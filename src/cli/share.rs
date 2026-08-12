@@ -616,11 +616,22 @@ pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
             WARN
         );
         println!(
-            "             It shares an origin with anything else you run on this port, so what \
-             it leaves behind — cookies, cached responses, stored data, any permission you \
-             grant it — outlives this share and belongs to whatever you run there next. \
-             Cookies reach your other local services too, since they ignore the port."
+            "             It shares an origin with anything else you run on this address and \
+             port, so what it leaves behind — cookies, cached responses, stored data, any \
+             permission you grant it — outlives this share and belongs to whatever you run \
+             there next."
         );
+        // The cookie jar is per *host*, and this join has a host of its own —
+        // unless the bind for one failed, which is the case worth a sentence.
+        if joined.shared_jar {
+            println!(
+                "             {} This join is on `127.0.0.1`, which shares one cookie jar with \
+                 every local service you have. Cookies ignore the port, so this page's \
+                 credential reaches your other local services and theirs reach the box. \
+                 Prefer a private window with nothing else open in it.",
+                WARN
+            );
+        }
         println!(
             "             Use a private window if you would rather none of that stuck, and \
              close it when you are done looking."

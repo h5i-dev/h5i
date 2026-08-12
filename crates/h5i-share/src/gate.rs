@@ -32,6 +32,33 @@
 /// services that are looking for it.
 pub const COOKIE: &str = "h5i_share";
 
+/// Is this cookie name one of h5i's own?
+///
+/// The two names that exist are the bare [`COOKIE`] and `h5i_share_<port>`,
+/// and both sanitisers were testing `starts_with("h5i_share")` instead — which
+/// is a different set. An app cookie called `h5i_shared_theme` or
+/// `h5i_shareable_session` matched, so it was deleted from every request on the
+/// way into the box and its `Set-Cookie` was deleted from every response on the
+/// way out. The app then loses its state or its login *only when viewed through
+/// a share*, which contradicts the contract stated directly above
+/// [`split_cookie`]: the app's own cookies pass through untouched.
+///
+/// One predicate, used in both directions and by the fuzz invariant, so the
+/// three cannot drift.
+pub fn is_share_cookie_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(COOKIE) else {
+        return false;
+    };
+    if rest.is_empty() {
+        return true;
+    }
+    // `h5i_share_<port>`, and a port is a nonzero `u16`. Anything else that
+    // merely begins with these characters belongs to the app.
+    rest.strip_prefix('_')
+        .and_then(|p| p.parse::<u16>().ok())
+        .is_some_and(|p| p != 0)
+}
+
 /// The cookie name a loopback proxy on `port` should use.
 pub fn cookie_for_port(port: u16) -> String {
     format!("{COOKIE}_{port}")
@@ -93,7 +120,7 @@ pub struct Request {
 /// requiring the schemes to agree would refuse the app's own requests. An
 /// absent `Origin` is allowed — that is an ordinary navigation, which is how
 /// every visitor arrives.
-fn is_cross_origin(headers: &[&str], host: Option<&str>) -> bool {
+fn is_cross_origin(headers: &[&str], host: Option<&str>, carries_invite: bool) -> bool {
     // `Sec-Fetch-Site` first, because `Origin` is not sent at all on a
     // subresource GET — which is the shape the check was written for and did
     // not stop. `<img src="http://127.0.0.1:8899/api/reset">` on a page served
@@ -108,7 +135,22 @@ fn is_cross_origin(headers: &[&str], host: Option<&str>) -> bool {
             // A navigation from *another site* is how every visitor arrives:
             // the invite is followed from a chat window, and refusing that
             // refuses everybody at the front door.
-            "cross-site" => !is_a_navigation(headers),
+            //
+            // **But only the invite.** `SameSite=Lax` is precisely the rule
+            // that attaches a cookie to a cross-site top-level GET navigation,
+            // so once a visitor has the share cookie this carve-out let any
+            // site on the internet that learns the origin navigate them to
+            // `…/reset` or `…/delete?id=1` and have it authorized. That is
+            // ordinary CSRF, wearing the exception written for the chat
+            // window.
+            //
+            // The distinction the exception actually needs is not "is this a
+            // navigation" but "did this request bring the capability with it".
+            // A link out of a chat window carries the token in its query
+            // string; the attacker's link cannot, because the token is the one
+            // thing they do not have. A cross-site navigation authenticated
+            // only by a cookie already in the browser is refused.
+            "cross-site" => !(is_a_navigation(headers) && carries_invite),
             // But a navigation from the same *site* is not that. Two `h5i
             // join` proxies on one machine are `127.0.0.1:A` and
             // `127.0.0.1:B` — different origins, same site, because a site
@@ -287,7 +329,7 @@ fn split_cookie(value: &str, name: &str) -> (Option<String>, String) {
                     if k == name {
                         ours = Some(v.trim().to_string());
                     }
-                    !k.starts_with(COOKIE)
+                    !is_share_cookie_name(k)
                 }
                 // A segment with no `=` at all. It cannot carry a token —
                 // there is nothing after an equals sign to carry it — so this
@@ -296,7 +338,7 @@ fn split_cookie(value: &str, name: &str) -> (Option<String>, String) {
                 // "the check ran on two of the three paths" defect this file
                 // has already had. Whatever is named like ours does not go to
                 // the box, however it is spelled.
-                None => !c.is_empty() && !c.starts_with(COOKIE),
+                None => !c.is_empty() && !is_share_cookie_name(c),
             }
         })
         .map(|c| c.trim())
@@ -503,7 +545,7 @@ pub fn parse(head: &str, cookie: &str) -> Option<Request> {
         content_length,
         expects_continue,
         service_worker: registers_a_service_worker(&headers),
-        cross_origin: is_cross_origin(&headers, header(&headers, "host")),
+        cross_origin: is_cross_origin(&headers, header(&headers, "host"), from_query),
         // Carried as its own flag rather than encoded in the length. As a
         // sentinel value it collided with a real `Content-Length` of
         // `u64::MAX`, and it was skipped entirely when the request also asked
@@ -705,16 +747,66 @@ mod cookie_shape_tests {
         let (_, kept) = split_cookie("999h5i_share=x; y=2", "h5i_share");
         assert_eq!(kept, "999h5i_share=x; y=2");
     }
+
+    /// An app cookie that merely *begins* like ours is the app's.
+    ///
+    /// Both sanitisers tested `starts_with("h5i_share")`, which is a larger set
+    /// than the two names h5i actually owns. `h5i_shared_theme=dark` was
+    /// therefore deleted from every request into the box and its `Set-Cookie`
+    /// deleted from every response out of it — so the app lost its state, or
+    /// its login, *only when someone was looking at it through a share*. That
+    /// is the opposite of the promise made directly above `split_cookie`.
+    #[test]
+    fn a_cookie_that_only_looks_like_ours_belongs_to_the_app() {
+        // Ours: the bare name and the per-port one.
+        assert!(is_share_cookie_name("h5i_share"));
+        assert!(is_share_cookie_name("h5i_share_8899"));
+        assert!(is_share_cookie_name("h5i_share_1"));
+        assert!(is_share_cookie_name("h5i_share_65535"));
+
+        // Theirs.
+        assert!(!is_share_cookie_name("h5i_shared_theme"));
+        assert!(!is_share_cookie_name("h5i_shareable_session"));
+        assert!(!is_share_cookie_name("h5i_share_"));
+        assert!(!is_share_cookie_name("h5i_share_0"));
+        assert!(!is_share_cookie_name("h5i_share_65536"));
+        assert!(!is_share_cookie_name("h5i_share_abc"));
+        assert!(!is_share_cookie_name("h5i_sharex"));
+        assert!(!is_share_cookie_name("999h5i_share"));
+
+        // And the request direction, end to end: the app's cookies go
+        // upstream, both of ours do not.
+        let (ours, kept) = split_cookie(
+            "h5i_shared_theme=dark; h5i_share_8899=tok; h5i_shareable_session=s; h5i_share=t",
+            "h5i_share_8899",
+        );
+        assert_eq!(ours.as_deref(), Some("tok"));
+        assert_eq!(kept, "h5i_shared_theme=dark; h5i_shareable_session=s");
+    }
 }
 
 #[cfg(test)]
 mod origin_tests {
     use super::*;
 
+    /// A request carrying the share cookie and nothing else — the state a
+    /// visitor's browser is in after the invite redirect.
     fn req(extra: &str) -> Option<Request> {
         parse(
             &format!(
                 "GET /a HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nCookie: h5i_share=abc\r\n{extra}\r\n"
+            ),
+            "h5i_share",
+        )
+    }
+
+    /// The invite itself: the token in the query string, which is the one
+    /// thing a third-party page cannot put there.
+    fn invite(extra: &str) -> Option<Request> {
+        parse(
+            &format!(
+                "GET /?h5i={} HTTP/1.1\r\nHost: 127.0.0.1:8899\r\n{extra}\r\n",
+                "a".repeat(64)
             ),
             "h5i_share",
         )
@@ -783,15 +875,54 @@ mod origin_tests {
         );
     }
 
+    /// A cross-site navigation with no invite in it is not the invite.
+    ///
+    /// `SameSite=Lax` is exactly the rule that puts a cookie on a cross-site
+    /// top-level GET navigation, so once a visitor holds the share cookie, the
+    /// carve-out written for "the link came from a chat window" admitted any
+    /// site on the internet that had learned the origin: `<a
+    /// href="http://127.0.0.1:8899/reset">`, or a meta refresh, and the state
+    /// change happens with the credential attached. CORS never enters into it
+    /// — nothing needs to read the answer.
+    ///
+    /// The exception belongs to the request that *brings* the capability, not
+    /// to the shape of the request.
+    #[test]
+    fn a_cross_site_navigation_without_the_invite_is_refused() {
+        let nav = "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\n\
+                   Sec-Fetch-Dest: document\r\n";
+        let attacker = req(nav).expect("parses");
+        assert!(
+            attacker.cross_origin,
+            "a cookie-only cross-site navigation was treated as the invite link"
+        );
+        // The same request *with* the token is the visitor arriving.
+        assert!(!invite(nav).expect("parses").cross_origin);
+
+        // And a cross-site navigation carrying both — the visitor following
+        // the link a second time, from the chat window, with the cookie
+        // already set — is still the invite.
+        let both = parse(
+            &format!(
+                "GET /?h5i={} HTTP/1.1\r\nHost: 127.0.0.1:8899\r\nCookie: h5i_share=abc\r\n{nav}\r\n",
+                "a".repeat(64)
+            ),
+            "h5i_share",
+        )
+        .expect("parses");
+        assert!(!both.cross_origin);
+    }
+
     #[test]
     fn the_invite_link_still_works_from_wherever_it_was_sent() {
         // The other direction, and the one that breaks the feature if it is
         // wrong. The invite is followed from a chat window, which is
         // cross-site by construction — refusing it would refuse every visitor
         // at the front door.
-        let from_chat =
-            req("Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n")
-                .expect("parses");
+        let from_chat = invite(
+            "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n",
+        )
+        .expect("parses");
         assert!(!from_chat.cross_origin);
 
         // Typed, or opened from a bookmark.
@@ -1010,7 +1141,7 @@ mod fuzz_tests {
                 for c in value.split(';') {
                     let name = c.trim().split_once('=').map(|(k, _)| k).unwrap_or(c).trim();
                     assert!(
-                        !name.starts_with(COOKIE),
+                        !is_share_cookie_name(name),
                         "a share cookie reached the box: {} -> {line:?}",
                         ctx()
                     );

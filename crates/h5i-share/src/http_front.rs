@@ -1843,9 +1843,21 @@ fn sets_a_share_cookie(line: &[u8]) -> bool {
     let Some(colon) = line.iter().position(|&b| b == b':') else {
         return false;
     };
-    String::from_utf8_lossy(&line[colon + 1..])
+    // The *name*, by the one predicate both directions share. A raw
+    // `starts_with` here deleted an app's `Set-Cookie: h5i_shared_theme=dark`
+    // from every response, so the app lost state only when viewed through a
+    // share — see `gate::is_share_cookie_name`.
+    let value = String::from_utf8_lossy(&line[colon + 1..]);
+    let name = value
         .trim_start()
-        .starts_with(crate::gate::COOKIE)
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .split('=')
+        .next()
+        .unwrap_or("")
+        .trim();
+    crate::gate::is_share_cookie_name(name)
 }
 
 #[cfg(test)]
@@ -2036,8 +2048,17 @@ mod response_fuzz {
             // clear one — and cookies ignore the port, so on the joining side
             // one box could log a visitor out of a different share.
             for v in header_values(&out, "set-cookie") {
+                let name = v
+                    .trim_start()
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .split('=')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
                 assert!(
-                    !v.trim_start().starts_with(crate::gate::COOKIE),
+                    !crate::gate::is_share_cookie_name(name),
                     "the box set a share cookie: {} -> {v:?}",
                     ctx()
                 );

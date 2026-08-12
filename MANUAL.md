@@ -385,9 +385,14 @@ come up in the session that is already there.
 **What the joining side is trusting.** A ticket names a machine to dial and h5i
 will dial it, so a ticket is worth the same care as any link: h5i refuses one
 that names your *own* loopback or link-local addresses, but a ticket from a
-stranger is still a stranger's. The page then arrives on `http://127.0.0.1:<port>`,
-which browsers treat as a trustworthy origin — it shares that origin with every
-other local service you run, so cookies it sets reach them. Service worker
+stranger is still a stranger's. The page then arrives on
+`http://127.<x>.<y>.<z>:<port>` — a loopback address picked at random for this
+join, because a cookie jar is scoped by *host* and ignores the port. On
+`127.0.0.1` that jar is shared with every local service you run, in both
+directions: the token this proxy sets would reach them, and every cookie they
+have set would be forwarded to the box. An address of its own gives this share a
+jar nothing else has written to. macOS configures only `127.0.0.1` on `lo0`, so
+there the bind falls back and `h5i join` says so. Service worker
 registration is refused outright, because one would keep control of that address
 after the share ended, and a request that fetch metadata says came from another
 page is refused too — including one from another `h5i join` on the next port,
@@ -395,10 +400,9 @@ which is a *different origin* but the *same site*, so nothing in the browser
 holds the credential back between them — two `h5i join` proxies on one machine are the same
 *site* to a browser, so one share's page could otherwise drive another's box
 with the credential attached. Nothing else the page does is sandboxed by h5i, and some of it outlives the
-share: cookies (which ignore the port, so they reach your other local
-services), cached responses, `localStorage`, any permission you grant, and
+share: cookies, cached responses, `localStorage`, any permission you grant, and
 anything it persuades the browser to download. All of that belongs to whatever
-you next run on that port — which is why `h5i join` binds an ephemeral one
+you next run on that address and port — which is why `h5i join` binds an ephemeral one
 unless you ask for a fixed one. A private window is the simple way to keep none
 of it.
 

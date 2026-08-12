@@ -44,6 +44,63 @@ pub struct Joined {
     /// The ticket worked, but the share said something worth repeating: it is
     /// full, or the box has nothing listening on the shared port yet.
     pub warning: Option<String>,
+    /// This join had to fall back to `127.0.0.1`, so it shares a cookie jar
+    /// with every other local service. See [`bind_loopback`] for what that
+    /// costs and why it is said out loud rather than assumed away.
+    pub shared_jar: bool,
+}
+
+/// Bind this join's own address on the loopback interface.
+///
+/// **The address is the isolation.** Cookies are scoped by *host* and ignore
+/// the port, so a proxy on `127.0.0.1:8899` shares one jar with every other
+/// HTTP service on this machine, and that goes wrong in both directions at
+/// once:
+///
+/// * **Outward.** The cookie this proxy sets — `h5i_share_<port>=<token>` —
+///   is sent by the browser to *every* `127.0.0.1` service the joiner visits
+///   while joined. `HttpOnly` is no help: this is the server-side `Cookie`
+///   header. Any such service learns the port from the cookie's own name and
+///   the token from its value, and can then reach the remote box. The token is
+///   minted here precisely because every local process is outside the gate,
+///   and it was being handed to all of them.
+///
+/// * **Inward, which is worse.** Every cookie any *other* loopback service has
+///   set on `127.0.0.1` is sent here too, and forwarded upstream — so a
+///   `session=<secret>` belonging to the joiner's own local app arrives at
+///   agent-written code inside somebody else's box on its first request. The
+///   joiner is the person who did not choose that risk.
+///
+/// A different loopback address is a different cookie host, with no DNS, no
+/// `/etc/hosts`, and no browser-specific `*.localhost` handling involved:
+/// `127.0.0.0/8` is all loopback, so `127.x.y.z` is reachable from this
+/// machine and from nowhere else, and the browser keeps a jar for it that only
+/// this share has ever written to.
+///
+/// Linux routes the whole `/8` by default and this simply works. macOS
+/// configures only `127.0.0.1` on `lo0`, so the bind fails there and this
+/// falls back — the fallback is reported rather than silent, because the two
+/// leaks above come back with it.
+async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5iError> {
+    // Random, so a local process cannot find this share's jar by guessing.
+    // `x.0.0` and `x.255.255` are avoided only to stay clear of anything that
+    // treats them as network or broadcast addresses.
+    for _ in 0..8 {
+        let r = h5i_core::token::hex(3)?;
+        let b = u8::from_str_radix(&r[0..2], 16).unwrap_or(1);
+        let c = u8::from_str_radix(&r[2..4], 16).unwrap_or(1);
+        let d = u8::from_str_radix(&r[4..6], 16).unwrap_or(1).clamp(1, 254);
+        // Never `127.0.0.1` itself: the whole point is a host nothing else has
+        // written a cookie for.
+        let addr = std::net::Ipv4Addr::new(127, b.clamp(1, 254), c, d);
+        if let Ok(l) = tokio::net::TcpListener::bind((addr, port)).await {
+            return Ok((l, false));
+        }
+    }
+    let l = tokio::net::TcpListener::bind(("127.0.0.1", port))
+        .await
+        .map_err(|e| H5iError::Metadata(format!("could not bind a local port: {e}")))?;
+    Ok((l, true))
 }
 
 /// Connect, bind, and serve until interrupted.
@@ -74,9 +131,7 @@ pub async fn run(
     // Loopback only. Never an external address, on any code path: this proxy
     // exists to give one browser on this machine a door, not to republish
     // someone else's dev server.
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .map_err(|e| H5iError::Metadata(format!("could not bind a local port: {e}")))?;
+    let (listener, shared_jar) = bind_loopback(port).await?;
     let local = listener.local_addr()?;
 
     // Minted here, and deliberately not the ticket secret. The browser gets a
@@ -86,13 +141,15 @@ pub async fn run(
 
     announce(&Joined {
         url: format!(
-            "http://127.0.0.1:{}/?{}={local_token}",
+            "http://{}:{}/?{}={local_token}",
+            local.ip(),
             local.port(),
             crate::gate::QUERY_PARAM
         ),
         path,
         box_id: ticket.box_id.clone(),
         warning,
+        shared_jar,
     });
 
     let secret = std::sync::Arc::new(ticket.secret.clone());
@@ -521,6 +578,55 @@ mod tests {
             let (head, body) = r.split_once("\r\n\r\n").expect("a head and a body");
             assert!(head.contains(&format!("Content-Length: {}", body.len())));
         }
+    }
+
+    /// Each join gets its own cookie jar, because it gets its own host.
+    ///
+    /// Cookies are scoped by host and ignore the port, so binding
+    /// `127.0.0.1` put this proxy in one jar with every other local service —
+    /// and that leaked both ways at once. Outward: the token this proxy sets
+    /// went to every `127.0.0.1` service the joiner visited while joined,
+    /// with the port in the cookie's own name, so any of them could reach the
+    /// remote box. Inward, and worse: every cookie those services had set
+    /// came here and was forwarded, so a `session=<secret>` for the joiner's
+    /// own local app arrived at agent-written code inside somebody else's box.
+    #[tokio::test]
+    async fn a_join_binds_a_loopback_address_of_its_own() {
+        let (a, shared_a) = bind_loopback(0).await.expect("bind");
+        let (b, shared_b) = bind_loopback(0).await.expect("bind");
+        let (ip_a, ip_b) = (a.local_addr().unwrap().ip(), b.local_addr().unwrap().ip());
+
+        // On a host that routes all of `127.0.0.0/8` — Linux — both joins get
+        // an address of their own, and it is never `127.0.0.1`. macOS
+        // configures only `127.0.0.1` on `lo0`, so there this falls back and
+        // says so rather than pretending the jar is private.
+        if shared_a || shared_b {
+            assert_eq!(ip_a.to_string(), "127.0.0.1");
+            assert_eq!(ip_b.to_string(), "127.0.0.1");
+            return;
+        }
+        assert_ne!(
+            ip_a.to_string(),
+            "127.0.0.1",
+            "the fallback was taken silently"
+        );
+        assert_ne!(ip_b.to_string(), "127.0.0.1");
+        assert_ne!(ip_a, ip_b, "two joins landed in one cookie jar");
+        assert!(
+            ip_a.is_loopback(),
+            "a join bound something reachable: {ip_a}"
+        );
+        assert!(
+            ip_b.is_loopback(),
+            "a join bound something reachable: {ip_b}"
+        );
+
+        // And it is a real listener a browser on this machine can reach.
+        let port = a.local_addr().unwrap().port();
+        assert!(
+            tokio::net::TcpStream::connect((ip_a, port)).await.is_ok(),
+            "the address a joiner is told to open does not accept connections"
+        );
     }
 
     #[tokio::test]
