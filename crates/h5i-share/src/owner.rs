@@ -141,7 +141,27 @@ fn specificity(listen: &SocketAddr, dial: IpAddr) -> Option<u8> {
 /// wins a candidate address outright. Every other shape — nobody, a stranger,
 /// a tie — is returned as itself, so the caller can say which one happened
 /// instead of printing one message for four different situations.
-pub fn decide(listeners: &[Listener], port: u16, box_pids: &HashSet<u32>) -> Ownership {
+/// `is_box` is asked rather than a set consulted, and that is load-bearing.
+///
+/// A precomputed set is a snapshot, and the thing it describes moves: a box
+/// spawns processes constantly — every shell command, every build step — and a
+/// child inherits its parent's descriptors across `fork`, so for the moment
+/// before `exec` it genuinely *does* hold the dev server's listening socket.
+/// Caught in that window, it looks like a second process on the same address.
+/// Judged against a snapshot taken microseconds earlier it is not yet in the
+/// box, so it looks like a **stranger** on the same address — which is
+/// `Contested`, and a refusal.
+///
+/// That is not theoretical: it is what a concurrency test found on the first
+/// run, with `/usr/bin/true` reported as co-holding the dev server's port. In
+/// production it means a share that intermittently refuses its own visitors
+/// while the box is busy, which is the worst shape a bug can take — it looks
+/// like the network.
+///
+/// Asking a predicate lets the caller answer for a pid the snapshot has never
+/// heard of, by walking its ancestry live ([`is_descendant`]). A genuine
+/// stranger still fails that walk.
+pub fn decide(listeners: &[Listener], port: u16, is_box: impl Fn(u32) -> bool) -> Ownership {
     let on_port: Vec<&Listener> = listeners.iter().filter(|l| l.addr.port() == port).collect();
     if on_port.is_empty() {
         return Ownership::Nobody;
@@ -162,9 +182,7 @@ pub fn decide(listeners: &[Listener], port: u16, box_pids: &HashSet<u32>) -> Own
     // A box that binds a real IPv4 socket keeps the IPv4 dial: it is what a
     // browser resolving `localhost` most often reaches, and there is no
     // ambiguity about whether that socket serves it.
-    let box_binds_v4 = on_port
-        .iter()
-        .any(|l| box_pids.contains(&l.pid) && l.addr.is_ipv4());
+    let box_binds_v4 = on_port.iter().any(|l| is_box(l.pid) && l.addr.is_ipv4());
     let candidates: [IpAddr; 2] = if box_binds_v4 {
         DIAL_CANDIDATES
     } else {
@@ -189,11 +207,11 @@ pub fn decide(listeners: &[Listener], port: u16, box_pids: &HashSet<u32>) -> Own
         // connections across them and h5i cannot promise which one a visitor
         // gets.
         if reachable.len() > 1 {
-            let ours = reachable.iter().any(|(_, l)| box_pids.contains(&l.pid));
+            let ours = reachable.iter().any(|(_, l)| is_box(l.pid));
             let others: Vec<u32> = reachable
                 .iter()
                 .map(|(_, l)| l.pid)
-                .filter(|p| !box_pids.contains(p))
+                .filter(|p| !is_box(*p))
                 .collect();
             // Unless every one of them is the box's. A tie is only a problem
             // because h5i cannot say *which* socket answers; when they all
@@ -219,7 +237,7 @@ pub fn decide(listeners: &[Listener], port: u16, box_pids: &HashSet<u32>) -> Own
         }
 
         let winner = reachable[0].1;
-        if box_pids.contains(&winner.pid) {
+        if is_box(winner.pid) {
             // Dial the address h5i just reasoned about, not the address the
             // socket is bound to: a box on `0.0.0.0:3000` is reached at
             // `127.0.0.1:3000`, and dialling `0.0.0.0` is not a thing.
@@ -241,7 +259,7 @@ pub fn decide(listeners: &[Listener], port: u16, box_pids: &HashSet<u32>) -> Own
     // address, say), that is still "not reachable as the box's port".
     fallback.unwrap_or_else(|| {
         let l = on_port[0];
-        if box_pids.contains(&l.pid) {
+        if is_box(l.pid) {
             // The box is listening, but somewhere h5i cannot dial it — a
             // specific LAN address and no loopback bind.
             Ownership::Nobody
@@ -699,16 +717,19 @@ mod tests {
         }
     }
 
-    fn boxed(pids: &[u32]) -> HashSet<u32> {
-        pids.iter().copied().collect()
+    /// The box, as the predicate `decide` now asks rather than the set it used
+    /// to consult. Tests answer from a fixed list; the dialer answers from a
+    /// snapshot plus a live ancestry walk.
+    fn boxed(pids: &[u32]) -> impl Fn(u32) -> bool + '_ {
+        move |pid| pids.contains(&pid)
     }
 
     #[test]
     fn nothing_listening_is_its_own_answer() {
-        assert_eq!(decide(&[], 3000, &boxed(&[10])), Ownership::Nobody);
+        assert_eq!(decide(&[], 3000, boxed(&[10])), Ownership::Nobody);
         // Something on another port is not something on this one.
         assert_eq!(
-            decide(&[l(10, "127.0.0.1:5173")], 3000, &boxed(&[10])),
+            decide(&[l(10, "127.0.0.1:5173")], 3000, boxed(&[10])),
             Ownership::Nobody
         );
     }
@@ -716,7 +737,7 @@ mod tests {
     #[test]
     fn the_box_on_loopback_is_dialled_there() {
         assert_eq!(
-            decide(&[l(10, "127.0.0.1:3000")], 3000, &boxed(&[10])),
+            decide(&[l(10, "127.0.0.1:3000")], 3000, boxed(&[10])),
             Ownership::Box {
                 pid: 10,
                 addr: "127.0.0.1:3000".parse().unwrap()
@@ -729,7 +750,7 @@ mod tests {
         // `0.0.0.0` is what the socket is bound to; it is not an address to
         // connect to.
         assert_eq!(
-            decide(&[l(10, "0.0.0.0:3000")], 3000, &boxed(&[10])),
+            decide(&[l(10, "0.0.0.0:3000")], 3000, boxed(&[10])),
             Ownership::Box {
                 pid: 10,
                 addr: "127.0.0.1:3000".parse().unwrap()
@@ -741,7 +762,7 @@ mod tests {
     fn a_stranger_holding_the_port_is_refused_not_shared() {
         // The whole point of the module.
         assert_eq!(
-            decide(&[l(99, "127.0.0.1:3000")], 3000, &boxed(&[10])),
+            decide(&[l(99, "127.0.0.1:3000")], 3000, boxed(&[10])),
             Ownership::Stranger {
                 pid: 99,
                 addr: "127.0.0.1:3000".parse().unwrap()
@@ -759,7 +780,7 @@ mod tests {
         let got = decide(
             &[l(10, "[::]:3000"), l(99, "127.0.0.1:3000")],
             3000,
-            &boxed(&[10]),
+            boxed(&[10]),
         );
         assert_eq!(
             got,
@@ -780,7 +801,7 @@ mod tests {
                 l(98, "[::1]:3000"),
             ],
             3000,
-            &boxed(&[10]),
+            boxed(&[10]),
         );
         assert!(
             matches!(got, Ownership::Stranger { .. }),
@@ -795,7 +816,7 @@ mod tests {
         let got = decide(
             &[l(10, "127.0.0.1:3000"), l(99, "127.0.0.1:3000")],
             3000,
-            &boxed(&[10]),
+            boxed(&[10]),
         );
         match got {
             Ownership::Contested { addr, others } => {
@@ -814,7 +835,7 @@ mod tests {
         // owner of a perfectly good server as "nothing is listening". `[::1]`
         // is right either way.
         assert_eq!(
-            decide(&[l(10, "[::]:3000")], 3000, &boxed(&[10])),
+            decide(&[l(10, "[::]:3000")], 3000, boxed(&[10])),
             Ownership::Box {
                 pid: 10,
                 addr: "[::1]:3000".parse().unwrap()
@@ -831,7 +852,7 @@ mod tests {
         let got = decide(
             &[l(10, "127.0.0.1:3000"), l(11, "127.0.0.1:3000")],
             3000,
-            &boxed(&[10, 11]),
+            boxed(&[10, 11]),
         );
         match got {
             Ownership::Box { addr, pid } => {
@@ -847,7 +868,7 @@ mod tests {
         let got = decide(
             &[l(10, "127.0.0.1:3000"), l(10, "[::1]:3000")],
             3000,
-            &boxed(&[10]),
+            boxed(&[10]),
         );
         assert_eq!(
             got,
@@ -863,7 +884,7 @@ mod tests {
         // The listener is the dev server, which is a descendant of the session
         // h5i started — never the session process itself.
         assert_eq!(
-            decide(&[l(14508, "127.0.0.1:3000")], 3000, &boxed(&[14506, 14508])),
+            decide(&[l(14508, "127.0.0.1:3000")], 3000, boxed(&[14506, 14508])),
             Ownership::Box {
                 pid: 14508,
                 addr: "127.0.0.1:3000".parse().unwrap()

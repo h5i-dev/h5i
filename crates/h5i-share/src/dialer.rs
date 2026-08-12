@@ -385,7 +385,16 @@ impl Dialer {
             Some(n) => format!("`{n}` (pid {pid})"),
             None => format!("pid {pid}"),
         };
-        match owner::decide(&listeners, self.port, &pids) {
+        // The snapshot first, because it is free and answers for almost every
+        // pid; the live ancestry walk only for one the snapshot has not heard
+        // of. That second half is the fix: a box spawns processes constantly,
+        // a child inherits the dev server's listening socket across `fork`, and
+        // one caught in the moment before `exec` is a real co-holder of the
+        // real address. Judged against the snapshot alone it is a *stranger* on
+        // the box's own port, which is `Contested` — so a busy box refused its
+        // own visitors, intermittently, in a way that looks like the network.
+        let is_box = |pid: u32| pids.contains(&pid) || owner::is_descendant(pid, self.mac.root);
+        match owner::decide(&listeners, self.port, is_box) {
             // Re-asked upwards, against the process table as it is now. The
             // tree above is a snapshot taken before the sockets were scanned,
             // and a pid that changed hands in between would otherwise carry the
@@ -1003,6 +1012,58 @@ mod mac_tests {
             .expect("the dialer must reach a v6-only server rather than report it missing");
         assert!(sock.peer_addr().expect("peer").is_ipv6());
         drop(fd);
+    }
+
+    /// Many visitors at once, which is the only way this route is ever used.
+    ///
+    /// Every dial re-runs the whole attribution — the process table, every
+    /// readable process's descriptors, the decision, and the ancestry check —
+    /// so a share serving a page with a dozen subresources runs a dozen of them
+    /// concurrently. Nothing here is shared mutable state, which is the point
+    /// worth holding onto by test rather than by inspection: the answer must be
+    /// the same socket every time, and no thread may panic on a process table
+    /// that is changing underneath it.
+    #[test]
+    fn concurrent_dials_all_reach_the_same_box_port() {
+        use std::sync::Arc;
+
+        let server = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = server.local_addr().expect("addr").port();
+        let accepting = std::thread::spawn(move || {
+            // One accept per dial below, then done.
+            for _ in 0..24 {
+                if server.accept().is_err() {
+                    break;
+                }
+            }
+        });
+
+        let dialer = Arc::new(Dialer::spawn_local(port).expect("dialer"));
+        // Churn the process table while the dials run, so the scans are reading
+        // something that is genuinely moving rather than a still picture.
+        let churn = std::thread::spawn(|| {
+            for _ in 0..12 {
+                if let Ok(mut c) = std::process::Command::new("/usr/bin/true").spawn() {
+                    let _ = c.wait();
+                }
+            }
+        });
+
+        let mut threads = Vec::new();
+        for _ in 0..24 {
+            let d = Arc::clone(&dialer);
+            threads.push(std::thread::spawn(move || {
+                d.connect().map(|s| s.peer_addr().expect("peer").port())
+            }));
+        }
+        for (i, t) in threads.into_iter().enumerate() {
+            match t.join().expect("a dial thread panicked") {
+                Ok(got) => assert_eq!(got, port, "dial {i} reached the wrong port"),
+                Err(e) => panic!("dial {i} failed while the box was listening: {e}"),
+            }
+        }
+        churn.join().expect("churn thread");
+        accepting.join().expect("server thread");
     }
 
     #[test]
