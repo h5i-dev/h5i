@@ -307,7 +307,7 @@ VHOST="$(join_host "$WORK/vjoin.log")"; VHOST="${VHOST:-127.0.0.1}"
 VP=$(share_pid)
 
 # A download slow enough that the kill lands in the middle of it.
-( curl -s -b "h5i_share_8951=$VTOK" --limit-rate 60k -o "$WORK/partial.bin"     --max-time 120 "http://$VHOST:8951/" ; echo "curl=$?" > "$WORK/curl.rc" ) &
+( curl -s -b "h5i_share_8951=$VTOK" --limit-rate 60k -o "$WORK/partial.bin"     --max-time 120 "http://$VHOST:8951/" ; echo "$?" > "$WORK/curl.rc" ) &
 sleep 4
 kill -9 "$VP" 2>/dev/null
 
@@ -322,6 +322,12 @@ for _ in $(seq 1 260); do
   sleep 0.5
 done
 rc=$(cat "$WORK/curl.rc" 2>/dev/null || echo missing)
+# The bare status, not `curl=$?`. Written with that prefix, `$rc` was
+# `curl=0` and neither `28` nor `missing` could ever match — so the one
+# ending this check exists to catch, a client sitting until its own timeout,
+# fell through to the pass arm. A check that cannot fail is worse than no
+# check: this one reported "the visitor's client returned on its own" for a
+# hang. The `(curl=curl=0)` in its own output was the tell.
 case "$rc" in
   28)      fail "the visitor's client sat until its own timeout — that is the hang" ;;
   missing) fail "the visitor's client never returned at all" ;;
@@ -436,6 +442,32 @@ assert "never published on the host" in text, "the receipt stopped saying the po
 assert "peers" in text, "the receipt has no peer section"
 PY
 [ $? = 0 ] && pass "the last receipt reads as it should" || fail "the receipt is not what it claims"
+
+# And one that actually carried somebody. The check above reads the *last*
+# receipt, and the last share of this run is one nobody visited — so its
+# "peers none" passed while the peer accounting, which is what several of
+# this feature's findings were about, went unread. The p2p share at the top
+# moved 4 MiB twice and refused a handful of requests; this is that receipt.
+python3 - "$ENV_DIR" <<'PY2'
+import json, os, re, sys
+d = sys.argv[1]
+rs = [json.loads(l) for l in open(os.path.join(d, "receipt.jsonl"))
+      if json.loads(l).get("source") == "share"]
+seen = []
+for r in rs:
+    blob = os.path.join(d, "receipts", r["raw_oid"].split(":")[1][:16] + ".raw")
+    try:
+        seen.append(open(blob).read())
+    except FileNotFoundError:
+        pass
+withpeers = [t for t in seen if re.search(r"^peers\s+[1-9]", t, re.M)]
+assert withpeers, "no receipt in this run recorded a peer at all"
+t = withpeers[0]
+assert re.search(r"\d+ connections", t), "a peer row carries no connection count"
+assert re.search(r"(KiB|MiB|B) in / ", t), "a peer row carries no byte counts"
+assert "MiB out" in t or "KiB out" in t, "no bytes were recorded as delivered"
+PY2
+[ $? = 0 ] && pass "a receipt that carried somebody counted them" || fail "the peer accounting is not in the receipt"
 
 say "done"
 if [ "$FAILED" = 0 ]; then
