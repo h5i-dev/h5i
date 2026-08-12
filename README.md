@@ -34,6 +34,19 @@ h5i gives you:
   - **Browser-ready demo links** for everyone else, with expiring grants, revocation, and ingress receipts
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
+**Use h5i to**
+
+<table>
+<tr>
+<td>🛡️ Run coding agents in secure sandboxes</td>
+<td>🌐 Test web apps in isolated browsers</td>
+</tr>
+<tr>
+<td>🔗 Share dev servers securely with others</td>
+<td>🧾 Review agent changes and activity</td>
+</tr>
+</table>
+
 **Local-first. No hosted sandbox. No SaaS account required.**
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
