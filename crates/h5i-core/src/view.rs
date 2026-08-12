@@ -133,7 +133,9 @@ pub fn stream_port(env_dir: &Path) -> Option<u16> {
 /// succeeds, and the forward then finds nothing listening — so it is worth
 /// doing by observation rather than by assuming which pid means what.
 pub fn box_pid(env_dir: &Path) -> Option<u32> {
-    let session = session_pid(env_dir)?;
+    // Verified, because this pid decides which network namespace a share
+    // publishes a port out of. See [`session_pid_verified`].
+    let session = session_pid_verified(env_dir, true)?;
     let own_netns = std::fs::read_link("/proc/self/ns/net").ok()?;
     let children = child_map();
 
@@ -194,29 +196,51 @@ fn child_map() -> std::collections::HashMap<u32, Vec<u32>> {
 /// process tree under this pid, and `h5i box share` identifies it that way
 /// (`h5i_share::owner`).
 pub fn session_pid(env_dir: &Path) -> Option<u32> {
+    session_pid_verified(env_dir, false)
+}
+
+/// [`session_pid`], optionally insisting the record proves whose pid it is.
+///
+/// `verified` is for `h5i box share`, and only for it. Every other reader
+/// tolerates the pid-identity staleness the registry has always had: a crashed
+/// session leaves its record, the kernel reissues its pid, `kill(pid, 0)` says
+/// yes, and the next scan heals it. Cosmetic, for a listing.
+///
+/// Sharing cannot tolerate it. `box_pid` walks this pid's descendants looking
+/// for a network namespace and the share dials `127.0.0.1:<port>` from
+/// whichever one it finds — so an unrelated same-user process that inherited a
+/// crashed session's pid, with a namespace of its own or a child that has one,
+/// makes `h5i box share` publish a port out of a box nobody offered. That is
+/// exactly the wrong-port exposure the namespace requirement exists to refuse,
+/// arriving through the check rather than around it.
+///
+/// With `verified`, a record must carry `started_ticks` *and* match. A record
+/// written by an older h5i therefore stops being usable for sharing until the
+/// session is restarted, which is the safe direction: the alternative is a
+/// check that passes because there was nothing to check.
+pub fn session_pid_verified(env_dir: &Path, verified: bool) -> Option<u32> {
     let mut best: Option<(String, u32)> = None;
     for e in std::fs::read_dir(env_dir.join("live")).ok()?.flatten() {
         let Ok(text) = std::fs::read_to_string(e.path()) else {
             continue;
         };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        let Ok(rec) = serde_json::from_str::<crate::env::LiveSession>(&text) else {
             continue;
         };
-        let (Some(pid), Some(kind)) = (
-            v["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
-            v["kind"].as_str(),
-        ) else {
-            continue;
-        };
-        if !crate::env::live_is_writer(kind) {
+        if !crate::env::live_is_writer(&rec.kind) {
             continue;
         }
-        if !pid_alive(pid) {
+        if !pid_alive(rec.pid) {
             continue;
         }
-        let started = v["started_at"].as_str().unwrap_or("").to_string();
-        if best.as_ref().is_none_or(|(s, _)| *s <= started) {
-            best = Some((started, pid));
+        if verified && rec.started_ticks.is_none() {
+            continue;
+        }
+        if !crate::env::live_identity_holds(&rec) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(s, _)| *s <= rec.started_at) {
+            best = Some((rec.started_at.clone(), rec.pid));
         }
     }
     best.map(|(_, pid)| pid)

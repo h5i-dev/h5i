@@ -91,9 +91,24 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // function is not simply `async`.
     let dialer = Dialer::spawn(req.box_pid, req.port)?;
     // What the dialer is pinned to, so the share can notice if the box later
-    // becomes a different box. Read here rather than inside the loop: this is a
-    // fact about what we pinned, not about what the box happens to have now.
-    let pinned_route = pinned_route(req.box_pid);
+    // becomes a different box. Asked of the *dialer*, which is holding the
+    // route, rather than re-read off the box process: `spawn` returns after its
+    // helper has entered the namespace, and if the box process exited in that
+    // window the read returned `None` while the helper held the namespace
+    // fine — and `box_went_away` read `None` as "nothing to compare" and
+    // skipped restart detection for the whole share. See
+    // `Dialer::pinned_route`.
+    let Some(pinned_route) = dialer.pinned_route() else {
+        // Refused rather than served with the check off. A share that cannot
+        // establish what it is pinned to cannot notice the box being replaced
+        // under it, and its public URL would go on claiming to work.
+        return Err(H5iError::Metadata(format!(
+            "h5i could not establish which network the route into `{}` holds, so a share of \
+             it could not tell the box restarting from the box still being there — and would \
+             keep advertising a URL that reaches nothing. Start a fresh session and try again.",
+            req.box_name
+        )));
+    };
 
     // A share of a port with nothing behind it is almost always a mistake, and
     // the peer is the one who would find out. Warn rather than refuse: an agent
@@ -180,55 +195,102 @@ async fn serve_async(
     req: Request,
     dialer: Dialer,
     warning: Option<String>,
-    pinned_netns: Option<String>,
+    pinned_netns: String,
     announce: impl FnOnce(&Started),
 ) -> Result<(), H5iError> {
-    // Transport setup first: it decides the endpoint the session records, and
-    // it is the step most likely to fail (no network, no cloudflared). Failing
-    // before anything is written keeps a dead share.json off disk.
-    let mut started = Setup::start(&req).await?;
-
-    // Minted *after* that, not before. `--tunnel` waits up to 45 seconds for
-    // `cloudflared` to publish a URL, and the clock was started before the
-    // wait: `--tunnel --expire 30s` printed a success tick, a complete
-    // ticket, and `expires in 0s` — a ticket already dead when it was handed
-    // over, and printed once. Whoever asked for thirty seconds meant thirty
-    // seconds of somebody being able to use it.
-    let expires_at = (chrono::Utc::now()
-        + chrono::Duration::from_std(req.expire).unwrap_or_default())
-    .timestamp();
-    let (grant, secret) = session::mint_grant(req.label.clone(), expires_at)?;
-    let grant_id = grant.id.clone();
-
-    let mut sess = ShareSession::new(
-        &req.env_id,
-        req.port,
-        req.transport,
-        started.endpoint(),
-        chrono::Utc::now(),
-    );
-    sess.grants.push(grant);
-    // Check and write in one locked step. A transport that is already running
-    // but a claim that fails means we tear the transport down again, which is
-    // the right order: better a wasted endpoint than two bridges sharing one
-    // grant table on two different ports, where a ticket for one authorizes the
-    // other.
+    // **The box is claimed before the network is touched.**
+    //
+    // Setup used to come first, on the reasoning that it is the step most
+    // likely to fail and that failing before anything was written kept a dead
+    // `share.json` off disk. What it also kept off disk was any sign that a
+    // share was starting at all — for the forty-five seconds `--tunnel` may
+    // spend waiting for a URL. In that window `share stop` and `stop --force`
+    // both reported success and did nothing, `rm`/`rebase`/`abort`/`export`
+    // saw an unshared box and proceeded, and the start then announced a public
+    // endpoint on top of whatever they had done. The dead record this ordering
+    // risks is cleaned up on every failure path below; the invisible share was
+    // not recoverable at all.
+    //
+    // The record starts with no endpoint and no grants, which is what
+    // `starting` means: claimed, admitting nobody, and about to be one thing or
+    // the other.
+    let mut sess = ShareSession::new(&req.env_id, req.port, req.transport, "", chrono::Utc::now());
+    sess.starting = true;
     match session::claim(&req.env_dir, &sess, &req.box_name) {
         Ok(Some(stale)) => eprintln!(
             "share: cleared a leftover share record from pid {stale} (that process is gone)"
         ),
         Ok(None) => {}
-        Err(e) => {
-            started.shutdown().await;
-            return Err(e);
-        }
+        Err(e) => return Err(e),
     }
-
     // The identity of the record just claimed, held here so every teardown
     // mutation below can name the share it is ending. Without it, a bridge
     // whose record was force-deleted and replaced marked the *new* share as
     // winding up on its way out.
     let claimed_at = sess.started_at.clone();
+
+    let mut started = match Setup::start(&req).await {
+        Ok(s) => s,
+        Err(e) => {
+            // The claim goes with the failure. Leaving it would refuse the
+            // next `box share` of this box until somebody found `--force`.
+            session::clear(&req.env_dir, &claimed_at);
+            return Err(e);
+        }
+    };
+
+    // Everything that may have changed while setup was waiting, checked before
+    // a single byte is announced.
+    if let Err(e) = still_ours(&req, &claimed_at, &pinned_netns) {
+        started.shutdown().await;
+        session::clear(&req.env_dir, &claimed_at);
+        return Err(e);
+    }
+
+    // The endpoint and the first grant, written in one locked step that also
+    // takes the record out of `starting`. The grant is minted *inside* that
+    // step for the two reasons `run::grant` gives: its lifetime should start
+    // when it is recorded, not up to five seconds earlier while the lock was
+    // being acquired, and its id has to be one the table is not already using.
+    let minted = std::cell::RefCell::new(None);
+    let endpoint = started.endpoint().to_string();
+    let updated = session::update(&req.env_dir, |s| {
+        if s.pid != std::process::id() || s.started_at != claimed_at {
+            return Err(H5iError::Metadata(
+                "this box was claimed by another share while this one was starting. Nothing was \
+                 announced."
+                    .into(),
+            ));
+        }
+        // `share stop` reached the starting record and marked it. That is an
+        // operator saying no, and it arrived first.
+        if s.winding_up {
+            return Err(H5iError::Metadata(
+                "this share was stopped while it was starting, so it will not open. Run \
+                 `h5i box share` again if that was not what you meant."
+                    .into(),
+            ));
+        }
+        let expires_at = (chrono::Utc::now()
+            + chrono::Duration::from_std(req.expire).unwrap_or_default())
+        .timestamp();
+        let (grant, secret) = session::mint_grant_unlike(&s.grants, req.label.clone(), expires_at)?;
+        *minted.borrow_mut() = Some((grant.id.clone(), secret, expires_at));
+        s.grants.push(grant);
+        s.endpoint = endpoint.clone();
+        s.starting = false;
+        Ok(())
+    });
+    if let Err(e) = updated {
+        started.shutdown().await;
+        session::clear(&req.env_dir, &claimed_at);
+        return Err(e);
+    }
+    let (grant_id, secret, expires_at) = minted
+        .into_inner()
+        .expect("update ran its closure to completion");
+    sess.endpoint = started.endpoint().to_string();
+    sess.starting = false;
 
     let bridge = Arc::new(Bridge::new(
         req.env_dir.clone(),
@@ -482,7 +544,50 @@ async fn stopped_elsewhere(bridge: Arc<Bridge>) -> String {
 /// rather than failing in a way anybody would notice. Left alone, a share whose
 /// box died answers `502` forever, and a box restarted afterwards gets a *new*
 /// namespace that this share will never reach. So the share ends, and says why.
-async fn box_went_away(env_dir: PathBuf, pinned: Option<String>) -> String {
+/// Is the box this share was pinned to still the box that is there?
+///
+/// Asked once, after transport setup and before anything is announced. Setup
+/// can take forty-five seconds for a tunnel and is not instant for P2P either,
+/// and everything it depends on can go away inside that: the writer session
+/// that made this a box at all can exit, and a replacement can start with a
+/// namespace of its own that this share's dialer is not in.
+///
+/// Neither failed naturally. The dialer's helper holds the old namespace open,
+/// so it stays perfectly dialable — into a box nobody is using. Without this
+/// check the share printed a successful invite and only `box_went_away`
+/// noticed, on its three-second poll, by which point the person on the other
+/// end had already been handed a link.
+fn still_ours(req: &Request, claimed_at: &str, pinned: &str) -> Result<(), H5iError> {
+    let writers = h5i_core::env::live_sessions(&req.env_dir)
+        .iter()
+        .any(|s| h5i_core::env::live_is_writer(&s.kind));
+    if !writers {
+        return Err(H5iError::Metadata(format!(
+            "`{}` stopped running while this share was starting, so there is nothing left to \
+             share. Start a session and share again.",
+            req.box_name
+        )));
+    }
+    if current_route(&req.env_dir).as_deref() != Some(pinned) {
+        return Err(H5iError::Metadata(format!(
+            "`{}` restarted while this share was starting, so the route this share holds goes \
+             into a box that is no longer there. Start a fresh share.",
+            req.box_name
+        )));
+    }
+    // And the claim is still ours to announce. `update` below re-checks this
+    // under the lock; this is the early, cheap half of the same question.
+    match session::read(&req.env_dir) {
+        Some(s) if s.started_at == claimed_at && s.pid == std::process::id() => Ok(()),
+        _ => Err(H5iError::Metadata(
+            "this share's claim on the box was taken over or removed while it was starting. \
+             Nothing was announced."
+                .into(),
+        )),
+    }
+}
+
+async fn box_went_away(env_dir: PathBuf, pinned: String) -> String {
     loop {
         tokio::time::sleep(BOX_POLL).await;
         // Only *writers* count. A read-only observer is a session, and it kept
@@ -512,9 +617,9 @@ async fn box_went_away(env_dir: PathBuf, pinned: Option<String>) -> String {
         // is not "nothing to check" but "the thing we were pinned to is gone" —
         // the very case this comparison was added for. The `if let` skipped it
         // silently.
-        if let Some(want) = &pinned {
+        {
             let now = current_route(&env_dir);
-            if now.as_deref() != Some(want.as_str()) {
+            if now.as_deref() != Some(pinned.as_str()) {
                 // Worded for what both platforms have in common, because both
                 // have this failure: on Linux the restarted box has a new
                 // namespace this share cannot enter, and on macOS it is a new
@@ -863,6 +968,16 @@ pub fn revoke(env_dir: &std::path::Path, grant_id: &str) -> Result<(), H5iError>
 pub enum Stopped {
     /// A live process was told to wind up; it writes its receipt and exits.
     Serving,
+    /// The share had claimed the box and its transport was not up yet, so it
+    /// abandons the start instead of tearing one down. No receipt: there was
+    /// no session to write one about.
+    ///
+    /// Without this state the window was invisible. `--tunnel` waits up to
+    /// forty-five seconds for a URL and nothing was on disk during it, so
+    /// `stop` and `stop --force` both answered "not being shared", printed a
+    /// success and returned 0 — and the start then went on to announce a
+    /// public endpoint.
+    Starting,
     /// The record was a leftover from a process that is gone, and was removed.
     /// Without this there was no way out of that state at all: `status` told
     /// people to run `stop`, and `stop` revoked grants in a file nobody was
@@ -877,9 +992,18 @@ pub enum Stopped {
 /// connections, writes its receipt and clears the session file on its own way
 /// out. Killing it would skip the receipt, which is the part that matters.
 pub fn stop(env_dir: &std::path::Path) -> Result<Stopped, H5iError> {
+    // Asked before the mutation, because `stop` is what makes the answer
+    // false: a share still in `Setup::start` has a record and no transport, and
+    // telling the operator it will "write its receipt and exit" would be
+    // describing a teardown that never happens.
+    let starting = session::read(env_dir).is_some_and(|s| s.starting);
     // One lock hold for the whole decision — see `session::stop`.
     Ok(if session::stop(env_dir)? {
-        Stopped::Serving
+        if starting {
+            Stopped::Starting
+        } else {
+            Stopped::Serving
+        }
     } else {
         Stopped::Stale
     })
@@ -906,6 +1030,60 @@ mod tests {
         session::write(dir.path(), &s).expect("write");
         let err = session::claim(dir.path(), &s, "demo").expect_err("already shared");
         assert!(format!("{err}").contains("already being shared"));
+    }
+
+    /// `share stop` reaches a share that has claimed the box and not opened.
+    ///
+    /// Nothing was written until after `Setup::start`, which for `--tunnel`
+    /// waits up to forty-five seconds for a URL. Throughout that window both
+    /// `stop` and `stop --force` saw no record, printed "not being shared" and
+    /// returned 0 — and the start then completed and began admitting visitors.
+    /// An operator could explicitly revoke access and have public access begin
+    /// afterwards, with no error from the command meant to prevent it.
+    #[test]
+    fn stopping_a_share_that_has_not_opened_yet_cancels_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut starting = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::Tunnel,
+            // No endpoint: the transport is not up. That is what `starting` is.
+            "",
+            chrono::Utc::now(),
+        );
+        starting.starting = true;
+        session::claim(dir.path(), &starting, "demo").expect("claim the box");
+
+        // The operator says no while setup is still running.
+        assert!(matches!(stop(dir.path()).expect("stop"), Stopped::Starting));
+
+        // What the start does when it comes back: the record is marked, so it
+        // abandons itself rather than announcing.
+        let s = session::read(dir.path()).expect("the record survived");
+        assert!(s.winding_up, "stop did not reach a starting share");
+        assert!(
+            session::update(dir.path(), |s| {
+                if s.winding_up {
+                    return Err(H5iError::Metadata("stopped while starting".into()));
+                }
+                s.starting = false;
+                Ok(())
+            })
+            .is_err(),
+            "a stopped start went on to open"
+        );
+
+        // And a share that opened is not reported as one that had not.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let open = ShareSession::new(
+            "env/a/demo",
+            3000,
+            Transport::Tunnel,
+            "https://x",
+            chrono::Utc::now(),
+        );
+        session::claim(dir.path(), &open, "demo").expect("claim");
+        assert!(matches!(stop(dir.path()).expect("stop"), Stopped::Serving));
     }
 
     #[test]

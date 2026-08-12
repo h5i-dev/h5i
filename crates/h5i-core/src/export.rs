@@ -147,6 +147,21 @@ pub fn export(
     // run`/`shell` or lifecycle op holds it". True, and not the fact the
     // operator needs: what is holding it is the session their share is
     // standing on, and stopping the share is the thing to do about it.
+    // Held for the whole bundle, so "no share" stays true while the evidence
+    // is gathered. The snapshot below reads the receipt log and then probes
+    // for a live share again at the end; those two reads and everything
+    // between them were unsynchronised with `session::claim` and with the
+    // receipt append at teardown, so a short share that started and finished
+    // inside the window appeared in neither — its receipt missed the listing
+    // and its record was gone before the final probe. Both `receipt.json` and
+    // `report.md` were then silent about somebody having been let in while the
+    // patch was produced.
+    //
+    // Ordering makes the other half work without a second lock: a teardown
+    // writes its receipt *before* it clears its record, so a share this holds
+    // out is either still recorded (and refused here) or already fully
+    // written down.
+    let _share_gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
     if let Some(sh) = crate::share_record::read_live(&m.dir(h5i_root)) {
         return Err(H5iError::Metadata(format!(
             "{} is being shared right now by pid {} — the export has to freeze the box into a \

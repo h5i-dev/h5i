@@ -6702,6 +6702,57 @@ pub struct LiveSession {
     /// What the session is executing (secret-redacted), when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The kernel's own start time for this pid, in clock ticks since boot
+    /// (field 22 of `/proc/<pid>/stat`).
+    ///
+    /// A pid alone is not an identity. A crashed session leaves its record
+    /// behind, the kernel hands that number to something else, and `kill(pid,
+    /// 0)` says yes — so the registry reports a live session belonging to an
+    /// unrelated process of the same user. For most readers that is a cosmetic
+    /// staleness that the next scan heals. For `h5i box share` it is not:
+    /// `box_pid` walks that pid's descendants looking for a network namespace,
+    /// and if the impostor or one of its children has one, the share enters
+    /// *that* namespace and publishes `127.0.0.1:<port>` from it — precisely
+    /// the wrong-port exposure the namespace check exists to refuse.
+    ///
+    /// Start time closes it: the pair (pid, start time) is unique for as long
+    /// as the process lives, and the kernel cannot reissue it. `None` for a
+    /// record written by an older h5i, which reads as "cannot verify" — see
+    /// [`live_identity_holds`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_ticks: Option<u64>,
+}
+
+/// The kernel's start time for a pid, in clock ticks since boot.
+///
+/// Field 22 of `/proc/<pid>/stat`, parsed from the *end* of the line: field 2
+/// is the executable name in parentheses and may itself contain spaces and
+/// parentheses, so splitting the whole line on whitespace is how this gets
+/// read wrong.
+#[cfg(target_os = "linux")]
+pub fn proc_start_ticks(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_comm = stat.rsplit_once(')')?.1;
+    // Fields 3.. follow the closing parenthesis, so field 22 is the 20th here.
+    after_comm.split_whitespace().nth(19)?.parse().ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn proc_start_ticks(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// Is this record still about the process it was written for?
+///
+/// `true` when the recorded start time matches the pid's, and `true` when
+/// there is nothing to compare — an older record, or a platform with no
+/// `/proc`. Callers that cannot tolerate the unverifiable case check
+/// `started_ticks.is_some()` themselves; `h5i box share` does.
+pub fn live_identity_holds(rec: &LiveSession) -> bool {
+    match (rec.started_ticks, proc_start_ticks(rec.pid)) {
+        (Some(recorded), Some(now)) => recorded == now,
+        _ => true,
+    }
 }
 
 /// Kinds that hold the exclusive writer lock (a live one of these means the
@@ -6728,6 +6779,10 @@ impl LiveGuard {
             kind: kind.to_string(),
             started_at: now_ts(),
             command,
+            // Written so a later reader can tell this process from whatever
+            // inherits its pid after a crash. See the field's own comment for
+            // what that costs `h5i box share`.
+            started_ticks: proc_start_ticks(pid),
         };
         if let Ok(json) = serde_json::to_string(&rec) {
             // Atomic: `live_sessions` unlinks anything it cannot parse, so a
@@ -8114,21 +8169,53 @@ fn conflict_runbook(m: &EnvManifest) -> String {
 /// and `--force` on it clears even a wedged record — so the way out is never
 /// more than one command, and it is the command that tells the other person
 /// their access has ended rather than pulling it out from under them.
+/// Take the share gate and refuse if this box is being shared.
+///
+/// The two together, because separately they are a check and then a gap. See
+/// [`crate::share_record::ShareGate`]. The returned guard must be held for the
+/// whole operation: dropping it early puts the gap back.
+fn hold_gate_unless_shared(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    verb: &str,
+) -> Result<crate::share_record::ShareGate, H5iError> {
+    let gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
+    refuse_if_shared(h5i_root, m, verb)?;
+    Ok(gate)
+}
+
 fn refuse_if_shared(h5i_root: &Path, m: &EnvManifest, verb: &str) -> Result<(), H5iError> {
     let Some(s) = crate::share_record::read_live(&m.dir(h5i_root)) else {
         return Ok(());
     };
-    // Only a share that can still let somebody in. `read_live` answers "a
-    // process holds this record"; `is_admitting` answers the question actually
-    // being asked, and a share whose grants are all revoked or expired is
-    // holding nothing — blocking on it costs the user a teardown for nothing.
-    if !s.is_admitting() && !s.winding_up {
-        return Ok(());
-    }
+    // **Any live share process**, not only one that could admit somebody new.
+    //
+    // `is_admitting` answers "could a fresh connection get in", and that was
+    // the wrong question by exactly the width of a drain. A connection already
+    // authorized stays up until its per-connection revocation poll runs — up
+    // to a second — and teardown happens after that; and the serving process
+    // does not even notice its writer session has gone until `BOX_POLL`, three
+    // seconds later. So with the writer just exited (`run.lock` free) and the
+    // last grant just expired, `abort`/`rebase`/`apply` walked through this
+    // guard and changed the box while a visitor was still uploading. That is
+    // the outcome the guard exists to prevent, arriving through it.
+    //
+    // A live share process is therefore exclusionary until it has cleared its
+    // record, which it does only after its transport is down and `quiesce` has
+    // returned. The cost is a teardown the user might not have needed; the
+    // remedy is one documented command, named below.
     if s.winding_up {
         return Err(H5iError::Metadata(format!(
             "{} is being shared by pid {} and that share is already shutting down — it will be \
              gone in a moment. Run `h5i box {verb} {}` again then.",
+            m.id, s.pid, m.slug
+        )));
+    }
+    if s.starting {
+        return Err(H5iError::Metadata(format!(
+            "{} is about to be shared: pid {} has claimed it and is setting up its transport. \
+             `{verb}` now would change the box out from under whoever is sent the invite. \
+             Wait for it, or stop it: `h5i box share stop {}`.",
             m.id, s.pid, m.slug
         )));
     }
@@ -8180,7 +8267,10 @@ pub fn apply(
     // below them would put it behind `run.lock` again for `apply`, whose own
     // ordering ("busy" wins over "wrong status") is pinned by a test and is
     // not this change's to alter.
-    refuse_if_shared(h5i_root, m, "apply")?;
+    // Held for the whole operation, not checked and let go: see
+    // `hold_gate_unless_shared`. A share cannot claim this box while this
+    // guard is alive, so "no share when we looked" stays true while we act.
+    let _share_gate = hold_gate_unless_shared(h5i_root, m, "apply")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status != ST_PROPOSED {
@@ -8359,7 +8449,10 @@ pub fn rebase(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result
     }
     // Rebase force-checks-out the worktree and re-pins the base in the manifest;
     // serialize against a concurrent `env run`/`shell` exactly like propose.
-    refuse_if_shared(h5i_root, m, "rebase")?;
+    // Held for the whole operation, not checked and let go: see
+    // `hold_gate_unless_shared`. A share cannot claim this box while this
+    // guard is alive, so "no share when we looked" stays true while we act.
+    let _share_gate = hold_gate_unless_shared(h5i_root, m, "rebase")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     match m.status.as_str() {
@@ -8482,7 +8575,10 @@ pub fn abort(repo: &Repository, h5i_root: &Path, m: &mut EnvManifest) -> Result<
     // Mutates the manifest status; serialize against a concurrent run/shell so
     // a run's terminal IDLE write can't clobber the ABORTED set here (a live run
     // holds the lock → abort waits/fails "busy" until it ends or is killed).
-    refuse_if_shared(h5i_root, m, "abort")?;
+    // Held for the whole operation, not checked and let go: see
+    // `hold_gate_unless_shared`. A share cannot claim this box while this
+    // guard is alive, so "no share when we looked" stays true while we act.
+    let _share_gate = hold_gate_unless_shared(h5i_root, m, "abort")?;
     #[cfg(unix)]
     let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     if m.status == ST_APPLIED {
@@ -8619,6 +8715,19 @@ pub fn rm(
     // A share is not a session, so neither that guard nor the two locks
     // further down see it. `--force` still removes the box, because that is
     // what `--force` is for, but it says what it is doing.
+    //
+    // Held across the removal, and that is not tidiness. A share's claim
+    // happens after its transport setup, so a `box share` can be forty-five
+    // seconds into waiting for a tunnel URL with nothing on disk to see. `rm`
+    // then found no record, deleted the environment directory — the share's
+    // own lock file with it — and the delayed claim, arriving afterwards,
+    // called `create_dir_all` on the parent it had just erased and wrote
+    // `share.json` into a recreated tree. The share announced a public
+    // endpoint for a box that no longer existed, shut down three seconds later
+    // on its next writer poll, and left a directory with a receipt in it and
+    // no manifest, which `box ls`, `share ls` and `gc` all answer "no
+    // environment named that" for and only `rm -rf` can clear.
+    let _share_gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
     let shared = crate::share_record::read_live(&m.dir(h5i_root));
     if let Some(s) = &shared {
         if !force {
@@ -8797,6 +8906,7 @@ mod tests {
             kind: "run".into(),
             started_at: now_ts(),
             command: None,
+            started_ticks: None,
         };
         std::fs::write(
             live_dir.join("2147483646.json"),
@@ -11021,6 +11131,76 @@ mod tests {
             refuse_if_shared(root, &m, "abort").is_ok(),
             "a dead record blocked abort"
         );
+    }
+
+    /// A share is exclusionary for as long as its process is, not only while
+    /// it could admit somebody new.
+    ///
+    /// `is_admitting` was the test, and it answers "could a fresh connection
+    /// get in" — which is the wrong question by exactly the width of a drain.
+    /// A connection already authorized stays up until its revocation poll runs,
+    /// and teardown follows that; the serving process does not even notice its
+    /// writer has gone until three seconds later. So with the writer just
+    /// exited and the last grant just expired, a lifecycle verb walked through
+    /// this guard and changed the box while a visitor was still connected.
+    ///
+    /// The two states this covers — every grant revoked, and every grant
+    /// expired — are exactly the ones that used to read as "nothing is
+    /// holding this box".
+    #[test]
+    fn a_share_still_draining_is_not_a_box_free_to_change() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let m = canonical_manifest("human", "draining");
+        let dir = m.dir(root);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+
+        let record = |grant: serde_json::Value, starting: bool| {
+            serde_json::json!({
+                "v": 1,
+                "box_id": m.id,
+                "port": 3000,
+                "transport": "tunnel",
+                "endpoint": "https://x",
+                "started_at": "2026-01-01T00:00:00Z",
+                "pid": std::process::id(),
+                "starting": starting,
+                "grants": if grant.is_null() { serde_json::json!([]) } else { serde_json::json!([grant]) },
+            })
+            .to_string()
+        };
+        let revoked = serde_json::json!({
+            "id": "a1b2c3d4", "secret_sha256": "ff",
+            "revoked": true, "expires_at": 4_000_000_000i64,
+        });
+        let expired = serde_json::json!({
+            "id": "a1b2c3d4", "secret_sha256": "ff",
+            "revoked": false, "expires_at": 1i64,
+        });
+
+        for (what, g) in [("revoked", revoked), ("expired", expired)] {
+            std::fs::write(dir.join("share.json"), record(g, false)).expect("write");
+            let err = refuse_if_shared(root, &m, "rebase").expect_err(what);
+            assert!(
+                format!("{err}").contains("being shared right now"),
+                "{what}: {err}"
+            );
+        }
+
+        // And the window before a transport exists at all: the record is
+        // written before `Setup::start`, which for `--tunnel` waits up to
+        // forty-five seconds. Nothing was on disk during it, so every verb
+        // here saw an unshared box and proceeded — and the start then
+        // announced a public endpoint on top of what they had done.
+        std::fs::write(
+            dir.join("share.json"),
+            record(serde_json::Value::Null, true),
+        )
+        .expect("write");
+        let err = refuse_if_shared(root, &m, "abort").expect_err("a starting share");
+        let said = format!("{err}");
+        assert!(said.contains("about to be shared"), "{said}");
+        assert!(said.contains("h5i box share stop draining"), "{said}");
     }
 
     fn manifest_on_branch(agent: &str, slug: &str, parent_branch: &str) -> EnvManifest {

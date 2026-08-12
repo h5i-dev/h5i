@@ -25,6 +25,100 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use crate::error::H5iError;
+
+/// The file both sides take to make "is this box shared" a decision rather
+/// than a guess.
+const GATE_FILE: &str = "share-gate.lock";
+
+/// How long a caller waits for the gate before giving up.
+///
+/// Generous, because the operations it guards are short and the alternative —
+/// failing fast — turns an ordinary overlap into an error the user has to
+/// understand. `rm --force` on a large worktree is the longest of them.
+const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Exclusive access to the *decision* about whether this box is shared.
+///
+/// Everything that reads [`read_live`] to decide what to do next — `apply`,
+/// `rebase`, `abort`, `rm`, `export` — and the one thing that changes the
+/// answer, `h5i-share`'s `session::claim`, takes this first and holds it for
+/// the whole operation.
+///
+/// Without it the check and the operation were two steps with a gap between
+/// them, and `run.lock` did not close it: a share does not hold `run.lock` —
+/// the box *session* it stands on does — and a share's own claim happens after
+/// its transport setup, which for `--tunnel` waits up to forty-five seconds
+/// for a URL. So the writer could exit during that wait, releasing `run.lock`;
+/// `rebase` or `export` or `rm` would then see no `share.json` at all and
+/// proceed; and the in-flight start would claim and announce a public URL
+/// while that operation was running. A visitor admitted while `rebase`
+/// force-checks out the worktree, or a box deleted out from under a share that
+/// then recreates its directory to write a receipt into, are both reachable
+/// that way.
+///
+/// Ordered *before* `run.lock` everywhere it is taken with it, and never taken
+/// while holding `run.lock`, so the two cannot deadlock. `h5i-share` never
+/// takes `run.lock` at all.
+#[derive(Debug)]
+pub struct ShareGate {
+    #[allow(dead_code)]
+    file: std::fs::File,
+}
+
+/// Take the gate, waiting up to [`GATE_WAIT`].
+///
+/// Non-blocking `flock` in a retry loop rather than a blocking one: a blocking
+/// `flock` cannot be given a deadline, and a lifecycle op that waits forever on
+/// a wedged share is the thing operators file bugs about.
+pub fn share_gate(env_dir: &Path) -> Result<ShareGate, H5iError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let path = env_dir.join(GATE_FILE);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| H5iError::with_path(e, &path))?;
+        let deadline = std::time::Instant::now() + GATE_WAIT;
+        loop {
+            let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if rc == 0 {
+                return Ok(ShareGate { file });
+            }
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::EWOULDBLOCK) {
+                return Err(H5iError::with_path(err, &path));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(H5iError::Metadata(format!(
+                    "another command is starting or ending a share of this box and has held it \
+                     for {}s. Try again, or `h5i box share stop <name> --force` if a share is \
+                     wedged.",
+                    GATE_WAIT.as_secs()
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let path = env_dir.join(GATE_FILE);
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| H5iError::with_path(e, &path))?;
+        Ok(ShareGate { file })
+    }
+}
+
 /// The format this reader understands. Must match `h5i_share::session`'s
 /// `SESSION_VERSION`; a record from any other version is not a record here.
 const SESSION_VERSION: u8 = 1;
@@ -59,6 +153,11 @@ struct OnDisk {
     pid: u64,
     #[serde(default)]
     winding_up: bool,
+    /// The box is claimed and the transport is not up yet. Admits nobody, and
+    /// is still a share: it exists precisely so the window it covers is not
+    /// invisible to the verbs that read this file.
+    #[serde(default)]
+    starting: bool,
     grants: Vec<Grant>,
 }
 
@@ -103,6 +202,8 @@ pub struct ShareRecord {
     /// The serving process has decided to stop and has not finished. It is
     /// alive, and it is not admitting anybody.
     pub winding_up: bool,
+    /// The box is claimed and the transport is not up yet.
+    pub starting: bool,
     /// Grants that could still admit somebody: not revoked, not expired.
     pub live_grants: usize,
 }
@@ -114,7 +215,7 @@ impl ShareRecord {
     /// to test. A share that is winding up, or whose grants have all been
     /// revoked, has a live pid and admits nobody.
     pub fn is_admitting(&self) -> bool {
-        !self.winding_up && self.live_grants > 0
+        !self.winding_up && !self.starting && self.live_grants > 0
     }
 }
 
@@ -148,6 +249,7 @@ pub fn read_live(env_dir: &Path) -> Option<ShareRecord> {
         transport: d.transport.as_str().to_string(),
         port: d.port,
         winding_up: d.winding_up,
+        starting: d.starting,
         live_grants: d
             .grants
             .iter()

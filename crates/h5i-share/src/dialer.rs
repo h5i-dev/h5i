@@ -114,6 +114,44 @@ impl Dialer {
         self.port
     }
 
+    /// The route this dialer actually holds, as an identity to compare later.
+    ///
+    /// Read off the **helper**, not off the box process it was pointed at, and
+    /// that is the whole point. `spawn` forks a helper which enters the box's
+    /// namespaces and then reports; only afterwards did the caller read
+    /// `/proc/<box_pid>/ns/net` for something to compare against. If the box
+    /// process exited in that gap, the helper was holding the namespace
+    /// perfectly well and the read returned `None` — and `box_went_away`
+    /// treated `None` as "nothing to check" and skipped the comparison for the
+    /// rest of the share. Start the box again before the next writer poll and
+    /// the share stayed up for its whole ticket, reporting healthy, while
+    /// every dial went into the abandoned namespace and every visitor got a
+    /// connection failure.
+    ///
+    /// The helper is alive for as long as the dialer is, so this cannot fail
+    /// for that reason. `None` means there is genuinely nothing to pin — no
+    /// helper (macOS, or `spawn_local`) — and the caller says so rather than
+    /// disabling the check.
+    pub fn pinned_route(&self) -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            let Inner::Helper { child, .. } = &self.inner;
+            std::fs::read_link(format!("/proc/{child}/ns/net"))
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // No namespace to hold. The identity is the process tree, and its
+            // root is what every dial re-checks anyway.
+            Some(format!("session {}", self.mac.root))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            None
+        }
+    }
+
     /// Open a fresh connection to the box's port.
     ///
     /// Every peer connection gets its own: the bridge never multiplexes two

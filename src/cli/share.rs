@@ -312,6 +312,13 @@ pub fn run(args: ShareArgs) -> anyhow::Result<()> {
                          `h5i box share stop {name} --force` deletes the record."
                     );
                 }
+                h5i_share::run::Stopped::Starting => {
+                    println!("{} stopping the share on {name} before it opened", SUCCESS);
+                    println!(
+                        "   It had claimed the box and was still setting up its transport, so \
+                         nothing was ever announced and there is no receipt to write."
+                    );
+                }
                 h5i_share::run::Stopped::Stale => {
                     println!("{} cleared a leftover share record on {name}", SUCCESS);
                     println!(
@@ -374,7 +381,18 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
     // here would be advice that is wrong half the time.
     #[cfg(target_os = "linux")]
     let Some(box_pid) = h5i_core::view::box_pid(&dir) else {
-        let running = !h5i_core::env::live_sessions(&dir).is_empty();
+        // A *writer*, which is the same filter `box_pid` applies. Asking
+        // whether the registry is non-empty counts `box shell --readonly`
+        // observers too — so with only an observer alive, and in the state a
+        // writer exiting while an observer stays leaves behind, this branch
+        // told the operator their box shares the host's network and that they
+        // needed a different tier or profile. Neither was true: `box_pid`
+        // rejected it because there is no writer session, not because the
+        // isolation is weak, and a process- or supervised-tier observer can
+        // have a namespace of its own. The remedy it needed was the other one.
+        let running = h5i_core::env::live_sessions(&dir)
+            .iter()
+            .any(|s| h5i_core::env::live_is_writer(&s.kind));
         anyhow::bail!(
             "h5i cannot find a process of `{name}` in a network namespace of its own, so it \
              cannot tell the box's port {} from any other port on this machine — and sharing \
@@ -425,7 +443,10 @@ fn start(h5i_root: &std::path::Path, args: ShareArgs) -> anyhow::Result<()> {
                 args.port
             );
         }
-        match h5i_core::view::session_pid(&dir) {
+        // Verified for the same reason `box_pid` verifies on Linux: this pid
+        // is the root of the tree the dialer attributes a listening socket to,
+        // and a pid a crashed session left behind can belong to anything.
+        match h5i_core::view::session_pid_verified(&dir, true) {
             Some(pid) => pid,
             None => anyhow::bail!(
                 "`{name}` has no session running, so h5i has no box to attribute port {} to. \

@@ -93,6 +93,25 @@ pub struct ShareSession {
     /// this file. `pid` is still alive throughout, so nothing else could tell.
     #[serde(default)]
     pub winding_up: bool,
+    /// The box is claimed and the transport is not up yet.
+    ///
+    /// Written *before* `Setup::start`, which for `--tunnel` waits up to
+    /// forty-five seconds for `cloudflared` to publish a URL. Nothing was
+    /// written during that wait, so for its whole length `h5i box share stop`
+    /// and `stop --force` both answered "this box is not being shared", printed
+    /// a successful result and returned 0 — and the start then completed,
+    /// claimed the box and began admitting visitors. An operator or an
+    /// automation could explicitly revoke access and have public access begin
+    /// afterwards, with no error from the command that was supposed to prevent
+    /// it.
+    ///
+    /// A record in this state admits nobody: it carries no grants, and no
+    /// transport exists to present one to. What it does is make the share
+    /// *visible* — to `stop`, which can now mark it winding-up and have the
+    /// start abandon itself, and to the lifecycle verbs, which must not change
+    /// a box somebody is a moment away from opening.
+    #[serde(default)]
+    pub starting: bool,
     pub grants: Vec<Grant>,
 }
 
@@ -192,6 +211,7 @@ impl ShareSession {
             started_at: started_at.to_rfc3339(),
             pid: std::process::id(),
             winding_up: false,
+            starting: false,
             grants: Vec::new(),
         }
     }
@@ -598,6 +618,26 @@ pub fn write(env_dir: &Path, s: &ShareSession) -> Result<(), H5iError> {
 /// rather than obeyed; the caller is told, because silently clearing somebody's
 /// share record is not something to do without saying so.
 pub fn claim(env_dir: &Path, s: &ShareSession, name: &str) -> Result<Option<u32>, H5iError> {
+    // The share gate first, then the session lock, and never the other way
+    // round — `h5i-core`'s lifecycle verbs take the gate and then `run.lock`,
+    // and this crate never takes `run.lock` at all, so the order is total.
+    //
+    // What the gate buys: `apply`, `rebase`, `abort`, `rm` and `export` all
+    // decide what to do by reading this record, and they hold the gate across
+    // that decision and the work that follows. Without it the two were a check
+    // and a gap, and a claim landing in the gap meant a visitor admitted while
+    // `rebase` force-checked out the worktree, or a box removed under a share
+    // that then recreated its directory to write a receipt into.
+    let _gate = h5i_core::share_record::share_gate(env_dir)?;
+    // And the box must still exist. `rm` may have removed it while this start
+    // was waiting for a tunnel URL; writing here would recreate the directory
+    // it erased.
+    if !env_dir.exists() {
+        return Err(H5iError::Metadata(format!(
+            "`{name}` is gone — it was removed while this share was starting. Nothing was \
+             written."
+        )));
+    }
     let _lock = Lock::acquire(env_dir)?;
     let mut cleared = None;
     // On `read_state`, not on `read`. `read` maps *both* `Gone` and
@@ -641,6 +681,14 @@ pub fn claim(env_dir: &Path, s: &ShareSession, name: &str) -> Result<Option<u32>
 /// had to guess what to type. The library does not know the name; the caller
 /// does, so it passes it in.
 pub fn already_shared(existing: &ShareSession, name: &str) -> H5iError {
+    if existing.starting {
+        return H5iError::Metadata(format!(
+            "this box has just been claimed by another `h5i box share` (pid {}), which is \
+             setting up its transport now. Wait for it to print its invite, or stop it with \
+             `h5i box share stop {name}`.",
+            existing.pid
+        ));
+    }
     if existing.winding_up {
         return H5iError::Metadata(format!(
             "this box's share is shutting down (pid {}) — it is writing its receipt and will be \
