@@ -343,7 +343,39 @@ pub fn process_name(pid: u32) -> Option<String> {
     } else {
         name
     };
-    (!name.is_empty()).then_some(name)
+    display_name(&name)
+}
+
+/// A process name fit to print, which is the only thing this is ever used for.
+///
+/// The name comes from the kernel but it is *chosen by whoever started the
+/// process* — it is the executable's file name, and a file name may contain any
+/// byte but `/` and NUL. So this is untrusted input arriving through a trusted
+/// channel, and it goes straight into the sentence h5i prints when it refuses
+/// to share a port:
+///
+/// ```text
+///   port 3000 on this machine is held by `<name>` (pid 421), which is not
+///   part of this box — so h5i will not share it.
+/// ```
+///
+/// That is the sentence the operator reads to work out what is wrong, and an
+/// unsanitised name lets the process being complained about write escape
+/// sequences into it — clearing the line, recolouring it, adding a clickable
+/// OSC-8 hyperlink, or scrolling the refusal off the screen and leaving
+/// something that reads like success. Measured rather than supposed: a binary
+/// named with a literal `ESC [ 3 1 m` is reported by Darwin verbatim, and
+/// `process_name` returned `"ev\u{1b}[31mIL"` before this.
+///
+/// [`h5i_core::redact::sanitize_display`] is the repository's existing answer
+/// to exactly this, used for manifest ids and spool records for the same
+/// reason. Applied here at the boundary rather than at each format site, since
+/// rendering is all this value is for and a second caller would otherwise have
+/// to remember.
+fn display_name(raw: &str) -> Option<String> {
+    let clean = h5i_core::redact::sanitize_display(raw);
+    let clean = clean.trim().to_string();
+    (!clean.is_empty()).then_some(clean)
 }
 
 /// Is `pid` still under `root`, asked *now* and walked upwards?
@@ -980,6 +1012,46 @@ mod tests {
                  and read back as {found:?}"
             );
         }
+    }
+
+    /// A process cannot write escape sequences into h5i's refusal.
+    ///
+    /// The name in that sentence is chosen by whoever started the process being
+    /// complained about — a file name takes any byte but `/` and NUL — so it is
+    /// hostile input printed to the operator's terminal at exactly the moment
+    /// they are trying to understand a security refusal. Darwin reports such a
+    /// name verbatim; this was confirmed against a real binary named with a
+    /// literal `ESC`, which `process_name` returned intact.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_process_name_cannot_carry_escapes_into_the_refusal() {
+        // The exact bytes measured from the kernel for the compiled probe.
+        let hostile = "ev\u{1b}[31mIL";
+        let shown = display_name(hostile).expect("a name that is not only controls");
+        assert!(
+            !shown.chars().any(|c| c.is_control()),
+            "an escape survived into the refusal: {shown:?}"
+        );
+        assert_eq!(shown, "ev[31mIL", "only the control byte should go");
+
+        // The sharper spoof needs no escape at all: a right-to-left override
+        // reorders the text around it, so a name can be made to read as another.
+        let bidi = display_name("evil\u{202E}drowssap").expect("a name");
+        assert!(
+            !bidi.contains('\u{202E}'),
+            "a bidi override survived: {bidi:?}"
+        );
+
+        // A newline would let a name forge a second line of output.
+        let multiline = display_name("evil\nOK  shared port 3000").expect("a name");
+        assert!(
+            !multiline.contains('\n'),
+            "a name forged a line: {multiline:?}"
+        );
+
+        // And a name that was only controls has nothing left to print, which
+        // must read as "no name" rather than as an empty pair of backticks.
+        assert_eq!(display_name("\u{1b}\u{7f}"), None);
     }
 
     /// A listener behind a great many descriptors is still found.
