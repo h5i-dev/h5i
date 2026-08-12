@@ -497,7 +497,10 @@ fn the_binary_carries_a_real_console_and_not_the_build_scripts_stub() {
         .split_once("/assets/")
         .map(|(_, rest)| rest.split(['"', '\'']).next().unwrap_or("").to_string())
         .expect("the page should reference a bundled asset");
-    assert!(asset.ends_with(".js"), "expected a script asset, got {asset}");
+    assert!(
+        asset.ends_with(".js"),
+        "expected a script asset, got {asset}"
+    );
 
     let served = ui.get_authed(&format!("/assets/{asset}"));
     assert_eq!(served.status, 200, "the referenced asset must be embedded");

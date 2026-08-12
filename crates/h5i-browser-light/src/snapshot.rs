@@ -932,7 +932,10 @@ mod tests {
     #[test]
     fn plain_containers_get_no_line_of_their_own() {
         for tag in ["div", "span", "section", "main", "nav"] {
-            assert!(role_for(tag, None, false).is_none(), "{tag} should be transparent");
+            assert!(
+                role_for(tag, None, false).is_none(),
+                "{tag} should be transparent"
+            );
         }
     }
 

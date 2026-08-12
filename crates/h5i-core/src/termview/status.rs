@@ -305,7 +305,10 @@ mod tests {
         let s = status();
         let mid = body(&render(&s, 52));
         assert!(mid.contains("localhost:3000"), "{mid:?}");
-        assert!(!mid.contains("net:"), "net is worth less than the origin: {mid:?}");
+        assert!(
+            !mid.contains("net:"),
+            "net is worth less than the origin: {mid:?}"
+        );
 
         let mut s2 = status();
         s2.mode = Mode::Interact;
@@ -325,7 +328,10 @@ mod tests {
         let out = render(&s, 120);
         assert!(!out.contains('\x1b') || out.starts_with(BAR_ON), "{out:?}");
         let inner = body(&out);
-        assert!(!inner.contains('\x1b'), "an escape survived into the bar: {inner:?}");
+        assert!(
+            !inner.contains('\x1b'),
+            "an escape survived into the bar: {inner:?}"
+        );
 
         // And a bidi override, which needs no escape byte at all to make the
         // origin read as a different host.
@@ -351,7 +357,10 @@ mod tests {
         let url = "https://bank.example.evil.test/login";
         let out = elide_url(url, 20);
         assert!(out.chars().count() <= 20, "{out:?}");
-        assert!(out.contains("evil.test"), "the real host must survive: {out:?}");
+        assert!(
+            out.contains("evil.test"),
+            "the real host must survive: {out:?}"
+        );
         assert!(!out.contains("https://bank.example."), "{out:?}");
         assert!(out.starts_with('…'), "{out:?}");
     }
@@ -365,9 +374,15 @@ mod tests {
 
     #[test]
     fn the_origin_is_found_with_or_without_a_path() {
-        assert_eq!(&"http://a.b:3000/x"[..origin_end("http://a.b:3000/x")], "http://a.b:3000");
+        assert_eq!(
+            &"http://a.b:3000/x"[..origin_end("http://a.b:3000/x")],
+            "http://a.b:3000"
+        );
         assert_eq!(&"http://a.b"[..origin_end("http://a.b")], "http://a.b");
-        assert_eq!(&"http://a.b?q=1"[..origin_end("http://a.b?q=1")], "http://a.b");
+        assert_eq!(
+            &"http://a.b?q=1"[..origin_end("http://a.b?q=1")],
+            "http://a.b"
+        );
         assert_eq!(&"http://a.b#f"[..origin_end("http://a.b#f")], "http://a.b");
         // about:blank and other scheme-only URLs have no authority at all.
         assert_eq!(&"about:blank"[..origin_end("about:blank")], "about:blank");

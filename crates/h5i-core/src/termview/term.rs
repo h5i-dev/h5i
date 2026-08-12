@@ -173,7 +173,11 @@ impl Guard {
         }
         self.mouse = on;
         let mut out = std::io::stdout();
-        let _ = out.write_all(if on { MOUSE_ON.as_bytes() } else { MOUSE_OFF.as_bytes() });
+        let _ = out.write_all(if on {
+            MOUSE_ON.as_bytes()
+        } else {
+            MOUSE_OFF.as_bytes()
+        });
         let _ = out.flush();
     }
 

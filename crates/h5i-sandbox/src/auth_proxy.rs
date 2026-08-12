@@ -127,17 +127,26 @@ pub fn resolve_credential(rt: AgentRuntime) -> Option<Credential> {
             // Bearer token (proxy/gateway or subscription) wins over an API key,
             // matching Claude Code's own precedence.
             if let Some(v) = nonempty_env("ANTHROPIC_AUTH_TOKEN") {
-                return Some(Credential { header: CredHeader::Bearer, value: v });
+                return Some(Credential {
+                    header: CredHeader::Bearer,
+                    value: v,
+                });
             }
             if let Some(v) = nonempty_env("ANTHROPIC_API_KEY") {
-                return Some(Credential { header: CredHeader::XApiKey, value: v });
+                return Some(Credential {
+                    header: CredHeader::XApiKey,
+                    value: v,
+                });
             }
-            nonempty_env("CLAUDE_CODE_OAUTH_TOKEN")
-                .map(|v| Credential { header: CredHeader::Bearer, value: v })
+            nonempty_env("CLAUDE_CODE_OAUTH_TOKEN").map(|v| Credential {
+                header: CredHeader::Bearer,
+                value: v,
+            })
         }
-        AgentRuntime::Codex => {
-            nonempty_env("OPENAI_API_KEY").map(|v| Credential { header: CredHeader::Bearer, value: v })
-        }
+        AgentRuntime::Codex => nonempty_env("OPENAI_API_KEY").map(|v| Credential {
+            header: CredHeader::Bearer,
+            value: v,
+        }),
     }
 }
 
@@ -289,7 +298,13 @@ pub fn spawn(
     client_token: String,
 ) -> Result<AuthProxyHandle, H5iError> {
     let host = runtime_proxy(rt).upstream_host.to_string();
-    spawn_to_upstream(format!("https://{host}"), host, credential, client_token, true)
+    spawn_to_upstream(
+        format!("https://{host}"),
+        host,
+        credential,
+        client_token,
+        true,
+    )
 }
 
 /// Core spawn. `upstream_base` is the scheme+host(+port) origin; `upstream_host`
@@ -323,7 +338,9 @@ fn spawn_to_upstream(
     // Parse the origin once, here, so every request can be checked against it
     // instead of against a string that concatenation might have moved.
     let upstream = reqwest::Url::parse(&upstream_base).map_err(|e| {
-        H5iError::Metadata(format!("auth proxy: invalid upstream origin '{upstream_base}': {e}"))
+        H5iError::Metadata(format!(
+            "auth proxy: invalid upstream origin '{upstream_base}': {e}"
+        ))
     })?;
 
     let listener = TcpListener::bind("127.0.0.1:0").map_err(H5iError::Io)?;
@@ -356,9 +373,7 @@ fn spawn_to_upstream(
                     // an accept loop that spawns a thread per connection is a
                     // host resource the box should not be able to grow without
                     // limit. Over the cap we answer and close rather than queue.
-                    let live = state
-                        .in_flight
-                        .fetch_add(1, Ordering::SeqCst);
+                    let live = state.in_flight.fetch_add(1, Ordering::SeqCst);
                     if live >= MAX_IN_FLIGHT {
                         state.in_flight.fetch_sub(1, Ordering::SeqCst);
                         let mut client = client;
@@ -386,7 +401,11 @@ fn spawn_to_upstream(
         }
     });
 
-    Ok(AuthProxyHandle { port, stop, join: Some(join) })
+    Ok(AuthProxyHandle {
+        port,
+        stop,
+        join: Some(join),
+    })
 }
 
 /// The address the box reaches the host's loopback on. The Linux tiers put the
@@ -481,9 +500,7 @@ fn is_stripped_request_header(name: &str) -> bool {
 fn is_origin_form(target: &str) -> bool {
     target.starts_with('/')
         && !target.starts_with("//")
-        && !target
-            .bytes()
-            .any(|b| b <= b' ' || b == 0x7f || b == b'\\')
+        && !target.bytes().any(|b| b <= b' ' || b == 0x7f || b == b'\\')
 }
 
 /// Parse the request line + headers. Returns `None` on a malformed head.
@@ -514,7 +531,12 @@ fn parse_request_head(head: &[u8]) -> Option<ParsedReq> {
             headers.push((name.to_string(), value.to_string()));
         }
     }
-    Some(ParsedReq { method, path, headers, content_length })
+    Some(ParsedReq {
+        method,
+        path,
+        headers,
+        content_length,
+    })
 }
 
 /// True iff the request presents the expected per-run dummy token (as either
@@ -536,7 +558,9 @@ fn client_authorized(head: &[u8], client_token: &str) -> bool {
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
         let presented = match name.as_str() {
-            "authorization" => value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer ")),
+            "authorization" => value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer ")),
             "x-api-key" => Some(value),
             _ => None,
         };
@@ -585,7 +609,10 @@ fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 const HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn write_status(client: &mut TcpStream, code: u16, reason: &str) {
-    let _ = client.write_all(format!("HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").as_bytes());
+    let _ = client.write_all(
+        format!("HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+            .as_bytes(),
+    );
 }
 
 /// Response headers dropped when relaying upstream→box: we re-frame the body as
@@ -679,13 +706,19 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
             return Ok(());
         }
     };
-    let mut builder = state.client.request(method, url).header("host", &state.upstream_host);
+    let mut builder = state
+        .client
+        .request(method, url)
+        .header("host", &state.upstream_host);
     for (name, value) in &req.headers {
         builder = builder.header(name, value);
     }
     builder = match state.credential.header {
         CredHeader::XApiKey => builder.header("x-api-key", &state.credential.value),
-        CredHeader::Bearer => builder.header("authorization", format!("Bearer {}", state.credential.value)),
+        CredHeader::Bearer => builder.header(
+            "authorization",
+            format!("Bearer {}", state.credential.value),
+        ),
     };
     if !body.is_empty() {
         builder = builder.body(body);
@@ -771,7 +804,10 @@ pub struct Engagement {
     /// reader's gate).
     #[cfg_attr(
         not(any(
-            all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+            all(
+                target_os = "linux",
+                any(target_arch = "x86_64", target_arch = "aarch64")
+            ),
             target_os = "macos"
         )),
         allow(dead_code)
@@ -848,20 +884,32 @@ mod tests {
     fn engage_reports_not_applicable_as_ok_none() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Unsupported tier.
-        assert!(engage_at("agent-claude", false, "127.0.0.1").unwrap().is_none());
+        assert!(engage_at("agent-claude", false, "127.0.0.1")
+            .unwrap()
+            .is_none());
         // Not an agent profile.
         assert!(engage_at("default", true, "127.0.0.1").unwrap().is_none());
         // Agent profile with no host credential to broker.
-        for v in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] {
+        for v in [
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ] {
             std::env::remove_var(v);
         }
-        assert!(engage_at("agent-claude", true, "127.0.0.1").unwrap().is_none());
+        assert!(engage_at("agent-claude", true, "127.0.0.1")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
     fn resolve_credential_precedence_claude() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        for v in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] {
+        for v in [
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ] {
             std::env::remove_var(v);
         }
         assert!(resolve_credential(AgentRuntime::Claude).is_none());
@@ -891,7 +939,10 @@ mod tests {
 
     #[test]
     fn credential_debug_is_redacted() {
-        let c = Credential { header: CredHeader::Bearer, value: "super-secret".into() };
+        let c = Credential {
+            header: CredHeader::Bearer,
+            value: "super-secret".into(),
+        };
         let shown = format!("{c:?}");
         assert!(!shown.contains("super-secret"), "{shown}");
         assert!(shown.contains("redacted"));
@@ -908,9 +959,13 @@ mod tests {
         assert!(names.contains(&"anthropic-version"));
         assert!(names.contains(&"Content-Type"));
         assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("host")));
-        assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("authorization")));
+        assert!(!names
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("authorization")));
         assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("x-api-key")));
-        assert!(!names.iter().any(|n| n.eq_ignore_ascii_case("content-length")));
+        assert!(!names
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("content-length")));
     }
 
     #[test]
@@ -1010,7 +1065,10 @@ mod tests {
             }
         });
 
-        let cred = Credential { header: CredHeader::Bearer, value: "REAL-TOKEN".into() };
+        let cred = Credential {
+            header: CredHeader::Bearer,
+            value: "REAL-TOKEN".into(),
+        };
         let handle = spawn_to_upstream(
             format!("http://127.0.0.1:{up_port}"),
             "127.0.0.1".into(),
@@ -1022,7 +1080,8 @@ mod tests {
 
         // (a) A request without the dummy is rejected with 403 and never reaches upstream.
         let mut c = TcpStream::connect(("127.0.0.1", handle.port)).unwrap();
-        c.write_all(b"POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n").unwrap();
+        c.write_all(b"POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+            .unwrap();
         let mut resp = String::new();
         c.read_to_string(&mut resp).unwrap();
         assert!(resp.starts_with("HTTP/1.1 403"), "{resp}");
@@ -1034,10 +1093,22 @@ mod tests {
         c.read_to_string(&mut resp).unwrap();
 
         // Header names are case-insensitive on the wire (reqwest lowercases them).
-        let seen = rx.recv_timeout(Duration::from_secs(5)).unwrap().to_ascii_lowercase();
-        assert_eq!(seen, "authorization: bearer real-token", "real credential must be injected");
-        assert!(resp.contains("data: hello"), "body must stream back: {resp}");
-        assert!(!resp.contains("the-dummy"), "dummy must not leak downstream");
+        let seen = rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .to_ascii_lowercase();
+        assert_eq!(
+            seen, "authorization: bearer real-token",
+            "real credential must be injected"
+        );
+        assert!(
+            resp.contains("data: hello"),
+            "body must stream back: {resp}"
+        );
+        assert!(
+            !resp.contains("the-dummy"),
+            "dummy must not leak downstream"
+        );
     }
 
     /// A request whose body arrives after its head must still be forwarded.
@@ -1166,10 +1237,14 @@ mod tests {
 
     #[test]
     fn parse_head_get_without_length_and_preserves_query() {
-        let head = b"GET /v1/models?limit=5 HTTP/1.1\r\nHost: x\r\nAccept: application/json\r\n\r\n";
+        let head =
+            b"GET /v1/models?limit=5 HTTP/1.1\r\nHost: x\r\nAccept: application/json\r\n\r\n";
         let req = parse_request_head(head).unwrap();
         assert_eq!(req.method, "GET");
-        assert_eq!(req.path, "/v1/models?limit=5", "query string must be preserved");
+        assert_eq!(
+            req.path, "/v1/models?limit=5",
+            "query string must be preserved"
+        );
         assert_eq!(req.content_length, 0);
     }
 
@@ -1187,14 +1262,36 @@ mod tests {
 
     #[test]
     fn request_and_response_header_stripping() {
-        for h in ["Host", "AUTHORIZATION", "x-api-key", "content-length", "Connection", "TE", "upgrade"] {
-            assert!(is_stripped_request_header(h), "request header {h} must be stripped");
+        for h in [
+            "Host",
+            "AUTHORIZATION",
+            "x-api-key",
+            "content-length",
+            "Connection",
+            "TE",
+            "upgrade",
+        ] {
+            assert!(
+                is_stripped_request_header(h),
+                "request header {h} must be stripped"
+            );
         }
         for h in ["anthropic-version", "content-type", "accept"] {
-            assert!(!is_stripped_request_header(h), "request header {h} must survive");
+            assert!(
+                !is_stripped_request_header(h),
+                "request header {h} must survive"
+            );
         }
-        for h in ["Content-Length", "transfer-encoding", "Connection", "keep-alive"] {
-            assert!(is_stripped_response_header(h), "response header {h} must be stripped");
+        for h in [
+            "Content-Length",
+            "transfer-encoding",
+            "Connection",
+            "keep-alive",
+        ] {
+            assert!(
+                is_stripped_response_header(h),
+                "response header {h} must be stripped"
+            );
         }
         assert!(!is_stripped_response_header("content-type"));
     }
@@ -1238,7 +1335,10 @@ mod tests {
             }
         });
 
-        let cred = Credential { header: CredHeader::XApiKey, value: "REAL-KEY".into() };
+        let cred = Credential {
+            header: CredHeader::XApiKey,
+            value: "REAL-KEY".into(),
+        };
         let handle = spawn_to_upstream(
             format!("http://127.0.0.1:{up_port}"),
             "pinned.example".into(), // the forced Host, distinct from the connect target
@@ -1256,16 +1356,37 @@ mod tests {
 
         let up_head = rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let low = up_head.to_ascii_lowercase();
-        assert!(low.contains("x-api-key: real-key"), "api key injected: {up_head}");
-        assert!(low.contains("host: pinned.example"), "forced upstream host, not client's: {up_head}");
-        assert!(!low.contains("evil.attacker"), "client Host must not reach upstream");
-        assert!(up_head.contains("/v1/messages?beta=true"), "path+query preserved: {up_head}");
+        assert!(
+            low.contains("x-api-key: real-key"),
+            "api key injected: {up_head}"
+        );
+        assert!(
+            low.contains("host: pinned.example"),
+            "forced upstream host, not client's: {up_head}"
+        );
+        assert!(
+            !low.contains("evil.attacker"),
+            "client Host must not reach upstream"
+        );
+        assert!(
+            up_head.contains("/v1/messages?beta=true"),
+            "path+query preserved: {up_head}"
+        );
 
         // Downstream: upstream framing headers stripped, connection-close applied.
         let head_lower = resp.split("\r\n\r\n").next().unwrap().to_ascii_lowercase();
-        assert!(head_lower.contains("content-type: application/json"), "safe header kept: {resp}");
-        assert!(!head_lower.contains("content-length"), "upstream content-length stripped: {resp}");
-        assert!(!head_lower.contains("transfer-encoding"), "upstream transfer-encoding stripped: {resp}");
+        assert!(
+            head_lower.contains("content-type: application/json"),
+            "safe header kept: {resp}"
+        );
+        assert!(
+            !head_lower.contains("content-length"),
+            "upstream content-length stripped: {resp}"
+        );
+        assert!(
+            !head_lower.contains("transfer-encoding"),
+            "upstream transfer-encoding stripped: {resp}"
+        );
         assert!(head_lower.contains("connection: close"));
     }
 
@@ -1274,20 +1395,25 @@ mod tests {
     /// to — `@evil/…` most sharply, via userinfo.
     #[test]
     fn only_origin_form_targets_are_accepted() {
-        for good in ["/", "/v1/messages", "/v1/models?limit=5", "/a/b?q=x&y=z#frag"] {
+        for good in [
+            "/",
+            "/v1/messages",
+            "/v1/models?limit=5",
+            "/a/b?q=x&y=z#frag",
+        ] {
             assert!(is_origin_form(good), "must accept {good}");
         }
         for bad in [
-            "@evil.example/v1/messages",   // userinfo: the host becomes evil.example
-            "@evil.example",               //
-            ":9999@evil.example/v1",       // userinfo with a password field
-            "//evil.example/v1",           // protocol-relative
-            "https://evil.example/v1",     // absolute-form
-            "v1/messages",                 // bare relative
-            "",                            //
-            "/v1 /messages",               // whitespace: request smuggling
-            "/v1\r\nX-Injected: 1",        // CRLF injection
-            "/v1\\..\\evil",               // backslash
+            "@evil.example/v1/messages", // userinfo: the host becomes evil.example
+            "@evil.example",             //
+            ":9999@evil.example/v1",     // userinfo with a password field
+            "//evil.example/v1",         // protocol-relative
+            "https://evil.example/v1",   // absolute-form
+            "v1/messages",               // bare relative
+            "",                          //
+            "/v1 /messages",             // whitespace: request smuggling
+            "/v1\r\nX-Injected: 1",      // CRLF injection
+            "/v1\\..\\evil",             // backslash
         ] {
             assert!(!is_origin_form(bad), "must reject {bad:?}");
         }
@@ -1314,7 +1440,10 @@ mod tests {
             }
         });
 
-        let cred = Credential { header: CredHeader::Bearer, value: "REAL-TOKEN-SECRET".into() };
+        let cred = Credential {
+            header: CredHeader::Bearer,
+            value: "REAL-TOKEN-SECRET".into(),
+        };
         let handle = spawn_to_upstream(
             "https://api.anthropic.com".into(),
             "api.anthropic.com".into(),
@@ -1354,7 +1483,10 @@ mod tests {
     /// before anything is allocated.
     #[test]
     fn an_oversized_content_length_is_refused_not_allocated() {
-        let cred = Credential { header: CredHeader::Bearer, value: "R".into() };
+        let cred = Credential {
+            header: CredHeader::Bearer,
+            value: "R".into(),
+        };
         let handle = spawn_to_upstream(
             "http://127.0.0.1:1".into(), // never contacted
             "pinned.example".into(),
@@ -1376,7 +1508,10 @@ mod tests {
 
     #[test]
     fn malformed_request_after_auth_is_rejected() {
-        let cred = Credential { header: CredHeader::Bearer, value: "R".into() };
+        let cred = Credential {
+            header: CredHeader::Bearer,
+            value: "R".into(),
+        };
         let handle = spawn_to_upstream(
             "http://127.0.0.1:1".into(), // never contacted — request is rejected first
             "pinned.example".into(),
@@ -1387,7 +1522,8 @@ mod tests {
         .unwrap();
         let mut c = TcpStream::connect(("127.0.0.1", handle.port)).unwrap();
         // Authorized (presents the dummy) but the request line has no HTTP version.
-        c.write_all(b"POST /v1\r\nAuthorization: Bearer dummy-tok\r\n\r\n").unwrap();
+        c.write_all(b"POST /v1\r\nAuthorization: Bearer dummy-tok\r\n\r\n")
+            .unwrap();
         let mut resp = String::new();
         c.read_to_string(&mut resp).unwrap();
         assert!(resp.starts_with("HTTP/1.1 400"), "{resp}");

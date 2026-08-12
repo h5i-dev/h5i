@@ -69,16 +69,65 @@ const STREAM_DRAIN: Duration = Duration::from_secs(5);
 /// the human wonders what is happening.
 const DIRECT_WAIT: Duration = Duration::from_secs(12);
 
+/// How many streams one peer may have open on one connection at once.
+///
+/// A browser opens several connections to an origin and a handful of streams
+/// on each — the page, its assets, an event source, a hot-reload socket. Twelve
+/// is comfortably above that and far below quinn's default of a hundred, which
+/// is the number that made the arithmetic below come out in the gigabytes.
+const MAX_PEER_STREAMS: u32 = 12;
+
 /// Bind an endpoint that can accept shares.
+///
+/// The transport limits are set here for the same reason [`bind_joiner`] sets
+/// them, and this side had the harder version of the problem: it is the side
+/// anyone can dial.
+///
+/// quinn's defaults are 100 bidirectional and 100 unidirectional streams per
+/// connection with about 1.25 MiB of receive window each, and data on a stream
+/// nobody accepts stays buffered. **This protocol never accepts a
+/// unidirectional stream at all** — nothing calls `accept_uni` — so an
+/// unauthenticated peer could fill a hundred of them and have the memory held
+/// by a connection whose application code would never read a byte of it. The
+/// 256-connection ceiling turned that into tens of gigabytes, and the same
+/// hundred bidirectional streams into 25,600 tasks parked in the greeting
+/// read, each holding its slot for the full [`HELLO_TIMEOUT`].
+///
+/// So: no remote unidirectional streams, and a bidirectional limit sized for a
+/// browser rather than for a protocol nobody wrote down.
 pub async fn bind_sharer() -> Result<Endpoint, H5iError> {
+    let transport = iroh::endpoint::QuicTransportConfig::builder()
+        .max_concurrent_uni_streams(0u32.into())
+        .max_concurrent_bidi_streams(MAX_PEER_STREAMS.into())
+        .build();
     Endpoint::builder(presets::N0)
         .alpns(vec![wire::ALPN.to_vec()])
+        .transport_config(transport)
         .bind()
         .await
         .map_err(|e| H5iError::Metadata(format!("could not start the peer-to-peer endpoint: {e}")))
 }
 
 /// Bind an endpoint that only dials.
+///
+/// **No address lookup is configured, and that is the security property.**
+/// The obvious build — `PkarrResolver` plus `DnsAddressLookup`, iroh's usual
+/// pair — was here, and it went around the ticket filter below entirely. Every
+/// address in a ticket is checked before iroh is handed it; discovered
+/// addresses are not, because they arrive later, inside the endpoint, and are
+/// merged straight into the dial candidates. The endpoint id is chosen by
+/// whoever wrote the ticket, so they hold the key that signs that endpoint's
+/// pkarr record: publish `127.0.0.1:11434` under it, hand out a ticket whose
+/// own address list is impeccable, and the joiner's machine dials its own
+/// loopback anyway. iroh triggers the lookup whenever there is no selected
+/// path, which on a fresh `connect` is always.
+///
+/// A ticket is self-contained by construction — [`addressing`] refuses to mint
+/// one that names nowhere — so there is nothing for discovery to add that the
+/// ticket did not already say. What is given up is the case where the sharer's
+/// addressing changed between minting and joining; the joiner gets a dial
+/// failure and asks for a fresh ticket, which is a worse minute and not a
+/// worse outcome.
 pub async fn bind_joiner() -> Result<Endpoint, H5iError> {
     // No ALPN is configured and `accept()` is never called, so a third party
     // cannot open a connection here. What it *could* do is open streams on the
@@ -101,13 +150,11 @@ pub async fn bind_joiner() -> Result<Endpoint, H5iError> {
     // so it can look the joiner up afterwards.
     //
     // A joiner has no use for it: it configures no ALPN, never calls
-    // `accept()`, and nobody needs to find it by id. It still needs the two
-    // *resolvers*, to find the sharer, and the relay, to reach one behind a
-    // NAT — dropping the publisher costs neither. Address exchange for hole
-    // punching happens in-band on the connection itself.
+    // `accept()`, and nobody needs to find it by id. The *resolvers* are gone
+    // for the reason in this function's doc comment. The relay stays, to reach
+    // a sharer behind a NAT; address exchange for hole punching happens in-band
+    // on the connection itself.
     Endpoint::builder(presets::Minimal)
-        .address_lookup(iroh::address_lookup::PkarrResolver::n0_dns())
-        .address_lookup(iroh::address_lookup::DnsAddressLookup::n0_dns())
         .relay_mode(iroh::endpoint::default_relay_mode())
         .transport_config(transport)
         .bind()
@@ -115,18 +162,85 @@ pub async fn bind_joiner() -> Result<Endpoint, H5iError> {
         .map_err(|e| H5iError::Metadata(format!("could not start the peer-to-peer endpoint: {e}")))
 }
 
+/// How long to wait for a home relay before minting a ticket anyway.
+///
+/// `Endpoint::online()` resolves when a relay connection is up, and iroh
+/// documents it as waiting *indefinitely* when there is no WAN. Awaited
+/// unconditionally, `h5i box share` hung before printing anything on an
+/// offline or relay-blocked network — including the LAN-only case, where the
+/// direct addresses it was waiting to supplement were already there, and
+/// including `--direct-only`, which had come to depend on reaching the very
+/// relay it promises not to put application traffic on.
+const RELAY_WAIT: Duration = Duration::from_secs(10);
+
 /// Wait until this endpoint knows how it can be reached, then describe it.
 ///
 /// Done before the ticket is printed rather than after: a ticket minted before
 /// the endpoint has any addresses is a ticket that names nowhere, and the
 /// person holding it has no way to tell that from a network problem on their
 /// end.
+///
+/// Three things happen here, and only the first was happening before.
+///
+/// 1. **Wait for a relay, but not forever.** See [`RELAY_WAIT`]. Past the
+///    deadline this carries on with whatever direct addresses the endpoint
+///    has, which on a LAN is the whole answer.
+/// 2. **Refuse to mint a ticket that names nowhere.** With the wait bounded,
+///    "no relay *and* no direct addresses" is now reachable, and it is a
+///    failure with a sentence rather than a ticket that cannot work. It is
+///    also what lets the joiner drop address discovery: see [`bind_joiner`].
+/// 3. **Apply the join side's own policy to what is about to be printed.**
+///    `ep.addr()` is the current relay plus *every* direct address, and a host
+///    with enough Docker bridges, VPN tunnels and dual-stack interfaces
+///    produced more than [`MAX_TICKET_ADDRS`] of them — so the sharer printed
+///    a confident invite that this same version of `h5i join` refused as
+///    attacker-shaped. The candidates are trimmed here, relay first, and then
+///    the emitted value goes through the exact function the joiner will run.
 pub async fn addressing(ep: &Endpoint) -> Result<(String, serde_json::Value), H5iError> {
-    ep.online().await;
-    let addr = ep.addr();
+    let _ = tokio::time::timeout(RELAY_WAIT, ep.online()).await;
+    let addr = trim_addressing(ep.addr());
     let id = addr.id.to_string();
+    if addr.addrs.is_empty() {
+        return Err(H5iError::Metadata(
+            "this machine has no address a peer could reach it on: no relay answered within \
+             10s and no usable direct address was found. A ticket minted now would name \
+             nowhere. Check the network — or use `--tunnel`, which needs only an outbound \
+             connection."
+                .into(),
+        ));
+    }
     let value = serde_json::to_value(&addr)?;
+    // The same check the joiner runs, against the bytes about to be printed.
+    // Trimming and validating are separate on purpose: if a future iroh grows
+    // an address shape the trim does not know how to prefer, this fails loudly
+    // here rather than producing an invite that only fails on somebody else's
+    // machine.
+    refuse_addresses_that_point_inward(&value).map_err(|e| {
+        H5iError::Metadata(format!(
+            "this machine's own addressing is not something a ticket may carry: {e}"
+        ))
+    })?;
     Ok((id, value))
+}
+
+/// Cut an endpoint's addressing down to something a ticket may carry.
+///
+/// Relay first — it is the one address that works from anywhere — then direct
+/// candidates, dropping the ones the join side would refuse anyway (loopback,
+/// unspecified, link-local) before counting, so a machine with many interfaces
+/// spends its budget on addresses that could actually carry a connection.
+fn trim_addressing(addr: EndpointAddr) -> EndpointAddr {
+    use iroh::TransportAddr;
+    let (relays, rest): (Vec<_>, Vec<_>) =
+        addr.addrs.into_iter().partition(TransportAddr::is_relay);
+    let usable = rest.into_iter().filter(|a| match a {
+        TransportAddr::Ip(s) => !points_inward(&s.ip()),
+        _ => true,
+    });
+    EndpointAddr::from_parts(
+        addr.id,
+        relays.into_iter().chain(usable).take(MAX_TICKET_ADDRS),
+    )
 }
 
 fn parse_addr(value: &serde_json::Value) -> Result<EndpointAddr, H5iError> {
@@ -188,10 +302,7 @@ fn refuse_addresses_that_point_inward(value: &serde_json::Value) -> Result<(), H
                         .map(|s| points_inward(&s.ip()))
                         .unwrap_or(false)
                 } else if let Some(url) = o.get("Relay").and_then(|v| v.as_str()) {
-                    match relay_host(url) {
-                        Host::Ip(ip) => points_inward(&ip),
-                        Host::Name(n) => names_this_machine(&n),
-                    }
+                    !relay_is_allowed(url)
                 } else {
                     false
                 }
@@ -200,51 +311,66 @@ fn refuse_addresses_that_point_inward(value: &serde_json::Value) -> Result<(), H
         };
         if bad {
             return Err(H5iError::Metadata(format!(
-                "this ticket names {entry}, which is an address on your own machine rather than \
-                 on the sharer's. h5i will not dial it. Ask for a ticket minted on the machine \
-                 that is actually sharing."
+                "this ticket names {entry}, which is not somewhere h5i will dial: either an \
+                 address on your own machine rather than on the sharer's, or a relay outside \
+                 the set h5i uses. Ask for a ticket minted on the machine that is actually \
+                 sharing, by a current h5i."
             )));
         }
     }
     Ok(())
 }
 
-/// What a relay URL's authority names.
-enum Host {
-    Ip(std::net::IpAddr),
-    Name(String),
-}
-
-/// Hostnames that mean "the machine doing the dialling" without a lookup.
+/// The DNS suffix h5i's relays live under.
 ///
-/// Found by the ticket fuzzer, which offered `http://localhost:11434/` — the
-/// port an Ollama listens on — and watched the filter accept it, because the
-/// filter only knew how to read IP literals. RFC 6761 reserves `localhost` and
-/// everything under `.localhost` to loopback, so this needs no resolver.
-///
-/// What is deliberately still allowed is any *other* hostname. Refusing those
-/// would mean resolving an attacker's string before anything has been checked,
-/// which trades this problem for a different one; and a name that resolves to
-/// loopback through the joiner's own `/etc/hosts` or a record the ticket's
-/// author controls is a residual this cannot close from here.
-fn names_this_machine(host: &str) -> bool {
-    let h = host.trim_end_matches('.').to_ascii_lowercase();
-    h == "localhost" || h.ends_with(".localhost")
-}
+/// Both sides of a share bind with iroh's `N0` relay defaults, so every relay
+/// a legitimate h5i ticket can name is one of these. Nothing self-hosted is
+/// supported today, and a ticket is not the place to introduce it: the URL in
+/// one is chosen by whoever wrote the ticket.
+const RELAY_SUFFIX: &str = ".relay.n0.iroh.link";
 
-/// The host a relay URL names.
-fn relay_host(url: &str) -> Host {
-    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    let host = match host.strip_prefix('[') {
-        // `[::1]:9200` and `[::1]`.
-        Some(v6) => v6.split(']').next().unwrap_or(v6),
-        None => host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host),
+/// May the joiner's relay client dial this URL?
+///
+/// An allowlist, and it took two goes to get here.
+///
+/// **First the parsing.** The authority was being taken apart by hand — split
+/// on `://`, split on `/`, `rsplit` on `:` — and that is not how a URL parser
+/// reads one. `http://attacker@localhost:11434/` came out of the hand-rolled
+/// version as the host `attacker@localhost`, which is not `localhost`, so it
+/// passed. `RelayUrl` is a `url::Url` underneath and the relay client asks
+/// *it* for the host, which is `localhost`, and dials loopback. Same trick with
+/// an IP literal. So the check reads the host through the same parser that
+/// will do the dialling, and refuses userinfo outright — no legitimate relay
+/// URL has any, and its only use here is to make the two readings disagree.
+///
+/// **Then the resolution.** Refusing loopback literals and `.localhost` still
+/// accepted every other name, and a name is resolved *later*, by the relay
+/// client, which then dials whatever came back. `evil.example.com A 127.0.0.1`
+/// restores the whole problem, and re-resolving it here would only add a
+/// rebinding window between the check and the dial. A hostname allowlist has
+/// neither hole: `use1-1.relay.n0.iroh.link.` is what an honest ticket names,
+/// and if that name ever resolves to loopback the joiner has bigger problems
+/// than this share.
+fn relay_is_allowed(url: &str) -> bool {
+    let Ok(parsed) = url.parse::<iroh::RelayUrl>() else {
+        return false;
     };
-    match host.parse() {
-        Ok(ip) => Host::Ip(ip),
-        Err(_) => Host::Name(host.to_string()),
+    // Userinfo is the whole trick in the first paragraph above, and no relay
+    // URL has a use for it.
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
     }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    // An IP literal is never one of h5i's relays, so this is `false` by the
+    // suffix test alone — but say it, because "no literal reaches the relay
+    // client" is the property, not a side effect of a string comparison.
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
+    host.ends_with(RELAY_SUFFIX)
 }
 
 /// Is this an address on the machine doing the dialling?
@@ -371,29 +497,33 @@ async fn serve_connection(
     // The first stream that authorizes registers the peer; every later stream
     // on the same connection is counted against the same record.
     let peer_id: Arc<std::sync::Mutex<Option<crate::bridge::PeerId>>> = Default::default();
-    // The grant a *probe* presented. A probe opens no stream to watch, so
-    // without this a joiner that has connected and not yet been visited sits
-    // outside revocation entirely.
-    let last_grant: Arc<std::sync::Mutex<Option<String>>> = Default::default();
+    // The grant that admitted this connection, set by whichever stream
+    // authorized first — including a bare ticket check, which opens no stream
+    // for revocation to act on and would otherwise sit outside it entirely.
+    // `serve_stream` refuses a second grant on the same connection, so this is
+    // *the* grant rather than the most recent one.
+    let grant_id: Arc<std::sync::Mutex<Option<String>>> = Default::default();
 
-    // Two jobs this connection's watchdog keeps doing for its whole life, and
-    // one it used to do that has moved.
+    // What this connection's watchdog keeps doing for its whole life.
     //
-    // **Moved:** revocation. It is decided per *stream* now (`serve_stream`),
-    // because a stream knows the grant that admitted it and a connection does
-    // not — a connection carrying two grants could only ever watch one of them,
-    // and would enforce a revoke of the wrong one.
+    // **Revocation**, for the connection's own grant. Per-stream enforcement
+    // covers a stream that is carrying traffic; this covers the joiner sitting
+    // on a checked ticket with no page open yet, and it closes the whole
+    // connection because one connection is one grant.
     //
-    // **Kept:** `--direct-only`, because a direct path can die and iroh will
-    // fall back to a relay, so a promise checked only at setup is a preference.
-    // And keeping the receipt's record of the path honest, because a long-lived
-    // stream sampled once at its start would be recorded as direct for a
-    // session that spent most of itself on a relay.
+    // **`--direct-only`**, because a direct path can die and iroh will fall
+    // back to a relay, so a promise checked only at setup is a preference. The
+    // poll is the coarse half of that enforcement: the fine half is the gate in
+    // `serve_stream`, consulted before every write.
+    //
+    // **The receipt's record of the path**, because a long-lived stream sampled
+    // once at its start would be recorded as direct for a session that spent
+    // most of itself on a relay.
     let watchdog = AbortOnDrop({
         let bridge = bridge.clone();
         let conn = conn.clone();
         let peer_id = peer_id.clone();
-        let last_grant = last_grant.clone();
+        let grant_id = grant_id.clone();
         tokio::spawn(async move {
             let deadline = tokio::time::Instant::now() + UNAUTHENTICATED_GRACE;
             // The share winding up is a close with a reason, said here rather
@@ -425,12 +555,12 @@ async fn serve_connection(
                     return;
                 }
 
-                // A connection that has only ever checked its ticket. Nothing
-                // per-stream is watching it, so this is the only place a revoke
-                // can reach an `h5i join` that is sitting waiting for its first
-                // visitor — and a joiner told nothing would keep its "joined"
-                // banner up for a share it had been cut off from.
-                let probed = last_grant.lock().expect("last grant").clone();
+                // The grant this whole connection was admitted by. For a
+                // joiner that has only checked its ticket this is the only
+                // place a revoke can reach it — it has no stream open — and
+                // without it `h5i join` kept its "joined" banner up for a
+                // share it had been cut off from.
+                let probed = grant_id.lock().expect("grant id").clone();
                 if let Some(id) = probed {
                     if !bridge.grant_is_live(&id) {
                         // Which of the two endings this is. `share stop`
@@ -493,7 +623,7 @@ async fn serve_connection(
         let bridge = bridge.clone();
         let who = who.clone();
         let peer_id = peer_id.clone();
-        let last_grant = last_grant.clone();
+        let grant_id = grant_id.clone();
         let path = observed_path(&conn);
         let conn_for_stream = conn.clone();
         streams.spawn(async move {
@@ -501,8 +631,9 @@ async fn serve_connection(
                 who: &who,
                 path,
                 peer_id: &peer_id,
-                last_grant: &last_grant,
+                grant_id: &grant_id,
                 conn: &conn_for_stream,
+                direct_only,
             };
             if let Err(e) = serve_stream(&bridge, send, recv, &on).await {
                 eprintln!("share: {e}");
@@ -551,10 +682,12 @@ struct OnThisConnection<'a> {
     /// Set by the first stream that authorizes; every later one is counted
     /// against the same record.
     peer_id: &'a std::sync::Mutex<Option<crate::bridge::PeerId>>,
-    /// The grant a ticket *check* presented, for a connection carrying no
-    /// streams for revocation to act on.
-    last_grant: &'a std::sync::Mutex<Option<String>>,
+    /// The grant this connection belongs to, set by whichever stream
+    /// authorized first. See [`serve_stream`] for why a second grant on the
+    /// same connection is refused rather than accounted for.
+    grant_id: &'a std::sync::Mutex<Option<String>>,
     conn: &'a Connection,
+    direct_only: bool,
 }
 
 async fn serve_stream(
@@ -567,8 +700,9 @@ async fn serve_stream(
         who,
         path,
         peer_id,
-        last_grant,
+        grant_id,
         conn,
+        direct_only,
     } = *on;
     let mut hello = [0u8; wire::HELLO_LEN];
     // Deadlined, because this is the one read an unauthenticated peer gets to
@@ -602,6 +736,42 @@ async fn serve_stream(
         }
     };
 
+    // **One grant per connection.** A stream carries its own ticket, so two
+    // streams on one QUIC connection could in principle present two different
+    // grants — and everything downstream assumed they could not. The peer
+    // record is created once per connection by whichever stream authorized
+    // first, so a second grant's connections, bytes, path and duration were
+    // all added to the *first* grant's row in the receipt; and the watchdog
+    // that closes a connection when its probe grant is revoked would have cut
+    // off streams belonging to a grant that was still perfectly live.
+    //
+    // Keeping the accounting per grant is the other way to fix it and buys
+    // nothing: `h5i join` holds one ticket and opens one connection, so a
+    // second grant here is not a case anybody has, and refusing it is a
+    // sentence rather than a second bookkeeping path nothing exercises.
+    let mismatch = {
+        let mut owner = grant_id.lock().expect("grant id");
+        match &*owner {
+            Some(first) if *first != grant.id => Some(first.clone()),
+            Some(_) => None,
+            None => {
+                *owner = Some(grant.id.clone());
+                None
+            }
+        }
+    };
+    if let Some(first) = mismatch {
+        let _ = send.write_all(&[wire::REPLY_DENIED]).await;
+        let _ = send.finish();
+        eprintln!(
+            "share: refused {} — this connection was admitted by grant {first}, and a stream on \
+             it presented grant {}. One connection carries one ticket.",
+            short(who),
+            grant.id
+        );
+        return Ok(());
+    }
+
     // Registered before anything is dialled, so an authorized peer always
     // appears in the receipt — even if the box turns out to have nothing
     // listening. Doing it after the dial left a share whose dev server was
@@ -629,12 +799,11 @@ async fn serve_stream(
     // share; that they then never loaded the page is a fact the receipt should
     // show rather than hide, and it shows as a peer with no connections.
     if intent == wire::Intent::Probe {
-        // Remembered so a revoke reaches a joiner who has connected and not yet
-        // opened the page. Revocation is per stream, so a connection carrying
-        // none was outside it entirely: `h5i join` would sit there with its
-        // "joined" banner after the sharer had cut it off, and find out at the
-        // next page load.
-        *last_grant.lock().expect("last grant") = Some(grant.id.clone());
+        // The connection's grant is already recorded above, which is what lets
+        // a revoke reach a joiner who has connected and not yet opened the
+        // page: without it a connection carrying no streams sat outside
+        // revocation entirely, and `h5i join` kept its "joined" banner up after
+        // the sharer had cut it off.
         let _ = send.write_all(&[wire::REPLY_OK]).await;
         let _ = send.finish();
         return Ok(());
@@ -658,9 +827,36 @@ async fn serve_stream(
     // serving the other connections of the same page.
     let upstream = {
         let bridge2 = bridge.clone();
-        let opened = tokio::task::spawn_blocking(move || bridge2.open_upstream())
-            .await
-            .map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))?;
+        // Raced against this stream's own grant and the share ending, which is
+        // not what the watchdog below can do for it: the `revoked` arm of that
+        // `select!` is installed *after* this await returns. The dialer
+        // serialises every request behind one mutex and allows each namespace
+        // connect ten seconds, so a dev server with a full accept queue let
+        // authorized requests pile up in exactly this gap — and `revoke`,
+        // which promises open connections are dropped within a second,
+        // returned to a terminal while sixty-four of them sat here holding
+        // every permit, ready to forward into the box the moment the port
+        // started accepting.
+        //
+        // The blocking dial itself cannot be cancelled — it is a syscall on a
+        // pool thread — so this drops the *result* rather than interrupting
+        // the work: the connection into the box is opened and immediately
+        // closed, and nothing the revoked peer sent reaches it.
+        let opened = tokio::select! {
+            r = tokio::task::spawn_blocking(move || bridge2.open_upstream()) => {
+                r.map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))?
+            }
+            _ = revoked(bridge.clone(), grant.id.clone()) => {
+                let _ = send.write_all(&[wire::REPLY_DENIED]).await;
+                let _ = send.finish();
+                return Ok(());
+            }
+            _ = bridge.shutting_down() => {
+                let _ = send.write_all(&[wire::REPLY_SHARE_OVER]).await;
+                let _ = send.finish();
+                return Ok(());
+            }
+        };
         match opened {
             Ok(s) => s,
             Err(e) => {
@@ -706,8 +902,28 @@ async fn serve_stream(
     // closing, or the copy finishing.
     let from_peer = std::sync::atomic::AtomicU64::new(0);
     let to_peer = std::sync::atomic::AtomicU64::new(0);
+    // `--direct-only`, enforced where the bytes are rather than only by the
+    // watchdog that polls once a second. A direct path that falls back to a
+    // relay just after a poll used to mean up to a second of application
+    // traffic across a third party before the connection was closed, for a
+    // flag that promises none crosses one at all. Asked immediately before
+    // every write, the residue is what QUIC had already accepted at the
+    // instant the path changed — which nothing above the transport can
+    // recall — and not a second's worth of fresh reads.
+    let barred: Option<Box<crate::pump::Gate>> = direct_only.then(|| {
+        let conn = conn.clone();
+        Box::new(move || observed_path(&conn) == Some(Path::Direct)) as Box<crate::pump::Gate>
+    });
     tokio::select! {
-        _ = crate::pump::duplex(recv, send, up_r, up_w, &from_peer, &to_peer) => {}
+        _ = crate::pump::duplex_gated(
+            recv,
+            send,
+            up_r,
+            up_w,
+            &from_peer,
+            &to_peer,
+            barred.as_deref(),
+        ) => {}
         // This stream's own grant, not the share's. A stream knows what
         // admitted it; the connection it arrived on may be carrying more than
         // one, and enforcing a revoke of the wrong one is worse than not
@@ -1100,6 +1316,90 @@ mod tests {
         )
     }
 
+    /// One QUIC connection carries one ticket.
+    ///
+    /// The protocol authorizes per stream, so two streams on one connection
+    /// could present two different grants — and everything downstream assumed
+    /// they could not. The peer record is created once per connection by
+    /// whichever stream authorized first, so the second grant's connections,
+    /// bytes and duration landed on the first grant's row in the receipt; and
+    /// the connection-wide watchdog would close streams belonging to a live
+    /// grant when a *different* one was revoked. Refused here rather than
+    /// accounted for: `h5i join` holds one ticket and opens one connection, so
+    /// this is nobody's case.
+    #[tokio::test]
+    async fn a_second_grant_on_one_connection_is_refused() {
+        let port = fake_dev_server();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bridge, first) = test_bridge(dir.path(), port);
+
+        // A second, equally valid grant on the same share.
+        let (grant, second) =
+            session::mint_grant(Some("someone else".into()), 4_000_000_000).unwrap();
+        session::update(dir.path(), |s| {
+            s.grants.push(grant.clone());
+            Ok(s.clone())
+        })
+        .expect("add a second grant");
+
+        let sharer = local_endpoint(true).await;
+        let addr = dialable(&sharer).await;
+        let serving = tokio::spawn({
+            let bridge = bridge.clone();
+            async move { serve(bridge, sharer, false).await }
+        });
+
+        let joiner = local_endpoint(false).await;
+        let conn = joiner
+            .connect(addr, wire::ALPN)
+            .await
+            .expect("connect to the sharer");
+
+        // The first ticket claims the connection.
+        let (mut send, mut recv) = conn.open_bi().await.expect("open a stream");
+        send.write_all(&wire::encode_hello(&first).expect("hello"))
+            .await
+            .expect("greet");
+        let mut reply = [0u8; 1];
+        recv.read_exact(&mut reply).await.expect("a reply");
+        assert_eq!(reply[0], wire::REPLY_OK, "the first ticket was refused");
+
+        // The second one, on the same connection, is not admitted — even
+        // though it would be admitted on a connection of its own.
+        let (mut send2, mut recv2) = conn.open_bi().await.expect("open a second stream");
+        send2
+            .write_all(&wire::encode_hello(&second).expect("hello"))
+            .await
+            .expect("greet");
+        let mut reply2 = [0u8; 1];
+        recv2.read_exact(&mut reply2).await.expect("a reply");
+        assert_eq!(
+            reply2[0],
+            wire::REPLY_DENIED,
+            "a second grant was admitted on a connection another grant owns"
+        );
+
+        // And the receipt attributes nothing to it: one peer, one grant.
+        let summary = bridge.snapshot();
+        assert_eq!(summary.peers.len(), 1, "a second peer record appeared");
+        assert_eq!(summary.peers[0].grant, grant_label(&first, dir.path()));
+
+        conn.close(0u32.into(), b"done");
+        serving.abort();
+    }
+
+    /// The grant id a secret maps to, read back out of the table on disk.
+    fn grant_label(secret: &str, dir: &std::path::Path) -> String {
+        let sess = session::read(dir).expect("a session");
+        let want = session::hash_secret(secret);
+        sess.grants
+            .iter()
+            .find(|g| g.secret_sha256 == want)
+            .expect("the grant this secret belongs to")
+            .id
+            .clone()
+    }
+
     /// Everything between a ticket and the dev server, exercised in one go:
     /// QUIC, the greeting, the grant table, the dialer, and the byte pump.
     #[tokio::test]
@@ -1311,6 +1611,100 @@ mod tests {
                 "a ticket naming {ok} was refused, which breaks the main use"
             );
         }
+    }
+
+    /// A relay URL is read by the parser that will dial it, and only h5i's own
+    /// relays are dialled at all.
+    ///
+    /// Two separate ways past the previous check, both of which end with the
+    /// joiner's relay client speaking HTTPS to something of the ticket
+    /// author's choosing.
+    #[test]
+    fn a_relay_url_is_read_the_way_the_relay_client_reads_it() {
+        let id = "ab".repeat(32);
+        let refused = |entry: &str| {
+            let v: serde_json::Value =
+                serde_json::from_str(&format!(r#"{{"id":"{id}","addrs":[{entry}]}}"#))
+                    .expect("json");
+            refuse_addresses_that_point_inward(&v).is_err()
+        };
+
+        // Userinfo. The hand-rolled authority split read the host of
+        // `http://attacker@localhost:11434/` as `attacker@localhost`, which is
+        // not `localhost` and so passed; `url::Url` — which is what the relay
+        // client asks — reads it as `localhost` and dials loopback.
+        assert!(refused(r#"{"Relay":"http://attacker@localhost:11434/"}"#));
+        assert!(refused(r#"{"Relay":"http://user:pw@127.0.0.1:9200/"}"#));
+        assert!(refused(
+            r#"{"Relay":"https://x@use1-1.relay.n0.iroh.link./"}"#
+        ));
+
+        // A name the joiner would resolve. Refusing only literals and
+        // `.localhost` left every other hostname, and the relay client
+        // resolves it later and dials what comes back — so an `A 127.0.0.1`
+        // record under a name the ticket's author controls restored the whole
+        // problem. Re-resolving here would only add a rebinding window.
+        assert!(refused(r#"{"Relay":"https://evil.example.com/"}"#));
+        assert!(refused(
+            r#"{"Relay":"https://relay.n0.iroh.link.evil.example/"}"#
+        ));
+        // Not a URL at all, and a scheme with no host.
+        assert!(refused(r#"{"Relay":"not a url"}"#));
+        assert!(refused(r#"{"Relay":"file:///etc/passwd"}"#));
+
+        // The relays an honest ticket names, in the two spellings iroh emits.
+        for ok in [
+            r#"{"Relay":"https://use1-1.relay.n0.iroh.link./"}"#,
+            r#"{"Relay":"https://euc1-1.relay.n0.iroh.link/"}"#,
+        ] {
+            let v: serde_json::Value =
+                serde_json::from_str(&format!(r#"{{"id":"{id}","addrs":[{ok}]}}"#)).expect("json");
+            assert!(
+                refuse_addresses_that_point_inward(&v).is_ok(),
+                "a ticket naming {ok} was refused, which breaks every share behind a NAT"
+            );
+        }
+    }
+
+    /// What the sharer prints passes the check the joiner will run.
+    ///
+    /// `ep.addr()` is the current relay plus *every* direct address, and a host
+    /// with enough Docker bridges, VPN tunnels and dual-stack interfaces goes
+    /// past the cap — so the sharer printed a confident invite that this same
+    /// version of `h5i join` refused as attacker-shaped, with nothing on either
+    /// side explaining why.
+    #[test]
+    fn a_minted_ticket_is_one_this_h5i_would_accept() {
+        use iroh::TransportAddr;
+        // A real key, because `EndpointId` is a curve point and not 32 bytes of
+        // anything. The JSON-level tests above can use a hex string because
+        // they never build an `EndpointAddr` out of it.
+        let id = iroh::SecretKey::generate().public();
+
+        // Thirteen candidates, one of them loopback: past the cap, and
+        // carrying an address the join side refuses outright.
+        let relay: iroh::RelayUrl = "https://use1-1.relay.n0.iroh.link./"
+            .parse()
+            .expect("relay");
+        let mut addrs = vec![TransportAddr::Relay(relay)];
+        addrs.push(TransportAddr::Ip("127.0.0.1:41641".parse().expect("ip")));
+        for i in 1..=13u8 {
+            addrs.push(TransportAddr::Ip(
+                format!("192.168.1.{i}:41641").parse().expect("ip"),
+            ));
+        }
+        let trimmed = trim_addressing(iroh::EndpointAddr::from_parts(id, addrs));
+
+        assert!(trimmed.addrs.len() <= MAX_TICKET_ADDRS);
+        // The relay survives the trim: it is the one address that works from
+        // anywhere, so spending the budget on interfaces first would produce a
+        // ticket that only works on the same LAN.
+        assert!(trimmed.addrs.iter().any(TransportAddr::is_relay));
+        let value = serde_json::to_value(&trimmed).expect("serialize");
+        assert!(
+            refuse_addresses_that_point_inward(&value).is_ok(),
+            "the sharer minted a ticket its own joiner would refuse: {value}"
+        );
     }
 
     #[test]

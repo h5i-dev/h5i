@@ -186,7 +186,10 @@ fn parse_csi(buf: &[u8], flush: bool) -> Parsed {
         return parse_paste(buf, flush);
     }
 
-    let Some(end) = buf.iter().position(|b| (0x40..=0x7e).contains(b) && *b != b'[') else {
+    let Some(end) = buf
+        .iter()
+        .position(|b| (0x40..=0x7e).contains(b) && *b != b'[')
+    else {
         return Parsed::Incomplete;
     };
     let params = &buf[2..end];
@@ -429,10 +432,7 @@ fn spelling(code: &KeyCode) -> (String, String, u32) {
         KeyCode::Char(c) => {
             let key = c.to_string();
             let (dom_code, vk) = match c {
-                'a'..='z' => (
-                    format!("Key{}", c.to_ascii_uppercase()),
-                    (*c as u32) - 32,
-                ),
+                'a'..='z' => (format!("Key{}", c.to_ascii_uppercase()), (*c as u32) - 32),
                 'A'..='Z' => (format!("Key{c}"), *c as u32),
                 '0'..='9' => (format!("Digit{c}"), *c as u32),
                 ' ' => ("Space".to_string(), 32),
@@ -629,7 +629,10 @@ mod tests {
         assert_eq!(down.key, "a");
         assert_eq!(down.code, "KeyA");
         assert_eq!(down.text.as_deref(), Some("a"));
-        assert_eq!(down.windows_virtual_key_code, 65, "'a' reports VK_A, not 97");
+        assert_eq!(
+            down.windows_virtual_key_code, 65,
+            "'a' reports VK_A, not 97"
+        );
         // The pair, and only the down half types.
         assert_eq!(up.kind, KeyKind::Up);
         assert_eq!(up.text, None);
@@ -702,7 +705,10 @@ mod tests {
         // every sequence, and only silence tells them apart. Deciding too early
         // turns every arrow key into an Escape followed by garbage.
         let mut buf = b"\x1b".to_vec();
-        assert!(parse(&mut buf, false).is_empty(), "must wait for more bytes");
+        assert!(
+            parse(&mut buf, false).is_empty(),
+            "must wait for more bytes"
+        );
         assert_eq!(buf, b"\x1b", "and leave the byte for the next read");
 
         let events = parse(&mut buf, true);
@@ -713,7 +719,10 @@ mod tests {
         let mut split = b"\x1b".to_vec();
         assert!(parse(&mut split, false).is_empty());
         split.extend_from_slice(b"[A");
-        assert_eq!(parse(&mut split, false), vec![Event::Key(plain(KeyCode::Up))]);
+        assert_eq!(
+            parse(&mut split, false),
+            vec![Event::Key(plain(KeyCode::Up))]
+        );
     }
 
     #[test]
@@ -723,7 +732,10 @@ mod tests {
         let mut buf = vec![0xe3, 0x81]; // first two bytes of 'あ'
         assert!(parse(&mut buf, false).is_empty());
         buf.push(0x82);
-        assert_eq!(parse(&mut buf, false), vec![Event::Key(plain(KeyCode::Char('あ')))]);
+        assert_eq!(
+            parse(&mut buf, false),
+            vec![Event::Key(plain(KeyCode::Char('あ')))]
+        );
         assert!(buf.is_empty());
     }
 
@@ -734,9 +746,15 @@ mod tests {
             other => panic!("expected a mouse event, got {other:?}"),
         };
         assert_eq!(m(b"\x1b[<0;10;5M").action, MouseAction::Press(Button::Left));
-        assert_eq!(m(b"\x1b[<0;10;5m").action, MouseAction::Release(Button::Left));
+        assert_eq!(
+            m(b"\x1b[<0;10;5m").action,
+            MouseAction::Release(Button::Left)
+        );
         assert_eq!(m(b"\x1b[<2;1;1M").action, MouseAction::Press(Button::Right));
-        assert_eq!(m(b"\x1b[<1;1;1M").action, MouseAction::Press(Button::Middle));
+        assert_eq!(
+            m(b"\x1b[<1;1;1M").action,
+            MouseAction::Press(Button::Middle)
+        );
         assert_eq!(m(b"\x1b[<35;4;9M").action, MouseAction::Move);
         assert_eq!(m(b"\x1b[<64;1;1M").action, MouseAction::Wheel { up: true });
         assert_eq!(m(b"\x1b[<65;1;1M").action, MouseAction::Wheel { up: false });
@@ -866,7 +884,10 @@ mod tests {
     #[test]
     fn an_unterminated_paste_does_not_wedge_every_later_keystroke() {
         let mut buf = b"\x1b[200~half".to_vec();
-        assert!(parse(&mut buf, false).is_empty(), "wait while it may still arrive");
+        assert!(
+            parse(&mut buf, false).is_empty(),
+            "wait while it may still arrive"
+        );
         assert_eq!(parse(&mut buf, true), vec![Event::Paste("half".into())]);
         assert!(buf.is_empty());
     }
@@ -887,7 +908,10 @@ mod tests {
         let mut buf = b"\x1b[?62;1c".to_vec();
         let events = parse(&mut buf, true);
         assert!(events.is_empty(), "{events:?}");
-        assert!(buf.is_empty(), "and the bytes are consumed, not left to jam");
+        assert!(
+            buf.is_empty(),
+            "and the bytes are consumed, not left to jam"
+        );
     }
 
     #[test]

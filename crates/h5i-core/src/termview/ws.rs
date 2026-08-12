@@ -490,7 +490,10 @@ mod tests {
             // A continuation with nothing to continue.
             ("orphan continuation", server_frame(true, 0x0, b"x")),
             // A control frame that is fragmented, or oversized.
-            ("fragmented control", server_frame(false, opcode::PING, b"x")),
+            (
+                "fragmented control",
+                server_frame(false, opcode::PING, b"x"),
+            ),
             // A reserved opcode.
             ("reserved opcode", server_frame(true, 0x3, b"x")),
             // A 64-bit length past the cap: must be refused *before* it becomes
@@ -589,7 +592,9 @@ mod tests {
         let mut reader = Reader::new(client);
         assert_eq!(
             reader.next_message().unwrap(),
-            Some(Incoming::Text(r#"{"type":"frame","seq":1,"data":"AAAA"}"#.into())),
+            Some(Incoming::Text(
+                r#"{"type":"frame","seq":1,"data":"AAAA"}"#.into()
+            )),
             "the first frame after the header block must not be truncated"
         );
 

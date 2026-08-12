@@ -477,7 +477,11 @@ mod tests {
     fn create_parts(argv: &[&str]) -> (String, Option<String>, Option<String>, bool) {
         match dispatch(argv) {
             Ok(cli::boxes::BoxCommands::Create {
-                name, pr, clone, new, ..
+                name,
+                pr,
+                clone,
+                new,
+                ..
             }) => (name, pr, clone, new),
             Ok(_) => panic!("expected Create"),
             Err(e) => panic!("dispatch failed: {e}"),
@@ -505,7 +509,9 @@ mod tests {
         // it, so it has to point at the flag rather than read as "h5i cannot
         // do this".
         for spec in ["1234", "#7", "https://github.com/o/r/pull/42"] {
-            let err = dispatch(&["h5i", "box", spec]).err().expect("must be refused");
+            let err = dispatch(&["h5i", "box", spec])
+                .err()
+                .expect("must be refused");
             assert!(err.contains("--pr"), "{spec}: {err}");
             assert!(err.contains("pull request"), "{spec}: {err}");
         }
@@ -515,20 +521,17 @@ mod tests {
     fn a_repository_url_is_still_a_positional_and_still_clones() {
         // The PR check runs first, and this is what must survive it: a plain
         // repository URL has no `/pull/<n>`, so it is unaffected.
-        let (_, pr, clone, _) = create_parts(&[
-            "h5i",
-            "box",
-            "https://github.com/o/r.git",
-            "--name",
-            "r",
-        ]);
+        let (_, pr, clone, _) =
+            create_parts(&["h5i", "box", "https://github.com/o/r.git", "--name", "r"]);
         assert_eq!(pr, None);
         assert_eq!(clone.as_deref(), Some("https://github.com/o/r.git"));
     }
 
     #[test]
     fn an_unrecognized_source_names_every_way_in() {
-        let err = dispatch(&["h5i", "box", "wat"]).err().expect("must be refused");
+        let err = dispatch(&["h5i", "box", "wat"])
+            .err()
+            .expect("must be refused");
         for hint in ["--pr", "--new", "repository URL"] {
             assert!(err.contains(hint), "{err}");
         }

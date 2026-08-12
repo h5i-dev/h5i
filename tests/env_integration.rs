@@ -262,10 +262,17 @@ fn a_failed_create_leaves_nothing_behind_to_clean_up() {
     )
     .unwrap();
     git(&r.dir, &["add", "."]);
-    git(&r.dir, &["commit", "-m", "add a broken service declaration"]);
+    git(
+        &r.dir,
+        &["commit", "-m", "add a broken service declaration"],
+    );
 
     let out = r.h5i(&["env", "create", "broken"]);
-    assert!(!out.status.success(), "create must fail closed: {}", out_str(&out));
+    assert!(
+        !out.status.success(),
+        "create must fail closed: {}",
+        out_str(&out)
+    );
 
     // Nothing half-built survives: the box is not listed, and neither the
     // branch nor the worktree registration is left over.
@@ -297,7 +304,11 @@ fn a_failed_create_leaves_nothing_behind_to_clean_up() {
     git(&r.dir, &["add", "."]);
     git(&r.dir, &["commit", "-m", "fix the service declaration"]);
     let retry = r.h5i(&["env", "create", "broken"]);
-    assert!(retry.status.success(), "retry after the fix must work: {}", out_str(&retry));
+    assert!(
+        retry.status.success(),
+        "retry after the fix must work: {}",
+        out_str(&retry)
+    );
 }
 
 #[test]
@@ -421,7 +432,10 @@ fn env_allow_add_list_remove_and_in_box_refusal() {
     assert!(out.status.success(), "{}", out_str(&out));
     let file = cfg.path().join("h5i").join("egress-allow");
     let text = std::fs::read_to_string(&file).expect("allowlist written");
-    assert!(text.contains("pypi.org"), "normalized lowercase rule:\n{text}");
+    assert!(
+        text.contains("pypi.org"),
+        "normalized lowercase rule:\n{text}"
+    );
 
     // Duplicate add is a friendly no-op (one line stays one line).
     run(&["env", "allow", "pypi.org"], false);
@@ -472,8 +486,15 @@ fn env_create_pr_pins_pr_head_as_base() {
     let r = Repo::new();
     // A "GitHub-like" remote: a bare repo exposing a PR head at refs/pull/7/head.
     let remote_dir = r.dir.parent().unwrap().join("remote.git");
-    run_ok(Command::new("git").args(["init", "--bare"]).arg(&remote_dir));
-    git(&r.dir, &["remote", "add", "origin", remote_dir.to_str().unwrap()]);
+    run_ok(
+        Command::new("git")
+            .args(["init", "--bare"])
+            .arg(&remote_dir),
+    );
+    git(
+        &r.dir,
+        &["remote", "add", "origin", remote_dir.to_str().unwrap()],
+    );
     git(&r.dir, &["push", "origin", "main"]);
     git(&r.dir, &["checkout", "-b", "feature"]);
     std::fs::write(r.dir.join("pr.txt"), "pr change\n").unwrap();
@@ -511,10 +532,22 @@ fn env_create_pr_pins_pr_head_as_base() {
     git(&r.dir, &["branch", "-f", "pr/7", "main"]);
     let out = r.h5i(&["env", "create", "review-pr-2", "--pr", "7"]);
     assert!(!out.status.success(), "colliding pr/7 must refuse");
-    assert!(out_str(&out).contains("already exists"), "{}", out_str(&out));
+    assert!(
+        out_str(&out).contains("already exists"),
+        "{}",
+        out_str(&out)
+    );
 
     // --pr and --from are mutually exclusive.
-    let out = r.h5i(&["env", "create", "review-pr-3", "--pr", "7", "--from", "HEAD"]);
+    let out = r.h5i(&[
+        "env",
+        "create",
+        "review-pr-3",
+        "--pr",
+        "7",
+        "--from",
+        "HEAD",
+    ]);
     assert!(!out.status.success());
 }
 
@@ -657,14 +690,23 @@ fn full_lifecycle_create_run_propose_apply() {
     let diff = out_str(&r.h5i_ok(&["env", "diff", "feature"]));
     assert!(diff.contains("return 2"), "{diff}");
     let stat = out_str(&r.h5i_ok(&["env", "diff", "feature", "--stat"]));
-    assert!(stat.contains("lib.py"), "diffstat includes changed file: {stat}");
+    assert!(
+        stat.contains("lib.py"),
+        "diffstat includes changed file: {stat}"
+    );
 
     let diff_json = out_str(&r.h5i_ok(&["env", "diff", "feature", "--json"]));
     let report: serde_json::Value =
         serde_json::from_str(&diff_json).expect("env diff --json emits valid JSON");
     assert_eq!(report["files_changed"], 1, "one file changed: {diff_json}");
-    assert_eq!(report["insertions"], 1, "one changed line added: {diff_json}");
-    assert_eq!(report["deletions"], 1, "one changed line removed: {diff_json}");
+    assert_eq!(
+        report["insertions"], 1,
+        "one changed line added: {diff_json}"
+    );
+    assert_eq!(
+        report["deletions"], 1,
+        "one changed line removed: {diff_json}"
+    );
     assert_eq!(report["files"][0]["path"], "lib.py");
     assert_eq!(report["files"][0]["insertions"], 1);
     assert_eq!(report["files"][0]["deletions"], 1);
@@ -1155,11 +1197,9 @@ fn secret_grant_is_injected_then_redacted_and_audited() {
     // The injected value must NOT appear in the capture — but the surrounding
     // text must, proving the secret was actually injected (then redacted).
     let cap = r.capture_manifest("needs-secret");
-    let raw = String::from_utf8_lossy(&r.capture_raw_for(
-        "needs-secret",
-        cap["id"].as_str().unwrap(),
-    ))
-    .into_owned();
+    let raw =
+        String::from_utf8_lossy(&r.capture_raw_for("needs-secret", cap["id"].as_str().unwrap()))
+            .into_owned();
     assert!(
         !raw.contains("supersecret-xyz"),
         "secret value leaked into the stored payload:\n{raw}"
@@ -1589,7 +1629,13 @@ fn supervised_profile_env(slug: &str, profile: &str) -> Option<Repo> {
     git(&r.dir, &["add", ".h5i/env.toml"]);
     git(&r.dir, &["commit", "-m", "supervised agent profile"]);
     let out = r.h5i(&[
-        "env", "create", slug, "--profile", profile, "--isolation", "supervised",
+        "env",
+        "create",
+        slug,
+        "--profile",
+        profile,
+        "--isolation",
+        "supervised",
     ]);
     if out.status.success() {
         Some(r)
@@ -1629,7 +1675,10 @@ fn a_workspace_under_tmp_survives_the_private_tmp_bind() {
     // `Repo::new()` builds under the system temp dir, so this only means
     // something where that is genuinely `/tmp`.
     if !r.dir.starts_with("/tmp") {
-        eprintln!("skipping: fixtures are not under /tmp on this host ({:?})", r.dir);
+        eprintln!(
+            "skipping: fixtures are not under /tmp on this host ({:?})",
+            r.dir
+        );
         return;
     }
     std::fs::write(r.work("tmpwork").join("marker.txt"), "visible\n").unwrap();
@@ -1719,7 +1768,8 @@ fn a_browser_box_at_supervised_gets_af_unix_and_its_neighbours_do_not() {
     let Some(plain) = supervised_env("plainbox", "") else {
         return;
     };
-    let raw = supervised_run_raw(&plain, "plainbox", &["python3", "-c", script]).expect("plain run");
+    let raw =
+        supervised_run_raw(&plain, "plainbox", &["python3", "-c", script]).expect("plain run");
     assert!(
         raw.contains("UNIXBIND FAIL EPERM"),
         "AF_UNIX stays denied for a profile that did not ask for it:\n{raw}"
@@ -1870,7 +1920,13 @@ fn auto_isolation_picks_a_runnable_tier() {
 fn unimplemented_backends_refuse_at_create() {
     let r = Repo::new();
     // hardened-container (gVisor/Kata) still has no adapter in this build.
-    let out = r.h5i(&["env", "create", "boxed", "--isolation", "hardened-container"]);
+    let out = r.h5i(&[
+        "env",
+        "create",
+        "boxed",
+        "--isolation",
+        "hardened-container",
+    ]);
     assert!(!out.status.success(), "hardened-container must refuse");
     assert!(out_str(&out).contains("backend"), "{}", out_str(&out));
     assert!(
@@ -1891,7 +1947,10 @@ fn microvm_claim_fails_closed_with_an_actionable_reason() {
     // No image: a static profile error, true on every host, so it is reported
     // regardless of whether this machine has `msb` or KVM.
     let out = r.h5i(&["env", "create", "boxed", "--isolation", "microvm"]);
-    assert!(!out.status.success(), "microvm without an image must refuse");
+    assert!(
+        !out.status.success(),
+        "microvm without an image must refuse"
+    );
     let text = out_str(&out);
     assert!(text.contains("requires a base image"), "{text}");
     assert!(
@@ -2462,7 +2521,14 @@ fn env_shell_readonly_pins_worktree_read_only() {
 
     // Reads succeed: the seed file is visible read-only.
     let read = r.h5i(&[
-        "env", "shell", "obs", "--readonly", "--", "sh", "-c", "cat lib.py",
+        "env",
+        "shell",
+        "obs",
+        "--readonly",
+        "--",
+        "sh",
+        "-c",
+        "cat lib.py",
     ]);
     assert!(
         read.status.success(),
@@ -2500,7 +2566,13 @@ fn env_shell_readonly_pins_worktree_read_only() {
     );
     // A normal (read-write) shell still works afterwards and CAN write.
     r.h5i_ok(&[
-        "env", "shell", "obs", "--", "sh", "-c", "echo yes > allowed.txt",
+        "env",
+        "shell",
+        "obs",
+        "--",
+        "sh",
+        "-c",
+        "echo yes > allowed.txt",
     ]);
     assert!(r.work("obs").join("allowed.txt").is_file());
 }
@@ -2873,7 +2945,10 @@ fn supervised_egress_still_works_with_a_pid_namespace() {
         "agent",
     ]);
     if !created.status.success() {
-        eprintln!("SKIP: no egress-capable supervised box here:\n{}", out_str(&created));
+        eprintln!(
+            "SKIP: no egress-capable supervised box here:\n{}",
+            out_str(&created)
+        );
         return;
     }
     // The workload must actually start and be PID 1 of its own namespace. A dead
@@ -3459,8 +3534,15 @@ fn inspect_json_renders_the_capture_manifest() {
     assert!(payload.contains("json-body"), "{payload}");
 
     let out = r.h5i(&["env", "inspect", "other", "--capture", &cap, "--json"]);
-    assert!(!out.status.success(), "cross-env JSON inspect must be refused");
-    assert!(out_str(&out).contains("not evidence for"), "{}", out_str(&out));
+    assert!(
+        !out.status.success(),
+        "cross-env JSON inspect must be refused"
+    );
+    assert!(
+        out_str(&out).contains("not evidence for"),
+        "{}",
+        out_str(&out)
+    );
 }
 
 /// A capture handle that resolves to nothing, and one too short to be a prefix,
@@ -4133,10 +4215,9 @@ fn env_log_limit_returns_the_newest_events() {
         ]);
     }
 
-    let all: serde_json::Value = serde_json::from_slice(
-        &r.h5i_ok(&["env", "log", "limited-log", "--json"]).stdout,
-    )
-    .expect("full env log must be valid JSON");
+    let all: serde_json::Value =
+        serde_json::from_slice(&r.h5i_ok(&["env", "log", "limited-log", "--json"]).stdout)
+            .expect("full env log must be valid JSON");
     let limited: serde_json::Value = serde_json::from_slice(
         &r.h5i_ok(&["env", "log", "limited-log", "--limit", "2", "--json"])
             .stdout,
@@ -4700,12 +4781,24 @@ fn env_rm_removes_multiple_envs() {
     // Remove both in one call with --force (they are in `created` status).
     let out = r.h5i_ok(&["env", "rm", "alpha", "beta", "--force"]);
     let text = out_str(&out);
-    assert!(text.contains("alpha"), "should confirm removal of alpha:\n{text}");
-    assert!(text.contains("beta"), "should confirm removal of beta:\n{text}");
+    assert!(
+        text.contains("alpha"),
+        "should confirm removal of alpha:\n{text}"
+    );
+    assert!(
+        text.contains("beta"),
+        "should confirm removal of beta:\n{text}"
+    );
 
     // Worktrees and manifest files must be gone.
-    assert!(!r.env_dir("alpha").join("manifest.json").exists(), "alpha manifest still present");
-    assert!(!r.env_dir("beta").join("manifest.json").exists(), "beta manifest still present");
+    assert!(
+        !r.env_dir("alpha").join("manifest.json").exists(),
+        "alpha manifest still present"
+    );
+    assert!(
+        !r.env_dir("beta").join("manifest.json").exists(),
+        "beta manifest still present"
+    );
     assert!(!r.work("alpha").exists(), "alpha worktree still present");
     assert!(!r.work("beta").exists(), "beta worktree still present");
 
@@ -4728,7 +4821,10 @@ fn env_rm_partial_failure_continues_and_exits_nonzero() {
     let out = r.h5i(&["env", "rm", "good", "nope", "--force"]);
 
     // The real env must be gone.
-    assert!(!r.env_dir("good").join("manifest.json").exists(), "good manifest still present");
+    assert!(
+        !r.env_dir("good").join("manifest.json").exists(),
+        "good manifest still present"
+    );
     assert!(!r.work("good").exists(), "good worktree still present");
 
     // The command must exit non-zero because `nope` failed.
@@ -4828,7 +4924,10 @@ fn export_writes_patch_report_and_receipt() {
 
     let report = std::fs::read_to_string(bundle.join("report.md")).expect("report.md");
     assert!(report.contains("# Export: env/tester/gate"), "{report}");
-    assert!(report.contains("echo built"), "the report lists what ran: {report}");
+    assert!(
+        report.contains("echo built"),
+        "the report lists what ran: {report}"
+    );
     assert!(report.contains("isolation enforced"), "{report}");
 
     let receipt: serde_json::Value =
@@ -4864,13 +4963,7 @@ fn export_honours_an_explicit_out_dir() {
     let r = Repo::new();
     r.h5i_ok(&["dev", "--name", "outdir"]);
     let dest = r.dir.join("somewhere/else");
-    r.h5i_ok(&[
-        "dev",
-        "export",
-        "outdir",
-        "--out",
-        dest.to_str().unwrap(),
-    ]);
+    r.h5i_ok(&["dev", "export", "outdir", "--out", dest.to_str().unwrap()]);
     assert!(dest.join("patch.diff").is_file());
     assert!(dest.join("report.md").is_file());
     assert!(dest.join("receipt.json").is_file());
@@ -4885,16 +4978,14 @@ fn export_honours_an_explicit_out_dir() {
 fn skill_install_writes_the_embedded_pages() {
     let r = Repo::new();
     let target = r.dir.join("skills-out");
-    let out = out_str(&r.h5i_ok(&[
-        "skill",
-        "install",
-        "--target",
-        target.to_str().unwrap(),
-    ]));
+    let out = out_str(&r.h5i_ok(&["skill", "install", "--target", target.to_str().unwrap()]));
     assert!(out.contains("installed the h5i skill"), "{out}");
 
     let skill = std::fs::read_to_string(target.join("SKILL.md")).expect("SKILL.md");
-    assert!(skill.starts_with("---\nname: h5i\n"), "frontmatter: {skill}");
+    assert!(
+        skill.starts_with("---\nname: h5i\n"),
+        "frontmatter: {skill}"
+    );
     assert!(target.join("references/policy.md").is_file());
 
     // `show` prints the same bytes without touching the filesystem.
@@ -4920,7 +5011,10 @@ fn the_receipt_log_is_outside_the_boxs_write_grants() {
     r.h5i_ok(&["dev", "run", "sealed", "--", "sh", "-c", "echo recorded"]);
 
     let env_dir = r.env_dir("sealed");
-    assert!(env_dir.join("receipt.jsonl").is_file(), "a receipt was written");
+    assert!(
+        env_dir.join("receipt.jsonl").is_file(),
+        "a receipt was written"
+    );
 
     let policy =
         std::fs::read_to_string(env_dir.join("policy.resolved.toml")).expect("resolved policy");
@@ -4937,7 +5031,10 @@ fn the_receipt_log_is_outside_the_boxs_write_grants() {
             "the receipt store must never appear in a write grant: {writes}"
         );
     }
-    assert!(writes.contains("$WORK"), "the worktree is the write window: {writes}");
+    assert!(
+        writes.contains("$WORK"),
+        "the worktree is the write window: {writes}"
+    );
     assert!(
         !writes.contains(&env_dir.display().to_string()),
         "no grant names the env directory itself: {writes}"
@@ -4955,7 +5052,11 @@ fn a_cloned_box_never_touches_the_host_repository() {
 
     // A separate repository to stand in for "somebody else's code".
     let external = r.dir.parent().unwrap().join("external");
-    run_ok(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&external));
+    run_ok(
+        Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .arg(&external),
+    );
     git(&external, &["config", "user.email", "x@h5i.test"]);
     git(&external, &["config", "user.name", "X"]);
     std::fs::write(external.join("app.py"), "print('external')\n").unwrap();
@@ -4964,7 +5065,10 @@ fn a_cloned_box_never_touches_the_host_repository() {
 
     let url = format!("file://{}", external.display());
     let out = out_str(&r.h5i_ok(&["dev", &url]));
-    assert!(out.contains("env/tester/external"), "named for the repo: {out}");
+    assert!(
+        out.contains("env/tester/external"),
+        "named for the repo: {out}"
+    );
 
     // The code is in the box …
     assert!(r.env_dir("external").join("work/app.py").is_file());
@@ -4983,14 +5087,20 @@ fn a_cloned_box_never_touches_the_host_repository() {
 
     // The manifest records where it came from, and status says so.
     let m = r.manifest("external");
-    assert_eq!(m["source"].as_str(), Some(url.as_str()).map(|u| format!("clone:{u}")).as_deref());
+    assert_eq!(
+        m["source"].as_str(),
+        Some(url.as_str()).map(|u| format!("clone:{u}")).as_deref()
+    );
     let status = out_str(&r.h5i_ok(&["dev", "status", "external"]));
     assert!(status.contains("detached"), "{status}");
 
     // A shallow clone keeps an origin remote pointing at the source; a box must
     // not inherit a network handle nobody granted it.
     let remotes = out_str(&git(&r.env_dir("external").join("work"), &["remote"]));
-    assert!(remotes.trim().is_empty(), "origin must be dropped: {remotes}");
+    assert!(
+        remotes.trim().is_empty(),
+        "origin must be dropped: {remotes}"
+    );
 }
 
 /// A detached box has no parent branch here, so `apply` and `rebase` refuse and
@@ -5004,7 +5114,10 @@ fn a_detached_box_refuses_apply_and_rebase() {
 
     for verb in ["apply", "rebase"] {
         let out = r.h5i(&["dev", verb, "scratch"]);
-        assert!(!out.status.success(), "{verb} must refuse on a detached box");
+        assert!(
+            !out.status.success(),
+            "{verb} must refuse on a detached box"
+        );
         let err = out_str(&out);
         assert!(err.contains("detached"), "{verb}: {err}");
         assert!(err.contains("export"), "{verb} names the way out: {err}");

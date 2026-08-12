@@ -69,7 +69,6 @@ pub fn store_io_error(h5i_root: &Path, path: &Path, source: std::io::Error) -> H
     }
 }
 
-
 fn write_schema_version_if_missing(h5i_root: &Path) -> Result<(), H5iError> {
     let path = h5i_root.join(STORAGE_VERSION_FILE);
     if !path.exists() {
@@ -92,7 +91,9 @@ mod tests {
         ensure_layout(&root).unwrap();
         assert!(root.join("env").is_dir());
         assert_eq!(
-            fs::read_to_string(root.join(STORAGE_VERSION_FILE)).unwrap().trim(),
+            fs::read_to_string(root.join(STORAGE_VERSION_FILE))
+                .unwrap()
+                .trim(),
             STORAGE_SCHEMA_VERSION.to_string()
         );
     }

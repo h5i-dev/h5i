@@ -6,9 +6,8 @@ use crate::receipt::MemorySink;
 use std::sync::Arc;
 
 fn page_and_script(html: &str) -> (crate::engine::Page, Script) {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse("https://app.example/").unwrap();
@@ -21,11 +20,14 @@ fn page_and_script(html: &str) -> (crate::engine::Page, Script) {
 /// deliberately is not: it builds a bare realm, so anything installed *by*
 /// `run_scripts` — the document lifecycle, named access — is not there.
 fn run_page(html: &str) -> (crate::engine::Page, Arc<Broker>) {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
     let base = url::Url::parse("https://app.example/").unwrap();
     let mut page = factory.from_html(html, &base);
     page.run_scripts(broker.clone()).expect("scripts run");
@@ -39,15 +41,21 @@ fn script_reads_the_same_tree_the_snapshot_does() {
     );
 
     assert_eq!(
-        script.eval_value("document.querySelector('#t').textContent").unwrap(),
+        script
+            .eval_value("document.querySelector('#t').textContent")
+            .unwrap(),
         "hello"
     );
     assert_eq!(
-        script.eval_value("document.querySelectorAll('.x').length").unwrap(),
+        script
+            .eval_value("document.querySelectorAll('.x').length")
+            .unwrap(),
         "2"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#t').tagName").unwrap(),
+        script
+            .eval_value("document.querySelector('#t').tagName")
+            .unwrap(),
         "H1"
     );
 }
@@ -84,9 +92,24 @@ fn attributes_and_classlist_round_trip_through_the_real_dom() {
         )
         .expect("runs");
 
-    assert_eq!(script.eval_value("document.querySelector('#d').getAttribute('data-x')").unwrap(), "1");
-    assert_eq!(script.eval_value("document.querySelector('#d').className").unwrap(), "b");
-    assert_eq!(script.eval_value("document.querySelector('.b') !== null").unwrap(), "true");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#d').getAttribute('data-x')")
+            .unwrap(),
+        "1"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#d').className")
+            .unwrap(),
+        "b"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('.b') !== null")
+            .unwrap(),
+        "true"
+    );
 }
 
 #[test]
@@ -121,12 +144,16 @@ fn capture_runs_before_bubble() {
         )
         .expect("runs");
 
-    assert_eq!(script.eval_value("log.join(',')").unwrap(), "capture,bubble");
+    assert_eq!(
+        script.eval_value("log.join(',')").unwrap(),
+        "capture,bubble"
+    );
 }
 
 #[test]
 fn a_listener_that_throws_does_not_stop_the_others() {
-    let (_page, mut script) = page_and_script("<html><body><button id='b'>go</button></body></html>");
+    let (_page, mut script) =
+        page_and_script("<html><body><button id='b'>go</button></body></html>");
     script
         .eval(
             "globalThis.ran = false; \
@@ -139,7 +166,10 @@ fn a_listener_that_throws_does_not_stop_the_others() {
 
     assert_eq!(script.eval_value("ran").unwrap(), "true");
     assert!(
-        script.console().iter().any(|line| line.text.contains("bad")),
+        script
+            .console()
+            .iter()
+            .any(|line| line.text.contains("bad")),
         "the throw is reported rather than lost: {:?}",
         script.console()
     );
@@ -149,14 +179,24 @@ fn a_listener_that_throws_does_not_stop_the_others() {
 fn a_settle_runs_timers_and_says_it_finished() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     script
-        .eval("globalThis.hits = 0; setTimeout(() => { hits++; setTimeout(() => hits++, 50) }, 10);")
+        .eval(
+            "globalThis.hits = 0; setTimeout(() => { hits++; setTimeout(() => hits++, 50) }, 10);",
+        )
         .expect("runs");
 
     let settled = script.settle();
-    assert_eq!(script.eval_value("hits").unwrap(), "2", "a chained timer ran too");
+    assert_eq!(
+        script.eval_value("hits").unwrap(),
+        "2",
+        "a chained timer ran too"
+    );
     assert!(!settled.cut_off, "{settled:?}");
     assert_eq!(settled.timers_run, 2);
-    assert!(settled.render().starts_with("settled after"), "{}", settled.render());
+    assert!(
+        settled.render().starts_with("settled after"),
+        "{}",
+        settled.render()
+    );
 }
 
 #[test]
@@ -172,7 +212,11 @@ fn a_page_that_never_settles_is_cut_off_and_says_so() {
     let settled = script.settle();
     assert!(settled.cut_off, "{settled:?}");
     assert!(settled.pending_timers > 0);
-    assert!(settled.render().contains("still busy"), "{}", settled.render());
+    assert!(
+        settled.render().contains("still busy"),
+        "{}",
+        settled.render()
+    );
 }
 
 #[test]
@@ -192,8 +236,14 @@ fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
         .expect("runs");
 
     let settled = script.settle();
-    assert!(settled.cut_off, "the 20s timer is past the budget: {settled:?}");
-    assert!(settled.timers_run >= 1, "the near-budget timer still ran: {settled:?}");
+    assert!(
+        settled.cut_off,
+        "the 20s timer is past the budget: {settled:?}"
+    );
+    assert!(
+        settled.timers_run >= 1,
+        "the near-budget timer still ran: {settled:?}"
+    );
 }
 
 // ── what WPT found ─────────────────────────────────────────────────────────
@@ -260,7 +310,9 @@ fn reflection_carries_the_type_the_spec_gives_it() {
 
     // Enumerated: anything that is not a keyword reads back as the empty
     // string. Passing the attribute through is what made this look implemented.
-    script.eval("globalThis.d = document.createElement('div');").expect("runs");
+    script
+        .eval("globalThis.d = document.createElement('div');")
+        .expect("runs");
     script.eval("d.setAttribute('dir', '5%')").expect("runs");
     assert_eq!(script.eval_value("d.dir").unwrap(), "");
     script.eval("d.setAttribute('dir', 'RTL')").expect("runs");
@@ -268,22 +320,35 @@ fn reflection_carries_the_type_the_spec_gives_it() {
 
     // The empty string is a real keyword for contenteditable, and the most
     // common way anyone writes it.
-    script.eval("d.setAttribute('contenteditable', '')").expect("runs");
+    script
+        .eval("d.setAttribute('contenteditable', '')")
+        .expect("runs");
     assert_eq!(script.eval_value("d.contentEditable").unwrap(), "true");
 
     // Unsigned reflections cannot hold a negative, and the property and the
     // attribute must not disagree about the same element.
-    script.eval("globalThis.td = document.createElement('td'); td.colSpan = -3;").expect("runs");
+    script
+        .eval("globalThis.td = document.createElement('td'); td.colSpan = -3;")
+        .expect("runs");
     assert_eq!(script.eval_value("String(td.colSpan)").unwrap(), "1");
-    assert_eq!(script.eval_value("td.getAttribute('colspan')").unwrap(), "1");
+    assert_eq!(
+        script.eval_value("td.getAttribute('colspan')").unwrap(),
+        "1"
+    );
 
     // ARIA is enumerated too, with three states: keyword, invalid, absent.
-    script.eval("d.setAttribute('aria-checked', 'MIXED')").expect("runs");
+    script
+        .eval("d.setAttribute('aria-checked', 'MIXED')")
+        .expect("runs");
     assert_eq!(script.eval_value("d.ariaChecked").unwrap(), "mixed");
-    script.eval("d.setAttribute('aria-checked', 'bogus')").expect("runs");
+    script
+        .eval("d.setAttribute('aria-checked', 'bogus')")
+        .expect("runs");
     assert_eq!(script.eval_value("d.ariaChecked").unwrap(), "");
     assert_eq!(
-        script.eval_value("String(document.createElement('div').ariaSort)").unwrap(),
+        script
+            .eval_value("String(document.createElement('div').ariaSort)")
+            .unwrap(),
         "null"
     );
 }
@@ -294,21 +359,34 @@ fn a_property_belongs_to_the_elements_that_have_it() {
     // `missingApi` lie at property scale: feature detection asks before it uses.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     assert_eq!(
-        script.eval_value("String('href' in document.createElement('div'))").unwrap(),
+        script
+            .eval_value("String('href' in document.createElement('div'))")
+            .unwrap(),
         "false"
     );
     assert_eq!(
-        script.eval_value("String('checked' in document.createElement('div'))").unwrap(),
+        script
+            .eval_value("String('checked' in document.createElement('div'))")
+            .unwrap(),
         "false"
     );
     assert_eq!(
-        script.eval_value("String(document.createElement('div').type)").unwrap(),
+        script
+            .eval_value("String(document.createElement('div').type)")
+            .unwrap(),
         "undefined"
     );
     // The one element whose missing `type` is not the empty string.
-    assert_eq!(script.eval_value("document.createElement('input').type").unwrap(), "text");
     assert_eq!(
-        script.eval_value("String(document.createElement('a') instanceof HTMLAnchorElement)").unwrap(),
+        script
+            .eval_value("document.createElement('input').type")
+            .unwrap(),
+        "text"
+    );
+    assert_eq!(
+        script
+            .eval_value("String(document.createElement('a') instanceof HTMLAnchorElement)")
+            .unwrap(),
         "true"
     );
 }
@@ -321,7 +399,9 @@ fn computed_style_declares_its_properties_and_recomputes_on_demand() {
     // reported absent. WPT's `test_computed_value` asserts this on its first
     // line, so thousands of subtests failed before comparing a value.
     assert_eq!(
-        script.eval_value("String('color' in getComputedStyle(document.body))").unwrap(),
+        script
+            .eval_value("String('color' in getComputedStyle(document.body))")
+            .unwrap(),
         "true"
     );
 
@@ -335,9 +415,14 @@ fn computed_style_declares_its_properties_and_recomputes_on_demand() {
              document.body.appendChild(made);",
         )
         .expect("runs");
-    assert_eq!(script.eval_value("getComputedStyle(made).top").unwrap(), "7px");
     assert_eq!(
-        script.eval_value("getComputedStyle(made).getPropertyValue('--theme')").unwrap(),
+        script.eval_value("getComputedStyle(made).top").unwrap(),
+        "7px"
+    );
+    assert_eq!(
+        script
+            .eval_value("getComputedStyle(made).getPropertyValue('--theme')")
+            .unwrap(),
         "teal"
     );
 
@@ -347,7 +432,9 @@ fn computed_style_declares_its_properties_and_recomputes_on_demand() {
         .eval("document.body.appendChild(document.createElement('span'));")
         .expect("runs");
     assert_eq!(
-        script.eval_value("getComputedStyle(document.querySelector('span')).display").unwrap(),
+        script
+            .eval_value("getComputedStyle(document.querySelector('span')).display")
+            .unwrap(),
         "inline"
     );
 }
@@ -359,20 +446,39 @@ fn a_stylesheet_can_be_read_and_edited_through_its_element() {
     let (_page, mut script) = page_and_script(
         "<html><head><style id='s'>.a { color: red }</style></head><body></body></html>",
     );
-    script.eval("globalThis.sheet = document.getElementById('s').sheet;").expect("runs");
+    script
+        .eval("globalThis.sheet = document.getElementById('s').sheet;")
+        .expect("runs");
 
-    assert_eq!(script.eval_value("String(sheet.cssRules.length)").unwrap(), "1");
-    assert_eq!(script.eval_value("sheet.cssRules[0].selectorText").unwrap(), ".a");
     assert_eq!(
-        script.eval_value("String(sheet.cssRules[0] === sheet.cssRules[0])").unwrap(),
+        script.eval_value("String(sheet.cssRules.length)").unwrap(),
+        "1"
+    );
+    assert_eq!(
+        script.eval_value("sheet.cssRules[0].selectorText").unwrap(),
+        ".a"
+    );
+    assert_eq!(
+        script
+            .eval_value("String(sheet.cssRules[0] === sheet.cssRules[0])")
+            .unwrap(),
         "true",
         "a page that keeps a rule and mutates it later must hold something real"
     );
-    assert_eq!(script.eval_value("String(document.styleSheets.length)").unwrap(), "1");
-
-    script.eval("sheet.cssRules[0].style.setProperty('color', 'blue')").expect("runs");
     assert_eq!(
-        script.eval_value("sheet.cssRules[0].style.getPropertyValue('color')").unwrap(),
+        script
+            .eval_value("String(document.styleSheets.length)")
+            .unwrap(),
+        "1"
+    );
+
+    script
+        .eval("sheet.cssRules[0].style.setProperty('color', 'blue')")
+        .expect("runs");
+    assert_eq!(
+        script
+            .eval_value("sheet.cssRules[0].style.getPropertyValue('color')")
+            .unwrap(),
         "blue",
         "the write reached the sheet rather than a throwaway"
     );
@@ -384,12 +490,24 @@ fn a_text_decoder_validates_its_label_and_decodes_as_that_label() {
     // checking whether an encoding was supported was told yes, and Shift-JIS
     // decoded as UTF-8 — mojibake with no error.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
-    assert_eq!(script.eval_value("new TextDecoder('shift_jis').encoding").unwrap(), "shift_jis");
-    assert_eq!(script.eval_value("new TextDecoder('latin2').encoding").unwrap(), "iso-8859-2");
     assert_eq!(
         script
-            .eval_value("(() => { try { new TextDecoder('no-such-encoding'); return 'accepted'; } \
-                         catch (e) { return e.name; } })()")
+            .eval_value("new TextDecoder('shift_jis').encoding")
+            .unwrap(),
+        "shift_jis"
+    );
+    assert_eq!(
+        script
+            .eval_value("new TextDecoder('latin2').encoding")
+            .unwrap(),
+        "iso-8859-2"
+    );
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { try { new TextDecoder('no-such-encoding'); return 'accepted'; } \
+                         catch (e) { return e.name; } })()"
+            )
             .unwrap(),
         "RangeError"
     );
@@ -401,11 +519,14 @@ fn a_rejection_nobody_handled_is_reported() {
     // one channel the engine was not watching: a half-built page with no
     // explanation at all.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
-    script.eval("Promise.reject(new Error('nobody is listening'));").expect("runs");
+    script
+        .eval("Promise.reject(new Error('nobody is listening'));")
+        .expect("runs");
     script.settle();
     assert!(
         script.console().iter().any(|line| {
-            line.text.contains("a promise rejected and nothing handled it")
+            line.text
+                .contains("a promise rejected and nothing handled it")
                 && line.text.contains("nobody is listening")
         }),
         "{:?}",
@@ -446,21 +567,29 @@ fn rendered_text_and_child_checks_answer_what_a_browser_would() {
     // `innerText` is the rendered text: hidden content is out, blocks break,
     // and adjacent inlines run together.
     assert_eq!(
-        script.eval_value("document.getElementById('b').innerText").unwrap(),
+        script
+            .eval_value("document.getElementById('b').innerText")
+            .unwrap(),
         "one\nab"
     );
     assert_eq!(
-        script.eval_value("document.getElementById('b').textContent").unwrap(),
+        script
+            .eval_value("document.getElementById('b').textContent")
+            .unwrap(),
         "oneabHIDDEN",
         "textContent still reports everything, which is the difference"
     );
     // Asked for 3,944 times by WPT and absent; one line.
     assert_eq!(
-        script.eval_value("String(document.getElementById('b').hasChildNodes())").unwrap(),
+        script
+            .eval_value("String(document.getElementById('b').hasChildNodes())")
+            .unwrap(),
         "true"
     );
     assert_eq!(
-        script.eval_value("String(document.createTextNode('x').hasChildNodes())").unwrap(),
+        script
+            .eval_value("String(document.createTextNode('x').hasChildNodes())")
+            .unwrap(),
         "false"
     );
 }
@@ -471,10 +600,30 @@ fn css_supports_answers_from_the_engine_that_would_have_to_do_it() {
     // It matters more than most answers: pages call this to take a *different
     // code path*, so a wrong answer does not degrade the page, it misroutes it.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
-    assert_eq!(script.eval_value("String(CSS.supports('display', 'grid'))").unwrap(), "true");
-    assert_eq!(script.eval_value("String(CSS.supports('display', 'zzz'))").unwrap(), "false");
-    assert_eq!(script.eval_value("String(CSS.supports('no-such-prop', '1px'))").unwrap(), "false");
-    assert_eq!(script.eval_value("String(CSS.supports('(display: flex)'))").unwrap(), "true");
+    assert_eq!(
+        script
+            .eval_value("String(CSS.supports('display', 'grid'))")
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value("String(CSS.supports('display', 'zzz'))")
+            .unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script
+            .eval_value("String(CSS.supports('no-such-prop', '1px'))")
+            .unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script
+            .eval_value("String(CSS.supports('(display: flex)'))")
+            .unwrap(),
+        "true"
+    );
     // The spec's escape, which a naive regex gets wrong in a way that silently
     // produces a selector matching nothing.
     assert_eq!(script.eval_value("CSS.escape('1abc')").unwrap(), "\\31 abc");
@@ -484,18 +633,19 @@ fn css_supports_answers_from_the_engine_that_would_have_to_do_it() {
 fn a_documents_encoding_reaches_both_its_text_and_its_urls() {
     // Two things follow from a document's encoding and they must not disagree:
     // how the bytes become text, and how a URL's query becomes bytes again.
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..PageOptions::default() };
+    let options = PageOptions {
+        script: true,
+        ..PageOptions::default()
+    };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
     let base = url::Url::parse("https://app.example/").unwrap();
 
     // "日本" in euc-jp, which is mojibake if read as UTF-8. The script writes
     // its answers into the page, so this reads them the way an agent would.
-    let mut bytes =
-        b"<!doctype html><meta charset=\"euc-jp\"><title>t</title><p id=t>".to_vec();
+    let mut bytes = b"<!doctype html><meta charset=\"euc-jp\"><title>t</title><p id=t>".to_vec();
     bytes.extend_from_slice(&[0xc6, 0xfc, 0xcb, 0xdc]);
     bytes.extend_from_slice(
         b"</p><p id=out></p><script>\
@@ -509,10 +659,17 @@ fn a_documents_encoding_reaches_both_its_text_and_its_urls() {
     );
 
     let page = factory.from_bytes(&bytes, None, &base);
-    assert_eq!(page.encoding(), "EUC-JP", "the document said so in its markup");
+    assert_eq!(
+        page.encoding(),
+        "EUC-JP",
+        "the document said so in its markup"
+    );
 
     let rendered = page.snapshot().render();
-    assert!(rendered.contains("日本"), "its text decoded as itself:\n{rendered}");
+    assert!(
+        rendered.contains("日本"),
+        "its text decoded as itself:\n{rendered}"
+    );
     // A code point euc-jp cannot represent becomes an HTML numeric character
     // reference with its own punctuation already percent-encoded. This engine
     // used to answer `?%E4%B8%82` — the right escape of the wrong bytes.
@@ -521,8 +678,14 @@ fn a_documents_encoding_reaches_both_its_text_and_its_urls() {
         "an unmappable code point is a numeric reference:\n{rendered}"
     );
     // One the encoding *can* represent is simply its bytes.
-    assert!(rendered.contains("?%C6%FC"), "a mappable one is its bytes:\n{rendered}");
-    assert!(rendered.contains("EUC-JP"), "and the document says so:\n{rendered}");
+    assert!(
+        rendered.contains("?%C6%FC"),
+        "a mappable one is its bytes:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("EUC-JP"),
+        "and the document says so:\n{rendered}"
+    );
 }
 
 #[test]
@@ -550,8 +713,18 @@ fn a_measured_answer_reflects_what_script_just_built() {
             "globalThis.made = document.createElement('div');              made.style.width = '50px'; made.style.height = '20px';              document.body.appendChild(made);",
         )
         .expect("runs");
-    assert_eq!(script.eval_value("made.getBoundingClientRect().width").unwrap(), "50");
-    assert_eq!(script.eval_value("made.getBoundingClientRect().height").unwrap(), "20");
+    assert_eq!(
+        script
+            .eval_value("made.getBoundingClientRect().width")
+            .unwrap(),
+        "50"
+    );
+    assert_eq!(
+        script
+            .eval_value("made.getBoundingClientRect().height")
+            .unwrap(),
+        "20"
+    );
     assert_eq!(script.eval_value("made.offsetWidth").unwrap(), "50");
 }
 
@@ -560,18 +733,18 @@ fn a_form_control_reports_what_it_holds() {
     // A textarea's value is its text content, and a control the page built
     // itself has no editor to store one in. Both read back empty before, so a
     // filled form looked blank.
-    let (_page, mut script) = page_and_script(
-        "<html><body><textarea id='t'>written in</textarea></body></html>",
-    );
+    let (_page, mut script) =
+        page_and_script("<html><body><textarea id='t'>written in</textarea></body></html>");
     assert_eq!(
-        script.eval_value("document.getElementById('t').value").unwrap(),
+        script
+            .eval_value("document.getElementById('t').value")
+            .unwrap(),
         "written in"
     );
     script
         .eval("globalThis.made = document.createElement('input'); made.value = 'typed';")
         .expect("runs");
     assert_eq!(script.eval_value("made.value").unwrap(), "typed");
-
 }
 
 #[test]
@@ -582,14 +755,43 @@ fn the_form_and_table_surface_answers() {
         "<html><body><form method='post'><input name='a'><input name='b'></form>\
          <table><tr><td></td><td id='c'></td></tr></table></body></html>",
     );
-    assert_eq!(script.eval_value("document.querySelector('form').elements.length").unwrap(), "2");
-    assert_eq!(script.eval_value("document.querySelector('form').method").unwrap(), "post");
-    assert_eq!(script.eval_value("document.querySelector('table').rows.length").unwrap(), "1");
-    assert_eq!(script.eval_value("document.querySelector('tr').cells.length").unwrap(), "2");
-    assert_eq!(script.eval_value("document.getElementById('c').cellIndex").unwrap(), "1");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('form').elements.length")
+            .unwrap(),
+        "2"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('form').method")
+            .unwrap(),
+        "post"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('table').rows.length")
+            .unwrap(),
+        "1"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('tr').cells.length")
+            .unwrap(),
+        "2"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.getElementById('c').cellIndex")
+            .unwrap(),
+        "1"
+    );
     // A control's form, found by ancestry.
     assert_eq!(
-        script.eval_value("String(document.querySelector('input').form === document.querySelector('form'))").unwrap(),
+        script
+            .eval_value(
+                "String(document.querySelector('input').form === document.querySelector('form'))"
+            )
+            .unwrap(),
         "true"
     );
 }
@@ -607,12 +809,18 @@ fn a_closed_disclosure_and_a_dropdown_read_as_a_person_sees_them() {
          </body></html>",
     );
     let rendered = page.snapshot().render();
-    assert!(rendered.contains("opt b"), "the dropdown says what it is set to:\n{rendered}");
+    assert!(
+        rendered.contains("opt b"),
+        "the dropdown says what it is set to:\n{rendered}"
+    );
     assert!(
         !rendered.contains("opt a"),
         "and not what it is not set to:\n{rendered}"
     );
-    assert!(rendered.contains("Summary line"), "the summary is shown:\n{rendered}");
+    assert!(
+        rendered.contains("Summary line"),
+        "the summary is shown:\n{rendered}"
+    );
     assert!(
         !rendered.contains("Details body"),
         "the body behind a closed disclosure is not:\n{rendered}"
@@ -628,15 +836,18 @@ fn focus_moves_and_the_document_knows_it() {
     // `focus()` was empty, so `document.activeElement` never moved: a page that
     // focused a field and then asked which field was focused got the wrong
     // answer, and a form advancing focus as it validates got no signal at all.
-    let (_page, mut script) = page_and_script(
-        "<html><body><input id='a'><input id='b'></body></html>",
-    );
+    let (_page, mut script) =
+        page_and_script("<html><body><input id='a'><input id='b'></body></html>");
     script
         .eval("globalThis.seen = [];                document.getElementById('b').addEventListener('focusin', () => seen.push('in'));                document.getElementById('a').addEventListener('blur', () => seen.push('out'));")
         .expect("runs");
-    script.eval("document.getElementById('a').focus();").expect("runs");
+    script
+        .eval("document.getElementById('a').focus();")
+        .expect("runs");
     assert_eq!(script.eval_value("document.activeElement.id").unwrap(), "a");
-    script.eval("document.getElementById('b').focus();").expect("runs");
+    script
+        .eval("document.getElementById('b').focus();")
+        .expect("runs");
     assert_eq!(script.eval_value("document.activeElement.id").unwrap(), "b");
     assert_eq!(
         script.eval_value("seen.join(',')").unwrap(),
@@ -645,8 +856,13 @@ fn focus_moves_and_the_document_knows_it() {
     );
     // Nothing focused reports the body, not null — code branching on it expects
     // an element.
-    script.eval("document.getElementById('b').blur();").expect("runs");
-    assert_eq!(script.eval_value("document.activeElement.tagName").unwrap(), "BODY");
+    script
+        .eval("document.getElementById('b').blur();")
+        .expect("runs");
+    assert_eq!(
+        script.eval_value("document.activeElement.tagName").unwrap(),
+        "BODY"
+    );
 }
 
 #[test]
@@ -678,13 +894,28 @@ fn a_selection_can_be_made_and_acted_on() {
         )
         .expect("runs");
 
-    assert_eq!(script.eval_value("getSelection().toString()").unwrap(), "brave");
-    assert_eq!(script.eval_value("getSelection().type").unwrap(), "Range");
-    assert_eq!(script.eval_value("String(getSelection().isCollapsed)").unwrap(), "false");
-
-    assert_eq!(script.eval_value("String(document.execCommand('bold'))").unwrap(), "true");
     assert_eq!(
-        script.eval_value("document.getElementById('p').innerHTML").unwrap(),
+        script.eval_value("getSelection().toString()").unwrap(),
+        "brave"
+    );
+    assert_eq!(script.eval_value("getSelection().type").unwrap(), "Range");
+    assert_eq!(
+        script
+            .eval_value("String(getSelection().isCollapsed)")
+            .unwrap(),
+        "false"
+    );
+
+    assert_eq!(
+        script
+            .eval_value("String(document.execCommand('bold'))")
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.getElementById('p').innerHTML")
+            .unwrap(),
         "Hello <b>brave</b> world",
         "the selected run is what got wrapped, not the whole paragraph"
     );
@@ -704,17 +935,29 @@ fn a_selection_can_be_made_and_acted_on() {
 
     // A command this engine cannot carry out says so, from both the doing and
     // the asking, rather than reporting success and changing nothing.
-    assert_eq!(script.eval_value("String(document.execCommand('undo'))").unwrap(), "false");
     assert_eq!(
-        script.eval_value("String(document.queryCommandSupported('undo'))").unwrap(),
+        script
+            .eval_value("String(document.execCommand('undo'))")
+            .unwrap(),
         "false"
     );
     assert_eq!(
-        script.eval_value("String(document.queryCommandSupported('bold'))").unwrap(),
+        script
+            .eval_value("String(document.queryCommandSupported('undo'))")
+            .unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script
+            .eval_value("String(document.queryCommandSupported('bold'))")
+            .unwrap(),
         "true"
     );
     assert!(
-        script.unsupported().iter().any(|(n, _)| n.contains("execCommand(undo)")),
+        script
+            .unsupported()
+            .iter()
+            .any(|(n, _)| n.contains("execCommand(undo)")),
         "and names itself: {:?}",
         script.unsupported()
     );
@@ -763,18 +1006,27 @@ fn an_api_this_engine_lacks_is_absent_rather_than_a_stub_that_lies() {
     // plausible-wrong answer this engine exists to refuse, written by us. It
     // cost three real sites their entire bundle.
     assert_eq!(script.eval_value("typeof WebSocket").unwrap(), "undefined");
-    assert_eq!(script.eval_value("typeof BroadcastChannel").unwrap(), "undefined");
     assert_eq!(
-        script.eval_value("String('serviceWorker' in navigator)").unwrap(),
+        script.eval_value("typeof BroadcastChannel").unwrap(),
+        "undefined"
+    );
+    assert_eq!(
+        script
+            .eval_value("String('serviceWorker' in navigator)")
+            .unwrap(),
         "false"
     );
     assert_eq!(
-        script.eval_value("String(!!navigator.serviceWorker)").unwrap(),
+        script
+            .eval_value("String(!!navigator.serviceWorker)")
+            .unwrap(),
         "false"
     );
     // And optional chaining reaches its fallback instead of throwing.
     assert_eq!(
-        script.eval_value("typeof navigator.clipboard?.writeText").unwrap(),
+        script
+            .eval_value("typeof navigator.clipboard?.writeText")
+            .unwrap(),
         "undefined"
     );
 
@@ -800,15 +1052,21 @@ fn element_scoped_queries_do_not_escape_their_element() {
     );
 
     assert_eq!(
-        script.eval_value("document.querySelector('#a').querySelector('.x').textContent").unwrap(),
+        script
+            .eval_value("document.querySelector('#a').querySelector('.x').textContent")
+            .unwrap(),
         "in-a"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#b').querySelectorAll('.x').length").unwrap(),
+        script
+            .eval_value("document.querySelector('#b').querySelectorAll('.x').length")
+            .unwrap(),
         "1"
     );
     assert_eq!(
-        script.eval_value("document.querySelectorAll('.x').length").unwrap(),
+        script
+            .eval_value("document.querySelectorAll('.x').length")
+            .unwrap(),
         "2"
     );
 }
@@ -828,7 +1086,9 @@ fn api_server() -> (u16, std::thread::JoinHandle<()>) {
     // a test can have, because it looks like a slow build.
     let handle = std::thread::spawn(move || {
         for _ in 0..1 {
-            let Ok((stream, _)) = listener.accept() else { return };
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut line = String::new();
             let _ = reader.read_line(&mut line);
@@ -858,11 +1118,13 @@ fn a_click_runs_script_that_fetches_and_the_agent_sees_the_result() {
     // DOM changes, and the change is in the outline the agent reads.
     let (port, server) = api_server();
     let sink = Arc::new(MemorySink::new());
-    let broker = Arc::new(
-        Broker::new(Policy::new(), sink.clone(), None).expect("broker"),
-    );
+    let broker = Arc::new(Broker::new(Policy::new(), sink.clone(), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
     let html = r#"<html><body>
@@ -893,7 +1155,10 @@ fn a_click_runs_script_that_fetches_and_the_agent_sees_the_result() {
 
     // The agent's own view of the page carries what the click produced.
     let rendered = page.snapshot().render();
-    assert!(rendered.contains("kelp"), "the list re-rendered:\n{rendered}");
+    assert!(
+        rendered.contains("kelp"),
+        "the list re-rendered:\n{rendered}"
+    );
 
     // And the causal link is stamped by the one component that knows it.
     assert_eq!(requests.len(), 1, "{requests:?}");
@@ -922,7 +1187,9 @@ fn an_external_script_is_fetched_through_the_broker_before_it_runs() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
-        let Ok((stream, _)) = listener.accept() else { return };
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut line = String::new();
         let _ = reader.read_line(&mut line);
@@ -945,7 +1212,10 @@ fn an_external_script_is_fetched_through_the_broker_before_it_runs() {
     let sink = Arc::new(MemorySink::new());
     let broker = Arc::new(Broker::new(Policy::new(), sink.clone(), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
@@ -990,7 +1260,10 @@ fn the_snapshot_says_when_a_page_needed_an_api_this_engine_lacks() {
     // tell an empty page from one that needed the other engine.
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
 
     let page = factory.from_html(
@@ -1001,7 +1274,10 @@ fn the_snapshot_says_when_a_page_needed_an_api_this_engine_lacks() {
     );
 
     let rendered = page.snapshot().render();
-    assert!(rendered.contains("Web APIs this engine does not have"), "{rendered}");
+    assert!(
+        rendered.contains("Web APIs this engine does not have"),
+        "{rendered}"
+    );
     assert!(rendered.contains("navigator.serviceWorker"), "{rendered}");
     // Outside the fence, because it is a fact about the reading, not the page.
     let fence = rendered.find(crate::snapshot::CONTENT_BEGIN).unwrap();
@@ -1012,7 +1288,10 @@ fn the_snapshot_says_when_a_page_needed_an_api_this_engine_lacks() {
 fn a_page_that_never_settles_says_so_in_the_outline() {
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
 
     let page = factory.from_html(
@@ -1034,16 +1313,25 @@ fn inner_html_round_trips_instead_of_stripping_every_tag() {
         "<html><body><div id='d'><b>bold</b> and <i>italic</i></div></body></html>",
     );
 
-    let before = script.eval_value("document.querySelector('#d').innerHTML").unwrap();
+    let before = script
+        .eval_value("document.querySelector('#d').innerHTML")
+        .unwrap();
     assert!(before.contains("<b>bold</b>"), "markup survives: {before}");
 
     script
         .eval("const d = document.querySelector('#d'); d.innerHTML = d.innerHTML;")
         .expect("round trip");
-    let after = script.eval_value("document.querySelector('#d').innerHTML").unwrap();
-    assert!(after.contains("<b>bold</b>"), "and survives the round trip: {after}");
+    let after = script
+        .eval_value("document.querySelector('#d').innerHTML")
+        .unwrap();
+    assert!(
+        after.contains("<b>bold</b>"),
+        "and survives the round trip: {after}"
+    );
     assert_eq!(
-        script.eval_value("document.querySelectorAll('#d b').length").unwrap(),
+        script
+            .eval_value("document.querySelectorAll('#d b').length")
+            .unwrap(),
         "1"
     );
 }
@@ -1064,9 +1352,16 @@ fn a_document_fragment_inserts_its_children_and_not_itself() {
         .expect("runs");
     page.refresh();
 
-    assert_eq!(script.eval_value("document.querySelectorAll('#l > li').length").unwrap(), "2");
     assert_eq!(
-        script.eval_value("document.querySelectorAll('#l > div').length").unwrap(),
+        script
+            .eval_value("document.querySelectorAll('#l > li').length")
+            .unwrap(),
+        "2"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelectorAll('#l > div').length")
+            .unwrap(),
         "0",
         "no stray element from the fragment"
     );
@@ -1084,13 +1379,30 @@ fn element_style_is_backed_by_the_style_attribute() {
         )
         .expect("runs");
 
-    let attr = script.eval_value("document.querySelector('#d').getAttribute('style')").unwrap();
+    let attr = script
+        .eval_value("document.querySelector('#d').getAttribute('style')")
+        .unwrap();
     assert!(attr.contains("display: none"), "{attr}");
-    assert!(attr.contains("background-color: red"), "camelCase reaches the dashed name: {attr}");
-    assert_eq!(script.eval_value("document.querySelector('#d').style.display").unwrap(), "none");
+    assert!(
+        attr.contains("background-color: red"),
+        "camelCase reaches the dashed name: {attr}"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#d').style.display")
+            .unwrap(),
+        "none"
+    );
 
-    script.eval("document.querySelector('#d').style.display = ''").expect("clears");
-    assert_eq!(script.eval_value("document.querySelector('#d').style.display").unwrap(), "");
+    script
+        .eval("document.querySelector('#d').style.display = ''")
+        .expect("clears");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#d').style.display")
+            .unwrap(),
+        ""
+    );
 }
 
 #[test]
@@ -1102,12 +1414,25 @@ fn bounding_rects_come_from_the_layout_the_engine_already_computed() {
          <div id='b' style='height:40px'>b</div></body></html>",
     );
 
-    let width = script.eval_value("document.querySelector('#a').getBoundingClientRect().width").unwrap();
+    let width = script
+        .eval_value("document.querySelector('#a').getBoundingClientRect().width")
+        .unwrap();
     assert_ne!(width, "0", "a laid-out block has width");
 
-    let top_a: f64 = script.eval_value("document.querySelector('#a').getBoundingClientRect().top").unwrap().parse().unwrap();
-    let top_b: f64 = script.eval_value("document.querySelector('#b').getBoundingClientRect().top").unwrap().parse().unwrap();
-    assert!(top_b > top_a, "the second block is below the first: {top_a} then {top_b}");
+    let top_a: f64 = script
+        .eval_value("document.querySelector('#a').getBoundingClientRect().top")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let top_b: f64 = script
+        .eval_value("document.querySelector('#b').getBoundingClientRect().top")
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        top_b > top_a,
+        "the second block is below the first: {top_a} then {top_b}"
+    );
 }
 
 #[test]
@@ -1117,18 +1442,36 @@ fn dataset_closest_and_matches_work_off_the_real_tree() {
          </section></body></html>",
     );
 
-    assert_eq!(script.eval_value("document.querySelector('#b').dataset.itemId").unwrap(), "7");
-    assert_eq!(script.eval_value("document.querySelector('#b').matches('#b')").unwrap(), "true");
-    assert_eq!(script.eval_value("document.querySelector('#b').matches('.panel')").unwrap(), "false");
     assert_eq!(
-        script.eval_value("document.querySelector('#b').closest('.panel').tagName").unwrap(),
+        script
+            .eval_value("document.querySelector('#b').dataset.itemId")
+            .unwrap(),
+        "7"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#b').matches('#b')")
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#b').matches('.panel')")
+            .unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#b').closest('.panel').tagName")
+            .unwrap(),
         "SECTION"
     );
 }
 
 #[test]
 fn insert_adjacent_html_places_markup_where_it_was_told() {
-    let (mut page, mut script) = page_and_script("<html><body><ul id='l'><li>one</li></ul></body></html>");
+    let (mut page, mut script) =
+        page_and_script("<html><body><ul id='l'><li>one</li></ul></body></html>");
     script
         .eval(
             "const l = document.querySelector('#l'); \
@@ -1148,7 +1491,8 @@ fn insert_adjacent_html_places_markup_where_it_was_told() {
 fn typed_events_carry_the_fields_a_page_reads() {
     // A single generic Event left `detail` and `key` undefined, which a
     // framework notices immediately and silently.
-    let (_page, mut script) = page_and_script("<html><body><button id='b'>go</button></body></html>");
+    let (_page, mut script) =
+        page_and_script("<html><body><button id='b'>go</button></body></html>");
     script
         .eval(
             "globalThis.seen = {}; const b = document.querySelector('#b'); \
@@ -1162,7 +1506,9 @@ fn typed_events_carry_the_fields_a_page_reads() {
     assert_eq!(script.eval_value("seen.detail.id").unwrap(), "3");
     assert_eq!(script.eval_value("seen.key").unwrap(), "Enter");
     assert_eq!(
-        script.eval_value("document.querySelector('#b').click() === undefined").unwrap(),
+        script
+            .eval_value("document.querySelector('#b').click() === undefined")
+            .unwrap(),
         "true",
         "a synthetic click is a MouseEvent and does not throw"
     );
@@ -1177,12 +1523,21 @@ fn storage_is_real_and_in_memory_only() {
 
     assert_eq!(script.eval_value("localStorage.getItem('k')").unwrap(), "v");
     assert_eq!(script.eval_value("localStorage.length").unwrap(), "1");
-    assert_eq!(script.eval_value("localStorage.getItem('absent')").unwrap(), "null");
-    assert_eq!(script.eval_value("sessionStorage.getItem('s')").unwrap(), "1");
+    assert_eq!(
+        script.eval_value("localStorage.getItem('absent')").unwrap(),
+        "null"
+    );
+    assert_eq!(
+        script.eval_value("sessionStorage.getItem('s')").unwrap(),
+        "1"
+    );
 
     // A fresh realm starts empty: nothing was written anywhere durable.
     let (_page2, mut fresh) = page_and_script("<html><body></body></html>");
-    assert_eq!(fresh.eval_value("localStorage.getItem('k')").unwrap(), "null");
+    assert_eq!(
+        fresh.eval_value("localStorage.getItem('k')").unwrap(),
+        "null"
+    );
 }
 
 #[test]
@@ -1204,7 +1559,11 @@ fn history_records_routing_and_fires_popstate() {
 
     script.eval("history.back()").expect("goes back");
     assert_eq!(script.eval_value("history.state.page").unwrap(), "1");
-    assert_eq!(script.eval_value("popped.page").unwrap(), "1", "popstate carried the state");
+    assert_eq!(
+        script.eval_value("popped.page").unwrap(),
+        "1",
+        "popstate carried the state"
+    );
 }
 
 #[test]
@@ -1219,13 +1578,19 @@ fn a_page_from_the_web_may_not_reach_the_boxs_dev_server() {
 
     let from_web = url::Url::parse("https://evil.example/page").unwrap();
     assert!(
-        policy.check_from(&loopback, Some(&from_web)).reason().is_some(),
+        policy
+            .check_from(&loopback, Some(&from_web))
+            .reason()
+            .is_some(),
         "a web page must not reach loopback"
     );
 
     let from_dev_server = url::Url::parse("http://127.0.0.1:3000/index.html").unwrap();
     assert!(
-        policy.check_from(&loopback, Some(&from_dev_server)).reason().is_none(),
+        policy
+            .check_from(&loopback, Some(&from_dev_server))
+            .reason()
+            .is_none(),
         "the dev server's own page still may"
     );
 
@@ -1250,16 +1615,22 @@ fn computed_style_answers_what_it_knows_and_reports_what_it_does_not() {
     );
 
     assert_eq!(
-        script.eval_value("getComputedStyle(document.querySelector('#shown')).display").unwrap(),
+        script
+            .eval_value("getComputedStyle(document.querySelector('#shown')).display")
+            .unwrap(),
         "block"
     );
     assert_eq!(
-        script.eval_value("getComputedStyle(document.querySelector('#hidden')).display").unwrap(),
+        script
+            .eval_value("getComputedStyle(document.querySelector('#hidden')).display")
+            .unwrap(),
         "none",
         "an element the cascade did not render reports none"
     );
     assert_ne!(
-        script.eval_value("getComputedStyle(document.querySelector('#shown')).width").unwrap(),
+        script
+            .eval_value("getComputedStyle(document.querySelector('#shown')).width")
+            .unwrap(),
         "0px",
         "box metrics come from the resolved layout"
     );
@@ -1273,7 +1644,9 @@ fn computed_style_answers_what_it_knows_and_reports_what_it_does_not() {
         "any longhand resolves, not just the six that were once written out"
     );
     assert_eq!(
-        script.eval_value("getComputedStyle(document.querySelector('#shown')).color").unwrap(),
+        script
+            .eval_value("getComputedStyle(document.querySelector('#shown')).color")
+            .unwrap(),
         "rgb(0, 0, 0)",
         "`color` came back empty before, which is what §11.5.11 recorded"
     );
@@ -1285,7 +1658,10 @@ fn computed_style_answers_what_it_knows_and_reports_what_it_does_not() {
         .eval("getComputedStyle(document.querySelector('#shown')).border")
         .expect("runs");
     assert!(
-        script.unsupported().iter().any(|(n, _)| n.contains("getComputedStyle(border)")),
+        script
+            .unsupported()
+            .iter()
+            .any(|(n, _)| n.contains("getComputedStyle(border)")),
         "a shorthand names itself: {:?}",
         script.unsupported()
     );
@@ -1317,7 +1693,8 @@ fn a_mutation_observer_sees_what_script_did_and_is_delivered_as_a_microtask() {
 
 #[test]
 fn a_mutation_observer_reports_attribute_changes_with_the_old_value() {
-    let (_page, mut script) = page_and_script("<html><body><div id='d' class='before'></div></body></html>");
+    let (_page, mut script) =
+        page_and_script("<html><body><div id='d' class='before'></div></body></html>");
     script
         .eval(
             "globalThis.seen = null; \
@@ -1335,9 +1712,8 @@ fn a_mutation_observer_reports_attribute_changes_with_the_old_value() {
 
 #[test]
 fn an_observer_outside_the_subtree_hears_nothing() {
-    let (_page, mut script) = page_and_script(
-        "<html><body><div id='watched'></div><div id='other'></div></body></html>",
-    );
+    let (_page, mut script) =
+        page_and_script("<html><body><div id='watched'></div><div id='other'></div></body></html>");
     script
         .eval(
             "globalThis.hits = 0; \
@@ -1366,10 +1742,25 @@ fn a_click_on_a_checkbox_toggles_it_and_fires_input_then_change() {
         )
         .expect("runs");
 
-    assert_eq!(script.eval_value("log.join(',')").unwrap(), "input,change:true");
-    assert_eq!(script.eval_value("document.querySelector('#c').checked").unwrap(), "true");
-    script.eval("document.querySelector('#c').click()").expect("toggles back");
-    assert_eq!(script.eval_value("document.querySelector('#c').checked").unwrap(), "false");
+    assert_eq!(
+        script.eval_value("log.join(',')").unwrap(),
+        "input,change:true"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#c').checked")
+            .unwrap(),
+        "true"
+    );
+    script
+        .eval("document.querySelector('#c').click()")
+        .expect("toggles back");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#c').checked")
+            .unwrap(),
+        "false"
+    );
 }
 
 #[test]
@@ -1378,11 +1769,25 @@ fn radios_in_a_group_are_exclusive() {
         "<html><body><input type='radio' name='g' id='a' value='1'>\
          <input type='radio' name='g' id='b' value='2'></body></html>",
     );
-    script.eval("document.querySelector('#a').click()").expect("runs");
-    script.eval("document.querySelector('#b').click()").expect("runs");
+    script
+        .eval("document.querySelector('#a').click()")
+        .expect("runs");
+    script
+        .eval("document.querySelector('#b').click()")
+        .expect("runs");
 
-    assert_eq!(script.eval_value("document.querySelector('#a').checked").unwrap(), "false");
-    assert_eq!(script.eval_value("document.querySelector('#b').checked").unwrap(), "true");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#a').checked")
+            .unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#b').checked")
+            .unwrap(),
+        "true"
+    );
 }
 
 #[test]
@@ -1396,11 +1801,22 @@ fn form_data_collects_what_a_server_would_receive() {
          </form></body></html>",
     );
 
-    let encoded = script.eval_value("new FormData(document.querySelector('#f')).toString()").unwrap();
+    let encoded = script
+        .eval_value("new FormData(document.querySelector('#f')).toString()")
+        .unwrap();
     assert!(encoded.contains("user=alice"), "{encoded}");
-    assert!(encoded.contains("terms=on"), "a checked box is included: {encoded}");
-    assert!(!encoded.contains("news"), "an unchecked box is absent: {encoded}");
-    assert!(!encoded.contains("go="), "the submit button is not a field: {encoded}");
+    assert!(
+        encoded.contains("terms=on"),
+        "a checked box is included: {encoded}"
+    );
+    assert!(
+        !encoded.contains("news"),
+        "an unchecked box is absent: {encoded}"
+    );
+    assert!(
+        !encoded.contains("go="),
+        "the submit button is not a field: {encoded}"
+    );
 }
 
 #[test]
@@ -1411,7 +1827,10 @@ fn typing_fires_input_and_change_because_it_is_a_user_edit() {
     // than trusting a value the engine already knew.
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
 
     let mut page = factory.from_html(
@@ -1442,8 +1861,14 @@ fn typing_fires_input_and_change_because_it_is_a_user_edit() {
     assert!(page.type_into(field, "typed by a person"));
 
     let rendered = page.snapshot().render();
-    assert!(rendered.contains("input;change;"), "a user edit fires both, in order:\n{rendered}");
-    assert_eq!(page.field_value(field).as_deref(), Some("typed by a person"));
+    assert!(
+        rendered.contains("input;change;"),
+        "a user edit fires both, in order:\n{rendered}"
+    );
+    assert_eq!(
+        page.field_value(field).as_deref(),
+        Some("typed by a person")
+    );
 }
 
 #[test]
@@ -1454,13 +1879,17 @@ fn response_headers_reach_the_page() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
-        let Ok((stream, _)) = listener.accept() else { return };
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut line = String::new();
         let _ = reader.read_line(&mut line);
         loop {
             let mut h = String::new();
-            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                break;
+            }
         }
         let body = "{}";
         let mut stream = stream;
@@ -1474,7 +1903,11 @@ fn response_headers_reach_the_page() {
 
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let page = factory.from_html("<html><body></body></html>", &base);
     let mut script = Script::new(page.dom(), broker, &base).expect("realm");
@@ -1515,7 +1948,12 @@ fn abort_fires_its_listeners() {
         )
         .expect("runs");
     assert_eq!(script.eval_value("fired").unwrap(), "true");
-    assert_eq!(script.eval_value("new Headers({'A':'1'}).get('a')").unwrap(), "1");
+    assert_eq!(
+        script
+            .eval_value("new Headers({'A':'1'}).get('a')")
+            .unwrap(),
+        "1"
+    );
 }
 
 // ── the security properties, end to end rather than at the policy ─────────
@@ -1539,7 +1977,9 @@ fn counting_server() -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
             let _ = reader.read_line(&mut line);
             loop {
                 let mut h = String::new();
-                if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+                if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                    break;
+                }
             }
             let body = "secret source code";
             let mut stream = stream;
@@ -1564,7 +2004,11 @@ fn a_web_page_cannot_read_the_dev_server_and_never_reaches_the_wire() {
     let sink = Arc::new(MemorySink::new());
     let broker = Arc::new(Broker::new(Policy::new(), sink.clone(), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
 
     // A page that came from the open web.
     let evil = url::Url::parse("https://evil.example/page").unwrap();
@@ -1581,13 +2025,21 @@ fn a_web_page_cannot_read_the_dev_server_and_never_reaches_the_wire() {
         .expect("runs");
     script.settle();
 
-    assert_eq!(script.eval_value("leaked").unwrap(), "null", "nothing was read");
+    assert_eq!(
+        script.eval_value("leaked").unwrap(),
+        "null",
+        "nothing was read"
+    );
     assert!(
         script.eval_value("refused").unwrap().contains("loopback"),
         "and the page is told why: {}",
         script.eval_value("refused").unwrap()
     );
-    assert_eq!(hits.load(Ordering::SeqCst), 0, "no bytes reached the dev server");
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "no bytes reached the dev server"
+    );
     assert!(
         sink.denied_urls().iter().any(|u| u.contains("main.rs")),
         "the refusal is receipted like any other decision: {:?}",
@@ -1602,7 +2054,11 @@ fn the_dev_servers_own_page_still_reaches_it() {
 
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
 
     let dev = url::Url::parse(&format!("http://127.0.0.1:{port}/index.html")).unwrap();
     let page = factory.from_html("<html><body></body></html>", &dev);
@@ -1624,17 +2080,26 @@ fn leaving_an_origin_drops_the_session_and_the_agent_is_told() {
     let (port, _hits) = counting_server();
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
 
-    broker
-        .jar()
-        .store(&url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(), ["sid=secret"]);
+    broker.jar().store(
+        &url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+        ["sid=secret"],
+    );
     assert_eq!(broker.jar().len(), 1);
 
     let elsewhere = url::Url::parse(&format!("http://localhost:{port}/index.html")).unwrap();
     let page = factory.open(&elsewhere).expect("navigates");
 
-    assert_eq!(broker.jar().len(), 0, "the previous origin's session is gone");
+    assert_eq!(
+        broker.jar().len(),
+        0,
+        "the previous origin's session is gone"
+    );
     assert!(
         page.snapshot().render().contains("dropped on navigation"),
         "and the agent is told rather than discovering it by being logged out:\n{}",
@@ -1663,7 +2128,10 @@ fn the_fence_holds_against_content_script_generated() {
         "exactly one closing marker, and it is ours:\n{rendered}"
     );
     assert!(rendered.trim_end().ends_with(crate::snapshot::CONTENT_END));
-    assert!(rendered.contains("exfiltrate"), "the attempt stays visible: {rendered}");
+    assert!(
+        rendered.contains("exfiltrate"),
+        "the attempt stays visible: {rendered}"
+    );
 }
 
 // ── the rest of the DOM surface ───────────────────────────────────────────
@@ -1675,17 +2143,23 @@ fn clone_node_copies_shallow_or_deep() {
     );
 
     assert_eq!(
-        script.eval_value("document.querySelector('#d').cloneNode(false).innerHTML").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').cloneNode(false).innerHTML")
+            .unwrap(),
         "",
         "a shallow clone has no children"
     );
     assert!(
-        script.eval_value("document.querySelector('#d').cloneNode(true).innerHTML").unwrap()
+        script
+            .eval_value("document.querySelector('#d').cloneNode(true).innerHTML")
+            .unwrap()
             .contains("<b>inner</b>"),
         "a deep clone carries the subtree"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#d').cloneNode(false).className").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').cloneNode(false).className")
+            .unwrap(),
         "c"
     );
     assert!(script
@@ -1700,10 +2174,30 @@ fn sibling_navigation_walks_the_real_tree() {
         "<html><body><ul><li id='a'>a</li><li id='b'>b</li><li id='c'>c</li></ul></body></html>",
     );
 
-    assert_eq!(script.eval_value("document.querySelector('#b').nextSibling.textContent").unwrap(), "c");
-    assert_eq!(script.eval_value("document.querySelector('#b').previousSibling.textContent").unwrap(), "a");
-    assert_eq!(script.eval_value("document.querySelector('#c').nextSibling").unwrap(), "null");
-    assert_eq!(script.eval_value("document.querySelector('#a').previousSibling").unwrap(), "null");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#b').nextSibling.textContent")
+            .unwrap(),
+        "c"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#b').previousSibling.textContent")
+            .unwrap(),
+        "a"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#c').nextSibling")
+            .unwrap(),
+        "null"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#a').previousSibling")
+            .unwrap(),
+        "null"
+    );
 }
 
 #[test]
@@ -1716,13 +2210,17 @@ fn scripts_run_in_document_order_inline_and_external_together() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
-        let Ok((stream, _)) = listener.accept() else { return };
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut line = String::new();
         let _ = reader.read_line(&mut line);
         loop {
             let mut h = String::new();
-            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                break;
+            }
         }
         let body = "order.push('external');";
         let mut stream = stream;
@@ -1736,7 +2234,10 @@ fn scripts_run_in_document_order_inline_and_external_together() {
 
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
@@ -1761,7 +2262,10 @@ fn scripts_run_in_document_order_inline_and_external_together() {
 fn a_script_that_throws_is_reported_and_the_rest_of_the_page_still_runs() {
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
 
     let page = factory.from_html(
@@ -1777,7 +2281,9 @@ fn a_script_that_throws_is_reported_and_the_rest_of_the_page_still_runs() {
         "one broken script does not take the page down"
     );
     assert!(
-        page.console().iter().any(|line| line.text.contains("exploded")),
+        page.console()
+            .iter()
+            .any(|line| line.text.contains("exploded")),
         "and the throw is reported: {:?}",
         page.console()
     );
@@ -1787,7 +2293,10 @@ fn a_script_that_throws_is_reported_and_the_rest_of_the_page_still_runs() {
 fn a_refused_script_src_is_reported_and_the_page_survives() {
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
 
     let page = factory.from_html(
@@ -1796,9 +2305,14 @@ fn a_refused_script_src_is_reported_and_the_page_survives() {
         &url::Url::parse("https://app.example/").unwrap(),
     );
 
-    assert!(page.snapshot().render().contains("here"), "the page still renders");
     assert!(
-        page.console().iter().any(|l| l.text.contains("not-allowed.example")),
+        page.snapshot().render().contains("here"),
+        "the page still renders"
+    );
+    assert!(
+        page.console()
+            .iter()
+            .any(|l| l.text.contains("not-allowed.example")),
         "the refusal names the script it could not load: {:?}",
         page.console()
     );
@@ -1827,7 +2341,9 @@ fn module_server(
             let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
             loop {
                 let mut h = String::new();
-                if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+                if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                    break;
+                }
             }
             log.lock().unwrap().push(path.clone());
 
@@ -1841,7 +2357,10 @@ fn module_server(
                     );
                 }
                 None => {
-                    let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
                 }
             }
             let _ = stream.flush();
@@ -1852,7 +2371,10 @@ fn module_server(
 
 fn scripted_factory(broker: Arc<Broker>) -> PageFactory {
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     PageFactory::new(broker, fonts.sources.clone(), options)
 }
 
@@ -1861,10 +2383,16 @@ fn a_module_graph_loads_and_evaluates() {
     // The shape a bundle actually has: an entry that imports, a dependency that
     // imports further, and named plus default exports.
     let (port, asked) = module_server(vec![
-        ("/entry.js", "import { greet } from './lib/greet.js';\
-                       document.querySelector('#out').textContent = greet('world');"),
-        ("/lib/greet.js", "import punctuation from './punctuation.js';\
-                           export const greet = (who) => `hello ${who}${punctuation}`;"),
+        (
+            "/entry.js",
+            "import { greet } from './lib/greet.js';\
+                       document.querySelector('#out').textContent = greet('world');",
+        ),
+        (
+            "/lib/greet.js",
+            "import punctuation from './punctuation.js';\
+                           export const greet = (who) => `hello ${who}${punctuation}`;",
+        ),
         ("/lib/punctuation.js", "export default '!';"),
     ]);
 
@@ -1888,16 +2416,25 @@ fn a_module_graph_loads_and_evaluates() {
     // Relative imports resolved against the *importing module*, not the page:
     // `./punctuation.js` inside `/lib/greet.js` is `/lib/punctuation.js`.
     let paths = asked.lock().unwrap().clone();
-    assert!(paths.contains(&"/lib/punctuation.js".to_string()), "{paths:?}");
+    assert!(
+        paths.contains(&"/lib/punctuation.js".to_string()),
+        "{paths:?}"
+    );
 }
 
 #[test]
 fn a_module_imported_twice_is_fetched_once() {
     let (port, asked) = module_server(vec![
-        ("/entry.js", "import './a.js'; import './b.js'; import './shared.js';"),
+        (
+            "/entry.js",
+            "import './a.js'; import './b.js'; import './shared.js';",
+        ),
         ("/a.js", "import './shared.js';"),
         ("/b.js", "import './shared.js';"),
-        ("/shared.js", "globalThis.__loads = (globalThis.__loads || 0) + 1;"),
+        (
+            "/shared.js",
+            "globalThis.__loads = (globalThis.__loads || 0) + 1;",
+        ),
     ]);
 
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
@@ -1908,8 +2445,18 @@ fn a_module_imported_twice_is_fetched_once() {
         &base,
     );
 
-    let shared = asked.lock().unwrap().iter().filter(|p| *p == "/shared.js").count();
-    assert_eq!(shared, 1, "the module cache holds: {:?}", asked.lock().unwrap());
+    let shared = asked
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| *p == "/shared.js")
+        .count();
+    assert_eq!(
+        shared,
+        1,
+        "the module cache holds: {:?}",
+        asked.lock().unwrap()
+    );
 }
 
 #[test]
@@ -1931,7 +2478,10 @@ fn every_module_is_fetched_through_the_broker_and_receipted() {
     );
 
     let logged = sink.fetched_urls();
-    assert!(logged.iter().any(|u| u.ends_with("/entry.js")), "{logged:?}");
+    assert!(
+        logged.iter().any(|u| u.ends_with("/entry.js")),
+        "{logged:?}"
+    );
     assert!(logged.iter().any(|u| u.ends_with("/dep.js")), "{logged:?}");
 }
 
@@ -1955,7 +2505,9 @@ fn a_bare_specifier_is_refused_and_the_page_is_told_why() {
         page.console()
     );
     assert!(
-        page.unsupported().iter().any(|(name, _)| name.contains("lodash")),
+        page.unsupported()
+            .iter()
+            .any(|(name, _)| name.contains("lodash")),
         "and reaches the snapshot's unsupported list: {:?}",
         page.unsupported()
     );
@@ -1971,10 +2523,8 @@ fn a_bare_specifier_is_refused_and_the_page_is_told_why() {
 
 #[test]
 fn an_inline_module_resolves_imports_against_the_page() {
-    let (port, _asked) = module_server(vec![(
-        "/lib.js",
-        "export const value = 'from the module';",
-    )]);
+    let (port, _asked) =
+        module_server(vec![("/lib.js", "export const value = 'from the module';")]);
 
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let factory = scripted_factory(broker);
@@ -2033,7 +2583,9 @@ fn a_module_that_fails_to_load_is_reported_rather_than_leaving_a_blank() {
     );
 
     assert!(
-        page.console().iter().any(|l| l.text.contains("module failed")),
+        page.console()
+            .iter()
+            .any(|l| l.text.contains("module failed")),
         "an agent reading a thin outline learns why: {:?}",
         page.console()
     );
@@ -2062,7 +2614,10 @@ fn a_module_may_not_reach_the_dev_server_from_a_page_the_web_served() {
         "refused, and the page is told: {:?}",
         page.console()
     );
-    assert!(asked.lock().unwrap().is_empty(), "no bytes reached the dev server");
+    assert!(
+        asked.lock().unwrap().is_empty(),
+        "no bytes reached the dev server"
+    );
 }
 
 #[test]
@@ -2070,9 +2625,12 @@ fn a_click_is_credited_only_with_what_it_caused() {
     // The correlation is the differentiator, so it has to be exact. Page load
     // fetches a module graph; the first click must not inherit it.
     let (port, _asked) = module_server(vec![
-        ("/entry.js", "import './dep.js';\
+        (
+            "/entry.js",
+            "import './dep.js';\
                        document.querySelector('#b').addEventListener('click', () => { \
-                         fetch('/clicked'); });"),
+                         fetch('/clicked'); });",
+        ),
         ("/dep.js", "globalThis.loaded = true;"),
         ("/clicked", "{}"),
     ]);
@@ -2175,24 +2733,36 @@ fn url_parsing_uses_the_engines_own_parser() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
 
     assert_eq!(
-        script.eval_value("new URL('/b?x=1#f', 'https://a.example/base/').href").unwrap(),
+        script
+            .eval_value("new URL('/b?x=1#f', 'https://a.example/base/').href")
+            .unwrap(),
         "https://a.example/b?x=1#f"
     );
     assert_eq!(
-        script.eval_value("new URL('https://a.example:8443/p').origin").unwrap(),
+        script
+            .eval_value("new URL('https://a.example:8443/p').origin")
+            .unwrap(),
         "https://a.example:8443"
     );
     assert_eq!(
-        script.eval_value("new URL('https://a.example/p?q=a%20b').searchParams.get('q')").unwrap(),
+        script
+            .eval_value("new URL('https://a.example/p?q=a%20b').searchParams.get('q')")
+            .unwrap(),
         "a b"
     );
     assert_eq!(
-        script.eval_value("String(new URLSearchParams({a:'1',b:'2'}))").unwrap(),
+        script
+            .eval_value("String(new URLSearchParams({a:'1',b:'2'}))")
+            .unwrap(),
         "a=1&b=2"
     );
     assert_eq!(
-        script.eval_value("(() => { try { new URL('not a url'); return 'no throw' } \
-                           catch (e) { return 'threw' } })()").unwrap(),
+        script
+            .eval_value(
+                "(() => { try { new URL('not a url'); return 'no throw' } \
+                           catch (e) { return 'threw' } })()"
+            )
+            .unwrap(),
         "threw"
     );
 }
@@ -2224,13 +2794,17 @@ fn an_http_error_page_is_not_presented_as_the_page_that_was_asked_for() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
-        let Ok((stream, _)) = listener.accept() else { return };
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut line = String::new();
         let _ = reader.read_line(&mut line);
         loop {
             let mut h = String::new();
-            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() { break; }
+            if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                break;
+            }
         }
         let body = "<html><body><h1>Not Found</h1></body></html>";
         let mut stream = stream;
@@ -2287,40 +2861,75 @@ fn match_media_answers_from_the_viewport_the_engine_renders_at() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
 
     // The default viewport, which is what these pages are built with: 1280x720.
-    assert_eq!(script.eval_value("matchMedia('(min-width: 300px)').matches").unwrap(), "true");
-    assert_eq!(script.eval_value("matchMedia('(min-width: 1900px)').matches").unwrap(), "false");
-    assert_eq!(script.eval_value("matchMedia('(max-width: 1500px)').matches").unwrap(), "true");
-    assert_eq!(script.eval_value("matchMedia('(orientation: landscape)').matches").unwrap(), "true");
     assert_eq!(
-        script.eval_value("matchMedia('(prefers-color-scheme: light)').matches").unwrap(),
+        script
+            .eval_value("matchMedia('(min-width: 300px)').matches")
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value("matchMedia('(min-width: 1900px)').matches")
+            .unwrap(),
+        "false"
+    );
+    assert_eq!(
+        script
+            .eval_value("matchMedia('(max-width: 1500px)').matches")
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value("matchMedia('(orientation: landscape)').matches")
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value("matchMedia('(prefers-color-scheme: light)').matches")
+            .unwrap(),
         "true",
         "the scheme it will actually be screenshotted in"
     );
     assert_eq!(
-        script.eval_value("matchMedia('(prefers-color-scheme: dark)').matches").unwrap(),
+        script
+            .eval_value("matchMedia('(prefers-color-scheme: dark)').matches")
+            .unwrap(),
         "false"
     );
 
     // `and` within a clause conjoins; a comma-separated list disjoins.
     assert_eq!(
-        script.eval_value("matchMedia('(min-width: 300px) and (max-width: 1500px)').matches").unwrap(),
+        script
+            .eval_value("matchMedia('(min-width: 300px) and (max-width: 1500px)').matches")
+            .unwrap(),
         "true"
     );
     assert_eq!(
-        script.eval_value("matchMedia('(min-width: 1900px), (max-width: 1500px)').matches").unwrap(),
+        script
+            .eval_value("matchMedia('(min-width: 1900px), (max-width: 1500px)').matches")
+            .unwrap(),
         "true",
         "a comma-separated list is a disjunction"
     );
     assert_eq!(
-        script.eval_value("matchMedia('(min-width: 1900px) and (max-width: 1500px)').matches").unwrap(),
+        script
+            .eval_value("matchMedia('(min-width: 1900px) and (max-width: 1500px)').matches")
+            .unwrap(),
         "false",
         "and `and` within a clause is a conjunction"
     );
 
     // A feature with no real answer here names itself rather than guessing.
-    script.eval("matchMedia('(color-gamut: p3)')").expect("runs");
+    script
+        .eval("matchMedia('(color-gamut: p3)')")
+        .expect("runs");
     assert!(
-        script.unsupported().iter().any(|(n, _)| n.contains("color-gamut")),
+        script
+            .unsupported()
+            .iter()
+            .any(|(n, _)| n.contains("color-gamut")),
         "{:?}",
         script.unsupported()
     );
@@ -2330,10 +2939,16 @@ fn match_media_answers_from_the_viewport_the_engine_renders_at() {
 fn document_cookie_shows_what_a_browser_would_and_withholds_the_session() {
     let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
     let base = url::Url::parse("https://app.example/page").unwrap();
-    broker.jar().store(&base, ["sid=secret; HttpOnly", "theme=dark"]);
+    broker
+        .jar()
+        .store(&base, ["sid=secret; HttpOnly", "theme=dark"]);
 
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
     let page = factory.from_html("<html><body></body></html>", &base);
     let mut script = Script::new(page.dom(), broker.clone(), &base).expect("realm");
 
@@ -2345,11 +2960,19 @@ fn document_cookie_shows_what_a_browser_would_and_withholds_the_session() {
     );
 
     // And script can set one, which the jar then carries on the wire.
-    script.eval("document.cookie = 'lang=en; Path=/'").expect("sets");
-    assert!(script.eval_value("document.cookie").unwrap().contains("lang=en"));
+    script
+        .eval("document.cookie = 'lang=en; Path=/'")
+        .expect("sets");
+    assert!(script
+        .eval_value("document.cookie")
+        .unwrap()
+        .contains("lang=en"));
     let (wire, _) = broker.jar().header_for(&base).expect("sent");
     assert!(wire.contains("lang=en"), "{wire}");
-    assert!(wire.contains("sid=secret"), "and the wire still carries the session: {wire}");
+    assert!(
+        wire.contains("sid=secret"),
+        "and the wire still carries the session: {wire}"
+    );
 }
 
 #[test]
@@ -2371,11 +2994,17 @@ fn set_interval_repeats_but_does_not_hold_the_page_open() {
         .expect("runs");
 
     let settled = script.settle();
-    assert!(!settled.cut_off, "a polling page still settles: {settled:?}");
+    assert!(
+        !settled.cut_off,
+        "a polling page still settles: {settled:?}"
+    );
     assert_eq!(script.eval_value("done").unwrap(), "true");
 
     let ticks: u64 = script.eval_value("ticks").unwrap().parse().unwrap();
-    assert!(ticks > 1, "the interval repeated while the clock moved: {ticks}");
+    assert!(
+        ticks > 1,
+        "the interval repeated while the clock moved: {ticks}"
+    );
 
     script.eval("clearInterval(id)").expect("clears");
     let before: u64 = script.eval_value("ticks").unwrap().parse().unwrap();
@@ -2408,7 +3037,11 @@ fn an_intersection_observer_reports_what_is_on_screen_and_what_is_not() {
         .expect("runs");
     script.settle();
 
-    assert_eq!(script.eval_value("seen.near").unwrap(), "true", "at the top of the viewport");
+    assert_eq!(
+        script.eval_value("seen.near").unwrap(),
+        "true",
+        "at the top of the viewport"
+    );
     assert_eq!(
         script.eval_value("seen.far").unwrap(),
         "false",
@@ -2445,9 +3078,8 @@ fn an_intersection_observer_reports_edges_rather_than_every_settle() {
 fn a_resize_observer_delivers_the_initial_measurement() {
     // The first observation always fires, which is what a browser does and what
     // layout code depends on for its initial measurement.
-    let (_page, mut script) = page_and_script(
-        "<html><body><div id='d' style='height:40px'>d</div></body></html>",
-    );
+    let (_page, mut script) =
+        page_and_script("<html><body><div id='d' style='height:40px'>d</div></body></html>");
     script
         .eval(
             "globalThis.size = null; \
@@ -2457,7 +3089,11 @@ fn a_resize_observer_delivers_the_initial_measurement() {
         .expect("runs");
     script.settle();
 
-    assert_ne!(script.eval_value("size.width").unwrap(), "0", "a laid-out block has width");
+    assert_ne!(
+        script.eval_value("size.width").unwrap(),
+        "0",
+        "a laid-out block has width"
+    );
     assert_eq!(script.eval_value("size.height").unwrap(), "40");
 }
 
@@ -2496,7 +3132,10 @@ fn an_unknown_property_on_an_element_names_itself() {
 fn an_unknown_property_on_document_names_itself() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
 
-    assert_eq!(script.eval_value("typeof document.fonts").unwrap(), "undefined");
+    assert_eq!(
+        script.eval_value("typeof document.fonts").unwrap(),
+        "undefined"
+    );
     assert!(
         script
             .unsupported()
@@ -2592,15 +3231,21 @@ fn href_and_src_resolve_against_the_document() {
     // The property is absolute; getAttribute stays raw. Code comparing a link
     // to location.href depends on exactly this difference.
     assert_eq!(
-        script.eval_value("document.querySelector('#a').href").unwrap(),
+        script
+            .eval_value("document.querySelector('#a').href")
+            .unwrap(),
         "https://app.example/up?q=1#f"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#a').getAttribute('href')").unwrap(),
+        script
+            .eval_value("document.querySelector('#a').getAttribute('href')")
+            .unwrap(),
         "../up?q=1#f"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#i').src").unwrap(),
+        script
+            .eval_value("document.querySelector('#i').src")
+            .unwrap(),
         "https://app.example/pic.png"
     );
     assert_eq!(
@@ -2626,7 +3271,9 @@ fn document_title_reads_and_writes_the_title_element() {
     assert_eq!(script.eval_value("document.title").unwrap(), "After");
     // And it is the real element, so the snapshot sees it too.
     assert_eq!(
-        script.eval_value("document.querySelector('title').textContent").unwrap(),
+        script
+            .eval_value("document.querySelector('title').textContent")
+            .unwrap(),
         "After"
     );
 }
@@ -2638,14 +3285,30 @@ fn document_identity_properties_answer_from_the_page() {
     );
 
     assert_eq!(script.eval_value("document.nodeType").unwrap(), "9");
-    assert_eq!(script.eval_value("document.childNodes.length").unwrap(), "1");
     assert_eq!(
-        script.eval_value("document.childNodes[0] === document.documentElement").unwrap(),
+        script.eval_value("document.childNodes.length").unwrap(),
+        "1"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.childNodes[0] === document.documentElement")
+            .unwrap(),
         "true"
     );
-    assert_eq!(script.eval_value("document.URL").unwrap(), "https://app.example/");
-    assert_eq!(script.eval_value("document.location.href").unwrap(), "https://app.example/");
-    assert_eq!(script.eval_value("document.defaultView === globalThis").unwrap(), "true");
+    assert_eq!(
+        script.eval_value("document.URL").unwrap(),
+        "https://app.example/"
+    );
+    assert_eq!(
+        script.eval_value("document.location.href").unwrap(),
+        "https://app.example/"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.defaultView === globalThis")
+            .unwrap(),
+        "true"
+    );
     // We send no Referer, so the honest answer is empty.
     assert_eq!(script.eval_value("document.referrer").unwrap(), "");
     // A named anchor is not a link.
@@ -2655,11 +3318,13 @@ fn document_identity_properties_answer_from_the_page() {
 
 #[test]
 fn current_script_names_the_running_element_and_only_then() {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
     let base = url::Url::parse("https://app.example/").unwrap();
 
@@ -2676,7 +3341,10 @@ fn current_script_names_the_running_element_and_only_then() {
     page.run_scripts(broker).unwrap();
 
     let text = page.snapshot().render();
-    assert!(text.contains("compact"), "currentScript should name its own element: {text}");
+    assert!(
+        text.contains("compact"),
+        "currentScript should name its own element: {text}"
+    );
 }
 
 #[test]
@@ -2687,20 +3355,44 @@ fn select_index_reads_and_moves_the_choice() {
          <option value='c'>C</option></select></body></html>",
     );
 
-    assert_eq!(script.eval_value("document.querySelector('#s').selectedIndex").unwrap(), "1");
-    script.eval("document.querySelector('#s').selectedIndex = 2").unwrap();
-    assert_eq!(script.eval_value("document.querySelector('#s').selectedIndex").unwrap(), "2");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#s').selectedIndex")
+            .unwrap(),
+        "1"
+    );
+    script
+        .eval("document.querySelector('#s').selectedIndex = 2")
+        .unwrap();
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#s').selectedIndex")
+            .unwrap(),
+        "2"
+    );
     // Setting the index has to move the attribute, or the element and the DOM
     // disagree about what is chosen and the form submits the old value.
-    assert_eq!(script.eval_value("document.querySelector('#s').value").unwrap(), "c");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#s').value")
+            .unwrap(),
+        "c"
+    );
 
     // A select with nothing marked reports its first option, as a browser does.
     let (_page2, mut plain) = page_and_script(
         "<html><body><select id='s'><option>A</option><option>B</option></select></body></html>",
     );
-    assert_eq!(plain.eval_value("document.querySelector('#s').selectedIndex").unwrap(), "0");
     assert_eq!(
-        plain.eval_value("document.createElement('select').selectedIndex").unwrap(),
+        plain
+            .eval_value("document.querySelector('#s').selectedIndex")
+            .unwrap(),
+        "0"
+    );
+    assert_eq!(
+        plain
+            .eval_value("document.createElement('select').selectedIndex")
+            .unwrap(),
         "-1"
     );
 }
@@ -2716,12 +3408,14 @@ fn select_add_inserts_an_option_where_asked() {
             "const s = document.querySelector('#s'); \
              const first = document.createElement('option'); first.textContent = 'A'; \
              s.add(first, 0); \
-             const last = document.createElement('option'); last.textContent = 'C'; s.add(last);"
+             const last = document.createElement('option'); last.textContent = 'C'; s.add(last);",
         )
         .unwrap();
 
     assert_eq!(
-        script.eval_value("s.options.map((o) => o.textContent).join('')").unwrap(),
+        script
+            .eval_value("s.options.map((o) => o.textContent).join('')")
+            .unwrap(),
         "ABC"
     );
 }
@@ -2731,16 +3425,27 @@ fn prepend_puts_nodes_first_and_node_value_distinguishes_text() {
     let (_page, mut script) =
         page_and_script("<html><body><div id='d'><span>old</span></div></body></html>");
 
-    script.eval("document.querySelector('#d').prepend('new ')").unwrap();
+    script
+        .eval("document.querySelector('#d').prepend('new ')")
+        .unwrap();
     assert_eq!(
-        script.eval_value("document.querySelector('#d').textContent").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').textContent")
+            .unwrap(),
         "new old"
     );
 
     // null for an element is the distinction a tree walk branches on.
-    assert_eq!(script.eval_value("document.querySelector('#d').nodeValue").unwrap(), "null");
     assert_eq!(
-        script.eval_value("document.querySelector('#d').firstChild.nodeValue").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').nodeValue")
+            .unwrap(),
+        "null"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#d').firstChild.nodeValue")
+            .unwrap(),
         "new "
     );
 }
@@ -2760,11 +3465,17 @@ fn base64_round_trips_and_refuses_what_a_browser_refuses() {
     // Byte-oriented, as the spec has it. Silently mangling a code point above
     // 255 would produce a wrong header rather than a caught error.
     assert_eq!(
-        script.eval_value("(() => { try { btoa('snowman \u{2603}') } catch (e) { return 'threw' } })()")
+        script
+            .eval_value(
+                "(() => { try { btoa('snowman \u{2603}') } catch (e) { return 'threw' } })()"
+            )
             .unwrap(),
         "threw"
     );
-    assert_eq!(script.eval_value("unescape('a%20b%u00e9')").unwrap(), "a bé");
+    assert_eq!(
+        script.eval_value("unescape('a%20b%u00e9')").unwrap(),
+        "a bé"
+    );
 }
 
 #[test]
@@ -2775,7 +3486,9 @@ fn self_is_the_same_object_as_the_global() {
     // through the other.
     assert_eq!(script.eval_value("self === globalThis").unwrap(), "true");
     assert_eq!(
-        script.eval_value("self.__stashed = 3; String(globalThis.__stashed)").unwrap(),
+        script
+            .eval_value("self.__stashed = 3; String(globalThis.__stashed)")
+            .unwrap(),
         "3"
     );
 }
@@ -2786,19 +3499,27 @@ fn node_constructors_answer_instanceof() {
 
     // How library code asks "is this a node?" before deciding what to do.
     assert_eq!(
-        script.eval_value("document.querySelector('#d') instanceof Element").unwrap(),
+        script
+            .eval_value("document.querySelector('#d') instanceof Element")
+            .unwrap(),
         "true"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#d') instanceof HTMLElement").unwrap(),
+        script
+            .eval_value("document.querySelector('#d') instanceof HTMLElement")
+            .unwrap(),
         "true"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#d') instanceof Node").unwrap(),
+        script
+            .eval_value("document.querySelector('#d') instanceof Node")
+            .unwrap(),
         "true"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#d').firstChild instanceof Text").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').firstChild instanceof Text")
+            .unwrap(),
         "true"
     );
     assert_eq!(script.eval_value("({}) instanceof Node").unwrap(), "false");
@@ -2808,9 +3529,8 @@ fn node_constructors_answer_instanceof() {
 
 #[test]
 fn defining_a_component_upgrades_the_markup_already_on_the_page() {
-    let (_page, mut script) = page_and_script(
-        "<html><body><my-card label='Kelp'></my-card></body></html>",
-    );
+    let (_page, mut script) =
+        page_and_script("<html><body><my-card label='Kelp'></my-card></body></html>");
 
     // The order that matters: markup first, definition second. A page that
     // ships server-rendered HTML and defines its components in a deferred
@@ -2830,7 +3550,9 @@ fn defining_a_component_upgrades_the_markup_already_on_the_page() {
         .expect("defines");
 
     assert_eq!(
-        script.eval_value("document.querySelector('my-card').textContent").unwrap(),
+        script
+            .eval_value("document.querySelector('my-card').textContent")
+            .unwrap(),
         "card: Kelp",
         "observed attributes should be delivered on upgrade, or a component that \
          renders from attributeChangedCallback renders blank"
@@ -2842,7 +3564,9 @@ fn defining_a_component_upgrades_the_markup_already_on_the_page() {
         "1"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('my-card') instanceof MyCard").unwrap(),
+        script
+            .eval_value("document.querySelector('my-card') instanceof MyCard")
+            .unwrap(),
         "true"
     );
 }
@@ -2900,7 +3624,8 @@ fn a_component_is_not_connected_twice_and_a_detached_one_is_not_connected_at_all
 
 #[test]
 fn a_component_whose_constructor_throws_does_not_take_the_page_with_it() {
-    let (_page, mut script) = page_and_script("<html><body><my-bad></my-bad><p>after</p></body></html>");
+    let (_page, mut script) =
+        page_and_script("<html><body><my-bad></my-bad><p>after</p></body></html>");
 
     script
         .eval(
@@ -2911,7 +3636,9 @@ fn a_component_whose_constructor_throws_does_not_take_the_page_with_it() {
 
     // The rest of the page is still readable, and the failure is on the record.
     assert_eq!(
-        script.eval_value("document.querySelector('p').textContent").unwrap(),
+        script
+            .eval_value("document.querySelector('p').textContent")
+            .unwrap(),
         "after"
     );
     assert!(
@@ -2964,7 +3691,9 @@ fn when_defined_resolves_for_a_component_registered_later() {
 
     assert_eq!(script.eval_value("seen").unwrap(), "defined");
     assert_eq!(
-        script.eval_value("typeof customElements.get('my-late')").unwrap(),
+        script
+            .eval_value("typeof customElements.get('my-late')")
+            .unwrap(),
         "function"
     );
 }
@@ -2985,15 +3714,21 @@ fn a_comment_is_a_real_node_and_stays_out_of_the_text() {
     // A marker that were secretly a text node would show up in the outline an
     // agent reads, which is the whole reason this is not a text node.
     assert_eq!(
-        script.eval_value("document.querySelector('#d').textContent").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').textContent")
+            .unwrap(),
         "text"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#d').lastChild.nodeType").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').lastChild.nodeType")
+            .unwrap(),
         "8"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#d').lastChild.data").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').lastChild.data")
+            .unwrap(),
         "list-anchor"
     );
     assert!(
@@ -3004,9 +3739,8 @@ fn a_comment_is_a_real_node_and_stays_out_of_the_text() {
 
 #[test]
 fn a_node_iterator_walks_the_types_it_was_asked_for() {
-    let (_page, mut script) = page_and_script(
-        "<html><body><div id='r'>one<span>two</span>three</div></body></html>",
-    );
+    let (_page, mut script) =
+        page_and_script("<html><body><div id='r'>one<span>two</span>three</div></body></html>");
 
     assert_eq!(
         script
@@ -3049,23 +3783,49 @@ fn document_position_and_containment_agree_with_the_tree() {
         .unwrap();
 
     // 4 = FOLLOWING, 2 = PRECEDING, 20 = CONTAINED_BY | FOLLOWING.
-    assert_eq!(script.eval_value("a.compareDocumentPosition(b)").unwrap(), "4");
-    assert_eq!(script.eval_value("b.compareDocumentPosition(a)").unwrap(), "2");
-    assert_eq!(script.eval_value("a.compareDocumentPosition(inner)").unwrap(), "20");
-    assert_eq!(script.eval_value("inner.compareDocumentPosition(a)").unwrap(), "10");
-    assert_eq!(script.eval_value("a.compareDocumentPosition(a)").unwrap(), "0");
+    assert_eq!(
+        script.eval_value("a.compareDocumentPosition(b)").unwrap(),
+        "4"
+    );
+    assert_eq!(
+        script.eval_value("b.compareDocumentPosition(a)").unwrap(),
+        "2"
+    );
+    assert_eq!(
+        script
+            .eval_value("a.compareDocumentPosition(inner)")
+            .unwrap(),
+        "20"
+    );
+    assert_eq!(
+        script
+            .eval_value("inner.compareDocumentPosition(a)")
+            .unwrap(),
+        "10"
+    );
+    assert_eq!(
+        script.eval_value("a.compareDocumentPosition(a)").unwrap(),
+        "0"
+    );
     assert_eq!(script.eval_value("a.contains(inner)").unwrap(), "true");
     assert_eq!(script.eval_value("b.contains(inner)").unwrap(), "false");
 
     // A detached node is disconnected, and its root is its own top.
     assert_eq!(
         script
-            .eval_value("const loose = document.createElement('div'); \
-                         String(loose.isConnected) + ' ' + (loose.getRootNode() === loose)")
+            .eval_value(
+                "const loose = document.createElement('div'); \
+                         String(loose.isConnected) + ' ' + (loose.getRootNode() === loose)"
+            )
             .unwrap(),
         "false true"
     );
-    assert_eq!(script.eval_value("inner.getRootNode() === document").unwrap(), "true");
+    assert_eq!(
+        script
+            .eval_value("inner.getRootNode() === document")
+            .unwrap(),
+        "true"
+    );
 }
 
 #[test]
@@ -3075,17 +3835,33 @@ fn the_remaining_document_and_element_asks_answer_from_the_page() {
          <input name='who' value='second'></body></html>",
     );
 
-    assert_eq!(script.eval_value("document.getElementsByName('who').length").unwrap(), "2");
+    assert_eq!(
+        script
+            .eval_value("document.getElementsByName('who').length")
+            .unwrap(),
+        "2"
+    );
 
     // defaultValue is what a reset restores — the attribute, not the live value.
-    script.eval("document.querySelector('input').value = 'typed'").unwrap();
-    assert_eq!(script.eval_value("document.querySelector('input').value").unwrap(), "typed");
+    script
+        .eval("document.querySelector('input').value = 'typed'")
+        .unwrap();
     assert_eq!(
-        script.eval_value("document.querySelector('input').defaultValue").unwrap(),
+        script
+            .eval_value("document.querySelector('input').value")
+            .unwrap(),
+        "typed"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('input').defaultValue")
+            .unwrap(),
         "start"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('textarea').defaultValue").unwrap(),
+        script
+            .eval_value("document.querySelector('textarea').defaultValue")
+            .unwrap(),
         "original"
     );
 
@@ -3102,10 +3878,18 @@ fn the_remaining_document_and_element_asks_answer_from_the_page() {
 
     // Absent in a real browser too, so defined-as-undefined rather than named
     // as a gap this engine has.
-    assert_eq!(script.eval_value("typeof document.namespaceURI").unwrap(), "undefined");
-    assert_eq!(script.eval_value("String(document.ownerDocument)").unwrap(), "null");
     assert_eq!(
-        script.eval_value("document.documentElement.namespaceURI").unwrap(),
+        script.eval_value("typeof document.namespaceURI").unwrap(),
+        "undefined"
+    );
+    assert_eq!(
+        script.eval_value("String(document.ownerDocument)").unwrap(),
+        "null"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.documentElement.namespaceURI")
+            .unwrap(),
         "http://www.w3.org/1999/xhtml"
     );
     assert!(
@@ -3118,20 +3902,21 @@ fn the_remaining_document_and_element_asks_answer_from_the_page() {
     // shape `DOMParser` returns, which is what the method is used for.
     assert_eq!(
         script
-            .eval_value(
-                "document.implementation.createHTMLDocument('x').body.tagName"
-            )
+            .eval_value("document.implementation.createHTMLDocument('x').body.tagName")
             .unwrap(),
         "BODY"
     );
-    assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
+    assert!(
+        script.unsupported().is_empty(),
+        "{:?}",
+        script.unsupported()
+    );
 }
 
 #[test]
 fn scroll_metrics_describe_the_document_and_agree_with_each_other() {
-    let (mut page, mut script) = page_and_script(
-        "<html><body><div style='height: 4000px'>tall</div></body></html>",
-    );
+    let (mut page, mut script) =
+        page_and_script("<html><body><div style='height: 4000px'>tall</div></body></html>");
     page.refresh();
 
     // The "am I at the bottom" expression every page writes.
@@ -3144,13 +3929,19 @@ fn scroll_metrics_describe_the_document_and_agree_with_each_other() {
             .unwrap(),
         "true"
     );
-    script.eval("document.documentElement.scrollTop = 500").unwrap();
+    script
+        .eval("document.documentElement.scrollTop = 500")
+        .unwrap();
     assert_eq!(
-        script.eval_value("document.documentElement.scrollTop").unwrap(),
+        script
+            .eval_value("document.documentElement.scrollTop")
+            .unwrap(),
         "500"
     );
     // Clamped to the document rather than accepted blindly.
-    script.eval("document.documentElement.scrollTop = 99999").unwrap();
+    script
+        .eval("document.documentElement.scrollTop = 99999")
+        .unwrap();
     assert_eq!(
         script
             .eval_value(
@@ -3164,9 +3955,8 @@ fn scroll_metrics_describe_the_document_and_agree_with_each_other() {
 
 #[test]
 fn the_window_knows_how_big_it_is() {
-    let (mut page, mut script) = page_and_script(
-        "<html><body><div style='height: 4000px'>tall</div></body></html>",
-    );
+    let (mut page, mut script) =
+        page_and_script("<html><body><div style='height: 4000px'>tall</div></body></html>");
     page.refresh();
 
     // Nothing exposed these before, and a bare undefined on the global object is
@@ -3200,19 +3990,23 @@ fn a_global_missing_because_a_script_was_refused_is_not_called_an_engine_gap() {
     );
     let console = script.console();
     assert!(
-        console.iter().any(|line| line.text.contains("code.jquery.com")
-            && line.text.contains("it refused the request")),
+        console
+            .iter()
+            .any(|line| line.text.contains("code.jquery.com")
+                && line.text.contains("it refused the request")),
         "the report should say what actually happened: {console:?}"
     );
 }
 
 #[test]
 fn an_uncaught_error_says_which_script_it_came_from() {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
     let base = url::Url::parse("https://app.example/").unwrap();
 
@@ -3227,7 +4021,9 @@ fn an_uncaught_error_says_which_script_it_came_from() {
     page.run_scripts(broker).unwrap();
 
     assert!(
-        page.console().iter().any(|line| line.text.contains("inline script #2")),
+        page.console()
+            .iter()
+            .any(|line| line.text.contains("inline script #2")),
         "{:?}",
         page.console()
     );
@@ -3296,16 +4092,23 @@ fn a_scoped_tag_search_only_sees_the_subtree() {
             .unwrap(),
         "2"
     );
-    assert_eq!(script.eval_value("document.getElementsByTagName('p').length").unwrap(), "3");
+    assert_eq!(
+        script
+            .eval_value("document.getElementsByTagName('p').length")
+            .unwrap(),
+        "3"
+    );
 }
 
 #[test]
 fn a_script_that_threw_explains_the_globals_it_never_defined() {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let options = PageOptions { script: true, ..Default::default() };
+    let options = PageOptions {
+        script: true,
+        ..Default::default()
+    };
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
     let base = url::Url::parse("https://app.example/").unwrap();
 
@@ -3324,8 +4127,10 @@ fn a_script_that_threw_explains_the_globals_it_never_defined() {
         page.unsupported()
     );
     assert!(
-        page.console().iter().any(|line| line.text.contains("`jQuery` is missing")
-            && line.text.contains("inline script #1")),
+        page.console()
+            .iter()
+            .any(|line| line.text.contains("`jQuery` is missing")
+                && line.text.contains("inline script #1")),
         "{:?}",
         page.console()
     );
@@ -3335,7 +4140,9 @@ fn a_script_that_threw_explains_the_globals_it_never_defined() {
 
 /// A server that holds every request open for `delay`, so overlapping requests
 /// take one delay in total and serialised ones take N.
-fn slow_server(delay: std::time::Duration) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+fn slow_server(
+    delay: std::time::Duration,
+) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3386,11 +4193,14 @@ fn requests_overlap_instead_of_queueing_behind_each_other() {
     use std::sync::atomic::Ordering;
     let (port, peak) = slow_server(std::time::Duration::from_millis(120));
 
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let page = factory.from_html("<html><body></body></html>", &base);
     let mut script = Script::new(page.dom(), broker, &base).expect("realm");
@@ -3408,7 +4218,11 @@ fn requests_overlap_instead_of_queueing_behind_each_other() {
     script.settle();
     let elapsed = started.elapsed();
 
-    assert_eq!(script.eval_value("String(done)").unwrap(), "5", "all five answered");
+    assert_eq!(
+        script.eval_value("String(done)").unwrap(),
+        "5",
+        "all five answered"
+    );
     assert!(
         peak.load(Ordering::SeqCst) > 1,
         "the server should have seen more than one request in flight at once, saw {}",
@@ -3425,11 +4239,14 @@ fn more_requests_than_slots_still_all_finish() {
     use std::sync::atomic::Ordering;
     let (port, peak) = slow_server(std::time::Duration::from_millis(30));
 
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let page = factory.from_html("<html><body></body></html>", &base);
     let mut script = Script::new(page.dom(), broker, &base).expect("realm");
@@ -3482,9 +4299,8 @@ fn the_wire_says_what_this_engine_is_and_what_it_will_accept() {
         seen
     });
 
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let url = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let _ = broker.fetch(&url, crate::receipt::Initiator::Navigation);
 
@@ -3529,7 +4345,9 @@ fn a_template_hands_back_content_that_can_be_cloned_and_queried() {
     // failures across the application corpus. It is how every framework that
     // ships a template renders its first row.
     assert_eq!(
-        script.eval_value("document.querySelector('#t').content.nodeType").unwrap(),
+        script
+            .eval_value("document.querySelector('#t').content.nodeType")
+            .unwrap(),
         "11",
         "content answers as a fragment"
     );
@@ -3540,17 +4358,22 @@ fn a_template_hands_back_content_that_can_be_cloned_and_queried() {
         )
         .expect("clones");
     assert_eq!(
-        script.eval_value("document.querySelector('#out').innerHTML").unwrap(),
+        script
+            .eval_value("document.querySelector('#out').innerHTML")
+            .unwrap(),
         "<li class=\"row\"><span>hello</span></li>"
     );
     // Cloning does not empty the template — it can be used again.
     assert_eq!(
-        script.eval_value("document.querySelector('#t').content.childNodes.length").unwrap(),
+        script
+            .eval_value("document.querySelector('#t').content.childNodes.length")
+            .unwrap(),
         "1"
     );
     // And it can be searched inside without being inserted first.
     assert_eq!(
-        script.eval_value("document.querySelector('#t').content.querySelector('span').textContent")
+        script
+            .eval_value("document.querySelector('#t').content.querySelector('span').textContent")
             .unwrap(),
         "hello"
     );
@@ -3565,10 +4388,17 @@ fn meta_content_is_the_attribute_and_template_content_is_not() {
 
     // The same property name, two unrelated meanings, both real.
     assert_eq!(
-        script.eval_value("document.querySelector('meta').content").unwrap(),
+        script
+            .eval_value("document.querySelector('meta').content")
+            .unwrap(),
         "a value"
     );
-    assert_eq!(script.eval_value("typeof document.querySelector('#p').content").unwrap(), "undefined");
+    assert_eq!(
+        script
+            .eval_value("typeof document.querySelector('#p').content")
+            .unwrap(),
+        "undefined"
+    );
 }
 
 #[test]
@@ -3579,39 +4409,58 @@ fn the_element_walk_and_attribute_list_answer() {
     );
 
     assert_eq!(
-        script.eval_value("document.querySelector('#d').firstElementChild.tagName").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').firstElementChild.tagName")
+            .unwrap(),
         "SPAN"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#d').lastElementChild.tagName").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').lastElementChild.tagName")
+            .unwrap(),
         "EM"
     );
-    assert_eq!(script.eval_value("document.querySelector('#d').childElementCount").unwrap(), "2");
     assert_eq!(
-        script.eval_value("document.querySelector('span').nextElementSibling.tagName").unwrap(),
+        script
+            .eval_value("document.querySelector('#d').childElementCount")
+            .unwrap(),
+        "2"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('span').nextElementSibling.tagName")
+            .unwrap(),
         "EM"
     );
 
     // Attributes, in source order, with a name lookup.
     assert_eq!(
-        script.eval_value("document.querySelector('#d').attributes.map(a => a.name).join(',')")
+        script
+            .eval_value("document.querySelector('#d').attributes.map(a => a.name).join(',')")
             .unwrap(),
         "id,class,data-x"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#d').attributes.getNamedItem('data-x').value")
+        script
+            .eval_value("document.querySelector('#d').attributes.getNamedItem('data-x').value")
             .unwrap(),
         "1"
     );
 
     // `rel` is a token list like `class` is.
     assert_eq!(
-        script.eval_value("document.querySelector('link').relList.contains('preload')").unwrap(),
+        script
+            .eval_value("document.querySelector('link').relList.contains('preload')")
+            .unwrap(),
         "true"
     );
-    script.eval("document.querySelector('link').relList.add('modulepreload')").unwrap();
+    script
+        .eval("document.querySelector('link').relList.add('modulepreload')")
+        .unwrap();
     assert_eq!(
-        script.eval_value("document.querySelector('link').getAttribute('rel')").unwrap(),
+        script
+            .eval_value("document.querySelector('link').getAttribute('rel')")
+            .unwrap(),
         "stylesheet preload modulepreload"
     );
 
@@ -3629,7 +4478,9 @@ fn a_frameworks_private_field_is_not_reported_as_a_missing_api() {
     // Solid reads `document._$DX_DELEGATE` before it sets it, and the list an
     // agent reads carried that as something this engine was missing. No web
     // platform property begins with an underscore or a dollar.
-    script.eval("void document._$DX_DELEGATE; void document.$internal;").unwrap();
+    script
+        .eval("void document._$DX_DELEGATE; void document.$internal;")
+        .unwrap();
     assert!(
         script.unsupported().is_empty(),
         "a framework's own bookkeeping is not an API gap: {:?}",
@@ -3637,9 +4488,14 @@ fn a_frameworks_private_field_is_not_reported_as_a_missing_api() {
     );
 
     // A name that could be a real API is still reported.
-    script.eval("void document.pictureInPictureElement;").unwrap();
+    script
+        .eval("void document.pictureInPictureElement;")
+        .unwrap();
     assert!(
-        script.unsupported().iter().any(|(n, _)| n == "document.pictureInPictureElement"),
+        script
+            .unsupported()
+            .iter()
+            .any(|(n, _)| n == "document.pictureInPictureElement"),
         "{:?}",
         script.unsupported()
     );
@@ -3662,14 +4518,18 @@ fn utf8_survives_a_round_trip_through_the_encoder() {
         );
     }
     assert_eq!(
-        script.eval_value("new TextEncoder().encode('é').length").unwrap(),
+        script
+            .eval_value("new TextEncoder().encode('é').length")
+            .unwrap(),
         "2",
         "two bytes, not one character"
     );
     // A truncated sequence decodes to the replacement character rather than
     // throwing, which is what a decoder is specified to do.
     assert_eq!(
-        script.eval_value("new TextDecoder().decode(new Uint8Array([0xE6, 0x97]))").unwrap(),
+        script
+            .eval_value("new TextDecoder().decode(new Uint8Array([0xE6, 0x97]))")
+            .unwrap(),
         "\u{FFFD}"
     );
 }
@@ -3717,30 +4577,40 @@ fn structured_clone_keeps_what_the_json_round_trip_dropped() {
 
     // Every one of these read as the page's own bug before.
     assert_eq!(
-        script.eval_value("structuredClone(new Map([['a', 1]])).get('a')").unwrap(),
+        script
+            .eval_value("structuredClone(new Map([['a', 1]])).get('a')")
+            .unwrap(),
         "1"
     );
     assert_eq!(
-        script.eval_value("structuredClone(new Set([1, 2, 3])).size").unwrap(),
+        script
+            .eval_value("structuredClone(new Set([1, 2, 3])).size")
+            .unwrap(),
         "3"
     );
     assert_eq!(
-        script.eval_value("structuredClone(new Date(86400000)) instanceof Date").unwrap(),
+        script
+            .eval_value("structuredClone(new Date(86400000)) instanceof Date")
+            .unwrap(),
         "true"
     );
     // A cycle is clonable, and used to throw.
     assert_eq!(
         script
-            .eval_value("const o = { name: 'x' }; o.self = o; \
-                         const c = structuredClone(o); String(c.self === c)")
+            .eval_value(
+                "const o = { name: 'x' }; o.self = o; \
+                         const c = structuredClone(o); String(c.self === c)"
+            )
             .unwrap(),
         "true"
     );
     // And the copy is a copy.
     assert_eq!(
         script
-            .eval_value("const src = { nested: { n: 1 } }; const copy = structuredClone(src); \
-                         copy.nested.n = 2; String(src.nested.n)")
+            .eval_value(
+                "const src = { nested: { n: 1 } }; const copy = structuredClone(src); \
+                         copy.nested.n = 2; String(src.nested.n)"
+            )
             .unwrap(),
         "1"
     );
@@ -3751,11 +4621,14 @@ fn the_old_request_object_goes_through_the_same_broker() {
     use std::sync::atomic::Ordering;
     let (port, hits) = counting_server();
 
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
-    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let factory = PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        PageOptions::default(),
+    );
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let page = factory.from_html("<html><body></body></html>", &base);
     let mut script = Script::new(page.dom(), broker, &base).expect("realm");
@@ -3835,7 +4708,8 @@ fn a_detached_subtree_can_be_searched_before_it_is_inserted() {
         "a scoped query must not find a match from elsewhere in the document"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#attached').querySelector('.label').textContent")
+        script
+            .eval_value("document.querySelector('#attached').querySelector('.label').textContent")
             .unwrap(),
         "here"
     );
@@ -3847,14 +4721,22 @@ fn the_address_moves_with_client_side_routing() {
 
     // A router that reads its own route back has to get the one it just pushed.
     assert_eq!(script.eval_value("location.pathname").unwrap(), "/");
-    script.eval("history.pushState({ page: 2 }, '', '/page/2?tab=a#top')").unwrap();
+    script
+        .eval("history.pushState({ page: 2 }, '', '/page/2?tab=a#top')")
+        .unwrap();
 
     assert_eq!(script.eval_value("location.pathname").unwrap(), "/page/2");
     assert_eq!(script.eval_value("location.search").unwrap(), "?tab=a");
     assert_eq!(script.eval_value("location.hash").unwrap(), "#top");
     assert_eq!(script.eval_value("location.host").unwrap(), "app.example");
-    assert_eq!(script.eval_value("location.origin").unwrap(), "https://app.example");
-    assert_eq!(script.eval_value("document.URL").unwrap(), "https://app.example/page/2?tab=a#top");
+    assert_eq!(
+        script.eval_value("location.origin").unwrap(),
+        "https://app.example"
+    );
+    assert_eq!(
+        script.eval_value("document.URL").unwrap(),
+        "https://app.example/page/2?tab=a#top"
+    );
 
     // Going back moves it too.
     script.eval("history.back()").unwrap();
@@ -3888,13 +4770,23 @@ fn an_on_handler_property_binds_and_replaces() {
     // Assigning replaces: two assignments leave one handler, which is what
     // makes the property different from addEventListener.
     assert_eq!(script.eval_value("calls.join(',')").unwrap(), "second");
-    assert_eq!(script.eval_value("typeof document.querySelector('#b').onclick").unwrap(), "function");
+    assert_eq!(
+        script
+            .eval_value("typeof document.querySelector('#b').onclick")
+            .unwrap(),
+        "function"
+    );
 
     // And it can be cleared.
-    script.eval("document.querySelector('#b').onclick = null; document.querySelector('#b').click()")
+    script
+        .eval("document.querySelector('#b').onclick = null; document.querySelector('#b').click()")
         .unwrap();
     assert_eq!(script.eval_value("calls.join(',')").unwrap(), "second");
-    assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
+    assert!(
+        script.unsupported().is_empty(),
+        "{:?}",
+        script.unsupported()
+    );
 }
 
 #[test]
@@ -3905,10 +4797,18 @@ fn a_missing_method_on_a_host_object_names_itself() {
     // `location` or `navigator` was invisible — and a module failing with "not
     // a callable function" that names nothing is the failure §8.3 exists to
     // prevent.
-    script.eval("void location.someRoutingHelper; void navigator.someSensor;").unwrap();
+    script
+        .eval("void location.someRoutingHelper; void navigator.someSensor;")
+        .unwrap();
     let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
-    assert!(reported.iter().any(|n| n == "location.someRoutingHelper"), "{reported:?}");
-    assert!(reported.iter().any(|n| n == "navigator.someSensor"), "{reported:?}");
+    assert!(
+        reported.iter().any(|n| n == "location.someRoutingHelper"),
+        "{reported:?}"
+    );
+    assert!(
+        reported.iter().any(|n| n == "navigator.someSensor"),
+        "{reported:?}"
+    );
 }
 
 #[test]
@@ -3919,8 +4819,14 @@ fn the_console_says_which_of_the_two_is_talking() {
     script.note_error("the engine could not do something");
 
     let lines = script.console();
-    let page_line = lines.iter().find(|l| l.text.contains("site is unhappy")).unwrap();
-    let engine_line = lines.iter().find(|l| l.text.contains("could not do")).unwrap();
+    let page_line = lines
+        .iter()
+        .find(|l| l.text.contains("site is unhappy"))
+        .unwrap();
+    let engine_line = lines
+        .iter()
+        .find(|l| l.text.contains("could not do"))
+        .unwrap();
 
     // "the site reported an error" and "the browser could not do something"
     // call for different responses, and were indistinguishable.
@@ -3939,7 +4845,10 @@ fn an_identical_line_repeated_is_counted_rather_than_repeated() {
         .unwrap();
 
     let lines = script.console();
-    let same: Vec<_> = lines.iter().filter(|l| l.text == "the same thing").collect();
+    let same: Vec<_> = lines
+        .iter()
+        .filter(|l| l.text == "the same thing")
+        .collect();
     assert_eq!(same.len(), 1, "collapsed to one line: {lines:?}");
     assert_eq!(same[0].repeats, 500, "and the count is kept");
 
@@ -3996,19 +4905,28 @@ fn the_small_asks_the_application_corpus_named_are_answered() {
          <p id='p'>y</p></body></html>",
     );
 
-    assert_eq!(script.eval_value("document.all.length > 0").unwrap(), "true");
     assert_eq!(
-        script.eval_value("document.querySelector('#e').contentEditable").unwrap(),
+        script.eval_value("document.all.length > 0").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#e').contentEditable")
+            .unwrap(),
         "true"
     );
     // Inherited down the tree, which is what makes it different from the
     // attribute: a child of an editable region is editable too.
     assert_eq!(
-        script.eval_value("document.querySelector('#inner').isContentEditable").unwrap(),
+        script
+            .eval_value("document.querySelector('#inner').isContentEditable")
+            .unwrap(),
         "true"
     );
     assert_eq!(
-        script.eval_value("document.querySelector('#p').isContentEditable").unwrap(),
+        script
+            .eval_value("document.querySelector('#p').isContentEditable")
+            .unwrap(),
         "false"
     );
     assert_eq!(script.eval_value("navigator.webdriver").unwrap(), "false");
@@ -4017,7 +4935,9 @@ fn the_small_asks_the_application_corpus_named_are_answered() {
     // stubs told: a page checking before using takes the branch for an API that
     // is not there.
     assert_eq!(
-        script.eval_value("String('userAgentData' in navigator)").unwrap(),
+        script
+            .eval_value("String('userAgentData' in navigator)")
+            .unwrap(),
         "false"
     );
 
@@ -4030,7 +4950,11 @@ fn the_small_asks_the_application_corpus_named_are_answered() {
             .unwrap(),
         "HEAD:t"
     );
-    assert!(script.unsupported().is_empty(), "{:?}", script.unsupported());
+    assert!(
+        script.unsupported().is_empty(),
+        "{:?}",
+        script.unsupported()
+    );
 }
 
 #[test]
@@ -4056,7 +4980,9 @@ fn a_generated_key_is_not_reported_as_a_missing_api() {
 
     // A short number in a real API name is still reported — `h1` and `atob2`
     // are the shape a person types, and the filter must not swallow them.
-    script.eval("void document.querySelector('#p').scrollIntoViewIfNeeded2;").unwrap();
+    script
+        .eval("void document.querySelector('#p').scrollIntoViewIfNeeded2;")
+        .unwrap();
     assert!(
         script
             .unsupported()

@@ -110,7 +110,10 @@ enum Command {
     /// One message from a viewer — input, pacing, or something to ignore.
     Viewer { id: u64, message: Value },
     /// One request from a control client, answered exactly once.
-    Control { request: Value, reply: Sender<Value> },
+    Control {
+        request: Value,
+        reply: Sender<Value>,
+    },
 }
 
 /// What a connection thread writes to its own socket.
@@ -292,7 +295,10 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     };
     run_session(session, rx, options.once);
 
-    for path in [&options.stream_file, &options.control_file].into_iter().flatten() {
+    for path in [&options.stream_file, &options.control_file]
+        .into_iter()
+        .flatten()
+    {
         let _ = std::fs::remove_file(path);
     }
     Ok(())
@@ -473,8 +479,11 @@ fn serve_viewer(id: u64, mut stream: TcpStream, tx: &Sender<Command>) -> Result<
         .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
     let pump = thread::spawn(move || write_outgoing(writer, out_rx));
 
-    tx.send(Command::Join { id, tx: out_tx.clone() })
-        .map_err(|_| H5iError::Metadata("the session ended".into()))?;
+    tx.send(Command::Join {
+        id,
+        tx: out_tx.clone(),
+    })
+    .map_err(|_| H5iError::Metadata("the session ended".into()))?;
 
     let mut reader = BufReader::new(
         stream
@@ -551,7 +560,13 @@ fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError
         let answer = match serde_json::from_str::<Value>(&line) {
             Ok(request) => {
                 let (reply_tx, reply_rx) = channel::<Value>();
-                if tx.send(Command::Control { request, reply: reply_tx }).is_err() {
+                if tx
+                    .send(Command::Control {
+                        request,
+                        reply: reply_tx,
+                    })
+                    .is_err()
+                {
                     return Err(H5iError::Metadata("the session ended".into()));
                 }
                 reply_rx
@@ -749,13 +764,21 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 
         "snapshot" => {
             let snapshot = session.page.snapshot();
-            let wants_delta = request.get("delta").and_then(Value::as_bool).unwrap_or(false);
+            let wants_delta = request
+                .get("delta")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
 
             // The difference, when one was asked for and there is a baseline to
             // difference against. Three hundred lines re-read after every click
             // — of which four are new — is the wrong shape for an agent loop.
             let delta = wants_delta
-                .then(|| session.last_snapshot.as_ref().map(|prev| snapshot.delta(prev)))
+                .then(|| {
+                    session
+                        .last_snapshot
+                        .as_ref()
+                        .map(|prev| snapshot.delta(prev))
+                })
                 .flatten();
 
             let mut reply = json!({
@@ -824,12 +847,20 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             // `/docs` for the same reason a person may click one.
             let resolved = match session.page.url().join(target) {
                 Ok(url) => url,
-                Err(error) => return (error_reply(&format!("`{target}` is not a URL: {error}")), false),
+                Err(error) => {
+                    return (
+                        error_reply(&format!("`{target}` is not a URL: {error}")),
+                        false,
+                    )
+                }
             };
             match session.factory.open(&resolved) {
                 Ok(page) => {
                     session.page = page;
-                    (json!({"ok": true, "url": session.page.url().to_string()}), true)
+                    (
+                        json!({"ok": true, "url": session.page.url().to_string()}),
+                        true,
+                    )
                 }
                 // A refusal is an answer, not a crash: the allowlist saying no
                 // is the engine working, and the agent needs to read it as one.
@@ -858,7 +889,9 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             let role = entry.role.clone();
             if !session.page.type_into(node_id, text) {
                 return (
-                    error_reply(&format!("`{reference}` is a {role}, not a field to type into")),
+                    error_reply(&format!(
+                        "`{reference}` is a {role}, not a field to type into"
+                    )),
                     false,
                 );
             }
@@ -947,12 +980,20 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             };
             let resolved = match session.page.url().join(&href) {
                 Ok(url) => url,
-                Err(error) => return (error_reply(&format!("`{href}` is not a URL: {error}")), false),
+                Err(error) => {
+                    return (
+                        error_reply(&format!("`{href}` is not a URL: {error}")),
+                        false,
+                    )
+                }
             };
             match session.factory.open(&resolved) {
                 Ok(page) => {
                     session.page = page;
-                    (json!({"ok": true, "url": session.page.url().to_string()}), true)
+                    (
+                        json!({"ok": true, "url": session.page.url().to_string()}),
+                        true,
+                    )
                 }
                 Err(error) => (error_reply(&format!("{error}")), false),
             }
@@ -996,10 +1037,7 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
 
         "input_mouse" => match message.get("eventType").and_then(Value::as_str) {
             Some("mouseWheel") => {
-                let delta = message
-                    .get("deltaY")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0);
+                let delta = message.get("deltaY").and_then(Value::as_f64).unwrap_or(0.0);
                 session.page.scroll_by(0.0, delta)
             }
             Some("mouseReleased") => {
@@ -1016,9 +1054,7 @@ fn handle(session: &mut Session, message: &Value) -> Result<Vec<Value>, H5iError
         },
 
         // keyUp never scrolls: acting on both halves would double every press.
-        "input_keyboard"
-            if message.get("eventType").and_then(Value::as_str) == Some("keyDown") =>
-        {
+        "input_keyboard" if message.get("eventType").and_then(Value::as_str) == Some("keyDown") => {
             let key = message.get("key").and_then(Value::as_str).unwrap_or("");
             match scroll_for_key(key, viewport_height as f64) {
                 Some(delta) => session.page.scroll_by(0.0, delta),
@@ -1178,7 +1214,10 @@ mod tests {
             &json!({"type":"input_mouse","eventType":"mouseWheel","deltaY": -50.0}),
         )
         .unwrap();
-        assert!(no_move.is_empty(), "a scroll with nowhere to go sends nothing");
+        assert!(
+            no_move.is_empty(),
+            "a scroll with nowhere to go sends nothing"
+        );
     }
 
     #[test]
@@ -1457,11 +1496,18 @@ mod tests {
 
         assert_eq!(reply["ok"], false);
         assert!(
-            reply["error"].as_str().unwrap().contains("could not be recorded"),
+            reply["error"]
+                .as_str()
+                .unwrap()
+                .contains("could not be recorded"),
             "the agent is told why: {reply:?}"
         );
         assert!(!changed);
-        assert_eq!(session.page.scroll_offset(), before, "the page must not move");
+        assert_eq!(
+            session.page.scroll_offset(),
+            before,
+            "the page must not move"
+        );
     }
 
     #[test]
@@ -1512,7 +1558,12 @@ mod tests {
         assert_eq!(reply["cookies"], 0);
         // The shape of the answer is the guarantee: there is no field here a
         // value could travel in.
-        let keys: Vec<&str> = reply.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        let keys: Vec<&str> = reply
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
         assert!(!keys.iter().any(|k| k.contains("value")), "{keys:?}");
     }
 
@@ -1536,8 +1587,10 @@ mod tests {
         let mut session = session_with(tall_page());
         let before = session.page.url().to_string();
 
-        let (reply, changed) =
-            control_verb(&mut session, &json!({"verb": "navigate", "url": "https://denied.test/"}));
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "navigate", "url": "https://denied.test/"}),
+        );
 
         assert_eq!(reply["ok"], false);
         assert!(!changed, "a refused navigation moved nothing");
@@ -1589,7 +1642,10 @@ mod tests {
             "the handler ran and the agent can see it:\n{}",
             session.page.snapshot().render()
         );
-        assert!(reply["settled"].is_string(), "the reply says whether it finished");
+        assert!(
+            reply["settled"].is_string(),
+            "the reply says whether it finished"
+        );
     }
 
     #[test]
@@ -1638,7 +1694,10 @@ mod tests {
         // rather than the click being silently swallowed by the event path.
         assert_eq!(reply["ok"], false, "{reply:?}");
         assert!(!changed);
-        assert!(reply["error"].as_str().unwrap().contains("denied.test"), "{reply:?}");
+        assert!(
+            reply["error"].as_str().unwrap().contains("denied.test"),
+            "{reply:?}"
+        );
     }
 
     #[test]
@@ -1740,7 +1799,10 @@ mod delta_and_login_tests {
         assert_eq!(reply["kind"], "delta");
         let text = reply["text"].as_str().unwrap();
         assert!(text.contains("TWO CHANGED"), "{text}");
-        assert!(!text.contains("seven"), "unchanged lines should not be re-sent: {text}");
+        assert!(
+            !text.contains("seven"),
+            "unchanged lines should not be re-sent: {text}"
+        );
         // And it is still fenced: every added line came from the page.
         assert!(text.contains(crate::snapshot::CONTENT_BEGIN), "{text}");
     }
@@ -1752,7 +1814,11 @@ mod delta_and_login_tests {
         );
         control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
 
-        replace_inner_html(&mut session, "body", "<p>wholly</p><p>different</p><p>now</p>");
+        replace_inner_html(
+            &mut session,
+            "body",
+            "<p>wholly</p><p>different</p><p>now</p>",
+        );
 
         // A difference as long as the page is technically true and useless.
         let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));

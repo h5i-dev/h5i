@@ -92,9 +92,9 @@ impl Encoding {
     fn apply(self, rgb: &[u8]) -> std::borrow::Cow<'_, [u8]> {
         match self {
             Encoding::Raw => std::borrow::Cow::Borrowed(rgb),
-            Encoding::Zlib => std::borrow::Cow::Owned(
-                miniz_oxide::deflate::compress_to_vec_zlib(rgb, ZLIB_LEVEL),
-            ),
+            Encoding::Zlib => {
+                std::borrow::Cow::Owned(miniz_oxide::deflate::compress_to_vec_zlib(rgb, ZLIB_LEVEL))
+            }
         }
     }
 }
@@ -326,7 +326,9 @@ fn replies(seen: &[u8]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     while let Some(start) = rest.find("\x1b_G") {
         rest = &rest[start + 3..];
-        let Some(end) = rest.find("\x1b\\") else { break };
+        let Some(end) = rest.find("\x1b\\") else {
+            break;
+        };
         let (block, after) = (&rest[..end], &rest[end + 2..]);
         rest = after;
         let (control, message) = block.split_once(';').unwrap_or((block, ""));
@@ -336,9 +338,7 @@ fn replies(seen: &[u8]) -> Vec<(String, String)> {
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 #[cfg(test)]
@@ -359,11 +359,24 @@ mod tests {
         // The reply would arrive on stdin, in the middle of the keystrokes this
         // viewer is translating into page input. `q=2` is not a preference.
         let mut p = Placer::new(Encoding::Zlib);
-        let frame = p.draw(&[0u8; 12], 2, 2, Placement { row: 2, col: 1, cols: 10, rows: 5 });
+        let frame = p.draw(
+            &[0u8; 12],
+            2,
+            2,
+            Placement {
+                row: 2,
+                col: 1,
+                cols: 10,
+                rows: 5,
+            },
+        );
         let text = String::from_utf8(frame).unwrap();
         for seq in text.split_inclusive("\x1b\\") {
             if seq.contains("\x1b_G") && !seq.contains("m=1;") {
-                assert!(seq.contains("q=2"), "a graphics command without q=2: {seq:?}");
+                assert!(
+                    seq.contains("q=2"),
+                    "a graphics command without q=2: {seq:?}"
+                );
             }
         }
     }
@@ -380,7 +393,10 @@ mod tests {
         assert!(first.contains("a=T"), "{first}");
         assert!(first.contains("f=24"), "{first}");
         assert!(first.contains("t=d"), "{first}");
-        assert!(!first.contains("o=z"), "raw must not claim compression: {first}");
+        assert!(
+            !first.contains("o=z"),
+            "raw must not claim compression: {first}"
+        );
         assert!(first.contains("s=4,v=4"), "{first}");
         assert!(first.contains("c=20,r=10"), "{first}");
         assert!(first.contains("C=1"), "the cursor must not move: {first}");
@@ -410,14 +426,18 @@ mod tests {
         let mut b64 = String::new();
         for block in text.split("\x1b_G").skip(1) {
             let block = block.split("\x1b\\").next().unwrap_or_default();
-            let Some((control, body)) = block.split_once(';') else { continue };
+            let Some((control, body)) = block.split_once(';') else {
+                continue;
+            };
             // Transmission chunks only: the trailing delete carries no payload.
             if control.contains("a=d") {
                 continue;
             }
             b64.push_str(body);
         }
-        base64::engine::general_purpose::STANDARD.decode(&b64).unwrap()
+        base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap()
     }
 
     #[test]
@@ -430,7 +450,12 @@ mod tests {
         let rgb: Vec<u8> = (0..(w * h * 3) as usize)
             .map(|i| ((i * 7 + i / 191) % 256) as u8)
             .collect();
-        let at = Placement { row: 3, col: 1, cols: 8, rows: 4 };
+        let at = Placement {
+            row: 3,
+            col: 1,
+            cols: 8,
+            rows: 4,
+        };
 
         let mut z = Placer::new(Encoding::Zlib);
         let compressed = z.draw(&rgb, w, h, at);
@@ -476,7 +501,10 @@ mod tests {
         // terminal that inflates, and `q=2` would make the difference invisible.
         assert!(accepts_zlib(b"\x1b_Gi=1;OK\x1b\\\x1b_Gi=2;OK\x1b\\"));
         assert!(!accepts_zlib(b"\x1b_Gi=1;OK\x1b\\\x1b_Gi=2;EINVAL:o\x1b\\"));
-        assert!(!accepts_zlib(b"\x1b_Gi=1;OK\x1b\\"), "no answer is not a yes");
+        assert!(
+            !accepts_zlib(b"\x1b_Gi=1;OK\x1b\\"),
+            "no answer is not a yes"
+        );
         assert!(!accepts_zlib(b""));
         // The id must match exactly: `i=2` answering is not `i=21` answering,
         // and a substring test would confuse them.
@@ -490,7 +518,10 @@ mod tests {
         // Stopping at the first graphics reply would decide compression before
         // the compressed query had been answered — always "no", every time.
         assert!(!probe_done(b"\x1b_Gi=1;OK\x1b\\"));
-        assert!(!probe_done(b"\x1b_Gi=1;OK\x1b\\\x1b[?"), "reply still arriving");
+        assert!(
+            !probe_done(b"\x1b_Gi=1;OK\x1b\\\x1b[?"),
+            "reply still arriving"
+        );
         assert!(probe_done(b"\x1b_Gi=1;OK\x1b\\\x1b[?62;1;6c"));
     }
 
@@ -498,10 +529,18 @@ mod tests {
     fn the_previous_frame_is_deleted_only_after_the_new_one_is_placed() {
         // Deleting first is a blink on every single frame.
         let mut p = Placer::new(Encoding::Raw);
-        let at = Placement { row: 2, col: 1, cols: 8, rows: 4 };
+        let at = Placement {
+            row: 2,
+            col: 1,
+            cols: 8,
+            rows: 4,
+        };
 
         let first = String::from_utf8(p.draw(&[0u8; 3], 1, 1, at)).unwrap();
-        assert!(!first.contains("a=d"), "nothing to delete on the first frame");
+        assert!(
+            !first.contains("a=d"),
+            "nothing to delete on the first frame"
+        );
 
         let second = String::from_utf8(p.draw(&[0u8; 3], 1, 1, at)).unwrap();
         let place_at = second.find("a=T").unwrap();
@@ -523,7 +562,18 @@ mod tests {
     #[test]
     fn the_frame_is_positioned_before_it_is_drawn() {
         let mut p = Placer::new(Encoding::Raw);
-        let seq = String::from_utf8(p.draw(&[0u8; 3], 1, 1, Placement { row: 3, col: 1, cols: 2, rows: 2 })).unwrap();
+        let seq = String::from_utf8(p.draw(
+            &[0u8; 3],
+            1,
+            1,
+            Placement {
+                row: 3,
+                col: 1,
+                cols: 2,
+                rows: 2,
+            },
+        ))
+        .unwrap();
         // Row 3, because row 1 is the status line the viewer owns and row 2 is
         // the separator. The image must never start at row 1.
         assert!(seq.starts_with("\x1b[3;1H"), "{seq:?}");
@@ -533,7 +583,17 @@ mod tests {
     fn leaving_removes_the_last_frame() {
         let mut p = Placer::new(Encoding::Raw);
         assert!(p.clear().is_empty(), "nothing drawn, nothing to clear");
-        p.draw(&[0u8; 3], 1, 1, Placement { row: 1, col: 1, cols: 1, rows: 1 });
+        p.draw(
+            &[0u8; 3],
+            1,
+            1,
+            Placement {
+                row: 1,
+                col: 1,
+                cols: 1,
+                rows: 1,
+            },
+        );
         let out = String::from_utf8(p.clear()).unwrap();
         assert!(out.contains("a=d"), "{out:?}");
         assert!(p.clear().is_empty(), "clearing twice must not re-delete");
@@ -545,7 +605,11 @@ mod tests {
         // indistinguishable from slowness, so we ask a question every terminal
         // answers and use its reply as the barrier.
         assert_eq!(classify_probe(b""), Support::Undecided);
-        assert_eq!(classify_probe(b"\x1b[?"), Support::Undecided, "reply still arriving");
+        assert_eq!(
+            classify_probe(b"\x1b[?"),
+            Support::Undecided,
+            "reply still arriving"
+        );
         assert_eq!(classify_probe(b"\x1b[?62;1;6c"), Support::No);
 
         // A graphics reply means yes, whatever else arrived with it.
@@ -557,15 +621,24 @@ mod tests {
             Support::Yes
         );
         // An error reply is still a reply: the protocol is understood.
-        assert_eq!(classify_probe(b"\x1b_Gi=1;ENOTSUPPORTED\x1b\\"), Support::Yes);
+        assert_eq!(
+            classify_probe(b"\x1b_Gi=1;ENOTSUPPORTED\x1b\\"),
+            Support::Yes
+        );
     }
 
     #[test]
     fn the_probe_asks_for_a_reply_where_the_render_path_suppresses_one() {
         let p = probe_sequence();
         assert!(p.contains("a=q"), "query only, nothing is displayed: {p:?}");
-        assert!(!p.contains("q=2"), "this is the one place we want an answer");
-        assert!(p.ends_with("\x1b[c"), "the device-attributes barrier: {p:?}");
+        assert!(
+            !p.contains("q=2"),
+            "this is the one place we want an answer"
+        );
+        assert!(
+            p.ends_with("\x1b[c"),
+            "the device-attributes barrier: {p:?}"
+        );
 
         // Two questions, and the second one has to actually be compressed —
         // asking about `o=z` with a raw payload would be answered `OK` by a
@@ -573,9 +646,17 @@ mod tests {
         assert_eq!(p.matches("a=q").count(), 2, "raw and deflated: {p:?}");
         let deflated = p.split("i=2,").nth(1).unwrap();
         assert!(deflated.contains("o=z"), "{deflated:?}");
-        let body = deflated.split_once(';').unwrap().1.split("\x1b").next().unwrap();
+        let body = deflated
+            .split_once(';')
+            .unwrap()
+            .1
+            .split("\x1b")
+            .next()
+            .unwrap();
         use base64::Engine as _;
-        let bytes = base64::engine::general_purpose::STANDARD.decode(body).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .unwrap();
         assert_eq!(
             miniz_oxide::inflate::decompress_to_vec_zlib(&bytes).unwrap(),
             vec![0u8, 0, 0],

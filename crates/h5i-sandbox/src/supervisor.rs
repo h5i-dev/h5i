@@ -85,11 +85,19 @@ fn probe_uncached() -> SupervisorCaps {
     );
     // A netns is created via unshare(NEWNET) inside our userns — functionally probed.
     let netns = host.userns && can_unshare_netns();
-    add("network-namespace", netns, (!netns).then(|| "cannot unshare NEWNET".into()));
+    add(
+        "network-namespace",
+        netns,
+        (!netns).then(|| "cannot unshare NEWNET".into()),
+    );
     // nftables is the airtight L3/L4 egress guard; we need the binary AND
     // (phase B) usability inside the child netns. Phase A checks the binary.
     let nft = nft_present();
-    add("nftables", nft, (!nft).then(|| "`nft` binary not found on PATH".into()));
+    add(
+        "nftables",
+        nft,
+        (!nft).then(|| "`nft` binary not found on PATH".into()),
+    );
     let notify = seccomp_notify_supported();
     add(
         "seccomp-user-notif",
@@ -99,9 +107,15 @@ fn probe_uncached() -> SupervisorCaps {
     add(
         "landlock",
         host.landlock_abi.is_some(),
-        host.landlock_abi.is_none().then(|| "Landlock LSM unavailable".into()),
+        host.landlock_abi
+            .is_none()
+            .then(|| "Landlock LSM unavailable".into()),
     );
-    add("seccomp-bpf", host.seccomp, (!host.seccomp).then(|| "seccomp-bpf unavailable".into()));
+    add(
+        "seccomp-bpf",
+        host.seccomp,
+        (!host.seccomp).then(|| "seccomp-bpf unavailable".into()),
+    );
     add(
         "cgroup-v2-delegation",
         cg.usable,
@@ -202,7 +216,11 @@ fn can_unshare_netns() -> bool {
         if pid == 0 {
             // Child: a userns first (for unprivileged NEWNET), then NEWNET.
             let rc = libc::unshare(libc::CLONE_NEWUSER);
-            let rc2 = if rc == 0 { libc::unshare(libc::CLONE_NEWNET) } else { rc };
+            let rc2 = if rc == 0 {
+                libc::unshare(libc::CLONE_NEWNET)
+            } else {
+                rc
+            };
             libc::_exit(if rc2 == 0 { 0 } else { 1 });
         }
         if pid < 0 {
@@ -249,8 +267,16 @@ fn seccomp_notify_supported() -> bool {
         filter: *const SockFilter,
     }
     // BPF_RET (0x06) | BPF_K (0x00) → return SECCOMP_RET_ALLOW
-    let insns = [SockFilter { code: 0x06, jt: 0, jf: 0, k: SECCOMP_RET_ALLOW }];
-    let prog = SockFprog { len: 1, filter: insns.as_ptr() };
+    let insns = [SockFilter {
+        code: 0x06,
+        jt: 0,
+        jf: 0,
+        k: SECCOMP_RET_ALLOW,
+    }];
+    let prog = SockFprog {
+        len: 1,
+        filter: insns.as_ptr(),
+    };
 
     // SAFETY: all effects (no_new_privs, seccomp filter) are confined to the
     // forked child, which exits immediately with the result.
@@ -316,7 +342,11 @@ pub fn decide_socket(domain: i32, sock_type: i32, protocol: i32, unix_granted: b
 
     // AF_UNIX only by explicit grant (SCM_RIGHTS authority passing).
     if domain == AF_UNIX {
-        return if unix_granted { Decision::Continue } else { Decision::Deny(libc::EPERM) };
+        return if unix_granted {
+            Decision::Continue
+        } else {
+            Decision::Deny(libc::EPERM)
+        };
     }
     // The one allowed shape: inet TCP/UDP, never IPPROTO_RAW. nftables governs
     // the destination from here.
@@ -340,7 +370,12 @@ pub fn decide_socket(domain: i32, sock_type: i32, protocol: i32, unix_granted: b
 /// denying it bricks coding agents in the box. Every other shape (socketpair
 /// is AF_UNIX-only in practice; anything else is suspicious) falls through to
 /// the default-deny [`decide_socket`] gate.
-pub fn decide_socketpair(domain: i32, sock_type: i32, protocol: i32, unix_granted: bool) -> Decision {
+pub fn decide_socketpair(
+    domain: i32,
+    sock_type: i32,
+    protocol: i32,
+    unix_granted: bool,
+) -> Decision {
     const AF_UNIX: i32 = 1;
     if domain == AF_UNIX {
         return Decision::Continue;
@@ -390,7 +425,9 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
             }
             _ => (raw, 443u16),
         };
-        let Ok(addrs) = (host, port).to_socket_addrs() else { continue };
+        let Ok(addrs) = (host, port).to_socket_addrs() else {
+            continue;
+        };
         let mut first_ip: Option<IpAddr> = None;
         for a in addrs {
             let dest = EgressDest { ip: a.ip(), port };
@@ -432,12 +469,24 @@ pub fn build_nft_ruleset(allow: &[EgressDest], resolver: Option<IpAddr>) -> Stri
     };
     if let Some(r) = resolver {
         let fam = if r.is_ipv4() { "ip" } else { "ip6" };
-        push(fam, &r, format!("    {fam} daddr {r} udp dport 53 accept\n"));
-        push(fam, &r, format!("    {fam} daddr {r} tcp dport 53 accept\n"));
+        push(
+            fam,
+            &r,
+            format!("    {fam} daddr {r} udp dport 53 accept\n"),
+        );
+        push(
+            fam,
+            &r,
+            format!("    {fam} daddr {r} tcp dport 53 accept\n"),
+        );
     }
     for d in allow {
         let fam = if d.ip.is_ipv4() { "ip" } else { "ip6" };
-        push(fam, &d.ip, format!("    {fam} daddr {} tcp dport {} accept\n", d.ip, d.port));
+        push(
+            fam,
+            &d.ip,
+            format!("    {fam} daddr {} tcp dport {} accept\n", d.ip, d.port),
+        );
     }
     format!(
         "table inet h5i_egress {{\n  \
@@ -581,7 +630,10 @@ fn pipe_cloexec() -> std::io::Result<(std::os::unix::io::RawFd, std::os::unix::i
 /// pinned `/etc/hosts`), the handshake pipes, and the `slirp4netns` uplink
 /// process. Built before the confined child is spawned; it hands the child an
 /// [`crate::sandbox::EgressJail`] and tears the uplink down on drop.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 struct EgressNetns {
     tmp_dir: std::path::PathBuf,
     // Parent ends (read child pid, signal "uplink ready").
@@ -597,7 +649,10 @@ struct EgressNetns {
     slirp: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>>,
 }
 
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 impl EgressNetns {
     fn jail(&self) -> crate::sandbox::EgressJail {
         crate::sandbox::EgressJail {
@@ -611,7 +666,10 @@ impl EgressNetns {
     }
 }
 
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 impl Drop for EgressNetns {
     fn drop(&mut self) {
         // Stop the uplink first, so the helper has nothing left to supervise.
@@ -647,14 +705,20 @@ impl Drop for EgressNetns {
 /// resolves or the tools are missing.
 /// The slirp gateway address a supervised netns routes through; also where the
 /// host's loopback (and our auth proxy) appears when host-loopback is enabled.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 const SLIRP_GATEWAY: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 2, 2));
 
 /// `slirp4netns` argv for a child netns (pid). `--disable-host-loopback` is
 /// present UNLESS host-loopback is intentionally allowed (auth proxy engaged),
 /// in which case the box can reach the host proxy via the gateway (nftables
 /// still restricts egress to the single proxy port). Pure — unit-tested.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn slirp_args(pid: u32, allow_host_loopback: bool) -> Vec<String> {
     let mut a: Vec<String> = vec!["--configure".into()];
     if !allow_host_loopback {
@@ -672,7 +736,10 @@ fn slirp_args(pid: u32, allow_host_loopback: bool) -> Vec<String> {
 /// under the env's own `backing`, never the real HOME. See
 /// [`scrub_box_credentials`].
 #[cfg(any(
-    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
     target_os = "macos"
 ))]
 fn cred_scrub_paths(
@@ -698,7 +765,10 @@ fn cred_scrub_paths(
 /// never the real HOME, which `prepare_home_state` only reads. Best-effort and
 /// idempotent; a later in-box login self-heals the copy if the proxy is disabled.
 #[cfg(any(
-    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
     target_os = "macos"
 ))]
 fn scrub_box_credentials(
@@ -717,7 +787,10 @@ fn scrub_box_credentials(
 /// egress), so a token in the box — even if present — is inert (unusable
 /// directly, unexfiltratable). Otherwise the box egresses to the resolved
 /// `net.egress` allowlist with host-loopback disabled (airtight).
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn setup_egress(
     policy: &crate::sandbox::ResolvedPolicy,
     auth_port: Option<u16>,
@@ -725,7 +798,13 @@ fn setup_egress(
     let (dests, host_pins): (Vec<EgressDest>, Vec<(String, IpAddr)>) = match auth_port {
         // Proxy-only egress: one accept, for the host-side auth proxy. No DNS
         // needed (the base URL is the gateway IP), so no host pins.
-        Some(port) => (vec![EgressDest { ip: SLIRP_GATEWAY, port }], Vec::new()),
+        Some(port) => (
+            vec![EgressDest {
+                ip: SLIRP_GATEWAY,
+                port,
+            }],
+            Vec::new(),
+        ),
         None => {
             let resolved = resolve_egress(&policy.profile.net_egress);
             if resolved.dests.is_empty() {
@@ -737,7 +816,8 @@ fn setup_egress(
         }
     };
     let allow_host_loopback = auth_port.is_some();
-    let nft = find_bin("nft").ok_or_else(|| H5iError::Metadata("`nft` not found on PATH".into()))?;
+    let nft =
+        find_bin("nft").ok_or_else(|| H5iError::Metadata("`nft` not found on PATH".into()))?;
     let slirp = slirp4netns_path()
         .ok_or_else(|| H5iError::Metadata("`slirp4netns` not found on PATH".into()))?;
 
@@ -805,7 +885,10 @@ fn setup_egress(
         let dev = format!("/proc/{pid}/net/dev");
         let mut ready = false;
         for _ in 0..600 {
-            if std::fs::read_to_string(&dev).map(|s| s.contains("tap0")).unwrap_or(false) {
+            if std::fs::read_to_string(&dev)
+                .map(|s| s.contains("tap0"))
+                .unwrap_or(false)
+            {
                 ready = true;
                 break;
             }
@@ -834,7 +917,10 @@ fn setup_egress(
     })
 }
 
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn run_supervised(
     policy: &crate::sandbox::ResolvedPolicy,
     work: &std::path::Path,
@@ -864,7 +950,12 @@ fn run_supervised(
     // neither end leaks into the exec'd (untrusted) program.
     let mut sv = [0i32; 2];
     let rc = unsafe {
-        libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0, sv.as_mut_ptr())
+        libc::socketpair(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+            0,
+            sv.as_mut_ptr(),
+        )
     };
     if rc != 0 {
         return Err(H5iError::Io(std::io::Error::last_os_error()));
@@ -960,7 +1051,9 @@ fn run_supervised(
         // Agent-in-box: inherit the real stdio (a TTY for the shell/agent).
         // Confinement still comes from netns + the seccomp gate + Landlock.
     } else {
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
     }
 
     let started = std::time::Instant::now();
@@ -1004,7 +1097,9 @@ fn run_supervised(
             close(listener);
             let _ = child.kill();
             let _ = child.wait();
-            return Err(H5iError::Metadata(format!("supervised: pidfd_open failed: {e}")));
+            return Err(H5iError::Metadata(format!(
+                "supervised: pidfd_open failed: {e}"
+            )));
         }
     };
 
@@ -1046,8 +1141,12 @@ fn run_supervised(
     let stats = serve_h.join().unwrap_or_default();
     close(listener);
     close(pidfd);
-    let stdout = out_h.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
-    let stderr = err_h.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
+    let stdout = out_h
+        .map(|h| h.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stderr = err_h
+        .map(|h| h.join().unwrap_or_default())
+        .unwrap_or_default();
 
     // Prefer cgroup accounting where present.
     if let Some(cgrp) = &cg {
@@ -1154,7 +1253,13 @@ fn run_supervised(
         let handle = crate::container::spawn_proxy_on(allow, policy.egress_proxy_port)?;
         let port = handle.port;
         let url = format!("http://{LOOPBACK_HOST}:{port}");
-        for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"] {
+        for var in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "ALL_PROXY",
+        ] {
             env.push((var.to_string(), url.clone()));
         }
         // h5i's own name for the same address, for the in-box tooling that has to
@@ -1201,7 +1306,10 @@ fn run_supervised(
 }
 
 #[cfg(not(any(
-    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
     target_os = "macos"
 )))]
 fn run_supervised(
@@ -1231,7 +1339,10 @@ mod tests {
             assert!(caps.components.iter().all(|c| c.ok));
             assert!(caps.missing().is_empty());
         } else {
-            assert!(!caps.missing().is_empty(), "refusal must explain what's missing");
+            assert!(
+                !caps.missing().is_empty(),
+                "refusal must explain what's missing"
+            );
         }
     }
 
@@ -1254,20 +1365,35 @@ mod tests {
         // The only allowed shape: boring inet TCP/UDP.
         assert_eq!(allow(AF_INET, SOCK_STREAM, 0), Decision::Continue);
         assert_eq!(allow(AF_INET6, SOCK_DGRAM, 0), Decision::Continue);
-        assert_eq!(allow(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0), Decision::Continue);
+        assert_eq!(
+            allow(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0),
+            Decision::Continue
+        );
 
         // Everything else denies — raw/packet, IPPROTO_RAW, non-inet families.
         assert_eq!(allow(AF_INET, SOCK_RAW, 0), Decision::Deny(libc::EPERM));
         assert_eq!(allow(AF_PACKET, SOCK_DGRAM, 0), Decision::Deny(libc::EPERM));
-        assert_eq!(allow(AF_INET, SOCK_STREAM, IPPROTO_RAW), Decision::Deny(libc::EPERM));
-        assert_eq!(allow(AF_NETLINK, SOCK_DGRAM, 0), Decision::Deny(libc::EPERM));
+        assert_eq!(
+            allow(AF_INET, SOCK_STREAM, IPPROTO_RAW),
+            Decision::Deny(libc::EPERM)
+        );
+        assert_eq!(
+            allow(AF_NETLINK, SOCK_DGRAM, 0),
+            Decision::Deny(libc::EPERM)
+        );
         assert_eq!(allow(AF_VSOCK, SOCK_STREAM, 0), Decision::Deny(libc::EPERM));
         // Unknown family/type → deny, never observe-and-allow.
         assert_eq!(allow(999, 999, 0), Decision::Deny(libc::EPERM));
 
         // AF_UNIX only by explicit grant.
-        assert_eq!(decide_socket(AF_UNIX, SOCK_STREAM, 0, false), Decision::Deny(libc::EPERM));
-        assert_eq!(decide_socket(AF_UNIX, SOCK_STREAM, 0, true), Decision::Continue);
+        assert_eq!(
+            decide_socket(AF_UNIX, SOCK_STREAM, 0, false),
+            Decision::Deny(libc::EPERM)
+        );
+        assert_eq!(
+            decide_socket(AF_UNIX, SOCK_STREAM, 0, true),
+            Decision::Continue
+        );
     }
 
     #[test]
@@ -1282,27 +1408,51 @@ mod tests {
 
         // An anonymous AF_UNIX pair is pure intra-box IPC — allowed without a
         // grant (tokio signals / Node child IPC depend on it).
-        assert_eq!(decide_socketpair(AF_UNIX, SOCK_STREAM, 0, false), Decision::Continue);
+        assert_eq!(
+            decide_socketpair(AF_UNIX, SOCK_STREAM, 0, false),
+            Decision::Continue
+        );
         assert_eq!(
             decide_socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, false),
             Decision::Continue
         );
-        assert_eq!(decide_socketpair(AF_UNIX, SOCK_DGRAM, 0, false), Decision::Continue);
+        assert_eq!(
+            decide_socketpair(AF_UNIX, SOCK_DGRAM, 0, false),
+            Decision::Continue
+        );
 
         // Everything else keeps the default-deny socket gate's verdicts.
-        assert_eq!(decide_socketpair(AF_PACKET, SOCK_DGRAM, 0, false), Decision::Deny(libc::EPERM));
-        assert_eq!(decide_socketpair(AF_INET, SOCK_RAW, 0, false), Decision::Deny(libc::EPERM));
-        assert_eq!(decide_socketpair(999, 999, 0, false), Decision::Deny(libc::EPERM));
+        assert_eq!(
+            decide_socketpair(AF_PACKET, SOCK_DGRAM, 0, false),
+            Decision::Deny(libc::EPERM)
+        );
+        assert_eq!(
+            decide_socketpair(AF_INET, SOCK_RAW, 0, false),
+            Decision::Deny(libc::EPERM)
+        );
+        assert_eq!(
+            decide_socketpair(999, 999, 0, false),
+            Decision::Deny(libc::EPERM)
+        );
         // inet socketpair is kernel-rejected anyway; the gate's verdict matches
         // decide_socket so nothing widens.
-        assert_eq!(decide_socketpair(AF_INET, SOCK_STREAM, 0, false), Decision::Continue);
+        assert_eq!(
+            decide_socketpair(AF_INET, SOCK_STREAM, 0, false),
+            Decision::Continue
+        );
     }
 
     #[test]
     fn nft_ruleset_is_default_drop_with_allowlist() {
         let allow = vec![
-            EgressDest { ip: "93.184.216.34".parse().unwrap(), port: 443 },
-            EgressDest { ip: "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap(), port: 443 },
+            EgressDest {
+                ip: "93.184.216.34".parse().unwrap(),
+                port: 443,
+            },
+            EgressDest {
+                ip: "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap(),
+                port: 443,
+            },
         ];
         let resolver = Some("10.0.2.3".parse().unwrap());
         let rs = build_nft_ruleset(&allow, resolver);
@@ -1324,16 +1474,25 @@ mod tests {
         assert!(rs.contains("policy drop;"));
         assert!(rs.contains("oif \"lo\" accept"));
         // No accept for any external destination.
-        assert!(!rs.contains("daddr"), "empty allowlist must add no daddr rule:\n{rs}");
+        assert!(
+            !rs.contains("daddr"),
+            "empty allowlist must add no daddr rule:\n{rs}"
+        );
     }
 
     #[test]
     fn nft_rule_pins_the_exact_port() {
         // A non-default port must appear verbatim in the allow rule (the gate is
         // host:port, not just host).
-        let allow = vec![EgressDest { ip: "10.1.2.3".parse().unwrap(), port: 8443 }];
+        let allow = vec![EgressDest {
+            ip: "10.1.2.3".parse().unwrap(),
+            port: 8443,
+        }];
         let rs = build_nft_ruleset(&allow, None);
-        assert!(rs.contains("ip daddr 10.1.2.3 tcp dport 8443 accept"), "{rs}");
+        assert!(
+            rs.contains("ip daddr 10.1.2.3 tcp dport 8443 accept"),
+            "{rs}"
+        );
         // And nothing on the conventional 443 for that host.
         assert!(!rs.contains("dport 443"));
     }
@@ -1343,8 +1502,14 @@ mod tests {
         // localhost resolves deterministically on every host; assert the port
         // parsing (default 443 vs explicit) without depending on public DNS.
         let pinned = pin_egress(&["localhost".into(), "localhost:8080".into()]);
-        assert!(pinned.iter().any(|d| d.port == 443), "default port should be 443");
-        assert!(pinned.iter().any(|d| d.port == 8080), "explicit port should be honored");
+        assert!(
+            pinned.iter().any(|d| d.port == 443),
+            "default port should be 443"
+        );
+        assert!(
+            pinned.iter().any(|d| d.port == 8080),
+            "explicit port should be honored"
+        );
         assert!(pinned.iter().all(|d| d.ip.is_loopback()));
         // An empty/garbage entry contributes nothing (fail-closed).
         assert!(pin_egress(&["".into(), "   ".into()]).is_empty());
@@ -1357,14 +1522,20 @@ mod tests {
         // IP literal needs none (the program connects to it directly).
         let r = resolve_egress(&["localhost".into(), "127.0.0.1:8080".into()]);
         assert!(!r.dests.is_empty());
-        assert!(r.host_pins.iter().any(|(h, _)| h == "localhost"), "hostname pinned");
+        assert!(
+            r.host_pins.iter().any(|(h, _)| h == "localhost"),
+            "hostname pinned"
+        );
         assert!(
             r.host_pins.iter().all(|(h, _)| h != "127.0.0.1"),
             "IP literal needs no /etc/hosts pin"
         );
         // Every pinned host's IP is among the nft-allowed destinations.
         for (_, ip) in &r.host_pins {
-            assert!(r.dests.iter().any(|d| &d.ip == ip), "pin IP is in the nft allowlist");
+            assert!(
+                r.dests.iter().any(|d| &d.ip == ip),
+                "pin IP is in the nft allowlist"
+            );
         }
     }
 
@@ -1374,7 +1545,8 @@ mod tests {
         // cannot satisfy the supervised stack — never a silent partial run.
         // (On a fully-capable host the e2e test in tests/env_integration.rs
         // proves real enforcement.)
-        let mut p = crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
+        let mut p =
+            crate::sandbox::Profile::builtin("p", crate::sandbox::IsolationClaim::Supervised);
         p.net_egress = vec!["example.com".into()];
         let pol = crate::sandbox::ResolvedPolicy::new(p.isolation, p);
         // Ask the admission check itself whether this host is capable, rather
@@ -1427,13 +1599,28 @@ mod tests {
         assert_eq!(SLIRP_GATEWAY, "10.0.2.2".parse::<IpAddr>().unwrap());
         // What setup_egress builds when the auth proxy is engaged: a single
         // accept for the host proxy at the gateway, default-drop for the rest.
-        let rs = build_nft_ruleset(&[EgressDest { ip: SLIRP_GATEWAY, port: 8080 }], None);
+        let rs = build_nft_ruleset(
+            &[EgressDest {
+                ip: SLIRP_GATEWAY,
+                port: 8080,
+            }],
+            None,
+        );
         assert!(rs.contains("policy drop;"), "must default-drop:\n{rs}");
-        assert!(rs.contains("ip daddr 10.0.2.2 tcp dport 8080 accept"), "{rs}");
+        assert!(
+            rs.contains("ip daddr 10.0.2.2 tcp dport 8080 accept"),
+            "{rs}"
+        );
         assert!(rs.contains("oif \"lo\" accept"));
         // No DNS (port 53) and no other external destination is opened.
-        assert!(!rs.contains("dport 53"), "proxy-only egress needs no resolver:\n{rs}");
-        assert!(!rs.contains("dport 443"), "direct API egress must NOT be opened:\n{rs}");
+        assert!(
+            !rs.contains("dport 53"),
+            "proxy-only egress needs no resolver:\n{rs}"
+        );
+        assert!(
+            !rs.contains("dport 443"),
+            "direct API egress must NOT be opened:\n{rs}"
+        );
     }
 
     #[test]
@@ -1452,7 +1639,10 @@ mod tests {
             },
         ];
         let paths = cred_scrub_paths(AgentRuntime::Claude, &binds);
-        assert_eq!(paths, vec![PathBuf::from("/env/home/.claude/.credentials.json")]);
+        assert_eq!(
+            paths,
+            vec![PathBuf::from("/env/home/.claude/.credentials.json")]
+        );
         // Only the env's own backing copy is ever named — never the real HOME.
         assert!(paths.iter().all(|p| p.starts_with("/env/home")));
 

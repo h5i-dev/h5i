@@ -516,9 +516,13 @@ any application byte crosses** — and the share stays up for anyone who can,
 which is the useful behaviour when one peer is behind a hostile NAT and another
 is not. It keeps checking afterwards,
 because a hole-punched path can die and the transport will slide onto a relay.
-Be precise about the second half: that check runs once a second, so a path that
-fails mid-session can carry up to about a second of traffic over a relay before
-the connection is closed. Setup is a guarantee; staying direct is a short leash.
+Be precise about the second half. Two things enforce it: a watchdog that closes
+the connection within a second of seeing a relay path, and — because a second
+of traffic is not nothing — a check immediately before every write, so no byte
+h5i has not already handed to QUIC is handed to it after the path changed. What
+remains is what the transport had already accepted and may retransmit on the
+new path, which nothing above QUIC can recall. Setup is a guarantee; staying
+direct is a very short leash.
 A flag that merely preferred a direct path would be worse than none, because it
 would let you believe nothing was in the middle when something was.
 

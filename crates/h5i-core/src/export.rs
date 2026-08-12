@@ -81,7 +81,10 @@ struct ReceiptBundle<'a> {
 fn md_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        if matches!(c, '`' | '|' | '[' | ']' | '(' | ')' | '*' | '_' | '<' | '>' | '\\') {
+        if matches!(
+            c,
+            '`' | '|' | '[' | ']' | '(' | ')' | '*' | '_' | '<' | '>' | '\\'
+        ) {
             out.push('\\');
         }
         out.push(c);
@@ -178,7 +181,8 @@ pub fn export(
 
     std::fs::create_dir_all(out).map_err(|e| H5iError::with_path(e, out))?;
     let patch_path = out.join("patch.diff");
-    std::fs::write(&patch_path, patch.as_bytes()).map_err(|e| H5iError::with_path(e, &patch_path))?;
+    std::fs::write(&patch_path, patch.as_bytes())
+        .map_err(|e| H5iError::with_path(e, &patch_path))?;
 
     let bundle = ReceiptBundle {
         env_id: &m.id,
@@ -202,11 +206,8 @@ pub fn export(
     // — so what actually reached the reviewer was an aggregate command string
     // and a digest they had no way to resolve. Copied in, one file per share
     // record, named by the record id the JSON already carries.
-    let share_payloads = copy_share_payloads(
-        &env::env_dir(h5i_root, &m.agent, &m.slug),
-        out,
-        &records,
-    );
+    let share_payloads =
+        copy_share_payloads(&env::env_dir(h5i_root, &m.agent, &m.slug), out, &records);
 
     let summary = ExportSummary {
         env_id: m.id.clone(),
@@ -291,13 +292,13 @@ fn report(
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Export: {}\n\n", m.id));
-    out.push_str(&format!("- base: `{}` (from `{}`)\n", m.base_commit, m.parent_branch));
+    out.push_str(&format!(
+        "- base: `{}` (from `{}`)\n",
+        m.base_commit, m.parent_branch
+    ));
     out.push_str(&format!("- branch: `{}`\n", m.branch));
     out.push_str(&format!("- profile: `{}`\n", m.profile));
-    out.push_str(&format!(
-        "- isolation enforced: `{}`\n",
-        m.isolation_claim
-    ));
+    out.push_str(&format!("- isolation enforced: `{}`\n", m.isolation_claim));
     out.push_str(&format!("- policy digest: `{}`\n", m.policy_digest));
     out.push_str(&format!(
         "- changes: {} file(s), +{} -{}\n",
@@ -329,7 +330,9 @@ fn report(
                 r.exit_code
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "signal".into()),
-                md_code(&crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or(""))),
+                md_code(&crate::redact::sanitize_display(
+                    r.cmd.as_deref().unwrap_or("")
+                )),
             ));
         }
     }
@@ -338,7 +341,10 @@ fn report(
     // it. A UI change whose report claims "verified in the browser" and whose
     // evidence section lists an uncaught TypeError is the case this exists for,
     // so it goes above the agent-authored proposal rather than below it.
-    let browser: Vec<(&crate::receipt::ExecRecord, &crate::receipt::BrowserEvidence)> = records
+    let browser: Vec<(
+        &crate::receipt::ExecRecord,
+        &crate::receipt::BrowserEvidence,
+    )> = records
         .iter()
         .filter_map(|r| r.browser.as_ref().map(|b| (r, b)))
         .collect();
@@ -406,13 +412,17 @@ fn report(
             out.push_str(&format!(
                 "| {} | {} |\n",
                 r.timestamp,
-                md_escape(&crate::redact::sanitize_display(r.cmd.as_deref().unwrap_or("")))
+                md_escape(&crate::redact::sanitize_display(
+                    r.cmd.as_deref().unwrap_or("")
+                ))
             ));
         }
-        if viewer
-            .iter()
-            .any(|r| r.cmd.as_deref().unwrap_or("").contains("human took control"))
-        {
+        if viewer.iter().any(|r| {
+            r.cmd
+                .as_deref()
+                .unwrap_or("")
+                .contains("human took control")
+        }) {
             out.push_str(
                 "\n**A human took control of the browser during this box's life.** \
                  Some of what the agent reports having verified may have been done by hand.\n",
@@ -467,7 +477,13 @@ fn report(
                 ),
                 // A record from a build before the field existed. Said, not
                 // guessed: the alternative is the substring test again.
-                None => ("unrecorded".into(), "?".into(), "?".into(), "?".into(), "?".into()),
+                None => (
+                    "unrecorded".into(),
+                    "?".into(),
+                    "?".into(),
+                    "?".into(),
+                    "?".into(),
+                ),
             };
             let account = if share_payloads.contains(&r.id) {
                 format!("`receipts/{}.raw`", r.id)
@@ -640,10 +656,20 @@ mod tests {
             failed_requests: vec!["500 POST /api/save".into()],
             ..Default::default()
         };
-        let text = report(&manifest(), &summary(), &[record(Some(ev))], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[record(Some(ev))],
+            "brief",
+            None,
+            &Default::default(),
+        );
 
         assert!(text.contains("## What the browser saw"), "{text}");
-        assert!(text.contains("TypeError: cannot read 'boom' of null"), "{text}");
+        assert!(
+            text.contains("TypeError: cannot read 'boom' of null"),
+            "{text}"
+        );
         assert!(text.contains("widget failed to mount"), "{text}");
         assert!(text.contains("500 POST /api/save"), "{text}");
         // Above the agent's own proposal: a reviewer should meet the observed
@@ -660,7 +686,14 @@ mod tests {
             verb: Some("snapshot".into()),
             ..Default::default()
         };
-        let text = report(&manifest(), &summary(), &[record(Some(clean))], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[record(Some(clean))],
+            "brief",
+            None,
+            &Default::default(),
+        );
         assert!(text.contains("no console errors"), "{text}");
 
         // The distinction that matters: this one was never looked at, and the
@@ -670,7 +703,14 @@ mod tests {
             unavailable: true,
             ..Default::default()
         };
-        let text = report(&manifest(), &summary(), &[record(Some(blind))], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[record(Some(blind))],
+            "brief",
+            None,
+            &Default::default(),
+        );
         assert!(text.contains("no browser available to observe"), "{text}");
     }
 
@@ -679,12 +719,26 @@ mod tests {
         // A live share has written no receipt yet, so an export taken during a
         // demo said nothing at all about the box having been opened to
         // somebody — and during a demo is when somebody takes one.
-        let text = report(&manifest(), &summary(), &[record(None)], "brief", Some("4242"), &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[record(None)],
+            "brief",
+            Some("4242"),
+            &Default::default(),
+        );
         assert!(text.contains("Shared with someone, right now"), "{text}");
         assert!(text.contains("written when the share ends"), "{text}");
 
         // And a box nobody is sharing does not grow the section.
-        let quiet = report(&manifest(), &summary(), &[record(None)], "brief", None, &Default::default());
+        let quiet = report(
+            &manifest(),
+            &summary(),
+            &[record(None)],
+            "brief",
+            None,
+            &Default::default(),
+        );
         assert!(!quiet.contains("right now"), "{quiet}");
     }
 
@@ -713,7 +767,14 @@ mod tests {
         assert!(!text.contains("raw_oid"), "{text}");
 
         // And a box nobody shared does not grow the section.
-        let text = report(&manifest(), &summary(), &[record(None)], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[record(None)],
+            "brief",
+            None,
+            &Default::default(),
+        );
         assert!(!text.contains("## Shared with someone"), "{text}");
     }
 
@@ -736,7 +797,14 @@ mod tests {
             seconds: 600,
             turned_away: 0,
         });
-        let text = report(&manifest(), &summary(), &[r], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[r],
+            "brief",
+            None,
+            &Default::default(),
+        );
         assert!(text.contains("## Shared with someone"), "{text}");
         assert!(
             !text.contains("not end-to-end encrypted"),
@@ -756,7 +824,14 @@ mod tests {
         r.source = "share".into();
         r.cmd = Some("h5i box share demo (port 3000, 1 peer(s), 600s)".into());
         r.share = None;
-        let text = report(&manifest(), &summary(), &[r], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[r],
+            "brief",
+            None,
+            &Default::default(),
+        );
         assert!(text.contains("unrecorded"), "{text}");
         assert!(text.contains("not end-to-end encrypted"), "{text}");
         // And a payload that could not be copied is stated, not implied by a
@@ -769,7 +844,14 @@ mod tests {
         let mut r = record(None);
         r.source = "viewer".into();
         r.cmd = Some("h5i box view (human took control, 42s)".into());
-        let text = report(&manifest(), &summary(), &[r], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[r],
+            "brief",
+            None,
+            &Default::default(),
+        );
 
         assert!(text.contains("## Viewer sessions"), "{text}");
         // The load-bearing sentence: some of what the agent claims to have
@@ -780,7 +862,14 @@ mod tests {
         let mut watched = record(None);
         watched.source = "viewer".into();
         watched.cmd = Some("h5i box view (agent, 42s)".into());
-        let text = report(&manifest(), &summary(), &[watched], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[watched],
+            "brief",
+            None,
+            &Default::default(),
+        );
         assert!(text.contains("## Viewer sessions"), "{text}");
         assert!(!text.contains("A human took control"), "{text}");
     }
@@ -789,7 +878,14 @@ mod tests {
     fn a_run_that_never_touched_a_browser_gets_no_section() {
         // Most boxes are not browser boxes; they should not carry an empty
         // heading implying an inspection that never happened.
-        let text = report(&manifest(), &summary(), &[record(None)], "brief", None, &Default::default());
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[record(None)],
+            "brief",
+            None,
+            &Default::default(),
+        );
         assert!(!text.contains("What the browser saw"), "{text}");
     }
 }

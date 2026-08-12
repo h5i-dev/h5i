@@ -77,7 +77,9 @@ const RULES: &[SecretRule] = &[
         entropy_group: None,
         min_entropy: 0.0,
         // AWS access keys always start with one of these four-char prefixes.
-        keywords: &["akia", "asia", "agpa", "aida", "aroa", "aipa", "anpa", "anva", "asca"],
+        keywords: &[
+            "akia", "asia", "agpa", "aida", "aroa", "aipa", "anpa", "anva", "asca",
+        ],
     },
     SecretRule {
         id: "GCP_API_KEY",
@@ -156,7 +158,6 @@ const RULES: &[SecretRule] = &[
         min_entropy: 0.0,
         keywords: &["-----begin"],
     },
-
     // ── Database connection strings (entropy-gated on password group) ─────
     //
     // Each captures `user:password@host` (or `:password@` for redis where
@@ -215,7 +216,6 @@ const RULES: &[SecretRule] = &[
         min_entropy: 2.5,
         keywords: &["http://", "https://"],
     },
-
     // ── Generic high-entropy assignment (entropy-gated, catches the tail) ─
     //
     // Matches `<credential-keyword> [=:] "<value>"` where `<value>` has
@@ -284,9 +284,9 @@ const STOPLIST: &[&str] = &[
     "dummy",
     "fake",
     "test_only",
-    "${",   // ${ENV_VAR} interpolation
-    "{{",   // {{template_var}}
-    "%(",   // %()s old-style python
+    "${", // ${ENV_VAR} interpolation
+    "{{", // {{template_var}}
+    "%(", // %()s old-style python
     // Explicit user-controlled escape hatches. Same convention as gitleaks.
     "h5i:allow",
     "gitleaks:allow",
@@ -315,13 +315,10 @@ const PATH_ALLOWLIST: &[&str] = &[
 ];
 
 const ALLOWLISTED_EXTENSIONS: &[&str] = &[
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".svg", ".ico",
-    ".webp", ".pdf",
-    ".ttf", ".otf", ".woff", ".woff2", ".eot",
-    ".mp3", ".mp4", ".mov", ".avi", ".webm",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z",
-    ".min.js", ".min.css", ".map",
-    ".bin", ".o", ".so", ".a", ".dylib", ".dll", ".exe",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".svg", ".ico", ".webp", ".pdf",
+    ".ttf", ".otf", ".woff", ".woff2", ".eot", ".mp3", ".mp4", ".mov", ".avi", ".webm", ".zip",
+    ".tar", ".gz", ".bz2", ".xz", ".7z", ".min.js", ".min.css", ".map", ".bin", ".o", ".so", ".a",
+    ".dylib", ".dll", ".exe",
 ];
 
 fn compiled_rules() -> &'static [(Regex, &'static SecretRule)] {
@@ -357,10 +354,7 @@ const TEST_FILE_SUFFIXES: &[&str] = &[
 
 /// File basenames that define the rule pack itself — scanning them is a
 /// self-inflicted false positive. Add new detector-defining files here.
-const RULE_DEFINITION_FILES: &[&str] = &[
-    "secrets.rs",
-    "gitleaks.toml",
-];
+const RULE_DEFINITION_FILES: &[&str] = &["secrets.rs", "gitleaks.toml"];
 
 /// True when `path` should be skipped entirely (lockfiles, binaries, test
 /// fixtures, the rule pack itself, …).
@@ -496,10 +490,7 @@ where
 /// Convenience: scan a full text body. Lines are numbered starting at 1.
 pub fn scan_text(path: &Path, text: &str) -> Vec<SecretFinding> {
     let path_str = path.to_string_lossy();
-    scan_lines(
-        &path_str,
-        text.lines().enumerate().map(|(i, l)| (i + 1, l)),
-    )
+    scan_lines(&path_str, text.lines().enumerate().map(|(i, l)| (i + 1, l)))
 }
 
 /// Marker substituted for a redacted secret span.
@@ -649,7 +640,10 @@ mod tests {
             !out.contains("ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"),
             "secret must be gone: {out}"
         );
-        assert!(out.contains(REDACTION_MARKER), "marker must be present: {out}");
+        assert!(
+            out.contains(REDACTION_MARKER),
+            "marker must be present: {out}"
+        );
         // Surrounding prose is preserved.
         assert!(out.starts_with("deploy used token "));
         assert!(out.ends_with(" — rotate it"));
@@ -721,7 +715,10 @@ mod tests {
         let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
         let out = redact_text(&format!("x\r\ntoken={token}\r\ny\r\n"));
         assert!(!out.contains(&token), "{out}");
-        assert!(out.starts_with("x\r\n") && out.ends_with("y\r\n"), "{out:?}");
+        assert!(
+            out.starts_with("x\r\n") && out.ends_with("y\r\n"),
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -731,7 +728,10 @@ mod tests {
         let token = format!("ghp_{}", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789");
         let input = format!("example token {token} please rotate");
         let out = redact_text(&input);
-        assert!(!out.contains(&token), "stoplist word must not fail open: {out}");
+        assert!(
+            !out.contains(&token),
+            "stoplist word must not fail open: {out}"
+        );
         assert!(out.contains(REDACTION_MARKER));
     }
 
@@ -805,7 +805,10 @@ mod tests {
 
     #[test]
     fn path_allowlist_skips_image() {
-        let f = scan_lines("assets/logo.png", std::iter::once((1, "AKIAZZZZZZZZZZZZZZZZ")));
+        let f = scan_lines(
+            "assets/logo.png",
+            std::iter::once((1, "AKIAZZZZZZZZZZZZZZZZ")),
+        );
         assert!(f.is_empty());
     }
 
@@ -846,7 +849,10 @@ mod tests {
 
     #[test]
     fn keywords_match_any_of_many() {
-        assert!(keywords_match(&["xoxa-", "xoxb-", "xoxp-"], "found xoxp-123"));
+        assert!(keywords_match(
+            &["xoxa-", "xoxb-", "xoxp-"],
+            "found xoxp-123"
+        ));
         assert!(!keywords_match(&["xoxa-", "xoxb-", "xoxp-"], "xoxq-"));
     }
 
@@ -913,7 +919,8 @@ mod tests {
 
     #[test]
     fn jdbc_password_param_fires() {
-        let f = scan("DRIVER=jdbc:postgresql://host:5432/db?user=app&password=Xb4nGq8wPzM3aLv7yFhT");
+        let f =
+            scan("DRIVER=jdbc:postgresql://host:5432/db?user=app&password=Xb4nGq8wPzM3aLv7yFhT");
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].rule_id, "JDBC_PASSWORD_PARAM");
     }
@@ -948,6 +955,10 @@ mod tests {
             "src/db/connection_test.rs",
             std::iter::once((1, "postgres://user:Xb4nGq8wPzM3aLv7yFhT@host/db")),
         );
-        assert!(f.is_empty(), "test fixtures must be allowlisted; got {:?}", f);
+        assert!(
+            f.is_empty(),
+            "test fixtures must be allowlisted; got {:?}",
+            f
+        );
     }
 }

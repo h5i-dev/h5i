@@ -762,9 +762,13 @@ mod tests {
     fn command_is_redacted_before_it_is_recorded() {
         let td = TempDir::new().unwrap();
         let mut i = input();
-        i.cmd = Some("curl -H 'Authorization: Bearer ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789'".into());
+        i.cmd =
+            Some("curl -H 'Authorization: Bearer ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789'".into());
         let rec = append(td.path(), i, b"").unwrap();
-        assert!(!rec.cmd.unwrap().contains("ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"));
+        assert!(!rec
+            .cmd
+            .unwrap()
+            .contains("ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"));
     }
 
     #[test]

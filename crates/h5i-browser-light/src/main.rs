@@ -430,7 +430,8 @@ fn serve(
     once: bool,
 ) -> Result<(), H5iError> {
     let (_display, factory, page) = load(target, net, view)?;
-    let stream_file = stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
+    let stream_file =
+        stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
     let control_file = control_file
         .or_else(|| std::env::var(CONTROL_FILE_VAR).ok().map(PathBuf::from))
         .or_else(|| stream_file.as_deref().map(control_file_beside));
@@ -463,7 +464,11 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             (at, serde_json::json!({"verb": "navigate", "url": url}))
         }
         SessionVerb::Scroll { by, at } => (at, serde_json::json!({"verb": "scroll", "by": by})),
-        SessionVerb::Type { reference, text, at } => (
+        SessionVerb::Type {
+            reference,
+            text,
+            at,
+        } => (
             at,
             serde_json::json!({"verb": "type", "ref": reference, "text": text}),
         ),
@@ -504,7 +509,10 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
     } else if let Some(message) = reply.get("message").and_then(serde_json::Value::as_str) {
         println!("{message}");
     } else if let Some(moved) = reply.get("moved").and_then(serde_json::Value::as_bool) {
-        let offset = reply.get("offset").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+        let offset = reply
+            .get("offset")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0);
         let height = reply
             .get("content_height")
             .and_then(serde_json::Value::as_f64)
@@ -513,7 +521,11 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         // is said rather than left to be inferred from an unchanged number.
         println!(
             "{} at {offset:.0} of {height:.0}",
-            if moved { "scrolled" } else { "already at the end —" }
+            if moved {
+                "scrolled"
+            } else {
+                "already at the end —"
+            }
         );
     } else if let Some(url) = reply.get("url").and_then(serde_json::Value::as_str) {
         println!("url: {url}");
@@ -633,7 +645,10 @@ fn doctor(net: &NetArgs) -> Result<(), H5iError> {
     let proxy = proxy_of(net);
     let font_setup = fonts::load(&[], &fonts::default_font_dirs(), None);
 
-    println!("engine     : h5i-browser-light {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "engine     : h5i-browser-light {}",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("fonts      : {}", font_setup.summary());
     if font_setup.is_empty() {
         println!(
@@ -874,7 +889,10 @@ mod tests {
 
         let base = local_base(missing).expect("an unwalkable path still has a base");
         assert_eq!(base.scheme(), "file");
-        assert!(base.path().ends_with("/no-such-dir-b7f1/page.html"), "{base}");
+        assert!(
+            base.path().ends_with("/no-such-dir-b7f1/page.html"),
+            "{base}"
+        );
     }
 
     #[test]
@@ -895,7 +913,14 @@ mod tests {
             vec!["h5i-browser-light", "session", "snapshot", "--json"],
             vec!["h5i-browser-light", "session", "navigate", "/docs"],
             vec!["h5i-browser-light", "session", "click", "@e3"],
-            vec!["h5i-browser-light", "session", "click", "e3", "--port", "9000"],
+            vec![
+                "h5i-browser-light",
+                "session",
+                "click",
+                "e3",
+                "--port",
+                "9000",
+            ],
         ] {
             Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?} should parse: {e}"));
         }
@@ -922,8 +947,18 @@ mod tests {
         // The gate ROADMAP_BROWSER §3.3 asks for: script is a decision someone
         // makes, never a default they inherit.
         for argv in [
-            vec!["h5i-browser-light", "open", "https://x.example/", "--script"],
-            vec!["h5i-browser-light", "serve", "https://x.example/", "--script"],
+            vec![
+                "h5i-browser-light",
+                "open",
+                "https://x.example/",
+                "--script",
+            ],
+            vec![
+                "h5i-browser-light",
+                "serve",
+                "https://x.example/",
+                "--script",
+            ],
             vec!["h5i-browser-light", "capabilities", "--script"],
         ] {
             Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
@@ -942,7 +977,10 @@ mod tests {
         let with = Capabilities::with_script(true);
         assert!(with.fail_closed_receipts);
         assert!(with.snapshot && with.screenshot && with.live_view);
-        assert!(!with.video && !with.webgl, "still absent, and still said so");
+        assert!(
+            !with.video && !with.webgl,
+            "still absent, and still said so"
+        );
     }
 
     #[test]

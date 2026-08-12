@@ -42,12 +42,22 @@ fn page_source() -> String {
 
 impl ConsoleLine {
     pub fn page(level: &str, text: String) -> Self {
-        Self { level: level.to_string(), text, source: page_source(), repeats: 1 }
+        Self {
+            level: level.to_string(),
+            text,
+            source: page_source(),
+            repeats: 1,
+        }
     }
 
     /// A line this engine said about itself, not about the page.
     pub fn engine(level: &str, text: String) -> Self {
-        Self { level: level.to_string(), text, source: "engine".to_string(), repeats: 1 }
+        Self {
+            level: level.to_string(),
+            text,
+            source: "engine".to_string(),
+            repeats: 1,
+        }
     }
 }
 

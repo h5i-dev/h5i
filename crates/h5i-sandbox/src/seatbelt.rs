@@ -519,7 +519,10 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     if let Some(r) = rule(
         "allow file-read*",
         "literal",
-        &MACOS_DEV_NODES.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        &MACOS_DEV_NODES
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
     ) {
         s.push_str(&r);
         s.push('\n');
@@ -573,7 +576,10 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     if let Some(r) = rule(
         "allow file-write* file-read*",
         "literal",
-        &MACOS_DEV_WRITE.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        &MACOS_DEV_WRITE
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
     ) {
         s.push_str(&r);
         s.push('\n');
@@ -654,7 +660,11 @@ pub fn build_profile(policy: &ResolvedPolicy, work: &Path, opts: &SeatbeltOption
     // Emitting it anyway costs nothing and means the profile states the intent
     // explicitly, so a reader of the generated SBPL sees the same list the
     // policy does.
-    let denies: Vec<String> = p.fs_deny.iter().filter_map(|d| expand_home(d, home)).collect();
+    let denies: Vec<String> = p
+        .fs_deny
+        .iter()
+        .filter_map(|d| expand_home(d, home))
+        .collect();
     if let Some(r) = rule("deny file-read* file-write*", "subpath", &denies) {
         s.push_str(";; profile fs.deny (restated; already outside every grant)\n");
         s.push_str(&r);
@@ -1250,7 +1260,10 @@ mod tests {
             writes.contains("(allow file-write* file-read*\n"),
             "write grants must carry read too\n{writes}"
         );
-        assert!(writes.contains("(subpath \"/Users/dev/.cache\")"), "{writes}");
+        assert!(
+            writes.contains("(subpath \"/Users/dev/.cache\")"),
+            "{writes}"
+        );
     }
 
     #[test]
@@ -1362,11 +1375,15 @@ mod tests {
 
         p.loopback_ports = vec![49999, 49999, 3000];
         let s = build_profile(&p, Path::new("/w"), &opts());
-        assert!(s.contains("(allow network-outbound (remote ip \"localhost:3000\"))"), "{s}");
+        assert!(
+            s.contains("(allow network-outbound (remote ip \"localhost:3000\"))"),
+            "{s}"
+        );
         // Deduplicated: a port declared in the profile and also live as a
         // service must not emit the rule twice.
         assert_eq!(
-            s.matches("(allow network-outbound (remote ip \"localhost:49999\"))").count(),
+            s.matches("(allow network-outbound (remote ip \"localhost:49999\"))")
+                .count(),
             1,
             "duplicate port emitted twice\n{s}"
         );
@@ -1379,7 +1396,8 @@ mod tests {
         );
         // Exactly one port, not the interface.
         assert_eq!(
-            s.matches("(allow network-outbound (remote ip \"localhost:").count(),
+            s.matches("(allow network-outbound (remote ip \"localhost:")
+                .count(),
             1,
             "granted more than the one port\n{s}"
         );
@@ -1449,14 +1467,22 @@ mod tests {
         }
         // TIOCSTI types at the *host* shell through the shared terminal; the
         // subtraction must come after the grant, or last-match-wins re-allows it.
-        let deny = s.find("(deny file-ioctl (ioctl-command #x80017472))").unwrap();
+        let deny = s
+            .find("(deny file-ioctl (ioctl-command #x80017472))")
+            .unwrap();
         assert!(deny > ioctl, "the TIOCSTI subtraction must come after\n{s}");
 
         // A captured run has no terminal to drive (it gets its own session), so
         // it gets neither the tty paths nor the ioctl.
         let s = build_profile(&p, Path::new("/w"), &opts());
-        assert!(!s.contains("(allow file-ioctl"), "captured runs get no tty ioctl\n{s}");
-        assert!(!s.contains("/dev/tty[a-z0-9]"), "captured runs get no tty paths\n{s}");
+        assert!(
+            !s.contains("(allow file-ioctl"),
+            "captured runs get no tty ioctl\n{s}"
+        );
+        assert!(
+            !s.contains("/dev/tty[a-z0-9]"),
+            "captured runs get no tty paths\n{s}"
+        );
     }
 
     #[test]
@@ -1596,9 +1622,7 @@ mod tests {
         assert!(plan.unmapped.is_empty(), "{:?}", plan.unmapped);
         // ...and the real HOME state is denied, so the redirect is a boundary
         // rather than a default.
-        assert!(plan
-            .profile
-            .contains("(subpath \"/Users/dev/.claude\")"));
+        assert!(plan.profile.contains("(subpath \"/Users/dev/.claude\")"));
     }
 
     #[test]
@@ -1691,7 +1715,10 @@ mod tests {
         std::fs::write(link.join("artifact.o"), b"precious").unwrap();
         let err = apply_symlinks(&symlink_plan(tmp.path(), &link, &backing)).unwrap_err();
         assert!(err.to_string().contains("not empty"), "{err}");
-        assert!(link.join("artifact.o").exists(), "must not have been deleted");
+        assert!(
+            link.join("artifact.o").exists(),
+            "must not have been deleted"
+        );
     }
 
     #[test]
@@ -2054,7 +2081,10 @@ mod tests {
                     format!(
                         "(no deny( lines; log exited {:?}, stderr: {})",
                         o.status.code(),
-                        String::from_utf8_lossy(&o.stderr).chars().take(300).collect::<String>()
+                        String::from_utf8_lossy(&o.stderr)
+                            .chars()
+                            .take(300)
+                            .collect::<String>()
                     )
                 } else {
                     // Newest last; keep the tail, which is our run.
@@ -2205,7 +2235,11 @@ mod tests {
         let out = crate::sandbox::run(
             &pol,
             &work,
-            &["/bin/sh".to_string(), "-c".to_string(), "echo alive".to_string()],
+            &[
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "echo alive".to_string(),
+            ],
         )
         .expect("confined run should not error out");
         // `exit_code: None` means it died on a signal. Report enough to tell a
@@ -2280,10 +2314,19 @@ mod tests {
             ),
         );
         // Positive control first: the box can write where it is supposed to.
-        assert!(text.contains("INSIDE-OK"), "worktree must stay writable: {text}");
-        assert!(work.join("inside.txt").exists(), "the write did not land: {text}");
+        assert!(
+            text.contains("INSIDE-OK"),
+            "worktree must stay writable: {text}"
+        );
+        assert!(
+            work.join("inside.txt").exists(),
+            "the write did not land: {text}"
+        );
         // ...and cannot write where it is not.
-        assert!(text.contains("OUTSIDE-DENIED"), "write outside $WORK was allowed: {text}");
+        assert!(
+            text.contains("OUTSIDE-DENIED"),
+            "write outside $WORK was allowed: {text}"
+        );
         assert!(
             !outside.join("outside.txt").exists(),
             "a file appeared outside $WORK — the filesystem boundary did not hold"
@@ -2332,7 +2375,10 @@ mod tests {
         );
         // RAN proves the shell executed, so BLOCKED means the connect was
         // refused rather than the whole command failing to start.
-        assert!(text.contains("RAN"), "the confined shell did not run: {text}");
+        assert!(
+            text.contains("RAN"),
+            "the confined shell did not run: {text}"
+        );
         assert!(
             text.contains("BLOCKED") && !text.contains("CONNECTED"),
             "net.mode=deny let the box dial host loopback: {text}"
@@ -2377,7 +2423,10 @@ mod tests {
         );
         // Control: the rest of the worktree is still writable, so the lock is a
         // subtraction and not a blanket read-only worktree.
-        assert!(text.contains("SIBLING-OK"), "worktree must stay writable: {text}");
+        assert!(
+            text.contains("SIBLING-OK"),
+            "worktree must stay writable: {text}"
+        );
         assert!(
             text.contains("LOCK-HELD"),
             "the agent could create $WORK/.claude/settings.local.json — the config lock did not \

@@ -43,5 +43,8 @@ pub use h5i_sandbox::{
 // `seccomp_notify` is Linux+x86_64/aarch64 only (its whole module is cfg'd out
 // elsewhere), so the re-export must carry the same gate or it fails to resolve
 // on macOS/other targets in the cross-check job.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub use h5i_sandbox::seccomp_notify;

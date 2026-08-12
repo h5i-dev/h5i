@@ -244,7 +244,9 @@ fn pump(
 /// hold that. Its own function so the refusal is testable without a socket.
 fn decode_frame(seq: u64, data: &str) -> Option<Frame> {
     use base64::Engine as _;
-    let jpeg = base64::engine::general_purpose::STANDARD.decode(data).ok()?;
+    let jpeg = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
     (jpeg.len() <= MAX_FRAME_BYTES).then_some(Frame { seq, jpeg })
 }
 
@@ -292,8 +294,7 @@ mod tests {
         // two constants, which is a tautology and would have passed with the
         // check deleted.
         use base64::Engine as _;
-        let encode =
-            |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+        let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
 
         let ok = encode(&[0xffu8, 0xd8, 0xff]); // a JPEG's opening bytes
         assert_eq!(

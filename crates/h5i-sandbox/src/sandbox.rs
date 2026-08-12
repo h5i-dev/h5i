@@ -47,10 +47,9 @@ use crate::error::H5iError;
 pub use crate::sandbox_policy::{
     agent_browser_binary, browser_light_binary, browser_read_grants, browser_tooling_present,
     chrome_binary, chrome_exec_patterns, engine_tooling_missing, AgentRuntime, AuditCapture,
-    BrowserEngine,
-    AuditPolicy,
-    BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
-    PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,
+    AuditPolicy, BoxGitPath, BrowserEngine, ExecOutcome, HomeBind, InteractiveOutcome,
+    IsolationClaim, NetMode, PrivateBind, PrivatePath, Profile, ResolvedPolicy, RoBind,
+    SecretGrant, DEFAULT_WALL,
 };
 
 /// The box env var naming the host-side egress proxy. Re-exported here because
@@ -290,7 +289,9 @@ struct PrivatePathToml {
 
 /// Build the sorted `private_paths` list from the `[profile.X.private_paths]`
 /// table. Deterministic order (BTreeMap) for a stable policy digest.
-fn build_private_paths(raw: &BTreeMap<String, PrivatePathToml>) -> Vec<crate::sandbox_policy::PrivatePath> {
+fn build_private_paths(
+    raw: &BTreeMap<String, PrivatePathToml>,
+) -> Vec<crate::sandbox_policy::PrivatePath> {
     raw.iter()
         .map(|(path, cfg)| {
             let kind = cfg.kind.clone().unwrap_or_else(|| "cache".to_string());
@@ -397,7 +398,10 @@ pub fn load_profile(
     };
 
     let mut profile = match raw {
-        None => builtin_named(name, isolation_override.unwrap_or(IsolationClaim::Workspace)),
+        None => builtin_named(
+            name,
+            isolation_override.unwrap_or(IsolationClaim::Workspace),
+        ),
         Some(t) => {
             let isolation = match (&isolation_override, &t.isolation) {
                 (Some(o), _) => *o,
@@ -434,7 +438,11 @@ pub fn load_profile(
                     Some(s) => Some(parse_mem(s)?),
                     None => base.mem_bytes,
                 },
-                max_procs: t.resources.as_ref().and_then(|r| r.procs).or(base.max_procs),
+                max_procs: t
+                    .resources
+                    .as_ref()
+                    .and_then(|r| r.procs)
+                    .or(base.max_procs),
                 wall_secs: match t.resources.as_ref().and_then(|r| r.wall.as_deref()) {
                     Some(s) => parse_wall(s)?.as_secs(),
                     None => base.wall_secs,
@@ -458,7 +466,11 @@ pub fn load_profile(
                 allow_command_extractors: t.allow_command_extractors
                     || base.allow_command_extractors,
                 shell_rcfile: t.shell.rcfile.or(base.shell_rcfile),
-                persona: if t.persona.is_empty() { base.persona } else { t.persona },
+                persona: if t.persona.is_empty() {
+                    base.persona
+                } else {
+                    t.persona
+                },
                 // Omitted → inherit the base, so a partial `[profile.browser]`
                 // overlay keeps the grant its daemon cannot start without.
                 // Explicit `unix = false` takes it away.
@@ -523,7 +535,10 @@ pub enum IsolationRequest {
 /// The isolation a profile *declares* in `.h5i/env.toml` (its `isolation =`
 /// field), or `None` when it's absent or set to `auto`. Read directly so the
 /// auto-picker can honor an explicit profile choice without probing the host.
-fn profile_declared_isolation(repo_workdir: &Path, name: &str) -> Result<Option<IsolationClaim>, H5iError> {
+fn profile_declared_isolation(
+    repo_workdir: &Path,
+    name: &str,
+) -> Result<Option<IsolationClaim>, H5iError> {
     let path = repo_workdir.join(POLICY_FILE);
     if !path.is_file() {
         return Ok(None);
@@ -591,7 +606,9 @@ pub fn effective_auto(
         // against the runtime-aware caps, every other tier against the cheap
         // kernel-only probe.
         let caps = probe_host_for(tier);
-        let runnable = resolve(&profile, &caps).and_then(|pol| verify_exec(&pol)).is_ok();
+        let runnable = resolve(&profile, &caps)
+            .and_then(|pol| verify_exec(&pol))
+            .is_ok();
         if runnable {
             return Ok(tier);
         }
@@ -651,7 +668,12 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // *config* here (names + source/inject syntax); values are resolved
     // fail-closed at run time, never at policy-load time.
     for g in &p.secret_grants {
-        if g.name.is_empty() || !g.name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        if g.name.is_empty()
+            || !g
+                .name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
             return Err(H5iError::Metadata(format!(
                 "secret grant name '{}' is invalid — use ASCII letters, digits, '_' \
                  (it becomes an environment variable)",
@@ -952,10 +974,11 @@ pub fn parse_mem(s: &str) -> Result<u64, H5iError> {
         Some('K') | Some('k') => (&t[..t.len() - 1], 1024),
         _ => (t, 1),
     };
-    num.trim()
-        .parse::<u64>()
-        .map(|n| n * mult)
-        .map_err(|_| H5iError::Metadata(format!("invalid resources.mem '{s}' (expected e.g. \"4G\", \"512M\")")))
+    num.trim().parse::<u64>().map(|n| n * mult).map_err(|_| {
+        H5iError::Metadata(format!(
+            "invalid resources.mem '{s}' (expected e.g. \"4G\", \"512M\")"
+        ))
+    })
 }
 
 /// Parse a wall-clock duration like "30m", "90s", "2h".
@@ -970,7 +993,11 @@ pub fn parse_wall(s: &str) -> Result<Duration, H5iError> {
     num.trim()
         .parse::<u64>()
         .map(|n| Duration::from_secs(n * mult))
-        .map_err(|_| H5iError::Metadata(format!("invalid resources.wall '{s}' (expected e.g. \"30m\", \"90s\")")))
+        .map_err(|_| {
+            H5iError::Metadata(format!(
+                "invalid resources.wall '{s}' (expected e.g. \"30m\", \"90s\")"
+            ))
+        })
 }
 
 // ─── capability probing (§5, mandatory) ─────────────────────────────────────
@@ -1069,10 +1096,7 @@ pub fn tty_input_injection(caps: &HostCaps, claim: IsolationClaim) -> bool {
     match caps.os.as_str() {
         "macos" => {
             !(caps.seatbelt
-                && matches!(
-                    claim,
-                    IsolationClaim::Process | IsolationClaim::Supervised
-                ))
+                && matches!(claim, IsolationClaim::Process | IsolationClaim::Supervised))
         }
         "linux" => tty_injection_from_sysctl(
             std::fs::read_to_string("/proc/sys/dev/tty/legacy_tiocsti")
@@ -1145,7 +1169,9 @@ pub fn probe_host_fresh() -> HostCaps {
 /// non-image-backed claim can probe with this and skip `podman info` entirely.
 /// Memoized separately from the full probe so the two never cross-trigger.
 pub fn probe_host_kernel() -> HostCaps {
-    HOST_CAPS_KERNEL.get_or_init(probe_host_kernel_uncached).clone()
+    HOST_CAPS_KERNEL
+        .get_or_init(probe_host_kernel_uncached)
+        .clone()
 }
 
 /// Cheap "is Podman installed?" check for discoverability hints — runs only
@@ -1178,9 +1204,9 @@ pub fn microvm_unavailable_detail() -> String {
 /// process `env create` from ever shelling out to `podman info`.
 pub fn probe_host_for(claim: IsolationClaim) -> HostCaps {
     match claim {
-        IsolationClaim::Container
-        | IsolationClaim::HardenedContainer
-        | IsolationClaim::Microvm => probe_host(),
+        IsolationClaim::Container | IsolationClaim::HardenedContainer | IsolationClaim::Microvm => {
+            probe_host()
+        }
         _ => probe_host_kernel(),
     }
 }
@@ -1300,9 +1326,7 @@ fn capabilities_report_from(caps: HostCaps) -> CapabilitiesReport {
             p.net_mode = NetMode::Host;
         }
         let satisfiable = resolve(&p, &caps).is_ok();
-        let runnable = resolve(&p, &caps)
-            .and_then(|pol| verify_exec(&pol))
-            .is_ok();
+        let runnable = resolve(&p, &caps).and_then(|pol| verify_exec(&pol)).is_ok();
         if runnable && claim > strongest {
             strongest = claim;
         }
@@ -1503,7 +1527,11 @@ fn probe_landlock_abi() -> Option<i32> {
             LANDLOCK_CREATE_RULESET_VERSION,
         )
     };
-    if ret > 0 { Some(ret as i32) } else { None }
+    if ret > 0 {
+        Some(ret as i32)
+    } else {
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1573,8 +1601,7 @@ pub fn resolve(profile: &Profile, caps: &HostCaps) -> Result<ResolvedPolicy, H5i
                 // unusable Seatbelt refuses here exactly as a missing Landlock
                 // does on Linux.
                 if !caps.seatbelt {
-                    let detail =
-                        seatbelt_detail().unwrap_or_else(|| "Seatbelt unavailable".into());
+                    let detail = seatbelt_detail().unwrap_or_else(|| "Seatbelt unavailable".into());
                     missing.push(format!("macOS Seatbelt is not usable: {detail}"));
                 }
                 // `net.mode = deny` needs no namespace here: the profile simply
@@ -1828,7 +1855,9 @@ pub fn spawn_background(
                 .map_err(|e| H5iError::Metadata(format!("service failed to start: {e}")))?;
             Ok(child.id())
         }
-        IsolationClaim::Process => spawn_background_confined(policy, work, argv, injected_env, out, err),
+        IsolationClaim::Process => {
+            spawn_background_confined(policy, work, argv, injected_env, out, err)
+        }
         claim => Err(H5iError::Metadata(format!(
             "services are not supported at isolation '{}' in v1 — use workspace or process",
             claim.as_str()
@@ -1852,7 +1881,16 @@ fn spawn_background_confined(
     // interactive=false → setsid (own pgid); pidns=false → no supervisor fork,
     // so child.id() is the service process; no cgroup/wall-clock kill.
     let mut cmd = build_confined_command(
-        policy, work, argv, injected_env, net_deny, None, None, false, None, false,
+        policy,
+        work,
+        argv,
+        injected_env,
+        net_deny,
+        None,
+        None,
+        false,
+        None,
+        false,
     )?;
     cmd.stdin(std::process::Stdio::null())
         .stdout(out)
@@ -1925,38 +1963,30 @@ pub fn run_interactive(
     match policy.claim {
         IsolationClaim::Workspace => interactive_unconfined(policy, work, argv, injected_env)
             .map(InteractiveOutcome::from_code),
-        IsolationClaim::Process => {
-            interactive_confined(policy, work, argv, injected_env)
-                .map(InteractiveOutcome::from_code)
-        }
-        IsolationClaim::Supervised => {
-            crate::supervisor::run_interactive(
-                policy,
-                work,
-                argv,
-                injected_env,
-                managed_settings_content,
-            )
-            .map(InteractiveOutcome::from_code)
-        }
-        IsolationClaim::Container => {
-            crate::container::run_interactive(
-                policy,
-                work,
-                argv,
-                injected_env,
-                managed_settings_content,
-            )
-        }
-        IsolationClaim::Microvm => {
-            crate::microvm::run_interactive(
-                policy,
-                work,
-                argv,
-                injected_env,
-                managed_settings_content,
-            )
-        }
+        IsolationClaim::Process => interactive_confined(policy, work, argv, injected_env)
+            .map(InteractiveOutcome::from_code),
+        IsolationClaim::Supervised => crate::supervisor::run_interactive(
+            policy,
+            work,
+            argv,
+            injected_env,
+            managed_settings_content,
+        )
+        .map(InteractiveOutcome::from_code),
+        IsolationClaim::Container => crate::container::run_interactive(
+            policy,
+            work,
+            argv,
+            injected_env,
+            managed_settings_content,
+        ),
+        IsolationClaim::Microvm => crate::microvm::run_interactive(
+            policy,
+            work,
+            argv,
+            injected_env,
+            managed_settings_content,
+        ),
         claim => Err(H5iError::Metadata(format!(
             "no interactive backend for isolation claim '{}'",
             claim.as_str()
@@ -1999,7 +2029,16 @@ fn interactive_confined(
     // Process tier interactive: confine the session to a fresh PID namespace +
     // private procfs too (pidns=true), with the supervisor joining it to cgroup.
     let mut cmd = build_confined_command(
-        policy, work, argv, injected_env, net_deny, None, None, true, procs.as_deref(), true,
+        policy,
+        work,
+        argv,
+        injected_env,
+        net_deny,
+        None,
+        None,
+        true,
+        procs.as_deref(),
+        true,
     )?;
     // build_confined_command leaves stdio unset → inherited (the session).
     let mut child = cmd
@@ -2147,7 +2186,7 @@ pub fn verify_exec(policy: &ResolvedPolicy) -> Result<(), H5iError> {
                 }
             }
             Ok(())
-        },
+        }
         Ok(o) => Err(H5iError::Metadata(format!(
             "process-tier confinement self-test exited {:?} on this host — refusing to create an \
              environment whose commands could not run (re-request --isolation workspace)",
@@ -2372,7 +2411,12 @@ pub(crate) fn build_confined_command(
     let ro_work = policy.work_readonly;
     let rw_paths: Vec<PathBuf> = std::iter::once(work.clone())
         .filter(|_| !ro_work)
-        .chain(p.fs_write.iter().filter(|s| s.as_str() != "$WORK").map(|s| PathBuf::from(expand_tilde(s))))
+        .chain(
+            p.fs_write
+                .iter()
+                .filter(|s| s.as_str() != "$WORK")
+                .map(|s| PathBuf::from(expand_tilde(s))),
+        )
         .filter(|p| p.exists())
         .collect();
     let ro_paths: Vec<PathBuf> = p
@@ -2415,8 +2459,8 @@ pub(crate) fn build_confined_command(
     let ll_abi = abi;
     // The cgroup.procs path, pre-resolved to a CString so the alloc-free
     // supervisor branch can move the workload into the cgroup.
-    let cgroup_procs_c: Option<std::ffi::CString> = cgroup_procs
-        .and_then(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok());
+    let cgroup_procs_c: Option<std::ffi::CString> =
+        cgroup_procs.and_then(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok());
 
     // Config-lockdown targets (interactive agent sessions only), pre-resolved to
     // CStrings so the post-fork child does no allocation when binding them. A
@@ -2454,13 +2498,13 @@ pub(crate) fn build_confined_command(
     // namespace and are applied before Landlock, in the (egress-)private ns.
     let home_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> =
         home_binds_in_mount_order(&policy.home_binds)
-        .into_iter()
-        .filter_map(|b| {
-            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
-            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
-            Some((bc, tc))
-        })
-        .collect();
+            .into_iter()
+            .filter_map(|b| {
+                let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
+                let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
+                Some((bc, tc))
+            })
+            .collect();
 
     // Read-only binds (warm dependency caches): the box sees the cache at the
     // package manager's own path and cannot write it. Same private ns, before
@@ -2588,25 +2632,45 @@ pub(crate) fn build_confined_command(
                 // (a0) A private mount namespace for the pinned /etc/hosts —
                 //      unshared *after* the user ns is fully set up (maps written).
                 if libc::unshare(libc::CLONE_NEWNS) != 0 {
-                    return Err(Error::other(format!("egress: unshare NEWNS: {}", Error::last_os_error())));
+                    return Err(Error::other(format!(
+                        "egress: unshare NEWNS: {}",
+                        Error::last_os_error()
+                    )));
                 }
                 // (a) Hand our pid to the helper so it can target our netns.
                 let pid = libc::getpid() as u32;
                 let pidbuf = pid.to_ne_bytes();
                 if libc::write(eg.pid_write_fd, pidbuf.as_ptr().cast(), 4) != 4 {
-                    return Err(Error::other(format!("egress: write pid: {}", Error::last_os_error())));
+                    return Err(Error::other(format!(
+                        "egress: write pid: {}",
+                        Error::last_os_error()
+                    )));
                 }
                 // (b) Bind the pinned /etc/hosts over the real one. The mount ns
                 //     was unshared under our user ns, so this mount cannot
                 //     propagate back to the host. (A recursive MS_PRIVATE on "/"
                 //     is unnecessary here and returns EINVAL under some kernels.)
-                if libc::mount(eg.hosts_src.as_ptr(), c"/etc/hosts".as_ptr(), null(), libc::MS_BIND, null()) != 0 {
-                    return Err(Error::other(format!("bind /etc/hosts failed: {}", Error::last_os_error())));
+                if libc::mount(
+                    eg.hosts_src.as_ptr(),
+                    c"/etc/hosts".as_ptr(),
+                    null(),
+                    libc::MS_BIND,
+                    null(),
+                ) != 0
+                {
+                    return Err(Error::other(format!(
+                        "bind /etc/hosts failed: {}",
+                        Error::last_os_error()
+                    )));
                 }
                 // (c) Apply the nftables ruleset (CAP_NET_ADMIN in our userns).
                 //     Raw fork/execve so nothing allocates in this child.
-                let argv: [*const libc::c_char; 4] =
-                    [eg.nft_path.as_ptr(), c"-f".as_ptr(), eg.nft_rules_path.as_ptr(), null()];
+                let argv: [*const libc::c_char; 4] = [
+                    eg.nft_path.as_ptr(),
+                    c"-f".as_ptr(),
+                    eg.nft_rules_path.as_ptr(),
+                    null(),
+                ];
                 let envp: [*const libc::c_char; 2] = [eg.nft_envp.as_ptr(), null()];
                 let kid = libc::fork();
                 if kid == 0 {
@@ -2621,7 +2685,9 @@ pub(crate) fn build_confined_command(
                     return Err(Error::last_os_error());
                 }
                 if !(libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 0) {
-                    return Err(Error::other("nft egress ruleset failed to apply (fail-closed)"));
+                    return Err(Error::other(
+                        "nft egress ruleset failed to apply (fail-closed)",
+                    ));
                 }
                 // (d) Wait for slirp4netns to configure the uplink, so the
                 //     program never races a not-yet-ready interface — but with
@@ -2741,12 +2807,14 @@ pub(crate) fn build_confined_command(
                 use landlock::{AccessFs, PathBeneath, RulesetCreatedAttr};
                 let proc_fd = std::fs::File::open("/proc")
                     .map_err(|e| Error::other(format!("pidns: open new /proc: {e}")))?;
-                let rs = ruleset_slot
-                    .take()
-                    .ok_or_else(|| Error::other("landlock ruleset consumed before /proc re-grant"))?;
+                let rs = ruleset_slot.take().ok_or_else(|| {
+                    Error::other("landlock ruleset consumed before /proc re-grant")
+                })?;
                 let rs = rs
                     .add_rule(PathBeneath::new(proc_fd, AccessFs::from_read(ll_abi)))
-                    .map_err(|e| Error::other(format!("pidns: landlock /proc re-grant failed: {e}")))?;
+                    .map_err(|e| {
+                        Error::other(format!("pidns: landlock /proc re-grant failed: {e}"))
+                    })?;
                 ruleset_slot = Some(rs);
             }
 
@@ -2897,20 +2965,29 @@ pub(crate) fn build_confined_command(
                 // rlimit-tier fallback; cgroup `memory.max` (when the host
                 // delegates one — see cgroup.rs) is the accurate whole-subtree
                 // RSS cap layered on top.
-                let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
+                let lim = libc::rlimit {
+                    rlim_cur: bytes,
+                    rlim_max: bytes,
+                };
                 if libc::setrlimit(libc::RLIMIT_DATA, &lim) != 0 {
                     return Err(Error::last_os_error());
                 }
             }
             if let Some(n) = nproc {
-                let lim = libc::rlimit { rlim_cur: n, rlim_max: n };
+                let lim = libc::rlimit {
+                    rlim_cur: n,
+                    rlim_max: n,
+                };
                 if libc::setrlimit(libc::RLIMIT_NPROC, &lim) != 0 {
                     return Err(Error::last_os_error());
                 }
             }
             if let Some(bytes) = fsize {
                 // Cap any single file the command writes — a disk-bomb backstop.
-                let lim = libc::rlimit { rlim_cur: bytes, rlim_max: bytes };
+                let lim = libc::rlimit {
+                    rlim_cur: bytes,
+                    rlim_max: bytes,
+                };
                 if libc::setrlimit(libc::RLIMIT_FSIZE, &lim) != 0 {
                     return Err(Error::last_os_error());
                 }
@@ -2918,12 +2995,18 @@ pub(crate) fn build_confined_command(
             if let Some(secs) = cpu {
                 // Hard CPU-time cap (SIGKILL at the hard limit) — a kernel
                 // backstop to the host-side wall-clock kill.
-                let lim = libc::rlimit { rlim_cur: secs, rlim_max: secs };
+                let lim = libc::rlimit {
+                    rlim_cur: secs,
+                    rlim_max: secs,
+                };
                 if libc::setrlimit(libc::RLIMIT_CPU, &lim) != 0 {
                     return Err(Error::last_os_error());
                 }
             }
-            let core = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            let core = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
             let _ = libc::setrlimit(libc::RLIMIT_CORE, &core);
 
             // 3. No new privileges — required by Landlock, and blocks setuid
@@ -2992,7 +3075,16 @@ fn run_confined(
     // Process tier: netns only when egress is denied; no seccomp-notify gate; the
     // workload is confined to a fresh PID namespace + private procfs (pidns=true).
     let cmd = build_confined_command(
-        policy, work, argv, injected_env, false, None, None, true, procs.as_deref(), false,
+        policy,
+        work,
+        argv,
+        injected_env,
+        false,
+        None,
+        None,
+        true,
+        procs.as_deref(),
+        false,
     )?;
 
     let mut outcome = wait_with_deadline(cmd, p.wall(), argv, procs.as_deref())?;
@@ -3020,7 +3112,10 @@ fn run_confined(
 /// the host actually supports rootless cgroup management. `None` (the common
 /// case on WSL2/CI) leaves the rlimit path as the sole enforcement.
 #[cfg(target_os = "linux")]
-pub(crate) fn make_run_cgroup(mem_bytes: Option<u64>, max_procs: Option<u64>) -> Option<crate::cgroup::ScopedCgroup> {
+pub(crate) fn make_run_cgroup(
+    mem_bytes: Option<u64>,
+    max_procs: Option<u64>,
+) -> Option<crate::cgroup::ScopedCgroup> {
     if mem_bytes.is_none() && max_procs.is_none() {
         return None;
     }
@@ -3182,18 +3277,21 @@ fn seccomp_deny_program() -> Result<seccompiler::BpfProgram, H5iError> {
     #[allow(clippy::unnecessary_cast)]
     let rules: std::collections::BTreeMap<i64, Vec<SeccompRule>> =
         denied.iter().map(|s| (*s as i64, Vec::new())).collect();
-    let arch = TargetArch::try_from(std::env::consts::ARCH)
-        .map_err(|_| H5iError::Metadata(format!("unsupported seccomp arch {}", std::env::consts::ARCH)))?;
+    let arch = TargetArch::try_from(std::env::consts::ARCH).map_err(|_| {
+        H5iError::Metadata(format!(
+            "unsupported seccomp arch {}",
+            std::env::consts::ARCH
+        ))
+    })?;
     let filter = SeccompFilter::new(
         rules,
-        SeccompAction::Allow,                       // mismatch: allow
-        SeccompAction::Errno(libc::EPERM as u32),   // match: EPERM
+        SeccompAction::Allow,                     // mismatch: allow
+        SeccompAction::Errno(libc::EPERM as u32), // match: EPERM
         arch,
     )
     .map_err(|e| H5iError::Metadata(format!("seccomp filter build failed: {e}")))?;
-    let program: seccompiler::BpfProgram = filter
-        .try_into()
-        .map_err(|e: seccompiler::BackendError| {
+    let program: seccompiler::BpfProgram =
+        filter.try_into().map_err(|e: seccompiler::BackendError| {
             H5iError::Metadata(format!("seccomp compile failed: {e}"))
         })?;
     Ok(prepend_x32_guard(program))
@@ -3227,10 +3325,25 @@ fn prepend_x32_guard(program: seccompiler::BpfProgram) -> seccompiler::BpfProgra
 
     let mut out: seccompiler::BpfProgram = vec![
         // A = nr
-        sock_filter { code: BPF_LD_W_ABS, jt: 0, jf: 0, k: OFF_NR },
+        sock_filter {
+            code: BPF_LD_W_ABS,
+            jt: 0,
+            jf: 0,
+            k: OFF_NR,
+        },
         // nr >= X32 bit → fall through to the kill; otherwise skip it.
-        sock_filter { code: BPF_JMP_JGE_K, jt: 0, jf: 1, k: X32_SYSCALL_BIT },
-        sock_filter { code: BPF_RET_K, jt: 0, jf: 0, k: SECCOMP_RET_KILL_PROCESS },
+        sock_filter {
+            code: BPF_JMP_JGE_K,
+            jt: 0,
+            jf: 1,
+            k: X32_SYSCALL_BIT,
+        },
+        sock_filter {
+            code: BPF_RET_K,
+            jt: 0,
+            jf: 0,
+            k: SECCOMP_RET_KILL_PROCESS,
+        },
     ];
     out.extend(program);
     out
@@ -3248,7 +3361,9 @@ pub(crate) fn wait_with_deadline(
     use std::io::Read;
     use std::process::Stdio;
 
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let started = std::time::Instant::now();
     let mut child = cmd
         .spawn()
@@ -3319,7 +3434,12 @@ pub(crate) fn wait_loop(
             } else {
                 None // died on a signal (incl. our SIGKILL)
             };
-            return (exit_code, timed_out, cpu_ms(&usage), Some(maxrss_kb(&usage)));
+            return (
+                exit_code,
+                timed_out,
+                cpu_ms(&usage),
+                Some(maxrss_kb(&usage)),
+            );
         }
         if r == -1 {
             let e = std::io::Error::last_os_error();
@@ -3445,7 +3565,9 @@ mod tests {
         });
 
         if verify_exec(&pol).is_err() {
-            eprintln!("SKIP home_bind_shadows_target_inside_confined_child: process tier not runnable");
+            eprintln!(
+                "SKIP home_bind_shadows_target_inside_confined_child: process tier not runnable"
+            );
             return;
         }
         let out = run_with_env(
@@ -3484,12 +3606,27 @@ mod tests {
 
         let locks = config_lock_paths(&work, Some(&home));
         // Project: the .claude directory itself (not the file under it).
-        assert!(locks.contains(&work.join(".claude")), "project .claude dir locked: {locks:?}");
-        assert!(!locks.contains(&work.join(".codex")), "absent project .codex not locked");
+        assert!(
+            locks.contains(&work.join(".claude")),
+            "project .claude dir locked: {locks:?}"
+        );
+        assert!(
+            !locks.contains(&work.join(".codex")),
+            "absent project .codex not locked"
+        );
         // User: the single settings file (NOT the whole ~/.claude dir).
-        assert!(locks.contains(&home.join(".claude/settings.json")), "home claude settings locked");
-        assert!(!locks.contains(&home.join(".claude")), "home .claude dir must stay writable");
-        assert!(locks.contains(&home.join(".codex/config.toml")), "home codex config locked");
+        assert!(
+            locks.contains(&home.join(".claude/settings.json")),
+            "home claude settings locked"
+        );
+        assert!(
+            !locks.contains(&home.join(".claude")),
+            "home .claude dir must stay writable"
+        );
+        assert!(
+            locks.contains(&home.join(".codex/config.toml")),
+            "home codex config locked"
+        );
 
         // No HOME → only project-scope locks.
         let locks = config_lock_paths(&work, None);
@@ -3512,7 +3649,11 @@ env.pass  = ["PATH", "HOME", "LANG"]
 "#
     }
 
-    fn load_from_str(toml_text: &str, name: &str, over: Option<IsolationClaim>) -> Result<Profile, H5iError> {
+    fn load_from_str(
+        toml_text: &str,
+        name: &str,
+        over: Option<IsolationClaim>,
+    ) -> Result<Profile, H5iError> {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".h5i")).unwrap();
         std::fs::write(dir.path().join(POLICY_FILE), toml_text).unwrap();
@@ -3603,15 +3744,21 @@ isolation = "process"
 "#;
         let p = load_from_str(toml_text, "dev", None).unwrap();
         // Deterministic (sorted) order for a stable digest.
-        let by: std::collections::HashMap<_, _> =
-            p.private_paths.iter().map(|pp| (pp.path.as_str(), pp)).collect();
+        let by: std::collections::HashMap<_, _> = p
+            .private_paths
+            .iter()
+            .map(|pp| (pp.path.as_str(), pp))
+            .collect();
         // cache defaults persist=true; scratch overrides to false; bare entry
         // defaults to cache+persist.
         assert_eq!(by["target"].kind, "cache");
         assert!(by["target"].persist);
         assert_eq!(by[".next"].kind, "scratch");
         assert!(!by[".next"].persist);
-        assert!(by["build"].persist, "bare entry defaults to a persisted cache");
+        assert!(
+            by["build"].persist,
+            "bare entry defaults to a persisted cache"
+        );
     }
 
     #[test]
@@ -3766,7 +3913,10 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     #[test]
     fn missing_named_profile_is_an_error() {
         let err = load_from_str(doc_example_toml(), "fetch", None).unwrap_err();
-        assert!(err.to_string().contains("profile 'fetch' not found"), "{err}");
+        assert!(
+            err.to_string().contains("profile 'fetch' not found"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -3786,7 +3936,10 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert_eq!(p.isolation, IsolationClaim::Supervised);
         // Narrowed binaries (not all of ~/.local) + the runtime's own share dir.
         assert!(p.fs_read.iter().any(|s| s == "~/.local/bin"));
-        assert!(!p.fs_read.iter().any(|s| s == "~/.local"), "blanket ~/.local removed");
+        assert!(
+            !p.fs_read.iter().any(|s| s == "~/.local"),
+            "blanket ~/.local removed"
+        );
         assert!(p.fs_read.iter().any(|s| s == "~/.local/share/claude"));
         // Rustup shims under ~/.cargo/bin need read-only rustup metadata to
         // locate the active toolchain, but ~/.cargo and ~/.rustup stay ungranted.
@@ -3798,26 +3951,42 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(p.fs_read.iter().any(|s| s == "~/.cargo/git"));
         assert!(p.fs_read.iter().any(|s| s == "~/.rustup/settings.toml"));
         assert!(p.fs_read.iter().any(|s| s == "~/.rustup/toolchains"));
-        assert!(!p.fs_read.iter().any(|s| s == "~/.cargo"), "blanket ~/.cargo removed");
+        assert!(
+            !p.fs_read.iter().any(|s| s == "~/.cargo"),
+            "blanket ~/.cargo removed"
+        );
         // Credentials stay ungranted even though the caches are now readable.
         assert!(
-            !p.fs_read.iter().any(|s| s == "~/.cargo/credentials"
-                || s == "~/.cargo/credentials.toml"),
+            !p.fs_read
+                .iter()
+                .any(|s| s == "~/.cargo/credentials" || s == "~/.cargo/credentials.toml"),
             "cargo credentials never granted"
         );
-        assert!(!p.fs_write.iter().any(|s| s == "~/.cargo"), "blanket ~/.cargo write removed");
+        assert!(
+            !p.fs_write.iter().any(|s| s == "~/.cargo"),
+            "blanket ~/.cargo write removed"
+        );
         assert!(
             !p.fs_write.iter().any(|s| s.starts_with("~/.cargo/")),
             "default agent profile does not mutate host Cargo cache"
         );
-        assert!(!p.fs_read.iter().any(|s| s == "~/.rustup"), "blanket ~/.rustup removed");
+        assert!(
+            !p.fs_read.iter().any(|s| s == "~/.rustup"),
+            "blanket ~/.rustup removed"
+        );
         // Own state read-write; the OTHER runtime's state is NOT granted.
         assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
-        assert!(!p.fs_write.iter().any(|s| s == "~/.codex"), "no cross-runtime state");
+        assert!(
+            !p.fs_write.iter().any(|s| s == "~/.codex"),
+            "no cross-runtime state"
+        );
         assert!(p.fs_write.iter().any(|s| s == "/tmp"));
         // Own API egress only — not OpenAI's.
         assert!(p.net_egress.iter().any(|s| s == "api.anthropic.com"));
-        assert!(!p.net_egress.iter().any(|s| s == "api.openai.com"), "no cross-runtime egress");
+        assert!(
+            !p.net_egress.iter().any(|s| s == "api.openai.com"),
+            "no cross-runtime egress"
+        );
         assert!(p.env_pass.iter().any(|k| k == "TERM"));
         assert!(p.env_pass.iter().any(|k| k == "SHELL"));
         // The default deny set survives and no grant contains a denied child
@@ -3858,7 +4027,9 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         let b = private_scratch_dir("h5i-test-scratch").unwrap();
         assert_ne!(a, b, "two scratch dirs must not collide");
         // Not derived from the pid: that is what made the old name guessable.
-        assert!(!a.to_string_lossy().contains(&std::process::id().to_string()));
+        assert!(!a
+            .to_string_lossy()
+            .contains(&std::process::id().to_string()));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -3920,12 +4091,21 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         let dir = tempfile::tempdir().unwrap();
         let p = load_profile(dir.path(), "agent-codex", Some(IsolationClaim::Supervised)).unwrap();
         assert!(p.fs_write.iter().any(|s| s == "~/.codex"));
-        assert!(!p.fs_write.iter().any(|s| s == "~/.claude"), "no cross-runtime state");
-        assert!(!p.fs_write.iter().any(|s| s == "~/.claude.json"), "no cross-runtime state");
+        assert!(
+            !p.fs_write.iter().any(|s| s == "~/.claude"),
+            "no cross-runtime state"
+        );
+        assert!(
+            !p.fs_write.iter().any(|s| s == "~/.claude.json"),
+            "no cross-runtime state"
+        );
         assert!(p.fs_read.iter().any(|s| s == "~/.local/share/codex"));
         assert!(!p.fs_read.iter().any(|s| s == "~/.local/share/claude"));
         assert!(p.net_egress.iter().any(|s| s == "api.openai.com"));
-        assert!(!p.net_egress.iter().any(|s| s == "api.anthropic.com"), "no cross-runtime egress");
+        assert!(
+            !p.net_egress.iter().any(|s| s == "api.anthropic.com"),
+            "no cross-runtime egress"
+        );
     }
 
     #[test]
@@ -3959,7 +4139,10 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert_eq!(AgentRuntime::from_identity("Codex-2"), AgentRuntime::Codex);
         assert_eq!(AgentRuntime::from_identity("claude"), AgentRuntime::Claude);
         // Unknown identities default to Claude (never silent OpenAI egress).
-        assert_eq!(AgentRuntime::from_identity("some-bot"), AgentRuntime::Claude);
+        assert_eq!(
+            AgentRuntime::from_identity("some-bot"),
+            AgentRuntime::Claude
+        );
         assert_eq!(AgentRuntime::from_identity(""), AgentRuntime::Claude);
     }
 
@@ -3986,7 +4169,10 @@ resources = { mem = "2G" }
 "#;
         let p = load_from_str(toml_text, "agent-claude", None).unwrap();
         assert_eq!(p.mem_bytes, Some(2 * 1024 * 1024 * 1024));
-        assert!(p.fs_read.iter().any(|s| s == "~/.local/bin"), "agent base grants inherited");
+        assert!(
+            p.fs_read.iter().any(|s| s == "~/.local/bin"),
+            "agent base grants inherited"
+        );
         assert!(p.fs_write.iter().any(|s| s == "~/.claude"));
         assert!(
             p.net_egress.iter().any(|s| s == "api.anthropic.com"),
@@ -4021,9 +4207,21 @@ fs.read = []
 env.pass = []
 "#;
         let p = load_from_str(toml_text, "agent-claude", None).unwrap();
-        assert!(p.fs_write.is_empty(), "explicit fs.write = [] must stay empty: {:?}", p.fs_write);
-        assert!(p.fs_read.is_empty(), "explicit fs.read = [] must stay empty: {:?}", p.fs_read);
-        assert!(p.env_pass.is_empty(), "explicit env.pass = [] must stay empty: {:?}", p.env_pass);
+        assert!(
+            p.fs_write.is_empty(),
+            "explicit fs.write = [] must stay empty: {:?}",
+            p.fs_write
+        );
+        assert!(
+            p.fs_read.is_empty(),
+            "explicit fs.read = [] must stay empty: {:?}",
+            p.fs_read
+        );
+        assert!(
+            p.env_pass.is_empty(),
+            "explicit env.pass = [] must stay empty: {:?}",
+            p.env_pass
+        );
     }
 
     /// Omitting them still inherits the base, so a partial overlay stays usable.
@@ -4066,7 +4264,12 @@ container.image = "localhost/mine:2"
 
     #[test]
     fn isolation_override_wins_over_profile() {
-        let p = load_from_str(doc_example_toml(), "default", Some(IsolationClaim::Workspace)).unwrap();
+        let p = load_from_str(
+            doc_example_toml(),
+            "default",
+            Some(IsolationClaim::Workspace),
+        )
+        .unwrap();
         assert_eq!(p.isolation, IsolationClaim::Workspace);
     }
 
@@ -4089,13 +4292,22 @@ container.image = "localhost/mine:2"
         );
         // `auto` is a strategy, not a declared tier → None (defer to the picker).
         let dir = tmp_repo(Some("[profile.default]\nisolation = \"auto\"\n"));
-        assert_eq!(profile_declared_isolation(dir.path(), "default").unwrap(), None);
+        assert_eq!(
+            profile_declared_isolation(dir.path(), "default").unwrap(),
+            None
+        );
         // No isolation key → None.
         let dir = tmp_repo(Some("[profile.default]\ntools = [\"git\"]\n"));
-        assert_eq!(profile_declared_isolation(dir.path(), "default").unwrap(), None);
+        assert_eq!(
+            profile_declared_isolation(dir.path(), "default").unwrap(),
+            None
+        );
         // No file at all → None (no error).
         let dir = tmp_repo(None);
-        assert_eq!(profile_declared_isolation(dir.path(), "default").unwrap(), None);
+        assert_eq!(
+            profile_declared_isolation(dir.path(), "default").unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -4134,7 +4346,11 @@ container.image = "localhost/mine:2"
         // kernel tier or workspace instead.
         let dir = tmp_repo(None);
         let tier = effective_auto(dir.path(), "default", true, None).unwrap();
-        assert_ne!(tier, IsolationClaim::Container, "imageless default can't be container");
+        assert_ne!(
+            tier,
+            IsolationClaim::Container,
+            "imageless default can't be container"
+        );
     }
 
     #[test]
@@ -4167,7 +4383,11 @@ inject = "env"
         let names: Vec<&str> = p.secret_grants.iter().map(|g| g.name.as_str()).collect();
         assert!(names.contains(&"DB_URL"));
         assert!(names.contains(&"GITHUB_TOKEN"));
-        let gh = p.secret_grants.iter().find(|g| g.name == "GITHUB_TOKEN").unwrap();
+        let gh = p
+            .secret_grants
+            .iter()
+            .find(|g| g.name == "GITHUB_TOKEN")
+            .unwrap();
         assert_eq!(gh.source.as_deref(), Some("env:GH_PAT"));
         // DB_URL got defaults.
         let db = p.secret_grants.iter().find(|g| g.name == "DB_URL").unwrap();
@@ -4251,7 +4471,10 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
 
     #[test]
     fn isolation_claim_parse_and_order() {
-        assert_eq!(IsolationClaim::parse("workspace").unwrap(), IsolationClaim::Workspace);
+        assert_eq!(
+            IsolationClaim::parse("workspace").unwrap(),
+            IsolationClaim::Workspace
+        );
         assert_eq!(
             IsolationClaim::parse("hardened-container").unwrap(),
             IsolationClaim::HardenedContainer
@@ -4392,7 +4615,10 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         // "set container.image" message, not a podman-not-found one.
         let err = resolve(&no_img, &caps_with_container(None)).unwrap_err();
         assert!(err.to_string().contains("image"), "{err}");
-        assert!(!err.to_string().contains("podman"), "image error must win: {err}");
+        assert!(
+            !err.to_string().contains("podman"),
+            "image error must win: {err}"
+        );
 
         // Runtime + image → resolves.
         assert!(resolve(&p, &caps_with_container(Some("podman"))).is_ok());
@@ -4446,13 +4672,22 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     /// door that is open, so the unreadable case must read as injectable.
     #[test]
     fn tty_injection_reporting_fails_open() {
-        assert!(tty_injection_from_sysctl(None), "an unreadable sysctl must read as open");
+        assert!(
+            tty_injection_from_sysctl(None),
+            "an unreadable sysctl must read as open"
+        );
         assert!(
             tty_injection_from_sysctl(Some("1\n")),
             "upstream's default (y → 1) leaves TIOCSTI available"
         );
-        assert!(!tty_injection_from_sysctl(Some("0\n")), "0 means the kernel refuses TIOCSTI");
-        assert!(!tty_injection_from_sysctl(Some("0")), "no trailing newline is still 0");
+        assert!(
+            !tty_injection_from_sysctl(Some("0\n")),
+            "0 means the kernel refuses TIOCSTI"
+        );
+        assert!(
+            !tty_injection_from_sysctl(Some("0")),
+            "no trailing newline is still 0"
+        );
         assert!(
             tty_injection_from_sysctl(Some("banana")),
             "anything we cannot read as a definite 0 must read as open"
@@ -4466,8 +4701,14 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
     #[test]
     fn tty_injection_on_macos_follows_the_profile_not_the_platform() {
         // A kernel tier on a working Seatbelt: the profile subtracts it.
-        assert!(!tty_input_injection(&mac_caps(true), IsolationClaim::Process));
-        assert!(!tty_input_injection(&mac_caps(true), IsolationClaim::Supervised));
+        assert!(!tty_input_injection(
+            &mac_caps(true),
+            IsolationClaim::Process
+        ));
+        assert!(!tty_input_injection(
+            &mac_caps(true),
+            IsolationClaim::Supervised
+        ));
 
         // `workspace` runs unconfined by design — no profile, no subtraction.
         assert!(
@@ -4488,7 +4729,10 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             IsolationClaim::HardenedContainer,
             IsolationClaim::Microvm,
         ] {
-            assert!(!tty_input_injection(&mac_caps(false), claim), "{claim:?} has its own tty");
+            assert!(
+                !tty_input_injection(&mac_caps(false), claim),
+                "{claim:?} has its own tty"
+            );
         }
 
         // An OS with no backend at all: nothing is known, so nothing is claimed.
@@ -4523,7 +4767,10 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             !caps(None, true, true).kernel_confinement(),
             "no Landlock is no kernel confinement on Linux"
         );
-        assert_eq!(caps(Some(3), true, true).confinement_mechanism(), "landlock+seccomp");
+        assert_eq!(
+            caps(Some(3), true, true).confinement_mechanism(),
+            "landlock+seccomp"
+        );
     }
 
     #[test]
@@ -4545,7 +4792,12 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let mut p = Profile::builtin("default", IsolationClaim::Workspace);
         p.wall_secs = 1;
         let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
-        let out = run(&policy, dir.path(), &["sleep".to_string(), "30".to_string()]).unwrap();
+        let out = run(
+            &policy,
+            dir.path(),
+            &["sleep".to_string(), "30".to_string()],
+        )
+        .unwrap();
         assert!(out.timed_out, "expected the wall-clock kill to fire");
         assert_ne!(out.exit_code, Some(0));
     }
@@ -4582,7 +4834,10 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         )
         .expect("a confined run must not hang on a full stdout pipe");
         assert_eq!(out.exit_code, Some(0));
-        assert!(!out.timed_out, "the run must finish well inside the wall clock");
+        assert!(
+            !out.timed_out,
+            "the run must finish well inside the wall clock"
+        );
         assert_eq!(
             out.stdout.iter().filter(|b| **b == b'\n').count(),
             4096,
@@ -4621,12 +4876,24 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let p = Profile::builtin("default", IsolationClaim::Workspace);
         let policy = ResolvedPolicy::new(IsolationClaim::Workspace, p);
         // A command that burns a little wall time so the numbers are non-trivial.
-        let out = run(&policy, dir.path(), &["sh".into(), "-c".into(), "sleep 0.2".into()]).unwrap();
+        let out = run(
+            &policy,
+            dir.path(),
+            &["sh".into(), "-c".into(), "sleep 0.2".into()],
+        )
+        .unwrap();
         assert_eq!(out.exit_code, Some(0));
-        assert!(out.wall_ms >= 150, "wall_ms should reflect the ~200ms sleep: {}", out.wall_ms);
+        assert!(
+            out.wall_ms >= 150,
+            "wall_ms should reflect the ~200ms sleep: {}",
+            out.wall_ms
+        );
         // On Linux wait4 fills ru_maxrss (KiB) — a real process is > 0.
         #[cfg(target_os = "linux")]
-        assert!(out.max_rss_kb.unwrap_or(0) > 0, "expected a peak RSS reading");
+        assert!(
+            out.max_rss_kb.unwrap_or(0) > 0,
+            "expected a peak RSS reading"
+        );
     }
 
     #[test]
@@ -4638,7 +4905,12 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         // Listed program (by basename) runs.
         assert!(run(&policy, dir.path(), &["echo".into(), "hi".into()]).is_ok());
         // An unlisted program is refused before it ever executes.
-        let err = run(&policy, dir.path(), &["sh".into(), "-c".into(), "echo no".into()]).unwrap_err();
+        let err = run(
+            &policy,
+            dir.path(),
+            &["sh".into(), "-c".into(), "echo no".into()],
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("allowlist"), "{err}");
     }
 
@@ -4662,7 +4934,8 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             &[
                 "sh".into(),
                 "-c".into(),
-                "echo \"unlisted=[$H5I_TEST_UNLISTED_HOST_VAR]\"; echo \"path=[${PATH:+set}]\"".into(),
+                "echo \"unlisted=[$H5I_TEST_UNLISTED_HOST_VAR]\"; echo \"path=[${PATH:+set}]\""
+                    .into(),
             ],
         )
         .expect("workspace run");
@@ -4673,7 +4946,10 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             "an unlisted host var must not reach a workspace-tier child: {text}"
         );
         // …and the allowlisted ones still do, or the tier would simply be broken.
-        assert!(text.contains("path=[set]"), "PATH is on the allowlist: {text}");
+        assert!(
+            text.contains("path=[set]"),
+            "PATH is on the allowlist: {text}"
+        );
     }
 
     #[test]
@@ -4707,7 +4983,11 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         let ws = r.claims.iter().find(|c| c.claim == "workspace").unwrap();
         assert!(ws.satisfiable && ws.runnable == Some(true));
         // The one remaining not-in-this-build backend is always unsatisfiable.
-        let hc = r.claims.iter().find(|c| c.claim == "hardened-container").unwrap();
+        let hc = r
+            .claims
+            .iter()
+            .find(|c| c.claim == "hardened-container")
+            .unwrap();
         assert!(!hc.satisfiable && hc.runnable.is_none());
         // The image-backed tiers are never exec-tested (a run needs an image),
         // and each tracks its own runtime.

@@ -196,7 +196,10 @@ mod tests {
         // record. This is what an added-required-field version bump looks like
         // from down here, so failing closed on it is the whole point.
         write(dir.path(), &format!(r#"{{"pid":{}}}"#, std::process::id()));
-        assert!(read_live(dir.path()).is_none(), "a pid alone is not a record");
+        assert!(
+            read_live(dir.path()).is_none(),
+            "a pid alone is not a record"
+        );
 
         write(dir.path(), "");
         assert!(read_live(dir.path()).is_none(), "empty");
@@ -209,7 +212,10 @@ mod tests {
         write(dir.path(), &full_raw("4294967295"));
         assert!(read_live(dir.path()).is_none(), "pid past u32");
         write(dir.path(), &full_raw("4294967296"));
-        assert!(read_live(dir.path()).is_none(), "pid that truncates to zero");
+        assert!(
+            read_live(dir.path()).is_none(),
+            "pid that truncates to zero"
+        );
     }
 
     fn full_raw(pid: &str) -> String {
@@ -281,7 +287,10 @@ mod tests {
         // `transport` was a free `String`, so anything at all round-tripped
         // into a `ShareRecord` and out to a reviewer as a statement about how
         // the traffic was carried.
-        let odd = full(pid, "").replace("\"transport\":\"tunnel\"", "\"transport\":\"carrier-pigeon\"");
+        let odd = full(pid, "").replace(
+            "\"transport\":\"tunnel\"",
+            "\"transport\":\"carrier-pigeon\"",
+        );
         write(dir.path(), &odd);
         assert!(read_live(dir.path()).is_none(), "an unknown transport");
 
@@ -311,7 +320,10 @@ mod tests {
 
         write(dir.path(), &at(now));
         let r = read_live(dir.path()).expect("the process is still alive");
-        assert_eq!(r.live_grants, 0, "a grant expiring this second still counted");
+        assert_eq!(
+            r.live_grants, 0,
+            "a grant expiring this second still counted"
+        );
         assert!(!r.is_admitting());
     }
 
@@ -328,7 +340,10 @@ mod tests {
         // Winding up: the process is alive and writing its receipt, and it
         // refuses to mint a ticket. Saying "somebody can reach this box right
         // now" of it is an overclaim in the direction of alarm.
-        write(dir.path(), &full(std::process::id(), r#","winding_up":true"#));
+        write(
+            dir.path(),
+            &full(std::process::id(), r#","winding_up":true"#),
+        );
         let r = read_live(dir.path()).expect("still a live process");
         assert!(r.winding_up);
         assert!(!r.is_admitting());

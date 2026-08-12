@@ -250,7 +250,7 @@ pub fn refresh(
     let profile_name = format!("cache-{}", eco.name);
     if crate::sandbox::load_profile(workdir, &profile_name, None).is_err() {
         return Err(H5iError::Metadata(format!(
-        "`cache refresh` needs a profile that grants egress to {} and nothing else, and no \
+            "`cache refresh` needs a profile that grants egress to {} and nothing else, and no \
          built-in does: `default` denies network (it is the build/test profile) and the agent \
          profiles grant a model API instead.\n  \
          Declare one in .h5i/env.toml and this becomes a one-liner:\n  \
@@ -261,14 +261,14 @@ pub fn refresh(
          \n  \
          The cache directory is prepared at {} and the box would run `{}` with it writable \
          there.",
-        eco.registries.join(", "),
-        eco.name,
-        eco.registries
-            .iter()
-            .map(|r| format!("\"{r}\""))
-            .collect::<Vec<_>>()
-            .join(", "),
-        dir.display(),
+            eco.registries.join(", "),
+            eco.name,
+            eco.registries
+                .iter()
+                .map(|r| format!("\"{r}\""))
+                .collect::<Vec<_>>()
+                .join(", "),
+            dir.display(),
             eco.fetch.join(" "),
         )));
     }

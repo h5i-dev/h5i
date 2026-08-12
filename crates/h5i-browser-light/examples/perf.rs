@@ -47,9 +47,8 @@ fn document_with_script(rows: usize) -> String {
 }
 
 fn factory(script: bool) -> (PageFactory, Arc<Broker>) {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker =
+        Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"));
     let fonts = h5i_browser_light::fonts::load(
         &[],
         &h5i_browser_light::fonts::default_font_dirs(),
@@ -99,7 +98,10 @@ fn main() {
     println!("build: {profile}\n");
 
     // ── reading a page ──────────────────────────────────────────────────────
-    println!("{:<34} {:>10} {:>10} {:>12}", "reading a page", "no script", "script", "outline");
+    println!(
+        "{:<34} {:>10} {:>10} {:>12}",
+        "reading a page", "no script", "script", "outline"
+    );
     for rows in [10usize, 100, 500] {
         let html = document(rows);
         let url = url::Url::parse("https://bench.example/").unwrap();
@@ -188,31 +190,43 @@ fn main() {
 
         let document_wide = time(5, || {
             script
-                .eval("(() => { let n = 0; for (let i = 0; i < 200; i++) \
-                        n += document.querySelectorAll('a').length; return n })()")
+                .eval(
+                    "(() => { let n = 0; for (let i = 0; i < 200; i++) \
+                        n += document.querySelectorAll('a').length; return n })()",
+                )
                 .expect("runs");
         });
         let scoped = time(5, || {
             script
-                .eval("(() => { const s = document.querySelector('section'); let n = 0; \
+                .eval(
+                    "(() => { const s = document.querySelector('section'); let n = 0; \
                         for (let i = 0; i < 200; i++) n += s.querySelectorAll('a').length; \
-                        return n })()")
+                        return n })()",
+                )
                 .expect("runs");
         });
         let iterate = time(5, || {
             script
-                .eval("(() => { const all = document.querySelectorAll('a'); let n = 0; \
-                        for (let i = 0; i < 200; i++) for (const a of all) n += 1; return n })()")
+                .eval(
+                    "(() => { const all = document.querySelectorAll('a'); let n = 0; \
+                        for (let i = 0; i < 200; i++) for (const a of all) n += 1; return n })()",
+                )
                 .expect("runs");
         });
 
         println!("\nqueries over a 200-section page (1800 nodes), 200 calls each:");
-        println!("  document.querySelectorAll('a')  {document_wide:>9.1?}  ({:.0} us each)",
-            document_wide.as_nanos() as f64 / 200.0 / 1000.0);
-        println!("  section.querySelectorAll('a')   {scoped:>9.1?}  ({:.0} us each)",
-            scoped.as_nanos() as f64 / 200.0 / 1000.0);
-        println!("  iterating a 400-node result     {iterate:>9.1?}  ({:.0} us each)",
-            iterate.as_nanos() as f64 / 200.0 / 1000.0);
+        println!(
+            "  document.querySelectorAll('a')  {document_wide:>9.1?}  ({:.0} us each)",
+            document_wide.as_nanos() as f64 / 200.0 / 1000.0
+        );
+        println!(
+            "  section.querySelectorAll('a')   {scoped:>9.1?}  ({:.0} us each)",
+            scoped.as_nanos() as f64 / 200.0 / 1000.0
+        );
+        println!(
+            "  iterating a 400-node result     {iterate:>9.1?}  ({:.0} us each)",
+            iterate.as_nanos() as f64 / 200.0 / 1000.0
+        );
     }
 
     // ── the reporting proxy ─────────────────────────────────────────────────
@@ -225,12 +239,15 @@ fn main() {
     let (scripted, broker) = factory(true);
     let mut page = scripted.from_html(&document(20), &url);
     page.run_scripts(broker).expect("realm");
-    let mut script =
-        h5i_browser_light::script::Script::new(page.dom(), {
+    let mut script = h5i_browser_light::script::Script::new(
+        page.dom(),
+        {
             let (_, broker) = factory(true);
             broker
-        }, &url)
-        .expect("realm");
+        },
+        &url,
+    )
+    .expect("realm");
 
     let reads = 20_000;
     let mut bench = |source: &str| {
@@ -258,7 +275,10 @@ fn main() {
 
     let per = |d: Duration| d.as_nanos() as f64 / reads as f64;
     println!("where a DOM property read goes, over {reads} reads:");
-    println!("  plain object, no proxy        {plain:>10.1?}  ({:.0} ns each)", per(plain));
+    println!(
+        "  plain object, no proxy        {plain:>10.1?}  ({:.0} ns each)",
+        per(plain)
+    );
     println!(
         "  watched node, known property  {trapped:>10.1?}  ({:.0} ns each)",
         per(trapped)

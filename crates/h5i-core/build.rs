@@ -98,7 +98,11 @@ fn ensure_stub_dist(web: &Path) {
 }
 
 fn run_npm(cwd: &Path, args: &[&str]) {
-    eprintln!("h5i build.rs: cd {} && npm {}", cwd.display(), args.join(" "));
+    eprintln!(
+        "h5i build.rs: cd {} && npm {}",
+        cwd.display(),
+        args.join(" ")
+    );
     match Command::new("npm").args(args).current_dir(cwd).status() {
         Ok(s) if s.success() => {}
         Ok(s) => panic!("npm {:?} failed with exit code {:?}", args, s.code()),

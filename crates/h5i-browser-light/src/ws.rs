@@ -83,9 +83,8 @@ pub fn accept(stream: &mut TcpStream) -> Result<String, H5iError> {
         }
     }
 
-    let key = key.ok_or_else(|| {
-        H5iError::Metadata("the client sent no Sec-WebSocket-Key".to_string())
-    })?;
+    let key =
+        key.ok_or_else(|| H5iError::Metadata("the client sent no Sec-WebSocket-Key".to_string()))?;
 
     // Exactly one terminating CRLF pair, and not a byte more.
     let response = format!(
@@ -194,7 +193,7 @@ pub fn read_message(reader: &mut impl Read) -> Result<Incoming, H5iError> {
             0x9 if at_boundary => return Ok(Incoming::Ping(payload)),
             0xA if at_boundary => return Ok(Incoming::Pong),
             0x9 | 0xA => continue, // interleaved: skip without touching `assembled`
-            0x0 => {} // continuation: keep the opcode we started with
+            0x0 => {}              // continuation: keep the opcode we started with
             other => message_opcode = Some(other),
         }
 
@@ -263,12 +262,7 @@ mod tests {
         let mask = [0x37, 0xfa, 0x21, 0x3d];
         let mut frame = vec![0x81, 0x80 | payload.len() as u8];
         frame.extend_from_slice(&mask);
-        frame.extend(
-            payload
-                .iter()
-                .enumerate()
-                .map(|(i, b)| b ^ mask[i % 4]),
-        );
+        frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
 
         let message = read_message(&mut frame.as_slice()).expect("decodes");
         assert_eq!(

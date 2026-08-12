@@ -223,9 +223,10 @@ impl ModuleLoader for BrokerModuleLoader {
                     .insert(resolved.to_string(), module.clone());
                 Ok(module)
             }
-            Err(error) => Err(JsError::from_native(JsNativeError::syntax().with_message(
-                format!("{resolved} is not a valid module: {error}"),
-            ))),
+            Err(error) => Err(JsError::from_native(
+                JsNativeError::syntax()
+                    .with_message(format!("{resolved} is not a valid module: {error}")),
+            )),
         }
     }
 
@@ -278,7 +279,9 @@ mod tests {
     #[test]
     fn absolute_http_specifiers_are_taken_as_written() {
         assert_eq!(
-            resolve("https://cdn.example/d.js", &base()).unwrap().as_str(),
+            resolve("https://cdn.example/d.js", &base())
+                .unwrap()
+                .as_str(),
             "https://cdn.example/d.js"
         );
     }
@@ -294,7 +297,10 @@ mod tests {
             !error.contains("esm.sh") && !error.contains("cdn"),
             "the message must not point at a CDN either: {error}"
         );
-        assert!(error.contains("bundle"), "it says what would work instead: {error}");
+        assert!(
+            error.contains("bundle"),
+            "it says what would work instead: {error}"
+        );
 
         // Scoped packages are bare too, and fail the same way.
         assert!(resolve("@scope/pkg", &base()).is_err());

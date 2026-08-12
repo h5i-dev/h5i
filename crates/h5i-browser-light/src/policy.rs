@@ -190,7 +190,9 @@ impl Policy {
                 return Verdict::Deny(format!(
                     "a page served from {} may not reach loopback ({}): only a page the \
                      dev server itself served may talk to it",
-                    document.map(|d| d.origin().ascii_serialization()).unwrap_or_default(),
+                    document
+                        .map(|d| d.origin().ascii_serialization())
+                        .unwrap_or_default(),
                     url.host_str().unwrap_or_default(),
                 ));
             }
@@ -241,8 +243,7 @@ impl Policy {
                 Some((h, p)) if p.bytes().all(|b| b.is_ascii_digit()) => (h, Some(p)),
                 _ => (rest, None),
             };
-            let host_matches =
-                host_lower == w_host || host_lower.ends_with(&format!(".{w_host}"));
+            let host_matches = host_lower == w_host || host_lower.ends_with(&format!(".{w_host}"));
             let scheme_matches = url.scheme() == scheme;
             let port_matches = match w_port {
                 Some(p) => url.port().map(|actual| actual.to_string()) == Some(p.to_string()),
@@ -271,10 +272,13 @@ fn is_loopback(host: &str) -> bool {
     // allowlist bypass to any page that references it. And IPv6 loopback
     // arrives from `host_str` as `[::1]` *with* the brackets, so a bare `::1`
     // comparison never fires. Parsing settles both.
-    let literal = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    let literal = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
     match literal.parse::<std::net::IpAddr>() {
         Ok(std::net::IpAddr::V4(v4)) => v4.octets()[0] == 127, // 127.0.0.0/8
-        Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback(),       // ::1
+        Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback(),      // ::1
         Err(_) => false,
     }
 }
@@ -337,12 +341,17 @@ mod tests {
         // this engine verbatim; treating it as a literal hostname refused every
         // request the sandbox itself would have allowed.
         let policy = Policy::new().allow("*.example.com");
-        assert!(policy.check(&url("https://docs.example.com/guide")).is_allowed());
+        assert!(policy
+            .check(&url("https://docs.example.com/guide"))
+            .is_allowed());
         assert!(policy.check(&url("https://a.b.example.com/")).is_allowed());
         // The apex too: `*.host` in h5i means the host and everything under it.
         assert!(policy.check(&url("https://example.com/")).is_allowed());
         // `.host` is the other spelling h5i accepts.
-        assert!(Policy::new().allow(".example.com").check(&url("https://x.example.com/")).is_allowed());
+        assert!(Policy::new()
+            .allow(".example.com")
+            .check(&url("https://x.example.com/"))
+            .is_allowed());
     }
 
     #[test]
@@ -357,14 +366,20 @@ mod tests {
             "a bare wildcard means https, exactly as a bare host does"
         );
         assert!(
-            !policy.check(&url("https://docs.example.com:8443/")).is_allowed(),
+            !policy
+                .check(&url("https://docs.example.com:8443/"))
+                .is_allowed(),
             "the port is part of the origin for wildcards too"
         );
 
         // ...and an explicit scheme/port is honoured.
         let plain = Policy::new().allow("http://*.internal.corp:8080");
-        assert!(plain.check(&url("http://api.internal.corp:8080/t")).is_allowed());
-        assert!(!plain.check(&url("https://api.internal.corp/t")).is_allowed());
+        assert!(plain
+            .check(&url("http://api.internal.corp:8080/t"))
+            .is_allowed());
+        assert!(!plain
+            .check(&url("https://api.internal.corp/t"))
+            .is_allowed());
     }
 
     #[test]
@@ -383,7 +398,9 @@ mod tests {
         // `notexample.com` or an attacker-controlled suffix lookalike.
         let policy = Policy::new().allow("*.example.com");
         assert!(!policy.check(&url("https://notexample.com/")).is_allowed());
-        assert!(!policy.check(&url("https://example.com.evil.test/")).is_allowed());
+        assert!(!policy
+            .check(&url("https://example.com.evil.test/"))
+            .is_allowed());
         assert!(!policy.check(&url("https://evil-example.com/")).is_allowed());
     }
 
@@ -394,7 +411,9 @@ mod tests {
         // that references it.
         let policy = Policy::new();
         assert!(!policy.check(&url("http://127.evil.com/exfil")).is_allowed());
-        assert!(!policy.check(&url("http://127.0.0.1.evil.com/")).is_allowed());
+        assert!(!policy
+            .check(&url("http://127.0.0.1.evil.com/"))
+            .is_allowed());
         // ...while the real 127/8 block stays loopback.
         assert!(policy.check(&url("http://127.0.0.1:8080/")).is_allowed());
         assert!(policy.check(&url("http://127.9.9.9/")).is_allowed());
@@ -416,7 +435,9 @@ mod tests {
         // A subdomain is a different origin. This is the rule that stops
         // "allow the docs site" from also allowing its CDN and its analytics.
         assert!(!policy.check(&url("https://cdn.example.com/x")).is_allowed());
-        assert!(!policy.check(&url("https://example.com.evil.test/")).is_allowed());
+        assert!(!policy
+            .check(&url("https://example.com.evil.test/"))
+            .is_allowed());
     }
 
     #[test]
@@ -426,7 +447,9 @@ mod tests {
         // Downgrade to http is a different origin, and silently allowing it
         // would let a network attacker strip TLS and stay "in policy".
         assert!(!policy.check(&url("http://example.com/a")).is_allowed());
-        assert!(!policy.check(&url("https://example.com:8443/a")).is_allowed());
+        assert!(!policy
+            .check(&url("https://example.com:8443/a"))
+            .is_allowed());
     }
 
     #[test]
@@ -471,7 +494,11 @@ mod tests {
         let listed: Vec<_> = policy.origins().collect();
         assert_eq!(
             listed,
-            vec!["http://localhost:9999", "https://docs.rs", "https://example.com"]
+            vec![
+                "http://localhost:9999",
+                "https://docs.rs",
+                "https://example.com"
+            ]
         );
     }
 }

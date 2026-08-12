@@ -682,9 +682,32 @@ async fn handle(
     // syscall is a worker not serving the other requests of the same page.
     let upstream = {
         let bridge2 = bridge.clone();
-        let opened = tokio::task::spawn_blocking(move || bridge2.open_upstream())
-            .await
-            .map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))?;
+        // Raced against the grant and the share ending, for the reason the P2P
+        // front gives at the same point: the `revoked` arm of the `select!`
+        // below is installed *after* this await, and the dialer serialises
+        // every request behind one mutex with a ten-second connect timeout. A
+        // dev server with a full accept queue therefore let authorized
+        // requests pile up here, holding every permit, past a `revoke` that
+        // had already told the operator open connections were dropped.
+        let opened = tokio::select! {
+            r = tokio::task::spawn_blocking(move || bridge2.open_upstream()) => {
+                r.map_err(|e| H5iError::Metadata(format!("the box dialer panicked: {e}")))?
+            }
+            _ = revoked(bridge.clone(), grant.id.clone()) => {
+                let body = crate::gate::refusal_response(crate::gate::Refusal::NotAuthorized);
+                bridge.peer_bytes(id, body.len() as u64, 0);
+                bridge.peer_seen(id);
+                http_front::respond(&mut sock, &body).await;
+                return Ok(());
+            }
+            _ = bridge.shutting_down() => {
+                let body = crate::gate::refusal_response(crate::gate::Refusal::NotAuthorized);
+                bridge.peer_bytes(id, body.len() as u64, 0);
+                bridge.peer_seen(id);
+                http_front::respond(&mut sock, &body).await;
+                return Ok(());
+            }
+        };
         match opened {
             Ok(s) => s,
             Err(e) => {

@@ -63,7 +63,8 @@ impl CgroupCaps {
 
 /// Render a `memory.max`/`pids.max` value: a number, or `"max"` for unbounded.
 pub fn format_limit(v: Option<u64>) -> String {
-    v.map(|n| n.to_string()).unwrap_or_else(|| "max".to_string())
+    v.map(|n| n.to_string())
+        .unwrap_or_else(|| "max".to_string())
 }
 
 /// Parse the `usage_usec` line from a `cpu.stat` file (microseconds of CPU).
@@ -215,7 +216,9 @@ fn try_make_usable(parent: &Path) -> std::io::Result<()> {
     if writable {
         Ok(())
     } else {
-        Err(std::io::Error::other("controllers not delegated to child cgroup"))
+        Err(std::io::Error::other(
+            "controllers not delegated to child cgroup",
+        ))
     }
 }
 
@@ -336,7 +339,10 @@ mod tests {
     fn live_scoped_cgroup_applies_and_accounts() {
         let caps = probe();
         if !caps.usable {
-            eprintln!("skipping: no delegated cgroup on this host ({:?})", caps.detail);
+            eprintln!(
+                "skipping: no delegated cgroup on this host ({:?})",
+                caps.detail
+            );
             return;
         }
         let parent = caps.parent.expect("usable ⇒ parent");
@@ -356,14 +362,24 @@ mod tests {
         };
         // The limits are actually written into the run cgroup.
         let max = std::fs::read_to_string(cg.path.join("memory.max")).unwrap_or_default();
-        assert_eq!(max.trim(), (256u64 << 20).to_string(), "memory.max must be enforced");
+        assert_eq!(
+            max.trim(),
+            (256u64 << 20).to_string(),
+            "memory.max must be enforced"
+        );
         let pids = std::fs::read_to_string(cg.path.join("pids.max")).unwrap_or_default();
         assert_eq!(pids.trim(), "64");
         // Accounting is readable (an empty cgroup reports 0, but the file must
         // exist — that's what the run path reads after a real run).
         let usage = cg.usage();
-        assert!(usage.mem_peak_bytes.is_some(), "memory.peak must be readable in the run cgroup");
-        assert!(usage.cpu_usec.is_some(), "cpu.stat must be readable in the run cgroup");
+        assert!(
+            usage.mem_peak_bytes.is_some(),
+            "memory.peak must be readable in the run cgroup"
+        );
+        assert!(
+            usage.cpu_usec.is_some(),
+            "cpu.stat must be readable in the run cgroup"
+        );
         // Drop removes the (empty) leaf; assert it's gone.
         let path = cg.path.clone();
         drop(cg);

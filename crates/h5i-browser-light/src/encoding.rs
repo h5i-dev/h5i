@@ -112,7 +112,10 @@ fn prescan(bytes: &[u8]) -> Option<&'static Encoding> {
     let mut at = 0;
     while let Some(found) = text[at..].find("<meta") {
         let start = at + found;
-        let end = text[start..].find('>').map(|e| start + e).unwrap_or(text.len());
+        let end = text[start..]
+            .find('>')
+            .map(|e| start + e)
+            .unwrap_or(text.len());
         let tag = &text[start..end];
         at = end.max(start + 1);
 
@@ -151,11 +154,16 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
             continue;
         }
         let rest = tag[from..].trim_start();
-        let Some(rest) = rest.strip_prefix('=') else { continue };
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
         let rest = rest.trim_start();
         let value = match rest.chars().next() {
             Some(quote @ ('"' | '\'')) => rest[1..].split(quote).next().unwrap_or(""),
-            _ => rest.split(|c: char| c.is_ascii_whitespace()).next().unwrap_or(""),
+            _ => rest
+                .split(|c: char| c.is_ascii_whitespace())
+                .next()
+                .unwrap_or(""),
         };
         if !value.is_empty() {
             return Some(value.to_string());
@@ -247,8 +255,14 @@ mod tests {
 
     #[test]
     fn the_declaration_a_document_makes_is_the_one_that_is_used() {
-        assert_eq!(sniff(b"<meta charset=\"euc-jp\">", None), encoding_rs::EUC_JP);
-        assert_eq!(sniff(b"<meta charset=shift_jis>", None), encoding_rs::SHIFT_JIS);
+        assert_eq!(
+            sniff(b"<meta charset=\"euc-jp\">", None),
+            encoding_rs::EUC_JP
+        );
+        assert_eq!(
+            sniff(b"<meta charset=shift_jis>", None),
+            encoding_rs::SHIFT_JIS
+        );
         assert_eq!(
             sniff(
                 b"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=euc-kr\">",
@@ -258,17 +272,26 @@ mod tests {
         );
         // The transport outranks the markup: the server knows what it sent.
         assert_eq!(
-            sniff(b"<meta charset=\"euc-jp\">", Some("text/html; charset=utf-8")),
+            sniff(
+                b"<meta charset=\"euc-jp\">",
+                Some("text/html; charset=utf-8")
+            ),
             encoding_rs::UTF_8
         );
         // A BOM outranks both, being unambiguous.
         assert_eq!(
-            sniff(b"\xef\xbb\xbf<meta charset=\"euc-jp\">", Some("text/html; charset=shift_jis")),
+            sniff(
+                b"\xef\xbb\xbf<meta charset=\"euc-jp\">",
+                Some("text/html; charset=shift_jis")
+            ),
             encoding_rs::UTF_8
         );
         // Undeclared bytes that demonstrate UTF-8 are taken as UTF-8, which is
         // the detection a browser performs.
-        assert_eq!(sniff("<html><body>café 日本".as_bytes(), None), encoding_rs::UTF_8);
+        assert_eq!(
+            sniff("<html><body>café 日本".as_bytes(), None),
+            encoding_rs::UTF_8
+        );
         // Undeclared and *not* valid UTF-8 is windows-1252, not UTF-8. Reading
         // those bytes as UTF-8 replaces every one of them with U+FFFD and the
         // text is gone; read as windows-1252 it is at worst mojibake, and it is

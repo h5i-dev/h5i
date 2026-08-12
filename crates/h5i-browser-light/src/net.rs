@@ -61,7 +61,6 @@ fn accept_for(initiator: Initiator) -> &'static str {
     }
 }
 
-
 /// What a fetch produced. A denied or failed fetch is still an outcome, with
 /// an empty body and a reason — never an absence.
 #[derive(Debug, Clone)]
@@ -274,8 +273,8 @@ impl Broker {
             //    and after the record: a request that policy refuses must never
             //    have carried a credential anywhere, not even into a log line.
             let started = Instant::now();
-            let verb = reqwest::Method::from_bytes(method.as_bytes())
-                .unwrap_or(reqwest::Method::GET);
+            let verb =
+                reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
             let mut request = self
                 .client
                 .request(verb, current.clone())
@@ -312,7 +311,10 @@ impl Broker {
                 .headers()
                 .iter()
                 .filter_map(|(name, value)| {
-                    value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|v| (name.as_str().to_string(), v.to_string()))
                 })
                 .collect();
 
@@ -499,14 +501,21 @@ mod tests {
         // if the test host has a network.
         let broker = broker_with(Policy::new(), sink.clone());
 
-        let outcome = broker.fetch(&url("https://tracker.test/pixel.gif"), Initiator::Subresource);
+        let outcome = broker.fetch(
+            &url("https://tracker.test/pixel.gif"),
+            Initiator::Subresource,
+        );
 
         assert!(!outcome.is_ok());
         assert!(outcome.body.is_empty());
         assert!(outcome.error.unwrap().contains("denied by policy"));
 
         let records = sink.records();
-        assert_eq!(records.len(), 2, "a denial is still a request/response pair");
+        assert_eq!(
+            records.len(),
+            2,
+            "a denial is still a request/response pair"
+        );
         assert!(records.iter().all(|r| !r.allowed));
         assert_eq!(records[0].phase, Phase::Request);
         assert_eq!(records[1].phase, Phase::Response);
@@ -600,7 +609,9 @@ mod cookie_wire_tests {
         let port = listener.local_addr().unwrap().port();
         let handle = std::thread::spawn(move || {
             for _ in 0..2 {
-                let Ok((stream, _)) = listener.accept() else { return };
+                let Ok((stream, _)) = listener.accept() else {
+                    return;
+                };
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut sent_cookie = String::new();
                 let mut line = String::new();
@@ -629,7 +640,8 @@ mod cookie_wire_tests {
                         stream,
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len()
-                    ).unwrap();
+                    )
+                    .unwrap();
                 }
                 let _ = stream.flush();
             }
@@ -644,7 +656,9 @@ mod cookie_wire_tests {
         let handle = std::thread::spawn(move || {
             let mut second = String::new();
             for hop in 0..2 {
-                let Ok((stream, _)) = listener.accept() else { break };
+                let Ok((stream, _)) = listener.accept() else {
+                    break;
+                };
                 let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
@@ -674,7 +688,8 @@ Content-Length: 0
 Connection: close
 
 "
-                    ).unwrap();
+                    )
+                    .unwrap();
                 } else {
                     second = format!("{method} body={}", String::from_utf8_lossy(&body));
                     let page = "<html><body>done</body></html>";
@@ -686,7 +701,8 @@ Connection: close
 
 {page}",
                         page.len()
-                    ).unwrap();
+                    )
+                    .unwrap();
                 }
                 let _ = stream.flush();
             }
@@ -764,8 +780,14 @@ Connection: close
         // The receipt says how many, and nothing more. A credential in a
         // request log is a credential in every export that log ends up in.
         let log = serde_json::to_string(&sink.records()).unwrap();
-        assert!(!log.contains("s3cr3t-value"), "a value reached the log:\n{log}");
-        assert!(log.contains("cookies_sent"), "the count is recorded:\n{log}");
+        assert!(
+            !log.contains("s3cr3t-value"),
+            "a value reached the log:\n{log}"
+        );
+        assert!(
+            log.contains("cookies_sent"),
+            "the count is recorded:\n{log}"
+        );
 
         let sent: Vec<usize> = sink
             .records()
