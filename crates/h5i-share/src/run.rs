@@ -470,7 +470,9 @@ async fn interrupted(env_dir: &std::path::Path, started_at: &str) {
     }
     #[cfg(not(unix))]
     {
-        let _ = env_dir;
+        // Both, because the hard-exit watcher they identify a share to is
+        // `#[cfg(unix)]`: there is no second-signal disposition to arm here.
+        let _ = (env_dir, started_at);
         let _ = tokio::signal::ctrl_c().await;
     }
 }

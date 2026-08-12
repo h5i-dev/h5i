@@ -36,6 +36,10 @@ const GATE_FILE: &str = "share-gate.lock";
 /// Generous, because the operations it guards are short and the alternative —
 /// failing fast — turns an ordinary overlap into an error the user has to
 /// understand. `rm --force` on a large worktree is the longest of them.
+///
+/// Unix only, like the `flock` it bounds: there is no waiting on the other
+/// branch, because there is nothing there to wait for.
+#[cfg(unix)]
 const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Exclusive access to the *decision* about whether this box is shared.
@@ -66,7 +70,7 @@ pub struct ShareGate {
     file: std::fs::File,
 }
 
-/// Take the gate, waiting up to [`GATE_WAIT`].
+/// Take the gate, waiting up to `GATE_WAIT` (30s).
 ///
 /// Non-blocking `flock` in a retry loop rather than a blocking one: a blocking
 /// `flock` cannot be given a deadline, and a lifecycle op that waits forever on
