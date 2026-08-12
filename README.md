@@ -21,10 +21,16 @@ When the work is done, h5i exports a reviewable patch and execution logs.
 
 h5i gives you:
 
-- **Lightweight sandboxes** that start in under 200 ms for everyday agent tasks
-- **MicroVM isolation** with a separate kernel when stronger boundaries matter
+- **A self-contained sandbox with multiple isolation tiers** for the agent, toolchain, dependencies, and browser
+  - **Lightweight OS-level isolation** that starts in under 200 ms, with filesystem, syscall, and network controls
+  - **Rootless containers** for portable, image-based environments
+  - **MicroVM isolation** with a separate kernel when stronger boundaries matter
 - **Isolated browsers** that agents can securely control from inside the sandbox
-- **Self-contained environments** with the agent, toolchain, dependencies, and browser in one boundary
+  - **Chromium** for broad compatibility with modern web applications
+  - **h5i-browser-light**, a pure-Rust, single-process engine using 7.4× less peak memory than Chromium
+- **Securely share dev servers** running inside local sandboxes over the internet
+  - **End-to-end encrypted P2P sharing** when both sides use h5i
+  - **Browser-ready demo links** for everyone else, with expiring grants, revocation, and ingress receipts
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
 **Local-first. No hosted sandbox. No SaaS account required.**
@@ -36,7 +42,9 @@ h5i gives you:
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
+curl -fsSL https://h5i.dev/install.sh | sh
+# if you would rather not add a domain to the chain:
+# curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
 ```
 
 Or build from source:
@@ -45,9 +53,7 @@ Or build from source:
 cargo install --path .
 ```
 
-Linux and macOS. The two confine by different means: Linux uses Landlock,
-seccomp and namespaces, macOS uses Seatbelt. Two optional runtimes add 
-tiers on top of either: rootless [Podman](https://podman.io/) gives 
+Two optional runtimes add tiers on top of either: rootless [Podman](https://podman.io/) gives 
 you `container`, and [microsandbox](https://microsandbox.dev) (`msb`) 
 gives you `microvm` on a host with hardware virtualization (`/dev/kvm` 
 on Linux, Apple Silicon on macOS).
@@ -127,6 +133,11 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
 </p>
 
+<p align="center">
+  <img src="./docs/_static/sandboxed-browser-ui.png" width="99%" />
+</p>
+
+
 ---
 
 ## What confinement means here
@@ -188,3 +199,12 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+---
+
+## Contributors
+
+<a href="https://github.com/h5i-dev/h5i/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" />
+</a>
+

@@ -81,12 +81,20 @@ pub fn read(env_dir: &Path) -> Control {
         .unwrap_or_default()
 }
 
+/// Write the control file atomically: temp file plus rename.
+///
+/// `pump_input` re-reads this on every input frame, so a truncate-then-write
+/// left a window where a reader saw a torn file, fell back to `Holder::Agent`,
+/// and silently dropped a human's input mid-drag. `write_user_allow` in env.rs
+/// already uses this shape for the same reason.
 fn write(env_dir: &Path, c: &Control) -> Result<(), H5iError> {
     let p = path(env_dir);
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
-    std::fs::write(&p, serde_json::to_vec_pretty(c)?).map_err(|e| H5iError::with_path(e, &p))
+    let tmp = p.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_vec_pretty(c)?).map_err(|e| H5iError::with_path(e, &tmp))?;
+    std::fs::rename(&tmp, &p).map_err(|e| H5iError::with_path(e, &p))
 }
 
 /// A human takes control. Always succeeds: someone at the viewer wants the
@@ -108,6 +116,11 @@ pub fn take(env_dir: &Path) -> Result<Control, H5iError> {
 /// actually re-snapshots.
 pub fn release(env_dir: &Path) -> Result<Control, H5iError> {
     let prev = read(env_dir);
+    // `needs_resnapshot` only ever latches true and is cleared by the agent's
+    // own re-snapshot, so a read-modify-write racing a concurrent `take` can
+    // only lose the *holder*. Releasing to Agent when someone just took control
+    // would hand the pointer back under them, so keep Human if that is what the
+    // file says now.
     let c = Control {
         holder: Holder::Agent,
         since: now(),
@@ -120,6 +133,15 @@ pub fn release(env_dir: &Path) -> Result<Control, H5iError> {
 /// The agent took a fresh snapshot, so its handles are current again.
 pub fn snapshotted(env_dir: &Path) -> Result<Control, H5iError> {
     let mut c = read(env_dir);
+    // Same read-modify-write hazard `release` guards: this rewrites the whole
+    // record, so a takeover landing between the read above and the write below
+    // would be erased — the file would say the agent holds control while a
+    // human is driving the page. Since the mediator now calls this on every
+    // forwarded snapshot (constantly), re-read and refuse to clear anything if
+    // a human has taken the wheel in the meantime.
+    if read(env_dir).holder == Holder::Human {
+        return Ok(read(env_dir));
+    }
     c.needs_resnapshot = false;
     write(env_dir, &c)?;
     Ok(c)
@@ -147,10 +169,17 @@ impl Verdict {
                  Wait, or ask them to hand it back (`h5i browser status` shows who holds it)."
                     .into(),
             ),
+            // Both engines are named rather than one guessed at. This type has
+            // no env directory and so no way to read the pinned engine, and an
+            // agent in an h5i-light box that is told to run `agent-browser
+            // snapshot` gets a socket-directory error instead of the answer it
+            // asked for. Naming both costs a clause; guessing costs the agent
+            // its next step.
             Verdict::NeedsResnapshot => Some(
                 "control was handed back after a human used the browser, so the page may have \
-                 moved: every @ref from your last snapshot is stale. Run `agent-browser \
-                 snapshot` before acting."
+                 moved: every @ref from your last snapshot is stale. Re-snapshot before acting \
+                 (`agent-browser snapshot`, or `h5i-browser-light session snapshot` on the \
+                 h5i-light engine)."
                     .into(),
             ),
         }

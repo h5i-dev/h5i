@@ -27,6 +27,34 @@ md = markdown.Markdown(extensions=["fenced_code","tables","toc","sane_lists","at
                        extension_configs={"toc":{"permalink":False,"slugify":gh_slug,"separator":"-"}})
 body = md.convert(src)
 
+# Guard against the two ways this renderer silently produces wrong HTML from
+# markdown that looks fine in an editor and on GitHub. Both bit the Limits and
+# Credentials sections and shipped unnoticed, because a mangled list is still
+# valid HTML: nothing downstream had any reason to complain.
+#
+#   1. A `- ` line directly after a multi-line paragraph is read as another line
+#      of that paragraph, not as a list item, so the bullet and everything after
+#      it collapse into prose. Fix: a blank line before the item.
+#   2. python-markdown's fenced_code is a preprocessor and never sees a fence
+#      indented inside a list item, so the fence renders as literal text and the
+#      language word leaks into the page. Fix: an indented code block instead,
+#      8 spaces at the top level of a list and 12 inside a nested item.
+def _check(body):
+    problems = []
+    for m in re.finditer(r'<p>(?:(?!</p>).)*?\n\s*[-*+] ', body, re.S):
+        problems.append(f"list item swallowed into a paragraph near: "
+                        f"{re.sub(r'<[^>]+>', '', m.group(0))[:70].strip()!r}")
+    if '```' in body:
+        i = body.index('```')
+        problems.append(f"unrendered code fence (indented inside a list?) near: "
+                        f"{re.sub(chr(60) + '[^>]+' + chr(62), '', body[i:i + 70]).strip()!r}")
+    if problems:
+        raise SystemExit("MANUAL.md renders to broken HTML:\n  - "
+                         + "\n  - ".join(problems)
+                         + "\nSee the note above this check in scripts/gen_manual.py.")
+
+_check(body)
+
 # Build sidebar TOC from the heading tokens (levels 2 and 3)
 def render_toc(tokens):
     out = []
@@ -48,9 +76,9 @@ HEAD = '''<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i Manual: CLI Reference for Auditable Agent Workspaces</title>
-  <meta name="description" content="The complete h5i CLI reference: every command for sandboxed agent workspaces (h5i env), prompt-aware commits, compressed logs, agent handoffs, audit, and review-ready PR evidence.">
-  <meta name="keywords" content="h5i manual, h5i cli reference, h5i env, h5i capture, h5i recall, h5i msg, h5i audit, h5i share, auditable workspace, claude code, codex">
+  <title>h5i Manual: CLI Reference for the AI Coding Agent Sandbox</title>
+  <meta name="description" content="The complete h5i CLI reference: h5i box for creating and running disposable sandboxes, the five isolation tiers from workspace to microvm, the .h5i/env.toml policy model, the credential broker, the in-box browser, execution receipts, and the honest limits.">
+  <meta name="keywords" content="h5i manual, h5i cli reference, h5i box, h5i box create, h5i box export, h5i box probe, h5i ui, h5i browser, isolation tiers, microvm sandbox, env.toml policy, egress allowlist, credential broker, execution receipt, claude code, codex">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -61,19 +89,38 @@ HEAD = '''<!DOCTYPE html>
   <link rel="apple-touch-icon" href="/_static/logo.png">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Manual: CLI Reference for Auditable Agent Workspaces">
-  <meta property="og:description" content="The complete h5i CLI reference: every command for sandboxed agent workspaces, prompt-aware commits, compressed logs, agent handoffs, audit, and review-ready PR evidence.">
+  <meta property="og:title" content="h5i Manual: CLI Reference for the AI Coding Agent Sandbox">
+  <meta property="og:description" content="Every h5i command, the five isolation tiers, the checked-in policy model, the credential broker, the browser in the box, execution receipts, and the limits h5i declines to claim.">
   <meta property="og:url" content="https://h5i.dev/manual/">
-  <meta property="og:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i Manual: CLI Reference for Auditable Agent Workspaces">
-  <meta name="twitter:description" content="The complete h5i CLI reference for auditable agent workspaces.">
-  <meta name="twitter:image" content="https://h5i.dev/_static/screenshot_h5i_server.png">
+  <meta name="twitter:title" content="h5i Manual: CLI Reference for the AI Coding Agent Sandbox">
+  <meta name="twitter:description" content="The complete CLI reference for h5i, the integrated sandbox for AI coding agents.">
+  <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@graph":[
+    {"@type":"TechArticle","@id":"https://h5i.dev/manual/#article",
+     "headline":"h5i Manual: CLI Reference for the AI Coding Agent Sandbox",
+     "description":"The complete h5i command reference: h5i box, the five isolation tiers, the .h5i/env.toml policy model, the credential broker, the browser in the box, execution receipts, and the honest limits.",
+     "url":"https://h5i.dev/manual/",
+     "inLanguage":"en",
+     "isPartOf":{"@type":"WebSite","name":"h5i","url":"https://h5i.dev/"},
+     "about":{"@type":"SoftwareApplication","name":"h5i","alternateName":"high-five","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS, Windows (WSL2)","url":"https://h5i.dev/"},
+     "author":{"@type":"Organization","name":"h5i-dev"},
+     "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},
+     "proficiencyLevel":"Beginner",
+     "keywords":"h5i box, isolation tiers, microvm, env.toml policy, egress allowlist, credential broker, execution receipt, agent sandbox CLI"},
+    {"@type":"BreadcrumbList","@id":"https://h5i.dev/manual/#breadcrumb","itemListElement":[
+      {"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},
+      {"@type":"ListItem","position":2,"name":"Manual","item":"https://h5i.dev/manual/"}]}
+  ]}
+  </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <noscript><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
 __STYLE__
 </head>
 <body>
@@ -95,103 +142,77 @@ __SCRIPT__
 </html>
 '''
 
-STYLE = '''  <style>
-    :root{
-      --red:#e0241b; --red-text:#ff6258; --red-glow:rgba(224,36,27,0.10);
-      --bg:#08080b; --bg-card:#0e0e12; --bg-card2:#141419; --bg-term:#0b0b0f;
-      --border:rgba(255,255,255,0.09); --border-hi:rgba(255,255,255,0.20);
-      --ink:#ffffff; --text:#e8e8ec; --text-dim:#9a9aa4; --text-faint:#6b6b75;
-      --green:#62c98c; --cyan:#a9bdd0;
-      --mono:'Space Mono',ui-monospace,monospace;
-      --sans:'Space Grotesk',-apple-system,system-ui,sans-serif;
+STYLE = '''  <link rel="stylesheet" href="/_static/blog.css">
+  <style>
+    /* The manual is the site's article layout with a two-level index: the
+       measure sits beside a sticky section list, both hung off the sheet's
+       own gutter. Everything else comes from the chassis. */
+    .manual-wrap{
+      display:grid;grid-template-columns:250px minmax(0,var(--measure));
+      gap:60px;justify-content:center;align-items:start;
+      padding:54px var(--gut) 78px;border-bottom:1px solid var(--line2);
     }
-    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-    html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;}
-    body{background:var(--bg);font-family:var(--sans);color:var(--text);line-height:1.6;
-      -webkit-font-smoothing:antialiased;}
-    ::selection{background:var(--red);color:#fff;}
-    a{color:var(--red-text);text-decoration:none;}
-    a:hover{text-decoration:underline;}
+    .manual-toc{position:sticky;top:84px;align-self:start;
+      max-height:calc(100vh - 120px);overflow-y:auto;min-width:0;}
+    .manual-toc .toc-head{margin:0 0 12px;font-family:var(--mono);font-size:10px;
+      letter-spacing:.2em;text-transform:uppercase;color:var(--faint);}
+    .manual-toc nav{display:flex;flex-direction:column;}
+    .manual-toc a{display:block;padding:6px 0 6px 13px;
+      border-left:1px solid var(--line2);color:var(--dim);
+      font-size:13px;line-height:1.45;transition:color .15s,border-color .15s;}
+    .manual-toc a:hover{color:var(--ink);}
+    .manual-toc a.t2{font-family:var(--mono);font-size:12px;color:var(--text);}
+    .manual-toc a.t3{padding-left:26px;font-size:12.5px;}
+    .manual-toc a.active{color:var(--spot);border-left-color:var(--spot);}
+    .manual-toc .t3group{display:flex;flex-direction:column;}
+    .manual-toc::-webkit-scrollbar{width:6px;}
 
-    /* nav (mirrors site) */
-    nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
-      padding:0 clamp(1rem,4vw,3rem);height:64px;background:rgba(8,8,11,0.86);
-      backdrop-filter:blur(12px);border-bottom:1px solid var(--border);}
-    .nav-logo{display:flex;align-items:center;gap:0.55rem;font-family:var(--mono);font-weight:700;
-      font-size:1.05rem;color:var(--ink);}
-    .nav-logo img{width:28px;height:28px;border-radius:6px;}
-    .nav-links{display:flex;align-items:center;gap:1.5rem;list-style:none;}
-    .nav-links a{color:var(--text-dim);transition:color .18s;font-size:.92rem;}
-    .nav-links a:hover{color:var(--ink);text-decoration:none;}
-    .nav-links a.nav-cta{background:var(--ink);color:#08080b !important;padding:.45rem .85rem;border-radius:7px;font-weight:500;}
-    .nav-links a[aria-current="page"]{color:var(--red-text);}
-    .nav-hamburger{display:none;flex-direction:column;gap:5px;cursor:pointer;}
-    .nav-hamburger span{width:24px;height:2px;background:var(--ink);}
+    .manual-body{min-width:0;max-width:var(--measure);font-size:16px;color:var(--dim);
+      overflow-wrap:break-word;}
+    .manual-body h1{font-family:var(--disp);font-weight:900;
+      font-size:clamp(32px,4vw,58px);letter-spacing:-.05em;line-height:.95;
+      color:var(--ink);margin:0 0 22px;}
+    .manual-body h2{font-family:var(--disp);font-weight:800;font-size:25px;
+      letter-spacing:-.035em;line-height:1.15;color:var(--ink);
+      margin:46px 0 16px;padding-top:18px;border-top:1px solid var(--line);
+      scroll-margin-top:84px;}
+    .manual-body hr+h2{border-top:0;padding-top:0;margin-top:26px;}
+    .manual-body h3{font-family:var(--disp);font-weight:700;font-size:18px;
+      letter-spacing:-.02em;color:var(--ink);margin:32px 0 12px;scroll-margin-top:84px;}
+    .manual-body h4{font-family:var(--disp);font-weight:700;font-size:15px;
+      color:var(--text);margin:24px 0 8px;scroll-margin-top:84px;}
+    .manual-body h3 code{font-size:1em;background:none;border:0;padding:0;color:var(--ink);}
+    .manual-body p{margin:0 0 18px;}
+    .manual-body ul,.manual-body ol{margin:0 0 18px;padding-left:22px;}
+    .manual-body li{margin:6px 0;}
+    .manual-body li::marker{color:var(--faint);}
+    .manual-body strong{color:var(--ink);font-weight:500;}
+    .manual-body a{color:var(--spot);text-decoration:underline;
+      text-decoration-color:color-mix(in srgb,var(--spot) 45%,transparent);
+      text-underline-offset:3px;}
+    .manual-body a:hover{text-decoration-color:currentColor;}
+    .manual-body a code{color:var(--spot);}
+    .manual-body code{font-family:var(--mono);font-size:13.5px;color:var(--ink);
+      background:var(--panel);border:1px solid var(--line2);padding:1px 6px;}
+    .manual-body pre{background:var(--panel);border:1px solid var(--line2);
+      padding:16px 18px;margin:0 0 22px;overflow-x:auto;}
+    .manual-body pre code{background:none;border:0;padding:0;
+      font-size:13.5px;line-height:1.7;color:var(--text);white-space:pre;}
+    .manual-body blockquote{margin:26px 0;padding-left:18px;
+      border-left:2px solid var(--spot-solid);color:var(--ink);}
+    .manual-body blockquote p{color:var(--ink);margin:0 0 8px;}
+    .manual-body hr{border:0;border-top:1px solid var(--line);margin:34px 0;}
+    .manual-body table{width:100%;border-collapse:collapse;margin:0 0 22px;
+      font-family:var(--mono);font-size:12.5px;display:block;overflow-x:auto;}
+    .manual-body th,.manual-body td{border:1px solid var(--line);
+      padding:10px 13px;text-align:left;vertical-align:top;font-weight:400;}
+    .manual-body th{background:var(--panel);color:var(--faint);
+      font-size:10px;letter-spacing:.16em;text-transform:uppercase;white-space:nowrap;}
+    .manual-body td{color:var(--dim);}
 
-    /* layout */
-    .manual-wrap{display:grid;grid-template-columns:266px minmax(0,1fr);gap:2.5rem;
-      max-width:1180px;margin:0 auto;padding:2.4rem clamp(1rem,4vw,3rem) 5rem;}
-    .manual-toc{position:sticky;top:84px;align-self:start;max-height:calc(100vh - 104px);
-      overflow-y:auto;border-right:1px solid var(--border);padding-right:1rem;}
-    .manual-toc .toc-head{font-family:var(--mono);font-size:.7rem;letter-spacing:.18em;
-      text-transform:uppercase;color:var(--red-text);margin-bottom:.9rem;}
-    .manual-toc nav{position:static;display:block;height:auto;padding:0;background:none;
-      backdrop-filter:none;border:none;}
-    .manual-toc a{display:block;color:var(--text-dim);font-size:.85rem;line-height:1.35;
-      padding:.22rem 0;border:none;}
-    .manual-toc a.t2{color:var(--text);font-weight:500;margin-top:.5rem;font-family:var(--mono);font-size:.82rem;}
-    .manual-toc a.t3{padding-left:.85rem;font-size:.8rem;border-left:1px solid var(--border);}
-    .manual-toc a:hover{color:var(--ink);text-decoration:none;}
-    .manual-toc a.active{color:var(--red-text);}
-    .manual-toc .t3group{margin:.15rem 0 .4rem;}
-
-    /* content */
-    .manual-body{min-width:0;font-size:1rem;}
-    .manual-body h1{font-size:clamp(2rem,4vw,2.8rem);font-weight:700;letter-spacing:-0.02em;
-      color:var(--ink);line-height:1.1;margin-bottom:1rem;}
-    .manual-body h2{font-size:1.6rem;font-weight:700;letter-spacing:-0.02em;color:var(--ink);
-      margin:2.8rem 0 1rem;padding-top:1.6rem;border-top:1px solid var(--border);scroll-margin-top:84px;}
-    .manual-body h3{font-size:1.18rem;font-weight:700;color:var(--ink);margin:1.9rem 0 .7rem;
-      font-family:var(--mono);scroll-margin-top:84px;}
-    .manual-body h3 code{font-size:1em;background:none;padding:0;color:var(--ink);}
-    .manual-body h4{font-size:1rem;font-weight:700;color:var(--text);margin:1.4rem 0 .5rem;scroll-margin-top:84px;}
-    .manual-body p,.manual-body li{color:var(--text-dim);}
-    .manual-body p{margin:.8rem 0;}
-    .manual-body ul,.manual-body ol{margin:.7rem 0 .7rem 1.3rem;}
-    .manual-body li{margin:.3rem 0;}
-    .manual-body strong{color:var(--text);font-weight:700;}
-    .manual-body a code{color:var(--red-text);}
-    .manual-body code{font-family:var(--mono);font-size:.86em;background:var(--bg-card2);
-      border:1px solid var(--border);border-radius:5px;padding:.08em .38em;color:#e6c9c6;}
-    .manual-body pre{background:var(--bg-term);border:1px solid var(--border);border-radius:10px;
-      padding:1rem 1.1rem;overflow-x:auto;margin:1rem 0;border-left:3px solid var(--red);}
-    .manual-body pre code{background:none;border:none;padding:0;color:var(--text);font-size:.84rem;line-height:1.6;}
-    .manual-body blockquote{border-left:3px solid var(--red);background:var(--red-glow);
-      padding:.7rem 1rem;margin:1rem 0;border-radius:0 8px 8px 0;}
-    .manual-body blockquote p{color:var(--text);margin:.3rem 0;}
-    .manual-body hr{border:none;border-top:1px solid var(--border);margin:2.2rem 0;}
-    .manual-body table{width:100%;border-collapse:collapse;margin:1.1rem 0;font-size:.9rem;display:block;overflow-x:auto;}
-    .manual-body th,.manual-body td{border:1px solid var(--border);padding:.55rem .7rem;text-align:left;vertical-align:top;}
-    .manual-body th{background:var(--bg-card2);color:var(--ink);font-weight:700;}
-    .manual-body td{color:var(--text-dim);}
-
-    /* footer */
-    footer{border-top:1px solid var(--border);padding:2.5rem clamp(1rem,4vw,3rem);}
-    .footer-inner{max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;gap:1.2rem;align-items:center;justify-content:space-between;}
-    .footer-brand{display:flex;align-items:center;gap:.5rem;font-family:var(--mono);color:var(--ink);}
-    .footer-brand img{width:26px;height:26px;border-radius:6px;}
-    .footer-brand .red{color:var(--red-text);}
-    .footer-links{display:flex;flex-wrap:wrap;gap:1.1rem;}
-    .footer-links a{color:var(--text-dim);font-size:.88rem;}
-    .footer-legal{color:var(--text-faint);font-size:.82rem;font-family:var(--mono);}
-
-    @media(max-width:900px){
-      .manual-wrap{grid-template-columns:1fr;}
+    @media (max-width:1100px){
+      .manual-wrap{grid-template-columns:minmax(0,1fr);gap:0;}
       .manual-toc{display:none;}
-      .nav-links{display:none;flex-direction:column;position:absolute;top:64px;left:0;right:0;
-        background:rgba(8,8,11,0.98);border-bottom:1px solid var(--border);padding:1.5rem 2rem;gap:1.2rem;}
-      .nav-links.open{display:flex;}
-      .nav-hamburger{display:flex;}
     }
   </style>'''
 
@@ -200,18 +221,13 @@ NAV = '''<nav>
     <img src="/_static/logo.png" alt="h5i">
     <span>h5i</span>
   </a>
-  <ul class="nav-links" id="nav-links">
-    <li><a href="/">Home</a></li>
+  <ul class="nav-links">
     <li><a href="/features/">Features</a></li>
     <li><a href="/guides/">Guides</a></li>
-    <li><a href="/workflows/">Workflows</a></li>
-    <li><a href="/manual/" aria-current="page">Manual</a></li>
+    <li><a href="/manual/">Manual</a></li>
     <li><a href="/blog/">Blog</a></li>
-    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub →</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
-  <div class="nav-hamburger" id="hamburger" onclick="toggleNav()">
-    <span></span><span></span><span></span>
-  </div>
 </nav>'''
 
 FOOTER = '''<footer>
@@ -233,8 +249,9 @@ FOOTER = '''<footer>
   </div>
 </footer>'''
 
-SCRIPT = '''<script>
-  function toggleNav(){document.getElementById('nav-links').classList.toggle('open');}
+SCRIPT = '''<script src="/_static/blog.js" defer></script>
+<script src="/_static/highlight.js" defer></script>
+<script>
   // scrollspy: highlight the current section in the sidebar
   (function(){
     var links=[].slice.call(document.querySelectorAll('.manual-toc a'));

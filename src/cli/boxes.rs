@@ -8,6 +8,10 @@ use console::style;
 use h5i_core::ui::{LOOKING, SUCCESS};
 
 #[derive(Subcommand)]
+// `Create` carries every create-time flag and dwarfs the other verbs; boxing
+// it would break clap's derive, and the enum is constructed once per process.
+// Same trade as `Commands` in main.rs.
+#[allow(clippy::large_enum_variant)]
 pub enum BoxCommands {
     /// Create a box explicitly. `h5i box [SOURCE]` is the short form and
     /// takes the same flags; this is what it dispatches to.
@@ -65,6 +69,14 @@ pub enum BoxCommands {
         /// makes both image-backed tiers candidates for the isolation auto-pick.
         #[arg(long)]
         image: Option<String>,
+
+        /// Browser engine for the `browser` profile: chromium (default),
+        /// lightpanda, or h5i-light. Overrides the profile's `engine`. Pinned
+        /// in the policy digest, and never falls back: a box whose engine
+        /// cannot serve a page fails and names the recreate, because switching
+        /// engine changes what a page is able to do.
+        #[arg(long)]
+        engine: Option<String>,
         /// Workspace backend (auto|worktree)
         #[arg(long, default_value = "auto")]
         backend: String,
@@ -189,6 +201,38 @@ pub enum BoxCommands {
         #[arg(long)]
         assume_graphics: bool,
     },
+
+    /// Let one other person try this box's web app, from their own machine.
+    ///
+    // The middle sentence is the one that differs, because the guarantee
+    // differs. Saying "h5i enters the box's network namespace" on a platform
+    // with no namespaces is not a small inaccuracy: it is the sentence a reader
+    // uses to decide how exposed the port is, and on macOS it claims an
+    // isolation that is exactly what macOS does not have. The short summary
+    // above — the only part that reaches the man page and the published manual,
+    // both generated on Linux — is deliberately left alone.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        doc = "The box's port is never published. h5i enters the box's network namespace, dials \
+               the dev server from inside, and carries the traffic"
+    )]
+    #[cfg_attr(
+        target_os = "macos",
+        doc = "h5i never publishes the box's port — but on macOS a box has no network of its \
+               own, so its dev server binds this machine's loopback and anything local can \
+               already reach it. What h5i promises here is that it shares *that box's* server \
+               and nobody else's: it asks which process holds the port, refuses unless that \
+               process belongs to this box, and re-checks on every connection. It carries the \
+               traffic"
+    )]
+    /// either peer to peer (they run `h5i join`, end-to-end encrypted) or
+    /// through a Cloudflare quick tunnel (`--tunnel`: any browser, no h5i, but
+    /// Cloudflare terminates TLS). Either way the invite is a capability with an
+    /// expiry that you can revoke, and the session lands in the box's receipt.
+    ///
+    /// `h5i box share <name>` starts one; the verbs manage it. Runs until Ctrl-C.
+    #[cfg(feature = "share-tunnel")]
+    Share(crate::cli::share::ShareArgs),
 
     /// Check one environment's enforcement readiness and structural health
     /// (can it actually enforce its isolation claim here? are its refs intact?)
@@ -651,6 +695,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     name,
                     from,
                     pr,
+                    engine,
                     clone,
                     new,
                     remote,
@@ -684,12 +729,20 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         (None, true) => h5i_core::env::BoxSource::New,
                         (None, false) => h5i_core::env::BoxSource::Repo,
                     };
+                    let engine = match &engine {
+                        Some(name) => Some(
+                            h5i_core::sandbox::BrowserEngine::parse(name)
+                                .map_err(h5i_core::error::H5iError::Metadata)?,
+                        ),
+                        None => None,
+                    };
                     let opts = h5i_core::env::CreateOpts {
                         source,
                         from: pr_base.as_ref().map(|b| b.oid.clone()).or(from),
                         profile,
                         isolation,
                         image,
+                        engine,
                         backend,
                         audit_capture: h5i_core::sandbox::AuditCapture::parse(&audit)?,
                         parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),
@@ -1267,14 +1320,24 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         // The status line reports what the box may reach. It is
                         // read from the *enforced* policy, not from the profile
                         // as written, so it describes the box that is running.
-                        let egress = h5i_core::env::load_policy(&h5i_root, &m)
+                        let enforced = h5i_core::env::load_policy(&h5i_root, &m);
+                        let egress = enforced
+                            .as_ref()
                             .map(|p| egress_summary(&p.profile.net_egress))
                             .unwrap_or_default();
+                        // Same source as the egress line, for the same reason:
+                        // what is running, not what was written.
+                        let engine = enforced
+                            .as_ref()
+                            .ok()
+                            .and_then(|p| p.profile.engine)
+                            .map(|e| e.as_str().to_string());
                         h5i_core::termview::run(h5i_core::termview::Options {
                             env_dir: dir,
                             env_id: m.id.clone(),
                             policy_digest: m.policy_digest.clone(),
                             egress,
+                            engine,
                             max_fps: fps,
                             assume_graphics,
                         })?;
@@ -1289,6 +1352,9 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         forward.serve()?;
                     }
                 }
+
+                #[cfg(feature = "share-tunnel")]
+                BoxCommands::Share(args) => crate::cli::share::run(args)?,
 
                 BoxCommands::Doctor { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
@@ -1306,7 +1372,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 BoxCommands::Secrets { name, json } => {
                     let m = h5i_core::env::find(&h5i_root, &name)?;
                     let policy = h5i_core::env::load_policy(&h5i_root, &m)?;
-                    let rows = h5i_core::env::secrets_status(&policy);
+                    let rows = h5i_core::env::secrets_status(&h5i_root, &policy);
                     if json {
                         println!("{}", serde_json::to_string_pretty(&rows)?);
                     } else {

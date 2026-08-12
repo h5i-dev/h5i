@@ -3,6 +3,9 @@
 // a receipt is the record of what actually ran inside it. (`error` stays public
 // because `H5iError` appears in the signatures of most of them.)
 pub mod browser;
+pub mod browser_events;
+pub mod browser_frames;
+pub mod browser_proxy;
 pub mod cache;
 pub mod control;
 pub mod env;
@@ -15,6 +18,10 @@ pub mod refstore;
 // bundle, and the build script's dependency on Node.
 #[cfg(feature = "web")]
 pub mod server;
+// Reading `share.json` for everything below `h5i-share`. See the module note:
+// there were three hand-rolled probes here and they did not agree with the
+// crate that writes the file.
+pub mod share_record;
 pub mod skill;
 pub mod source;
 pub mod storage;

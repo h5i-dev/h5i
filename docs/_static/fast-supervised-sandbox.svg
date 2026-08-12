@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 440" width="800" height="440" role="img" aria-label="h5i box supervised mode keeps the sandbox fast enough for everyday agent work">
+<rect width="800" height="440" fill="#ffffff"/>
+<defs>
+<marker id="hero-green" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#2e7d32"/></marker>
+</defs>
+
+<text x="400" y="42" font-size="22" font-weight="700" fill="#1a202c" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Fast sandbox, real guardrails</text>
+<text x="400" y="68" font-size="12.5" fill="#52606d" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">supervised h5i box: process-level confinement with a live network socket gate</text>
+
+<rect x="50" y="118" width="190" height="106" rx="8" fill="#edf7f6" stroke="#16837a" stroke-width="2"/>
+<text x="145" y="148" font-size="15" font-weight="700" fill="#0f5d56" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Developer</text>
+<text x="145" y="174" font-size="12" fill="#254f4b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">one command</text>
+<text x="145" y="198" font-size="12" fill="#254f4b" text-anchor="middle" font-family="Consolas, Menlo, monospace">h5i box shell</text>
+
+<rect x="305" y="98" width="190" height="146" rx="8" fill="#f7fafc" stroke="#4a5568" stroke-width="2"/>
+<text x="400" y="130" font-size="15" font-weight="700" fill="#2d3748" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">supervised box</text>
+<text x="400" y="158" font-size="12" fill="#4a5568" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Landlock filesystem</text>
+<text x="400" y="181" font-size="12" fill="#4a5568" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">seccomp + namespaces</text>
+<text x="400" y="204" font-size="12" fill="#4a5568" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">socket gate + nftables</text>
+<text x="400" y="226" font-size="12" fill="#4a5568" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">resource limits</text>
+
+<rect x="560" y="118" width="190" height="106" rx="8" fill="#fff7e6" stroke="#b7791f" stroke-width="2"/>
+<text x="655" y="148" font-size="15" font-weight="700" fill="#8a5a12" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Agent workload</text>
+<text x="655" y="174" font-size="12" fill="#6b4e16" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">build, test, edit</text>
+<text x="655" y="198" font-size="12" fill="#6b4e16" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">inside the box</text>
+
+<path d="M240,171 L302,171" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#hero-green)"/>
+<path d="M495,171 L557,171" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#hero-green)"/>
+
+<rect x="85" y="292" width="630" height="82" rx="8" fill="#eef2ff" stroke="#4c51bf" stroke-width="2"/>
+<text x="400" y="321" font-size="14" font-weight="700" fill="#3730a3" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Why speed matters</text>
+<text x="400" y="347" font-size="12" fill="#3730a3" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">If startup is roughly a few tenths of a second, the safe path becomes the normal path.</text>
+<text x="400" y="368" font-size="12" fill="#3730a3" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">You do not need to choose between quick iteration and a confined agent session.</text>
+</svg>

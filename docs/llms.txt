@@ -1,97 +1,43 @@
 # h5i
 
-> h5i ("high-five") is an open-source **contained agentic development environment**. It gives a coding agent (Claude Code, Codex) a disposable box holding the code, the agent process, the toolchain, the dependencies, the dev server and a real browser, inside one enforced boundary. Nothing of your machine is inside it: no SSH key, no cloud credential, no personal browser profile. Nothing leaves it except a patch, a report and an execution receipt you exported deliberately. One Rust binary, local-first, no server, no daemon, no SaaS.
+> h5i ("high-five") is an open-source integrated sandbox for AI coding agents. It places the agent, workspace, shell, dependencies, dev server, and isolated browser inside one disposable boundary. Host files and reusable credentials stay outside. A human exports a reviewable patch and execution record when the work is done.
 
-The problem h5i solves is that a coding agent runs unattended, which makes two questions urgent at once: what could it reach, and what did it actually do? Sandboxing one command was the right idea at the wrong scale, because an agent's work is a shell, a package manager, a build, a test run, a dev server and a browser. h5i confines the workspace rather than the command, so everything the session spawns is contained by construction, and records what ran from outside the box rather than from the agent's account of itself. Apache-2.0, written in Rust, Linux and macOS.
+## Start here
 
-## Core concepts
-- A **box**: a disposable, confined development environment for one agent
-- Five **isolation tiers**: `workspace`, `process`, `supervised`, `container`, `microvm`
-- **Fail closed**: an explicit tier is refused, never silently downgraded
-- **Egress allowlist**, labelled by OSI layer (L3/L4 at `supervised` and `microvm`, L7 at `container`)
-- **Credential broker**: keys stay on the host; a proxy injects them into allowed calls
-- **Detached box**: external code gets its own repository, and `apply` refuses
-- **Output gate** (`h5i box export`): a path-validated patch, a report, an execution receipt
-- **Sealed receipt**: append-only JSONL stored outside every grant the box holds
-- **Lanes**: every record names who observed it, so host-observed and box-claimed never blur
-- Local-first, no SaaS, no hosted sandbox
-
-## Technical model
-A box's policy is resolved from a checked-in `.h5i/env.toml`, serialized to `policy.resolved.toml` and hashed *before* any state exists on disk, so an unsatisfiable request fails closed. The base revision is pinned immutably at creation. Every receipt record carries that policy digest, so a run and the rules that governed it cannot drift apart. The box's entire write window under its own directory is its `spool`; the receipt log and payloads are siblings of that spool, outside every grant, so the box stages a record and the host ingests it. Linux confines with Landlock, seccomp and namespaces; macOS with Seatbelt. Rootless Podman adds `container`, and microsandbox (`msb`) adds `microvm` on a host with hardware virtualization.
-
-## Command surface
-`h5i box` (create, ls, status, run, shell, diff, log, export, apply, rebase, abort, rm, gc, probe, capabilities, doctor, secrets, inspect, compare, view, service, ports, cache, allow) · `h5i ui` (read-only box console) · `h5i browser` (the control lock) · `h5i skill` · `h5i completion` · `h5i man`
-
-## Docs
-- [Features](https://h5i.dev/features/): The five parts of a box, the tier ladder, the output gate, and the console.
-- [Manual (CLI reference)](https://h5i.dev/manual/): The complete command reference, the policy model, receipts, and the honest limits.
-- [Workflow](https://h5i.dev/workflows/): The end-to-end loop: box, work, export, apply.
-- [Blog](https://h5i.dev/blog/): Engineering posts on containment, evidence, review, policy and security.
-- [Guides](https://h5i.dev/guides/): Task-focused how-tos for pull-request review, credentials, containment, exports and caching.
-
-## The boundary
-- [What Is a Contained Agentic Development Environment?](https://h5i.dev/blog/what-is-ai-aware-version-control/): The category defined: five parts inside one boundary, why a worktree and a container each fall short, and four questions that separate a real one from a label.
-- [The Agent Sandbox With an Output Gate](https://h5i.dev/blog/agent-sandbox-env/): The product walkthrough: how a box is made, what the policy pins, what the receipt records, and why export is the only door.
-- [Four Shapes a Box Can Take](https://h5i.dev/blog/orchestration-patterns-beyond-ensemble/): Repo box, pull-request box, clone box, empty box, and the cache-refresh box with no agent in it.
-- [Git Worktrees vs h5i Boxes](https://h5i.dev/blog/git-notes-vs-h5i-ai-coding-workflows/): A worktree separates checkouts; a box separates authority. When each is right.
-
-## Sandboxing (4-part series)
-- [Part 1: Foundations](https://h5i.dev/blog/sandboxing-ai-agents-foundations/): The threat model and the primitives (namespaces, seccomp, Landlock, cgroups) that contain an agent.
-- [Part 2: Implementing Kernel-Tier Confinement](https://h5i.dev/blog/sandboxing-ai-agents-implementation/): Probe, run a functional self-test, and fail closed instead of silently downgrading.
-- [Part 3: The Landscape, Compared by Threat Model](https://h5i.dev/blog/sandboxing-ai-agents-landscape/): A survey from nothing/YOLO to full VMs, ranked by what each boundary actually defends against.
-- [Part 4: h5i's Tier Ladder and Policy Model](https://h5i.dev/blog/sandboxing-ai-agents-h5i/): Five tiers, three egress mechanisms with three different guarantees, and the lints that refuse a contradictory profile.
-
-## Evidence
-- [An Audit You Do Not Have to Trust](https://h5i.dev/blog/auditable-workspaces-for-ai-agents/): The test: could the agent have written this line? If yes it is testimony, not an audit.
-- [Why a Diff Is Not Enough for AI-Generated Code](https://h5i.dev/blog/why-git-diffs-are-not-enough-for-ai-generated-code/): Four things a comparison of two trees structurally cannot show.
-- [What Is Inside an Execution Receipt](https://h5i.dev/blog/structured-tool-output-schema/): The JSONL record field by field, including the flags that keep absence from being ambiguous.
-- [The Flight Recorder: Five Lanes and Three Colours](https://h5i.dev/blog/uncertainty-heatmap/): Red means a refused destination; grey means the evidence is weak, which is the most useful thing a dashboard can say.
-- [How to Track What Claude Code Actually Ran](https://h5i.dev/blog/track-claude-code-prompts-diffs-git/): Four commands for the part with consequences, none of which needs the agent to cooperate.
-- [We Built AI Blame, Then Deleted It](https://h5i.dev/blog/from-git-blame-to-ai-blame/): A feature retrospective: why per-line attribution answered the wrong question, and what replaced it.
-
-## Review
-- [Review a Pull Request by Running It](https://h5i.dev/blog/pr-body-ai-code-review/): A detached box makes building an untrusted branch the cheap option instead of the risky one.
-- [Reviewing Code an AI Agent Wrote](https://h5i.dev/blog/review-code-written-by-ai-agents/): A reading order that puts the least trustworthy evidence at the bottom.
-- [Triaging a Fleet of Agent Boxes](https://h5i.dev/blog/auditing-ai-generated-code/): Counting receipts instead of scoring them, and why a risk score stops working after you ship it.
-- [Many Boxes, One Repository](https://h5i.dev/blog/agent-ensembles-with-h5i-team/): Parallel attempts, the pinned base that makes comparison honest, and why there is deliberately no verifier.
-
-## Policy
-- [Write Your First Box Profile](https://h5i.dev/blog/write-your-first-orchestra-score/): Build `.h5i/env.toml` one field at a time, with the failure each field prevents.
-- [Why the Sandbox Policy Is a File, Not Flags](https://h5i.dev/blog/programmable-agent-orchestration-edsl/): A file arrives whole before anything runs, which is the only reason it can be refused as self-contradictory.
-- [Pinning What Was Actually Enforced](https://h5i.dev/blog/context-dag-versioned-agent-reasoning/): Resolve, hash, then create. Three orderings that make "what was enforced" a fact rather than a memory.
-- [What a Box Copies From Your Config, and What It Strips](https://h5i.dev/blog/persistent-memory-for-claude-code/): Settings in, credential-shaped files out, matched by shape at any depth.
-- [Making Boxes Start in Seconds, Not Minutes](https://h5i.dev/blog/token-reduction-object-store/): Three rules that make a warm dependency cache safe rather than merely fast.
-
-## Security
-- [Prompt Injection: Contain It, Because You Cannot Detect It](https://h5i.dev/blog/prompt-injection-in-agent-traces/): Every defence that reads the attacker's text is a filter the attacker can read back. Bound the reach instead.
-- [CVE-2026-33068: When a Repo's settings.json Decides Trust](https://h5i.dev/blog/cve-2026-33068-bypass-permissions-settings/): A committed `bypassPermissions` was read before the trust dialog. Inside a box, permission mode is not a boundary.
-- [CVE-2025-59536: Code Execution Before the Trust Dialog](https://h5i.dev/blog/cve-2025-59536-startup-trust-dialog/): Project code ran before the user accepted. In a box that premise is already handled.
-- [Claude Code Hooks vs Git Hooks](https://h5i.dev/blog/claude-code-hooks-vs-git-hooks/): Two lifecycles, two trust models, and why h5i moved observation below the agent entirely.
-
-## Working in a box
-- [Who Is Driving the Browser?](https://h5i.dev/blog/git-communication-layer-ai-agents/): The control lock's three rules, and why handing control back must invalidate what the agent knew.
-- [Watching a Box's Browser Without Giving It a Port](https://h5i.dev/blog/i5h-agent-to-agent-messaging/): h5i enters the box's network namespace by pid and hands the socket back out. The terminal viewer binds nothing.
-- [Teaching an Agent to Use Its Own Box](https://h5i.dev/blog/prompt-maturity-score/): The skill is embedded in the binary, so it cannot document flags the installed binary lacks.
+- [Features](https://h5i.dev/features/): Product overview, isolation tiers, browser, output gate, and console.
+- [First box](https://h5i.dev/guides/first-box/): Install h5i and take one task from box creation to a reviewed patch.
+- [Workflow](https://h5i.dev/workflows/): The complete box, work, inspect, export, apply loop.
+- [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
 ## Guides
-- [Review a Pull Request in a Box](https://h5i.dev/guides/ai-code-review-audit/): Fetch a PR head into a detached box, build and exercise it, read what the boundary refused.
-- [Export a Reviewable Patch From a Box](https://h5i.dev/guides/ai-code-provenance/): Three files out of the output gate, then `git apply --3way`.
-- [Pass API Tokens to a Coding Agent Without Leaking Them](https://h5i.dev/guides/secure-api-tokens-in-agent-box/): The credential proxy: the box authenticates without ever holding the key.
-- [Contain a Prompt-Injected Agent](https://h5i.dev/guides/prompt-injection-detection-for-agents/): Assume the injection worked, then write down in a profile what it can reach.
-- [Give a Box Your Claude Code Config Without Your Credentials](https://h5i.dev/guides/claude-code-memory/): How the HOME seed works and how to verify what a box got.
-- [Run Claude Code and Codex in Separate Boxes](https://h5i.dev/guides/codex-claude-code-collaboration/): Two runtimes, two credential sets, one pinned base.
-- [Find Out What Actually Ran in a Box](https://h5i.dev/guides/git-blame-for-ai-code/): Four commands, and how to tell host-observed evidence from the box's own account.
-- [Warm the Dependency Cache So Boxes Start Fast](https://h5i.dev/guides/token-reduction-capture-run/): Populate a cache once in a box with no agent in it.
+
+1. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
+2. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
+3. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
+4. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
+
+## Design essays
+
+- [The environment is the sandbox](https://h5i.dev/blog/the-environment-is-the-sandbox/): The isolation unit is the entire development session, not one command or checkout.
+- [Five tiers, five different promises](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the property required.
+- [A transcript is not an audit trail](https://h5i.dev/blog/evidence-for-agent-work/): Separate host-observed evidence, box-claimed records, Git state, and agent testimony.
+- [Assume the prompt injection worked](https://h5i.dev/blog/prompt-injection-is-a-boundary-problem/): Bound a compromised session's filesystem, credentials, sockets, egress, and output.
+
+## Core model
+
+- A box is a complete disposable development environment for one agent.
+- Five tiers: workspace, process, supervised, container, microvm.
+- Explicit isolation requests fail closed; h5i never silently downgrades.
+- supervised and microvm enforce egress at L3/L4. container uses an L7 proxy allowlist.
+- Model credentials remain host-side and are injected by a runtime-scoped proxy.
+- h5i box export produces patch.diff, report.md, and receipt.json.
+- Every receipt names the policy digest and the observer lane.
+- h5i is local-first, Apache-2.0, and requires no hosted sandbox or SaaS account.
 
 ## Honest limits
-- Containment stops the agent touching your host. It does **not** stop it putting private source into a model prompt; that needs a self-hosted model or no model egress at all.
-- Four of the five tiers share the host kernel: strong against a runaway agent and careless dependency code, not a claim against a targeted kernel exploit. `microvm` is where the boundary is a hypervisor.
-- The `container` tier's egress allowlist is L7, so it binds proxy-respecting tooling only.
-- An agent can stage extra receipt records or stop writing them. Both are visible as a gap against host-observed exits, and that is the whole claim.
-- A `microvm` receipt carries no egress summary: the guest's netstack drops packets without reporting them.
-- On macOS at the kernel tiers, memory and process-count limits cannot be enforced, and h5i marks them rather than claiming them.
 
-## Related projects
-- [h5i-db](https://db.h5i.dev/): A sibling project from the same authors. An embedded, versioned analytical database for quantitative finance and time-series workloads, written in Rust: DataFusion SQL with native ASOF joins, OHLCV/VWAP rollups, time travel, and previewable mutations over immutable Parquet segments, designed to be safe for AI agents to drive.
-- [h5i-db docs index](https://db.h5i.dev/llms.txt): The structured, link-first index for the h5i-db manual, Python API, and cookbook.
-- [h5i-db full documentation](https://db.h5i.dev/llms-full.txt): The entire h5i-db manual and Python API reference as one markdown file.
+- Containment cannot stop source code from being included in an allowed model request.
+- Every tier below microvm shares the host kernel.
+- Container egress scoping binds proxy-respecting software only.
+- Box-claimed receipt data can be omitted or fabricated; h5i keeps it distinct from host-observed evidence.
+- A local receipt is protected from the box, not notarized against the host owner.

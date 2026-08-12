@@ -269,65 +269,17 @@ pub fn egress_rule_tokens(egress: &[String]) -> Result<Vec<String>, H5iError> {
     };
 
     for raw in egress {
-        let raw = raw.trim();
-        if raw.is_empty() {
+        // One grammar for every tier: `container::parse_egress_rule` is the
+        // single definition, so the strictness here and the allowlist the
+        // container proxy enforces cannot drift apart again.
+        let Some((host, wildcard, port)) = crate::container::parse_egress_rule(raw)? else {
             continue;
-        }
-        if raw.contains(',') || raw.contains('@') {
-            return Err(H5iError::Metadata(format!(
-                "net.egress entry '{raw}' contains ',' or '@', which the microvm tier's rule \
-                 grammar reserves — refusing rather than emitting a rule that means something \
-                 else (fail-closed). Split it into separate entries."
-            )));
-        }
-        // An IPv6 literal is full of colons, and the port split below cannot tell
-        // one from a `host:port`: `2001:db8::1` used to come out as
-        // `allow@2001:db8::tcp:1` — a rule that means nothing anyone asked for.
-        // The grammar has no unambiguous spelling for one here, so refuse it
-        // rather than translate it wrong.
-        if raw.matches(':').count() > 1 {
-            return Err(H5iError::Metadata(format!(
-                "net.egress entry '{raw}' looks like an IPv6 literal (more than one ':'), which \
-                 the microvm tier's rule grammar cannot carry unambiguously — refusing rather \
-                 than emitting a rule that means something else (fail-closed). Use a hostname, \
-                 or an IPv4 address or CIDR."
-            )));
-        }
-        // Only a trailing all-digit segment is a port.
-        let (host_part, port) = match raw.rsplit_once(':') {
-            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
-                // Out of range is an error, never a silent widening: `.ok()` here
-                // turned `example.com:99999` into `allow@example.com`, which is
-                // *every* port — the opposite of what the entry asked for.
-                let port = p.parse::<u16>().map_err(|_| {
-                    H5iError::Metadata(format!(
-                        "net.egress entry '{raw}' has a port outside 1-65535 — refusing rather \
-                         than falling back to an any-port rule (fail-closed)."
-                    ))
-                })?;
-                (h, Some(port))
-            }
-            _ => (raw, None),
         };
-        let lower = host_part.to_ascii_lowercase();
-        let (host, wildcard) = match lower.strip_prefix("*.").or_else(|| lower.strip_prefix('.')) {
-            Some(rest) => (rest.to_string(), true),
-            None => (lower, false),
-        };
-        if host.is_empty() {
-            continue;
-        }
         let qualifier = match port {
             Some(p) => format!(":tcp:{p}"),
             None => String::new(),
         };
         if wildcard {
-            if host.split('.').filter(|l| !l.is_empty()).count() < 2 {
-                return Err(H5iError::Metadata(format!(
-                    "net.egress wildcard '{raw}' covers a single label — a suffix rule must name \
-                     at least two (e.g. '*.example.com', not '*.com'). Refusing (fail-closed)."
-                )));
-            }
             push(format!("allow@domain={host}{qualifier}"), &mut tokens);
             push(format!("allow@suffix={host}{qualifier}"), &mut tokens);
         } else {
@@ -511,9 +463,11 @@ pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: 
     // exist host-side (an image-backed tier writes a sentinel when there is no
     // real config), so a missing source here means the guard deliberately left
     // it out, not that we should mount something else.
-    for rel in [".claude/settings.json", ".codex/config.toml"] {
-        let source = work.join(rel);
-        if source.is_file() {
+    for rel in crate::container::AGENT_CONFIG_RELS {
+        // Resolved through the shared guard: `$WORK` is repo-supplied, so a
+        // symlink here (or at any directory above it) would otherwise mount an
+        // arbitrary host path into the guest.
+        if let Some(source) = crate::container::agent_config_mount_source(work, rel) {
             a.push("--mount-file".into());
             a.push(format!("{}:{WORK_MOUNT}/{rel}:ro", source.display()));
         }
@@ -734,22 +688,93 @@ struct SandboxGuard {
 
 impl SandboxGuard {
     fn new(bin: &str) -> Self {
-        SandboxGuard {
+        let g = SandboxGuard {
             bin: bin.to_string(),
             name: format!(
                 "h5i-{}-{}",
                 std::process::id(),
                 RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ),
+        };
+        // Drop alone cannot cover SIGKILL, SIGTERM, or a panic=abort build, and
+        // a *named* msb sandbox survives us — unlike the container tier, which
+        // has `--rm` as a backstop. Leave a marker so a later run can reap what
+        // an abnormal exit left behind.
+        if let Some(m) = marker_path(&g.name) {
+            if let Some(d) = m.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = std::fs::write(&m, b"");
         }
+        g
     }
 
     fn remove(&self) {
-        let _ = std::process::Command::new(&self.bin)
-            .args(["remove", "--force", &self.name])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        remove_named(&self.bin, &self.name);
+        if let Some(m) = marker_path(&self.name) {
+            let _ = std::fs::remove_file(m);
+        }
+    }
+}
+
+fn remove_named(bin: &str, name: &str) {
+    let _ = std::process::Command::new(bin)
+        .args(["remove", "--force", name])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Where the marker for a live named sandbox lives.
+fn marker_path(name: &str) -> Option<PathBuf> {
+    Some(std::env::temp_dir().join("h5i-msb-live").join(name))
+}
+
+/// Reap named sandboxes an earlier h5i left behind.
+///
+/// Keyed on the pid embedded in the name (`h5i-<pid>-<seq>`): a marker whose
+/// process is gone can only be a leftover, because a live run holds its own
+/// marker until Drop removes it. Best-effort throughout — a failed sweep must
+/// never turn a good run into an error.
+pub fn reap_orphaned_sandboxes(bin: &str) {
+    let Some(dir) = marker_path("").and_then(|p| p.parent().map(PathBuf::from)) else {
+        return;
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(pid) = name
+            .strip_prefix("h5i-")
+            .and_then(|r| r.split('-').next())
+            .and_then(|p| p.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if pid == std::process::id() as i32 || pid_alive(pid) {
+            continue;
+        }
+        remove_named(bin, &name);
+        let _ = std::fs::remove_file(e.path());
+    }
+}
+
+/// Is `pid` still around? `kill(pid, 0)` reports EPERM for a live process we do
+/// not own, which still means "do not reap".
+fn pid_alive(pid: i32) -> bool {
+    #[cfg(unix)]
+    {
+        if pid <= 0 {
+            return true; // never interpret a bad pid as reapable
+        }
+        let rc = unsafe { libc::kill(pid, 0) };
+        rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
     }
 }
 
@@ -791,6 +816,8 @@ pub fn run(
 
     let net = net_plan(policy)?;
     let preload = write_preload(work, &guest_env(policy, injected_env))?;
+    // Sweep leftovers from an h5i that died without running Drop.
+    reap_orphaned_sandboxes(&rt.bin);
     let sandbox = SandboxGuard::new(&rt.bin);
     let full = build_run_argv(
         &rt,
@@ -847,6 +874,8 @@ pub fn run_interactive(
     // Only ask for a pseudo-TTY when we have one on both ends — msb rejects
     // `--tty` under a pipe, which would turn a CI `env shell` into a hard error.
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    // Sweep leftovers from an h5i that died without running Drop.
+    reap_orphaned_sandboxes(&rt.bin);
     let sandbox = SandboxGuard::new(&rt.bin);
     let full = build_run_argv(
         &rt,
@@ -1000,6 +1029,32 @@ mod tests {
     }
 
     // ─── version parsing ────────────────────────────────────────────────────
+
+    /// A named msb sandbox outlives us, and Drop cannot run on SIGKILL. The
+    /// sweep reaps a marker whose pid is gone and leaves a live one alone.
+    #[test]
+    fn orphan_sweep_only_targets_dead_pids() {
+        // Our own pid is alive, so it must never be swept.
+        assert!(pid_alive(std::process::id() as i32));
+        // pid 1 always exists; kill(1,0) is EPERM for a normal user, which the
+        // helper must read as "alive" rather than "reapable".
+        assert!(pid_alive(1));
+        // A bad pid is never treated as reapable.
+        assert!(pid_alive(0));
+        assert!(pid_alive(-1));
+        // A pid that cannot exist is reapable.
+        assert!(!pid_alive(0x7fff_fffe));
+    }
+
+    #[test]
+    fn a_guard_leaves_a_marker_and_clears_it() {
+        let g = SandboxGuard::new("true");
+        let m = marker_path(&g.name).unwrap();
+        assert!(m.exists(), "a live sandbox records a marker");
+        assert!(g.name.starts_with(&format!("h5i-{}-", std::process::id())));
+        drop(g);
+        assert!(!m.exists(), "Drop clears the marker");
+    }
 
     #[test]
     fn version_is_parsed_from_the_banner_shapes_msb_prints() {
@@ -1319,8 +1374,10 @@ mod tests {
         // $WORK is rw, so without this mount an in-box agent could rewrite the
         // file that defines its observation hook and go dark.
         let dir = std::env::temp_dir().join(format!("h5i-microvm-cfg-{}", std::process::id()));
-        let work = dir.join("work");
-        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(dir.join("work/.claude")).unwrap();
+        // Canonicalized: the mount source is the resolved path, so the
+        // expectation has to agree where the temp root is itself a symlink.
+        let work = dir.canonicalize().unwrap().join("work");
         std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
         let a = build_run_argv(
             &rt(),

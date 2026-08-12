@@ -1,7 +1,7 @@
 # h5i Manual
 
 Command reference for h5i. **New here? Read [What h5i is](#what-h5i-is) and
-[The loop](#the-loop) first** — they give the mental model before the
+[The loop](#the-loop) first**: they give the mental model before the
 per-command reference.
 
 `h5i <command> --help` is always authoritative for flags. This manual explains
@@ -25,8 +25,8 @@ It is one Rust binary. No server, no daemon, no SaaS.
 
 Everything h5i does maps to one of these:
 
-1. **A disposable workspace.** The code is copied into the box — a pull request,
-   an existing repository, a fresh project — along with everything it pulls in.
+1. **A disposable workspace.** The code is copied into the box (a pull request,
+   an existing repository, a fresh project) along with everything it pulls in.
    No host directory is mounted read-write into the agent's reach.
 2. **A sandboxed coding agent.** Claude Code or Codex, its child processes, its
    package managers, builds, tests and dev server all run inside the same
@@ -81,6 +81,11 @@ curl -fsSL https://h5i.dev/install.sh | sh     # prebuilt binary
 cargo install --path .                         # from source
 ```
 
+`h5i.dev/install.sh` and
+`raw.githubusercontent.com/h5i-dev/h5i/main/install.sh` are the same file, and
+CI fails if they ever stop being. Use the second one if you would rather the
+install path not depend on the domain.
+
 Then, so your agent knows how to use it:
 
 ```bash
@@ -98,6 +103,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i ui`](#h5i-ui) | The box console: one read-only screen over the whole fleet. |
 | [`h5i browser`](#h5i-browser) | The control lock: who is driving a box's browser. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
+| [`h5i join`](#h5i-box-share) | Open a box someone else is sharing, from their ticket. |
 | `h5i completion` / `h5i man` | Shell completions and the man page. |
 
 `h5i dev *` and `h5i env *` both remain as hidden aliases for `h5i box *`
@@ -137,6 +143,7 @@ Where the code comes from decides the shape of the box:
 ```
 h5i box create <NAME> [--from <rev>] [--pr <n>] [--clone <url>] [--new]
                       [--profile <p>] [--isolation <tier>] [--image <img>]
+                      [--engine <chromium|lightpanda|h5i-light>]
 ```
 
 The base revision is frozen at creation and pinned immutably. The policy is
@@ -152,6 +159,22 @@ unsatisfiable request fails closed rather than leaving half a box behind.
 | `--profile <p>` | See [Profiles](#profiles). |
 | `--isolation <tier>` | See [Isolation tiers](#isolation-tiers). |
 | `--image <img>` | Base image for `isolation=container` and `isolation=microvm`. Pre-pulled; runs never pull. |
+| `--engine <e>` | Browser engine for the `browser` profile: `chromium` (default), `lightpanda`, or `h5i-light`. Pinned in the digest; never falls back. See [Choosing the engine](#choosing-the-engine). |
+
+A profile can also refuse individual browser actions, enforced by h5i on the
+daemon's control socket rather than advised:
+
+```toml
+[profile.browser.browser]
+deny = ["evaluate", "state"]   # a bare family name covers state_save/state_load
+```
+
+`evaluate` is arbitrary code in the page; `state_*` and `credentials_*` reach
+the browser's stored secrets. A denied verb never reaches the browser, and the
+refusal lands in the receipt's `browser-proxy` lane. This is enforcement
+against an agent using the documented path, not containment against one that
+goes looking: the daemon runs inside the box, and a box has no internal
+privilege boundary.
 
 ### Working in a box
 
@@ -205,17 +228,18 @@ Produces:
 | `patch.diff` | The tree diff against the pinned base, path-validated: no symlink escapes, no nested `.git`, no agent-introduced gitlinks. |
 | `report.md` | What ran, what the browser saw, who was at the controls, and the agent's own proposal. |
 | `receipt.json` | Every observed execution, with the policy digest that was enforced. |
+| `receipts/<id>.raw` | The full account of each ingress session: who connected, over what path, for how long, how much moved, what was refused. Present when the box was shared. |
 
 It refuses rather than overwrites an existing non-empty directory (`--force` to
-replace). Secret redaction and size caps apply to all three.
+replace). Secret redaction and size caps apply to all of it.
 
 Read `report.md` before applying. It surfaces, in this order:
 
-- **denied egress attempts** — the box tried to reach hosts the policy refused
-- **what ran** — every command, its lane, its exit code
-- **what the browser saw** — console errors, uncaught exceptions and failed
+- **denied egress attempts**: the box tried to reach hosts the policy refused
+- **what ran**: every command, its lane, its exit code
+- **what the browser saw**: console errors, uncaught exceptions and failed
   requests, observed by h5i rather than reported by the agent
-- **viewer sessions** — including whether a human took the controls
+- **viewer sessions**: including whether a human took the controls
 - the agent's proposal
 
 Then apply it where you want:
@@ -246,7 +270,7 @@ Rules that make this safe rather than merely fast:
   lockfiles. A cache whose key no longer matches is listed as stale and never
   handed to a box: packages resolved for a different dependency set are a
   silent, hard-to-explain wrong answer.
-- Mounted **read-only** into an agent box. That costs nothing in correctness —
+- Mounted **read-only** into an agent box. That costs nothing in correctness:
   every package manager falls back to fetching what it cannot find.
 - Written **only** by `h5i box cache refresh`, which runs the install step alone,
   with egress narrowed to the registry hosts and no agent inside. `refresh`
@@ -324,6 +348,409 @@ h5i sends a press and a release together: typing works exactly, and holding a
 key down does not. Clicks are placed at the resolution of a terminal cell, which
 is fine for a form and coarse for a dense canvas.
 
+### h5i box share
+
+Let one other person try the web app in a box, from their own machine, while it
+is still running inside the boundary. This is the one path in h5i that lets
+something *in*, so it is worth reading before you use it.
+
+```bash
+h5i box share <name> [--port 3000] [--expire 60m] [--label alex]
+h5i box share <name> --direct-only    # fail rather than relay a single byte
+h5i box share <name> --tunnel         # any browser, no h5i on their side
+
+h5i box share status <name>
+h5i box share ls
+h5i box share grant <name> [--label sam] [--expire 30m]   # a second ticket (--tunnel only)
+h5i box share revoke <name> <grant>
+h5i box share stop <name>
+h5i box share stop <name> --force            # delete the record, whatever it says
+```
+
+The other side runs:
+
+```bash
+h5i join h5i1_eyJ2IjoxLCJib3hf…
+h5i join -                            # the same, with the ticket on stdin
+h5i join - --shared-jar               # on a machine with only 127.0.0.1 to offer
+```
+
+The share needs a live session of the box to dial into, not a live dev server:
+starting one before the server is up warns and carries on, visitors get a `502`
+saying the server is not up rather than that their link is bad, and it starts
+working the moment the port binds — measured, and the receipt counts those
+attempts on their own `unreached` line. The session is the constraint. A second
+`h5i box run` is refused while the first holds the box, so the server has to
+come up in the session that is already there.
+
+**What the joining side is trusting.** A ticket names a machine to dial and h5i
+will dial it, so a ticket is worth the same care as any link: h5i refuses one
+that names your *own* loopback or link-local addresses, but a ticket from a
+stranger is still a stranger's. The page then arrives on
+`http://127.<x>.<y>.<z>:<port>` — a loopback address picked at random for this
+join, because a cookie jar is scoped by *host* and ignores the port. On
+`127.0.0.1` that jar is shared with every local service you run, in both
+directions: the token this proxy sets would reach them, and every cookie they
+have set would be forwarded to the box. An address of its own gives this share a
+jar nothing else has written to.
+
+macOS configures only `127.0.0.1` on `lo0`, so there the bind falls back — and
+the two directions get different answers, because only one of them can be
+answered. Your cookies going *into* somebody else's box is narrowed, though not
+closed: on a shared jar only cookies the box itself set are ever sent back to
+it, learned from its own `Set-Cookie` headers, so a `session=` belonging to your
+own local app is never forwarded by this proxy. What that cannot reach is the
+page itself. It is served on `127.0.0.1`, cookies ignore the port, and script on
+that page can therefore read any non-HttpOnly cookie in the jar and send it to
+the box under its own steam — the filter governs what h5i hands over, not what
+the page does. A private window with nothing else open in it is the answer to
+that half, and it is why `h5i join` refuses this jar unless you ask for it.
+(The cost of the filter is that a cookie the app wrote from JavaScript never
+reaches the box either — nothing in a `Set-Cookie` says so, and `h5i join` tells
+you when it applies.) The token going *out* to your other local services has no
+fix that does not need a cookie host of h5i's own, so it is not fixed, it is
+yours to decide: `h5i join` refuses that jar unless you pass `--shared-jar`. If
+you would rather not, `sudo ifconfig lo0 alias 127.0.0.2` gives h5i an address
+to take instead, which lasts until you reboot — keep that one for h5i, because
+an address you also run your own services on is a jar shared with them and h5i
+cannot tell why it is there. On Linux none of this arises: the
+whole of `127.0.0.0/8` is routed to `lo` and every join gets its own. Service
+worker
+registration is refused outright, because one would keep control of that address
+after the share ended, and a request that fetch metadata says came from another
+page is refused too — including one from another `h5i join` on the next port,
+which is a *different origin* but the *same site*, so nothing in the browser
+holds the credential back between them — two `h5i join` proxies on one machine are the same
+*site* to a browser, so one share's page could otherwise drive another's box
+with the credential attached. Nothing else the page does is sandboxed by h5i, and some of it outlives the
+share: cookies, cached responses, `localStorage`, any permission you grant, and
+anything it persuades the browser to download. All of that belongs to whatever
+you next run on that address and port — which is why `h5i join` binds an ephemeral one
+unless you ask for a fixed one. A private window is the simple way to keep none
+of it.
+
+**The box's port is never published.** h5i enters the box's network namespace by
+pid — the same way `h5i box view` does — dials `127.0.0.1:<port>` from inside,
+and passes the socket back out. No TCP listener is bound on an external address
+and no port is forwarded, so the box gains no reachability it did not have.
+(Peer-to-peer mode does bind a UDP socket that anyone may send to — hole
+punching requires it — and everything that arrives on it has to present a ticket
+before it becomes anything. The claim is about the box's port, not about there
+being no socket.) That entry happens
+**once**, at startup: a small helper process lives in the box's namespaces for
+the life of the share and answers "connect me", pinned to the one port you named.
+Nothing on the wire, from a peer or from the shared page, can move where it
+connects.
+
+**A share needs the box's port to be distinguishable from the host's**, and the
+two platforms establish that differently.
+
+On **Linux** it rests on the box having a network namespace this machine can
+enter: only then is "the box's port 3000" a distinct thing from this machine's
+port 3000. Without one, sharing would publish whatever happened to be listening
+on the host, so `h5i box share` refuses rather than guessing.
+
+On **macOS** there are no namespaces and a box binds the host's loopback, so the
+two ports really are the same port — and h5i asks Darwin who holds it. It shares
+the port only when the listening socket belongs to a process of that box (the
+session and its descendants), and refuses when it belongs to anything else,
+naming what holds it. The refusal is not hypothetical: a stray `serve.py` left
+on port 3000 is enough, and h5i will not publish it just because it answers.
+Two processes holding the same address (`SO_REUSEPORT`) is refused too, since
+the kernel — not h5i — would decide which one a visitor reached. That check runs
+again on **every** connection, so a box whose dev server exits cannot have its
+share inherited by the next process to claim the port. macOS boxes at the
+`container` or `microvm` tier run inside a VM, where no host process holds the
+port at all; those are refused, and say so.
+
+The paragraph above is about **Linux**, where the box needs a network of its
+own. On macOS the condition is different — the box needs to be the process
+holding the port — so the tier and profile advice below does not apply there;
+what matters is that the box is running and its dev server is the listener.
+`scripts/share_macos.sh` checks the four outcomes on that platform: a
+stranger's port refused, an empty port warned about, a box shadowed by a more
+specific listener refused, and a visitor reaching the box rather than the
+stranger.
+
+A box has a network of its own when it is running and at the `supervised` or
+`container` tier, or at `process` with a profile that denies egress. But having
+one is not enough, and the second condition is about the **profile**: a profile
+that denies egress gets an empty namespace with no loopback brought up in it,
+at *every* tier, so nothing inside can reach even itself. `h5i box share`
+refuses such a box rather than minting a ticket that can never move a byte.
+What works is a profile with an egress allowlist — the `agent`, `agent-claude`
+and `agent-codex` profiles — because the uplink those get brings a loopback
+with it. `scripts/share_matrix.sh` checks this combination by combination. It does not at `workspace`, or at `process` with a profile that grants
+egress, because both share the host's network.
+
+#### The ticket is the whole access model
+
+A ticket names one box, one port, one grant and an expiry, and carries a
+256-bit secret. Holding it is the authorization; there is no account on either
+side. h5i keeps only the secret's SHA-256, so **a ticket is printed once and
+cannot be reprinted** — mint another with `share grant`.
+
+Because holding it is the whole authorization, where the text ends up matters.
+`/proc/<pid>/cmdline` is world-readable on an ordinary Linux box and `h5i join`
+runs for the length of the session, so `h5i join h5i1_…` leaves a working invite
+in the process table for every other user on that machine to read, and in shell
+history besides. `h5i join -` takes the ticket from stdin instead:
+
+```
+pbpaste | h5i join -          # or: h5i join - < ticket.txt
+```
+
+A ticket is a capability, not a seat: nothing marks one as used or binds it to a
+person, so forwarding the text admits everyone it reaches, under the one grant.
+What one ticket per person buys is that `share revoke <name> <grant>` cuts off
+exactly the people you gave *that* ticket to, rather than everybody. The receipt
+is where a forwarded ticket becomes visible: a grant used by more than one peer
+gets a line of its own saying so, because two endpoint ids against one grant id
+is otherwise something a reader has to spot for themselves in a list that can
+run to 256 entries. `share grant` mints a second one, but
+only for a `--tunnel` share today: a peer-to-peer ticket needs the running
+endpoint's addressing and only the serving process has it, so `grant` refuses on
+a P2P share. Adding a second peer to a P2P share means **stopping it and
+starting a fresh one**, which invalidates the first person's ticket too: mint
+new tickets for everybody, including whoever was already connected. Starting a
+second share alongside the first is refused — a box carries one share at a
+time — so it is not a way round this.
+
+Authorization is re-read from disk on every connection, so a revoke from another
+terminal takes effect on the next one; connections already open are dropped
+within about a second, by a watchdog that asks about *that peer's own grant* —
+so revoking one person cuts their live connections while everyone else's keep
+working. `share stop` revokes everything; the serving process then writes its
+receipt and exits on its own, which is why it is not a `kill`.
+
+`--force` is a different verb wearing the same name: it deletes the record and
+asks nothing to stop. A process that really was serving notices within about a
+second and exits, and in that second visitors are told the share has ended,
+which is what happened. Take the message it prints literally. If it says the
+record was written straight back, a process is still serving the box and access
+is *not* cut off.
+
+The longest a share may last is 24 hours, and the default is one.
+
+#### The two transports
+
+**Peer to peer (the default).** QUIC between the two h5i processes, end-to-end
+encrypted, hole-punched to a direct path when the networks allow it. When they
+do not, a relay carries it: the relay moves sealed packets and sees both
+addresses, the timing and the volume, never the content. `--direct-only` refuses
+that fallback. A peer that cannot get a direct path is turned away — **before
+any application byte crosses** — and the share stays up for anyone who can,
+which is the useful behaviour when one peer is behind a hostile NAT and another
+is not. It keeps checking afterwards,
+because a hole-punched path can die and the transport will slide onto a relay.
+Be precise about the second half. Two things enforce it: a watchdog that closes
+the connection within a second of seeing a relay path, and — because a second
+of traffic is not nothing — a check immediately before every write, so no byte
+h5i has not already handed to QUIC is handed to it after the path changed. What
+remains is what the transport had already accepted and may retransmit on the
+new path, which nothing above QUIC can recall. Setup is a guarantee; staying
+direct is a very short leash.
+A flag that merely preferred a direct path would be worse than none, because it
+would let you believe nothing was in the middle when something was.
+
+**Quick tunnel (`--tunnel`).** A browser cannot speak QUIC to an endpoint id, so
+peer to peer needs h5i on both ends. When the person you want clicking the
+prototype is a designer or a customer, `--tunnel` shells out to `cloudflared`
+and hands back a plain link. The costs, plainly:
+
+- **Cloudflare terminates TLS, so this path is not end to end.** Cloudflare can
+  read the traffic. That fact is written into the box's receipt, not only here.
+- `cloudflared` is a binary we neither ship nor pin. If it is missing, h5i says
+  so and names the alternative.
+- Cloudflare quick tunnels are not a production service: they cap concurrency
+  and do not carry server-sent events.
+
+What does not change is everything under the transport. The link carries a
+token, the token is checked against the same grant table on every connection,
+revocation still works mid-session, and the credential is stripped before
+anything reaches the box. The capability degrades from "hold the secret" to
+"hold the link"; it does not degrade to nothing.
+
+#### What the shared app can and cannot see
+
+The token travels in the URL on the first request only. h5i answers that request
+with a redirect that moves it into an `HttpOnly` cookie and sends the browser to
+the same page without it — so it stays out of the address bar, out of `Referer`
+on every outbound link, and out of the app's own logs. On the way to the box,
+both the cookie and the query parameter are removed. The app being shared never
+sees the credential that admitted its visitor.
+
+The app's own cookies are passed through untouched, and so is its query string
+with two exceptions worth knowing: a parameter literally named `h5i` is taken as
+the share token and removed, and empty pairs are dropped (`?a=1&&b=2` arrives as
+`?a=1&b=2`). WebSockets pass through as well: hot reload works, because a share
+of a dev server that never reloaded would not be a share of a dev server.
+
+A share carries at most 64 connections into the box at once. Past that, a
+visitor gets a `503` telling them to reload rather than a `401` telling them
+their link is bad, and the count of refusals lands in the receipt. The ceiling
+exists because a share is a door on the open internet in tunnel mode and an
+endpoint anyone may dial in P2P mode: without it, one peer — or one page opening
+sockets in a loop — becomes unbounded connections into the box.
+
+One connection carries exactly one request, and that is an authorization
+control rather than a performance choice. A connection is checked when its
+first request arrives, which is only the same as checking every request if it
+cannot carry a second — and by default it can. `cloudflared` keeps a pool of
+connections to the origin and reuses them for whatever request comes next, from
+whatever visitor; browsers pool per origin the same way, which puts the
+identical problem on the joiner's proxy.
+
+So h5i reads the request's head, then exactly as many body bytes as it declared,
+and then stops forwarding anything else on that connection. `Connection: close`
+goes to the box as well, but that is a courtesy: the box runs agent-written code
+and may decline, and the control cannot depend on it. On the way back, the
+response's own `Connection` header is replaced with `close` — otherwise a
+keep-alive answer would tell the visitor's browser to reuse a connection that
+will never answer again — and the response is framed by its `Content-Length` so
+the connection ends when the response does. A response that says two
+contradictory things about its length has both of them taken off, so the visitor
+is left with one framing rather than two — the chunk stream if a
+`Transfer-Encoding` was the other half of the contradiction, the connection
+closing if it was a second length; a response the box starts and never finishes
+becomes a `502`, because relaying an unfinished head verbatim would let the box
+choose when to be sanitised.
+
+Two consequences worth knowing. A chunked request body is parsed rather than
+just copied — forwarding one request means knowing where it ends, and a chunk
+stream only says so in its own framing — though it is forwarded verbatim, chunk
+headers and all, so the box sees the request it would have seen anyway. And an
+upgrade is the exception to the one-request rule: it does become a two-way pipe,
+but only after the box has actually answered `101`, and only when the request
+asked for it properly with both an `Upgrade` header and a `Connection: upgrade`.
+A request that merely attached an `Upgrade:` header gets no exception.
+
+The cost is that every request is its own connection. For a dev server that
+serves each module separately, a first page load is a few hundred of them, each
+with its own dial into the box. It works and it is not free.
+
+**What the box learns about whoever visits.** On a quick tunnel, Cloudflare
+adds the visitor's public IP (`CF-Connecting-IP`, `X-Forwarded-For`), their
+country, and a handful of `CF-*` request headers. h5i drops all of them at the
+gate: the code being demonstrated is agent-written and the person who clicked
+the link is a third party who agreed to look at a page. What does reach the box
+is what any web server sees from a browser — `User-Agent`, `Accept`, the app's
+own cookies — plus `Host` and `X-Forwarded-Proto`, which stay because dev
+servers build absolute URLs out of them. So the box can tell it is behind a
+proxy; it cannot tell who is on the other end.
+
+Where that stripping happens differs by transport, and it is worth being exact.
+On a tunnel the request arrives at the sharer's own front, which is what rewrites
+it. Peer to peer, the sharer is a raw pipe by design — the stream carried its own
+ticket, so everything on it comes from the peer that ticket admitted — and the
+rewriting happened a moment earlier, in the joiner's gate on their machine.
+Measured both ways: a visitor who forges `X-Forwarded-For` and `CF-Connecting-IP`
+at their own joiner proxy has both dropped before the bytes cross, while an
+ordinary custom header of theirs is passed through untouched. What this does not
+defend against is a peer running modified software, who can put anything on that
+stream — but the only person they can identify that way is themselves.
+
+#### What the person joining is taking on
+
+The app is agent-written code, and joining runs it in their browser. That is the
+point of sharing a port rather than a picture of one, and it is also the
+exposure — the same one as clicking any link a colleague sends.
+
+One asymmetry is worth knowing, because it runs the other way from what you
+would guess. In peer-to-peer mode the app is served from the joiner's own
+loopback, and browsers exempt loopback origins from their private-network
+protections, so a hostile page has an easier reach at that machine's local
+services than the same page on a public origin would. Tunnel mode, ironically,
+keeps those protections, because the origin is public.
+
+The joiner's local proxy is gated for the same reason the viewer forward is: a
+port on loopback is reachable by every process on that machine and every page in
+that browser. Its URL carries a token minted **on the joining side**, which is
+not the ticket secret — nothing that authorizes the share is ever handed to a
+browser.
+
+While a share is open, `h5i ui` marks the box **shared now**, with the port,
+the transport and how many tickets can still admit somebody. That indicator is
+live; the receipt below is what lands when the share ends. `h5i box rm`, `abort`, `apply` and `rebase` all refuse a box that is being
+shared, and name the share and the command that ends it — `rebase` in
+particular force-checks-out the worktree, which would change the files under
+the dev server a visitor is looking at. `gc` skips such a box and reclaims the
+others. `rm --force` removes it anyway,
+and once the removal is actually going ahead it says so, at which point the
+share notices within a few seconds and ends itself.
+
+A ticket is worth the same care as a password in one more respect: it is an
+argument to `h5i join`, so any other user on the joining machine can read it out
+of `ps` for the life of the grant.
+
+#### What lands in the receipt
+
+Every other receipt lane observes what left a box. This one records what came
+in, and it is host observed in the strongest sense available: h5i owns both ends
+of the bridge, the box supplies none of it and cannot suppress it.
+
+```
+share session, 612s (p2p transport)
+opened   2026-08-10T10:00:00+00:00
+closed   2026-08-10T10:10:12+00:00
+shared   port 3000 inside the box, never published on the host
+endpoint kbcd7fq2m4xn8s6r3v9w1y5z7a2b4c6d8e0f2g4h6j8k0l2m4n
+peers    1
+  kbcd7fq2m4x… via direct — grant a1b2c3d4 (alex), 300s, 12 connections, 900 B in / 4.9 KiB out
+refused  3 attempt(s): of the 3 recorded, 1 presented no invite, 1 an unknown ticket, 0 expired, 1 revoked
+turned   2 connection(s) away before any ticket was weighed: 2 no direct path was available
+```
+
+Lines appear only when they have something to say. `turned` covers what is not
+a credential question at all: `--direct-only` with no direct path, a peer that
+connected and never presented a ticket, and requests the gate refuses to parse.
+`capacity` and `flooded` say the share was hammered rather than probed, and
+they are deliberately separate from `refused` because the two mean opposite
+things. `route` says h5i could not reach the box, which is a different fact
+from `unreached` — nothing was listening on the port — and blaming the second
+for the first sends somebody to check a dev server that is running fine.
+
+`clock` appears when this machine's two clocks disagree, and it says which kind
+of disagreement it is. The session length is measured on a clock nothing can
+move, so it is right either way; the timestamps beside it and each peer's held
+time are wall-clock readings.
+
+A *jump* is a discontinuity: an NTP correction, a VM resumed from a snapshot,
+somebody running `date -s`. Timestamps after one can be minutes or hours out, or
+out of order, and a jump backwards cannot extend a live ticket — that was
+measured putting an hour back onto every grant before the check existed.
+
+*Drift* is the two clocks running at different rates, which is ordinary and is
+not a fault: the machine this was developed on runs its wall clock about five
+per cent slow, all day. That gets the weaker sentence, because treating it as a
+jump would mean shortening every ticket on such a host by the same five per
+cent — a one-hour ticket dying at fifty-seven minutes.
+
+A receipt can also open with `partial`, which means it was written before every
+connection had finished: the byte counts below it are short and a peer may read
+as still connected. That happens when the quiesce times out, and when a Ctrl-C
+during the shutdown skips the wait.
+
+Read the numbers for what they are. "Connections" counts connections *into the
+box*, not requests to the share: a visitor who followed the invite link and read
+nothing is a peer with zero. Lines appear for what a share left out — attempts
+refused, connections turned away because the box was already carrying its limit,
+connections refused at the front door before a credential was asked for, peers
+past the 256 the receipt lists individually, authorized peers who found nothing
+listening, and responses the box left unfinished — because a cap that stops
+counting silently makes a busy share read as a quiet one, and a truncated
+download reads to the visitor as the app being broken rather than as a share
+that gave up.
+
+The two refusal-for-load lines are separate on purpose: the front-door one costs
+an anonymous flooder a TCP connect and can be driven into the millions, and a
+reader who saw that number under the box's ceiling would draw the wrong
+conclusion from it.
+
+A box that was opened to someone and an identical box that was not are different
+artifacts, and an export should not be silent about which one it came from. A
+tunnel session carries the "not end-to-end encrypted" note in the same block.
+
 ### Inspecting what happened
 
 ```bash
@@ -368,7 +795,7 @@ h5i ui --open           # hand the URL to this desktop's browser too
 
 The box console: the same fleet the commands above report on, drawn as one
 screen. Left is every box with its tier, status and one signal; right is the box
-you picked — the policy that was actually enforced, the services it declares,
+you picked: the policy that was actually enforced, the services it declares,
 its diffstat against the pinned base, and a flight recorder with one row per
 receipt across five lanes (FS, NET, PROC, RES, PAGE). Click a row for the
 rendered receipt, the same text `h5i box inspect` prints.
@@ -379,21 +806,21 @@ is no mutating surface to guard and no way to turn the console into a remote
 control for someone's boxes.
 
 **What guards it.** The server binds `127.0.0.1` and nothing else. The URL
-carries a token minted for this session and kept in memory — never written to
-disk, so no box can read it — which the page trades for a `SameSite=Strict`
+carries a token minted for this session and kept in memory (never written to
+disk, so no box can read it), which the page trades for a `SameSite=Strict`
 cookie on first load. Requests from another origin are refused outright.
 
 **What the colours mean.** Red is the only one that makes a claim about the
 boundary: the egress allowlist *refused* a destination, host-observed by the
-proxy. Amber is something to look at — a run exited non-zero, the wall-clock
-limit killed one, or the in-box browser reported errors — and says nothing about
+proxy. Amber is something to look at (a run exited non-zero, the wall-clock
+limit killed one, or the in-box browser reported errors) and says nothing about
 containment. Grey means the evidence is weak: either the tier is `workspace` and
 nothing was confined, or every receipt came from the in-box shim and so is the
 box's own account. Each run row is labelled `host-observed` or `box-claimed` for
 the same reason. Nothing on the screen is a score.
 
 The console is a default-on cargo feature. `cargo build --no-default-features`
-drops it, along with axum, tokio and the build script's need for Node — and the
+drops it, along with axum, tokio and the build script's need for Node, and the
 `h5i ui` command with it.
 
 ---
@@ -422,6 +849,56 @@ The rules:
 - **Handing control back invalidates what the agent knew.** The page moved, so
   every `@ref` from its last snapshot may now point somewhere else. It must
   re-snapshot before acting, and acting first is refused rather than mis-clicked.
+
+### Choosing the engine
+
+`--engine` picks what runs pages in the box, and the choice is pinned in the
+digest: a run never quietly falls back to a different one.
+
+| engine | what it is |
+| --- | --- |
+| `chromium` (default) | A real browser. Everything works; it costs what a browser costs. |
+| `lightpanda` | A third-party headless engine. |
+| `h5i-light` | h5i's own engine, described below. |
+
+#### h5i-light
+
+An engine built for the case an agent is actually in: read a page, act on it,
+read what changed. It runs in **one process** and holds a page in roughly a
+seventh of the memory Chromium needs (76 MiB against 563 MiB, median over the
+same pages), from a binary a ninth the size. It is about 30% *slower* — it has
+an interpreter where Chromium has a JIT — and that trade is the whole point of
+choosing it deliberately rather than by default.
+
+It runs page JavaScript, follows redirects and `<meta refresh>`, keeps a cookie
+jar scoped to one origin, and puts **every request through the same broker as
+the rest of h5i**, so a page's own fetches are policy-checked and receipted like
+anything else. What it reads is an outline with `@ref` handles, not pixels.
+
+Two properties worth knowing before you rely on it:
+
+- **It says what it could not do.** A page needing an API this engine lacks gets
+  that API *named* in the snapshot rather than a blank space, and console errors
+  carry the script and line they came from. "The page is empty" and "I could not
+  read the page" are different answers, and it gives different answers.
+- **It is not a complete browser, and does not pretend to be.** Of twenty
+  single-page applications measured, eighteen read usefully and one not at all.
+  Canvas, WebSockets, Workers and IndexedDB are absent. For a page it cannot
+  read, the answer is `--engine chromium`.
+
+Driven directly, it has its own CLI — `h5i-browser-light --help` — including two
+verbs the size of a page makes worth having:
+
+```bash
+h5i-browser-light session snapshot --delta   # only what changed since last read
+h5i-browser-light session login              # hand the page to the human
+```
+
+`--delta` matters because re-reading three hundred lines after every click is
+the wrong shape for an agent loop. `session login` closes the page to the agent
+while a person types a credential into the live view: the session it establishes
+stays in the jar afterwards, and the agent can see *that* it is logged in
+without ever reading the cookie that says so.
 
 ### Driving the browser itself
 
@@ -452,7 +929,7 @@ What the `browser` profile does to Chrome, and why:
   (`/var/folders/<xx>/<yy>/T`), read and write. This is the widest thing any
   profile asks for and it is worth understanding before you use it. Chrome puts
   its ProcessSingleton lock socket there, and it finds that directory through
-  `confstr(_CS_DARWIN_USER_TEMP_DIR)` rather than `TMPDIR` — so the per-env
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)` rather than `TMPDIR`, so the per-env
   `/tmp` redirect cannot move it, and without the grant Chrome will not start.
   The cost is that the directory is shared: a browser box can read what other
   host processes leave there and can plant files they will pick up. That is
@@ -461,12 +938,12 @@ What the `browser` profile does to Chrome, and why:
   every profile on Linux, are unaffected.
 
     Two consequences of that grant being a machine-specific absolute path. The
-    pinned policy digest differs between two Macs for the same profile — harmless,
-    because `policy.resolved.toml` is verified against the digest stored beside
-    it, and both are written together at create time; nothing re-resolves the
-    profile and compares. But a `browser` env created on one machine and pulled to
-    another carries a grant for a directory that does not exist there, so Chrome
-    will fail to start until the env is recreated.
+    pinned policy digest differs between two Macs for the same profile. That is
+    harmless, because `policy.resolved.toml` is verified against the digest
+    stored beside it, and both are written together at create time; nothing
+    re-resolves the profile and compares. But a `browser` env created on one
+    machine and pulled to another carries a grant for a directory that does not
+    exist there, so Chrome will fail to start until the env is recreated.
 
 ---
 
@@ -536,7 +1013,7 @@ scopes `RLIMIT_NPROC` to the whole user rather than to one box, so h5i declines
 to apply a limit it cannot hold. `h5i box status` marks such a value with `*`
 and says so underneath, rather than listing it as enforced. Use
 `isolation = "container"` or `isolation = "microvm"` where you need a real
-ceiling — both cap memory and process count in the runtime itself.
+ceiling: both cap memory and process count in the runtime itself.
 
 ### Isolation tiers
 
@@ -549,7 +1026,7 @@ ceiling — both cap memory and process count in the runtime itself.
 | `microvm` | A hardware-isolated guest with its own kernel, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images. Egress rules are evaluated by the VM's network stack. | **L3/L4** |
 
 `auto` (the default) picks the strongest tier the host can actually run. An
-explicit tier **fails closed** if the host cannot satisfy it — h5i never
+explicit tier **fails closed** if the host cannot satisfy it: h5i never
 silently downgrades.
 
 Worth being clear about, because two drafts of the design got it backwards: the
@@ -571,7 +1048,7 @@ Requirements, all three, or the tier refuses:
 - Host virtualization: `/dev/kvm` openable on Linux, Apple Silicon on macOS.
   A stock WSL2 kernel and most cloud CI runners have neither.
 - A base image, from `--image`, the profile's `container.image`, or the
-  repo-level `[container] image` — the same images the container tier runs,
+  repo-level `[container] image`, the same images the container tier runs,
   pre-pulled with `msb pull`.
 
 `h5i box probe` reports which of the three is missing, since "install a package"
@@ -601,7 +1078,7 @@ smuggling.
 
 What the grant does *not* open, which is why it can exist at all: abstract
 sockets are scoped by the box's private netns; filesystem-bound ones are scoped
-by Landlock; and `/tmp` — where `.X11-unix`, `tmux-*` and an ssh-agent live — is
+by Landlock; and `/tmp`, where `.X11-unix`, `tmux-*` and an ssh-agent live, is
 a per-box scratch at the kernel tiers. What is left is a host socket sitting
 inside a granted path, so the grant is opt-in per profile and pinned in the
 digest.
@@ -616,25 +1093,29 @@ socket is a filesystem-bound `AF_UNIX` listener.
   reach the OpenAI credential.
 - **Any other service**: the same mechanism, declared as policy:
 
-  ```toml
-  [[profile.review.auth]]
-  host           = "api.github.com"
-  credential_env = "GITHUB_TOKEN"   # read on the host, never in the box
-  base_url_var   = "GH_HOST"        # what the client reads
-  ```
+        [[profile.review.auth]]
+        host           = "api.github.com"
+        credential_env = "GITHUB_TOKEN"   # read on the host, never in the box
+        base_url_var   = "GH_HOST"        # what the client reads
+        token_var      = "GH_TOKEN"       # where the box gets its per-run dummy
 
-  The limit is real and worth knowing before you declare one: it binds clients
-  you can point at another origin, so a plain `curl https://api.github.com`
-  still goes nowhere. A TLS-terminating forward proxy would lift that, at the
-  cost of a CA the box trusts, and it is deliberately not built.
+    `token_var` is required. The proxy gates every request on a per-run token, so
+    the box has to be handed it in whatever variable its client already sends as
+    a credential. The real credential stays on the host; the box only ever holds
+    the dummy.
 
-  Restricting *what* the box may do with a credential is authorization, and it
-  belongs where it is already solved: a fine-grained token scoped to one
-  repository and the operations you meant.
+    The limit is real and worth knowing before you declare one: it binds clients
+    you can point at another origin, so a plain `curl https://api.github.com`
+    still goes nowhere. A TLS-terminating forward proxy would lift that, at the
+    cost of a CA the box trusts, and it is deliberately not built.
+
+    Restricting *what* the box may do with a credential is authorization, and it
+    belongs where it is already solved: a fine-grained token scoped to one
+    repository and the operations you meant.
 
 - **Per-box HOME state** is a copy of the host agent's config, seeded once and
   never written back, with credential-shaped entries stripped at any depth
-  (`credentials*`, `.netrc`, ssh keys, `*.pem`/`*.key`/`*.p12`) — keeping only
+  (`credentials*`, `.netrc`, ssh keys, `*.pem`/`*.key`/`*.p12`), keeping only
   the runtime's own token, which it cannot function without.
 
 ### Secrets
@@ -686,7 +1167,7 @@ never blur:
 
 A run that drove the browser also carries what the page said back: console
 errors, uncaught exceptions, and requests that failed. h5i collects these itself,
-right after the command, in the same box under the same policy — so the timing
+right after the command, in the same box under the same policy, so the timing
 is not the agent's to choose. Only what is new since the last drain is recorded.
 
 A browser command with **no browser to ask** is recorded as `unavailable`, not as
@@ -717,33 +1198,32 @@ Being explicit about these is a feature, since the claim is a security claim.
   binds proxy-respecting tooling only.
 - **An interactive session at a kernel tier shares your terminal.** `box shell`
   hands the box the terminal you launched it from, because that is what makes
-  job control and every TUI work — a box shell is a nested shell, not a
+  job control and every TUI work. A box shell is a nested shell, not a
   connection to somewhere else. A terminal is a two-way device, and the box gets
   both directions of it, so the residual is a list rather than a single door:
     - **Typing at your shell** (`TIOCSTI` pushes characters into the terminal's
       *input* queue, which your shell reads as if you had typed them, after the
       session ends). Whether that is closed is not h5i's to assert, and the two
       platforms answer from different places. On macOS it is the Seatbelt
-      profile that subtracts the ioctl — so it holds at `process` and
+      profile that subtracts the ioctl, so it holds at `process` and
       `supervised`, and **not** at `isolation=workspace`, which applies no
       profile by design, nor on a host whose Seatbelt is unusable. On Linux it
       is **your kernel's setting**, the same at every tier, since h5i does no
       ioctl filtering of its own there: 6.2 made TIOCSTI disableable via
       `CONFIG_LEGACY_TIOCSTI` and `dev.tty.legacy_tiocsti`, but upstream
-      defaults that *open* — many distros ship it closed, and a kernel older
+      defaults that *open*. Many distros ship it closed, and a kernel older
       than 6.2 cannot close it at all. So h5i measures instead of claiming.
       `h5i box probe` prints one of:
 
-      ```
-        tty-injection= blocked at every tier
-        tty-injection= blocked at the kernel tiers, possible at isolation=workspace
-        tty-injection= possible at every tier
-      ```
+              tty-injection= blocked at every tier
+              tty-injection= blocked at the kernel tiers, possible at isolation=workspace
+              tty-injection= possible at every tier
 
-      and, when anything is open, how to close it.
+        and, when anything is open, how to close it.
+
     - **Reading what you type next.** The session's read grant on the terminal
       is not revoked when the shell exits, so a box process that outlives the
-      session — a stray background job — can read the terminal it still holds
+      session (a stray background job) can read the terminal it still holds
       open. This predates the tty ioctl grant; it is a property of sharing the
       device.
     - **Leaving the terminal in a state.** A box can set raw mode, turn echo
@@ -751,18 +1231,19 @@ Being explicit about these is a feature, since the claim is a security claim.
       programs cannot open it. Recoverable (`stty sane`, or a new terminal), not
       an escape, but it is yours to recover.
 
-  What is *not* reachable, checked rather than assumed: `TIOCCONS` (redirecting
-  console output to the box's terminal) is refused by Darwin for a non-root
-  process with or without a sandbox. Giving the box its own pty and proxying it
-  is the fix that ends the whole list, and it is not built. The container and
-  microVM tiers do not share a terminal at all.
+    What is *not* reachable, checked rather than assumed: `TIOCCONS`
+    (redirecting console output to the box's terminal) is refused by Darwin for
+    a non-root process with or without a sandbox. Giving the box its own pty and
+    proxying it is the fix that ends the whole list, and it is not built. The
+    container and microVM tiers do not share a terminal at all.
+
 - **Chrome runs with its own sandbox off.** On Linux, h5i's seccomp deny-list
   blocks the namespace syscalls Chrome's sandbox needs, at every tier. h5i's box
   is the boundary; Chrome's is not available inside it. That is one layer fewer
   than a browser on the host has.
 - **A dev server the box runs is reachable only if its port is declared.** On
   macOS the box shares the *host's* loopback, so h5i denies outbound to it
-  wholesale — otherwise a box could reach a database or a dev server belonging
+  wholesale. Otherwise a box could reach a database or a dev server belonging
   to the host. A box that runs its own dev server and wants to point its own
   browser at it names the port: `[profile.X.net] loopback = [3000]`. Exactly
   that port is granted; everything else on loopback stays denied, and an
@@ -771,7 +1252,7 @@ Being explicit about these is a feature, since the claim is a security claim.
   alive, so this is only needed for a server started by hand. On Linux the box
   has its own network namespace and none of this applies.
 - **On macOS the browser has no in-process domain check.** agent-browser cannot
-  start Chrome from inside a Seatbelt sandbox — the failure reproduces under a
+  start Chrome from inside a Seatbelt sandbox. The failure reproduces under a
   fully permissive `sandbox-exec` profile and disappears without the sandbox, so
   it is not something a grant fixes. h5i therefore launches Chrome itself and
   attaches agent-browser to it with `--cdp`, which upstream refuses to combine
@@ -781,14 +1262,14 @@ Being explicit about these is a feature, since the claim is a security claim.
   non-allowlisted host fails inside Chrome with `net::ERR_ACCESS_DENIED`.
 - **A browser box's Chrome is restarted when its route out changes.** Chrome
   outlives the run that started it, and it takes its proxy address once, at
-  launch — so a browser started before the box's current route (an upgrade, or a
+  launch, so a browser started before the box's current route (an upgrade, or a
   run whose proxy port moved) cannot reach the network through it. The box
   cannot restart it itself: a browser from a previous run is in a previous
   sandbox instance, which Seatbelt's same-sandbox signal grant does not reach.
   It is detected in the box and stopped host-side at the start of the next run,
   so the fix costs one extra run and says so rather than failing with a proxy
   error that reads like a page problem. The relaunch starts from a clean profile
-  directory, so anything the old browser held — cookies, logins — is gone.
+  directory, so anything the old browser held (cookies, logins) is gone.
 - **Two kernel mechanisms, not one.** Linux confines with Landlock, seccomp and
   namespaces. macOS confines with Seatbelt, which is default deny across
   filesystem, network, mach and sysctl in one policy, and which (unlike
@@ -809,7 +1290,10 @@ Being explicit about these is a feature, since the claim is a security claim.
   the host's loopback (deliberately: it is the only way a dev server in a box is
   reachable). h5i closes the outbound half of this, denying the box every
   outbound loopback destination except its own egress proxy, but the box's own
-  listening ports are reachable by any local process.
+  listening ports are reachable by any local process. `h5i box share` works on
+  macOS by identifying which process holds the port rather than by owning the
+  route to it, so it can promise that what it publishes is the box's server —
+  it cannot make the port private to the box, and does not claim to.
 - **Cost.** A Chrome sidecar is real RAM and CPU, even headless. Headless boxes
   stay first class, and the browser is opt-in per box.
 - **The viewport is not a desktop.** CDP screencast shows the page. Native
@@ -868,8 +1352,8 @@ Read these to detect that you are in one; do not set them yourself.
 
 ## See also
 
-- `h5i <command> --help` — the authoritative flag reference
-- `man h5i` — the terse CLI reference
-- [`skills/h5i/`](skills/h5i/) — the agent-facing skill (`h5i skill show`)
-- [`ROADMAP.md`](ROADMAP.md) — what is built and what is not
-- [`SECURITY.md`](SECURITY.md) — reporting a vulnerability
+- `h5i <command> --help`: the authoritative flag reference
+- `man h5i`: the terse CLI reference
+- [`skills/h5i/`](skills/h5i/): the agent-facing skill (`h5i skill show`)
+- [`ROADMAP.md`](ROADMAP.md): what is built and what is not
+- [`SECURITY.md`](SECURITY.md): reporting a vulnerability

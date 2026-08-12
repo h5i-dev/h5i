@@ -49,6 +49,7 @@ pub mod image;
 pub mod input;
 pub mod kitty;
 pub mod proto;
+pub mod panes;
 pub mod status;
 pub mod ws;
 
@@ -91,9 +92,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(600);
 #[cfg(unix)]
 const TICK: Duration = Duration::from_millis(250);
 
-/// Rows the viewer keeps for itself: the status line and a blank separator.
-#[cfg(unix)]
-const CHROME_ROWS: u16 = 2;
+// Rows the viewer keeps for itself (status line + separator) live in `panes`,
+// which is also what computes the split. Two copies of "how many rows the
+// chrome takes" is a screen that overlaps by one row the first time either
+// changes.
 
 /// What a viewer needs to know to attach to one box.
 pub struct Options {
@@ -110,6 +112,35 @@ pub struct Options {
     /// else's terminal, and being wrong about it must not be the end of the
     /// road for a user who knows better than we do.
     pub assume_graphics: bool,
+    /// The engine this box is pinned to, when it has one. Read only to tell
+    /// someone how to start a stream — the viewer itself is engine-agnostic,
+    /// and adding this must not become the start of engine-specific rendering.
+    pub engine: Option<String>,
+}
+
+/// What to tell someone whose box has no `.stream` file yet.
+///
+/// The advice is engine-specific because the command is: an `h5i-light` box has
+/// no agent-browser daemon to enable streaming on, and telling its owner to run
+/// `agent-browser stream enable` sends them to a CLI that will fail on a
+/// missing socket directory before it ever reaches the question they asked. The
+/// viewer stays engine-agnostic everywhere else; this is the one place the
+/// difference is the user's problem rather than ours.
+///
+/// Unix-gated with the `run` that calls it, following this file's rule: the
+/// non-unix `run` is a stub that refuses before it could ever need advice about
+/// streaming, so an ungated helper here is dead code on Windows and `-D
+/// warnings` is right to say so.
+#[cfg(unix)]
+fn not_streaming_hint(engine: Option<&str>) -> String {
+    match engine {
+        Some("h5i-light") => "the box's browser is not streaming. Inside the box, run \
+                              `h5i-browser-light serve <url>`, then try again."
+            .into(),
+        _ => "the box's browser is not streaming. Inside the box, run \
+              `agent-browser stream enable`, then try again."
+            .into(),
+    }
 }
 
 /// The render loop's own clock.
@@ -200,13 +231,8 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
                 .into(),
         )
     })?;
-    let port = crate::view::stream_port(&opts.env_dir).ok_or_else(|| {
-        H5iError::Metadata(
-            "the box's browser is not streaming. Inside the box, run \
-             `agent-browser stream enable`, then try again."
-                .into(),
-        )
-    })?;
+    let port = crate::view::stream_port(&opts.env_dir)
+        .ok_or_else(|| H5iError::Metadata(not_streaming_hint(opts.engine.as_deref())))?;
 
     let mut guard = term::Guard::enter(stdin).map_err(H5iError::Io)?;
     // Skipping the probe means skipping the answer about compression too. Raw
@@ -404,6 +430,10 @@ struct App<'a> {
     /// The last frame, kept so a resize can redraw without waiting for the box
     /// to send another. A static page sends nothing at all.
     last_frame: Option<Vec<u8>>,
+    /// Developer layout: page plus what the page said.
+    developer: bool,
+    /// Console errors and page exceptions, bounded.
+    log: panes::LogBuffer,
     /// Where the page currently sits on screen, for mapping clicks back.
     mapping: Option<input::Mapping>,
     viewport: (u32, u32),
@@ -432,6 +462,10 @@ impl<'a> App<'a> {
             placer: kitty::Placer::new(encoding),
             mode: Mode::View,
             last_frame: None,
+            developer: false,
+            // Enough to see a failure loop's shape without holding a page's
+            // whole console in a viewer.
+            log: panes::LogBuffer::new(200),
             mapping: None,
             viewport: (1280, 720),
             url: None,
@@ -518,9 +552,19 @@ impl<'a> App<'a> {
                         self.url = Some(url);
                         self.draw_status();
                     }
-                    Some(proto::ServerMessage::ConsoleError(_) | proto::ServerMessage::PageError(_)) => {
+                    Some(proto::ServerMessage::ConsoleError(text)) => {
                         self.errors = self.errors.saturating_add(1);
+                        // Kept, not just counted: the count tells a supervisor
+                        // something is wrong, the text tells them what.
+                        self.log.push(panes::LogLine::console(text));
                         self.draw_status();
+                        self.redraw_log();
+                    }
+                    Some(proto::ServerMessage::PageError(text)) => {
+                        self.errors = self.errors.saturating_add(1);
+                        self.log.push(panes::LogLine::page_error(text));
+                        self.draw_status();
+                        self.redraw_log();
                     }
                     _ => {}
                 }
@@ -562,20 +606,20 @@ impl<'a> App<'a> {
         let Ok(frame) = image::decode(jpeg) else {
             return;
         };
-        let rows = self.size.rows.saturating_sub(CHROME_ROWS).max(1);
+        let regions = panes::layout(self.size.cols.max(1), self.size.rows, self.developer);
         let fit = image::fit(
             frame.width,
             frame.height,
-            self.size.cols.max(1),
-            rows,
+            regions.page.cols.max(1),
+            regions.page.rows.max(1),
             self.size.cell_w,
             self.size.cell_h,
         );
         let scaled = image::downscale(&frame, fit.pixel_width, fit.pixel_height);
 
         let at = kitty::Placement {
-            row: CHROME_ROWS + 1,
-            col: 1,
+            row: regions.page.row,
+            col: regions.page.col,
             cols: fit.cols,
             rows: fit.rows,
         };
@@ -618,6 +662,34 @@ impl<'a> App<'a> {
         // The lock can change under us — the agent's own tooling, or another
         // terminal — so it is read rather than remembered.
         self.draw_status();
+    }
+
+    /// Repaint the developer pane, if it is showing.
+    ///
+    /// Cursor position is saved and restored around it, the same way
+    /// `draw_status` does: the page image is placed by absolute position, but
+    /// anything else writing to the terminal would otherwise leave the cursor
+    /// wherever it finished.
+    fn redraw_log(&mut self) {
+        if !self.developer {
+            return;
+        }
+        let regions = panes::layout(self.size.cols.max(1), self.size.rows, true);
+        let Some(rect) = regions.log else {
+            return;
+        };
+        let rendered = panes::render_pane(&self.log, rect.cols, rect.rows);
+
+        let mut out = String::from("\x1b[s");
+        for (index, line) in rendered.iter().enumerate() {
+            out.push_str(&kitty::cursor_to(rect.row + index as u16, rect.col));
+            out.push_str(line);
+        }
+        out.push_str("\x1b[u");
+
+        let mut stdout = std::io::stdout();
+        let _ = stdout.write_all(out.as_bytes());
+        let _ = stdout.flush();
     }
 
     fn draw_status(&mut self) {
@@ -678,6 +750,20 @@ impl<'a> App<'a> {
             KeyCode::Char('c') if ctrl => true,
             KeyCode::Char('i') if !ctrl => {
                 self.enter_interact();
+                false
+            }
+            // Developer mode. Safe as a bare letter here: nothing typed in
+            // VIEW reaches the page.
+            KeyCode::Char('d') if !ctrl => {
+                self.developer = !self.developer;
+                // The split moves the page, so the old placement has to go
+                // before the new one is drawn or the two overlap.
+                let _ = std::io::stdout().write_all(b"\x1b[2J");
+                self.draw_status();
+                if let Some(frame) = self.last_frame.clone() {
+                    self.render(&frame);
+                }
+                self.redraw_log();
                 false
             }
             _ => false,
@@ -767,7 +853,7 @@ mod tests {
         // The page starts below the status line and its separator. If this ever
         // became 0 the page would be drawn over the one row it must never be
         // able to touch.
-        assert_eq!(CHROME_ROWS, 2, "row one is the status line, row two separates it");
+        assert_eq!(panes::CHROME_ROWS, 2, "row one is the status line, row two separates it");
     }
 
     #[test]
@@ -812,6 +898,21 @@ mod tests {
 
         // And nothing is owed before the deadline.
         assert_eq!(ticker.due(t0 + Duration::from_millis(600)), None);
+    }
+
+    #[test]
+    fn the_start_a_stream_hint_names_the_engine_the_box_actually_runs() {
+        // An h5i-light box has no agent-browser daemon, so the old advice sent
+        // its owner to a CLI that fails on a missing socket directory before it
+        // can answer the question they asked.
+        let light = not_streaming_hint(Some("h5i-light"));
+        assert!(light.contains("h5i-browser-light serve"), "{light}");
+        assert!(!light.contains("agent-browser"), "{light}");
+
+        for other in [Some("chromium"), Some("lightpanda"), None] {
+            let msg = not_streaming_hint(other);
+            assert!(msg.contains("agent-browser stream enable"), "{msg}");
+        }
     }
 
     #[test]

@@ -101,8 +101,18 @@ pub fn runtime_proxy(rt: AgentRuntime) -> RuntimeProxy {
 }
 
 /// A non-empty, non-whitespace host env var, or `None`.
+/// Read a credential from the host environment, **trimmed**.
+///
+/// Trimming is not cosmetic: `export TOKEN="$(cat ~/key)"` carries a trailing
+/// newline, `HeaderValue` rejects it, and `send()` then fails for every request
+/// — surfacing as a permanent 502 whose cause is deliberately not printed (the
+/// right call for an upstream error, wrong for a local one). The sibling
+/// `engage_grant_at` already trimmed; this path did not.
 fn nonempty_env(key: &str) -> Option<String> {
-    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// Resolve the genuine upstream credential from *h5i's own* host environment,
@@ -255,6 +265,9 @@ pub fn engage_grant_at(
             grant.base_url_var.clone(),
             format!("http://{host}:{}", handle.port),
         ),
+        // The gate token. Without it the box presents no credential, every
+        // request is refused with 403, and the grant does nothing at all.
+        (grant.token_var.clone(), token.clone()),
         ("NO_PROXY".to_string(), no_proxy.clone()),
         ("no_proxy".to_string(), no_proxy),
     ];
@@ -538,9 +551,23 @@ fn client_authorized(head: &[u8], client_token: &str) -> bool {
 
 /// Read the request head (request line + headers) up to the blank line, capped.
 fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    // Bounded overall, not just per read(). The socket's read timeout bounds a
+    // single syscall, so a client dribbling one header byte just under that
+    // interval held its in-flight slot indefinitely. Sixty-four such clients
+    // — any local process, which is the actor the token gate exists for —
+    // exhausted MAX_IN_FLIGHT and the agent's own API call got a 503 for the
+    // life of the box, with no fallback because its only credential is the
+    // dummy.
+    let deadline = std::time::Instant::now() + HEAD_DEADLINE;
     let mut buf = Vec::with_capacity(512);
     let mut byte = [0u8; 1];
     loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request head exceeded its deadline",
+            ));
+        }
         let n = s.read(&mut byte)?;
         if n == 0 {
             break;
@@ -552,6 +579,10 @@ fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
     }
     Ok(buf)
 }
+
+/// Whole-head deadline. Generous for a real client on a slow link, short enough
+/// that a stalled connection cannot hold an in-flight slot for a session.
+const HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn write_status(client: &mut TcpStream, code: u16, reason: &str) {
     let _ = client.write_all(format!("HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").as_bytes());
@@ -750,39 +781,54 @@ pub struct Engagement {
 
 /// Decide + spawn the credential-injecting proxy for a run. Shared by both the
 /// container and supervised backends (their only difference is `tier_ok` —
-/// whether the box can reach the host proxy on this tier). `None` keeps the box
-/// on its existing in-box-login path — never a downgrade of an active protection.
-pub fn engage(profile_name: &str, tier_ok: bool) -> Option<Engagement> {
+/// whether the box can reach the host proxy on this tier).
+///
+/// `Ok(None)` means the proxy does not apply: opted out, an unsupported tier, a
+/// non-agent profile, or no host credential to broker. Those keep the box on
+/// its existing in-box-login path and are not a downgrade of anything.
+///
+/// `Err` means the proxy was *supposed* to engage and could not. That is a
+/// different thing entirely and must not be swallowed: the caller would keep
+/// the real credential in the box's HOME copy *and* open the full `net.egress`
+/// allowlist instead of narrowing to the proxy port, which is precisely the
+/// state this module's header claims is unreachable.
+pub fn engage(profile_name: &str, tier_ok: bool) -> Result<Option<Engagement>, H5iError> {
     engage_at(profile_name, tier_ok, SLIRP_GATEWAY_HOST)
 }
 
 /// [`engage`] for a backend whose box reaches the host proxy at `host` rather
 /// than the slirp gateway — the macOS Seatbelt tiers, where the box shares the
 /// host's loopback instead of living in its own network namespace.
-pub fn engage_at(profile_name: &str, tier_ok: bool, host: &str) -> Option<Engagement> {
+pub fn engage_at(
+    profile_name: &str,
+    tier_ok: bool,
+    host: &str,
+) -> Result<Option<Engagement>, H5iError> {
     if !tier_ok || opted_out() {
-        return None;
+        return Ok(None);
     }
-    let rt = AgentRuntime::from_profile_name(profile_name)?;
-    let cred = resolve_credential(rt)?;
-    let token = match new_client_token() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("note: credential proxy unavailable ({e}); box uses in-box login");
-            return None;
-        }
+    let Some(rt) = AgentRuntime::from_profile_name(profile_name) else {
+        return Ok(None);
     };
-    match spawn(rt, cred, token.clone()) {
-        Ok(handle) => Some(Engagement {
-            box_env: box_env_at(rt, host, handle.port, &token),
-            handle,
-            runtime: rt,
-        }),
-        Err(e) => {
-            eprintln!("note: credential proxy unavailable ({e}); box uses in-box login");
-            None
-        }
-    }
+    let Some(cred) = resolve_credential(rt) else {
+        return Ok(None);
+    };
+    // From here the proxy is expected. Entropy or bind failure is a refusal,
+    // not a fallback: silently continuing would put the long-lived token back
+    // in the box and widen its egress at the same time.
+    let token = new_client_token()?;
+    let handle = spawn(rt, cred, token.clone()).map_err(|e| {
+        H5iError::Metadata(format!(
+            "credential proxy failed to start ({e}) — refusing to run the box with its own \
+             credentials and the full egress allowlist instead (fail-closed). Set \
+             H5I_NO_AUTH_PROXY=1 to opt out deliberately."
+        ))
+    })?;
+    Ok(Some(Engagement {
+        box_env: box_env_at(rt, host, handle.port, &token),
+        handle,
+        runtime: rt,
+    }))
 }
 
 #[cfg(test)]
@@ -795,6 +841,22 @@ mod tests {
     /// otherwise race on the same vars. Poison-tolerant (a panicking test must
     /// not wedge the rest).
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The not-applicable cases stay `Ok(None)`: they keep a working in-box
+    /// login working and are not a downgrade of anything.
+    #[test]
+    fn engage_reports_not_applicable_as_ok_none() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Unsupported tier.
+        assert!(engage_at("agent-claude", false, "127.0.0.1").unwrap().is_none());
+        // Not an agent profile.
+        assert!(engage_at("default", true, "127.0.0.1").unwrap().is_none());
+        // Agent profile with no host credential to broker.
+        for v in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] {
+            std::env::remove_var(v);
+        }
+        assert!(engage_at("agent-claude", true, "127.0.0.1").unwrap().is_none());
+    }
 
     #[test]
     fn resolve_credential_precedence_claude() {
@@ -875,6 +937,7 @@ mod tests {
             host: "api.example.com".into(),
             credential_env: "H5I_TEST_ABSENT_CREDENTIAL".into(),
             base_url_var: "EXAMPLE_BASE_URL".into(),
+            token_var: "EXAMPLE_TOKEN".into(),
         };
         std::env::remove_var("H5I_TEST_ABSENT_CREDENTIAL");
         let err = match engage_grant(&grant, true) {
@@ -894,6 +957,7 @@ mod tests {
             host: "api.example.com".into(),
             credential_env: "H5I_TEST_ABSENT_CREDENTIAL".into(),
             base_url_var: "EXAMPLE_BASE_URL".into(),
+            token_var: "EXAMPLE_TOKEN".into(),
         };
         // No proxy path from the box → no engagement, and notably no error
         // about the missing credential: there was nothing to authenticate.

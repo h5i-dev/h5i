@@ -63,6 +63,46 @@ enum Commands {
         action: cli::browser::BrowserCommands,
     },
 
+    /// Open a box someone else is sharing, from a ticket they sent you.
+    ///
+    /// Connects peer to peer, end-to-end encrypted, and serves their dev server
+    /// on this machine's loopback. The local URL carries its own token, minted
+    /// here — the ticket's secret is never handed to a browser.
+    ///
+    /// What you are opening is somebody else's agent's code. Treat it like any
+    /// link a colleague sends you.
+    #[cfg(feature = "share")]
+    Join {
+        /// The `h5i1_…` ticket you were sent, or `-` to read it from stdin.
+        ///
+        /// `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box
+        /// and this process runs for the whole session, so a ticket passed as
+        /// an argument is legible to every other user on the machine for as
+        /// long as you are joined — and a ticket is the whole authorization.
+        /// `pbpaste | h5i join -` keeps it out of the process table and out
+        /// of your shell history.
+        #[arg(value_name = "TICKET")]
+        ticket: String,
+        /// Local port to serve it on. 0 picks a free one and prints it.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Join even when the only address left is `127.0.0.1`.
+        ///
+        /// Each join normally gets a loopback address of its own, because a
+        /// browser's cookie jar is scoped by host and ignores the port. On
+        /// `127.0.0.1` the jar is shared with every local service you run, so
+        /// the token this proxy sets is sent to any of them you visit while
+        /// joined — and that token reaches the box. macOS configures only
+        /// `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an
+        /// address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
+        ///
+        /// Your own cookies are not the other half of this: they are filtered
+        /// on a shared jar whether or not you pass this, and only cookies the
+        /// box set itself are ever sent back to it.
+        #[arg(long)]
+        shared_jar: bool,
+    },
+
     /// Write or print the agent skill this binary carries.
     Skill {
         #[command(subcommand)]
@@ -109,7 +149,14 @@ pub struct BoxArgs {
     name: Option<String>,
 
     /// Base revision, when the source is this repository. Pinned immutably.
-    #[arg(long)]
+    ///
+    /// Same conflicts as the explicit `box create` form. Without them the short
+    /// form parsed `--new --from <rev>` and `--pr N --from <rev>` happily and
+    /// then discarded the base: `into_command()` builds `Create` *after* clap
+    /// has validated, so the explicit form's rules never applied. A silently
+    /// unpinned base is an integrity gap in a tool whose pitch is that the base
+    /// is pinned immutably.
+    #[arg(long, conflicts_with_all = ["pr", "new"])]
     from: Option<String>,
 
     /// Remote to fetch a pull request head from.
@@ -127,6 +174,10 @@ pub struct BoxArgs {
     /// Container base image for isolation=container.
     #[arg(long)]
     image: Option<String>,
+
+    /// Browser engine for the `browser` profile: chromium | lightpanda | h5i-light.
+    #[arg(long)]
+    engine: Option<String>,
 
     /// Emit the created box's manifest as JSON instead of the human summary.
     #[arg(long)]
@@ -167,6 +218,14 @@ impl BoxArgs {
                  pull request, or `--new` for an empty box."
             ),
         };
+        // clap covers `--from` with `--pr`/`--new`, but a URL source becomes
+        // `clone` only here, after validation — and a detached box never reads
+        // `from`. Refuse rather than accept a pin and drop it.
+        if self.from.is_some() && clone.is_some() {
+            anyhow::bail!(
+                "`--from` pins a base revision in *this* repository, but '{source}' is an                  external source, so the box is detached and has no such base. Drop `--from`,                  or pin the revision in the URL if the host supports it."
+            );
+        }
         let name = match (self.name, &pr, &clone) {
             (Some(n), _, _) => n,
             // From the PR *number*, not the spec: a URL spec would otherwise
@@ -186,6 +245,7 @@ impl BoxArgs {
             profile: self.profile,
             isolation: self.isolation,
             image: self.image,
+            engine: self.engine,
             backend: "auto".into(),
             audit: "signal".into(),
             json: self.json,
@@ -205,6 +265,12 @@ fn main() -> anyhow::Result<()> {
         #[cfg(feature = "web")]
         Commands::Ui { port, open } => cli::ui::run(port, open)?,
         Commands::Browser { action } => cli::browser::run(action)?,
+        #[cfg(feature = "share")]
+        Commands::Join {
+            ticket,
+            port,
+            shared_jar,
+        } => cli::share::join(&ticket, port, shared_jar)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
         Commands::Man => cli::man::run()?,
@@ -249,13 +315,34 @@ fn maybe_version_json(argv: &[String]) {
     let out = serde_json::json!({
         "name": "h5i",
         "version": env!("CARGO_PKG_VERSION"),
-        "features": Vec::<&str>::new(),
+        "features": compiled_features(),
     });
     println!(
         "{}",
         serde_json::to_string_pretty(&out).expect("version json is serializable")
     );
     std::process::exit(0);
+}
+
+/// Compiled feature flags for this binary, sorted so JSON output is diffable.
+// One cfg-gated `push` per feature, so a new feature is a one-line addition.
+// clippy sees `Vec::new()` + `push` and suggests `vec![]`, but the pushes are
+// conditional — collapsing them would reintroduce paired cfg/cfg(not) bindings.
+#[allow(clippy::vec_init_then_push)]
+fn compiled_features() -> Vec<&'static str> {
+    #[allow(unused_mut)]
+    let mut features: Vec<&str> = Vec::new();
+    #[cfg(feature = "web")]
+    features.push("web");
+    // Both switches, because they are separately selectable and a consumer
+    // deciding whether to offer a share UI needs to know which half is here:
+    // `share-tunnel` alone means `box share --tunnel` and no `join`.
+    #[cfg(feature = "share-tunnel")]
+    features.push("share-tunnel");
+    #[cfg(feature = "share")]
+    features.push("share");
+    features.sort_unstable();
+    features
 }
 
 fn render_man_page<W: std::io::Write>(w: &mut W) -> std::io::Result<()> {
@@ -356,6 +443,39 @@ fn demote_headings(bytes: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn version_json_features_match_compiled_build() {
+        let features = compiled_features();
+        #[cfg(feature = "web")]
+        assert!(features.contains(&"web"));
+        #[cfg(not(feature = "web"))]
+        assert!(!features.contains(&"web"));
+        // `share` implies `share-tunnel`, so the p2p build reports both and a
+        // tunnel-only build reports exactly one. This output is what an
+        // installer or a wrapper reads to decide whether the share workflow
+        // exists at all; a default build that omitted it read as one without
+        // sharing compiled in.
+        #[cfg(feature = "share")]
+        {
+            assert!(features.contains(&"share"));
+            assert!(features.contains(&"share-tunnel"));
+        }
+        #[cfg(all(feature = "share-tunnel", not(feature = "share")))]
+        {
+            assert!(features.contains(&"share-tunnel"));
+            assert!(!features.contains(&"share"));
+        }
+        #[cfg(not(feature = "share-tunnel"))]
+        {
+            assert!(!features.contains(&"share"));
+            assert!(!features.contains(&"share-tunnel"));
+        }
+        // Sorted, because the JSON is diffable output.
+        let mut sorted = features.clone();
+        sorted.sort_unstable();
+        assert_eq!(features, sorted);
+    }
+
     /// Route `argv` through clap and the short-form fold, exactly as `main`
     /// does. The error is flattened to a string because `BoxCommands` has no
     /// `Debug`, and deriving one on a public enum purely for tests would be
@@ -376,7 +496,11 @@ mod tests {
     fn create_parts(argv: &[&str]) -> (String, Option<String>, Option<String>, bool) {
         match dispatch(argv) {
             Ok(cli::boxes::BoxCommands::Create {
-                name, pr, clone, new, ..
+                name,
+                pr,
+                clone,
+                new,
+                ..
             }) => (name, pr, clone, new),
             Ok(_) => panic!("expected Create"),
             Err(e) => panic!("dispatch failed: {e}"),
@@ -404,7 +528,9 @@ mod tests {
         // it, so it has to point at the flag rather than read as "h5i cannot
         // do this".
         for spec in ["1234", "#7", "https://github.com/o/r/pull/42"] {
-            let err = dispatch(&["h5i", "box", spec]).err().expect("must be refused");
+            let err = dispatch(&["h5i", "box", spec])
+                .err()
+                .expect("must be refused");
             assert!(err.contains("--pr"), "{spec}: {err}");
             assert!(err.contains("pull request"), "{spec}: {err}");
         }
@@ -414,20 +540,17 @@ mod tests {
     fn a_repository_url_is_still_a_positional_and_still_clones() {
         // The PR check runs first, and this is what must survive it: a plain
         // repository URL has no `/pull/<n>`, so it is unaffected.
-        let (_, pr, clone, _) = create_parts(&[
-            "h5i",
-            "box",
-            "https://github.com/o/r.git",
-            "--name",
-            "r",
-        ]);
+        let (_, pr, clone, _) =
+            create_parts(&["h5i", "box", "https://github.com/o/r.git", "--name", "r"]);
         assert_eq!(pr, None);
         assert_eq!(clone.as_deref(), Some("https://github.com/o/r.git"));
     }
 
     #[test]
     fn an_unrecognized_source_names_every_way_in() {
-        let err = dispatch(&["h5i", "box", "wat"]).err().expect("must be refused");
+        let err = dispatch(&["h5i", "box", "wat"])
+            .err()
+            .expect("must be refused");
         for hint in ["--pr", "--new", "repository URL"] {
             assert!(err.contains(hint), "{err}");
         }

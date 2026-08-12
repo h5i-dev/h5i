@@ -1,0 +1,168 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>What counts as evidence for agent-written code? | h5i</title><meta name="description" content="Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/blog/evidence-for-agent-work/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="What counts as evidence for agent-written code? | h5i"><meta property="og:description" content="Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation.">
+<meta property="og:url" content="https://h5i.dev/blog/evidence-for-agent-work/"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="What counts as evidence for agent-written code? | h5i">
+<meta name="twitter:description" content="Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation."><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "A transcript is not an audit trail",
+      "description": "Review agent-written code with evidence collected outside the agent: the patch, observed execution, denied activity, and explicit gaps in observation.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-08-10",
+      "dateModified": "2026-08-10",
+      "mainEntityOfPage": "https://h5i.dev/blog/evidence-for-agent-work/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Blog",
+          "item": "https://h5i.dev/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "A transcript is not an audit trail",
+          "item": "https://h5i.dev/blog/evidence-for-agent-work/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is an h5i receipt tamper-proof?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It is protected from the box, not from a user who controls the host. h5i stores ingested receipts outside every filesystem grant held by the box; it does not provide third-party notarization."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why keep agent-reported records at all?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "They provide useful detail that an external observer may not have. The requirement is to label their source and compare them with host-observed events, not to discard testimony."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css"><link rel="stylesheet" href="/_static/highlight.css">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Essay / Review &middot; 2026-08-10</div>
+<h1>A transcript is not an audit trail</h1><p class="post-deck">The agent can explain what it did in perfect prose. That account is useful—and it is still testimony from the subject of the review. Evidence begins where self-report ends.</p>
+<div class="post-meta"><span>12 min read</span><span>Receipts &middot; Audit &middot; Diffs</span></div></header>
+
+<div class="callout"><strong>The test.</strong> Point at a line in the record and ask: <em>could the agent have written this?</em> If yes, keep it as testimony. Do not promote it into independent evidence.</div>
+<figure class="feature-figure"><img src="/_static/sandbox-ui-demo.png" alt="The h5i box console showing policy, diff statistics, and execution events in separate lanes"><figcaption>The useful view does not compress everything into one confidence score. Policy, tree state, process events, network decisions, and page evidence keep their own provenance.</figcaption></figure>
+<p>Suppose an agent returns a twelve-line authentication fix and this summary: “Implemented token refresh, added regression coverage, all tests pass.” The prose is specific. The patch is small. The test file exists. This is exactly the kind of result that feels easy to approve.</p>
+<p>Now add three observations the summary omitted: the full test suite was never run; one command exited 137 after hitting the memory ceiling; and the process tried seven times to reach a telemetry host outside policy. None proves the patch is malicious. All three change the review. The difference between the two versions of the story is not better summarization. It is independent collection.</p>
+<h2 id="diff">A diff records state, not execution</h2>
+<p>A Git diff is excellent at its job. It describes how one tree differs from another, composes through merges, and gives reviewers a stable object to discuss.</p>
+<p>It cannot show a failed network connection, a read that left no edit, an install hook that ran, a test that was skipped, or a browser exception that did not change a file. Those are events. Tree comparison has no place to store them.</p>
+<p>Human review papered over that gap with conversation. The author remembered the work and answered questions. An autonomous agent removes that memory while making the replacement self-report unusually fluent.</p>
+<h2 id="source">The source of a record sets its value</h2>
+<p>Suppose a transcript says “ran <code>cargo test</code>, exit 0.” The line may be true. If the agent or its in-process tool shim produced it, the line is the subject's account of itself.</p>
+<p>Now suppose the supervisor that launched the child waits for it and records the exit status. The words can be identical. The evidence is different because the child did not author the observation.</p>
+<p>This distinction must travel with every event. Flatten host-observed and box-claimed records into one log and no downstream dashboard can reconstruct the trust boundary.</p>
+<h2 id="storage">Evidence must live outside the subject's write path</h2>
+<p>External observation is not enough if the result is written somewhere the agent can edit. The storage layout matters.</p>
+<p>In h5i, the box can stage capture data in its spool. The host ingests it into receipt storage outside every grant the box holds. Host-observed process exits and proxy decisions are already produced there. The box cannot rewrite an earlier receipt without first escaping the boundary.</p>
+<p>This is local protection, not notarization. A user with control of the host can edit local files. The claim is narrower: the code under review cannot silently rewrite the record of its own run.</p>
+<h2 id="lanes">Keep evidence grades visible</h2>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Record</th><th>Observer</th><th>What it supports</th></tr></thead><tbody>
+<tr><th>Patch</th><td>Git tree comparison</td><td>What changed</td></tr>
+<tr><th>Process exit</th><td>Host supervisor</td><td>What command ended and how</td></tr>
+<tr><th>Egress refusal</th><td>Boundary or proxy</td><td>Which destination was denied</td></tr>
+<tr><th>Browser error</th><td>In-box browser capture</td><td>What the instrumented page reported</td></tr>
+<tr><th>Agent proposal</th><td>Agent</td><td>What the agent says the result means</td></tr>
+</tbody></table></div>
+<p>These records belong together. They do not deserve the same color, ordering, or confidence.</p>
+<h2 id="absence">Absence must not impersonate success</h2>
+<p>A missing browser section can mean no errors, no browser, or a failed capture. An empty egress summary can mean no attempts or a tier whose packet filter does not report them. Good evidence formats name the difference.</p>
+<p>This is the hardest discipline in audit UI: make uncertainty visible even when it makes the product look less complete. Grey is information. “Unavailable” is a result. Silence is ambiguity.</p>
+<h2 id="review">A better review order</h2>
+<ol><li>Start with boundary refusals and failed execution.</li><li>Confirm the meaningful build and test commands actually ran.</li><li>Read browser and resource observations, including unavailable sections.</li><li>Review the patch against the pinned base.</li><li>Read the agent's explanation last.</li></ol>
+<p>This order does not replace code review. It stops eloquent testimony from framing the evidence before you see it.</p>
+<h2 id="receipt-anatomy">What a useful receipt has to bind together</h2>
+<p>An event record becomes reviewable when it answers more than “what text was printed?” At minimum it needs the command or event kind, time, exit result, observer, payload reference, and the digest of the policy in force. Without the digest, a clean-looking run can be separated from the rules that supposedly constrained it. Without the observer, testimony and observation collapse into the same JSON shape.</p>
+<p>The pinned base matters for the same reason. A patch is meaningful only relative to the tree it changed. A receipt is meaningful only relative to the boundary that produced it. h5i freezes both at box creation so a later branch update or profile edit cannot rewrite the premise of an old run.</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">review bundle</span></div><div class="terminal-body"><pre><code>review/
+├── patch.diff      # tree state against the frozen base
+├── report.md       # evidence ordered for a human review
+└── receipt.json    # events, observer lanes, policy digest</code></pre></div></div>
+<h2 id="two-paths">Observation needs two paths, because each catches the other's lie</h2>
+<p>The host supervisor can reliably observe the child it launched: start, exit status, elapsed time, and resource use. It cannot reconstruct every command typed inside a long-lived interactive shell. An in-box hook can report that detail, including nested shell commands. The box can also suppress or fabricate that hook.</p>
+<p>The right response is not to choose one and pretend it is complete. Keep both. A host-observed shell exit with no matching in-box command is a gap worth showing. An in-box command claiming success beside a host-observed nonzero exit is a disagreement worth showing. Redundancy becomes evidence only when sources remain distinguishable.</p>
+<h2 id="denials">Denied actions are often the most valuable rows</h2>
+<p>Successful work dominates normal logs. Security review is disproportionately interested in failed attempts: a path outside the grant, a refused address family, an off-list destination, a resource ceiling, a browser verb denied at the control socket.</p>
+<p>A diff cannot represent any of these because the attempt left no accepted state change. A transcript may omit them because they were noisy or because the agent moved on. The boundary that made the decision is the natural observer, and its denial should appear before the agent's proposal in the report.</p>
+<p>Do not overread a denial. A build tool reaching a telemetry endpoint can be normal. Seven retries can reflect an ordinary client. The record does not assign intent. It tells the reviewer where intent is worth investigating.</p>
+<h2 id="tamper-model">“Sealed” is a local, scoped claim</h2>
+<p>The box's writable spool is a staging area. Receipt storage is a sibling outside its grants. The host ingests staged records and assigns ordering. A process inside the box cannot reopen yesterday's host record and change an exit code.</p>
+<p>A user who owns the host can still edit the file. There is no external timestamp authority, signature service, or transparency log. Calling the receipt tamper-proof would be false. The actual claim is narrower and useful: the subject of the review has no filesystem path to its ingested history.</p>
+<h2 id="worked-review">A worked review order</h2>
+<p>For an unattended change, begin with the highest-consequence, lowest-interpretation evidence:</p>
+<ol><li><strong>Policy and tier.</strong> Was the session actually confined, and at which layer was egress enforced?</li><li><strong>Denials and limits.</strong> What did the boundary stop? What died under a ceiling?</li><li><strong>Observed execution.</strong> Which meaningful build and test commands have externally observed exits?</li><li><strong>Page evidence.</strong> Were there console exceptions or failed requests? Was a browser even available?</li><li><strong>Patch.</strong> Does the state change match the execution story?</li><li><strong>Proposal.</strong> What does the agent believe it achieved, and where does that account diverge?</li></ol>
+<p>The order is intentionally unfriendly to polished prose. By the time you read the summary, you already know which claims need proof.</p>
+<h2 id="anti-patterns">Four ways evidence turns back into decoration</h2>
+<h3>One risk score</h3>
+<p>Combining a denied destination, a failed test, a large diff, and a box-claimed command into “risk: 72” destroys the semantics a reviewer needs. The score cannot explain whether the boundary stopped something or whether the agent merely said it did. Keep the lanes. Let the human weigh them for the task.</p>
+<h3>Only successful final runs</h3>
+<p>Retries contain the debugging story. A failure followed by a pass can be ordinary progress, or the agent can have weakened an assertion until it turned green. Retaining only the final exit removes the comparison that makes the patch intelligible.</p>
+<h3>Unlimited payloads</h3>
+<p>Raw command output can be enormous and attacker-controlled. Evidence collection needs byte caps, truncation markers, redaction, and payload references. Otherwise one verbose build can make the review artifact unusable—or push secrets into every downstream index built from it.</p>
+<h3>Silence as green</h3>
+<p>An empty array is not a universal success state. It may mean the observer saw no errors, the subsystem was never started, the tier cannot report that class, or collection failed. Good schemas make these states distinct before a UI assigns color.</p>
+<h2 id="compare">Compare claims across artifacts, not only within one log</h2>
+<p>The strongest review questions cross boundaries. The proposal says tests pass; do host-observed exits contain the meaningful suite? The patch adds a network client; does the report show new destinations or repeated refusals? The browser screenshot looks correct; were there console exceptions? The profile says no network; does status show that the resolved tier could enforce the claim?</p>
+<p>This is where a bundle beats a transcript. Patch, report, receipt, and policy digest are deliberately different views. Agreement increases confidence. Disagreement tells you exactly where to look.</p>
+<h2 id="sources">Sources and further reading</h2>
+<ul><li><a href="/manual/#receipts">The receipt reference</a>, including observer lanes and explicit limits.</li><li><a href="/manual/#h5i-box-export">The export bundle</a>, for report ordering and path validation.</li><li><a href="/guides/review-a-pull-request/">Review a pull request in a detached box</a>, for the evidence-first workflow.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-core">h5i-core</a>, where box state, policy digests, and receipt storage are implemented.</li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Is an h5i receipt tamper-proof?</summary><div class="faq-answer">It is protected from the box, not from a user who controls the host. h5i stores ingested receipts outside every filesystem grant held by the box; it does not provide third-party notarization.</div></details><details class="faq-item"><summary>Why keep agent-reported records at all?</summary><div class="faq-answer">They provide useful detail that an external observer may not have. The requirement is to label their source and compare them with host-observed events, not to discard testimony.</div></details></div>
+<a class="next-up" href="/guides/review-a-pull-request/"><span class="label">Use the method</span><h3>Review a pull request by running it</h3><p>Read the report in an evidence-first order.</p></a>
+<div class="post-cta"><h3>Put the record beside the patch</h3><p>Export both, then review each artifact for the question it can actually answer.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#receipts">Read the receipt reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script></body></html>

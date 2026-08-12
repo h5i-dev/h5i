@@ -234,6 +234,32 @@ const RULES: &[SecretRule] = &[
         min_entropy: 3.5,
         keywords: &[],
     },
+    // The two shapes credentials most often take in *captured evidence*, as
+    // opposed to in source. A receipt records `argv.join(" ")` and the command's
+    // output, so an opaque token that matches no vendor prefix reached the
+    // store verbatim: it is not a JWT, not `sk-`/`ghp_`/`AKIA`, and not a
+    // quoted assignment, so nothing above fires on it.
+    SecretRule {
+        id: "AUTHORIZATION_HEADER",
+        description: "credential in an Authorization/Proxy-Authorization header",
+        // Covers both the header line and the `-H "Authorization: …"` argv form.
+        pattern: r#"(?i)(?:proxy-)?authorization\s*:\s*(?:bearer|token|basic|digest)\s+([A-Za-z0-9+/=_.\-]{12,})"#,
+        entropy_group: Some(1),
+        min_entropy: 3.0,
+        keywords: &["authorization"],
+    },
+    SecretRule {
+        id: "GENERIC_HIGH_ENTROPY_UNQUOTED",
+        description: "high-entropy credential-like assignment (unquoted)",
+        // Same keyword anchor as GENERIC_HIGH_ENTROPY, without the quotes:
+        // `export TOKEN=<opaque>` and `password=<opaque>` are ordinary in a
+        // shell command and were previously stored as written. Terminated by
+        // whitespace so a following argument is not swallowed.
+        pattern: r#"(?i)(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|token)\s*[:=]\s*([A-Za-z0-9+/=_\-]{20,})(?:\s|$)"#,
+        entropy_group: Some(1),
+        min_entropy: 3.5,
+        keywords: &[],
+    },
 ];
 
 /// Per-line allowlist substrings. If any of these (case-insensitive) appears
@@ -492,19 +518,31 @@ const REDACTION_MARKER: &str = "‹redacted›";
 ///
 /// The guillemet marker is intentionally free of Markdown/HTML metacharacters so
 /// it survives a later escaping pass unchanged.
+/// Redact every line, preserving the payload's exact framing.
+///
+/// Line endings and a trailing newline are kept byte-for-byte. `lines()` would
+/// fold `\r\n` into `\n` and drop a trailing newline, which mattered little
+/// while redaction was conditional but rewrites every receipt now that it is
+/// unconditional — and `raw_oid`/`raw_size` are supposed to describe the bytes
+/// the run actually produced.
 pub fn redact_text(text: &str) -> String {
-    let mut lines = text.lines().map(redact_line);
-    match lines.next() {
-        None => String::new(),
-        Some(first) => {
-            let mut out = first;
-            for line in lines {
-                out.push('\n');
-                out.push_str(&line);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        let (line, sep, tail) = match rest.find('\n') {
+            Some(i) => {
+                let (l, t) = rest.split_at(i);
+                let l = l.strip_suffix('\r').unwrap_or(l);
+                let sep = &rest[l.len()..i + 1];
+                (l, sep, &t[1..])
             }
-            out
-        }
+            None => (rest, "", ""),
+        };
+        out.push_str(&redact_line(line));
+        out.push_str(sep);
+        rest = tail;
     }
+    out
 }
 
 /// Redact one line. Mirrors the per-line *matching* in [`scan_lines`] but
@@ -634,6 +672,56 @@ mod tests {
         assert_eq!(lines[0], "key = your-key-here");
         assert!(!lines[1].contains("AKIAZZZZZZZZZZZZZZZZ"));
         assert!(lines[1].contains(REDACTION_MARKER));
+    }
+
+    #[test]
+    fn opaque_credentials_in_captured_commands_are_caught() {
+        // A receipt records `argv.join(" ")`. An opaque token matches no vendor
+        // prefix, is not a JWT, and is not a quoted assignment, so nothing in
+        // the pack used to fire and it was stored verbatim.
+        let tok = "9f3c1b7ae2d84f0c9a5e77b1c4d9";
+        for line in [
+            format!("curl -H \"Authorization: Bearer {tok}\" https://internal.api/x"),
+            format!("export ACCESS_TOKEN={tok}"),
+            format!("password={tok}"),
+        ] {
+            let out = redact_text(&line);
+            assert!(!out.contains(tok), "not redacted: {out}");
+        }
+    }
+
+    #[test]
+    fn the_new_rules_do_not_fire_on_ordinary_prose() {
+        for line in [
+            "authorization: required for this endpoint",
+            "token = 12",
+            "password: see the vault",
+            "the access_token field is documented above",
+        ] {
+            assert_eq!(redact_text(line), line, "false positive on {line:?}");
+        }
+    }
+
+    #[test]
+    fn redact_text_preserves_framing() {
+        // Unconditional redaction means every receipt goes through here, so the
+        // payload's exact framing has to survive: CRLF stays CRLF, a trailing
+        // newline stays, and a payload with nothing to scrub is unchanged.
+        for text in [
+            "alpha\r\nbeta\r\n",
+            "alpha\nbeta\n",
+            "alpha\nbeta",
+            "\n\n",
+            "",
+            "no trailing newline",
+        ] {
+            assert_eq!(redact_text(text), text, "framing changed for {text:?}");
+        }
+        // And it still scrubs, without disturbing the line endings around it.
+        let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+        let out = redact_text(&format!("x\r\ntoken={token}\r\ny\r\n"));
+        assert!(!out.contains(&token), "{out}");
+        assert!(out.starts_with("x\r\n") && out.ends_with("y\r\n"), "{out:?}");
     }
 
     #[test]

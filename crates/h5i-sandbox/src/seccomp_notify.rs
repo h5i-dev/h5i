@@ -82,6 +82,8 @@ const BPF_W: u16 = 0x00;
 const BPF_ABS: u16 = 0x20;
 const BPF_JMP: u16 = 0x05;
 const BPF_JEQ: u16 = 0x10;
+/// `A >= K` — used to catch the x32 syscall-number range in one comparison.
+const BPF_JGE: u16 = 0x30;
 const BPF_K: u16 = 0x00;
 const BPF_RET: u16 = 0x06;
 
@@ -102,7 +104,7 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
 /// allocation-free and therefore async-signal-safe to call in a `fork`ed child —
 /// a `Vec` here would risk a malloc-lock deadlock when the parent is
 /// multithreaded (e.g. the cargo test harness). Pure; structurally unit-tested.
-pub fn build_socket_notify_program() -> [SockFilter; 8] {
+pub fn build_socket_notify_program() -> [SockFilter; 10] {
     [
         // 0: A = arch
         stmt(BPF_LD | BPF_W | BPF_ABS, OFF_ARCH),
@@ -112,20 +114,38 @@ pub fn build_socket_notify_program() -> [SockFilter; 8] {
         stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
         // 3: A = nr
         stmt(BPF_LD | BPF_W | BPF_ABS, OFF_NR),
-        // 4: nr == socket → NOTIFY (idx 7)
+        // 4: x32 → kill (idx 9). See X32_SYSCALL_BIT: x32 passes the arch guard
+        //    above but carries different syscall numbers, so without this the
+        //    `nr` comparisons below miss and instruction 7 ALLOWs an unmediated
+        //    socket(2). The notify handler cannot help — no notification is
+        //    ever generated.
+        jump(BPF_JMP | BPF_JGE | BPF_K, X32_SYSCALL_BIT, 4, 0),
+        // 5: nr == socket → NOTIFY (idx 8)
         jump(BPF_JMP | BPF_JEQ | BPF_K, NR_SOCKET, 2, 0),
-        // 5: nr == socketpair → NOTIFY (idx 7)
+        // 6: nr == socketpair → NOTIFY (idx 8)
         jump(BPF_JMP | BPF_JEQ | BPF_K, NR_SOCKETPAIR, 1, 0),
-        // 6: everything else → allow
+        // 7: everything else → allow
         stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
-        // 7: mediate
+        // 8: mediate
         stmt(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF),
+        // 9: x32 → kill
+        stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
     ]
 }
 
+/// On x86_64 the x32 ABI reports `AUDIT_ARCH_X86_64` in `seccomp_data.arch` but
+/// ORs this bit into `nr`, so an arch guard alone lets it through with syscall
+/// numbers that match none of the comparisons that follow. Kernels built with
+/// `CONFIG_X86_X32_ABI=n` never produce it; the filter refuses it either way
+/// rather than depending on the host's config.
+///
+/// Defined unconditionally so both architectures compile one program shape: no
+/// aarch64 syscall number comes near this value, so the test is a no-op there.
+pub const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+
 /// Compile-time guard: the BPF builder's array length must match what
 /// [`install_listener`] tells the kernel (`SockFprog::len`).
-const _: () = assert!(std::mem::size_of::<[SockFilter; 8]>() == 8 * 8);
+const _: () = assert!(std::mem::size_of::<[SockFilter; 10]>() == 10 * 8);
 
 // ─── kernel ABI: seccomp_data / seccomp_notif / resp / sizes ──────────────────
 
@@ -510,18 +530,53 @@ pub unsafe fn recv_fd(sock: RawFd) -> std::io::Result<RawFd> {
 mod tests {
     use super::*;
 
+    /// x32 reports AUDIT_ARCH_X86_64, so the arch guard passes, but its syscall
+    /// numbers carry X32_SYSCALL_BIT and match none of the comparisons below —
+    /// the filter used to fall through to ALLOW and no notification was ever
+    /// generated, so the handler's defence-in-depth re-check could not help.
+    #[test]
+    fn the_socket_gate_refuses_the_x32_abi() {
+        let p = build_socket_notify_program();
+        // The nr load is followed immediately by the x32 test, before any
+        // syscall-number comparison can miss.
+        let nr_load = p.iter().position(|i| i.code == (BPF_LD | BPF_W | BPF_ABS) && i.k == OFF_NR).unwrap();
+        let guard = &p[nr_load + 1];
+        assert_eq!(guard.code, BPF_JMP | BPF_JGE | BPF_K, "x32 test must come first");
+        assert_eq!(guard.k, X32_SYSCALL_BIT);
+        // Taking that branch lands on a kill, never on the allow.
+        let target = nr_load + 2 + guard.jt as usize;
+        assert_eq!(p[target].code, BPF_RET | BPF_K);
+        assert_eq!(p[target].k, SECCOMP_RET_KILL_PROCESS, "x32 must be killed, not allowed");
+    }
+
     #[test]
     fn bpf_program_shape() {
+        // Asserted structurally rather than by index: the program grows when a
+        // guard is added, and a positional test just breaks without saying
+        // anything about the policy.
         let p = build_socket_notify_program();
-        assert_eq!(p.len(), 8);
-        // Last two are ALLOW then USER_NOTIF.
-        assert_eq!(p[6], stmt(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
-        assert_eq!(p[7], stmt(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF));
-        // Arch guard kills on mismatch.
+
+        // It starts by checking the arch, and a mismatch kills.
+        assert_eq!(p[0], stmt(BPF_LD | BPF_W | BPF_ABS, OFF_ARCH));
+        assert_eq!(p[1].k, AUDIT_ARCH);
         assert_eq!(p[2], stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS));
-        // socket / socketpair compares jump forward to the NOTIFY instruction.
-        assert_eq!(p[4].k, NR_SOCKET);
-        assert_eq!(p[5].k, NR_SOCKETPAIR);
+
+        // Both socket-creating calls are compared, and every comparison lands
+        // on the USER_NOTIF instruction rather than on the allow.
+        for want in [NR_SOCKET, NR_SOCKETPAIR] {
+            let i = p
+                .iter()
+                .position(|ins| ins.code == (BPF_JMP | BPF_JEQ | BPF_K) && ins.k == want)
+                .unwrap_or_else(|| panic!("no comparison for syscall {want}"));
+            let target = i + 1 + p[i].jt as usize;
+            assert_eq!(p[target], stmt(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF));
+        }
+
+        // Exactly one fall-through allow, and it is the last thing reached.
+        assert_eq!(
+            p.iter().filter(|i| i.code == (BPF_RET | BPF_K) && i.k == SECCOMP_RET_ALLOW).count(),
+            1
+        );
     }
 
     #[test]

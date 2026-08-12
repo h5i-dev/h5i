@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 460" width="800" height="460" role="img" aria-label="The .h5i/env.toml profile resolves into policy.resolved.toml, whose sha256 digest is pinned in the box manifest and stamped on every evidence capture">
+<rect width="800" height="460" fill="#ffffff"/>
+<defs>
+<marker id="pt-green" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#2e7d32"/></marker>
+</defs>
+
+<text x="400" y="42" font-size="22" font-weight="700" fill="#1a202c" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">From profile to pinned policy</text>
+<text x="400" y="68" font-size="12.5" fill="#52606d" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">one TOML file in the repo becomes a digest a reviewer can cite</text>
+
+<rect x="40" y="100" width="205" height="215" rx="8" fill="#edf7f6" stroke="#16837a" stroke-width="2"/>
+<text x="142" y="130" font-size="15" font-weight="700" fill="#0f5d56" text-anchor="middle" font-family="Consolas, Menlo, monospace">.h5i/env.toml</text>
+<text x="142" y="158" font-size="12" fill="#254f4b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">fs: read / write / deny</text>
+<text x="142" y="180" font-size="12" fill="#254f4b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">net: mode + egress</text>
+<text x="142" y="202" font-size="12" fill="#254f4b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">resources · env.pass · tools</text>
+<text x="142" y="224" font-size="12" fill="#254f4b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">private_paths</text>
+<text x="142" y="246" font-size="12" fill="#254f4b" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">secrets · services</text>
+<text x="142" y="286" font-size="11" font-style="italic" fill="#52606d" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">checked into the repo</text>
+
+<path d="M245,205 L305,205" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#pt-green)"/>
+<text x="275" y="192" font-size="10.5" fill="#2e7d32" text-anchor="middle" font-family="Consolas, Menlo, monospace">box create</text>
+
+<rect x="308" y="140" width="205" height="130" rx="8" fill="#f7fafc" stroke="#4a5568" stroke-width="2"/>
+<text x="410" y="170" font-size="14" font-weight="700" fill="#2d3748" text-anchor="middle" font-family="Consolas, Menlo, monospace">policy.resolved.toml</text>
+<text x="410" y="196" font-size="12" fill="#4a5568" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">fully resolved, fail-closed</text>
+<text x="410" y="220" font-size="12" fill="#4a5568" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">sha256 digest</text>
+<text x="410" y="243" font-size="12" font-weight="700" fill="#2d3748" text-anchor="middle" font-family="Consolas, Menlo, monospace">659a845179f5…</text>
+
+<path d="M513,175 L565,145" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#pt-green)"/>
+<path d="M513,235 L565,265" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#pt-green)"/>
+
+<rect x="568" y="100" width="192" height="92" rx="8" fill="#fff7e6" stroke="#b7791f" stroke-width="2"/>
+<text x="664" y="130" font-size="14" font-weight="700" fill="#8a5a12" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">box manifest</text>
+<text x="664" y="155" font-size="12" fill="#6b4e16" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">digest pinned</text>
+<text x="664" y="176" font-size="12" fill="#6b4e16" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">at create</text>
+
+<rect x="568" y="223" width="192" height="92" rx="8" fill="#fff7e6" stroke="#b7791f" stroke-width="2"/>
+<text x="664" y="253" font-size="14" font-weight="700" fill="#8a5a12" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">evidence captures</text>
+<text x="664" y="278" font-size="12" fill="#6b4e16" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">every run stamped</text>
+<text x="664" y="299" font-size="12" fill="#6b4e16" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">with the digest</text>
+
+<rect x="85" y="352" width="630" height="82" rx="8" fill="#eef2ff" stroke="#4c51bf" stroke-width="2"/>
+<text x="400" y="381" font-size="14" font-weight="700" fill="#3730a3" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Tamper-evident by construction</text>
+<text x="400" y="405" font-size="12" fill="#3730a3" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">h5i box doctor re-verifies the stored policy against the pinned digest.</text>
+<text x="400" y="425" font-size="12" fill="#3730a3" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif">Editing .h5i/env.toml after create changes nothing for an existing box.</text>
+</svg>

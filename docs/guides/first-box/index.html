@@ -1,0 +1,188 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your first h5i box | h5i</title><meta name="description" content="Create your first h5i sandbox, run an agent inside it, inspect the diff and execution record, then export or apply the result.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/first-box/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Your first h5i box | h5i"><meta property="og:description" content="Create your first h5i sandbox, run an agent inside it, inspect the diff and execution record, then export or apply the result.">
+<meta property="og:url" content="https://h5i.dev/guides/first-box/"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Your first h5i box | h5i">
+<meta name="twitter:description" content="Create your first h5i sandbox, run an agent inside it, inspect the diff and execution record, then export or apply the result."><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Take one coding task from prompt to reviewed patch",
+      "description": "Create your first h5i sandbox, run an agent inside it, inspect the diff and execution record, then export or apply the result.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-08-10",
+      "dateModified": "2026-08-10",
+      "mainEntityOfPage": "https://h5i.dev/guides/first-box/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Take one coding task from prompt to reviewed patch",
+          "item": "https://h5i.dev/guides/first-box/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does h5i change my current checkout?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "A box created from the current repository uses its own Git worktree and branch. Your current checkout is not where the agent works. Only an explicit apply step lands a proposed local change."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which isolation tier should I use first?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Leave the tier on auto for the first run, then read h5i box status. An explicit tier fails closed if the host cannot provide it; h5i never silently substitutes a weaker tier."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I use Codex instead of Claude Code?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Replace agent-claude with agent-codex and run codex inside the shell. Keep one runtime per box so credentials and configuration remain scoped."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css"><link rel="stylesheet" href="/_static/highlight.css">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 01 / Start here &middot; 2026-08-10</div>
+<h1>Take one coding task from prompt to reviewed patch</h1><p class="post-deck">The useful unit is not a sandboxed command. It is the whole coding session: repository, agent, shell, dependencies, dev server, and browser inside one disposable boundary.</p>
+<div class="post-meta"><span>9 min read</span><span>Install &middot; Create &middot; Export</span></div></header>
+
+<div class="callout"><strong>Outcome.</strong> In about ten minutes you will create a named box, work inside it, inspect what changed and what ran, then choose whether the patch leaves the boundary.</div>
+<figure class="feature-figure"><img src="/_static/fast-supervised-sandbox.svg" alt="One h5i command creates a supervised box with filesystem, syscall, network, and resource controls around the agent workload"><figcaption>The first run should establish the mental model: one command creates the environment; every agent child stays inside; evidence and a patch come back out.</figcaption></figure>
+<h2 id="before">Before you start</h2>
+<p>Use a Git repository with a clean enough baseline that you can recognize the agent's change. You do not need Podman or a microVM runtime for the first box. h5i can use its lightweight host-kernel tiers when the operating system supports them.</p>
+<p>Choose one agent runtime. The guide shows Claude Code; Codex works the same way with the runtime-specific profile and command changed. One runtime per box keeps HOME state, API routing, and credential handling narrow.</p>
+<h2 id="install">1. Install h5i and check the host</h2>
+<p>Install the single binary, then ask it what this machine can actually enforce. <code>probe</code> performs a functional check; it does not infer support from the operating-system name.</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ curl -fsSL https://h5i.dev/install.sh | sh
+$ h5i box probe
+$ h5i skill install</code></pre></div></div>
+<p>The skill teaches a supported coding agent how to operate the box. It is embedded in the binary, so its commands match the version you installed.</p>
+<h2 id="create">2. Create a box from the current repository</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">repository root</span></div>
+<div class="terminal-body"><pre><code>$ h5i box create first-box --from HEAD --profile agent-claude
+$ h5i box status first-box</code></pre></div></div>
+<p>Creation freezes the base revision and resolves the policy before the workspace exists. Read the status once. It names the isolation tier, filesystem grants, network policy, resource limits, and policy digest that the receipts will carry.</p>
+<p>Do not skip that output on the first run. Find the answers to four questions: which tier was selected, whether the box shares the host kernel, which paths are writable, and how network access is scoped. The point is to verify the claim before asking the agent to do useful work.</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">what to record</span></div>
+<div class="terminal-body"><pre><code>box       first-box
+base      <frozen commit>
+profile   agent-claude
+isolation <resolved tier>
+policy    sha256:<digest>
+write     $WORK only</code></pre></div></div>
+<div class="callout warn"><strong>Use the runtime-specific profile.</strong> Choose <code>agent-claude</code> or <code>agent-codex</code>. A box should not receive two runtimes' configuration or credential routes.</div>
+<h2 id="work">3. Work inside the boundary</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host, then box</span></div>
+<div class="terminal-body"><pre><code>$ h5i box shell first-box
+box$ claude
+# Ask for one concrete change. Let the agent edit, build, and test.
+box$ exit</code></pre></div></div>
+<p><code>shell</code> is the boundary. Every child process inherits it, including package scripts and test runners. You do not need to remember to wrap each command.</p>
+<p>For a single deterministic check, skip the interactive shell:</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box run first-box -- cargo test
+$ h5i box run first-box -- npm test</code></pre></div></div>
+<h2 id="inspect">4. Inspect before you export</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box diff first-box --stat
+$ h5i box diff first-box
+$ h5i box log first-box
+$ h5i box status first-box</code></pre></div></div>
+<p>Use the diff to review the result and the log to review the execution. They answer different questions. A clean patch does not prove that tests ran; a successful test does not make an unrelated edit acceptable.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Question</th><th>Command</th><th>Signal</th></tr></thead><tbody>
+<tr><th>What changed?</th><td><code>box diff</code></td><td>Unexpected files, generated output, dependency drift</td></tr>
+<tr><th>What ran?</th><td><code>box log</code></td><td>Missing tests, nonzero exits, repeated retries</td></tr>
+<tr><th>What governed it?</th><td><code>box status</code></td><td>Tier, grants, resource caps, policy digest</td></tr>
+<tr><th>Can the claim still hold?</th><td><code>box doctor</code></td><td>Broken refs, missing runtime prerequisites, policy mismatch</td></tr>
+</tbody></table></div>
+<h2 id="export">5. Move the result through the output gate</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box export first-box --out ./review-first-box
+$ git apply --check ./review-first-box/patch.diff
+$ less ./review-first-box/report.md</code></pre></div></div>
+<p>The export contains <code>patch.diff</code>, <code>report.md</code>, and <code>receipt.json</code>. The patch is path-validated. The report puts denied egress and failed execution ahead of the agent's own proposal.</p>
+<p>If this is a local box and you want h5i to land the work directly, freeze it first:</p>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box propose first-box
+$ h5i box apply first-box</code></pre></div></div>
+<h2 id="finish">6. Remove the box when the decision is made</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box rm first-box
+$ h5i box gc</code></pre></div></div>
+<p>A box is cheap because it is disposable. Keep the export. Remove the execution environment.</p>
+<h2 id="failure-modes">If the first run fails</h2>
+<h3>The requested tier is unavailable</h3>
+<p>Run <code>h5i box probe</code> and read the reason. An explicit tier fails rather than falling back. Either satisfy the prerequisite or choose a tier whose stated boundary fits the task; do not translate refusal into “turn security off.”</p>
+<h3>A build cannot download dependencies</h3>
+<p>The default profile may have no network. Add only the registry destinations the build needs in a repository profile, or prepare a read-only warm cache. A denied telemetry endpoint is not automatically a missing dependency.</p>
+<h3>The agent cannot find its login</h3>
+<p>Check that the profile matches the runtime and run <code>h5i box secrets first-box</code>. It shows resolution state without printing values. Do not solve the problem by copying a whole host HOME into the box.</p>
+<h3>Apply refuses</h3>
+<p>Only local worktree boxes can use the mediated propose/apply path. Boxes created from a pull request, clone URL, or empty repository are detached; export the patch and apply it explicitly where you want it.</p>
+<h2 id="first-review">What “done” looks like</h2>
+<p>Your first run is successful when you can explain the boundary and the result separately. You should know which tier ran, which test exits were observed, which destinations were denied, and which exact patch you are choosing to take. The agent's summary is helpful, but none of those answers should depend on trusting it.</p>
+<h2 id="sources">Reference</h2>
+<ul><li><a href="/manual/#install">Installation and skill setup</a>.</li><li><a href="/manual/#h5i-box">The complete box command reference</a>.</li><li><a href="/manual/#h5i-box-export">Export bundle semantics and review order</a>.</li><li><a href="/blog/the-environment-is-the-sandbox/">Why the complete environment is the isolation unit</a>.</li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does h5i change my current checkout?</summary><div class="faq-answer">A box created from the current repository uses its own Git worktree and branch. Your current checkout is not where the agent works. Only an explicit apply step lands a proposed local change.</div></details><details class="faq-item"><summary>Which isolation tier should I use first?</summary><div class="faq-answer">Leave the tier on auto for the first run, then read h5i box status. An explicit tier fails closed if the host cannot provide it; h5i never silently substitutes a weaker tier.</div></details><details class="faq-item"><summary>Can I use Codex instead of Claude Code?</summary><div class="faq-answer">Yes. Replace agent-claude with agent-codex and run codex inside the shell. Keep one runtime per box so credentials and configuration remain scoped.</div></details></div>
+<a class="next-up" href="/guides/review-a-pull-request/"><span class="label">Next guide</span><h3>Run an untrusted pull request</h3><p>Use a detached box when the code did not originate in your repository.</p></a>
+<div class="post-cta"><h3>Make the box the default place agents work</h3><p>The boundary only helps when the whole session starts inside it.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-box">Open the box reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script></body></html>

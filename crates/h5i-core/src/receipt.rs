@@ -92,6 +92,44 @@ impl BrowserEvidence {
     }
 }
 
+/// What an ingress session was, as structured fact rather than as prose.
+///
+/// The one thing a reviewer must be able to read off a share record without
+/// ambiguity is **whether a third party could read the traffic** — a Cloudflare
+/// quick tunnel terminates TLS, and peer-to-peer does not. That was being
+/// recovered by testing whether the rendered command string contained the
+/// substring `tunnel`, and the command string contains the box's name: a
+/// perfectly ordinary P2P share of a box called `tunnel`, `my-tunnel` or
+/// `tunneling` was reported to the reviewer as Cloudflare-terminated. A wrong
+/// security claim in the evidence artifact is worse than a missing one.
+///
+/// So it is a field. Prose is rendered from this; nothing parses the prose.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShareEvidence {
+    /// `p2p` or `tunnel`, as `h5i-share` recorded it.
+    pub transport: String,
+    /// The port inside the box that was exposed.
+    pub port: u16,
+    /// Distinct peers admitted, including any past the receipt's record cap.
+    pub peers: u64,
+    /// How long the share ran, in seconds, from the monotonic clock.
+    pub seconds: i64,
+    /// Connections refused before a ticket was weighed at all.
+    #[serde(default)]
+    pub turned_away: u64,
+}
+
+impl ShareEvidence {
+    /// Is a third party able to read this traffic in the clear?
+    ///
+    /// The question the export's warning is really asking. Decided on the
+    /// recorded transport, and `true` for anything this h5i does not recognise
+    /// — an unknown transport is not a promise of end-to-end encryption.
+    pub fn third_party_can_read(&self) -> bool {
+        self.transport != "p2p"
+    }
+}
+
 /// One observed execution inside an environment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecRecord {
@@ -137,6 +175,10 @@ pub struct ExecRecord {
     /// [`BrowserEvidence`] for the lane and the cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser: Option<BrowserEvidence>,
+    /// What an ingress session was, when this record is one. Host observed:
+    /// h5i owned both ends of the bridge and the box supplied none of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<ShareEvidence>,
     /// Secret rules that fired while redacting, by rule id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub redactions: Vec<String>,
@@ -168,6 +210,7 @@ pub struct RecordInput {
     pub files: Vec<String>,
     pub egress: Option<EgressSummary>,
     pub browser: Option<BrowserEvidence>,
+    pub share: Option<ShareEvidence>,
 }
 
 /// Scrub every string a page supplied. A console line is a place a token turns
@@ -192,6 +235,46 @@ fn log_path(env_dir: &Path) -> PathBuf {
 
 fn raw_path(env_dir: &Path, id: &str) -> PathBuf {
     env_dir.join(RAW_DIR).join(format!("{id}.raw"))
+}
+
+/// Redact the decodable runs of a non-UTF-8 payload, preserving every other
+/// byte exactly. Splitting on the invalid sequences is what keeps a credential
+/// from hiding behind one stray byte.
+fn redact_binary(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(raw.len());
+    let mut rest = raw;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(text) => {
+                out.extend_from_slice(crate::secrets::redact_text(text).as_bytes());
+                return out;
+            }
+            Err(e) => {
+                let good = e.valid_up_to();
+                if good > 0 {
+                    let text = std::str::from_utf8(&rest[..good]).unwrap_or_default();
+                    out.extend_from_slice(crate::secrets::redact_text(text).as_bytes());
+                }
+                // Copy the invalid sequence through untouched and carry on.
+                let skip = e.error_len().unwrap_or(rest.len() - good).max(1);
+                let end = (good + skip).min(rest.len());
+                out.extend_from_slice(&rest[good..end]);
+                if end >= rest.len() {
+                    return out;
+                }
+                rest = &rest[end..];
+            }
+        }
+    }
+}
+
+/// Record ids are lowercase hex. Checking that before a handle becomes a path
+/// keeps `../..` out of the join. No caller can reach it with hostile input
+/// today — `env::inspect` is gated by `find` succeeding on the same handle —
+/// but `raw_bytes` is `pub`, and a console route added later would inherit the
+/// unvalidated join rather than this refusal.
+fn valid_handle(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// RFC3339 UTC with microsecond precision — lexically sortable, so the log's
@@ -246,20 +329,33 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
     let redacted_holder;
     let raw: &[u8] = match std::str::from_utf8(raw) {
         Ok(text) => {
+            // Redaction is UNCONDITIONAL. `scan_text` applies a placeholder
+            // stoplist (`example`, `dummy`, `fake`, …) and skips the whole line
+            // when it hits one, which is right for detection and fail-open for
+            // publication: a box printing `example config: ghp_<real>` produced
+            // no findings, so the credential was stored verbatim. `redact_line`
+            // deliberately has no stoplist for exactly this reason, and there is
+            // a regression test pinning that — gating the call on the detector
+            // put the hole back one level up.
+            //
+            // So scan only to name the rules that fired, and always scrub.
             let findings = crate::secrets::scan_text(Path::new("<receipt>"), text);
-            if findings.is_empty() {
-                raw
-            } else {
-                let mut ids: Vec<String> = findings.iter().map(|f| f.rule_id.to_string()).collect();
-                ids.sort();
-                ids.dedup();
-                redactions = ids;
-                redacted_holder = crate::secrets::redact_text(text).into_bytes();
-                &redacted_holder[..]
-            }
+            let mut ids: Vec<String> = findings.iter().map(|f| f.rule_id.to_string()).collect();
+            ids.sort();
+            ids.dedup();
+            redactions = ids;
+            redacted_holder = crate::secrets::redact_text(text).into_bytes();
+            &redacted_holder[..]
         }
-        // Binary payloads are left as-is: the secret scanner is line oriented.
-        Err(_) => raw,
+        // Binary payloads: the pattern scanner is line oriented and cannot run
+        // here, but leaving them wholly untouched meant a box could defeat the
+        // scrub by interleaving one invalid byte with a credential. Redact the
+        // valid UTF-8 runs and leave the rest byte-for-byte, so the payload
+        // stays faithful while known secret shapes still go.
+        Err(_) => {
+            redacted_holder = redact_binary(raw);
+            &redacted_holder[..]
+        }
     };
 
     let raw_truncated = raw.len() > RAW_CAP;
@@ -288,6 +384,9 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
         // Box-claimed strings from a page the box just visited, so they go
         // through the same scrub as everything else before they are stored.
         browser: input.browser.map(redact_browser_evidence),
+        // Host observed, and every field is a number or one of two known
+        // transport strings, so there is nothing here for the scrub to reach.
+        share: input.share,
         redactions,
         raw_oid: format!("sha256:{digest}"),
         raw_size: stored.len() as u64,
@@ -302,21 +401,67 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
     // so payloads stored by older versions remain readable.
     let raw_file = raw_path(env_dir, &digest[..ID_LEN]);
     if let Some(parent) = raw_file.parent() {
+        // Only under an env directory that still exists. `append` creating
+        // the whole tree is what let a share that outlived `h5i box rm`
+        // recreate the box it had just erased — as a receipt log and a payload
+        // under a path with no manifest, which every tool answers "no
+        // environment named that" for and only `rm -rf` clears. Guarding one
+        // caller left the next one armed.
+        if let Some(env_dir) = parent.parent() {
+            if !env_dir.exists() {
+                return Err(H5iError::Metadata(format!(
+                    "the box directory {} is gone, so there is nowhere to record this",
+                    env_dir.display()
+                )));
+            }
+        }
         std::fs::create_dir_all(parent)?;
     }
     // An identical payload is already on disk and rewriting it would only risk a
     // torn file for a concurrent reader.
     if !raw_file.exists() {
-        std::fs::write(&raw_file, stored)?;
+        // Written to a unique temp and renamed. `fs::write` truncates, so two
+        // writers storing the same payload digest at once both truncated and
+        // both rewrote, and a reader between them saw a short blob — measured
+        // at up to 234 short reads per 1200 iterations in a transplant. Not
+        // reachable today, because `run.lock` serialises the high-rate writer
+        // and no two lanes produce identical bodies; it becomes reachable the
+        // moment a second writer does. The payload is content-addressed, so
+        // whichever rename wins is byte-identical to the other.
+        let tmp = raw_file.with_extension(format!("raw.tmp.{}", std::process::id()));
+        if let Err(e) = std::fs::write(&tmp, stored) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(H5iError::with_path(e, &tmp));
+        }
+        if let Err(e) = std::fs::rename(&tmp, &raw_file) {
+            // The same cleanup as above, for the other half of the operation.
+            // A rename can fail on its own — a read-only directory, a full
+            // disk, EXDEV — and the round that added the cleanup put it only
+            // on the write, so exactly the failures that leave a temp behind
+            // most often were the ones that left it.
+            let _ = std::fs::remove_file(&tmp);
+            return Err(H5iError::with_path(e, &raw_file));
+        }
     }
 
     let mut line = serde_json::to_string(&rec)?;
     line.push('\n');
+    // Named here as well as on the write below. The comment there says this
+    // "used to report `Permission denied` with no hint of which file refused",
+    // and on a read-only directory the refusal happens at the `open` — so the
+    // naming was attached to the one call that could not reach it.
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_path(env_dir))?;
-    f.write_all(line.as_bytes())?;
+        .open(log_path(env_dir))
+        .map_err(|e| H5iError::with_path(e, log_path(env_dir)))?;
+    // One `write_all` of a line that already ends in a newline, so a short
+    // write cannot leave a fragment the *next* append glues itself onto —
+    // which `list()` would then drop silently, losing two receipts and saying
+    // nothing. And named: this used to report `Permission denied` with no hint
+    // of which file refused.
+    f.write_all(line.as_bytes())
+        .map_err(|e| H5iError::with_path(e, log_path(env_dir)))?;
 
     Ok(rec)
 }
@@ -382,6 +527,11 @@ pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
                 return Ok(std::fs::read(p)?);
             }
         }
+    }
+    if !valid_handle(id) {
+        return Err(H5iError::Metadata(format!(
+            "receipt handle '{id}' is not a hex record id (fail-closed)"
+        )));
     }
     let p = raw_path(env_dir, id);
     if !p.exists() {
@@ -612,9 +762,13 @@ mod tests {
     fn command_is_redacted_before_it_is_recorded() {
         let td = TempDir::new().unwrap();
         let mut i = input();
-        i.cmd = Some("curl -H 'Authorization: Bearer ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789'".into());
+        i.cmd =
+            Some("curl -H 'Authorization: Bearer ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789'".into());
         let rec = append(td.path(), i, b"").unwrap();
-        assert!(!rec.cmd.unwrap().contains("ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"));
+        assert!(!rec
+            .cmd
+            .unwrap()
+            .contains("ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"));
     }
 
     #[test]
@@ -624,6 +778,56 @@ mod tests {
         let rec = append(td.path(), input(), &big).unwrap();
         assert!(rec.raw_truncated);
         assert_eq!(rec.raw_size, RAW_CAP as u64);
+    }
+
+    /// The advisory case: a box prints a credential on a line that also carries
+    /// a placeholder word. `scan_text` skips that line via its stoplist, so
+    /// gating redaction on "did the scanner find anything" stored the token
+    /// verbatim in `<env>/raw/<id>.raw` and in the published evidence.
+    #[test]
+    fn a_stoplist_word_cannot_smuggle_a_credential_into_the_raw_store() {
+        let td = TempDir::new().unwrap();
+        let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+        for line in [
+            format!("example config: {token}"),
+            format!("dummy value {token}"),
+            format!("# fake, do not use: {token}"),
+            format!("${{PLACEHOLDER}} {token}"),
+        ] {
+            let rec = append(td.path(), input(), line.as_bytes()).unwrap();
+            let stored = String::from_utf8(raw_bytes(td.path(), &rec.id).unwrap()).unwrap();
+            assert!(!stored.contains(&token), "stored verbatim: {stored}");
+        }
+    }
+
+    /// One stray non-UTF-8 byte used to skip redaction for the whole payload,
+    /// so a box could smuggle a credential past the scrub by interleaving one.
+    #[test]
+    fn an_invalid_byte_does_not_disable_redaction_for_the_payload() {
+        let td = TempDir::new().unwrap();
+        let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+        let mut raw: Vec<u8> = Vec::new();
+        raw.extend_from_slice(b"before\xff\xfe binary\n");
+        raw.extend_from_slice(format!("token={token}\n").as_bytes());
+        let rec = append(td.path(), input(), &raw).unwrap();
+        let stored = raw_bytes(td.path(), &rec.id).unwrap();
+        assert!(
+            !String::from_utf8_lossy(&stored).contains(&token),
+            "credential survived behind an invalid byte"
+        );
+        // The undecodable bytes are still carried through untouched.
+        assert!(stored.windows(2).any(|w| w == [0xff, 0xfe]));
+    }
+
+    /// Redaction is unconditional now, so a payload with nothing to scrub must
+    /// still round-trip byte for byte.
+    #[test]
+    fn a_clean_payload_is_stored_unchanged() {
+        let td = TempDir::new().unwrap();
+        let body = b"line one\r\nline two\n";
+        let rec = append(td.path(), input(), body).unwrap();
+        assert_eq!(raw_bytes(td.path(), &rec.id).unwrap(), body);
+        assert!(rec.redactions.is_empty());
     }
 
     #[test]

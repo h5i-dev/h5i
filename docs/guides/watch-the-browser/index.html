@@ -1,0 +1,162 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watch an agent's browser in an h5i box | h5i</title><meta name="description" content="Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human.">
+<meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
+<meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://h5i.dev/guides/watch-the-browser/"><link rel="icon" type="image/png" href="/_static/logo.png">
+<meta property="og:type" content="article"><meta property="og:site_name" content="h5i">
+<meta property="og:title" content="Watch an agent's browser in an h5i box | h5i"><meta property="og:description" content="Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human.">
+<meta property="og:url" content="https://h5i.dev/guides/watch-the-browser/"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Watch an agent's browser in an h5i box | h5i">
+<meta name="twitter:description" content="Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human."><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Watch the page, then take the controls",
+      "description": "Run a dev server and browser inside an h5i box, watch it through a loopback-only viewer, and safely transfer control from agent to human.",
+      "author": {
+        "@type": "Organization",
+        "name": "h5i-dev"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "h5i"
+      },
+      "datePublished": "2026-08-10",
+      "dateModified": "2026-08-10",
+      "mainEntityOfPage": "https://h5i.dev/guides/watch-the-browser/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Watch the page, then take the controls",
+          "item": "https://h5i.dev/guides/watch-the-browser/"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does h5i publish the box's browser port?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. h5i enters the box's network namespace by process id, connects from inside, and hands the socket back out through a loopback-only authenticated viewer."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why do page references become stale after a handoff?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "A human can change navigation, focus, and DOM state. Invalidating old handles forces the agent to observe the new page before acting, preventing a stale reference from targeting the wrong element."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I watch over SSH?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, with h5i box view --term in a terminal that supports the Kitty graphics protocol. This path does not bind a port."
+          }
+        }
+      ]
+    }
+  ]
+}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/_static/blog.css"><link rel="stylesheet" href="/_static/highlight.css">
+</head>
+<body><nav class="blog-nav">
+  <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
+  <ul class="nav-links">
+    <li><a href="/features/">Features</a></li><li><a href="/guides/">Guides</a></li>
+    <li><a href="/manual/">Manual</a></li><li><a href="/blog/">Blog</a></li>
+    <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
+  </ul>
+</nav><main class="article-wrap"><article class="post">
+<header><div class="post-eyebrow">Guide 04 / Browser &middot; 2026-08-10</div>
+<h1>Watch the page, then take the controls</h1><p class="post-deck">The browser belongs inside the same boundary as the code and dev server. You still need a way to see it—and a handoff that cannot turn a stale page reference into the wrong click.</p>
+<div class="post-meta"><span>9 min read</span><span>Dev server &middot; Viewer &middot; Control lock</span></div></header>
+
+<div class="callout"><strong>The shape.</strong> Frames flow out of the box. Input flows in only for the control-lock holder. The browser's stream port is never published on the host.</div>
+<figure class="feature-figure"><img src="/_static/browser-in-terminal.svg" alt="h5i enters a box network namespace, receives browser frames without binding a port, and renders them through the Kitty graphics protocol"><figcaption>The terminal path binds nothing. h5i holds the socket itself, decodes bounded image frames, and generates every terminal escape byte on the host side.</figcaption></figure>
+<p>The browser is not a cosmetic add-on to a coding session. It executes page code, stores session state, reaches loopback, and turns visual behavior into instructions the agent can act on. Keeping it inside the box is what makes “open localhost” mean the disposable application rather than the developer's machine.</p>
+<h2 id="create">1. Create a browser box</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box create browser-demo --from HEAD --profile browser
+$ h5i box shell browser-demo</code></pre></div></div>
+<p>The <code>browser</code> profile adds a fresh browser profile, the control daemon, and the socket access that daemon requires. Browser state is scoped to this box.</p>
+<h2 id="serve">2. Start the app and browser in the same session</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">inside the box</span></div>
+<div class="terminal-body"><pre><code>box$ npm run dev &
+box$ agent-browser stream enable
+box$ agent-browser open http://localhost:3000
+box$ agent-browser snapshot</code></pre></div></div>
+<p>Keep the shell alive. At the isolated network tiers, the network namespace belongs to that session. The browser reaches the dev server on the box's own loopback.</p>
+<h2 id="view">3. Open a host-side viewer</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">second host terminal</span></div>
+<div class="terminal-body"><pre><code>$ h5i box view browser-demo
+# Or, in a Kitty-graphics terminal:
+$ h5i box view browser-demo --term</code></pre></div></div>
+<p>The browser viewer binds host loopback and uses a per-box token that the box cannot read. The terminal viewer binds nothing: it enters the box's network namespace, receives compressed pixels, and emits its own terminal escapes.</p>
+<p>That last detail closes a less obvious direction. Terminal output is active: escape sequences can manipulate the window, clipboard, and graphics state. The box never writes raw escapes to your terminal. It supplies bounded compressed pixels over the stream; the trusted host viewer creates the Kitty graphics commands.</p>
+<h2 id="take">4. Take control explicitly</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i browser status browser-demo
+$ h5i browser take browser-demo
+# interact in the viewer
+$ h5i browser release browser-demo</code></pre></div></div>
+<p>Taking control invalidates every page handle the agent held. When control returns, the agent must take a new snapshot before it can act. A stale handle is refused instead of being resolved against a page that may have changed under human hands.</p>
+<h2 id="review">5. Review browser evidence with the code</h2>
+<div class="terminal"><div class="terminal-bar"><span class="terminal-path">host</span></div>
+<div class="terminal-body"><pre><code>$ h5i box export browser-demo --out ./browser-review
+$ less ./browser-review/report.md</code></pre></div></div>
+<p>The report can include console errors, uncaught exceptions, failed requests, and viewer sessions. It can show that a human took over; it cannot claim the page was correct merely because someone viewed it.</p>
+<h2 id="status-row">Read the status row before the page</h2>
+<p>In terminal mode, row one belongs to h5i. The page cannot draw over it. It shows the box name, watch or drive mode, current control holder, page origin, egress posture, and error count. The origin is particularly important: a convincing login page and the application under test can render the same pixels.</p>
+<p>Watch mode leaves the terminal's mouse alone so selection and scrollback continue to work. Drive mode enables mouse reporting and sends input to the box while you hold the lock. The distinction is visible because silently stealing terminal input would make observation itself unsafe.</p>
+<h2 id="lock-detail">The lock is enforced at the browser choke point</h2>
+<p>When the human holds control, mutating agent verbs are refused at the daemon's control socket. This is stronger than an instruction telling the agent to wait: the action does not reach the browser. The refusal is recorded.</p>
+<p>The scope is still worth naming. The daemon lives inside the box, and there is no privilege boundary between it and a process determined to bypass the documented path. The lock coordinates a supported agent client; the outer box policy remains the security boundary.</p>
+<h2 id="fresh-profile">Why the profile must be fresh</h2>
+<p>Pointing automation at a daily browser imports every live session, extension permission, saved credential, and browsing artifact. Copying that profile only creates a second credential archive. Headless mode changes rendering, not authority.</p>
+<p>The browser profile creates state inside the box. It has never been logged into your cloud console or email. Its downloads land in the disposable filesystem. Its loopback contains the app under test. Its external network is the box's network policy. Those properties do more security work than a long list of “safe” browser verbs.</p>
+<h2 id="evidence-detail">Collect page evidence independently</h2>
+<p>An agent can report “the page loaded correctly” after looking at a screenshot. h5i separately drains console errors, uncaught exceptions, and failed requests on its own timing. If no browser is available, the record should say unavailable instead of rendering an empty list that looks clean.</p>
+<p>Use browser evidence to ask better questions. A failed request can explain an empty component. A console exception can identify a code path the screenshot hid. A viewer session tells the reviewer when human action may have changed state the agent later observed.</p>
+<h2 id="terminal-limits">Terminal-viewer limits</h2>
+<ul><li>A terminal reports key presses, not reliable key releases, so held-key gestures do not work.</li><li>Clicks land at terminal-cell resolution after scaling, which is less precise than a native browser surface.</li><li>The terminal needs Kitty graphics support. If it lacks that protocol, use the loopback browser viewer.</li><li>A viewer proves what frames and input crossed the bridge, not that the application behaved correctly.</li></ul>
+<h2 id="troubleshoot">If no frames arrive</h2>
+<p>Keep the box session running, confirm <code>agent-browser stream enable</code> succeeded, and check <code>h5i browser status browser-demo</code>. At isolated tiers the viewer finds the namespace through the live session's process, so an exited shell leaves no namespace to enter. If the dev server is missing, inspect it inside the same shell instead of publishing a replacement on the host.</p>
+<h2 id="sources">Reference</h2>
+<ul><li><a href="/manual/#h5i-box-view">Browser and terminal viewer reference</a>.</li><li><a href="/manual/#driving-the-browser-itself">Browser engine and control-lock commands</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser-light">The local browser implementation</a>.</li></ul>
+<h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does h5i publish the box's browser port?</summary><div class="faq-answer">No. h5i enters the box's network namespace by process id, connects from inside, and hands the socket back out through a loopback-only authenticated viewer.</div></details><details class="faq-item"><summary>Why do page references become stale after a handoff?</summary><div class="faq-answer">A human can change navigation, focus, and DOM state. Invalidating old handles forces the agent to observe the new page before acting, preventing a stale reference from targeting the wrong element.</div></details><details class="faq-item"><summary>Can I watch over SSH?</summary><div class="faq-answer">Yes, with h5i box view --term in a terminal that supports the Kitty graphics protocol. This path does not bind a port.</div></details></div>
+<a class="next-up" href="/blog/the-environment-is-the-sandbox/"><span class="label">Read the principle</span><h3>The environment is the sandbox</h3><p>Why the browser, server, shell, and agent must share one boundary.</p></a>
+<div class="post-cta"><h3>Put localhost inside the boundary</h3><p>Let the agent exercise the same application you are watching without publishing its internal ports.</p>
+<div class="hero-actions"><a class="btn btn-primary" href="/manual/#h5i-box-view">Open the viewer reference</a></div></div>
+</article></main><footer class="blog-footer"><div class="blog-footer-inner">
+  <div class="brand">h5i<span class="red"> / high-five</span></div>
+  <nav class="links"><a href="/">Home</a><a href="/guides/">Guides</a><a href="/blog/">Blog</a><a href="/manual/">Manual</a><a href="https://github.com/h5i-dev/h5i">GitHub</a></nav>
+  <div class="legal">Apache 2.0 &middot; Built with Rust</div>
+</div></footer>
+<script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script></body></html>

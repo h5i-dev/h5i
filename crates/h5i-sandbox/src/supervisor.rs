@@ -614,17 +614,27 @@ impl EgressNetns {
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 impl Drop for EgressNetns {
     fn drop(&mut self) {
-        // Stop the uplink, then reap the helper and close every pipe end.
+        // Stop the uplink first, so the helper has nothing left to supervise.
         if let Ok(mut g) = self.slirp.lock() {
             if let Some(mut c) = g.take() {
                 let _ = c.kill();
                 let _ = c.wait();
             }
         }
+        // Close the pid pipe's WRITE ends BEFORE joining. The helper parks in
+        // `read(pid_r, .., 4)` waiting for the child to report its pid, and its
+        // only early exit is a short read — which needs every writer gone. The
+        // child's copy closes when it `_exit`s, but ours did not until after
+        // the join, so any pre_exec failure before the pid write (a userns
+        // ENOSPC from concurrent boxes, a uid_map write failure) deadlocked
+        // teardown permanently.
+        for fd in [self.child_pid_write_fd, self.pid_read_fd] {
+            unsafe { libc::close(fd) };
+        }
         if let Some(h) = self.helper.take() {
             let _ = h.join();
         }
-        for fd in [self.pid_read_fd, self.ready_write_fd, self.child_pid_write_fd, self.child_ready_read_fd] {
+        for fd in [self.ready_write_fd, self.child_ready_read_fd] {
             unsafe { libc::close(fd) };
         }
         let _ = std::fs::remove_dir_all(&self.tmp_dir);
@@ -731,9 +741,11 @@ fn setup_egress(
     let slirp = slirp4netns_path()
         .ok_or_else(|| H5iError::Metadata("`slirp4netns` not found on PATH".into()))?;
 
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = std::env::temp_dir().join(format!("h5i-egress-{}-{seq}", std::process::id()));
-    std::fs::create_dir_all(&tmp).map_err(H5iError::Io)?;
+    // Unguessable and 0700: the ruleset written here is handed to `nft -f` by a
+    // child holding CAP_NET_ADMIN, so a pre-planted directory or symlink at a
+    // predictable path would let another local user choose the box's egress
+    // policy outright.
+    let tmp = crate::sandbox::private_scratch_dir("h5i-egress")?;
     // No resolver port: DNS is pinned via /etc/hosts, so port 53 stays closed.
     let rules = build_nft_ruleset(&dests, None);
     let rules_path = tmp.join("egress.nft");
@@ -834,6 +846,19 @@ fn run_supervised(
     use std::io::Read;
     use std::process::Stdio;
 
+    // Check the notify ABI *before* committing to this tier. The module doc
+    // promises the `seccomp_notif` structs are validated against
+    // SECCOMP_GET_NOTIF_SIZES and refused on mismatch, but nothing called the
+    // validator on any production path — so on a kernel with a different layout
+    // the listener installed fine and then `ioctl(NOTIF_RECV)`, whose request
+    // number embeds our struct size, failed with an unexpected errno. The serve
+    // loop broke on the first notification and the box's first socket() blocked
+    // unanswered: a hang where a refusal was documented.
+    //
+    // Here rather than at `install_listener`, which runs in the forked child
+    // and must not allocate an error.
+    crate::seccomp_notify::validate_notif_sizes()?;
+
     // A CLOEXEC socketpair for the SCM_RIGHTS listener handoff: the child sends
     // its seccomp listener fd over `sv[1]`; we receive it on `sv[0]`. CLOEXEC so
     // neither end leaks into the exec'd (untrusted) program.
@@ -856,7 +881,7 @@ fn run_supervised(
     // and the real credential is scrubbed from the box's per-env HOME copy, so
     // the token is absent from the box entirely.
     let auth = if !policy.profile.net_egress.is_empty() {
-        crate::auth_proxy::engage(&policy.profile.name, true)
+        crate::auth_proxy::engage(&policy.profile.name, true)?
     } else {
         None
     };
@@ -1093,7 +1118,7 @@ fn run_supervised(
     // Credential-injecting auth proxy (option 2). `tier_ok` is true because the
     // box shares the host's loopback and the profile will open exactly this port.
     let auth = if has_egress {
-        crate::auth_proxy::engage_at(&policy.profile.name, true, LOOPBACK_HOST)
+        crate::auth_proxy::engage_at(&policy.profile.name, true, LOOPBACK_HOST)?
     } else {
         None
     };
@@ -1114,7 +1139,13 @@ fn run_supervised(
     // narrows the nftables ruleset to the auth proxy alone in that case).
     let mut env = effective_env;
     let (_egress_proxy, egress_port) = if has_egress && auth_port.is_none() {
-        let mut allow = crate::container::AllowList::parse(&policy.profile.net_egress);
+        // Through `effective_egress`, like every other tier: parsing the profile
+        // list directly meant `h5i box allow` extras applied on container and
+        // microvm but silently did nothing here.
+        let mut allow = crate::container::AllowList::parse(&crate::container::effective_egress(
+            &policy.profile.net_egress,
+            &policy.user_egress_allow,
+        ))?;
         // Pin now, so a later DNS answer cannot move the allowlist under us.
         allow.pin_dns();
         // On the pinned port when the box has one: a `browser` box's Chrome

@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+"""Serve a Web Platform Tests checkout, with the vendor reporter hook filled in.
+
+WPT ships `resources/testharnessreport.js` as an empty seam for exactly this:
+a vendor drops in code that collects results when a file finishes. We serve our
+own rather than writing into the checkout, so the checkout stays a pristine
+`git status` and can be shared with any other runner.
+
+The results come back out through the console, because that is a channel the
+engine already has and `open --json` already reports. Nothing new is added to
+the engine to be measured, which matters: an instrument that requires the
+subject to grow a port for it is measuring something other than the subject.
+"""
+
+import http.server
+import os
+import posixpath
+import re
+import socketserver
+import sys
+import threading
+import uuid as uuid_module
+
+WPT_ROOT = os.environ.get("WPT_ROOT", os.path.expanduser("~/Dev/wpt"))
+
+# The marker is deliberately long and unlikely: console output is page-
+# controlled, and a page that printed our marker could otherwise report its own
+# score. Tests are trusted here, but the runner should not be forgeable by
+# accident either.
+MARKER = "H5I-WPT-RESULT-6a7f2c1b"
+
+REPORTER = (
+    """
+// Do not build the results table.
+//
+// testharness renders one DOM row per subtest into `#log` when it finishes, and
+// a file like `html/dom/reflection-tabular.html` has forty thousand of them.
+// That rendering — not the tests — was most of the forty seconds those files
+// took, and it is pure overhead here because the results come back through the
+// completion callback below rather than by being read off the page.
+//
+// This is what the official WPT runner does too: `output: false` is a
+// documented harness setting, not a trick. It changes how results are
+// *reported*, never which tests run or what they conclude.
+setup({ output: false });
+
+add_completion_callback(function (tests, status) {
+  var out = {
+    status: status.status,
+    message: status.message,
+    tests: []
+  };
+  for (var i = 0; i < tests.length; i++) {
+    out.tests.push({
+      name: tests[i].name,
+      status: tests[i].status,
+      message: tests[i].message
+    });
+  }
+  console.log("%s" + JSON.stringify(out));
+});
+"""
+    % MARKER
+)
+
+
+# ── wptserve substitution ───────────────────────────────────────────────────
+#
+# wptserve rewrites `{{...}}` placeholders in any file whose name contains
+# `.sub.`, and in anything served through `?pipe=sub`. 2,424 files use it, and
+# without it their URLs come out as literal `http://{{domains[www1]}}:NaN/...` —
+# which is how a page ends up asking blitz to load an image from a host that
+# cannot be parsed.
+#
+# **The domains get distinct loopback addresses on purpose.** 127.0.0.0/8 is all
+# loopback, so 127.0.0.2 is reachable without configuration and is a *different
+# origin* from 127.0.0.1 — same-origin policy keys on host, not on whether the
+# host is local. Collapsing every domain to one address would have made every
+# cross-origin test silently same-origin, which is a worse answer than failing:
+# the test would pass while testing nothing.
+#
+# What is still missing is named honestly rather than faked: there is no TLS, so
+# `{{ports[https][0]}}` resolves to the HTTP port and a test that checks
+# `location.protocol` will fail; and the `.py` handlers are not executed.
+DOMAINS = {
+    "": "127.0.0.1",
+    "www": "127.0.0.2",
+    "www1": "127.0.0.3",
+    "www2": "127.0.0.4",
+    "xn--n8j6ds53lwwkrqhv28a": "127.0.0.5",
+    "xn--lve-6lad": "127.0.0.6",
+}
+# The "alt" domain set, which tests use when they need an origin that is
+# definitely not this one.
+ALT_DOMAINS = {key: f"127.0.1.{index + 1}" for index, key in enumerate(DOMAINS)}
+
+SUBSTITUTION = re.compile(r"\{\{([^}]+)\}\}")
+
+
+def guess_type(path):
+    """Content type from the extension, ignoring the `.sub.` infix."""
+    if path.endswith((".html", ".htm", ".xhtml", ".xht")):
+        return "text/html; charset=utf-8"
+    if path.endswith(".js"):
+        return "text/javascript; charset=utf-8"
+    if path.endswith(".css"):
+        return "text/css; charset=utf-8"
+    if path.endswith(".json"):
+        return "application/json"
+    return "text/plain; charset=utf-8"
+
+
+def substitute(text, port, query=""):
+    """Apply wptserve's `{{...}}` substitutions."""
+    from urllib.parse import parse_qs
+
+    params = parse_qs(query)
+
+    def replace(match):
+        token = match.group(1).strip()
+        if token in ("uuid()", "uuid"):
+            return str(uuid_module.uuid4())
+        if token == "host":
+            return DOMAINS[""]
+        indexed = re.match(r"([a-z_]+)\[([^\]]*)\](?:\[([^\]]*)\])?", token)
+        if indexed:
+            name, first, second = indexed.group(1), indexed.group(2), indexed.group(3)
+            if name == "domains":
+                return DOMAINS.get(first, DOMAINS[""])
+            if name == "hosts":
+                table = ALT_DOMAINS if first == "alt" else DOMAINS
+                return table.get(second or "", table[""])
+            if name == "ports":
+                # One server, one port. Tests that need a *second* port to make a
+                # second origin get a different loopback address instead.
+                return str(port)
+            if name == "location":
+                return {
+                    "host": f"{DOMAINS['']}:{port}", "hostname": DOMAINS[""],
+                    "port": str(port), "scheme": "http", "protocol": "http:",
+                }.get(first, "")
+            if name == "GET":
+                values = params.get(first)
+                return values[0] if values else ""
+        # Anything unrecognised is left as it stands rather than blanked: a
+        # visible `{{whatever}}` in the output says which substitution is
+        # missing, where an empty string would just be a broken URL.
+        return match.group(0)
+
+    return SUBSTITUTION.sub(replace, text)
+
+
+def parse_pipes(query):
+    """The `?pipe=` directives this server understands."""
+    from urllib.parse import parse_qs
+
+    directives = []
+    for chunk in parse_qs(query).get("pipe", []):
+        for piece in chunk.split("|"):
+            call = re.match(r"([a-z_]+)(?:\((.*)\))?$", piece.strip())
+            if call:
+                directives.append((call.group(1), call.group(2) or ""))
+    return directives
+
+
+# ── generated endpoints ─────────────────────────────────────────────────────
+#
+# WPT keeps a large share of its tests as bare JavaScript and builds the HTML
+# around them at serve time: `x.any.js` is served as `x.any.html`,
+# `x.any.worker.html` and more, and none of those files exist on disk. Skipping
+# them left 3,083 files — and the several thousand subtests inside them —
+# outside every measurement this harness produced.
+#
+# Only the *window* wrapper is built here. The worker variants need Workers,
+# which this engine does not have, and inventing an HTML page that pretends to
+# be a worker scope would produce failures that blame the engine for the
+# harness's fiction.
+
+META = re.compile(r"^//\s*META:\s*([a-z]+)=(.*)$")
+
+
+def directives(source):
+    """The `// META:` lines at the top of a WPT script, as a list of pairs.
+
+    They stop at the first line that is not a META comment, which is what
+    wptserve does — a `// META:` further down is a comment, not a directive.
+    """
+    found = []
+    for line in source.splitlines():
+        match = META.match(line.strip())
+        if not match:
+            if line.strip().startswith("//") or not line.strip():
+                continue
+            break
+        found.append((match.group(1), match.group(2).strip()))
+    return found
+
+
+def runs_in_window(source):
+    """Whether this test has a window variant at all.
+
+    `// META: global=worker` means exactly that, and building a window page for
+    it would score a test the author never wrote.
+    """
+    for key, value in directives(source):
+        if key == "global":
+            scopes = {scope.strip() for scope in value.split(",")}
+            return bool(scopes & {"window", "!dedicatedworker", "!worker"}) or not scopes
+    return True
+
+
+def wrapper_for(js_path: str, source: str) -> str:
+    """The HTML wptserve would have generated for this script."""
+    title = ""
+    scripts = []
+    for key, value in directives(source):
+        if key == "title":
+            title = value
+        elif key == "script":
+            scripts.append(value)
+
+    base = posixpath.dirname(js_path)
+    tags = []
+    for script in scripts:
+        src = script if script.startswith("/") else posixpath.normpath(posixpath.join(base, script))
+        tags.append(f'<script src="{src}"></script>')
+
+    return (
+        "<!doctype html>\n<meta charset=utf-8>\n"
+        f"<title>{title}</title>\n"
+        '<script src="/resources/testharness.js"></script>\n'
+        '<script src="/resources/testharnessreport.js"></script>\n'
+        + "\n".join(tags)
+        + '\n<div id="log"></div>\n'
+        f'<script src="{js_path}"></script>\n'
+    )
+
+
+def generated_source(root: str, path: str):
+    """The `.js` behind a generated `.html` endpoint, or None if there is none."""
+    for suffix in (".any.html", ".window.html"):
+        if not path.endswith(suffix):
+            continue
+        js_path = path[: -len(".html")] + ".js"
+        on_disk = os.path.join(root, js_path.lstrip("/"))
+        if not os.path.isfile(on_disk):
+            return None
+        try:
+            with open(on_disk, encoding="utf8", errors="replace") as handle:
+                source = handle.read()
+        except OSError:
+            return None
+        if not runs_in_window(source):
+            return None
+        return js_path, source
+    return None
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, directory=WPT_ROOT, **kw)
+
+    def do_GET(self):
+        path = self.path.split("?")[0].split("#")[0]
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        pipes = parse_pipes(query)
+
+        # A file whose name carries `.sub.`, or anything asked for through
+        # `?pipe=sub`, is served with its placeholders resolved. `header()` and
+        # `status()` are the other two directives that appear often enough to
+        # matter; `trickle` and `gzip` are about *how* bytes arrive rather than
+        # what they are, and are ignored rather than approximated.
+        wants_sub = ".sub." in path or any(name == "sub" for name, _ in pipes)
+        if wants_sub or pipes:
+            on_disk = os.path.join(WPT_ROOT, path.lstrip("/"))
+            if os.path.isfile(on_disk):
+                try:
+                    with open(on_disk, encoding="utf8", errors="replace") as handle:
+                        text = handle.read()
+                except OSError:
+                    text = None
+                if text is not None:
+                    if wants_sub:
+                        text = substitute(text, self.server.server_address[1], query)
+                    body = text.encode()
+                    status = 200
+                    extra = []
+                    for name, argument in pipes:
+                        if name == "status":
+                            try:
+                                status = int(argument.strip())
+                            except ValueError:
+                                pass
+                        elif name == "header":
+                            parts = argument.split(",", 1)
+                            if len(parts) == 2:
+                                extra.append((parts[0].strip(), parts[1].strip()))
+                    self.send_response(status)
+                    self.send_header("Content-Type", guess_type(path))
+                    self.send_header("Content-Length", str(len(body)))
+                    for name, value in extra:
+                        self.send_header(name, value)
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
+        built = generated_source(WPT_ROOT, path)
+        if built is not None:
+            js_path, source = built
+            body = wrapper_for(js_path, source).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # `resources/WebIDLParser.js` is a build artifact, not a checked-in
+        # file: `webidl2/build.sh` copies the bundle there. A checkout that
+        # never ran it 404s, and the 211 `idlharness` endpoints across WPT then
+        # hang on a script that will never arrive and report a timeout that says
+        # nothing about this engine. Served from the bundle that is present,
+        # which is exactly what the build would have produced.
+        if path == "/resources/WebIDLParser.js":
+            bundle = os.path.join(WPT_ROOT, "resources", "webidl2", "lib", "webidl2.js")
+            if os.path.isfile(bundle):
+                with open(bundle, "rb") as handle:
+                    body = handle.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/javascript")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+        if path == "/resources/testharnessreport.js":
+            body = REPORTER.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        return super().do_GET()
+
+    def log_message(self, *a):
+        pass
+
+
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def start(port=0):
+    """Start the server on a background thread. Returns the bound port.
+
+    Bound to every address rather than to 127.0.0.1 alone, because the
+    substitution above hands out 127.0.0.2 and friends as distinct origins and
+    they have to actually answer.
+    """
+    httpd = Server(("0.0.0.0", port), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, httpd.server_address[1]
+
+
+if __name__ == "__main__":
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    httpd, port = start(port)
+    print(f"serving {WPT_ROOT} on http://127.0.0.1:{port} "
+          f"(and 127.0.0.2-6 as separate origins)", flush=True)
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        pass

@@ -276,6 +276,158 @@ struct AllowEntry {
     wildcard: bool,
     /// Restrict to a single port when present; `None` = any port.
     port: Option<u16>,
+    /// Addresses this exact host resolved to at startup. Empty for a wildcard
+    /// (unenumerable) or when startup resolution failed.
+    pinned: Vec<IpAddr>,
+}
+
+/// Parse one `net.egress` entry into `(host, wildcard, port)`, fail-closed.
+///
+/// This is the single definition of the grammar. It used to exist twice — here
+/// and in `microvm::egress_rule_tokens` — and the copies drifted: the microvm
+/// side refused an out-of-range port, a single-label wildcard, an IPv6 literal
+/// and the reserved `,`/`@`, while this side silently widened or mangled all
+/// four. `example.com:99999` in particular became an *any-port* rule, the exact
+/// opposite of what the entry asked for.
+///
+/// `Ok(None)` is a blank entry (skip it); anything malformed is an error.
+pub fn parse_egress_rule(raw: &str) -> Result<Option<(String, bool, Option<u16>)>, H5iError> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    if raw.contains(',') || raw.contains('@') {
+        return Err(H5iError::Metadata(format!(
+            "net.egress entry '{raw}' contains ',' or '@', which the rule grammar reserves — \
+             refusing rather than emitting a rule that means something else (fail-closed). \
+             Split it into separate entries."
+        )));
+    }
+    // An IPv6 literal is full of colons and the port split cannot tell one from
+    // a `host:port`: `2001:db8::1` came out as host `2001:db8:` port 1. There is
+    // no unambiguous spelling here, so refuse rather than translate it wrong.
+    if raw.matches(':').count() > 1 {
+        return Err(H5iError::Metadata(format!(
+            "net.egress entry '{raw}' looks like an IPv6 literal (more than one ':'), which the \
+             rule grammar cannot carry unambiguously — refusing rather than emitting a rule that \
+             means something else (fail-closed). Use a hostname, or an IPv4 address or CIDR."
+        )));
+    }
+    let (host_part, port) = match raw.rsplit_once(':') {
+        // Only a trailing all-digit segment is a port.
+        Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
+            let port = p.parse::<u16>().map_err(|_| {
+                H5iError::Metadata(format!(
+                    "net.egress entry '{raw}' has a port outside 1-65535 — refusing rather than \
+                     falling back to an any-port rule (fail-closed)."
+                ))
+            })?;
+            (h, Some(port))
+        }
+        _ => (raw, None),
+    };
+    let lower = host_part.to_ascii_lowercase();
+    let (host, wildcard) = match lower.strip_prefix("*.").or_else(|| lower.strip_prefix('.')) {
+        Some(rest) => (rest.to_string(), true),
+        None => (lower, false),
+    };
+    if host.is_empty() {
+        return Ok(None);
+    }
+    if wildcard && host.split('.').filter(|l| !l.is_empty()).count() < 2 {
+        return Err(H5iError::Metadata(format!(
+            "net.egress wildcard '{raw}' covers a single label — a suffix rule must name at \
+             least two (e.g. '*.example.com', not '*.com'). Refusing (fail-closed)."
+        )));
+    }
+    Ok(Some((host, wildcard, port)))
+}
+
+impl AllowEntry {
+    /// Does this entry open `port`? `None` means any.
+    fn port_ok(&self, port: u16) -> bool {
+        self.port.is_none_or(|p| p == port)
+    }
+
+    /// Does this entry cover `host:port`? `host` must already be lower-cased
+    /// and free of a trailing dot.
+    fn matches(&self, host: &str, port: u16) -> bool {
+        self.port_ok(port)
+            && if self.wildcard {
+                host == self.host
+                    || host
+                        .strip_suffix(self.host.as_str())
+                        .is_some_and(|p| p.ends_with('.'))
+            } else {
+                host == self.host
+            }
+    }
+}
+
+/// Is this address one the box has no business reaching through the proxy?
+///
+/// Used only where a destination could not be pinned. The proxy runs on the
+/// host with full host network access, so an unpinned name that resolves to
+/// loopback, a private range, or the cloud metadata link-local address turns
+/// the egress boundary into an SSRF gadget. `IpAddr::is_global` is still
+/// unstable, so the ranges are spelled out.
+fn is_internal(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => {
+            let [o0, o1, ..] = a.octets();
+            a.is_loopback()
+                || a.is_private()
+                || a.is_link_local()
+                || a.is_broadcast()
+                || a.is_documentation()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || o0 == 0
+                || (o0 == 100 && (64..128).contains(&o1)) // CGNAT 100.64/10
+                || (o0 == 198 && (o1 & 0xfe) == 18) // benchmarking 198.18/15
+                || o0 >= 240 // reserved 240/4
+        }
+        IpAddr::V6(a) => {
+            if let Some(v4) = a.to_ipv4_mapped() {
+                return is_internal(&IpAddr::V4(v4));
+            }
+            let s0 = a.segments()[0];
+            a.is_loopback()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || (s0 & 0xfe00) == 0xfc00 // unique-local fc00::/7
+                || (s0 & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+    }
+}
+
+/// The agent hook-config files that every image-backed tier mounts read-only
+/// over their place in `$WORK`, so the in-box agent cannot rewrite the file
+/// that defines its own observation hook.
+pub const AGENT_CONFIG_RELS: [&str; 2] = [".claude/settings.json", ".codex/config.toml"];
+
+/// Resolve one agent config file into a mount source, refusing anything that is
+/// not a regular file that really lives inside `$WORK`.
+///
+/// `$WORK` holds the branch under review, so this path and every directory
+/// above it are supplied by the repository. `Path::exists()` follows symlinks
+/// and the *unresolved* path is what would reach the mount spec, which the
+/// kernel then resolves host-side: a branch shipping `.claude/settings.json`
+/// as a symlink to `~/.ssh` would have h5i mount that directory into the box.
+/// The exposure is created entirely by the mount — left alone, the link dangles
+/// inside the box's mount namespace because the target is not in it.
+///
+/// `symlink_metadata` refuses a symlinked final component; canonicalizing and
+/// re-checking the prefix refuses a symlinked *ancestor*, which is the same
+/// trick one directory up.
+pub fn agent_config_mount_source(work: &Path, rel: &str) -> Option<PathBuf> {
+    let source = work.join(rel);
+    if !std::fs::symlink_metadata(&source).is_ok_and(|md| md.file_type().is_file()) {
+        return None;
+    }
+    let canon_work = work.canonicalize().ok()?;
+    let canon = source.canonicalize().ok()?;
+    canon.starts_with(&canon_work).then_some(canon)
 }
 
 /// Combine the digested profile allowlist with the host-side user extras
@@ -302,102 +454,133 @@ pub fn effective_egress(profile_egress: &[String], user_allow: &[String]) -> Vec
     out
 }
 
-/// A resolved egress allowlist: parsed host rules plus the set of IPs the
-/// allowed domains pinned to at startup (so a client connecting by a pinned IP
-/// is permitted, and the proxy is DNS-rebinding resistant).
+/// A resolved egress allowlist: parsed host rules, each carrying the addresses
+/// its host pinned to at startup.
+///
+/// The pin is what makes the proxy DNS-rebinding resistant, and it only works
+/// if the proxy *dials* the pinned address. Matching a name and then calling
+/// `TcpStream::connect((host, port))` re-resolves, which is how an allowlisted
+/// domain under attacker DNS control used to reach host loopback or a metadata
+/// endpoint through a proxy that has full host network access. See
+/// [`AllowList::dial_addrs`].
 #[derive(Debug, Clone, Default)]
 pub struct AllowList {
     entries: Vec<AllowEntry>,
-    pinned_ips: HashSet<IpAddr>,
 }
 
 impl AllowList {
-    /// Parse `net.egress` entries (no DNS yet — pure, for tests).
-    pub fn parse(egress: &[String]) -> AllowList {
+    /// Parse `net.egress` entries through [`parse_egress_rule`] (no DNS yet —
+    /// pure, for tests). Fail-closed: a malformed entry is an error, never a
+    /// rule that means something wider than what was written.
+    pub fn parse(egress: &[String]) -> Result<AllowList, H5iError> {
         let mut entries = Vec::new();
         for raw in egress {
-            let raw = raw.trim();
-            if raw.is_empty() {
-                continue;
-            }
-            let (host_part, port) = match raw.rsplit_once(':') {
-                // Only treat the suffix as a port if it's numeric (IPv6 has colons).
-                Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty() => {
-                    (h, p.parse::<u16>().ok())
-                }
-                _ => (raw, None),
-            };
-            let lower = host_part.to_ascii_lowercase();
-            let (host, wildcard) = if let Some(s) = lower.strip_prefix("*.") {
-                (s.to_string(), true)
-            } else if let Some(s) = lower.strip_prefix('.') {
-                (s.to_string(), true)
-            } else {
-                (lower, false)
-            };
-            if !host.is_empty() {
+            if let Some((host, wildcard, port)) = parse_egress_rule(raw)? {
                 entries.push(AllowEntry {
                     host,
                     wildcard,
                     port,
+                    pinned: Vec::new(),
                 });
             }
         }
-        AllowList {
-            entries,
-            pinned_ips: HashSet::new(),
-        }
+        Ok(AllowList { entries })
     }
 
-    /// Resolve every allowed host to IPs and pin them. Best-effort: a host that
-    /// fails to resolve simply contributes no pinned IPs (it can still match by
-    /// name at CONNECT time). Returns the count pinned.
+    /// Resolve every exact allowed host and pin the answers onto its entry.
+    /// Best-effort: a host that fails to resolve keeps an empty pin and falls
+    /// back to a guarded resolve at CONNECT time (see [`Self::dial_addrs`]).
+    /// Returns the number of distinct addresses pinned.
     pub fn pin_dns(&mut self) -> usize {
-        let mut pinned = HashSet::new();
-        for e in &self.entries {
+        let mut distinct = HashSet::new();
+        for e in &mut self.entries {
             if e.wildcard {
                 continue; // can't enumerate a wildcard's IPs
             }
             let port = e.port.unwrap_or(443);
             if let Ok(addrs) = (e.host.as_str(), port).to_socket_addrs() {
-                for a in addrs {
-                    pinned.insert(a.ip());
-                }
+                e.pinned = addrs.map(|a| a.ip()).collect();
+                distinct.extend(e.pinned.iter().copied());
             }
         }
-        let n = pinned.len();
-        self.pinned_ips = pinned;
-        n
+        distinct.len()
+    }
+
+    /// The addresses the proxy may dial for an already-[`allowed`](Self::allows)
+    /// request. Empty means refuse.
+    ///
+    /// Pinned addresses win, so the name the allowlist matched and the address
+    /// the socket reaches are decided by the *same* DNS answer. Only a wildcard
+    /// entry (or a host that would not resolve at startup) falls through to a
+    /// live lookup, and that answer is filtered to globally routable addresses:
+    /// without a pin there is nothing else standing between a rebound record
+    /// and the host's own loopback.
+    pub fn dial_addrs(&self, host: &str, port: u16) -> Vec<std::net::SocketAddr> {
+        let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        if let Ok(ip) = h.parse::<IpAddr>() {
+            return vec![std::net::SocketAddr::new(ip, port)];
+        }
+        let mut out: Vec<std::net::SocketAddr> = Vec::new();
+        for e in self.entries.iter().filter(|e| e.matches(&h, port)) {
+            out.extend(e.pinned.iter().map(|ip| std::net::SocketAddr::new(*ip, port)));
+        }
+        if !out.is_empty() {
+            out.sort();
+            out.dedup();
+            return out;
+        }
+        (h.as_str(), port)
+            .to_socket_addrs()
+            .map(|it| it.filter(|a| !is_internal(&a.ip())).collect())
+            .unwrap_or_default()
     }
 
     /// Decide whether a CONNECT/request to `host:port` is allowed (fail-closed:
     /// the empty allowlist permits nothing).
     pub fn allows(&self, host: &str, port: u16) -> bool {
         let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
-        // Direct connection to a pinned IP of an allowed host.
+        // Direct connection by address: permitted only when some entry pinned
+        // that exact IP *and* opened this port. Ignoring the port here let
+        // `CONNECT <pinned-ip>:22` through on an allowlist of `host:443`.
         if let Ok(ip) = host.parse::<IpAddr>() {
-            if self.pinned_ips.contains(&ip) {
-                return true;
-            }
+            return self.entries.iter().any(|e| {
+                e.port_ok(port)
+                    // Either an address the allowlist pinned for one of its
+                    // names, or an address the operator listed literally.
+                    && (e.pinned.contains(&ip) || (!e.wildcard && e.host == host))
+            });
         }
         for e in &self.entries {
-            if let Some(p) = e.port {
-                if p != port {
-                    continue;
-                }
-            }
-            let name_ok = if e.wildcard {
-                host == e.host || host.ends_with(&format!(".{}", e.host))
-            } else {
-                host == e.host
-            };
-            if name_ok {
+            if e.matches(&host, port) {
                 return true;
             }
         }
         false
     }
 }
+
+/// Resource caps this tier cannot apply, named so a run can say so instead of
+/// silently dropping them. Mirrors the honesty machinery Seatbelt already uses
+/// for the same situation.
+pub fn unmapped_resources(profile: &Profile) -> Vec<String> {
+    let mut out = Vec::new();
+    if profile.cpu_secs.is_some() {
+        out.push(
+            "resources.cpu (a CPU-seconds budget; podman caps CPU rate, not total)".to_string(),
+        );
+    }
+    out
+}
+
+/// Most bytes the tee shim records per stream, per command. The box decides how
+/// much it writes, so this is a disk bound on the host, not a display limit —
+/// the command's own output still passes through in full.
+const SPOOL_STREAM_CAP: u64 = 4 * 1024 * 1024;
+
+/// Most connections the egress proxy will serve at once. Generous for real
+/// tooling (parallel `cargo`/`npm` fetches) and far below what it takes to
+/// exhaust host threads.
+const MAX_PROXY_CONNECTIONS: usize = 64;
 
 /// A running egress proxy: a localhost TCP listener gating CONNECT/HTTP by the
 /// allowlist. Dropping the handle shuts the accept loop down.
@@ -475,20 +658,36 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
     let tally = Arc::new(Mutex::new(EgressTally::default()));
     let tally_thread = tally.clone();
 
+    // Bounded concurrency. One unbounded thread per accepted connection let a
+    // box open thousands of proxy connections and exhaust host threads; the
+    // proxy is the box's only route out, so the box is also the only thing that
+    // benefits from unbounded parallelism here.
+    let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let join = std::thread::spawn(move || {
         while !stop_thread.load(Ordering::SeqCst) {
             match listener.accept() {
-                Ok((client, _)) => {
+                Ok((mut client, _)) => {
                     if stop_thread.load(Ordering::SeqCst) {
                         break;
+                    }
+                    if live.load(Ordering::SeqCst) >= MAX_PROXY_CONNECTIONS {
+                        // Refuse rather than queue: a queued connection still
+                        // holds an fd, and the client sees a clear 503.
+                        let _ = client.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+                        );
+                        continue;
                     }
                     // The accepted socket may arrive non-blocking (see
                     // `handle_proxy_client`, which is where that is corrected —
                     // at the point the blocking reads are actually made).
                     let allow = allow.clone();
                     let tally = tally_thread.clone();
+                    let live_slot = live.clone();
+                    live_slot.fetch_add(1, Ordering::SeqCst);
                     std::thread::spawn(move || {
                         let _ = handle_proxy_client(client, &allow, &tally, HEAD_READ_TIMEOUT);
+                        live_slot.fetch_sub(1, Ordering::SeqCst);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -568,6 +767,27 @@ fn parse_target(head: &[u8]) -> Option<(String, u16, bool)> {
 /// box that points its Chrome elsewhere reaches a port it is denied anyway.
 pub const EGRESS_PROXY_VAR: &str = "H5I_EGRESS_PROXY";
 
+/// Environment variables that carry the egress proxy wiring. A profile's
+/// `env.pass` must never re-export one of these: podman applies `--env` in
+/// order, so a later name-only pass would replace h5i's value with the host's
+/// and route the box around the allowlist entirely.
+pub const PROXY_WIRING_VARS: [&str; 8] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+
+/// Is `key` part of the proxy wiring (case-insensitively)?
+pub fn is_proxy_wiring_var(key: &str) -> bool {
+    key.eq_ignore_ascii_case(EGRESS_PROXY_VAR)
+        || PROXY_WIRING_VARS.iter().any(|v| key.eq_ignore_ascii_case(v))
+}
+
 /// How long a connection may take to finish sending its request head. It bounds
 /// only the head: a client that connects and says nothing must not hold a thread,
 /// but once the tunnel is up the relay has no clock of its own (see the reset
@@ -608,9 +828,13 @@ fn handle_proxy_client(
         let _ = client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
         return Ok(());
     }
-    let mut upstream = match TcpStream::connect((host.as_str(), port)) {
-        Ok(s) => s,
-        Err(_) => {
+    // Dial the address the allowlist pinned, not a fresh lookup of the name it
+    // matched: re-resolving here is what let a rebound record send the proxy —
+    // a host process with full host network access — at loopback instead.
+    let addrs = allow.dial_addrs(&host, port);
+    let mut upstream = match addrs.iter().find_map(|a| TcpStream::connect(a).ok()) {
+        Some(s) => s,
+        None => {
             let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n");
             return Ok(());
         }
@@ -781,19 +1005,35 @@ while [ -e "$d/cmd-$$-$n.cmd" ] && [ "$n" -lt 1000 ]; do n=$((n+1)); done
 b="$d/cmd-$$-$n"
 {{ printf '%s' "$cmd" > "$b.cmd"; }} 2>/dev/null || exec "$real" "$@"
 mkfifo "$b.po" "$b.pe" 2>/dev/null || {{ rm -f "$b.cmd"; exec "$real" "$@"; }}
-tee "$b.out" < "$b.po" &
+# Cap what lands in the host-side spool. The box chooses how much it writes
+# here, so an uncapped `tee` let `yes > /dev/stdout` fill the operator's disk —
+# the ingest side caps what it READS, which is a different thing.
+#
+# POSIX sh, so no process substitution: tee's file target is a second fifo whose
+# reader keeps only the first $cap bytes and then drains the rest to /dev/null.
+# Draining matters — without it tee would take EPIPE once the cap was hit and
+# the command's passthrough output would stop with it.
+cap={spool_cap}
+mkfifo "$b.oc" "$b.ec" 2>/dev/null || {{ rm -f "$b.cmd" "$b.po" "$b.pe"; exec "$real" "$@"; }}
+{{ head -c "$cap" > "$b.out"; cat > /dev/null; }} < "$b.oc" &
+oc=$!
+{{ head -c "$cap" > "$b.err"; cat > /dev/null; }} < "$b.ec" &
+ec=$!
+tee "$b.oc" < "$b.po" &
 po=$!
-tee "$b.err" < "$b.pe" >&2 &
+tee "$b.ec" < "$b.pe" >&2 &
 pe=$!
 "$real" "$@" > "$b.po" 2> "$b.pe"
 rc=$?
 wait "$po" "$pe" 2>/dev/null
-rm -f "$b.po" "$b.pe"
+wait "$oc" "$ec" 2>/dev/null
+rm -f "$b.po" "$b.pe" "$b.oc" "$b.ec"
 printf '%s' "$rc" > "$b.exit" 2>/dev/null
 exit "$rc"
 "#,
         orig = orig_prefix,
         spool = spool_dir,
+        spool_cap = SPOOL_STREAM_CAP,
     )
 }
 
@@ -971,9 +1211,11 @@ pub fn build_run_argv(
             b.target.display()
         ));
     }
-    for rel in [".claude/settings.json", ".codex/config.toml"] {
-        let source = work.join(rel);
-        if source.exists() && !source.display().to_string().contains(',') {
+    for rel in AGENT_CONFIG_RELS {
+        let Some(source) = agent_config_mount_source(work, rel) else {
+            continue;
+        };
+        if !source.display().to_string().contains(',') {
             a.push("--mount".into());
             a.push(format!(
                 "type=bind,source={},target=/work/{rel},ro",
@@ -1093,6 +1335,15 @@ pub fn build_run_argv(
         a.push("--pids-limit".into());
         a.push(n.to_string());
     }
+    // `resources.cpu` as a CPU-seconds budget has no podman equivalent (podman
+    // caps *rate*, not total), and `--ulimit fsize` is the file-size cap. Map
+    // what maps; the caller reports the rest through `unmapped_resources`
+    // rather than letting a profile written to bound a runaway build quietly
+    // get no bound at all.
+    if let Some(bytes) = profile.fsize_bytes {
+        a.push("--ulimit".into());
+        a.push(format!("fsize={bytes}"));
+    }
 
     // Network.
     match net {
@@ -1103,6 +1354,23 @@ pub fn build_run_argv(
             // Default rootless network (slirp4netns/pasta) gives NAT'd egress.
         }
         NetPlan::Proxy(port) => {
+            // HONESTY: `allow_host_loopback=true` is what lets the box reach the
+            // host-side proxy at the gateway address — and it exposes every
+            // *other* host loopback service there too. Choosing the allowlist
+            // plan therefore widens the box's reach relative to plain rootless
+            // NAT, which is the opposite of how an allowlist reads.
+            //
+            // Two consequences worth naming: the box can reach `h5i ui`'s
+            // console API and any local database on 127.0.0.1, and it can reach
+            // another concurrent box's egress proxy, which has no client
+            // authentication — borrowing that box's wider allowlist.
+            //
+            // Not fixable at this layer: the proxy has to be reachable, and
+            // slirp4netns exposes loopback all-or-nothing. Narrowing it needs
+            // the proxy inside the box's network namespace instead. The
+            // supervised tiers already avoid it (nftables narrows the jail to
+            // the proxy port; Seatbelt refuses host loopback wholesale), and
+            // `announce_egress` states the caveat at session start.
             if let Some(mode) = HOST_ROUTE.network_arg {
                 a.push(format!("--network={mode}"));
             }
@@ -1133,7 +1401,16 @@ pub fn build_run_argv(
     // value never lands in the container's argv — which is world-readable on a
     // default host via `/proc/<podman-pid>/cmdline`. (`--env KEY=VALUE` would
     // leak it there.)
+    let proxied = matches!(net, NetPlan::Proxy(_));
     for key in &profile.env_pass {
+        // Podman applies `--env` in order, and the proxy wiring was pushed
+        // above. A profile passing HTTPS_PROXY or NO_PROXY through — plausible
+        // behind a corporate proxy, and repo-supplied like the rest of the
+        // policy — would otherwise replace h5i's value with the host's and
+        // egress unfiltered through the rootless NAT.
+        if proxied && is_proxy_wiring_var(key) {
+            continue;
+        }
         if std::env::var_os(key).is_some() {
             a.push("--env".into());
             a.push(key.clone());
@@ -1162,26 +1439,35 @@ pub fn build_run_argv(
 /// stays host-side in the proxy; the box never receives it — this is "option 2":
 /// the box can authenticate to its provider API without ever holding the token.
 ///
-/// Returns `None` (keeping the box on its existing in-box-login path) when: the
-/// net plan has no proxy to reach the host loopback, the profile is not a known
-/// agent runtime, no host credential is available, or the proxy fails to spawn.
-/// We never *downgrade* an active protection, and never break a working
-/// interactive-login flow that has no host token to broker.
+/// `Ok(None)` (keeping the box on its existing in-box-login path) when: the net
+/// plan has no proxy to reach the host loopback, the profile is not a known
+/// agent runtime, or no host credential is available. Those never break a
+/// working interactive-login flow that has no host token to broker.
+///
+/// A proxy that was supposed to start and could not is an `Err`, not a `None`:
+/// falling back would leave the real credential in the box while also widening
+/// its egress, which is the opposite of what this exists to do.
+/// A live credential proxy and the env additions the box needs to reach it.
+type AuthProxyEngagement = (crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>);
+
 fn maybe_auth_proxy(
     profile: &Profile,
     net: &NetPlan,
-) -> Option<(crate::auth_proxy::AuthProxyHandle, Vec<(String, String)>)> {
+) -> Result<Option<AuthProxyEngagement>, H5iError> {
     // The box reaches the host proxy only on the egress-proxy net plan, and at
     // whichever address this platform routes to the host ([`HOST_ROUTE`]).
     // `engage_at` handles opt-out + runtime + credential resolution; the
     // container tier ignores the returned runtime (there is no per-env HOME copy
     // to scrub — the rootfs never mounts host HOME).
-    let e = crate::auth_proxy::engage_at(
+    let Some(e) = crate::auth_proxy::engage_at(
         &profile.name,
         matches!(net, NetPlan::Proxy(_)),
         HOST_ROUTE.host_addr,
-    )?;
-    Some((e.handle, e.box_env))
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((e.handle, e.box_env)))
 }
 
 /// Live proxies for a box's authenticated-egress grants, and the env the box
@@ -1196,16 +1482,39 @@ pub type AuthGrantEngagement = (Vec<crate::auth_proxy::AuthProxyHandle>, Vec<(St
 pub fn engage_auth_grants(
     profile: &Profile,
     tier_ok: bool,
+    host_addr: &str,
 ) -> Result<AuthGrantEngagement, H5iError> {
     let mut handles = Vec::new();
     let mut env = Vec::new();
     for grant in &profile.auth {
-        if let Some(e) = crate::auth_proxy::engage_grant_at(grant, tier_ok, HOST_ROUTE.host_addr)? {
+        if let Some(e) = crate::auth_proxy::engage_grant_at(grant, tier_ok, host_addr)? {
             handles.push(e.handle);
             env.extend(e.box_env);
         }
     }
     Ok((handles, env))
+}
+
+/// Where a box on `claim` reaches a host-side grant proxy, or `None` when it
+/// cannot reach one at all.
+///
+/// This used to be hard-wired to [`HOST_ROUTE`], which is the *container*
+/// answer. On macOS that is `host.containers.internal`, a podman-machine name
+/// that does not resolve inside a Seatbelt box sharing host loopback; and on
+/// Linux `supervised` the box lives in its own netns whose nftables set only
+/// ever opens the runtime auth-proxy port or `net.egress` — never a grant's
+/// port — so the connection is dropped whatever address it names. Saying so is
+/// better than engaging a proxy nothing can dial.
+pub fn grant_host_addr(claim: crate::sandbox_policy::IsolationClaim) -> Option<&'static str> {
+    use crate::sandbox_policy::IsolationClaim;
+    match claim {
+        IsolationClaim::Container | IsolationClaim::Microvm => Some(HOST_ROUTE.host_addr),
+        // macOS supervised/process share the host's loopback.
+        IsolationClaim::Supervised | IsolationClaim::Process if cfg!(target_os = "macos") => {
+            Some("127.0.0.1")
+        }
+        _ => None,
+    }
 }
 
 // ─── run ─────────────────────────────────────────────────────────────────────
@@ -1250,7 +1559,7 @@ pub fn run(
     let egress_rules = effective_egress(&p.net_egress, &policy.user_egress_allow);
     let mut _proxy: Option<ProxyHandle> = None;
     let net = if !egress_rules.is_empty() {
-        let mut allow = AllowList::parse(&egress_rules);
+        let mut allow = AllowList::parse(&egress_rules)?;
         allow.pin_dns();
         let handle = spawn_proxy(allow)?;
         let port = handle.port;
@@ -1265,7 +1574,7 @@ pub fn run(
     // Credential-injecting auth proxy (option 2): held for the container's
     // lifetime. When engaged, the real API token stays host-side and the box is
     // handed only a base-URL override + per-run dummy (appended to the env).
-    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net) {
+    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net)? {
         Some((handle, extra)) => {
             let mut env = injected_env.to_vec();
             env.extend(extra);
@@ -1360,7 +1669,7 @@ pub fn run_interactive(
     let egress_rules = effective_egress(&p.net_egress, &policy.user_egress_allow);
     let mut _proxy: Option<ProxyHandle> = None;
     let net = if !egress_rules.is_empty() {
-        let mut allow = AllowList::parse(&egress_rules);
+        let mut allow = AllowList::parse(&egress_rules)?;
         allow.pin_dns();
         let handle = spawn_proxy(allow)?;
         let port = handle.port;
@@ -1373,7 +1682,7 @@ pub fn run_interactive(
     };
 
     // Credential-injecting auth proxy (option 2), held for the session lifetime.
-    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net) {
+    let (_auth_proxy, effective_env) = match maybe_auth_proxy(p, &net)? {
         Some((handle, extra)) => {
             let mut env = injected_env.to_vec();
             env.extend(extra);
@@ -1615,7 +1924,7 @@ mod tests {
             "github.com:443".into(),
             ".githubusercontent.com".into(),
             "*.pythonhosted.org".into(),
-        ]);
+        ]).unwrap();
         // Exact host, any port.
         assert!(a.allows("pypi.org", 443));
         assert!(a.allows("pypi.org", 80));
@@ -1639,8 +1948,152 @@ mod tests {
 
     #[test]
     fn empty_allowlist_denies_everything() {
-        let a = AllowList::parse(&[]);
+        let a = AllowList::parse(&[]).unwrap();
         assert!(!a.allows("anything.com", 443));
+    }
+
+    /// Build an allowlist with a hand-placed pin, so the pinning behaviour is
+    /// testable without touching the network.
+    fn pinned(rule: &str, ips: &[&str]) -> AllowList {
+        let mut a = AllowList::parse(&[rule.to_string()]).unwrap();
+        a.entries[0].pinned = ips.iter().map(|i| i.parse().unwrap()).collect();
+        a
+    }
+
+    /// Matching by name and then re-resolving let an allowlisted domain under
+    /// attacker DNS control point the proxy at anything. The proxy must dial
+    /// the address the allowlist pinned.
+    #[test]
+    fn dial_uses_the_pinned_address_not_a_fresh_lookup() {
+        let a = pinned("api.example.com", &["203.0.113.10", "203.0.113.11"]);
+        let addrs = a.dial_addrs("api.example.com", 443);
+        assert_eq!(addrs.len(), 2);
+        assert!(addrs.iter().all(|x| x.ip().to_string().starts_with("203.0.113.")));
+        assert!(addrs.iter().all(|x| x.port() == 443));
+    }
+
+    /// A pinned IP opens only the port its entry named. Ignoring the port here
+    /// turned an allowlist of `host:443` into a free pass to `host:22`.
+    #[test]
+    fn a_pinned_ip_does_not_open_every_port() {
+        let a = pinned("github.com:443", &["140.82.121.4"]);
+        assert!(a.allows("140.82.121.4", 443));
+        assert!(!a.allows("140.82.121.4", 22));
+        // An address nobody pinned stays refused on any port.
+        assert!(!a.allows("140.82.121.5", 443));
+    }
+
+    /// A wildcard cannot be pinned, so its lookup happens at CONNECT time —
+    /// and that answer must not be allowed to name an internal address.
+    #[test]
+    fn unpinnable_destinations_refuse_internal_addresses() {
+        for ip in [
+            "127.0.0.1",
+            "169.254.169.254", // cloud metadata
+            "10.1.2.3",
+            "192.168.1.1",
+            "172.16.0.1",
+            "100.64.0.1", // CGNAT
+            "0.0.0.0",
+            "::1",
+            "fd00::1",   // unique-local
+            "fe80::1",   // link-local
+            "::ffff:127.0.0.1",
+        ] {
+            assert!(is_internal(&ip.parse().unwrap()), "{ip} should be internal");
+        }
+        for ip in ["93.184.216.34", "8.8.8.8", "2606:4700::1111"] {
+            assert!(!is_internal(&ip.parse().unwrap()), "{ip} should be routable");
+        }
+    }
+
+    /// A literal IP target is dialled verbatim — `allows` has already checked
+    /// it against the pins, so there is nothing left to resolve.
+    #[test]
+    fn a_literal_ip_target_is_dialled_as_given() {
+        let a = pinned("api.example.com", &["203.0.113.10"]);
+        let addrs = a.dial_addrs("203.0.113.10", 443);
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0].to_string(), "203.0.113.10:443");
+    }
+
+    /// Podman applies `--env` in order and the proxy wiring is pushed first, so
+    /// an `env.pass` entry naming one of those variables would replace h5i's
+    /// value with the host's and route the box around the allowlist.
+    #[test]
+    fn env_pass_cannot_shadow_the_egress_proxy_wiring() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
+        p.env_pass = vec!["HTTPS_PROXY".into(), "no_proxy".into(), "PATH".into()];
+        // Safety: single-threaded test; the vars are read back immediately.
+        unsafe {
+            std::env::set_var("HTTPS_PROXY", "http://attacker.invalid:3128");
+            std::env::set_var("no_proxy", "*");
+        }
+        let argv = build_run_argv(
+            &rt(), &p, &[], None, tmp.path(), "img", "n", &NetPlan::Proxy(9999),
+            &["true".into()], &[], None, None, &[], None, None, None, &[],
+        );
+        // The wiring h5i pushed is present exactly once and is never re-passed
+        // by name (a name-only `--env HTTPS_PROXY` would take the host value).
+        assert!(argv.iter().any(|a| a == "HTTPS_PROXY=http://10.0.2.2:9999"
+            || a.starts_with("HTTPS_PROXY=http://")));
+        assert!(!argv.iter().any(|a| a == "HTTPS_PROXY"), "{argv:?}");
+        assert!(!argv.iter().any(|a| a == "no_proxy"), "{argv:?}");
+        // Unrelated allowlist entries still pass.
+        assert!(argv.iter().any(|a| a == "PATH"));
+        unsafe {
+            std::env::remove_var("HTTPS_PROXY");
+            std::env::remove_var("no_proxy");
+        }
+    }
+
+    /// The container tier used to widen or mangle four inputs the microvm tier
+    /// already refused. One parser now, so they cannot disagree again.
+    #[test]
+    fn the_egress_grammar_is_fail_closed_for_both_tiers() {
+        // An out-of-range port became an ANY-port rule — the opposite of the ask.
+        for bad in [
+            "example.com:99999",
+            "*.com",                  // a whole TLD
+            "2001:db8::1",            // mangled into host "2001:db8:" port 1
+            "a,b.example.com",        // reserved separator
+            "user@example.com",
+        ] {
+            assert!(
+                AllowList::parse(&[bad.to_string()]).is_err(),
+                "container tier accepted {bad:?}"
+            );
+            assert!(
+                crate::microvm::egress_rule_tokens(&[bad.to_string()]).is_err(),
+                "microvm tier accepted {bad:?}"
+            );
+        }
+        // And the well-formed shapes still parse on both.
+        for good in ["example.com", "example.com:443", ".example.com", "*.example.com"] {
+            assert!(AllowList::parse(&[good.to_string()]).is_ok(), "{good}");
+            assert!(crate::microvm::egress_rule_tokens(&[good.to_string()]).is_ok(), "{good}");
+        }
+    }
+
+    /// An operator may list a literal address. That entry must keep matching
+    /// itself even though nothing pinned it (the proxy's relay tests dial a
+    /// local upstream this way).
+    #[test]
+    fn a_literal_ip_entry_still_matches_itself() {
+        let a = AllowList::parse(&["127.0.0.1:8080".into()]).unwrap();
+        assert!(a.allows("127.0.0.1", 8080));
+        assert!(!a.allows("127.0.0.1", 9090), "the port on the entry still binds");
+        assert_eq!(a.dial_addrs("127.0.0.1", 8080)[0].to_string(), "127.0.0.1:8080");
+    }
+
+    /// Wildcard matching stays anchored on a label boundary.
+    #[test]
+    fn wildcard_matching_is_label_anchored() {
+        let a = AllowList::parse(&[".githubusercontent.com".into()]).unwrap();
+        assert!(a.allows("raw.githubusercontent.com", 443));
+        assert!(a.allows("githubusercontent.com", 443));
+        assert!(!a.allows("evilgithubusercontent.com", 443));
     }
 
     #[test]
@@ -1664,7 +2117,7 @@ mod tests {
     #[test]
     fn allowlist_does_not_treat_ipv6_as_port() {
         // A bare IPv6-ish string must not be mis-split on its colons.
-        let a = AllowList::parse(&["example.org".into()]);
+        let a = AllowList::parse(&["example.org".into()]).unwrap();
         assert!(a.allows("example.org", 443));
     }
 
@@ -1730,7 +2183,9 @@ mod tests {
     #[test]
     fn run_argv_mounts_agent_hook_configs_read_only() {
         let tmp = tempfile::tempdir().unwrap();
-        let work = tmp.path();
+        // Canonicalized: the mount source is the resolved path, so the test has
+        // to agree on hosts where the temp root is itself a symlink.
+        let work = &tmp.path().canonicalize().unwrap();
         std::fs::create_dir_all(work.join(".claude")).unwrap();
         std::fs::create_dir_all(work.join(".codex")).unwrap();
         std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
@@ -1765,6 +2220,52 @@ mod tests {
             "type=bind,source={},target=/work/.codex/config.toml,ro",
             work.join(".codex/config.toml").display()
         )));
+    }
+
+    /// A branch under review can ship `.claude/settings.json` as a symlink.
+    /// `exists()` follows it and the unresolved path is what the kernel would
+    /// mount, so h5i would bind the link's target — a host path the box has no
+    /// grant on — into `/work`. Refuse the mount instead.
+    #[test]
+    fn run_argv_refuses_a_symlinked_agent_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let work = root.join("work");
+        let secret_dir = root.join("secrets");
+        std::fs::create_dir_all(work.join(".claude")).unwrap();
+        std::fs::create_dir_all(&secret_dir).unwrap();
+        std::fs::write(secret_dir.join("id_rsa"), "PRIVATE KEY").unwrap();
+
+        // (a) the file itself is a symlink out of $WORK
+        std::os::unix::fs::symlink(secret_dir.join("id_rsa"), work.join(".claude/settings.json"))
+            .unwrap();
+        assert_eq!(agent_config_mount_source(&work, ".claude/settings.json"), None);
+
+        // (b) a real file, but reached through a symlinked ancestor
+        std::fs::create_dir_all(root.join("elsewhere/.codex")).unwrap();
+        std::fs::write(root.join("elsewhere/.codex/config.toml"), "").unwrap();
+        std::os::unix::fs::symlink(root.join("elsewhere/.codex"), work.join(".codex")).unwrap();
+        assert_eq!(agent_config_mount_source(&work, ".codex/config.toml"), None);
+
+        // Neither reaches the argv.
+        let p = Profile::builtin("default", crate::sandbox_policy::IsolationClaim::Container);
+        let argv = build_run_argv(
+            &rt(), &p, &[], None, &work, "img", "n", &NetPlan::None,
+            &["true".into()], &[], None, None, &[], None, None, None, &[],
+        );
+        let joined = argv.join(" ");
+        assert!(!joined.contains("id_rsa"), "leaked the symlink target: {joined}");
+        assert!(!joined.contains("elsewhere"), "leaked through a symlinked parent: {joined}");
+        assert!(!joined.contains("target=/work/.claude/settings.json"));
+        assert!(!joined.contains("target=/work/.codex/config.toml"));
+
+        // A real regular file inside $WORK still mounts.
+        std::fs::remove_file(work.join(".claude/settings.json")).unwrap();
+        std::fs::write(work.join(".claude/settings.json"), "{}").unwrap();
+        assert_eq!(
+            agent_config_mount_source(&work, ".claude/settings.json"),
+            Some(work.join(".claude/settings.json")),
+        );
     }
 
     // In-box git plumbing mounts: identical source/target host paths, ro/rw
@@ -2468,7 +2969,7 @@ mod tests {
 
         // Allow only an unreachable host so we never actually open egress; we
         // only assert the gate's accept/deny verdict.
-        let allow = AllowList::parse(&["allowed.invalid:443".into()]);
+        let allow = AllowList::parse(&["allowed.invalid:443".into()]).unwrap();
         let proxy = spawn_proxy(allow).unwrap();
 
         // Denied host → 403, fail-closed.
@@ -2523,7 +3024,7 @@ mod tests {
             s.write_all(b"PONG").unwrap();
         });
 
-        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]).unwrap();
         let proxy = spawn_proxy(allow).unwrap();
         let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
         c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
@@ -2579,7 +3080,7 @@ mod tests {
         // One connection into `handle_proxy_client`, no accept loop involved.
         let front = TcpListener::bind("127.0.0.1:0").unwrap();
         let front_port = front.local_addr().unwrap().port();
-        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]).unwrap();
         std::thread::spawn(move || {
             let (s, _) = front.accept().unwrap();
             let tally = Arc::new(Mutex::new(EgressTally::default()));
@@ -2633,7 +3134,7 @@ mod tests {
 
         let front = TcpListener::bind("127.0.0.1:0").unwrap();
         let front_port = front.local_addr().unwrap().port();
-        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]);
+        let allow = AllowList::parse(&[format!("127.0.0.1:{origin_port}")]).unwrap();
         std::thread::spawn(move || {
             let (s, _) = front.accept().unwrap();
             s.set_nonblocking(true).unwrap();
@@ -2678,7 +3179,7 @@ mod tests {
     /// ephemeral-fallback note on success; that stderr line is expected here.
     #[test]
     fn proxy_binds_the_requested_port_and_falls_back_when_it_cannot() {
-        let allow = || AllowList::parse(&["allowed.invalid".into()]);
+        let allow = || AllowList::parse(&["allowed.invalid".into()]).unwrap();
 
         let mut honoured = None;
         for _ in 0..5 {

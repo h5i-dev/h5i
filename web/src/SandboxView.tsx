@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
 } from "react";
@@ -14,6 +15,7 @@ import {
   Tag,
 } from "@blueprintjs/core";
 
+import { BrowserTerminal } from "./BrowserTerminal";
 import {
   api,
   type BoxDetail,
@@ -56,6 +58,28 @@ export function SandboxView() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("all");
+  // Bumped on every successful fleet poll, so the detail pane refreshes with it.
+  const [tick, setTick] = useState(0);
+  // Width of the fleet column. Read from storage once, on the initialiser, so
+  // the first paint is already at the remembered width rather than jumping.
+  const [split, setSplit] = useState<number>(loadSplit);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SPLIT_KEY, String(Math.round(split)));
+    } catch {
+      // Storage refused (private mode, disabled). The width still works for
+      // this session; only the memory of it is lost.
+    }
+  }, [split]);
+
+  // A window that shrinks below the saved width would otherwise leave no room
+  // for the detail pane at all.
+  useEffect(() => {
+    const onResize = () => setSplit((w) => clampSplit(w));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const load = useCallback(() => {
     api
@@ -63,6 +87,7 @@ export function SandboxView() {
       .then((b) => {
         setBoxes(b);
         setError(null);
+        setTick((t) => t + 1);
       })
       .catch((e) => setError(String(e instanceof Error ? e.message : e)));
   }, []);
@@ -114,7 +139,10 @@ export function SandboxView() {
   return (
     <div className="sbx-shell">
       <TopStrip probe={probe} boxes={boxes} />
-      <div className="sbx-body">
+      <div
+        className="sbx-body"
+        style={{ gridTemplateColumns: `${split}px 1px 1fr` }}
+      >
         <FleetPane
           boxes={filtered}
           total={boxes?.length ?? 0}
@@ -123,9 +151,120 @@ export function SandboxView() {
           selectedId={selectedId}
           onSelect={setSelectedId}
         />
-        <DetailPane box={selected} />
+        <Divider width={split} onWidth={setSplit} />
+        <DetailPane box={selected} tick={tick} />
       </div>
     </div>
+  );
+}
+
+// ── the split ────────────────────────────────────────────────────────────────
+
+/** Bounds on the fleet column, in pixels. Narrow enough to get out of the way
+ *  of the browser terminal, wide enough that a box row is still readable. */
+const SPLIT_MIN = 260;
+const SPLIT_MAX = 900;
+const SPLIT_DEFAULT = 380;
+const SPLIT_KEY = "h5i.console.split";
+
+/** Remembered across reloads, because re-dragging the same divider every time
+ *  the page reloads is the kind of small friction that makes a tool feel
+ *  disposable. `localStorage` can throw (private mode, storage disabled), and a
+ *  console that fails to render because it could not save a pane width would be
+ *  a bad trade — so both directions swallow. */
+function loadSplit(): number {
+  try {
+    const raw = window.localStorage.getItem(SPLIT_KEY);
+    const n = raw === null ? NaN : Number.parseInt(raw, 10);
+    return Number.isFinite(n) ? clampSplit(n) : SPLIT_DEFAULT;
+  } catch {
+    return SPLIT_DEFAULT;
+  }
+}
+
+function clampSplit(n: number): number {
+  // Also bounded by the window, or a saved width from a wide monitor leaves the
+  // detail pane invisible on a laptop.
+  const ceiling = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, window.innerWidth - 360));
+  return Math.min(ceiling, Math.max(SPLIT_MIN, n));
+}
+
+/**
+ * The drag handle between the fleet and the detail pane.
+ *
+ * A `separator` with `aria-valuenow`, focusable, and movable with the arrow
+ * keys: a divider that only responds to a mouse is one a keyboard user cannot
+ * reach at all, and this one decides how much of the screen the browser
+ * terminal gets.
+ *
+ * Pointer events rather than mouse events, so a trackpad, a pen and a touch
+ * screen all work; `setPointerCapture` keeps the drag alive when the pointer
+ * outruns the 1px handle, which at speed it always does.
+ */
+function Divider({
+  width,
+  onWidth,
+}: {
+  width: number;
+  onWidth: (n: number) => void;
+}) {
+  const dragging = useRef(false);
+
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    dragging.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    // Without this the drag selects the fleet list's text as it crosses it.
+    document.body.classList.add("sbx-dragging");
+  }, []);
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!dragging.current) return;
+      // The x of the pointer *is* the new column width: the grid starts at the
+      // body's left edge, so no offset bookkeeping is needed.
+      const left = e.currentTarget.parentElement?.getBoundingClientRect().left ?? 0;
+      onWidth(clampSplit(e.clientX - left));
+    },
+    [onWidth],
+  );
+
+  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    dragging.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    document.body.classList.remove("sbx-dragging");
+  }, []);
+
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = e.shiftKey ? 64 : 16;
+      if (e.key === "ArrowLeft") onWidth(clampSplit(width - step));
+      else if (e.key === "ArrowRight") onWidth(clampSplit(width + step));
+      else if (e.key === "Home") onWidth(SPLIT_MIN);
+      else if (e.key === "End") onWidth(clampSplit(SPLIT_MAX));
+      else return;
+      e.preventDefault();
+    },
+    [width, onWidth],
+  );
+
+  return (
+    <div
+      className="sbx-divider"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the fleet list"
+      aria-valuenow={Math.round(width)}
+      aria-valuemin={SPLIT_MIN}
+      aria-valuemax={SPLIT_MAX}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => onWidth(SPLIT_DEFAULT)}
+      title="Drag to resize · double-click to reset · arrow keys when focused"
+    />
   );
 }
 
@@ -149,6 +288,16 @@ function TopStrip({
   return (
     <div className="sbx-strip">
       <div className="sbx-strip-group">
+        {/* The console's own name and its standing rules: read-only, loopback,
+            no lifecycle verbs. Kept as a tooltip rather than a banner — it is
+            the same sentence on every screen, and the strip is worth more to
+            the host claims beside it. */}
+        <span
+          className="sbx-brand"
+          title="h5i box console — read-only · loopback only · lifecycle verbs stay in the CLI"
+        >
+          h5i
+        </span>
         <span className="sbx-strip-label">host</span>
         {probe ? (
           <>
@@ -353,6 +502,14 @@ function FleetPane(props: {
                           {b.drift}
                         </span>
                       ) : null}
+                      {b.shared_now ? (
+                        <span
+                          className="sbx-drift"
+                          title={`somebody outside can reach port ${b.shared_now.port} inside this box right now, over ${b.shared_now.transport} (${b.shared_now.grants} live ticket(s)). The receipt for it lands when the share ends.`}
+                        >
+                          {" · shared now"}
+                        </span>
+                      ) : null}
                       {b.stale_running ? (
                         <span
                           className="sbx-drift"
@@ -470,12 +627,23 @@ function SignalBadge({ signals }: { signals: Signals }) {
 
 // ── right: one box ───────────────────────────────────────────────────────────
 
-function DetailPane({ box }: { box: BoxRow | null }) {
+type DetailView = "evidence" | "browser";
+
+function DetailPane({ box, tick }: { box: BoxRow | null; tick: number }) {
   const [detail, setDetail] = useState<BoxDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [view, setView] = useState<DetailView>("evidence");
 
   const agent = box?.agent;
   const slug = box?.slug;
+
+  // Selecting a different box returns to Evidence. Keeping the browser tab
+  // across a switch would land the reader on a browser view of a box that may
+  // not have one, and the empty result reads as a failure rather than as "you
+  // are looking at the wrong box".
+  useEffect(() => {
+    setView("evidence");
+  }, [agent, slug]);
 
   useEffect(() => {
     if (!agent || !slug) {
@@ -498,7 +666,10 @@ function DetailPane({ box }: { box: BoxRow | null }) {
     return () => {
       live = false;
     };
-  }, [agent, slug]);
+    // `tick` advances with the fleet poll: without it the detail pane fetched
+    // once per selection while the row beside it kept updating, so an open box
+    // drifted behind its own signal badge.
+  }, [agent, slug, tick]);
 
   if (!box) {
     return (
@@ -509,6 +680,11 @@ function DetailPane({ box }: { box: BoxRow | null }) {
       </div>
     );
   }
+
+  // Only a browser box has a browser terminal. Reading it off the profile
+  // rather than off whether events have arrived: a box that has not browsed yet
+  // still has the tab, and its panes say so, which is the honest empty state.
+  const browserCapable = box.profile === "browser";
 
   return (
     <div className="sbx-detail">
@@ -533,10 +709,43 @@ function DetailPane({ box }: { box: BoxRow | null }) {
         <SignalBadge signals={box.signals} />
       </div>
 
+      {/* Two views of one box, because they answer different questions and
+          want different shapes. Evidence is a scroll of what has already
+          happened; the browser terminal is a live instrument that wants the
+          whole pane. Wedging the second into the first gave it a few hundred
+          pixels between Services and the timeline, which is not the density the
+          panes were designed for. The tab strip only appears for a box that has
+          a browser — every other box has one view, and a disabled tab is just a
+          question a reader has to answer. */}
+      {browserCapable ? (
+        <div className="sbx-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "evidence"}
+            className={view === "evidence" ? "on" : undefined}
+            onClick={() => setView("evidence")}
+          >
+            Evidence
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "browser"}
+            className={view === "browser" ? "on" : undefined}
+            onClick={() => setView("browser")}
+          >
+            Browser
+          </button>
+        </div>
+      ) : null}
+
       {loading && !detail ? (
         <NonIdealState icon={<Spinner size={20} />} title="Loading evidence…" />
       ) : !detail ? (
         <div className="sbx-pane-empty">No detail available.</div>
+      ) : view === "browser" && browserCapable ? (
+        <BrowserTerminal agent={box.agent} slug={box.slug} />
       ) : (
         <div className="sbx-detail-body">
           <SignalSummary box={box} />

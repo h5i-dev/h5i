@@ -70,6 +70,14 @@ jobs:
       # `--locked` throughout: Cargo.lock is committed and the release build
       # uses it, so a manifest change that never updated the lockfile has to
       # fail on a PR rather than surface at tag time.
+      # h5i-browser-light depends on boa by git revision because no published
+      # version can coexist with blitz's parley. That is a thing to undo, not to keep,
+      # and "it is on the list" is how a temporary patch becomes permanent — so
+      # the question is asked here rather than remembered. Fails the day a
+      # usable release exists, and is quiet until then.
+      - name: A published boa would still not work (so the patch stays)
+        run: ./scripts/check_boa_release.sh
+
       - name: cargo clippy (deny warnings)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
@@ -160,11 +168,38 @@ jobs:
   # toolchain; the HTML is pinned by `scripts/requirements.txt` (the `markdown`
   # version). Regenerate locally on Linux with the same pins and commit the diff.
   docs:
-    name: manuals fresh (man + html)
+    name: docs fresh (man + html + install.sh)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+
+      # `docs/install.sh` is what `curl -fsSL https://h5i.dev/install.sh | sh`
+      # fetches, and `docs/` is published verbatim, so the site needs a real
+      # copy of the file rather than a pointer to one. Two copies of a script
+      # people pipe into a shell is exactly what drifts in silence: the root
+      # file gets the fix, the published one keeps installing the old way, and
+      # nothing says so.
+      #
+      # A symlink would avoid the second copy and is rejected on purpose. It
+      # would work only because `upload-pages-artifact` happens to tar with
+      # `--dereference` today, which is an implementation detail of someone
+      # else's action, and the day it changes the install URL 404s.
+      #
+      # First step in the job because it needs no toolchain: a stale manual
+      # below should not hide this, and this should not wait on a Rust build.
+      - name: The published install.sh matches the repository's
+        run: |
+          if cmp -s install.sh docs/install.sh; then
+            echo "docs/install.sh is in sync"
+            exit 0
+          fi
+          echo "::error::install.sh and docs/install.sh have diverged — h5i.dev would serve the stale one."
+          echo "Copy the root file over the published one, then commit it:"
+          echo "    cp install.sh docs/install.sh"
+          echo "----------------------------- drift -----------------------------"
+          diff -u install.sh docs/install.sh || true
+          exit 1
 
       - uses: dtolnay/rust-toolchain@stable
 
