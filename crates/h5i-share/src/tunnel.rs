@@ -651,8 +651,8 @@ async fn handle(
                 // them.
                 let id = register(&bridge, &peers, g);
                 bridge.peer_bytes(id, body.len() as u64, 0);
-                bridge.peer_seen(id);
-                bridge.peer_seen(id);
+                // Once. `peer_seen` stamps a timestamp; three calls in a row
+                // stamped the same one three times.
                 bridge.peer_seen(id);
             }
             http_front::respond(&mut sock, &body).await;
@@ -695,6 +695,13 @@ async fn handle(
                 // written.
                 let body = unreachable_response();
                 bridge.peer_bytes(id, body.len() as u64, 0);
+                // Stamped, like every other path that answers a visitor. Left
+                // out, a peer whose most recent request received this `502`
+                // kept the activity time of some earlier one — and for a
+                // cookie-authenticated visitor whose every request failed this
+                // way, the receipt showed them as still connected at the end
+                // of the share.
+                bridge.peer_seen(id);
                 http_front::respond(&mut sock, &body).await;
                 return Err(e);
             }

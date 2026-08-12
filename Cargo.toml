@@ -32,16 +32,28 @@ path = "src/main.rs"
 default = ["web", "share"]
 web = ["h5i-core/web"]
 # `share` adds `h5i box share` / `h5i join` and, through h5i-share, the iroh
-# QUIC stack. Drop it for a build with no peer-to-peer transport in it at all;
-# `h5i-share/p2p` is the narrower switch that keeps the tunnel transport.
-share = ["dep:h5i-share", "dep:tokio"]
+# QUIC stack. Drop it for a build with no sharing in it at all;
+# `share-tunnel` is the narrower switch that keeps `--tunnel` and drops iroh.
+#
+# The two are layered rather than parallel because the dependency below is
+# declared `default-features = false`: `share-tunnel` buys the crate and its
+# loopback/`cloudflared` half, and `share` adds `h5i-share/p2p` on top. Written
+# the other way round — an optional dependency carrying its own defaults —
+# `--no-default-features --features share-tunnel` still resolved to
+# `h5i-share/default`, so the tunnel-only build this comment described could
+# not actually be selected.
+share = ["share-tunnel", "h5i-share/p2p"]
+share-tunnel = ["dep:h5i-share", "dep:tokio"]
 
 [dependencies]
 # `default-features = false` so this package's own `web` flag is the single
 # switch: without it, h5i-core is built lean rather than pulling axum in
 # through its own defaults.
 h5i-core = { path = "crates/h5i-core", default-features = false }
-h5i-share = { path = "crates/h5i-share", optional = true }
+# `default-features = false` for the same reason as h5i-core above: the root
+# feature list is the single switch. With the dependency's own defaults left
+# on, `--features share-tunnel` would still pull iroh in.
+h5i-share = { path = "crates/h5i-share", default-features = false, optional = true }
 git2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

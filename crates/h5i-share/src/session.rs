@@ -25,6 +25,11 @@ use sha2::{Digest, Sha256};
 
 /// Sibling of the receipt log; never under a path the box can write.
 const SESSION_FILE: &str = "share.json";
+/// The format `share.json` is written in, and the only one this h5i will read.
+///
+/// Checked on the way in as well as written on the way out — see [`read_state`]
+/// for why a discriminator nobody reads is not a discriminator.
+pub const SESSION_VERSION: u8 = 1;
 /// Held for the read-modify-write of the grant table. Two `revoke` calls racing
 /// must not end with one of them silently lost.
 const LOCK_FILE: &str = "share.lock";
@@ -179,7 +184,7 @@ impl ShareSession {
         started_at: chrono::DateTime<chrono::Utc>,
     ) -> ShareSession {
         ShareSession {
-            v: 1,
+            v: SESSION_VERSION,
             box_id: box_id.to_string(),
             port,
             transport,
@@ -402,14 +407,33 @@ fn lock_is_stale(path: &Path) -> bool {
     old_enough
 }
 
+/// A pid that `kill` will treat as one process, or nothing.
+///
+/// `pid_t` is signed and every one of these numbers arrives from a file on
+/// disk. `4294967295` fits the `u32` these records store and reaches `kill` as
+/// `-1` — *every process this user may signal* — which succeeds, so a corrupt
+/// or crafted record read as permanently live: `share` refused to start,
+/// cleanup refused to clear it, and grant operations trusted a process that
+/// was never there. `0` is the caller's own process group and `-1`'s smaller
+/// sibling. Both are out of range for a pid and neither reaches `kill` now.
+///
+/// `h5i-core`'s reader has had this bound since it was written; these two
+/// callers did not, and they are the ones that decide whether a share starts.
+fn as_pid(pid: u32) -> Option<i32> {
+    i32::try_from(pid).ok().filter(|p| *p > 0)
+}
+
 #[cfg(unix)]
 fn pid_alive(pid: u32) -> bool {
-    pid != 0 && unsafe { libc::kill(pid as libc::pid_t, 0) } == 0
+    match as_pid(pid) {
+        Some(p) => (unsafe { libc::kill(p as libc::pid_t, 0) }) == 0,
+        None => false,
+    }
 }
 
 #[cfg(not(unix))]
-fn pid_alive(_pid: u32) -> bool {
-    true
+fn pid_alive(pid: u32) -> bool {
+    as_pid(pid).is_some()
 }
 
 impl Drop for Lock {
@@ -459,7 +483,20 @@ pub fn read_state(env_dir: &Path) -> ReadState {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadState::Gone,
         Err(_) => return ReadState::Unreadable,
     };
-    match serde_json::from_slice(&raw) {
+    match serde_json::from_slice::<ShareSession>(&raw) {
+        // The version is a discriminator or it is decoration, and it was
+        // decoration: `v` was written and never read, so a record from a
+        // *newer* h5i decoded here as a v1 one as long as the field names still
+        // matched. Share management runs in a different process from the share
+        // — `grant`, `revoke`, `stop` — so during an upgrade or a rollback an
+        // older binary could read a live v2 table, apply v1 grant semantics to
+        // it, and atomically rewrite it. If a later format keeps these fields
+        // and changes what they mean, that is authorization state corrupted by
+        // a binary that could not have known better.
+        //
+        // `Unreadable` is the state whose own doc comment already said "a
+        // record from a version this h5i does not know"; now it is.
+        Ok(s) if s.v != SESSION_VERSION => ReadState::Unreadable,
         Ok(s) => ReadState::Present(Box::new(s)),
         Err(_) => ReadState::Unreadable,
     }
@@ -725,16 +762,10 @@ pub fn clear_now(env_dir: &Path) {
 ///
 /// A share file outliving its process is the ordinary result of a crash or a
 /// `kill -9`, and the honest answer to "is this box shared" is no.
+/// A pid out of `pid_t`'s range is not a live process — see [`as_pid`] for what
+/// went wrong when it reached `kill` unchecked.
 pub fn is_live(s: &ShareSession) -> bool {
-    #[cfg(unix)]
-    {
-        s.pid != 0 && unsafe { libc::kill(s.pid as libc::pid_t, 0) } == 0
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = s;
-        true
-    }
+    pid_alive(s.pid)
 }
 
 #[cfg(test)]
@@ -1088,6 +1119,48 @@ mod tests {
             "endpoint":"https://x","started_at":"2026-01-01T00:00:00Z","pid":1,"grants":[]}"#;
         let s: ShareSession = serde_json::from_str(old).expect("an older record still reads");
         assert!(!s.winding_up);
+    }
+
+    #[test]
+    fn a_pid_kill_would_treat_as_a_wildcard_is_not_a_live_process() {
+        // `pid_t` is signed. `4294967295` fits the `u32` this record stores and
+        // arrives at `kill` as `-1` — every process this user may signal —
+        // which succeeds, so a corrupt or crafted record read as live forever:
+        // `share` refused to start, cleanup refused to clear it, and grant
+        // operations trusted a process that never existed. `h5i-core`'s reader
+        // had this bound; these two did not.
+        let mut s = session_with(vec![]);
+        s.pid = u32::MAX;
+        assert!(!is_live(&s), "kill(-1, 0) was read as a live share");
+        s.pid = 0;
+        assert!(!is_live(&s), "pid 0 is this process group, not a process");
+        s.pid = std::process::id();
+        assert!(is_live(&s), "a real pid is still live");
+    }
+
+    #[test]
+    fn a_record_from_a_version_this_h5i_does_not_know_is_unreadable() {
+        // Management verbs run in their own processes, so an upgrade or a
+        // rollback puts an older binary in front of a newer live table. `v` was
+        // written and never read, so that binary decoded a v2 record as v1,
+        // applied v1 grant semantics, and rewrote it. `Unreadable` is the state
+        // whose own doc comment already promised to cover this.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut s = session_with(vec![]);
+        s.pid = std::process::id();
+        write(dir.path(), &s).expect("write");
+        assert!(matches!(read_state(dir.path()), ReadState::Present(_)));
+
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(session_path(dir.path())).expect("read"))
+                .expect("json");
+        v["v"] = serde_json::json!(2);
+        std::fs::write(session_path(dir.path()), v.to_string()).expect("write v2");
+        assert!(
+            matches!(read_state(dir.path()), ReadState::Unreadable),
+            "a v2 record was decoded as a v1 one"
+        );
+        assert!(read(dir.path()).is_none());
     }
 
     fn session_with(grants: Vec<Grant>) -> ShareSession {

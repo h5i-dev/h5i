@@ -46,9 +46,13 @@ h5i box share stop <name> --force    # delete the record, whatever it says
 the first.
 
 `grant` works on a `--tunnel` share only. A peer-to-peer ticket needs the
-running endpoint's addressing, which lives in the serving process, so adding a
-second peer to a P2P share means starting a second share. The command says so
-rather than handing out a ticket that reaches nothing.
+running endpoint's addressing, which lives in the serving process, so `grant`
+refuses on a P2P share rather than handing out a ticket that reaches nothing.
+
+To add a second peer to a P2P share: stop the share and start a new one, then
+give everybody a fresh ticket — **including the person already connected**,
+whose ticket the restart invalidates. Do not start a second share alongside the
+first; a box carries one share at a time and the second start is refused.
 
 The share runs in the foreground until Ctrl-C, so start it where the human can
 see it rather than in a background job they cannot find later. A share carries

@@ -228,9 +228,10 @@ Produces:
 | `patch.diff` | The tree diff against the pinned base, path-validated: no symlink escapes, no nested `.git`, no agent-introduced gitlinks. |
 | `report.md` | What ran, what the browser saw, who was at the controls, and the agent's own proposal. |
 | `receipt.json` | Every observed execution, with the policy digest that was enforced. |
+| `receipts/<id>.raw` | The full account of each ingress session: who connected, over what path, for how long, how much moved, what was refused. Present when the box was shared. |
 
 It refuses rather than overwrites an existing non-empty directory (`--force` to
-replace). Secret redaction and size caps apply to all three.
+replace). Secret redaction and size caps apply to all of it.
 
 Read `report.md` before applying. It surfaces, in this order:
 
@@ -482,7 +483,11 @@ is otherwise something a reader has to spot for themselves in a list that can
 run to 256 entries. `share grant` mints a second one, but
 only for a `--tunnel` share today: a peer-to-peer ticket needs the running
 endpoint's addressing and only the serving process has it, so `grant` refuses on
-a P2P share and says to start a second one instead.
+a P2P share. Adding a second peer to a P2P share means **stopping it and
+starting a fresh one**, which invalidates the first person's ticket too: mint
+new tickets for everybody, including whoever was already connected. Starting a
+second share alongside the first is refused — a box carries one share at a
+time — so it is not a way round this.
 
 Authorization is re-read from disk on every connection, so a revoke from another
 terminal takes effect on the next one; connections already open are dropped

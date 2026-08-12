@@ -769,6 +769,18 @@ impl Bridge {
                 // shows, did not.
                 peers_seen
             )),
+            // The same facts as the command line above, as fields. A reader
+            // deciding whether a third party could read this traffic was
+            // reduced to searching the rendered string for `tunnel` — which
+            // the box's own name can supply — so the one security-relevant
+            // claim in this record now travels as data.
+            share: Some(h5i_core::receipt::ShareEvidence {
+                transport: self.transport.as_str().to_string(),
+                port: self.dialer.port(),
+                peers: peers_seen,
+                seconds,
+                turned_away: summary.turned_away.len() as u64 + summary.turned_away_overflow,
+            }),
             wall_ms: u64::try_from(seconds * 1000).ok(),
             // A share ends when it is asked to. Left unset, the receipt viewer
             // renders "signal" for it, which reads in an export as though the

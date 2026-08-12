@@ -4830,6 +4830,9 @@ fn run_inner(
         // workspace/process. Host observed: the box never supplies this.
         egress: outcome.egress.clone(),
         browser: browser_evidence,
+        // Not a share. That lane is written by `h5i-share`, which sits above
+        // this crate.
+        share: None,
     };
     let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
     let capture_id = captured.id.clone();

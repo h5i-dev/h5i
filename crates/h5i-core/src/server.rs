@@ -1005,6 +1005,7 @@ mod tests {
             files: vec![],
             egress: None,
             browser: None,
+            share: None,
             redactions: vec![],
             raw_oid: "d".repeat(64),
             raw_size: 0,

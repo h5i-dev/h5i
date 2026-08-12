@@ -551,6 +551,7 @@ fn envelope(name: &str, s: &h5i_share::session::ShareSession) -> serde_json::Val
 /// other user on the machine a working invite for as long as you are joined.
 /// Reading it from a pipe is the way out, and it keeps the ticket out of shell
 /// history at the same time.
+#[cfg(feature = "share")]
 fn ticket_text(arg: &str) -> anyhow::Result<String> {
     if arg != "-" {
         return Ok(arg.to_string());
@@ -567,6 +568,11 @@ fn ticket_text(arg: &str) -> anyhow::Result<String> {
     Ok(ticket)
 }
 
+/// Gated on `share`, not on `share-tunnel`: joining is dialling a ticket, and
+/// a ticket is a peer-to-peer thing. A tunnel-only build has `box share
+/// --tunnel` and no `join`, which is the correct shape — the person on the
+/// other end of a tunnel opens a link in a browser and needs no h5i at all.
+#[cfg(feature = "share")]
 pub fn join(ticket: &str, port: u16) -> anyhow::Result<()> {
     let ticket = h5i_share::ticket::Ticket::decode(&ticket_text(ticket)?)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -693,6 +699,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "share")]
     fn a_ticket_can_arrive_without_going_through_the_process_table() {
         // `/proc/<pid>/cmdline` is world-readable on an ordinary Linux box —
         // mode `-r--r--r--`, no `hidepid` — and `h5i join` runs for the whole

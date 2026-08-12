@@ -92,6 +92,44 @@ impl BrowserEvidence {
     }
 }
 
+/// What an ingress session was, as structured fact rather than as prose.
+///
+/// The one thing a reviewer must be able to read off a share record without
+/// ambiguity is **whether a third party could read the traffic** — a Cloudflare
+/// quick tunnel terminates TLS, and peer-to-peer does not. That was being
+/// recovered by testing whether the rendered command string contained the
+/// substring `tunnel`, and the command string contains the box's name: a
+/// perfectly ordinary P2P share of a box called `tunnel`, `my-tunnel` or
+/// `tunneling` was reported to the reviewer as Cloudflare-terminated. A wrong
+/// security claim in the evidence artifact is worse than a missing one.
+///
+/// So it is a field. Prose is rendered from this; nothing parses the prose.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShareEvidence {
+    /// `p2p` or `tunnel`, as `h5i-share` recorded it.
+    pub transport: String,
+    /// The port inside the box that was exposed.
+    pub port: u16,
+    /// Distinct peers admitted, including any past the receipt's record cap.
+    pub peers: u64,
+    /// How long the share ran, in seconds, from the monotonic clock.
+    pub seconds: i64,
+    /// Connections refused before a ticket was weighed at all.
+    #[serde(default)]
+    pub turned_away: u64,
+}
+
+impl ShareEvidence {
+    /// Is a third party able to read this traffic in the clear?
+    ///
+    /// The question the export's warning is really asking. Decided on the
+    /// recorded transport, and `true` for anything this h5i does not recognise
+    /// — an unknown transport is not a promise of end-to-end encryption.
+    pub fn third_party_can_read(&self) -> bool {
+        self.transport != "p2p"
+    }
+}
+
 /// One observed execution inside an environment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecRecord {
@@ -137,6 +175,10 @@ pub struct ExecRecord {
     /// [`BrowserEvidence`] for the lane and the cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser: Option<BrowserEvidence>,
+    /// What an ingress session was, when this record is one. Host observed:
+    /// h5i owned both ends of the bridge and the box supplied none of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share: Option<ShareEvidence>,
     /// Secret rules that fired while redacting, by rule id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub redactions: Vec<String>,
@@ -168,6 +210,7 @@ pub struct RecordInput {
     pub files: Vec<String>,
     pub egress: Option<EgressSummary>,
     pub browser: Option<BrowserEvidence>,
+    pub share: Option<ShareEvidence>,
 }
 
 /// Scrub every string a page supplied. A console line is a place a token turns
@@ -341,6 +384,9 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
         // Box-claimed strings from a page the box just visited, so they go
         // through the same scrub as everything else before they are stored.
         browser: input.browser.map(redact_browser_evidence),
+        // Host observed, and every field is a number or one of two known
+        // transport strings, so there is nothing here for the scrub to reach.
+        share: input.share,
         redactions,
         raw_oid: format!("sha256:{digest}"),
         raw_size: stored.len() as u64,

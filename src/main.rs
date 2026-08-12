@@ -315,6 +315,13 @@ fn compiled_features() -> Vec<&'static str> {
     let mut features: Vec<&str> = Vec::new();
     #[cfg(feature = "web")]
     features.push("web");
+    // Both switches, because they are separately selectable and a consumer
+    // deciding whether to offer a share UI needs to know which half is here:
+    // `share-tunnel` alone means `box share --tunnel` and no `join`.
+    #[cfg(feature = "share-tunnel")]
+    features.push("share-tunnel");
+    #[cfg(feature = "share")]
+    features.push("share");
     features.sort_unstable();
     features
 }
@@ -423,7 +430,31 @@ mod tests {
         #[cfg(feature = "web")]
         assert!(features.contains(&"web"));
         #[cfg(not(feature = "web"))]
-        assert!(features.is_empty());
+        assert!(!features.contains(&"web"));
+        // `share` implies `share-tunnel`, so the p2p build reports both and a
+        // tunnel-only build reports exactly one. This output is what an
+        // installer or a wrapper reads to decide whether the share workflow
+        // exists at all; a default build that omitted it read as one without
+        // sharing compiled in.
+        #[cfg(feature = "share")]
+        {
+            assert!(features.contains(&"share"));
+            assert!(features.contains(&"share-tunnel"));
+        }
+        #[cfg(all(feature = "share-tunnel", not(feature = "share")))]
+        {
+            assert!(features.contains(&"share-tunnel"));
+            assert!(!features.contains(&"share"));
+        }
+        #[cfg(not(feature = "share-tunnel"))]
+        {
+            assert!(!features.contains(&"share"));
+            assert!(!features.contains(&"share-tunnel"));
+        }
+        // Sorted, because the JSON is diffable output.
+        let mut sorted = features.clone();
+        sorted.sort_unstable();
+        assert_eq!(features, sorted);
     }
 
     /// Route `argv` through clap and the short-form fold, exactly as `main`

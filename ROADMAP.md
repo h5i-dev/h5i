@@ -817,9 +817,11 @@ built and was never in this milestone.
 
 **Not built, and it is a gap rather than a choice.** `h5i box share grant` mints
 a second ticket for a *tunnel* share only. A P2P ticket needs the running
-endpoint's addressing, and only the serving process has it — so adding a second
-peer to a P2P share means starting a second share. The verb refuses with that
-sentence rather than handing out a ticket that names nowhere. Closing it needs
+endpoint's addressing, and only the serving process has it — so the verb refuses
+rather than handing out a ticket that names nowhere. The procedure that works is
+to stop the share and start a fresh one, reissuing tickets to everybody
+including the peer already connected; a *second concurrent* share is refused by
+`session::claim`, so it is not a way round this. Closing it needs
 the serving process to answer a request from another process, which is a channel
 this feature does not otherwise need, so it waits for someone to want it.
 

@@ -212,7 +212,7 @@ pub enum BoxCommands {
     /// expiry that you can revoke, and the session lands in the box's receipt.
     ///
     /// `h5i box share <name>` starts one; the verbs manage it. Runs until Ctrl-C.
-    #[cfg(feature = "share")]
+    #[cfg(feature = "share-tunnel")]
     Share(crate::cli::share::ShareArgs),
 
     /// Check one environment's enforcement readiness and structural health
@@ -1334,7 +1334,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     }
                 }
 
-                #[cfg(feature = "share")]
+                #[cfg(feature = "share-tunnel")]
                 BoxCommands::Share(args) => crate::cli::share::run(args)?,
 
                 BoxCommands::Doctor { name, json } => {

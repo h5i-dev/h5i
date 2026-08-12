@@ -25,27 +25,68 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+/// The format this reader understands. Must match `h5i_share::session`'s
+/// `SESSION_VERSION`; a record from any other version is not a record here.
+const SESSION_VERSION: u8 = 1;
+
 /// The file, as everything below `h5i-share` needs to see it.
 ///
 /// Deliberately a *subset* with every field required. Adding a field to the
 /// record in `h5i-share` will not break this; making one required there without
 /// adding it here would, and the round-trip test is what catches that.
+///
+/// "Every field required" was the claim and not the code: `endpoint`,
+/// `started_at`, and a grant's `id` and `secret_sha256` were all required by the
+/// real deserializer up in `h5i-share` and absent from this one, and
+/// `transport` took any string at all. That asymmetry is exactly the
+/// split-brain this module exists to prevent, and it points the wrong way: a
+/// record missing `endpoint` read as *live* down here — the console advertised
+/// it, `apply`/`rebase`/`abort` refused as "being shared" — while
+/// `box share status` and `box share stop`, which use the real reader, said the
+/// box was not being shared and could not perform the recovery the refusal
+/// recommended. Reachable under version skew or a hand-edited file.
 #[derive(Debug, Clone, Deserialize)]
 struct OnDisk {
-    #[allow(dead_code)]
     v: u8,
     #[allow(dead_code)]
     box_id: String,
     port: u16,
-    transport: String,
+    transport: Transport,
+    #[allow(dead_code)]
+    endpoint: String,
+    #[allow(dead_code)]
+    started_at: String,
     pid: u64,
     #[serde(default)]
     winding_up: bool,
     grants: Vec<Grant>,
 }
 
+/// The same two-variant enum `h5i-share` writes, spelled the same way. A free
+/// `String` here accepted a transport this h5i has no idea how to describe and
+/// then printed it to a reviewer as fact.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Transport {
+    P2p,
+    Tunnel,
+}
+
+impl Transport {
+    fn as_str(self) -> &'static str {
+        match self {
+            Transport::P2p => "p2p",
+            Transport::Tunnel => "tunnel",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct Grant {
+    #[allow(dead_code)]
+    id: String,
+    #[allow(dead_code)]
+    secret_sha256: String,
     #[serde(default)]
     revoked: bool,
     expires_at: i64,
@@ -85,6 +126,13 @@ impl ShareRecord {
 pub fn read_live(env_dir: &Path) -> Option<ShareRecord> {
     let raw = std::fs::read(env_dir.join("share.json")).ok()?;
     let d: OnDisk = serde_json::from_slice(&raw).ok()?;
+    // A version this reader does not know is a file it does not understand,
+    // which is the one case this whole module is built to fail closed on. `v`
+    // was decoded and then ignored, so a v2 record written by a newer h5i read
+    // as a v1 one here for as long as the field names still lined up.
+    if d.v != SESSION_VERSION {
+        return None;
+    }
     // Bounded by `i32`, not by `u32`. `pid_t` is signed, so `4294967295` fits
     // a `u32` and still arrives at `kill` as `-1` — "every process" — which
     // returns success and made a nonsense record read as live forever. `2^32`
@@ -97,7 +145,7 @@ pub fn read_live(env_dir: &Path) -> Option<ShareRecord> {
     let now = chrono::Utc::now().timestamp();
     Some(ShareRecord {
         pid,
-        transport: d.transport,
+        transport: d.transport.as_str().to_string(),
         port: d.port,
         winding_up: d.winding_up,
         live_grants: d
@@ -166,6 +214,82 @@ mod tests {
 
     fn full_raw(pid: &str) -> String {
         full(1, "").replace("\"pid\":1,", &format!("\"pid\":{pid},"))
+    }
+
+    /// Every field the real reader requires is required here too.
+    ///
+    /// The asymmetry this pins down was not theoretical. A record with a live
+    /// pid, a live-looking grant and no `endpoint` made this function return
+    /// `Some` — so the console advertised the share and `apply`/`rebase`/
+    /// `abort` refused with "this box is being shared" — while `h5i box share
+    /// status` and `stop`, which go through the real deserializer, answered
+    /// "not being shared" and could not perform the recovery the refusal
+    /// recommended. The mirror of that dead end is what `h5i-share`'s
+    /// `what_this_crate_writes_is_what_h5i_core_reads` covers going the other
+    /// way; this is the closing half.
+    #[test]
+    fn a_record_missing_any_required_field_is_not_a_share() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pid = std::process::id();
+        let good = full(pid, "");
+        write(dir.path(), &good);
+        assert!(read_live(dir.path()).is_some(), "the fixture must be valid");
+
+        // Top-level fields, removed one at a time from a record that is
+        // otherwise complete and live.
+        for field in [
+            "v",
+            "box_id",
+            "port",
+            "transport",
+            "endpoint",
+            "started_at",
+            "pid",
+            "grants",
+        ] {
+            let mut v: serde_json::Value =
+                serde_json::from_str(&good).expect("the fixture parses as JSON");
+            v.as_object_mut().expect("object").remove(field);
+            write(dir.path(), &v.to_string());
+            assert!(
+                read_live(dir.path()).is_none(),
+                "a record with no `{field}` was read as a live share"
+            );
+        }
+
+        // And the two grant fields the real reader requires.
+        for field in ["id", "secret_sha256", "expires_at"] {
+            let mut v: serde_json::Value =
+                serde_json::from_str(&good).expect("the fixture parses as JSON");
+            v["grants"][0]
+                .as_object_mut()
+                .expect("grant object")
+                .remove(field);
+            write(dir.path(), &v.to_string());
+            assert!(
+                read_live(dir.path()).is_none(),
+                "a grant with no `{field}` was read as a live grant"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_transport_or_version_is_not_a_share() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pid = std::process::id();
+
+        // `transport` was a free `String`, so anything at all round-tripped
+        // into a `ShareRecord` and out to a reviewer as a statement about how
+        // the traffic was carried.
+        let odd = full(pid, "").replace("\"transport\":\"tunnel\"", "\"transport\":\"carrier-pigeon\"");
+        write(dir.path(), &odd);
+        assert!(read_live(dir.path()).is_none(), "an unknown transport");
+
+        // A newer record read as a v1 one for as long as the field names lined
+        // up, which is the situation an upgrade or a rollback creates.
+        let v2 = full(pid, "").replace("\"v\":1", "\"v\":2");
+        write(dir.path(), &v2);
+        assert!(read_live(dir.path()).is_none(), "a v2 record");
     }
 
     #[test]
