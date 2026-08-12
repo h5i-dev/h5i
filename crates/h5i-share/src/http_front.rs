@@ -1861,23 +1861,29 @@ fn strip_share_cookies(head: &[u8]) -> Vec<u8> {
 
 /// The name a `Set-Cookie` line sets, or `None` for any other header.
 fn set_cookie_name(line: &[u8]) -> Option<String> {
+    set_cookie_pair(line).map(|(name, _)| name)
+}
+
+/// The name **and value** a `Set-Cookie` line assigns.
+///
+/// Both, because a name on its own is not enough to tell one cookie from
+/// another in a jar this proxy shares with the rest of the machine: two
+/// cookies may carry one name when their paths differ, and the browser sends
+/// both back in one header. See [`gate::AppCookies`].
+///
+/// `split_once`, not `split`: a cookie value may itself contain `=` (base64
+/// padding is the everyday case), and taking the first field of a `split`
+/// would learn a value the browser never sends back — which fails closed, but
+/// fails, and would drop the cookie of any app whose session id ends in `=`.
+fn set_cookie_pair(line: &[u8]) -> Option<(String, String)> {
     if header_name(line) != "set-cookie" {
         return None;
     }
     let colon = line.iter().position(|&b| b == b':')?;
     let value = String::from_utf8_lossy(&line[colon + 1..]);
-    Some(
-        value
-            .trim_start()
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .split('=')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string(),
-    )
+    let first = value.trim_start().split(';').next().unwrap_or("");
+    let (name, val) = first.split_once('=')?;
+    Some((name.trim().to_string(), val.trim().to_string()))
 }
 
 /// Note every cookie name this head sets, so the ones the visitor sends back
@@ -1896,8 +1902,8 @@ fn learn_app_cookies(head: &[u8], app: Option<&gate::AppCookies>) {
     };
     for line in head.split(|&b| b == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if let Some(name) = set_cookie_name(line) {
-            app.learn(&name);
+        if let Some((name, value)) = set_cookie_pair(line) {
+            app.learn(&name, &value);
         }
     }
 }
@@ -2643,18 +2649,28 @@ mod response_tests {
                      X-Not-A-Cookie: nope=1\r\n\r\n";
         learn_app_cookies(head, Some(&jar));
 
-        assert!(jar.knows("sid"));
+        assert!(jar.knows("sid", "9"));
+        // The value is part of it: the same name with somebody else's value is
+        // not this box's cookie. See `gate::AppCookies`.
+        assert!(!jar.knows("sid", "joiners-own-secret"));
         // The attributes are not names, and neither is a header that merely
         // looks like one.
-        assert!(!jar.knows("Path"));
-        assert!(!jar.knows("HttpOnly"));
-        assert!(!jar.knows("nope"));
+        assert!(!jar.knows("Path", "/"));
+        assert!(!jar.knows("HttpOnly", ""));
+        assert!(!jar.knows("nope", "1"));
         // Whitespace around the name is the server's formatting, not part of
         // it: a browser sends `spaced=1` back and an untrimmed list would drop
         // it on every request.
-        assert!(jar.knows("spaced"));
+        assert!(jar.knows("spaced", "1"));
         // Never ours, however it arrives.
-        assert!(!jar.knows("h5i_share_1234"));
+        assert!(!jar.knows("h5i_share_1234", "junk"));
+
+        // A value carrying `=` is learned whole. Base64 padding makes this the
+        // everyday case for a session id, and learning only up to the first
+        // `=` would drop the cookie on every request the browser sent it on.
+        let padded = b"HTTP/1.1 200 OK\r\nSet-Cookie: s=YWJj==; Path=/\r\n\r\n";
+        learn_app_cookies(padded, Some(&jar));
+        assert!(jar.knows("s", "YWJj=="));
 
         // `None` is the ordinary case — a jar this share has to itself — and
         // it must not fall over on a head it is not keeping.

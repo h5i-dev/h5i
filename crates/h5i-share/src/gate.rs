@@ -92,35 +92,51 @@ const MAX_APP_COOKIES: usize = 64;
 /// It is the safe direction to be wrong in: an unlearned name is dropped, never
 /// forwarded, so a path that forgets to learn breaks an app rather than leaking
 /// a credential.
+///
+/// **Name *and* value, not name alone.** Two cookies may share a name in one
+/// jar when their paths differ, and the browser then sends both segments in
+/// one `Cookie` header. Matching on the name alone forwarded both — so a box
+/// that set `sid` at some deep path, having guessed a name the joiner's own
+/// service uses at `/`, was handed the joiner's `sid` beside its own on every
+/// request under that path. Guessing is cheap: `sid`, `session`, `token`,
+/// `jwt`. The value closes it, because the one thing a box cannot do is set a
+/// cookie to a secret it has not been told.
 #[derive(Default, Debug)]
 pub struct AppCookies {
-    names: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// `name=value`, exactly as the box set it and exactly as the browser will
+    /// send it back.
+    pairs: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl AppCookies {
     /// Remember a name the box set. Ours are never learned: they are stripped
     /// from the box's responses on the way out, so a box cannot talk its own
     /// name onto the list and get the share credential forwarded back to it.
-    pub fn learn(&self, name: &str) {
+    pub fn learn(&self, name: &str, value: &str) {
         if name.is_empty() || is_share_cookie_name(name) {
             return;
         }
-        let Ok(mut names) = self.names.lock() else {
+        let pair = format!("{name}={value}");
+        let Ok(mut pairs) = self.pairs.lock() else {
             return;
         };
-        if names.len() >= MAX_APP_COOKIES && !names.contains(name) {
+        if pairs.len() >= MAX_APP_COOKIES && !pairs.contains(&pair) {
             return;
         }
-        names.insert(name.to_string());
+        pairs.insert(pair);
     }
 
-    /// Has the box set this name? Cookie names are case-sensitive, so this is
-    /// an exact match.
+    /// Did the box set this cookie, to this value? Cookie names and values are
+    /// both case-sensitive, so this is an exact match on both.
     ///
     /// A poisoned lock answers "no": the failure mode is an app that loses its
     /// cookies, not a jar that goes upstream unfiltered.
-    pub fn knows(&self, name: &str) -> bool {
-        self.names.lock().map(|n| n.contains(name)).unwrap_or(false)
+    pub fn knows(&self, name: &str, value: &str) -> bool {
+        let pair = format!("{name}={value}");
+        self.pairs
+            .lock()
+            .map(|p| p.contains(&pair))
+            .unwrap_or(false)
     }
 }
 /// Where it travels on the first request, in the URL a human was sent.
@@ -394,7 +410,7 @@ fn split_cookie(value: &str, name: &str, app: Option<&AppCookies>) -> (Option<St
                     if k == name {
                         ours = Some(v.trim().to_string());
                     }
-                    !is_share_cookie_name(k) && app.is_none_or(|a| a.knows(k))
+                    !is_share_cookie_name(k) && app.is_none_or(|a| a.knows(k, v.trim()))
                 }
                 // A segment with no `=` at all. It cannot carry a token —
                 // there is nothing after an equals sign to carry it — so this
@@ -887,7 +903,7 @@ mod cookie_shape_tests {
 
         // The box sets one of its own. Now that one, and only that one,
         // comes back to it.
-        jar.learn("sid");
+        jar.learn("sid", "9");
         let (_, kept) = split_cookie(sent, "h5i_share_8899", Some(&jar));
         assert_eq!(kept, "sid=9");
 
@@ -895,6 +911,52 @@ mod cookie_shape_tests {
         // is nobody else's cookie in it to tell apart.
         let (_, kept) = split_cookie(sent, "h5i_share_8899", None);
         assert_eq!(kept, sent);
+    }
+
+    /// One name, two cookies, and only the box's own goes back.
+    ///
+    /// Cookies sharing a name coexist in one jar when their paths differ, and
+    /// the browser sends both segments in a single `Cookie` header. Matching
+    /// on the name alone forwarded both — so a box that set `sid` at a deep
+    /// path, having guessed a name the joiner's own local service uses at `/`,
+    /// was handed the joiner's `sid` beside its own on every request under
+    /// that path. The guess is cheap (`sid`, `session`, `token`, `jwt`) and
+    /// the box is untrusted code by construction, so this was the inward leak
+    /// reopening through the fix for it.
+    ///
+    /// The value closes it: the one thing a box cannot do is set a cookie to a
+    /// secret nobody has told it.
+    #[test]
+    fn a_name_the_box_guessed_does_not_carry_the_joiners_cookie() {
+        let jar = AppCookies::default();
+        jar.learn("sid", "box-value");
+
+        // What the browser sends under the deep path: the box's, and the
+        // joiner's own from another service on this machine.
+        let (_, kept) = split_cookie(
+            "sid=box-value; sid=joiners-own-secret",
+            "h5i_share_8899",
+            Some(&jar),
+        );
+        assert_eq!(kept, "sid=box-value");
+        assert!(
+            !kept.contains("joiners-own-secret"),
+            "a guessed name carried the joiner's cookie upstream: {kept}"
+        );
+
+        // Order is the browser's, not ours: most specific path first is usual,
+        // but nothing may depend on it.
+        let (_, kept) = split_cookie(
+            "sid=joiners-own-secret; sid=box-value",
+            "h5i_share_8899",
+            Some(&jar),
+        );
+        assert_eq!(kept, "sid=box-value");
+
+        // And a value the box has *stopped* setting is not grandfathered in
+        // for having once shared a name with one it did.
+        let (_, kept) = split_cookie("sid=something-else", "h5i_share_8899", Some(&jar));
+        assert_eq!(kept, "");
     }
 
     /// A box cannot talk its way onto its own allowlist.
@@ -907,10 +969,10 @@ mod cookie_shape_tests {
     #[test]
     fn the_box_cannot_learn_its_way_to_the_share_credential() {
         let jar = AppCookies::default();
-        jar.learn("h5i_share");
-        jar.learn("h5i_share_8899");
-        assert!(!jar.knows("h5i_share"));
-        assert!(!jar.knows("h5i_share_8899"));
+        jar.learn("h5i_share", "tok");
+        jar.learn("h5i_share_8899", "tok");
+        assert!(!jar.knows("h5i_share", "tok"));
+        assert!(!jar.knows("h5i_share_8899", "tok"));
 
         // Belt and braces: even if one were on the list, the name predicate
         // still refuses it.
@@ -923,7 +985,7 @@ mod cookie_shape_tests {
     #[test]
     fn the_odd_shapes_are_dropped_on_a_shared_jar_too() {
         let jar = AppCookies::default();
-        jar.learn("sid");
+        jar.learn("sid", "9");
 
         // A segment with no `=`. A `Set-Cookie` always has a value, so nothing
         // the box set can arrive spelled like this, and there is no name here
@@ -945,14 +1007,14 @@ mod cookie_shape_tests {
     fn a_box_cannot_grow_the_list_without_limit() {
         let jar = AppCookies::default();
         for i in 0..MAX_APP_COOKIES * 4 {
-            jar.learn(&format!("c{i}"));
+            jar.learn(&format!("c{i}"), "v");
         }
-        assert!(jar.knows("c0"));
-        assert!(!jar.knows(&format!("c{}", MAX_APP_COOKIES * 4 - 1)));
-        // Full is not frozen: a name already on the list is still known, so a
+        assert!(jar.knows("c0", "v"));
+        assert!(!jar.knows(&format!("c{}", MAX_APP_COOKIES * 4 - 1), "v"));
+        // Full is not frozen: a pair already on the list is still known, so a
         // busy app does not start losing the cookies it had.
-        jar.learn("c0");
-        assert!(jar.knows("c0"));
+        jar.learn("c0", "v");
+        assert!(jar.knows("c0", "v"));
     }
 }
 
