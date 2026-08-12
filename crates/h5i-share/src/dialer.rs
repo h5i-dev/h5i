@@ -386,7 +386,17 @@ impl Dialer {
             None => format!("pid {pid}"),
         };
         match owner::decide(&listeners, self.port, &pids) {
-            Ownership::Box { addr, .. } => Ok(addr),
+            // Re-asked upwards, against the process table as it is now. The
+            // tree above is a snapshot taken before the sockets were scanned,
+            // and a pid that changed hands in between would otherwise carry the
+            // snapshot's word for it. See [`owner::is_descendant`].
+            Ownership::Box { addr, pid } if owner::is_descendant(pid, self.mac.root) => Ok(addr),
+            Ownership::Box { pid, .. } => Err(DialError::NotTheBox(H5iError::Metadata(format!(
+                "the process holding port {} (pid {pid}) stopped being part of this box while \
+                 h5i was looking at it, so h5i will not connect to it. This is the pid changing \
+                 hands underneath the check; try again.",
+                self.port
+            )))),
             Ownership::Nobody => Err(DialError::NothingListening(H5iError::Metadata(format!(
                 "nothing is listening on port {} in the box. Start the dev server in the box, \
                  or share the port it is actually on.",

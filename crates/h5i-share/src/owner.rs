@@ -330,6 +330,42 @@ pub fn process_name(pid: u32) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Is `pid` still under `root`, asked *now* and walked upwards?
+///
+/// [`process_tree`] answers the same question downwards, and the two differ in
+/// when they are true rather than in what they mean. The tree is a snapshot,
+/// and [`listening_sockets`] runs after it — so between the two, a box child
+/// can exit, the kernel can hand its pid to something else, and that something
+/// else can bind the shared port. Its socket is then found under a pid the
+/// snapshot vouches for, and h5i dials a stranger believing it is the box.
+/// That is the pid-identity hazard `h5i box share` already refuses at the
+/// session root, arriving one level down.
+///
+/// Re-asking upwards from the winner closes it, and closes it without the cost
+/// of being wrong in the other direction: intersecting two tree snapshots would
+/// also drop a *legitimate* dev server that started between them, and turn a
+/// millisecond of timing into "port 3000 is held by something that is not part
+/// of this box" — a frightening sentence for an ordinary event. An impostor's
+/// ancestry does not lead to the box; a newly started box process's does.
+///
+/// Bounded, because a walk over `ppid` is only a tree while the process table
+/// is consistent, and this reads it one entry at a time without a lock.
+#[cfg(target_os = "macos")]
+pub fn is_descendant(pid: u32, root: u32) -> bool {
+    let mut at = pid;
+    for _ in 0..64 {
+        if at == root {
+            return true;
+        }
+        // pid 1 is launchd and 0 is the kernel: both are above any box.
+        match parent_of(at) {
+            Some(p) if p != 0 && p != at => at = p,
+            _ => return false,
+        }
+    }
+    false
+}
+
 #[cfg(target_os = "macos")]
 fn all_pids() -> Vec<u32> {
     // Sized from the kernel's own answer, then re-read: the count can grow
@@ -882,6 +918,49 @@ mod tests {
                  and read back as {found:?}"
             );
         }
+    }
+
+    /// The upward check, which is what the dialer trusts at the last moment.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ancestry_answers_for_a_grandchild_and_refuses_a_stranger() {
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("sleep 30 & wait")
+            .spawn()
+            .expect("spawn a child");
+        let me = std::process::id();
+        let mut grandchild = None;
+        for _ in 0..100 {
+            if let Some(g) = all_pids()
+                .into_iter()
+                .find(|p| parent_of(*p) == Some(child.id()))
+            {
+                grandchild = Some(g);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let grandchild = grandchild.expect("the shell never started its background `sleep`");
+
+        assert!(is_descendant(me, me), "a process is its own root");
+        assert!(is_descendant(child.id(), me), "a child is under its parent");
+        assert!(
+            is_descendant(grandchild, me),
+            "a grandchild is under its grandparent — where a dev server lives"
+        );
+        // The direction that matters: launchd is not under us, and neither is
+        // anything whose ancestry does not lead back to the root. A pid that
+        // changed hands looks exactly like this.
+        assert!(!is_descendant(1, me), "launchd is not part of this box");
+        assert!(
+            !is_descendant(me, child.id()),
+            "ancestry is not symmetric, or every process would be in every box"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+        unsafe { libc::kill(grandchild as libc::pid_t, libc::SIGKILL) };
     }
 
     /// The tree walk, against processes we actually fork — two deep.
