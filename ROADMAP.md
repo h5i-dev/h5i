@@ -1183,7 +1183,7 @@ rootless Podman host.
 > `box_git_status_and_commit_work_inside_process_tier`,
 > `process_tier_confines_fs_and_network`). They fail identically at
 > `e4488b064`, before any of this work, so it is host drift rather than a
-> regression — but it is drift nobody has diagnosed, and the process tier is
+> regression, but it is drift nobody has diagnosed, and the process tier is
 > not actually covered here until someone does.
 
 ### M0. Freeze and branch: done
@@ -1224,11 +1224,11 @@ revision of this line said `refresh` was not built; it landed in e75020358,
 with the writable bind reachable from no profile and the refusal that names the
 registry-only profile it demands.)
 Also done: the credential-seed audit (the per-box HOME copy now drops
-credential-shaped entries at any depth — `credentials*`, `.netrc`, ssh keys,
-`*.pem`/`*.key`/`*.p12` — keeping only the runtime's own token, which it cannot
+credential-shaped entries at any depth (`credentials*`, `.netrc`, ssh keys,
+`*.pem`/`*.key`/`*.p12`), keeping only the runtime's own token, which it cannot
 function without), and the credential proxy, which was already default-on but
 did not engage for a `browser` box.
-Also done: profile-declared authenticated egress (5.5, option 1) — a reverse
+Also done: profile-declared authenticated egress (5.5, option 1): a reverse
 proxy per grant, the credential resolved host side and never placed in the box,
 part of the pinned digest, and fail-closed when the host-side variable is
 unset. GitHub is a policy entry, not a feature. Option 2 (a TLS-terminating
@@ -1243,7 +1243,7 @@ order:
    workspace is under `/tmp`**, because the agent profile redirects `/tmp` to a
    per-env scratch and that shadows the worktree.~~ **Wrong, and withdrawn.** A
    `create`-time refusal for that layout was written and it rejected this
-   suite's own fixtures — every `tempfile` repo is under `/tmp`. Checked
+   suite's own fixtures: every `tempfile` repo is under `/tmp`. Checked
    directly instead: a supervised box whose workspace is under `/tmp` sees its
    workspace, runs commands, and drives the full browser loop. The bind-ordering
    fix in 86dddafe0 (mount `/tmp` last) had already handled it. The working
@@ -1260,12 +1260,12 @@ order:
    this, and it immediately caught a bug in our own policy: pinning
    `AI_GATEWAY_API_KEY` to an empty string *enabled* chat, because
    agent-browser tests for the variable's presence. The box reported
-   "AI_GATEWAY_API_KEY present (chat enabled)" — the opposite of the intent.
+   "AI_GATEWAY_API_KEY present (chat enabled)", the opposite of the intent.
    **Fixed** by not injecting it at all (it is not in `env.pass` either, so it
    is absent), and verified from inside: "chat command disabled".
 5. Doctor also confirms the profile's grants work: **Chromium 130 is found** at
    the granted `~/.cache/ms-playwright` path.
-6. **The daemon exited during startup with no output — and it was our socket
+6. **The daemon exited during startup with no output, and it was our socket
    gate, not Chrome.** The supervised tier notifies on `socket()` and denied
    `AF_UNIX` unconditionally, with no way for a profile to ask for it; the
    daemon's control socket is a filesystem-bound `AF_UNIX` listener, so it got
@@ -1274,7 +1274,7 @@ order:
 
    The grant is narrower than it sounds, which is why it can exist: abstract
    sockets are scoped by the private netns, filesystem-bound ones by Landlock,
-   and `/tmp` — where `.X11-unix`, `tmux-*` and an ssh-agent live — is a per-env
+   and `/tmp`, where `.X11-unix`, `tmux-*` and an ssh-agent live, is a per-env
    scratch at the kernel tiers. The residual is a host socket under a granted
    path, so it stays opt-in per profile and lands in the digest.
 
@@ -1286,16 +1286,16 @@ order:
 7. **Two variables we set were not variables agent-browser reads.**
    `AGENT_BROWSER_HEADLESS` does not exist (it is `AGENT_BROWSER_HEADED`, and
    headless is what a falsey value means), and neither does
-   `AGENT_BROWSER_DISABLE_CHAT` — chat is gated on `AI_GATEWAY_API_KEY`
+   `AGENT_BROWSER_DISABLE_CHAT`: chat is gated on `AI_GATEWAY_API_KEY`
    presence alone. A variable the tool never reads reviews as enforcement while
    enforcing nothing, so both are gone and the tests assert their absence.
 
 Nothing here could have been found by reading the code, which is the argument
 for driving the loop before building more on top of it.
 
-That gap — **no test in the suite ran an agent-family profile at
+That gap, **no test in the suite ran an agent-family profile at
 `supervised`**, the only kernel tier that can host an agent or browser box
-(`process` refuses the egress the profile needs) — is why both surprises were
+(`process` refuses the egress the profile needs), is why both surprises were
 available to find, and it is now closed. The test that would have caught the
 daemon failure asserts both directions: a `browser` box binds a
 filesystem-bound `AF_UNIX` listener, and a `default` box on the same host and
@@ -1310,7 +1310,7 @@ default. **No pod, no second image, no Podman requirement** (5.2).
 `--allowed-domains` is derived from the enforced `net.egress` (plus loopback,
 which never appears in an allowlist but is the whole point of a dev server),
 headless is pinned through the variable that actually exists, and the AI gateway
-is refused by absence — the only mechanism upstream has.
+is refused by absence, the only mechanism upstream has.
 
 **Browser evidence in the receipt** is built (`crates/h5i-core/src/browser.rs`).
 After a run that drove the browser, h5i asks the page what happened and records
@@ -1336,14 +1336,14 @@ The control lock
 (`crates/h5i-core/src/control.rs`, `h5i browser status|take|release`): the
 agent holds control by default, a human *takes* it rather than asking, and
 handing it back sets a stale-handle flag that refuses the agent's next mutating
-action until it re-snapshots — read-only verbs stay available throughout,
+action until it re-snapshots. Read-only verbs stay available throughout,
 because watching never collides. Nothing upstream arbitrates this, which is
 why it is ours.
 
 The forward (`crates/h5i-core/src/view.rs`, `h5i box view`, `h5i browser url`)
 serves the agent-browser stream to loopback. The box's port is never published:
 h5i enters the box's user and network namespaces by pid, connects from inside,
-and hands the socket back over `SCM_RIGHTS` — the fd-handoff the supervisor
+and hands the socket back over `SCM_RIGHTS`, the fd-handoff the supervisor
 already uses. All four gates verified live against a supervised browser box:
 loopback only; a per-box token minted at create and kept outside every path the
 box can read or write (401 without, 401 on a wrong one); cross-origin
@@ -1353,7 +1353,7 @@ before taking control keeps a live viewer. Sessions land in the receipt and the
 export under a `viewer` lane, and the report calls out a session where a human
 drove.
 
-Three bugs found, all the same kind — quiet failures producing a plausible
+Three bugs found, all the same kind: quiet failures producing a plausible
 wrong answer rather than an error, and each worth remembering:
 
 - The live registry records h5i's **host-side** pid, which is in the host's
@@ -1361,7 +1361,7 @@ wrong answer rather than an error, and each worth remembering:
   box. Fixed by walking the session's process tree for the first descendant
   whose netns differs from ours.
 - A stray CRLF in the relayed handshake is not a protocol error the server
-  reports — it is two bytes read as the start of the client's first frame, after
+  reports. It is two bytes read as the start of the client's first frame, after
   which the handshake completes and the viewer hangs.
 - Returning `Result<u64>` from the input pump discarded the forwarded-input
   count on the error path, which is exactly the path a human takes by closing
@@ -1378,14 +1378,14 @@ could run.
 `skills/h5i/` is written against the
 real surface and the binary carries it; the missing fifth page
 (`references/browser.md`) is written. The README, MANUAL.md, `man/h5i.1` and
-`docs/manual/index.html` all describe the product that exists — the manual was
+`docs/manual/index.html` all describe the product that exists. The manual was
 3,900 lines of `capture`/`recall`/`audit`/`team`/`mcp`, and is rewritten around
 the boundary. The landing page is rewritten too, and the embedded mock of the
 deleted `h5i serve` workbench is gone with its CSS and its film driver. Seven
 guides plus `/features/` and `/workflows/` teach deleted commands, so each
 carries a banner and is `noindex` rather than being quietly left.
 
-**Remaining**: `npx skills add h5i-dev/h5i` is still unverified — the `skills`
+**Remaining**: `npx skills add h5i-dev/h5i` is still unverified: the `skills`
 CLI needs Node >= 22.20 and no such runtime was available to test it; the repo
 layout and frontmatter were checked against what the CLI discovers. There is no
 demo video. `/blog/` and `/pitch/` still argue the old positioning, and
@@ -1407,8 +1407,8 @@ preserved, 624 continuation chunks), the previous frame deleted only after the
 next was placed, the control lock flipping to `human` and back to `agent`, mouse
 tracking taken and returned, the alternate screen restored on a clean exit, and
 the status line picking up the page's real URL. The receipt recorded `12
-frame(s) forwarded to the page` — "hello" as ten key events plus a press and a
-release — and flagged `a human drove this box` from the input count, which is
+frame(s) forwarded to the page` ("hello" as ten key events plus a press and a
+release) and flagged `a human drove this box` from the input count, which is
 the take-and-hand-back case that comparing the holder at open and close would
 have missed.
 
@@ -1417,7 +1417,7 @@ size makes `TIOCGWINSZ` succeed and report zeroes, and the viewer dutifully
 scaled the page into one cell and transmitted a **1×1 pixel image** with no
 error anywhere; `Size::or_fallback` now supplies 80×24. And the first harness
 stopped reading before sending `q`, which is why it looked as though the
-alternate screen was never exited — worth remembering as a way to mistake a
+alternate screen was never exited, worth remembering as a way to mistake a
 test artifact for a terminal-corrupting bug.
 
 Still **not demonstrated**: a real person, at a real Kitty-protocol terminal,
@@ -1479,15 +1479,17 @@ Two findings from driving it, neither available by reading:
 
 1. **A denied resource must be *completed*, not dropped.** Blitz counts a
    resource pending until its `NetHandler` is called, and `paint_scene`
-   refuses to paint while any critical resource is pending — so the obvious
+   refuses to paint while any critical resource is pending, so the obvious
    way to write a deny (return without calling the handler) renders every page
    permanently blank. Fail-closed means "completed with nothing", and there is
    a test on it.
 2. **`system-fonts` is a build-time native dependency.** Blitz's font
    discovery pulls `yeslogic-fontconfig-sys`, which needs libfontconfig
-   headers to compile — portable engine, non-portable build. Fonts are
+   headers to compile: portable engine, non-portable build. Fonts are
    discovered and registered at runtime instead, which also makes "no fonts"
    a state `doctor` reports rather than a blank screenshot nobody can explain.
+
+#### Tier 2, and the numbers
 
 **Tier 2 built, same day.** `h5i-browser-light serve`: a WebSocket that speaks
 the viewers' own format (base64 JPEG in a JSON envelope, `status` carrying the
@@ -1520,22 +1522,24 @@ heavy CSS.
 Still open at this tier: no script; input stops at scrolling and link clicks
 (no typing, no form submission); and the live view has been driven by a
 protocol-level test client rather than by `h5i box view` against a real box.
-What is missing in that last one is the run, not the plumbing —
+What is missing in that last one is the run, not the plumbing.
 `H5I_BROWSER_STREAM_FILE` puts the `.stream` under the box's `agent-browser`
 directory, which is where the viewers' discovery already scans.
 
-**Tier 2's open item closed, 2026-08-08.** The live view has now been driven by
+#### What landed after, 2026-08-08
+
+**Tier 2's open item closed.** The live view has now been driven by
 `h5i box view` against a real `h5i-light` box rather than by a protocol-level
 client: the forward attaches and renders, the console's frame relay pulls a
 1280x720 JPEG through the same session, input is dropped while the agent holds
-the control lock and flows the moment a human takes it — so the lock is enforced
+the control lock and flows the moment a human takes it, so the lock is enforced
 on an engine with no mediator behind it, which had never been checked. Two
 defects fell out of the run, both fixed:
 
 1. **A readable file could fail to open.** `open ./page.html` reported "invalid
    path" when `canonicalize` failed, because the fallback handed a *relative*
    path to `Url::from_file_path`, which refuses one. The walk fails for a
-   working directory the box can reach by fd and not by name — which is any
+   working directory the box can reach by fd and not by name, which is any
    repo under `/tmp`, since that is the directory the supervised tier
    overmounts. The message named the path when the problem was the walk.
 2. **`serve` accepted one viewer at a time.** The accept loop handled
@@ -1545,7 +1549,7 @@ defects fell out of the run, both fixed:
 3. **Scrolling only ever worked on unstyled pages.** The scroll range came from
    the root element's `size.height`, which a stylesheet saying
    `html, body { height: 100% }` pins to the viewport while the article
-   overflows it — so Blitz reported Wikipedia's 16477px page as 720px and every
+   overflows it, so Blitz reported Wikipedia's 16477px page as 720px and every
    scroll clamped to zero. The fix reads `size.height.max(content_size.height)`,
    which is the same formula Blitz's own `scroll_viewport_by` uses. Every local
    test page was unstyled, so the whole suite agreed with the bug. Found by
@@ -1555,14 +1559,14 @@ defects fell out of the run, both fixed:
 that several viewers and a control channel share, and
 `h5i-browser-light session status|snapshot|navigate|click` drives it. A control
 verb that moves the page broadcasts to every viewer, so the live view shows the
-page *the agent* is driving — the caveat M11a's page pane had to print is gone
+page *the agent* is driving, so the caveat M11a's page pane had to print is gone
 for this engine. Ack pacing moved from a structural accident ("one frame per
 client message") to per-viewer state, holding the *newest* frame rather than
 queueing a backlog, and nothing is encoded at all when no one is watching.
 
 The architecture was chosen by the compiler, not by preference: **`Page` is not
-`Send`** — `BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
-`Box<dyn FontMetricsProvider>` — so the obvious `Arc<Mutex<Session>>` does not
+`Send`**: `BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
+`Box<dyn FontMetricsProvider>`, so the obvious `Arc<Mutex<Session>>` does not
 exist. One thread owns the page and everything else reaches it by channel. That
 is the shape a multi-driver session wants regardless; here it was not optional.
 
@@ -1572,7 +1576,7 @@ the list because §11 called it "the only item on this list whose absence is a
 live hole rather than a missing feature" while ranking it fourth, and it depends
 on nothing. Writing the test found the hole that made the fence worth having:
 `href` was the one page-derived field the walker did not collapse, and an HTML
-attribute value may contain a literal newline — so the field that could forge
+attribute value may contain a literal newline, so the field that could forge
 the fence was the field nobody had thought of as text.
 
 **The agent-actions pane had no source on this engine, 2026-08-08.** Found by
@@ -1580,7 +1584,7 @@ someone running an agent in an `h5i-light` box and noticing the pane stayed
 empty while the agent worked. It was empty *by construction*: the pane is fed by
 `browser-actions.jsonl`, which the mediator writes, and
 `engage_browser_mediation` returns `None` for any engine agent-browser cannot
-drive. Before the resident session that was harmless — there were no verbs to
+drive. Before the resident session that was harmless: there were no verbs to
 miss. Adding verbs made it a monitoring surface that silently under-reported,
 which is the failure this codebase keeps writing tests against.
 
@@ -1590,7 +1594,7 @@ host-observed. That distinction is the point rather than a caveat: h5i sits on
 no socket between an agent and this engine because the engine *is* the browser,
 and a row claiming otherwise would launder the box's own account into evidence
 h5i gathered. The pane note is engine-aware for the same reason. Each verb is
-recorded before it runs and again after — no record, no action — which is a
+recorded before it runs and again after (no record, no action), which is a
 guarantee against accident, not against a box that has decided to lie.
 
 Measured before shipping, because it sits on the verb path: **7µs per verb**
@@ -1605,7 +1609,7 @@ on a later navigate.
 
 Blitz owns the form submission algorithm and dispatches to a navigation
 provider, so the engine hands it one that *captures* the request rather than
-performing it — the encoding is upstream's, the wire stays ours, and a
+performing it: the encoding is upstream's, the wire stays ours, and a
 submission is policy-checked and receipted like everything else. `Broker::send`
 generalises `fetch` rather than sitting beside it, because every guarantee lives
 in that loop and a POST that took a shortcut would be the one request with no
@@ -1627,13 +1631,15 @@ is why the narrowings arrived with it rather than after:
   to whatever a server names next.
 
 Two bugs the tests caught rather than review. The request-path matcher used
-RFC 6265's *default-path* derivation — which exists only to fill in a missing
-`Path` attribute — so a cookie set at `Path=/admin` was never sent to `/admin`.
+RFC 6265's *default-path* derivation, which exists only to fill in a missing
+`Path` attribute, so a cookie set at `Path=/admin` was never sent to `/admin`.
 And `scroll_height` was tried for the scroll range before the fix above: taffy
 measures overflow *within* a box, which is zero for an unstyled page whose root
 simply grew.
 
-**Still open. LOGIN mode is not built**, and it is the one item this entry was
+#### Still open, and one correction
+
+**LOGIN mode is not built**, and it is the one item this entry was
 warned about: §12 pairs LOGIN mode with cookies precisely because a session
 with cookies is the first version of this browser where a stolen credential is
 worth having. Until it lands, a human taking over to type a password does so on
@@ -1642,14 +1648,14 @@ which is a deliberate refusal to acquire filesystem reach. Tier 3 (policy-gated
 script) is now in scope, and the cost of putting it there is §12.5.
 
 **Corrected 2026-08-08.** This entry also said "nothing wires h5i to this
-engine yet — M9's `--engine` knob does not exist, so using it in a box is
+engine yet: M9's `--engine` knob does not exist, so using it in a box is
 still manual", which was true the day tier 2 shipped and stopped being true
 three commits later on the same branch. `--engine h5i-light`, or
 `[profile.X] engine`, pins the engine in `policy.resolved.toml` and so in the
 digest; `browser_env` hands that engine `H5I_BROWSER_ALLOW` (the box's own
 `net.egress`, loopback included) and `H5I_BROWSER_RECEIPTS` pointing at the
 box's spool, and skips the agent-browser shim, whose job is to launch Chrome
-and attach a driver — neither of which applies to an engine h5i runs itself.
+and attach a driver, neither of which applies to an engine h5i runs itself.
 Using this engine in a box is a create-time flag. The entry is left standing
 rather than edited away because the gap it records is the real lesson: a
 milestone's "still open" list ages against the commits that follow it.
@@ -1776,8 +1782,8 @@ first, has: `browser_events` is the one stream, and the console reads it.
   **box-claimed** (written inside the box) and **fail-closed** (the engine will
   not fetch what it cannot record). Chromium's Fetch lane is box-claimed and
   best-effort. One "trusted" flag could not have said that. `caused_by` is set
-  only where the source carries the link — a response to its request by
-  sequence number, a refusal to the action that provoked it — and nowhere else,
+  only where the source carries the link (a response to its request by
+  sequence number, a refusal to the action that provoked it) and nowhere else,
   so no arrow on the screen is drawn from two things merely having happened at
   about the same time. Ingest sanitises every box string once, here, rather than
   in each renderer, because M11b writes this same text straight to a PTY.
@@ -1785,7 +1791,7 @@ first, has: `browser_events` is the one stream, and the console reads it.
   mediator's actions, and the drained page evidence.
 * **The mediator now writes its actions as data.** They were only ever on the
   receipt as *rendered text*, so a reader wanting them back would have had to
-  parse a display format — the quiet-wrong-answer shape this file keeps
+  parse a display format, the quiet-wrong-answer shape this file keeps
   recording. `browser-actions.jsonl` sits beside `receipt.jsonl`, host-side,
   where the box cannot write, and the round trip is pinned by a test.
 * **In `h5i ui`, on the console's own terms.** One `GET`, the same token gate,
@@ -1794,7 +1800,9 @@ first, has: `browser_events` is the one stream, and the console reads it.
   network pane names its engine's evidence grade in its header, and a dropped
   count is rendered rather than hidden.
 
-**Driven against a real box, not only a test client** — the gap M10 recorded and
+#### Driven against a real box
+
+**Not only a test client**, which is the gap M10 recorded and
 this milestone was gated on not repeating. The real engine opened a page with
 two refused subresources, wrote its own log into the box's `/tmp`, and the
 console served the stream: both denials as `box-claimed` / `fail-closed`, each
@@ -1806,18 +1814,18 @@ fail-closed grade, and the mediator's sidecar shows up `host-observed` on the
 box that has one.
 
 **The finding, which cost the first live attempt.** `ResolvedPolicy::home_binds`
-is `#[serde(skip)]`, so `host_tmp_root` — correct for a live run, which is the
-only caller it had — returns `None` for **every** policy loaded back from disk.
+is `#[serde(skip)]`, so `host_tmp_root`, correct for a live run and the
+only caller it had, returns `None` for **every** policy loaded back from disk.
 The console asked a live-run question of a stored policy and got a silently
 empty stream for a session that had one: enforcement-shaped code answering
 "nothing to show" instead of "I cannot tell". The reader now takes the path from
 `private_tmp_backing`, the same function that placed it.
 
-**Second pass, same day: its own tab, and the reader made honest.**
+#### Second pass, same day: its own tab, and the reader made honest
 
 * **The stream is incremental and session-aware, which was a bug fix rather
   than an optimisation.** The first reader re-parsed every source per poll and
-  numbered from 1 each time — stable only while files grow by appending, and
+  numbered from 1 each time: stable only while files grow by appending, and
   they do not: every run clears the box's private `/tmp`, so a second browser
   run restarts the request log at zero bytes and restarts the numbering with
   it. A console tab open across two runs would have kept its cursor and
@@ -1846,23 +1854,25 @@ empty stream for a session that had one: enforcement-shaped code answering
 One bug this pass created and caught before it shipped, worth recording because
 it is the same shape twice: the new `session-reset` event was added server-side
 while the console's own union type and pane router still knew six kinds, so the
-row was dropped silently in the browser — the swallow that had just been fixed
+row was dropped silently in the browser, the swallow that had just been fixed
 one layer down, moved one layer up. Found by grepping the *served bundle* for
 the divider text rather than by trusting a green typecheck, which could not see
 it: an unknown variant simply matched no case.
 
-**Third pass: the console carries pixels.** The page pane shows the box's page,
+#### Third pass: the console carries pixels
+
+The page pane shows the box's page,
 rendered by our own engine inside the box. The frame lane is joined, and the way
 it is joined is the point:
 
 * **A reader, not a proxy.** A background thread per watched box enters the
   box's user and network namespaces by pid, connects to the stream server, and
-  reads — the same route `h5i box view --term` takes (`view::connect_in_netns`),
+  reads, the same route `h5i box view --term` takes (`view::connect_in_netns`),
   reusing the same hardened WebSocket client (`termview::ws`, which refuses
   reserved opcodes, masked server frames and oversized lengths). Nothing new
   listens; the box gains no reachability it did not have.
 * **The console's structural guarantee survives.** Every route is still a `GET`,
-  because the frame is served *as* a `GET` returning `image/jpeg` — `nosniff` so
+  because the frame is served *as* a `GET` returning `image/jpeg`, with `nosniff` so
   crafted bytes cannot be re-read as anything else, `no-store` so a frame of
   somebody's page does not settle into a disk cache. And the relay is
   one-directional by construction: the only messages it can send upstream are
@@ -1872,56 +1882,58 @@ it is joined is the point:
   which enforces the control lock.
 * **Change-driven, end to end.** The stream reports the newest frame's sequence
   number and the page keys its `<img>` on it, so an unchanged page is zero
-  requests rather than a timer redrawing a still picture — the engine's own rule,
+  requests rather than a timer redrawing a still picture, the engine's own rule,
   carried up to the browser.
 * **The picture is labelled.** A frame is **box-claimed**: the box's rendering of
   its own page. Nothing derived from it reaches the trusted status row, and the
   `h5i-light` caveat sits under the image rather than being left for a reader to
-  infer — that engine has no resident session, so a served view shows the page
+  infer: that engine has no resident session, so a served view shows the page
   the *serving* process opened, which need not be the one the agent is driving.
 
 Driven end to end rather than asserted: the engine served a page inside a
 supervised box, the console found the `.stream`, crossed the namespace, and
 returned a 1280×720 JPEG at `frame_seq 2` with the right headers; stopping the
 in-box server flipped `live_view` to false, dropped the relay, and the frame
-route went to 204. One test was rewritten on the way — clippy caught it
+route went to 204. One test was rewritten on the way: clippy caught it
 comparing two constants, which is a tautology that would have passed with the
 size check deleted; it now drives the real decoder with real base64.
 
-**Still open, and none of it is dressing.** The
+#### Still open, and none of it is dressing
+
+The
 accessibility snapshot has no live source (it is a CLI verb today). Takeover is
 not wired here: the console remains read-only and input still goes through
 `h5i box view`, so the read-only-by-default / interact-under-the-lock rule below
 is *stated* by this milestone and *enforced* by the forward, which is one
 surface short of the exit criterion. Nothing links an agent action to the
-requests it caused — neither the mediator's records nor the engine's log carries
-the other's id — so "selecting an action surfaces its correlated request" holds
+requests it caused, since neither the mediator's records nor the engine's log carries
+the other's id, so "selecting an action surfaces its correlated request" holds
 only for the verdict it provoked, and closing it is a change at the *sources*,
 not in the viewer. M11b has not started, so the claim that two readers agree is
 untested. The original entry follows.
 
 **M11a (as proposed).** M11 put
 the developer view in the terminal; this puts the full one where it can
-actually breathe, inside `h5i ui`. The design motif is a trading terminal —
+actually breathe, inside `h5i ui`. The design motif is a trading terminal.
 Hyperliquid is the reference, the way terminal-browser was for 5.10: what we
 take is the information model (peer panes of equal rank, change-driven row
 highlights, an always-on status bar), not the skin. The reasoning is the same
 one M11 recorded: for an agent's overseer the rendered page is the *least*
 informative pane, so page viewport, accessibility snapshot, agent actions,
-network requests, console, and policy verdicts sit side by side at equal rank
-— what the agent saw, what it did, what moved on the wire, and what h5i
+network requests, console, and policy verdicts sit side by side at equal rank:
+what the agent saw, what it did, what moved on the wire, and what h5i
 refused, in one view.
 
 **One web surface, not a second one.** This lives in the existing console:
 same axum server, same embedded bundle, same `web` feature, same loopback
-bind. The console's own rule — every route is a GET — stands; the live data
+bind. The console's own rule, every route is a GET, stands; the live data
 and the input direction ride the per-box forward that already exists (5.9),
 with its per-box token and its lock check on input. The console gains a view,
 not a write path.
 
 **Not a read-only browser.** The viewer is read-only by default, interactive
 only while holding the control lock (5.4), and taking the lock is itself a
-recorded policy event — the takeover and the window in which human input
+recorded policy event: the takeover and the window in which human input
 flowed belong in the receipt next to the verbs the mediator refused during
 it. This is the terminal viewer's VIEW/INTERACT model (5.10) given a second
 skin, not a new input policy; a viewer that could never take over would
@@ -1929,8 +1941,8 @@ delete M5's takeover story, and one that could always type would delete the
 lock.
 
 **The durable half is the event model, and it lands first.** One stream from
-the browser runtime — frames, snapshots, actions, requests, console, policy
-verdicts, metrics — with every event stamped with its session, ordinal,
+the browser runtime (frames, snapshots, actions, requests, console, policy
+verdicts, metrics), with every event stamped with its session, ordinal,
 timestamp, kind, a `caused_by` back-reference, and its **lane**:
 host-observed or box-claimed, the same two kinds of claim the receipt
 already keeps apart. The web view, the terminal view, and the exported
@@ -1939,7 +1951,7 @@ receipt rather than a dashboard that happens to resemble one: selecting an
 action shows the request, console output, and verdict that carry its id.
 The panes inherit the honesty rules with the data: the status bar shows
 host-derived values only (box-claimed metrics are labeled, not promoted),
-and the network pane names its evidence grade per engine — h5i-light's
+and the network pane names its evidence grade per engine: h5i-light's
 fail-closed request log is authoritative, the Chromium path's Fetch lane is
 best-effort, and a pane that showed both alike would read as enforcement
 where there is none. Update budgets are per pane, not global: the viewport
@@ -1961,8 +1973,8 @@ the same session shows the same events, because divergence between the two
 viewers is a bug in the model, not a difference of skin.
 
 Gated on the shared event stream existing (this milestone's own first half)
-and on M10's open item being closed first — the live view driven by a real
-`h5i box view` against a real box — because a polished terminal over a
+and on M10's open item being closed first, the live view driven by a real
+`h5i box view` against a real box, because a polished terminal over a
 stream never exercised end to end inverts this file's own priorities.
 
 ### M11b. Terminal watch mode: proposed, 2026-08-08
@@ -1971,7 +1983,7 @@ The shipped terminal
 viewer (5.10, M7, M11) re-pointed at the same event stream and kept,
 deliberately smaller: viewport, trusted status row, latest actions, console
 errors, denied requests, panes cycled rather than tiled. It is the SSH and
-demo surface — "or stay entirely inside the terminal" — and it does not
+demo surface ("or stay entirely inside the terminal"), and it does not
 chase pane parity with M11a: the investment moves to the web view, and the
 TUI's job is to watch, take the lock when a login wall demands it, and prove
 the event model has two independent readers. Nothing shipped is discarded.
@@ -1988,8 +2000,8 @@ and is not built.
 #### What was verified, and how
 
 **What is demonstrated, and by what.** The suite covers the whole P2P chain
-end to end in-process — QUIC handshake, greeting, grant table, the dialer's fd
-handoff, the byte pump — with a wrong ticket refused on the same connection and
+end to end in-process (QUIC handshake, greeting, grant table, the dialer's fd
+handoff, the byte pump) with a wrong ticket refused on the same connection and
 a revoke written by another process stopping the next one. The tunnel front is
 driven exactly as `cloudflared` drives it, including against a dev server
 written to ignore `Connection: close`, which is what pins the one-request rule.
@@ -2002,7 +2014,7 @@ second `h5i` process, and fetched with `curl`:
 
 - the invite bounced to a cookie (`h5i_share_40959`, port-scoped as designed)
   and the box's HTML came back through the joiner's loopback proxy;
-- the path was **direct** — hole punching, not a relay — with the endpoint's
+- the path was **direct**, hole punching rather than a relay, with the endpoint's
   real addresses in the ticket;
 - a request with no cookie and one with a wrong cookie both got `401`, and
   neither reached the box;
@@ -2012,7 +2024,7 @@ second `h5i` process, and fetched with `curl`:
   connection count, the byte counts and the path:
   `08e03775419e… via direct — grant 38bd63e2 (reviewer), 14s, 1 connection,
   97 in / 412 out`. The connection count is *one*, because the redirect and
-  both refusals were answered by the joiner's own proxy and never crossed —
+  both refusals were answered by the joiner's own proxy and never crossed,
   which is the gate working, visible in the evidence.
 
 **Re-run on 2026-08-10 after the third round of fixes**, because that round
@@ -2029,20 +2041,20 @@ receipt named the transport, the grant, six connections, 678 KB in and 676 KB
 out, one refusal, and the "not end-to-end encrypted" note.
 
 Two things the live run found that no test would have. A `POST` answered `501`
-and the first diagnosis — that `cloudflared` chunks every body and the proxy
-refused chunked — was **wrong**: the `501` came from the box's own
+and the first diagnosis, that `cloudflared` chunks every body and the proxy
+refused chunked, was **wrong**: the `501` came from the box's own
 `python -m http.server`, which has no `do_POST`. (Chunked request bodies are
 forwarded now rather than refused, which is a real improvement and was reachable
 from a direct client; it was not what that `501` was.) And killing the box's
 session left the share answering `502` forever with nothing said, because the
 dialer's helper lives *inside* the box's network namespace and keeps it alive
-after everything else in it has gone — so a box restarted afterwards gets a new
+after everything else in it has gone, so a box restarted afterwards gets a new
 namespace the share can never reach. The share now notices and ends.
 
 **The whole response matrix, run over both transports on 2026-08-10.** A dev
 server in a box answering a page, a `304`, a `HEAD`, a chunked response, a form
-`POST`, a chunked `POST` and an `Expect: 100-continue` upload — every shape the
-framing code had to be rewritten twice to get right — with an anonymous request
+`POST`, a chunked `POST` and an `Expect: 100-continue` upload, every shape the
+framing code had to be rewritten twice to get right, with an anonymous request
 refused alongside them. All of it in single-digit milliseconds on the P2P path.
 The two receipts record seven and six connections, which is one per request,
 which is the one-request rule visible in the evidence.
@@ -2055,19 +2067,19 @@ receipts record it as two connections, which is what a page plus a socket is.
 
 **Two peers and a per-person revoke, run for real on 2026-08-10.** A tunnel
 share with two grants: both admitted, `share revoke` on one, and the other kept
-working — `200` and `401` from the same URL a second apart. The receipt lists
+working: `200` and `401` from the same URL a second apart. The receipt lists
 them separately by grant and label, with the revoked one's traffic still counted
 and the refusal recorded as revoked rather than unknown. That is the property
 the whole grant model exists for and it had never been exercised outside a test.
 
 Also verified live, and worth recording because it was a defect this branch
 introduced and fixed: two `h5i join` sessions on one machine, a browser holding
-both of their cookies, and the box seeing neither — only the app's own `sid=9`.
+both of their cookies, and the box seeing neither, only the app's own `sid=9`.
 
 #### The review rounds, and what each lens found
 
 **Rounds 8 to 10, and what live running kept finding.** A ticket expiring on
-its own — not revoked, not interrupted — ends the share, writes the receipt,
+its own, neither revoked nor interrupted, ends the share, writes the receipt,
 clears the record, and now tells the joiner why; that path was verified twice
 because the first fix for it was inert. A dev server that rejects a request
 before reading its body has its own answer relayed rather than replaced. And a
@@ -2075,13 +2087,13 @@ before reading its body has its own answer relayed rather than replaced. And a
 working.
 
 **Rounds 11 to 14, and the two that would have bitten a real user.** A client
-that sends its request and then shuts down its write side — legal HTTP/1.1, and
-what anything built out of one write and one read does — had that EOF read as
+that sends its request and then shuts down its write side, which is legal HTTP/1.1 and
+what anything built out of one write and one read does, had that EOF read as
 "the visitor left", so the relay stopped on the spot: a 2 MB download arrived as
 63 bytes, with a clean close and nothing recorded anywhere. And `h5i join` was
 hung up on by the sharer thirty seconds after connecting, because the sharer
 drops a connection that has never authorized a stream and the joiner did not
-open one until somebody visited the page — so the ordinary sequence (send a
+open one until somebody visited the page, so the ordinary sequence (send a
 ticket, they join, *then* they open the browser) killed itself. The joiner now
 presents its ticket once at connect time, which fixes that and makes "joined" a
 statement about the ticket rather than about the network: a revoked ticket fails
@@ -2096,8 +2108,8 @@ swallowed for the whole six-second teardown on three of the four ways a share
 ends.
 
 **Round 15, and the fix that was worse than the bug.** Making Ctrl-C responsive
-during the teardown was done by arming the hard-exit watcher after the select —
-and on the three exits where no signal had been delivered yet, that meant the
+during the teardown was done by arming the hard-exit watcher after the select.
+On the three exits where no signal had been delivered yet, that meant the
 operator's *first* Ctrl-C hit a watcher built for their second: it printed
 "interrupted again", threw the receipt away and exited. Pressing Ctrl-C once to
 get a prompt back destroyed the one artifact this feature exists to produce, and
@@ -2105,8 +2117,8 @@ said they had done it twice. An interrupt during the ending now means "stop
 waiting", not "stop recording"; only a second one exits without a receipt.
 Verified live three times out of three.
 
-The same round found that the join-time ticket check — itself a fix from the
-previous round — went the whole way into the box, costing a connection to the
+The same round found that the join-time ticket check, itself a fix from the
+previous round, went the whole way into the box, costing a connection to the
 dev server and one of the share's 64 slots per join; that a new joiner against
 an un-updated sharer would be told its ticket was revoked, forever, because the
 greeting changed without the ALPN changing; and that `clear`, `clear_now` and
@@ -2137,8 +2149,8 @@ cookie named `999h5i_share` is somebody else's.
 rounds of adversarial reading had started mostly finding the previous round's
 work. A fuzzer, an end-to-end script that automates the live checks that had
 been done by hand for five rounds, a leak hunt, a flake hunt, the two capacity
-ceilings nothing had ever driven, an accounting sweep of every counter, and —
-the one that found most — a review from the **joiner's** side, asking what a
+ceilings nothing had ever driven, an accounting sweep of every counter, and,
+the one that found most, a review from the **joiner's** side, asking what a
 hostile *sharer* can do to the person who pasted their ticket.
 
 That last direction had never been examined. It found that the joiner's
@@ -2148,12 +2160,12 @@ served on the joiner's loopback could register a service worker, which outlives
 the share and keeps control of that address afterwards; that a ticket's
 addressing went to iroh unexamined, so one naming `127.0.0.1:2375` made the
 joiner dial a service on its own machine; and that the QUIC close reason, which
-the sharer chooses, was printed to the joiner's terminal unsanitised — the same
+the sharer chooses, was printed to the joiner's terminal unsanitised, the same
 escape-injection the `box_id` fix had just closed, through the field next to it.
 
 The fuzzer needed a round of its own, too. Measured against the real parser,
 1.9% of its heads were parseable, **none** of two million carried both framings,
-and about one per run carried a credential — so "twenty million heads pass" was
+and about one per run carried a credential, so "twenty million heads pass" was
 true and meant almost nothing. Sampling the line ending once per head rather
 than once per line, and leaving two thirds of heads unmutated, took those to
 18%, 0.8% and 0.8%; the test now asserts floors on all three, so a generator
@@ -2162,7 +2174,7 @@ that stops reaching the code fails instead of passing.
 **Rounds 27 to 36** kept changing the lens. Two more directions had never been
 looked at, and both paid: a review from the **joiner's** side (what a hostile
 *sharer* can do to the person who pasted the ticket) and one of **how a live
-share interacts with the rest of h5i** — the lifecycle verbs, the export, the
+share interacts with the rest of h5i**: the lifecycle verbs, the export, the
 console, and the fact that a share holds a box's namespace open.
 
 The worst thing either found: **a share of a box at the `process` tier with a
@@ -2175,8 +2187,8 @@ MANUAL and the skill no longer name that tier as an option.
 
 Second: **a share pins one namespace at startup and only asked whether the box
 had *any* session.** Every session gets a new namespace, so somebody who exits
-a shell and starts another — or who has a read-only observer attached while
-they restart — left the share serving a namespace nothing was in, with
+a shell and starts another, or who has a read-only observer attached while
+they restart, left the share serving a namespace nothing was in, with
 `share ls` reporting it healthy. It compares the namespace now.
 
 Third, and the same argument for the third time: the wire had four reply codes
@@ -2189,7 +2201,7 @@ each was verified by reproducing it first.
 
 `cloudflared` outlived a `SIGKILL` of the share by more than twenty seconds,
 with its public `trycloudflare.com` hostname still registered and still
-pointing at a loopback port that had just been freed — so for that window
+pointing at a loopback port that had just been freed, so for that window
 anything on the machine that bound it was on the public internet under a
 hostname h5i minted. `kill_on_drop` is a destructor and `SIGKILL` skips
 destructors; `PR_SET_PDEATHSIG` is the kernel doing it instead. Measured: gone
@@ -2200,7 +2212,7 @@ allows. `PR_SET_PDEATHSIG` is something a process asks *for itself*, so Linux
 sets it in the child between fork and exec; nothing can ask it on behalf of a
 binary h5i does not compile. So a watchdog process waits on `kqueue` for either
 the share or `cloudflared` to exit, and kills the tunnel if the share went
-first — a separate process precisely because a `SIGKILL` cannot skip what is
+first, a separate process precisely because a `SIGKILL` cannot skip what is
 not running the share's code. Both pids are watched, not just the share's: a
 watchdog armed on one pid alone would outlive the tunnel it was guarding and
 eventually `SIGKILL` whatever inherited the recycled number. Measured on macOS
@@ -2209,12 +2221,12 @@ window before, and the tunnel is gone within 250 ms after.
 
 `h5i box rm` did not know what a share was. A shared box is almost always also
 `running`, so the operator was told to abort the box and never that somebody
-outside was connected to it — and the check has to sit *above* the status guard
+outside was connected to it, and the check has to sit *above* the status guard
 or it is unreachable. Worse, a share that outlived the removal wrote its
 receipt afterwards, and `receipt::append` creates the directory it writes into:
 the box came back as a receipt log and a payload under a path with no manifest,
 which every tool answers "no environment named that" for and only `rm -rf`
-clears. The receipt is skipped when the box is gone, which loses it — the right
+clears. The receipt is skipped when the box is gone, which loses it. The right
 trade, since it is evidence about something that no longer exists.
 
 And the console showed nothing at all while a box was open to somebody. The
@@ -2224,7 +2236,7 @@ on the box row now.
 
 The pattern across all fifteen rounds is worth recording, because it is the
 argument for having run them: **every round found real defects in the previous
-round's fixes**, and five of the sharpest were fixes that did nothing at all — a
+round's fixes**, and five of the sharpest were fixes that did nothing at all: a
 `Connection: close` the box could ignore, a shutdown signal that was sent after
 the shutdown, a flag that recorded truncation for the rarest of the four ways a
 response gets cut short, and a linger drain whose two dedicated tests both
@@ -2239,8 +2251,8 @@ receipt records `via direct`.
 
 **macOS now has a route, and it is a different argument rather than the same
 one ported.** A Seatbelt box has no namespace to enter and binds the host's
-loopback, so "the box's port 3000" and "this machine's port 3000" are one port
-— which is why an earlier macOS arm, deleted in round 51, was wrong to connect
+loopback, so "the box's port 3000" and "this machine's port 3000" are one port,
+which is why an earlier macOS arm, deleted in round 51, was wrong to connect
 to it and call whatever answered the box. What replaces it (`share::owner`)
 asks Darwin which process holds the listening socket and shares it only when
 that process is in the box's tree; a stranger, or a second process sharing the
@@ -2251,7 +2263,7 @@ next.
 That this is not a theoretical hazard was demonstrated by the machine it was
 written on: port 3000 was held by the box's `python3 -m http.server` on `::`
 *and* by an unrelated `serve.py` on `127.0.0.1`, and a plain loopback connect
-reached the stranger. Run end to end on macOS — share, `h5i join`, a direct
+reached the stranger. Run end to end on macOS: share, `h5i join`, a direct
 QUIC path, and the visitor receiving the box's directory listing rather than
 the stranger's page. The three outcomes were each exercised: the box's port
 shared, a stranger's port refused by name, and an empty port warned about
@@ -2272,17 +2284,17 @@ the code could *see*.
 - A pid that changed hands between the tree snapshot and the socket scan was
   vouched for by the snapshot. Re-asked upwards from the winner now.
 - Both kernel scans sized their buffer once and added fixed slack. The kernel
-  never says "there was more", and both lists are ordered — so a process that
+  never says "there was more", and both lists are ordered, so a process that
   opens descriptors faster than the guess can push its own listening socket off
   the end of the scan, and a listener h5i cannot see is one it cannot refuse.
   Both grow until the answer provably fits.
 - The refusal named the offending process, and that name is the executable's
-  file name — chosen by whoever started it. A binary named with a literal `ESC`
+  file name, chosen by whoever started it. A binary named with a literal `ESC`
   wrote escape sequences into the sentence an operator reads while deciding
   whether their port has been taken. Sanitised through the same helper the rest
   of the repository already used.
 - A newborn child inherits its parent's descriptors across `fork`, so between
-  `fork` and `exec` it really does hold the dev server's listening socket —
+  `fork` and `exec` it really does hold the dev server's listening socket,
   and judged against a snapshot taken microseconds earlier it is a *stranger*
   co-holding the box's address, which is a refusal. A busy box therefore
   refused its own visitors in proportion to how busy it was. Found by a
@@ -2290,13 +2302,13 @@ the code could *see*.
   co-holding a port.
 - And the module's own note claimed a refusal it could not make: a listener
   belonging to another user is never *attributed* to the box, which is safe,
-  but neither can it be counted as a competitor — so "unambiguous" rested in
+  but neither can it be counted as a competitor, so "unambiguous" rested in
   part on not having seen what this process may not see. Recorded as a limit
   rather than argued away.
 
 The through-line: on Linux the namespace makes the guarantee true by
 construction, and there is nothing to observe. Here it is established by
-observation, and every defect but one was the observation being incomplete —
+observation, and every defect but one was the observation being incomplete,
 which is the failure mode this approach has and the namespace does not, and is
 worth stating plainly wherever the two are compared.
 
@@ -2307,7 +2319,7 @@ direct QUIC path through the host's network stack, but not two machines on two
 networks. On macOS the two-machine half is likewise untried, and `SO_REUSEPORT`
 contention is covered by unit tests over the decision rule rather than by two
 real processes racing for one address. And `--direct-only` has never been
-exercised against a hole punch that actually *fails* — the refusal is the half
+exercised against a hole punch that actually *fails*. The refusal is the half
 that matters and it needs two hostile NATs to reach. Those are what remains of
 the exit criteria.
 
@@ -3232,16 +3244,16 @@ setInterval                  1      1
 for running it at all:
 
 * `<script type="application/json">` was being **executed**. Every `<script>`
-  ran regardless of `type`, so pages embedding state as JSON — github.com does —
-  had it parsed as JavaScript, filling the console with syntax errors that blamed
-  the page.
+  ran regardless of `type`, so pages embedding state as JSON, github.com among
+  them, had it parsed as JavaScript, filling the console with syntax errors that
+  blamed the page.
 * **HTTP errors were rendered as the page.** crates.io answered 404, the engine
   rendered the error body, and the outline came back empty with nothing anywhere
   saying why. The status was in the request log and nowhere an agent looks.
 * **Missing APIs did not name themselves.** A global we never defined threw a
   bare `ReferenceError`; a method on a half-defined object threw
   `TypeError: not a callable function`. Neither reached the unsupported list, so
-  the measurement could not see them — the method depends on missing things
+  the measurement could not see them: the method depends on missing things
   reporting themselves, and they were not.
 
 **The headline result: for the pages agents actually read, script adds nothing
@@ -3252,7 +3264,7 @@ argues the reading case was close to solved before any of this.
 
 Two caveats keep it from being stronger than it is. The harness allows only the
 page's own host and a few common CDNs, so **17 cross-origin scripts were denied
-by policy** and those bundles never ran — the script-heavy end of the corpus is
+by policy** and those bundles never ran, so the script-heavy end of the corpus is
 therefore under-tested. And the remaining 13 TypeErrors and 6 ReferenceErrors are
 still anonymous: they come from pages touching DOM properties we return
 null/undefined for, which the `missingApi` list does not cover because they are
@@ -3282,7 +3294,7 @@ api                      sites  calls        console errors
 **An empty unsupported list beside 19 anonymous errors is a misleading result,
 and it is the honest state of things.** Those errors come from pages touching
 DOM *properties* that return null or undefined, not from globals, so
-`missingApi` — which covers globals — cannot name them. The instrument now
+`missingApi`, which covers globals, cannot name them. The instrument now
 reports nothing because it cannot see what is left, which is a different fact
 from there being nothing left. Naming those is the next measurement problem, and
 it has to be solved before another run means much.
@@ -3295,7 +3307,7 @@ Two blind spots, closed:
   `Proxy` whose `get` records a name that is on neither the prototype chain nor
   the object itself. A property we implement takes the plain path, and so does
   an expando the page assigned and reads back, so **a working page records
-  nothing at all** — the list stays a list of gaps rather than a log of traffic.
+  nothing at all**: the list stays a list of gaps rather than a log of traffic.
 * **Undeclared globals.** No proxy can trap `Sentry.init(...)`: it throws before
   any object is consulted. The thrown `ReferenceError` carries the name, so
   `note_error` reads it back. Only identifier-shaped names are accepted, because
@@ -3313,7 +3325,7 @@ second pass named five globals. Answering both rounds moved the errors:
 
 **`TypeError` went 8 → 10 partway through, and that was progress.** Exposing
 `HTMLElement` let `class X extends HTMLElement` get *further* before failing, at
-`customElements.define` — which the list now names. A count going up because
+`customElements.define`, which the list now names. A count going up because
 pages reach deeper is the shape of a real measurement.
 
 Two things the remaining list should not be misread as:
@@ -3334,8 +3346,8 @@ Everything §B8.3 surfaced is built. In order of what they were worth:
   page, delivers the initial values of `observedAttributes`, and runs
   `connectedCallback` once the node is genuinely in the tree. Defining without
   upgrading would have been the worse kind of half-support: a page that renders
-  its markup server-side and defines its components in a deferred bundle — most
-  of them — would register everything, see no error, and render nothing. The id
+  its markup server-side and defines its components in a deferred bundle, which is most
+  of them, would register everything, see no error, and render nothing. The id
   reaches the constructor out of band through a construction slot, because
   `super()` takes no arguments and the class never sees the node it is
   attaching to.
@@ -3346,7 +3358,7 @@ Everything §B8.3 surfaced is built. In order of what they were worth:
   scrollHeight` is how every bottom-of-page check is written and it has to be
   *true at the bottom*. `clientHeight` already existed, computed from the
   bounding rect, which for `documentElement` is the page height rather than the
-  window — so the idiom read "already at the bottom" everywhere.
+  window, so the idiom read "already at the bottom" everywhere.
 * **`window.innerWidth`/`innerHeight`/`scrollY`** and the scroll methods, which
   nothing had ever exposed. This one the instrument could not have found:
   nothing wraps the global object, so they were simply undefined, and a layout
@@ -3354,7 +3366,7 @@ Everything §B8.3 surfaced is built. In order of what they were worth:
   arithmetic. Found while chasing an unrelated scroll bug.
 * `compareDocumentPosition`, `contains`, `getRootNode`, `isConnected`,
   `defaultValue`, `getElementsByTagName`, `getElementsByName`, `importNode`,
-  `createNodeIterator`/`createTreeWalker`, and `implementation` — which names
+  `createNodeIterator`/`createTreeWalker`, and `implementation`, which names
   `createHTMLDocument` as refused rather than handing back a broken document,
   because a second document really is out of reach when there is one tree.
 
@@ -3364,12 +3376,12 @@ argument for the instrument in one line:
 | reported | what it actually was |
 |---|---|
 | `Element._h5iConnected` | *our own* bookkeeping flag, stored on the node, read before it was set |
-| `Element.tagName` | a page reading `tagName` off a **text** node — every node was labelled "Element" |
+| `Element.tagName` | a page reading `tagName` off a **text** node; every node was labelled "Element" |
 | `$`, still | jQuery that *loaded and threw*, not one that was refused |
 
 All three are fixed: the flag moved off the nodes, labels follow the node's
 actual type, and a script that throws is recorded as not-run alongside one that
-was refused — its globals are undefined either way.
+was refused: its globals are undefined either way.
 
 That left one ask, `Text.tagName`, and it was a false positive worth a rule:
 **a gap is only a gap if a real browser would have answered.** An element
@@ -3396,8 +3408,8 @@ is the finest locus available; a real position needs engine support we do not
 have, and that is now the only thing in the way of an agent debugging a page it
 is reading.
 
-One page also rendered materially more *with* script for the first time — the
-Rust book, 35 lines to 171 — which is the first evidence in this file that
+One page also rendered materially more *with* script for the first time: the
+Rust book, 35 lines to 171, which is the first evidence in this file that
 running script buys an agent anything at all on a real documentation site.
 
 What the four turned into:
@@ -3408,9 +3420,9 @@ What the four turned into:
   feature. `min-width`, `max-width`, `orientation` and `prefers-color-scheme`
   have correct answers at a fixed viewport with a known scheme; a feature
   outside that set still records itself.
-* **`document.cookie` exists, and honours `HttpOnly`.** The earlier framing —
+* **`document.cookie` exists, and honours `HttpOnly`.** The earlier framing,
   that exposing it would break "an agent can be logged in without reading the
-  credential" — was a false choice, because a browser has the same problem and
+  credential", was a false choice, because a browser has the same problem and
   solved it: a session cookie is almost always `HttpOnly`, and that flag is
   exactly the line between what the wire carries and what script may see. The
   jar had been parsing `HttpOnly` and dropping it, which was harmless until
@@ -3433,7 +3445,7 @@ What the four turned into:
 ### B8.6 A second corpus: applications, not documents
 
 The document corpus reached zero asks and zero anonymous errors, and then
-stopped being informative — **because four of its 28 pages still rendered
+stopped being informative, **because four of its 28 pages still rendered
 nothing and not one of them was a missing API**:
 
 | site | why | not |
@@ -3447,8 +3459,8 @@ That inverted the plan: the next frontier was the network layer and the honesty
 of the report around it, not more bindings. All four are fixed (§B8.8), and
 crates.io answers 200 and json.org renders 299 lines instead of 1.
 
-So the corpus was **pointed at applications instead** — SPAs, interactive demos,
-design systems — because a documentation corpus will never ask for routing,
+So the corpus was **pointed at applications instead** (SPAs, interactive demos,
+design systems) because a documentation corpus will never ask for routing,
 storage or template cloning when it contains nothing that does them. It named,
 immediately and specifically:
 
@@ -3458,7 +3470,7 @@ immediately and specifically:
   query, fill, append is how every framework renders a row.
 * **Scoped selector queries that do not scope.** `query_selector_all` always
   starts at the document root and the engine narrowed by ancestry afterwards, so
-  a **detached** subtree was invisible — which is every cloned template before it
+  a **detached** subtree was invisible, which is every cloned template before it
   is inserted, exactly when a framework searches one. Stylo's fast path consults
   the document's id and class caches and reports "handled, nothing found" rather
   than falling through, so scoped queries now walk the subtree and match element
@@ -3483,7 +3495,7 @@ immediately and specifically:
 
 **The corpus now lives in the repository**, after a crash took the only copy
 along with the scratchpad it sat in. `corpus/run.py` is the network instrument;
-`tests/corpus.rs` is the part CI runs — the same patterns against local
+`tests/corpus.rs` is the part CI runs: the same patterns against local
 fixtures, asserting the two properties that matter, and it found two real bugs
 the moment it was written.
 
@@ -3497,8 +3509,8 @@ constraint below and the clearest argument for revisiting it.
 Not bindings, and the reason four pages read as empty:
 
 * **Request fidelity.** No `Accept`, no `Accept-Language`, and a user agent that
-  named only the crate. The agent string is honest rather than imitative — it
-  names this engine and does not claim to be Chrome — and is now one constant
+  named only the crate. The agent string is honest rather than imitative. It
+  names this engine and does not claim to be Chrome, and is now one constant
   shared with `navigator.userAgent`, because a page that branches on it
   server-side and again in script must see the same string twice.
 * **`<meta refresh>`** is followed, with a hop limit and a visited set, and a
@@ -3532,20 +3544,20 @@ strongest argument for pinning a revision over a five-month-old release.
 
 Three things then changed on our side, each measured before and after:
 
-1. **A page with no script no longer builds a realm.** That costs ~15 ms — 114
-   KiB of prelude parsed and evaluated — and a page with nothing to run was
+1. **A page with no script no longer builds a realm.** That costs ~15 ms, 114
+   KiB of prelude parsed and evaluated, and a page with nothing to run was
    paying all of it for a realm never asked a question. It is also reported
    correctly now: "had none to run" is a different fact from "script is off",
    and a page with no script is *settled* rather than unknown.
 2. **Collections are no longer watched.** Wrapping a query result in the
-   reporting proxy cost **3.9x on iteration** — 674 µs against 174 µs for a
-   400-node result — because every index read goes through a trap and
+   reporting proxy cost **3.9x on iteration**, 674 µs against 174 µs for a
+   400-node result, because every index read goes through a trap and
    `for (const el of query)` is the hottest line in DOM code. An array already
    answers everything a `NodeList` does except `item` and `namedItem`, which are
    implemented, so the naming it bought was small and the price was not.
 3. **`matches()` is a direct predicate.** It had been asking the *parent* for
    all matching descendants and checking membership, which made `closest()`
-   walk a subtree per ancestor — quadratic on any page whose framework calls it
+   walk a subtree per ancestor: quadratic on any page whose framework calls it
    in a render loop, and worth minutes on a real site.
 
 ```
@@ -3562,7 +3574,7 @@ queries, 200 calls each
 ```
 
 The remaining fixed cost is the realm: 114 KiB of JavaScript parsed per page.
-Reusing one across navigations would remove it, and is *not* safe — a page could
+Reusing one across navigations would remove it, and is *not* safe: a page could
 leave state for whatever loads next, which is the same reason the cookie jar is
 cleared across origins.
 
@@ -3579,13 +3591,13 @@ Boa 0.21 maps a program counter back to a source position. It is pinned by
 **revision of upstream `main`**, not by release: the 0.21.1 release pins three
 icu crates to `~2.0.0`, which excludes what parley requires, and parley arrives
 through blitz. Upstream relaxed those pins after the release, so a pinned commit
-needs no fork and no patched source — and buys five months of engine and parser
+needs no fork and no patched source, and buys five months of engine and parser
 fixes over a five-month-old tag, which turned out to matter.
 
 Two other routes were tried and rejected with evidence. **Vendoring** the two
 crates worked and cost 7.5 MB and 508 files for a two-line change. **Forking**
 at `v0.21.1` plus one commit also worked, and is one commit, one file, six
-lines — but it is a fork to carry, and upstream `main` had already made the same
+lines, but it is a fork to carry, and upstream `main` had already made the same
 change for free.
 
 Errors now read:
@@ -3605,12 +3617,12 @@ barely better than nothing when a page has nine scripts.
 
 | named cause | fix |
 | --- | --- |
-| `EventTarget is not defined` | a real base class, independent of the tree — a store is not a node |
+| `EventTarget is not defined` | a real base class, independent of the tree; a store is not a node |
 | `HTMLAnchorElement`, `HTMLButtonElement`, `HTMLTemplateElement`, … | the per-tag constructor family, all aliasing `Element` |
 | `Invalid URL: /assets/…` | `import.meta.url`, which bundlers resolve every sibling asset against |
 | `RuntimeLimit: exceeded recursive calls` | Boa's 512-frame default, which Next.js exceeded while merely initialising |
 | `DOMParser is not defined` | parse-to-subtree, with no script inside it running |
-| `not a callable function` | collections that were not collections — see below |
+| `not a callable function` | collections that were not collections; see below |
 
 That last one was the instrument's blind spot again, and the most instructive.
 The reporting proxy watched `document` and nodes but **not the collections and
@@ -3642,21 +3654,21 @@ defeats the `in` check the reporting one depends on.
    , b;            // SyntaxError
    ```
 
-   All four are valid JavaScript — node runs them, as script and as module. The
+   All four are valid JavaScript: node runs them, as script and as module. The
    asymmetry is the finding: **`var` handles it and `let`/`const` do not**, so
    this is a defect in the lexical-declaration path rather than a deliberate
    choice about semicolon insertion. Per the grammar a `,` continues a
    `BindingList`, so it is not an offending token and no semicolon may be
    inserted.
 
-   Confirmed with this engine entirely out of the path — `Context::default()`,
-   `Source::from_bytes`, no host, no module loader, no HTML — so it is not ours.
+   Confirmed with this engine entirely out of the path: `Context::default()`,
+   `Source::from_bytes`, no host, no module loader, no HTML, so it is not ours.
    Minified bundles that keep `/*! @license */` comments between declarators
    produce exactly this shape, which is how lit.dev fails.
 
    Not fixable here, and not worth working around: rewriting a page's own source
    would move every line number we just gained and could corrupt string
-   literals — the plausible-wrong answer again. What *is* ours is that the
+   literals, the plausible-wrong answer again. What *is* ours is that the
    failure names the script it came from and does not take the rest of the page
    with it, which `a_script_the_parser_cannot_read_is_named_and_does_not_take_the_page_with_it`
    pins.
@@ -3670,12 +3682,12 @@ defeats the `in` check the reporting one depends on.
    slow page has:
 
    * **Many jobs.** Boa's job executor checks a cancellation token between jobs,
-     and `get_cancellation_token` hands it out as an `Arc<AtomicBool>` — so a
+     and `get_cancellation_token` hands it out as an `Arc<AtomicBool>`, so a
      watchdog thread can set it, which is the only wall-clock lever the engine
      offers. A page building 200,000 promise jobs is now stopped at 15 seconds,
      renders what it had, and says so in the engine's own voice. This is the
      shape a promise-driven page actually has.
-   * **One long job.** lit.dev looked like the other shape — a module graph
+   * **One long job.** lit.dev looked like the other shape: a module graph
      evaluating depth-first inside a *single* job, beyond any token check.
 
    **That second diagnosis was wrong, and wrong in the most useful direction.**
@@ -3683,15 +3695,15 @@ defeats the `in` check the reporting one depends on.
    that way. `appendChild` into the document cost 40 µs against 13 µs for a
    detached one, because every insertion walked to the root to ask whether it
    was connected and then walked the inserted subtree looking for custom
-   elements — on pages that had defined none. An early return when nothing is
+   elements, on pages that had defined none. An early return when nothing is
    defined, and a native `isConnected` that walks in Rust instead of one call
    per ancestor, took it to **7 µs, the same as the detached case**.
 
    lit.dev went from three and a half minutes to fifty seconds, material-web
    from a timeout to forty-five, and both now *return*. A second pass on the
-   mutation-record path — the old value of an attribute was read from the tree,
+   mutation-record path: the old value of an attribute was read from the tree,
    and a record object with two arrays allocated, on every write, whether or not
-   anything was observing — took the hot operations to:
+   anything was observing, took the hot operations to:
 
    ```
    createElement    5.5 µs      textContent  2.0 µs
@@ -3703,8 +3715,8 @@ defeats the `in` check the reporting one depends on.
    **And then the sites did not get faster**, which is the part worth writing
    down. lit.dev renders in 0.27s without script and 46s with it, of which 0.5s
    is network; the DOM is no longer where the time goes. Nor are the budgets: a
-   shared deadline across the script phase and the settle — they used to add up
-   — changed nothing either, because the time is inside a *single* evaluation
+   shared deadline across the script phase and the settle, which used to add up,
+   changed nothing either, because the time is inside a *single* evaluation
    that neither a between-jobs token nor a between-scripts budget can interrupt.
 
    So the original diagnosis was half right and recorded too confidently in both
@@ -3714,7 +3726,7 @@ defeats the `in` check the reporting one depends on.
    interpreter loop. That is still upstream, and it is now the only thing
    standing between this engine and a page like lit.dev.
 3. **Total CPU is unbounded.** Boa exposes no wall-clock interrupt, so the
-   engine bounds what it can — one loop, recursion depth, stack size — and a
+   engine bounds what it can (one loop, recursion depth, stack size) and a
    caller that cannot wait must impose its own timeout. Raising the loop bound
    from 5 to 50 million turned a site that returned in three minutes into one
    that had not returned in four; the bound stays low enough to return, and
@@ -3727,7 +3739,7 @@ because the *stack size* was what a deep call actually hit.
 
 `console.error(someError)` rendered as `{}`, because an Error has no enumerable
 own properties and the console used `JSON.stringify`. remix.run produced **1487
-lines saying exactly that**, and the message — the one part an agent needed —
+lines saying exactly that**, and the message, the one part an agent needed,
 was what got thrown away. Errors now render as name, message and trace;
 functions and DOM nodes say what they are; and an object that stringifies to
 `{}` reports its constructor rather than an empty shape.
@@ -3737,7 +3749,7 @@ functions and DOM nodes say what they are; and an object that stringifies to
 ### B8.13 Insertion was not moving nodes, which is what a keyed diff is made of
 
 preactjs.com rendered 178 lines without script and 65 with it, with no errors
-and nothing on the unsupported list — its shell and its sidebar, and nothing
+and nothing on the unsupported list: its shell and its sidebar, and nothing
 where the article should be. Four things had to be ruled out before the cause
 showed itself: the content JSON arrived (35 KB, 200), `DOMParser` parsed all
 31 KB of it correctly (557 elements, 108 body children), the page settled rather
@@ -3755,7 +3767,7 @@ insertBefore(A, B)       B     (1)   <- A gone
 
 The DOM defines insertion as removing the node from its old parent first. This
 engine skipped that, and the tree underneath drops a node inserted while still
-parented — so every *move* was a deletion. That is the operation a keyed diff is
+parented, so every *move* was a deletion. That is the operation a keyed diff is
 built out of: preact reorders by re-inserting nodes it already holds, and each
 reorder threw one away until the article was gone.
 
@@ -3763,8 +3775,8 @@ Detaching first fixes it, and preactjs.com now reads **178 lines with script,
 matching its prerendered reading exactly**.
 
 Two things worth keeping from how it was found. The failure was invisible to
-every instrument in this project — no error, no unnamed API, no anonymous
-console line — because nothing was *wrong* from the page's point of view; it
+every instrument in this project (no error, no unnamed API, no anonymous
+console line) because nothing was *wrong* from the page's point of view; it
 asked for a move and got a deletion. And the fixture harness had been running
 every page's scripts twice, since `PageFactory::from_html` already runs them:
 harmless for a script that assigns, wrong for one that appends. Both were found
@@ -3784,7 +3796,7 @@ it lands in the host. The trade is stated rather than discovered:
 
 * **Kept**: the content renders and is therefore readable, `host` and `mode`
   answer, `nodeType` is 11, a closed root is not handed out, and light children
-  are projected into a `<slot>` if the component declares one — otherwise held
+  are projected into a `<slot>` if the component declares one, otherwise held
   aside, because a browser stops rendering them and showing a component's input
   beside its output would be worse than showing neither.
 * **Lost**: encapsulation. `document.querySelector` reaches inside a shadow root
@@ -3797,10 +3809,10 @@ keep.
 **The interrupt exists, and not where it is needed.** §B8.11 recorded that Boa
 exposes no way to stop a running evaluation. That was wrong:
 `Script::evaluate_async_with_budget` is public, and the VM yields to the caller
-every N instructions — a real interrupt, for classic scripts. `Module` has only
+every N instructions: a real interrupt, for classic scripts. `Module` has only
 `evaluate()`, with no budgeted variant, and lit.dev is modules end to end. So
-the mechanism is there, the upstream ask has a precise shape —
-`Module::evaluate_async_with_budget` — and until it exists a module graph is
+the mechanism is there, the upstream ask has a precise shape,
+`Module::evaluate_async_with_budget`, and until it exists a module graph is
 still one uninterruptible unit.
 
 ---
@@ -3832,12 +3844,12 @@ elements with names like `jQuery360062973586668224961` and
 `sizzle1786301869537` and read them before writing them; one corpus page
 produced **5265 such "gaps"** and put them at the top of the list. No web
 platform property carries a six-digit run, because it would have to be typed by
-a person — so those are filtered, alongside the `_` and `$` prefixes already
+a person, so those are filtered, alongside the `_` and `$` prefixes already
 filtered for the same reason.
 
 **Where the application corpus stands after all of it:** 20/20 load, 17 usable
 outlines, 2 render materially more with script, **0 render less**, 0 anonymous
-errors, and **1 site** that cannot be read with script at all — lit.dev, whose
+errors, and **1 site** that cannot be read with script at all: lit.dev, whose
 module graph is the one uninterruptible unit left (§B8.14).
 
 ---
@@ -3847,7 +3859,7 @@ module graph is the one uninterruptible unit left (§B8.14).
 preactjs.com rendered its version as `v11.0.0-beta.111.0.0-beta.1`. It looked
 cosmetic and was filed that way. It was not.
 
-Reproduced with real preact against the page's actual markup — a single text
+Reproduced with real preact against the page's actual markup: a single text
 node `v1.0.0` hydrated against a vnode with two text children, which is what a
 prerendered page gives a component that renders `v{version}`:
 
@@ -3859,7 +3871,7 @@ after    kids=2  datas=["v", "1.0.0"]           <- a browser
 
 Preact assigns `dom.data = 'v'` to the node it is reusing. **That write did
 nothing**, because writing to a text node took the path meant for elements:
-clear the children — a text node has none — and append a new text child, which
+clear the children, which a text node has none of, and append a new text child, which
 is meaningless. Blitz has `set_node_text` for exactly this and it was never
 called.
 
@@ -3869,7 +3881,7 @@ reactive UI performs: every framework updates text by assigning `.data` or
 of a general failure to apply text updates at all.
 
 preactjs.com now reads **178 lines with script, matching its prerendered
-reading**, and shows `v11.0.0-beta.2` — the version it *fetched*, where before it
+reading**, and shows `v11.0.0-beta.2`, the version it *fetched*, where before it
 showed the stale prerendered `beta.1` twice. The update applies now.
 
 Worth noting how it was found: not by reading the DOM code, but by reproducing
@@ -3904,7 +3916,7 @@ processes per page          1                    7
 **What these numbers are, and are not.**
 
 They are honest about the trade: this engine holds a page in about a seventh of
-the memory, in one process rather than seven, from a binary a ninth the size —
+the memory, in one process rather than seven, from a binary a ninth the size,
 and it is *slower*, because Chromium has a JIT and this has an interpreter.
 Anyone quoting the memory figure without the speed one is quoting half a
 measurement.
@@ -3916,8 +3928,8 @@ for the pages it can read", and the second half of that is doing real work.
 
 The comparison deliberately records what each run actually *read*, so a run that
 produced nothing cannot appear as a fast, small success. The counts are not
-comparable to each other — ours is a summarised outline capped at 300 lines,
-Chromium's is a raw DOM dump — and they are there to prove each engine did the
+comparable to each other. Ours is a summarised outline capped at 300 lines,
+Chromium's is a raw DOM dump, and they are there to prove each engine did the
 work, not to be divided by one another.
 
 Worth stating for anyone reaching for these in a comparison: this is one page
@@ -3931,16 +3943,16 @@ browser and GPU processes across many tabs and would look better per page.
 Two writing systems' worth of blind spot, and a shape of page neither corpus
 contained.
 
-**International** — fourteen pages in CJK, Arabic, Hebrew, Persian, Thai,
+**International**: fourteen pages in CJK, Arabic, Hebrew, Persian, Thai,
 Devanagari, Greek, Cyrillic and Vietnamese. Text shaping, bidi and CJK line
 breaking all run through parley, and every page measured until now was Latin: in
 an engine whose entire product is extracted text, none of it had ever been
 exercised. **14/14 load, 14 usable outlines, zero errors, zero anonymous
-errors**, and the extracted text is correct — checked character by character
+errors**, and the extracted text is correct, checked character by character
 rather than by line count, because a corpus that counts lines would happily
 report three hundred lines of mojibake.
 
-**Structures** — big tables, forms, search results, plain RFCs, and markup old
+**Structures**: big tables, forms, search results, plain RFCs, and markup old
 enough to predate the conventions the rest of the web settled on. This one paid
 immediately.
 
@@ -3950,7 +3962,7 @@ construction. A panic is the one outcome an agent cannot act on: not a thin
 page, not an error it can read, but a dead process and no answer at all.
 
 Layout now runs behind a guard. The panic is caught, the document is read in
-whatever state layout reached, and the snapshot says so — the page returns **500
+whatever state layout reached, and the snapshot says so: the page returns **500
 lines and a note** where it used to return a stack trace and an exit code. The
 first failure is kept rather than the last, because a later pass that happens to
 survive does not undo the fact that the tree was laid out incompletely.
@@ -3972,14 +3984,14 @@ matcher rather than in the engine.
 structures corpus. Checking each before building it turned out to matter.
 
 **`document.respec` is not a web API.** The W3C pages call
-`document.respec.ready.then(...)` — it is ReSpec's own global, a page expando in
+`document.respec.ready.then(...)`: it is ReSpec's own global, a page expando in
 the same class as Solid's `_$DX_DELEGATE`, and implementing it would have been
 implementing someone's variable name. It stays reported, and the ask list
 carrying it is the cost of a filter that cannot know every library's field.
 
 **`document.write` is emulated where it can be and refused where it cannot.** A
 browser inserts at the parser's position; this engine parses the whole document
-before running anything, so that position does not exist — but `currentScript`
+before running anything, so that position does not exist, but `currentScript`
 does, and inserting after it is the same place for the one deliberate use:
 caniuse.com writes `<style>.static-only{display:none}</style>` from an inline
 script. Called with no script running, a browser would implicitly `open()` and
@@ -3994,7 +4006,7 @@ answering an empty list for a sheet that plainly has rules is the confident
 wrong answer it keeps having to refuse.
 
 **And a bigger thing fell out of testing them.** The written
-`<style>display:none</style>` did not hide anything — because **the outline does
+`<style>display:none</style>` did not hide anything, because **the outline does
 not filter hidden content at all**. `display: none`, `visibility: hidden` and
 the `hidden` attribute all appear in the reading:
 
@@ -4007,7 +4019,7 @@ paragraph 'hidden attribute'      <- nor this
 
 That is a fidelity problem and a safety one. This engine's product is a faithful
 account of what a page shows, and text a user cannot see is the classic vehicle
-for instructions aimed at whatever is reading — the fence in §B1 exists for
+for instructions aimed at whatever is reading, and the fence in §B1 exists for
 exactly that threat and this walks around it. It is the next thing to fix, and
 it deserves care rather than a quick filter: content revealed later by script,
 and the difference between `display: none` and off-screen accessibility text,
@@ -4018,7 +4030,7 @@ both decide whether a filter helps or quietly deletes the page.
 ### B8.20 Driving a page, and the sentence that contradicted itself
 
 **Every corpus until now loaded a page and read it. None clicked anything.** An
-agent's loop is read, act, read the difference — so two thirds of what this
+agent's loop is read, act, read the difference, so two thirds of what this
 engine is for went unmeasured, while the session verbs, the semantic delta and
 the action-to-request correlation were all built and tested only in isolation.
 
@@ -4026,14 +4038,14 @@ the action-to-request correlation were all built and tested only in isolation.
 what the *delta* reports rather than on the page, because a change nobody can
 see is the same as no change:
 
-* typing into a field and submitting adds an item — and the delta names the new
+* typing into a field and submitting adds an item, and the delta names the new
   item without reporting the rest of the page as replaced;
 * clicking a filter that rewrites a list reports the items that went and **not**
   the footer that did not;
 * clicking something inert reports *no change*, which is a result an agent needs
   rather than the page handed back to be re-read;
 * a router click moves the view and the address together, while the document's
-  own URL stays put — the router moved, not the fetch.
+  own URL stays put: the router moved, not the fetch.
 
 They pass, which is worth stating plainly: the interaction path works, and it
 had never been measured end to end.
@@ -4041,14 +4053,14 @@ had never been measured end to end.
 **And `<noscript>` was in the outline.** A browser shows that content only when
 script is off; this engine showed it always. So a page whose script ran
 perfectly still handed an agent the sentence *"JavaScript is disabled in your
-browser"* — not a cosmetic slip but a direct contradiction of the reading it
+browser"*, not a cosmetic slip but a direct contradiction of the reading it
 appeared in. crates.io's **entire outline was that sentence**.
 
 crates.io now reports zero lines and a note saying so, which is the honest
 answer: its SvelteKit app really does render nothing here. Why it does remains
-undiagnosed — the entry shape reproduces perfectly in isolation, dynamic
+undiagnosed: the entry shape reproduces perfectly in isolation, dynamic
 `import()`, `currentScript.parentElement` and all 75 subresources check out
-individually — and it is better recorded as unexplained than as fixed.
+individually, and it is better recorded as unexplained than as fixed.
 
 pypi's search page joins the challenge matcher, which also normalises
 typographic apostrophes: pypi writes "couldn't" with U+2019, and a matcher that
@@ -4061,14 +4073,14 @@ only knew `'` would have missed it while looking like it had checked.
 The outline carried `display: none` content, the `hidden` attribute, and
 `visibility: hidden`. Two problems, and the second is the serious one: the
 outline claims to be an account of what a page *shows*, and invisible text is the
-classic vehicle for instructions aimed at whatever is reading it — the threat the
+classic vehicle for instructions aimed at whatever is reading it, the threat the
 untrusted-content fence exists for, walked around by text a human never meets.
 
 `display: none` and `hidden` are filtered now, asked of the style engine rather
 than re-derived: a node with no primary styles is not rendered, and a node with
 styles can still resolve to `display: none`, which is the common case because it
 is what a stylesheet says. The first attempt checked only the former and filtered
-the attribute while missing every CSS rule — the difference between the two took
+the attribute while missing every CSS rule; the difference between the two took
 a probe to find.
 
 **`visibility: hidden` is deliberately kept.** That content occupies its space,
@@ -4078,7 +4090,7 @@ problem.
 
 **The measurement then produced an alarming number, and it was right.** The Rust
 book fell from 171 lines to **6**. That is the failure mode this change was
-warned against — silently deleting a page — so it was checked against Chromium
+warned against, silently deleting a page, so it was checked against Chromium
 rather than reasoned about: Chromium's DOM for the same page carries
 `<html class="js light">` and **no `sidebar-visible` class**, so mdBook's sidebar
 is not shown there either.
@@ -4086,7 +4098,7 @@ is not shown there either.
 The six lines are the chapter: its heading, its opening paragraph, its list. The
 165 that went were navigation **no reader ever sees**, and this engine had been
 handing them to agents as page content. A number that looks like a regression is
-worth checking against a browser before it is treated as one — and worth checking
+worth checking against a browser before it is treated as one, and worth checking
 before it is treated as a success, which is the same discipline pointing the
 other way.
 
