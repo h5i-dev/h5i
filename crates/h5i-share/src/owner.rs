@@ -35,11 +35,27 @@
 //! it is readable for our own processes without privilege, which is what `lsof`
 //! relies on for the same job.
 //!
-//! Only same-uid processes answer `PROC_PIDLISTFDS`, and that is a limit worth
-//! stating: a listener belonging to **another user** is visible in the process
-//! table but its sockets are not. It therefore cannot be mistaken for the box's
-//! — it is never attributed to anything — and the ambiguity rule below refuses
-//! rather than assuming the box won.
+//! Only same-uid processes answer `PROC_PIDLISTFDS`, and that limit is worth
+//! stating precisely, because the obvious way to state it is wrong. A listener
+//! belonging to **another user** is visible in the process table but its
+//! sockets are not — `lsof` cannot see them either without privilege. It can
+//! therefore never be attributed to the box, which is the half that matters
+//! and is genuinely safe.
+//!
+//! What it is *not* is refused. An invisible listener cannot be counted as a
+//! competitor either, so a verdict of "the box wins this address
+//! unambiguously" rests, in part, on not having seen something this process is
+//! not allowed to see. The case where that gap has teeth is narrow and worth
+//! naming: the box holds only a **wildcard**, and a process of another user
+//! holds a *more specific* address on the same port — that listener would take
+//! the connection, and h5i would not know it was there. A box bound to an exact
+//! address is immune, since nothing can be more specific than an exact address,
+//! and that is the common shape.
+//!
+//! Whether Darwin even permits two users to hold overlapping binds on one port
+//! is a kernel question this module has not established, so nothing here
+//! assumes it either way; the limit is recorded as a limit rather than argued
+//! away.
 //!
 //! The policy below ([`decide`]) is pure and compiled everywhere, so the rule
 //! that decides what gets published is unit-tested on both CI platforms rather
