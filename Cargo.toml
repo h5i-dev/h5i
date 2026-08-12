@@ -55,7 +55,6 @@ h5i-core = { path = "crates/h5i-core", default-features = false }
 # on, `--features share-tunnel` would still pull iroh in.
 h5i-share = { path = "crates/h5i-share", default-features = false, optional = true }
 git2 = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }

@@ -1861,7 +1861,6 @@ dependencies = [
  "git2",
  "h5i-core",
  "h5i-share",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
