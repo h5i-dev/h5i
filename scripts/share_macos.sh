@@ -64,6 +64,20 @@ free_port() {
 # than stack another server onto it. That refusal is also silent unless
 # somebody is reading the server's own output, which is how this script spent
 # three runs believing a bind had failed.
+# Free the shared port of every stand-in this script has put on it, and wait
+# for the kernel to agree it is free. Killing is asynchronous; a stage that
+# starts its own listener a millisecond later gets `EADDRINUSE` and looks like
+# a product failure.
+kill_port_holders() {
+  pkill -f "serve4.py" 2>/dev/null
+  pkill -f "serve6.py" 2>/dev/null
+  pkill -f "socketserver.TCPServer" 2>/dev/null
+  for _ in $(seq 1 40); do
+    lsof -nP -iTCP:"$STRANGER_PORT" -sTCP:LISTEN 2>/dev/null | grep -q . || return 0
+    sleep 0.5
+  done
+}
+
 stop_session() {
   pkill -f "box run $BOX" 2>/dev/null
   for _ in $(seq 1 20); do
@@ -276,5 +290,86 @@ case "$body" in
     fail "the visitor got neither: $(head -c 120 <<<"$body")" ;;
 esac
 
+# ── 5. the box's server dies mid-share and a stranger takes the port ─────────
+#
+# The one that cannot happen on Linux, and so the one only this platform can
+# get wrong. There, the port lives in the box's namespace and a stranger cannot
+# reach it at any price. Here the port is on the host's loopback and becomes
+# available the moment the dev server lets go of it — while the share is up,
+# authorized, and carrying a ticket somebody already holds.
+#
+# What must happen is that the visitor gets an error. What must not happen is
+# that they get the stranger's bytes, which is the whole exposure the
+# attribution route exists to prevent, arriving after the share started rather
+# than before.
+#
+# The session and the dev server are deliberately different processes here
+# (`sh` starts the server and outlives it), so that killing the server does not
+# also end the session and end the share for an unrelated reason.
+
+stop_session
+kill_port_holders
+
+cat > "$WORK/serve_child.sh" <<PY
+python3 serve4.py $STRANGER_PORT &
+sleep 300
+PY
+cp "$WORK/serve_child.sh" ".git/.h5i/env/human/$BOX/work/serve_child.sh"
+"$H5I" box run "$BOX" -- sh serve_child.sh >"$WORK/serve5.log" 2>&1 &
+PIDS+=($!)
+disown 2>/dev/null || true
+wait_listen "$STRANGER_PORT" "IPv4.*\*:$STRANGER_PORT" "the box's server" "$WORK/serve5.log"
+
+"$H5I" box share "$BOX" --port "$STRANGER_PORT" --expire 5m >"$WORK/share5.log" 2>&1 &
+disown 2>/dev/null || true
+sleep 15
+ticket=$(grep -ao 'h5i1_[A-Za-z0-9_-]*' "$WORK/share5.log" | head -1)
+[ -n "$ticket" ] || fail "could not share the box's own port: $(grep -am1 Error "$WORK/share5.log")"
+
+JOIN2=$(free_port)
+"$H5I" join "$ticket" --port "$JOIN2" >"$WORK/join5.log" 2>&1 &
+disown 2>/dev/null || true
+sleep 12
+url=$(grep -ao "http://127.0.0.1:$JOIN2/?h5i=[a-f0-9]*" "$WORK/join5.log" | head -1)
+[ -n "$url" ] || fail "the joiner never came up: $(tail -2 "$WORK/join5.log")"
+body=$(curl -s -L -c "$WORK/jar5" -b "$WORK/jar5" -m 20 "$url")
+case "$body" in
+  *"THE BOX"*) : ;;
+  *) fail "the share was not serving the box before the handover: $(head -c 80 <<<"$body")" ;;
+esac
+
+# The dev server lets go, and something else claims the port. The session — and
+# so the share — is still up.
+pkill -f "python3 serve4.py" 2>/dev/null
+for _ in $(seq 1 40); do
+  lsof -nP -iTCP:"$STRANGER_PORT" -sTCP:LISTEN 2>/dev/null | grep -q . || break
+  sleep 0.5
+done
+python3 -c "
+import http.server, socketserver
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(s):
+        s.send_response(200); s.end_headers(); s.wfile.write(b'STRANGER')
+    def log_message(*a): pass
+class S(socketserver.TCPServer):
+    allow_reuse_address = True
+S(('127.0.0.1', $STRANGER_PORT), H).serve_forever()
+" &
+PIDS+=($!)
+disown 2>/dev/null || true
+wait_listen "$STRANGER_PORT" "127.0.0.1:$STRANGER_PORT" "the stranger taking over"
+
+after=$(curl -s -L -c "$WORK/jar5" -b "$WORK/jar5" -m 20 "$url")
+case "$after" in
+  *STRANGER*)
+    fail "A LIVE SHARE HANDED THE VISITOR A STRANGER — the port changed hands and the share \
+followed it" ;;
+  *"THE BOX"*)
+    fail "the share served the box's page after its server had gone (a cache, or the wrong \
+process answered)" ;;
+  *)
+    pass "a port that changes hands mid-share stops serving rather than serving the stranger" ;;
+esac
+
 echo
-echo "all four outcomes hold. Boxes left behind: $BOX (in $REPO)"
+echo "all five outcomes hold. Boxes left behind: $BOX (in $REPO)"
