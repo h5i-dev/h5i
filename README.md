@@ -71,20 +71,20 @@ h5i box create <name> --profile agent-claude            # a sandboxed Git worktr
 h5i box create <name> --profile agent-claude --pr 1234  # a sandbox from pull request #1234
 ```
 
-- **Run a single command**
+#### Run a single command
 
 ```bash
 h5i box run <name> -- cargo test # one command; the exit code passes through
 ```
 
-- **Work in it interactively**
+#### Work in it interactively
 
 ```bash
 h5i box shell <name>             # an interactive confined session
                                  # every command is policy-enforced and recorded:
 ```
 
-- **Watch the browser it drives**
+#### Watch the browser it drives
 
 ```bash
 h5i box view <name>              # the box's page, on a forward only your host can reach
@@ -95,14 +95,14 @@ h5i box view <name> --term       # draw it in this terminal instead (needs kitty
   <img src="./docs/_static/browser-demo.gif" width="99%" />
 </p>
 
-- **Review the work, then take it**
+#### Review the work, then take it
 
 ```bash
 h5i box propose <name>           # freeze the worktree into a reviewable snapshot
 h5i box apply   <name>           # merge that snapshot onto the parent branch
 ```
 
-- **Share the web app running inside the box**
+#### Share the web app running inside the box
 
 ```bash
 h5i box share <name> --port 3000 # end-to-end encrypted P2P sharing
@@ -112,7 +112,7 @@ h5i box share <name> --port 3000 --tunnel # browser-ready demo link
 h5i join <ticket>
 ```
 
-- **Keep the record of what happened**
+#### Keep the record of what happened
 
 ```bash
 h5i box export <name>            # freeze the box and write a bundle you can read
@@ -121,7 +121,7 @@ h5i box export <name>            # freeze the box and write a bundle you can rea
 #   h5i-export/<name>/receipt.json  the records, with the enforced policy digest
 ```
 
-- **See where your boxes stand**
+#### See where your boxes stand
 
 ```bash
 h5i box ls                       # every box on this clone, and how far each has drifted
@@ -129,13 +129,13 @@ h5i box status <name>            # the policy that was actually enforced
 h5i box diff <name>              # what changed against the pinned base
 ```
 
-- **Throw a box away**
+#### Throw a box away
 
 ```bash
 h5i box rm <name>                # prune the worktree, delete its branches, erase its manifest
 ```
 
-- **Watch the whole fleet in a browser**
+#### Watch the whole fleet in a browser
 
 ```bash
 h5i ui                           # the whole fleet on one screen, read-only
