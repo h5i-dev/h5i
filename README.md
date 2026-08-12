@@ -64,7 +64,7 @@ on Linux, Apple Silicon on macOS).
 
 ## Use it
 
-- **Create a sandboxed**
+#### Create a sandboxed
 
 ```bash
 h5i box create <name> --profile agent-claude            # a sandboxed Git worktree from this repository
