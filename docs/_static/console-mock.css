@@ -292,14 +292,7 @@
    documentation nobody reads while looking at a refusal. */
 .bt-pane header p { margin: 0.25em 0 0; color: var(--dim); font-size: 0.85em; line-height: 1.5; }
 
-.bt-page-body {
-  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
-  gap: 1.1em; padding: 0.9em 1.1em;
-}
-.bt-url { margin: 0; color: var(--ink); font-size: 0.95em;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bt-state { margin: 0.5em 0 0; color: var(--faint); font-size: 0.85em; line-height: 1.6; }
-.bt-state code { color: var(--dim); }
+.bt-page-body { padding: 1.1em; }
 
 /* ── the frame: the page the box rendered ──
  *
@@ -307,8 +300,11 @@
  * pixels from inside the box, arriving on a screen made of everything else.
  * The seam is the point — nothing in here is evidence, and the caption under
  * it says so in the console's own words.
+ *
+ * Centred, and capped rather than stretched: a checkout page run out to the
+ * full width of a wide display stops looking like a page somebody opened.
  */
-.bt-frame { margin: 0; min-width: 0; }
+.bt-frame { margin: 0 auto; min-width: 0; max-width: 42em; }
 .bt-shot {
   border: 1px solid var(--line2);
   background: #f4f5f7;
@@ -395,5 +391,4 @@
   .bt { font-size: clamp(8px, 2.1cqw, 13px); }
   .bt-panes { grid-template-columns: minmax(0, 1fr); }
   .bt-panes > .bt-pane { border-right: 0; }
-  .bt-page-body { grid-template-columns: minmax(0, 1fr); }
 }
