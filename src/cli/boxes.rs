@@ -681,13 +681,13 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
             // shell start.
             let in_env_box = std::env::var(h5i_core::env::H5I_ENV_ID_VAR).is_ok();
             let lazy_materialize_env_ref = matches!(&action, BoxCommands::Shell { .. });
-            if !in_env_box && !lazy_materialize_env_ref {
-                if let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root) {
-                    eprintln!(
-                        "{} could not sync shared env manifests: {e}",
-                        style("warning:").yellow()
-                    );
-                }
+            if !in_env_box && !lazy_materialize_env_ref
+                && let Err(e) = h5i_core::env::materialize_from_ref(git, &h5i_root)
+            {
+                eprintln!(
+                    "{} could not sync shared env manifests: {e}",
+                    style("warning:").yellow()
+                );
             }
 
             match action {

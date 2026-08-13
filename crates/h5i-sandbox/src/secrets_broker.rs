@@ -125,10 +125,10 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
 /// it is written owner-only and never leaves the host.
 pub fn fingerprint_key(h5i_root: &Path) -> Result<Vec<u8>, H5iError> {
     let path = h5i_root.join("secrets-fp.key");
-    if let Ok(k) = std::fs::read(&path) {
-        if k.len() >= 32 {
-            return Ok(k);
-        }
+    if let Ok(k) = std::fs::read(&path)
+        && k.len() >= 32
+    {
+        return Ok(k);
     }
     let mut raw = [0u8; 32];
     getrandom::fill(&mut raw).map_err(|e| {
@@ -512,19 +512,31 @@ mod tests {
     #[test]
     fn resolves_env_source() {
         // SAFETY: single-threaded test; unique var name avoids cross-test races.
-        std::env::set_var("H5I_TEST_TOKEN_A", "s3cr3t-A");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_TOKEN_A", "s3cr3t-A");
+        }
         let g = grant("TOK", Some("env:H5I_TEST_TOKEN_A"), Some("env"));
         assert_eq!(resolve_value(&g, false).unwrap(), "s3cr3t-A");
-        std::env::remove_var("H5I_TEST_TOKEN_A");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_TOKEN_A");
+        }
     }
 
     #[test]
     fn default_source_is_namespaced_env_var() {
-        std::env::set_var("H5I_SECRET_GITHUB_TOKEN", "ghp_xyz");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_SECRET_GITHUB_TOKEN", "ghp_xyz");
+        }
         let g = grant("GITHUB_TOKEN", None, None);
         assert_eq!(g.source_or_default(), "env:H5I_SECRET_GITHUB_TOKEN");
         assert_eq!(resolve_value(&g, false).unwrap(), "ghp_xyz");
-        std::env::remove_var("H5I_SECRET_GITHUB_TOKEN");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_SECRET_GITHUB_TOKEN");
+        }
     }
 
     #[test]
@@ -535,10 +547,16 @@ mod tests {
 
     #[test]
     fn empty_value_fails_closed() {
-        std::env::set_var("H5I_TEST_EMPTY", "");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_EMPTY", "");
+        }
         let g = grant("E", Some("env:H5I_TEST_EMPTY"), Some("env"));
         assert!(resolve_value(&g, false).is_err());
-        std::env::remove_var("H5I_TEST_EMPTY");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_EMPTY");
+        }
     }
 
     #[test]
@@ -552,7 +570,10 @@ mod tests {
 
     #[test]
     fn env_inject_brokers_value_and_records_no_value() {
-        std::env::set_var("H5I_TEST_TOKEN_B", "tok-B");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_TOKEN_B", "tok-B");
+        }
         let g = grant("API_KEY", Some("env:H5I_TEST_TOKEN_B"), Some("env"));
         let dir = tempfile::tempdir().unwrap();
         let b = broker(&[g], &dir.path().join("secrets"), false, false, b"test-key").unwrap();
@@ -564,12 +585,18 @@ mod tests {
         assert!(detail.contains("inject=env"));
         assert!(detail.starts_with("grant=API_KEY"));
         assert!(!detail.contains("tok-B"), "value must never appear in the record");
-        std::env::remove_var("H5I_TEST_TOKEN_B");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_TOKEN_B");
+        }
     }
 
     #[test]
     fn file_inject_writes_0600_and_points_env_at_it() {
-        std::env::set_var("H5I_TEST_TOKEN_C", "file-tok-C");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_TOKEN_C", "file-tok-C");
+        }
         let g = grant("CERT", Some("env:H5I_TEST_TOKEN_C"), Some("file"));
         let dir = tempfile::tempdir().unwrap();
         let sdir = dir.path().join("secrets");
@@ -590,23 +617,35 @@ mod tests {
         let p2 = path.to_path_buf();
         drop(b);
         assert!(!p2.exists(), "file-injected secret must be unlinked on drop");
-        std::env::remove_var("H5I_TEST_TOKEN_C");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_TOKEN_C");
+        }
     }
 
     #[test]
     fn file_inject_refused_off_workspace_tier() {
-        std::env::set_var("H5I_TEST_TOKEN_D", "x");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_TOKEN_D", "x");
+        }
         let g = grant("T", Some("env:H5I_TEST_TOKEN_D"), Some("file"));
         let dir = tempfile::tempdir().unwrap();
         let err = broker(&[g], &dir.path().join("secrets"), false, false, b"test-key").unwrap_err();
         assert!(format!("{err}").contains("inject=env"));
-        std::env::remove_var("H5I_TEST_TOKEN_D");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_TOKEN_D");
+        }
     }
 
     #[test]
     fn multiple_grants_all_brokered_independently() {
-        std::env::set_var("H5I_TEST_M1", "val-one");
-        std::env::set_var("H5I_TEST_M2", "val-two");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_M1", "val-one");
+            std::env::set_var("H5I_TEST_M2", "val-two");
+        }
         let grants = vec![
             grant("TOK_A", Some("env:H5I_TEST_M1"), Some("env")),
             grant("TOK_B", Some("env:H5I_TEST_M2"), Some("env")),
@@ -622,13 +661,19 @@ mod tests {
         assert!(b.records.iter().all(|r| !r.detail().contains("val-")));
         // Distinct fingerprints for distinct values.
         assert_ne!(b.records[0].fingerprint, b.records[1].fingerprint);
-        std::env::remove_var("H5I_TEST_M1");
-        std::env::remove_var("H5I_TEST_M2");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_M1");
+            std::env::remove_var("H5I_TEST_M2");
+        }
     }
 
     #[test]
     fn one_missing_grant_fails_the_whole_broker() {
-        std::env::set_var("H5I_TEST_PRESENT", "here");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_PRESENT", "here");
+        }
         // First grant resolves; second is absent → the whole call fails closed
         // (an env must not run with a partial credential set).
         let grants = vec![
@@ -637,7 +682,10 @@ mod tests {
         ];
         let dir = tempfile::tempdir().unwrap();
         assert!(broker(&grants, &dir.path().join("secrets"), false, false, b"test-key").is_err());
-        std::env::remove_var("H5I_TEST_PRESENT");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_PRESENT");
+        }
     }
 
     #[test]

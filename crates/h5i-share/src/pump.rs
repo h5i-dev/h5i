@@ -86,11 +86,11 @@ where
         };
         // Asked between the read and the write, so a refusal stops bytes that
         // have not yet been handed to the transport.
-        if let Some(gate) = gate {
-            if !gate() {
-                let _ = w.shutdown().await;
-                return Ended::Barred;
-            }
+        if let Some(gate) = gate
+            && !gate()
+        {
+            let _ = w.shutdown().await;
+            return Ended::Barred;
         }
         // Deadlined, like every other write in the crate. A peer that stops
         // reading an upgraded connection — a backgrounded tab holding a

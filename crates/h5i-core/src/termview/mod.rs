@@ -796,11 +796,11 @@ impl<'a> App<'a> {
         use input::{Event, KeyCode};
         // The one key the viewer keeps. Raw mode hands us everything else, so
         // without a reserved key there would be no way back out.
-        if let Event::Key(k) = &ev {
-            if k.code == KeyCode::Char(']') && k.modifiers & proto::modifiers::CTRL != 0 {
-                self.leave_interact();
-                return;
-            }
+        if let Event::Key(k) = &ev
+            && k.code == KeyCode::Char(']') && k.modifiers & proto::modifiers::CTRL != 0
+        {
+            self.leave_interact();
+            return;
         }
 
         // The lock is re-read rather than assumed: another process can take it

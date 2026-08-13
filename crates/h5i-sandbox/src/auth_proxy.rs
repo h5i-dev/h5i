@@ -309,12 +309,11 @@ fn spawn_to_upstream(
         // No total timeout: streaming (SSE) responses are long-lived. A bounded
         // connect timeout still fails a dead upstream fast.
         .connect_timeout(Duration::from_secs(15));
-    if pin_dns {
-        if let Ok(mut addrs) = (upstream_host.as_str(), 443u16).to_socket_addrs() {
-            if let Some(addr) = addrs.next() {
-                builder = builder.resolve(&upstream_host, addr);
-            }
-        }
+    if pin_dns
+        && let Ok(mut addrs) = (upstream_host.as_str(), 443u16).to_socket_addrs()
+        && let Some(addr) = addrs.next()
+    {
+        builder = builder.resolve(&upstream_host, addr);
     }
     let client = builder
         .build()
@@ -853,7 +852,10 @@ mod tests {
         assert!(engage_at("default", true, "127.0.0.1").unwrap().is_none());
         // Agent profile with no host credential to broker.
         for v in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] {
-            std::env::remove_var(v);
+            // Safety: single-threaded test; no other thread reads the environment.
+            unsafe {
+                std::env::remove_var(v);
+            }
         }
         assert!(engage_at("agent-claude", true, "127.0.0.1").unwrap().is_none());
     }
@@ -862,31 +864,46 @@ mod tests {
     fn resolve_credential_precedence_claude() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         for v in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] {
-            std::env::remove_var(v);
+            // Safety: single-threaded test; no other thread reads the environment.
+            unsafe {
+                std::env::remove_var(v);
+            }
         }
         assert!(resolve_credential(AgentRuntime::Claude).is_none());
 
         // API key → x-api-key.
-        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-xyz");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-xyz");
+        }
         let c = resolve_credential(AgentRuntime::Claude).unwrap();
         assert_eq!(c.header, CredHeader::XApiKey);
         assert_eq!(c.value, "sk-ant-xyz");
 
         // Bearer token wins over the API key.
-        std::env::set_var("ANTHROPIC_AUTH_TOKEN", "brr");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("ANTHROPIC_AUTH_TOKEN", "brr");
+        }
         let c = resolve_credential(AgentRuntime::Claude).unwrap();
         assert_eq!(c.header, CredHeader::Bearer);
         assert_eq!(c.value, "brr");
 
         // With neither, the long-lived OAuth token is the last resort (Bearer).
-        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "oauth-abc");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "oauth-abc");
+        }
         let c = resolve_credential(AgentRuntime::Claude).unwrap();
         assert_eq!(c.header, CredHeader::Bearer);
         assert_eq!(c.value, "oauth-abc");
 
-        std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
+        }
     }
 
     #[test]
@@ -939,7 +956,10 @@ mod tests {
             base_url_var: "EXAMPLE_BASE_URL".into(),
             token_var: "EXAMPLE_TOKEN".into(),
         };
-        std::env::remove_var("H5I_TEST_ABSENT_CREDENTIAL");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_ABSENT_CREDENTIAL");
+        }
         let err = match engage_grant(&grant, true) {
             Err(e) => e.to_string(),
             Ok(_) => panic!("a grant with no credential must be refused"),
@@ -1145,23 +1165,41 @@ mod tests {
     #[test]
     fn resolve_credential_codex_bearer() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var("OPENAI_API_KEY");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
         assert!(resolve_credential(AgentRuntime::Codex).is_none());
-        std::env::set_var("OPENAI_API_KEY", "sk-openai");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "sk-openai");
+        }
         let c = resolve_credential(AgentRuntime::Codex).unwrap();
         assert_eq!(c.header, CredHeader::Bearer);
         assert_eq!(c.value, "sk-openai");
-        std::env::remove_var("OPENAI_API_KEY");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
     }
 
     #[test]
     fn nonempty_env_rejects_blank() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("H5I_TEST_BLANK_VAR", "   ");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_BLANK_VAR", "   ");
+        }
         assert!(nonempty_env("H5I_TEST_BLANK_VAR").is_none());
-        std::env::set_var("H5I_TEST_BLANK_VAR", "v");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_BLANK_VAR", "v");
+        }
         assert_eq!(nonempty_env("H5I_TEST_BLANK_VAR").as_deref(), Some("v"));
-        std::env::remove_var("H5I_TEST_BLANK_VAR");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_BLANK_VAR");
+        }
     }
 
     #[test]

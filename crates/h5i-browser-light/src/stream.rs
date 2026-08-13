@@ -357,11 +357,11 @@ fn run_session(mut session: Session, rx: Receiver<Command>, once: bool) {
                     }
                     continue;
                 }
-                if message.get("type").and_then(Value::as_str) == Some("config") {
-                    if let Some(viewer) = viewers.get_mut(&id) {
-                        viewer.ack_pacing =
-                            message.get("pacing").and_then(Value::as_str) == Some("ack");
-                    }
+                if message.get("type").and_then(Value::as_str) == Some("config")
+                    && let Some(viewer) = viewers.get_mut(&id)
+                {
+                    viewer.ack_pacing =
+                        message.get("pacing").and_then(Value::as_str) == Some("ack");
                 }
 
                 match handle(&mut session, &message) {
@@ -916,26 +916,26 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             // navigation. A page that handles the click and calls
             // `preventDefault` never wanted the href followed, and a button
             // with no href is only clickable at all because of its handler.
-            if session.page.has_script() {
-                if let Some(caused) = session.page.dispatch_event(node_id, "click") {
-                    let settled = session
-                        .page
-                        .settled()
-                        .map(|s| s.render())
-                        .unwrap_or_default();
-                    if href.is_none() {
-                        return (
-                            json!({
-                                "ok": true,
-                                "ref": reference,
-                                "settled": settled,
-                                // The causal link, stamped by the one component
-                                // that knows it: this click, these receipts.
-                                "requests": caused,
-                            }),
-                            true,
-                        );
-                    }
+            if session.page.has_script()
+                && let Some(caused) = session.page.dispatch_event(node_id, "click")
+            {
+                let settled = session
+                    .page
+                    .settled()
+                    .map(|s| s.render())
+                    .unwrap_or_default();
+                if href.is_none() {
+                    return (
+                        json!({
+                            "ok": true,
+                            "ref": reference,
+                            "settled": settled,
+                            // The causal link, stamped by the one component
+                            // that knows it: this click, these receipts.
+                            "requests": caused,
+                        }),
+                        true,
+                    );
                 }
             }
 
@@ -969,10 +969,10 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 }
 
 fn write_port_file(path: &Path, port: u16) -> Result<(), H5iError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
     std::fs::write(path, port.to_string()).map_err(|e| H5iError::with_path(e, path))
 }

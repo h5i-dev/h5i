@@ -144,10 +144,10 @@ pub fn box_pid(env_dir: &Path) -> Option<u32> {
     let mut queue = std::collections::VecDeque::from([session]);
     let mut seen = std::collections::HashSet::from([session]);
     while let Some(pid) = queue.pop_front() {
-        if let Ok(ns) = std::fs::read_link(format!("/proc/{pid}/ns/net")) {
-            if ns != own_netns {
-                return Some(pid);
-            }
+        if let Ok(ns) = std::fs::read_link(format!("/proc/{pid}/ns/net"))
+            && ns != own_netns
+        {
+            return Some(pid);
         }
         for &child in children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
             if seen.insert(child) {
@@ -549,10 +549,10 @@ pub fn gate(req: &Request, expected_token: &str, self_origin: &str) -> Result<()
         Some(t) if token_matches(expected_token, t) => {}
         _ => return Err(Refusal::BadToken),
     }
-    if let Some(origin) = &req.origin {
-        if origin != self_origin {
-            return Err(Refusal::CrossOrigin);
-        }
+    if let Some(origin) = &req.origin
+        && origin != self_origin
+    {
+        return Err(Refusal::CrossOrigin);
     }
     Ok(())
 }

@@ -1250,15 +1250,15 @@ pub fn build_run_argv(
     // path and cannot disable a managed hook from its own config, so in-box
     // observation cannot be silenced. Podman auto-creates the nested target on
     // the read-only rootfs overlay; the mount lives only in this box's ns.
-    if let Some(ms) = managed_settings {
-        if !ms.display().to_string().contains(',') {
-            a.push("--mount".into());
-            a.push(format!(
-                "type=bind,source={},target={},ro",
-                ms.display(),
-                crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH
-            ));
-        }
+    if let Some(ms) = managed_settings
+        && !ms.display().to_string().contains(',')
+    {
+        a.push("--mount".into());
+        a.push(format!(
+            "type=bind,source={},target={},ro",
+            ms.display(),
+            crate::sandbox_policy::CLAUDE_MANAGED_SETTINGS_PATH
+        ));
     }
     // Interactive (agent-in-box) flags, right after `run`.
     if let Some(want_tty) = tty {
@@ -1289,25 +1289,25 @@ pub fn build_run_argv(
             "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
             s.spool.display()
         ));
-    } else if let Some(spool) = env_capture_spool {
-        if !spool.display().to_string().contains(',') {
-            a.push("--mount".into());
-            a.push(format!(
-                "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
-                spool.display()
-            ));
-        }
+    } else if let Some(spool) = env_capture_spool
+        && !spool.display().to_string().contains(',')
+    {
+        a.push("--mount".into());
+        a.push(format!(
+            "type=bind,source={},target={SHIM_SPOOL_MOUNT},rw",
+            spool.display()
+        ));
     }
     // Per-env inbound mailbox: read-only so the box can receive cross-agent
     // messages without any write access to the shared coordination store.
-    if let Some(inbox) = env_inbox {
-        if !inbox.display().to_string().contains(',') {
-            a.push("--mount".into());
-            a.push(format!(
-                "type=bind,source={},target={ENV_INBOX_MOUNT},ro",
-                inbox.display()
-            ));
-        }
+    if let Some(inbox) = env_inbox
+        && !inbox.display().to_string().contains(',')
+    {
+        a.push("--mount".into());
+        a.push(format!(
+            "type=bind,source={},target={ENV_INBOX_MOUNT},ro",
+            inbox.display()
+        ));
     }
     // Private-path binds (Idea 3): each per-env backing dir mounted rw over its
     // workspace path inside the box (`/work/<rel>`), giving distinct inodes per

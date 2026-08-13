@@ -136,10 +136,10 @@ fn candidate_bases() -> Vec<PathBuf> {
     if let Some(own) = self_cgroup() {
         v.push(own);
     }
-    if let Some(svc) = user_service_cgroup() {
-        if !v.contains(&svc) {
-            v.push(svc);
-        }
+    if let Some(svc) = user_service_cgroup()
+        && !v.contains(&svc)
+    {
+        v.push(svc);
     }
     v
 }

@@ -598,21 +598,21 @@ async fn serve_connection(
                 // without it `h5i join` kept its "joined" banner up for a
                 // share it had been cut off from.
                 let probed = grant_id.lock().unwrap_or_else(|p| p.into_inner()).clone();
-                if let Some(id) = probed {
-                    if !bridge.grant_is_live(&id) {
-                        // Which of the two endings this is. `share stop`
-                        // revokes every grant and marks the share winding up in
-                        // the same write, so this branch fires first every time
-                        // — and said "your ticket was revoked or has expired"
-                        // for a share somebody had simply stopped. Half of that
-                        // sentence is a false claim about time.
-                        if bridge.share_is_ending() {
-                            conn.close(5u32.into(), b"h5i: this share has ended");
-                        } else {
-                            conn.close(6u32.into(), b"h5i: this ticket was revoked or has expired");
-                        }
-                        return;
+                if let Some(id) = probed
+                    && !bridge.grant_is_live(&id)
+                {
+                    // Which of the two endings this is. `share stop`
+                    // revokes every grant and marks the share winding up in
+                    // the same write, so this branch fires first every time
+                    // — and said "your ticket was revoked or has expired"
+                    // for a share somebody had simply stopped. Half of that
+                    // sentence is a false claim about time.
+                    if bridge.share_is_ending() {
+                        conn.close(5u32.into(), b"h5i: this share has ended");
+                    } else {
+                        conn.close(6u32.into(), b"h5i: this ticket was revoked or has expired");
                     }
+                    return;
                 }
 
                 if let (Some(id), Some(p)) = (seen, observed_path(&conn)) {

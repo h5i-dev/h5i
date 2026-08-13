@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-resolver = "2"
+resolver = "3"
 
 # Shared dependency versions for every workspace crate — a single source of
 # truth so the crates never skew versions (a git2/serde mismatch would break
@@ -17,8 +17,8 @@ toml = { version = "0.8", features = ["parse", "display"] }
 # drives is `crates/h5i-core`.
 [package]
 name = "h5i"
-version = "0.3.2"
-edition = "2021"
+version = "0.3.3"
+edition = "2024"
 description = "h5i — disposable, confined development environments for AI coding agents (CLI)."
 
 [[bin]]

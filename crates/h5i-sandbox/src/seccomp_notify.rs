@@ -250,12 +250,16 @@ pub fn validate_notif_sizes() -> Result<(), H5iError> {
 pub unsafe fn install_listener() -> Result<RawFd, i32> {
     let prog = build_socket_notify_program();
     let fprog = SockFprog { len: prog.len() as u16, filter: prog.as_ptr() };
-    let fd = libc::syscall(
-        libc::SYS_seccomp,
-        SECCOMP_SET_MODE_FILTER,
-        SECCOMP_FILTER_FLAG_NEW_LISTENER,
-        &fprog as *const SockFprog,
-    );
+    // Safety: discharged by this function's own contract — the caller promises
+    // this is a child it intends to supervise. `fprog` outlives the call.
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            SECCOMP_SET_MODE_FILTER,
+            SECCOMP_FILTER_FLAG_NEW_LISTENER,
+            &fprog as *const SockFprog,
+        )
+    };
     if fd < 0 {
         Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL))
     } else {
@@ -456,29 +460,35 @@ pub fn pidfd_open(pid: libc::pid_t) -> std::io::Result<RawFd> {
 /// # Safety
 /// `sock` and `fd` must be valid open file descriptors.
 pub unsafe fn send_fd(sock: RawFd, fd: RawFd) -> std::io::Result<()> {
-    let mut iov_base = [0u8; 1]; // one dummy byte (some kernels need payload)
-    let mut iov = libc::iovec {
-        iov_base: iov_base.as_mut_ptr() as *mut libc::c_void,
-        iov_len: 1,
-    };
-    let mut cmsg_buf = [0u8; 64];
-    let mut msg: libc::msghdr = std::mem::zeroed();
-    msg.msg_iov = &mut iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
-    msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<RawFd>() as u32) as _;
+    // Safety: discharged by this function's own contract — the caller promises
+    // `sock` and `fd` are valid. `cmsg_buf` is 64 bytes, far more than the one
+    // `SCM_RIGHTS` header plus fd written into it, so `CMSG_FIRSTHDR` is in
+    // bounds and non-null.
+    unsafe {
+        let mut iov_base = [0u8; 1]; // one dummy byte (some kernels need payload)
+        let mut iov = libc::iovec {
+            iov_base: iov_base.as_mut_ptr() as *mut libc::c_void,
+            iov_len: 1,
+        };
+        let mut cmsg_buf = [0u8; 64];
+        let mut msg: libc::msghdr = std::mem::zeroed();
+        msg.msg_iov = &mut iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
+        msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<RawFd>() as u32) as _;
 
-    let cmsg = libc::CMSG_FIRSTHDR(&msg);
-    (*cmsg).cmsg_level = libc::SOL_SOCKET;
-    (*cmsg).cmsg_type = libc::SCM_RIGHTS;
-    (*cmsg).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as _;
-    std::ptr::copy_nonoverlapping(&fd, libc::CMSG_DATA(cmsg) as *mut RawFd, 1);
+        let cmsg = libc::CMSG_FIRSTHDR(&msg);
+        (*cmsg).cmsg_level = libc::SOL_SOCKET;
+        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+        (*cmsg).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as _;
+        std::ptr::copy_nonoverlapping(&fd, libc::CMSG_DATA(cmsg) as *mut RawFd, 1);
 
-    let n = libc::sendmsg(sock, &msg, 0);
-    if n < 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
+        let n = libc::sendmsg(sock, &msg, 0);
+        if n < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -487,43 +497,48 @@ pub unsafe fn send_fd(sock: RawFd, fd: RawFd) -> std::io::Result<()> {
 /// # Safety
 /// `sock` must be a valid connected `AF_UNIX` socket.
 pub unsafe fn recv_fd(sock: RawFd) -> std::io::Result<RawFd> {
-    let mut iov_base = [0u8; 1];
-    let mut iov = libc::iovec {
-        iov_base: iov_base.as_mut_ptr() as *mut libc::c_void,
-        iov_len: 1,
-    };
-    let mut cmsg_buf = [0u8; 64];
-    let mut msg: libc::msghdr = std::mem::zeroed();
-    msg.msg_iov = &mut iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
-    msg.msg_controllen = cmsg_buf.len() as _;
+    // Safety: discharged by this function's own contract — the caller promises
+    // `sock` is a valid connected socket. The cmsg is only dereferenced after
+    // the null/type/length checks below.
+    unsafe {
+        let mut iov_base = [0u8; 1];
+        let mut iov = libc::iovec {
+            iov_base: iov_base.as_mut_ptr() as *mut libc::c_void,
+            iov_len: 1,
+        };
+        let mut cmsg_buf = [0u8; 64];
+        let mut msg: libc::msghdr = std::mem::zeroed();
+        msg.msg_iov = &mut iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
+        msg.msg_controllen = cmsg_buf.len() as _;
 
-    let n = libc::recvmsg(sock, &mut msg, 0);
-    if n != 1 {
-        return Err(std::io::Error::other("fd handoff: unexpected payload length"));
+        let n = libc::recvmsg(sock, &mut msg, 0);
+        if n != 1 {
+            return Err(std::io::Error::other("fd handoff: unexpected payload length"));
+        }
+        // Reject a truncated control message — a partial/forged ancillary buffer
+        // must never be mistaken for a valid fd (Codex hardening).
+        if msg.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0 {
+            return Err(std::io::Error::other("fd handoff: truncated control message"));
+        }
+        let cmsg = libc::CMSG_FIRSTHDR(&msg);
+        if cmsg.is_null()
+            || (*cmsg).cmsg_type != libc::SCM_RIGHTS
+            || (*cmsg).cmsg_level != libc::SOL_SOCKET
+            || (*cmsg).cmsg_len < libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as _
+        {
+            return Err(std::io::Error::other("fd handoff: missing/short SCM_RIGHTS cmsg"));
+        }
+        let mut fd: RawFd = -1;
+        std::ptr::copy_nonoverlapping(libc::CMSG_DATA(cmsg) as *const RawFd, &mut fd, 1);
+        if fd < 0 {
+            return Err(std::io::Error::other("fd handoff: invalid fd received"));
+        }
+        // The listener fd must not leak across a future exec in the supervisor.
+        libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        Ok(fd)
     }
-    // Reject a truncated control message — a partial/forged ancillary buffer
-    // must never be mistaken for a valid fd (Codex hardening).
-    if msg.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0 {
-        return Err(std::io::Error::other("fd handoff: truncated control message"));
-    }
-    let cmsg = libc::CMSG_FIRSTHDR(&msg);
-    if cmsg.is_null()
-        || (*cmsg).cmsg_type != libc::SCM_RIGHTS
-        || (*cmsg).cmsg_level != libc::SOL_SOCKET
-        || (*cmsg).cmsg_len < libc::CMSG_LEN(std::mem::size_of::<RawFd>() as u32) as _
-    {
-        return Err(std::io::Error::other("fd handoff: missing/short SCM_RIGHTS cmsg"));
-    }
-    let mut fd: RawFd = -1;
-    std::ptr::copy_nonoverlapping(libc::CMSG_DATA(cmsg) as *const RawFd, &mut fd, 1);
-    if fd < 0 {
-        return Err(std::io::Error::other("fd handoff: invalid fd received"));
-    }
-    // The listener fd must not leak across a future exec in the supervisor.
-    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-    Ok(fd)
 }
 
 #[cfg(test)]

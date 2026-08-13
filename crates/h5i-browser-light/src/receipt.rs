@@ -146,10 +146,10 @@ pub struct JsonlSink {
 
 impl JsonlSink {
     pub fn create(path: &Path) -> Result<Self, H5iError> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
         }
         let file = OpenOptions::new()
             .create(true)
@@ -354,10 +354,10 @@ pub struct ActionLog {
 
 impl ActionLog {
     pub fn create(path: &Path) -> Result<Self, H5iError> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
         }
         let file = OpenOptions::new()
             .create(true)

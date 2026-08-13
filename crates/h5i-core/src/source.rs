@@ -32,10 +32,10 @@ pub struct PrBase {
 /// (`https://github.com/<owner>/<repo>/pull/<n>`).
 pub fn parse_pr_spec(spec: &str) -> Result<u64, H5iError> {
     let s = spec.trim().trim_start_matches('#');
-    if let Ok(n) = s.parse::<u64>() {
-        if n > 0 {
-            return Ok(n);
-        }
+    if let Ok(n) = s.parse::<u64>()
+        && n > 0
+    {
+        return Ok(n);
     }
     let segs: Vec<&str> = s.split('/').collect();
     for i in 0..segs.len().saturating_sub(1) {
@@ -44,10 +44,10 @@ pub fn parse_pr_spec(spec: &str) -> Result<u64, H5iError> {
                 .chars()
                 .take_while(|c| c.is_ascii_digit())
                 .collect();
-            if let Ok(n) = digits.parse::<u64>() {
-                if n > 0 {
-                    return Ok(n);
-                }
+            if let Ok(n) = digits.parse::<u64>()
+                && n > 0
+            {
+                return Ok(n);
             }
         }
     }

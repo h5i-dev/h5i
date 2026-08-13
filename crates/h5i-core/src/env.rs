@@ -878,15 +878,15 @@ pub fn union_merge_commits(
         let praw = crate::refstore::read_blob_from_tree(repo, tree.as_ref(), POLICIES_FILE)
             .unwrap_or_default();
         for line in praw.lines() {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                if let (Some(id), Some(toml)) = (
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+                && let (Some(id), Some(toml)) = (
                     v.get("id").and_then(|i| i.as_str()),
                     v.get("toml").and_then(|t| t.as_str()),
-                ) {
-                    policies
-                        .entry(id.to_string())
-                        .or_insert_with(|| toml.to_string());
-                }
+                )
+            {
+                policies
+                    .entry(id.to_string())
+                    .or_insert_with(|| toml.to_string());
             }
         }
     }
@@ -981,18 +981,18 @@ fn ingest_meta_tree(
     }
     let praw = crate::refstore::read_blob_from_tree(repo, tree, POLICIES_FILE).unwrap_or_default();
     for line in praw.lines() {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-            if let (Some(id), Some(toml)) = (
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+            && let (Some(id), Some(toml)) = (
                 v.get("id").and_then(|i| i.as_str()),
                 v.get("toml").and_then(|t| t.as_str()),
-            ) {
-                if filter.is_some_and(|f| !f.contains(id)) {
-                    continue;
-                }
-                policies
-                    .entry(id.to_string())
-                    .or_insert_with(|| toml.to_string());
+            )
+        {
+            if filter.is_some_and(|f| !f.contains(id)) {
+                continue;
             }
+            policies
+                .entry(id.to_string())
+                .or_insert_with(|| toml.to_string());
         }
     }
 }
@@ -1010,10 +1010,10 @@ pub fn local_env_ids_for_branch(repo: &Repository, branch: &str) -> HashSet<Stri
     let mut ids = HashSet::new();
     if let Some(raw) = crate::refstore::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE) {
         for line in raw.lines() {
-            if let Ok(m) = serde_json::from_str::<EnvManifest>(line) {
-                if m.parent_branch == branch {
-                    ids.insert(m.id);
-                }
+            if let Ok(m) = serde_json::from_str::<EnvManifest>(line)
+                && m.parent_branch == branch
+            {
+                ids.insert(m.id);
             }
         }
     }
@@ -1033,10 +1033,10 @@ pub fn scoped_code_branch_refs(repo: &Repository, branch: &str) -> Vec<String> {
     let mut refs = Vec::new();
     if let Some(raw) = crate::refstore::read_blob_from_tree(repo, tree.as_ref(), MANIFESTS_FILE) {
         for line in raw.lines() {
-            if let Ok(m) = serde_json::from_str::<EnvManifest>(line) {
-                if ids.contains(&m.id) && !m.branch.is_empty() {
-                    refs.push(m.branch);
-                }
+            if let Ok(m) = serde_json::from_str::<EnvManifest>(line)
+                && ids.contains(&m.id) && !m.branch.is_empty()
+            {
+                refs.push(m.branch);
             }
         }
     }
@@ -1487,10 +1487,10 @@ impl Drop for CreateRollback<'_> {
             .args(["worktree", "prune", "--expire=now"])
             .current_dir(self.repo.commondir())
             .output();
-        if let Some(b) = &self.branch {
-            if let Ok(mut r) = self.repo.find_branch(b, git2::BranchType::Local) {
-                let _ = r.delete();
-            }
+        if let Some(b) = &self.branch
+            && let Ok(mut r) = self.repo.find_branch(b, git2::BranchType::Local)
+        {
+            let _ = r.delete();
         }
         let _ = std::fs::remove_dir_all(&self.dir);
         let _ = self.h5i_root;
@@ -1608,22 +1608,22 @@ pub fn create(
     // Kernel tiers reach the host filesystem, so the engine has to be there. A
     // container box brings its own in the image, and is checked by the image
     // existing at all.
-    if claim < sandbox::IsolationClaim::Container {
-        if let Some(engine) = profile.engine {
-            let missing = sandbox::engine_tooling_missing(engine);
-            if !missing.is_empty() {
-                let (_, install) = engine.required_tooling();
-                return Err(H5iError::Metadata(format!(
-                    "the `{}` profile is pinned to the `{}` engine, which needs {} on this host, \
-                     and it is not there.\n  Install with:  {}\n  \
-                     Then create the box again, or pick another engine with \
-                     `--engine chromium` (fail-closed).",
-                    profile.name,
-                    engine.as_str(),
-                    missing.join(" and "),
-                    install
-                )));
-            }
+    if claim < sandbox::IsolationClaim::Container
+        && let Some(engine) = profile.engine
+    {
+        let missing = sandbox::engine_tooling_missing(engine);
+        if !missing.is_empty() {
+            let (_, install) = engine.required_tooling();
+            return Err(H5iError::Metadata(format!(
+                "the `{}` profile is pinned to the `{}` engine, which needs {} on this host, \
+                 and it is not there.\n  Install with:  {}\n  \
+                 Then create the box again, or pick another engine with \
+                 `--engine chromium` (fail-closed).",
+                profile.name,
+                engine.as_str(),
+                missing.join(" and "),
+                install
+            )));
         }
     }
 
@@ -2223,16 +2223,16 @@ fn prepare_private_paths(
         // contain: Podman's `--mount` splits on ',', microsandbox's
         // `SOURCE:DEST` on ':'. Fail closed if the env's host path holds one,
         // rather than silently dropping the (policy-required) isolation.
-        if let Some(sep) = mount_spec_separator(policy.claim) {
-            if backing.display().to_string().contains(sep) {
-                return Err(H5iError::Metadata(format!(
-                    "private_paths '{rel}': the env's backing path '{}' contains a '{sep}' which \
-                     the {} tier's mount syntax cannot carry — move the repo out of that path \
-                     (fail-closed)",
-                    backing.display(),
-                    policy.claim.as_str()
-                )));
-            }
+        if let Some(sep) = mount_spec_separator(policy.claim)
+            && backing.display().to_string().contains(sep)
+        {
+            return Err(H5iError::Metadata(format!(
+                "private_paths '{rel}': the env's backing path '{}' contains a '{sep}' which \
+                 the {} tier's mount syntax cannot carry — move the repo out of that path \
+                 (fail-closed)",
+                backing.display(),
+                policy.claim.as_str()
+            )));
         }
         if kernel {
             policy.profile.fs_write.push(backing.display().to_string());
@@ -2947,10 +2947,10 @@ fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
         else {
             continue;
         };
-        if let Some(port) = rec.dynamic_port {
-            if pid_alive(rec.pid) {
-                out.push(port);
-            }
+        if let Some(port) = rec.dynamic_port
+            && pid_alive(rec.pid)
+        {
+            out.push(port);
         }
     }
     out
@@ -4230,10 +4230,10 @@ impl ProtectedHookConfigGuard {
                             touched.push(f.label);
                         }
                     }
-                    if f.parent_created {
-                        if let Some(parent) = f.path.parent() {
-                            let _ = std::fs::remove_dir(parent);
-                        }
+                    if f.parent_created
+                        && let Some(parent) = f.path.parent()
+                    {
+                        let _ = std::fs::remove_dir(parent);
                     }
                 }
             }
@@ -4371,10 +4371,10 @@ pub fn validate_egress_rule(raw: &str) -> Result<String, H5iError> {
         Some(_) => return bad("only a numeric `:port` suffix is allowed"),
         None => (rule.as_str(), None),
     };
-    if let Some(p) = port {
-        if p.parse::<u16>().is_err() {
-            return bad("port out of range");
-        }
+    if let Some(p) = port
+        && p.parse::<u16>().is_err()
+    {
+        return bad("port out of range");
     }
     let host = host_part
         .strip_prefix("*.")
@@ -7070,13 +7070,13 @@ pub fn service_start(
     })?;
     let svc_dir = services_dir(h5i_root, m);
     std::fs::create_dir_all(&svc_dir).map_err(|e| H5iError::with_path(e, &svc_dir))?;
-    if let Some(rec) = read_service_record(&svc_dir, name) {
-        if pid_alive(rec.pid) {
-            return Err(H5iError::Metadata(format!(
-                "service '{name}' is already running (pid {}) — stop it first",
-                rec.pid
-            )));
-        }
+    if let Some(rec) = read_service_record(&svc_dir, name)
+        && pid_alive(rec.pid)
+    {
+        return Err(H5iError::Metadata(format!(
+            "service '{name}' is already running (pid {}) — stop it first",
+            rec.pid
+        )));
     }
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
@@ -7194,31 +7194,31 @@ pub fn service_stop(
     let want_logs = defs.get(name).map(|d| d.logs).unwrap_or(true);
     let mut capture_id = None;
     let log_path = PathBuf::from(&rec.log);
-    if want_logs && log_path.is_file() {
-        if let Ok(raw) = std::fs::read(&log_path) {
-            if !raw.is_empty() {
-                let work = m.work_dir(h5i_root);
-                if let Ok(wt_repo) = open_env_worktree(h5i_root, m) {
-                    let head_tree = wt_repo
-                        .head()
-                        .ok()
-                        .and_then(|h| h.peel_to_tree().ok())
-                        .map(|t| t.id().to_string());
-                    let input = crate::receipt::RecordInput {
-                        env_id: m.id.clone(),
-                        policy_digest: Some(m.policy_digest.clone()),
-                        source: "service-log".into(),
-                        cmd: Some(format!("service:{name} {}", rec.command)),
-                        cwd: Some(work.display().to_string()),
-                        git_tree: head_tree,
-                        ..Default::default()
-                    };
-                    if let Ok(c) =
-                        crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)
-                    {
-                        capture_id = Some(c.id.clone());
-                    }
-                }
+    if want_logs
+        && log_path.is_file()
+        && let Ok(raw) = std::fs::read(&log_path)
+        && !raw.is_empty()
+    {
+        let work = m.work_dir(h5i_root);
+        if let Ok(wt_repo) = open_env_worktree(h5i_root, m) {
+            let head_tree = wt_repo
+                .head()
+                .ok()
+                .and_then(|h| h.peel_to_tree().ok())
+                .map(|t| t.id().to_string());
+            let input = crate::receipt::RecordInput {
+                env_id: m.id.clone(),
+                policy_digest: Some(m.policy_digest.clone()),
+                source: "service-log".into(),
+                cmd: Some(format!("service:{name} {}", rec.command)),
+                cwd: Some(work.display().to_string()),
+                git_tree: head_tree,
+                ..Default::default()
+            };
+            if let Ok(c) =
+                crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)
+            {
+                capture_id = Some(c.id.clone());
             }
         }
     }
@@ -7251,11 +7251,11 @@ pub fn service_status(h5i_root: &Path, m: &EnvManifest) -> Vec<ServiceStatus> {
         if p.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        if let Some(name) = p.file_stem().and_then(|s| s.to_str()) {
-            if let Some(record) = read_service_record(&svc_dir, name) {
-                let alive = pid_alive(record.pid);
-                out.push(ServiceStatus { record, alive });
-            }
+        if let Some(name) = p.file_stem().and_then(|s| s.to_str())
+            && let Some(record) = read_service_record(&svc_dir, name)
+        {
+            let alive = pid_alive(record.pid);
+            out.push(ServiceStatus { record, alive });
         }
     }
     out.sort_by(|a, b| a.record.name.cmp(&b.record.name));
@@ -8002,10 +8002,10 @@ fn base_gitlinks(tree: &git2::Tree) -> HashMap<String, git2::Oid> {
     let mut out = HashMap::new();
     // `dir` is the parent prefix ("" at the root, "examples/" one level down).
     let _ = tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
-        if entry.filemode() == 0o160000 {
-            if let Some(name) = entry.name() {
-                out.insert(format!("{dir}{name}"), entry.id());
-            }
+        if entry.filemode() == 0o160000
+            && let Some(name) = entry.name()
+        {
+            out.insert(format!("{dir}{name}"), entry.id());
         }
         git2::TreeWalkResult::Ok
     });
@@ -8772,15 +8772,15 @@ pub fn rm(
     // environment named that" for and only `rm -rf` can clear.
     let _share_gate = crate::share_record::share_gate(&m.dir(h5i_root))?;
     let shared = crate::share_record::read_live(&m.dir(h5i_root));
-    if let Some(s) = &shared {
-        if !force {
-            return Err(H5iError::Metadata(format!(
-                "{} is being shared right now by pid {} — somebody outside may be connected \
-                 to it. Stop the share first (`h5i box share stop {}`), or pass --force to \
-                 remove the box anyway.",
-                m.id, s.pid, m.slug
-            )));
-        }
+    if let Some(s) = &shared
+        && !force
+    {
+        return Err(H5iError::Metadata(format!(
+            "{} is being shared right now by pid {} — somebody outside may be connected \
+             to it. Stop the share first (`h5i box share stop {}`), or pass --force to \
+             remove the box anyway.",
+            m.id, s.pid, m.slug
+        )));
     }
 
     let live = matches!(

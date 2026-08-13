@@ -153,11 +153,11 @@ fn compose(s: &Status, width: usize) -> String {
         let position_of = |p: u8, segs: &[Seg]| segs.iter().position(|x| x.prio == p);
 
         // Anything worth less than knowing where you are goes first, whole.
-        if worst > URL_PRIO {
-            if let Some(i) = position_of(worst, &segs) {
-                segs.remove(i);
-                continue;
-            }
+        if worst > URL_PRIO
+            && let Some(i) = position_of(worst, &segs)
+        {
+            segs.remove(i);
+            continue;
         }
         // Only once nothing cheaper is left does the URL start to give, and it
         // shortens rather than vanishing: an elided origin still answers the

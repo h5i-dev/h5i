@@ -651,10 +651,10 @@ pub fn ingest_light_actions_with(
         if let Some(target) = v.get("target").and_then(serde_json::Value::as_str) {
             action = format!("{action} {}", clean(target));
         }
-        if !ok {
-            if let Some(error) = v.get("error").and_then(serde_json::Value::as_str) {
-                action = format!("{action} — {}", clean(error));
-            }
+        if !ok
+            && let Some(error) = v.get("error").and_then(serde_json::Value::as_str)
+        {
+            action = format!("{action} — {}", clean(error));
         }
 
         let action_seq = v.get("seq").and_then(serde_json::Value::as_u64);
@@ -776,24 +776,24 @@ impl BoxStream {
             self.log.extend(ingest_actions_log(&growth.text), &at);
         }
 
-        if let Some(path) = crate::env::browser_action_log(h5i_root, m) {
-            if let Some(growth) = grown(&path, &mut self.light_actions_at) {
-                if growth.restarted {
-                    self.log.extend(reset_draft("the engine's action log"), &at);
-                }
-                    self.log
-                    .extend(ingest_light_actions_with(&growth.text, &mut caused), &at);
+        if let Some(path) = crate::env::browser_action_log(h5i_root, m)
+            && let Some(growth) = grown(&path, &mut self.light_actions_at)
+        {
+            if growth.restarted {
+                self.log.extend(reset_draft("the engine's action log"), &at);
             }
+                self.log
+                .extend(ingest_light_actions_with(&growth.text, &mut caused), &at);
         }
 
-        if let Some(path) = crate::env::browser_request_log(h5i_root, m) {
-            if let Some(growth) = grown(&path, &mut self.requests_at) {
-                if growth.restarted {
-                    self.log.extend(reset_draft("the engine's request log"), &at);
-                }
-                self.log
-                    .extend(ingest_request_log_with(&growth.text, &caused), &at);
+        if let Some(path) = crate::env::browser_request_log(h5i_root, m)
+            && let Some(growth) = grown(&path, &mut self.requests_at)
+        {
+            if growth.restarted {
+                self.log.extend(reset_draft("the engine's request log"), &at);
             }
+            self.log
+                .extend(ingest_request_log_with(&growth.text, &caused), &at);
         }
 
         for record in crate::receipt::list(&env_dir).unwrap_or_default() {

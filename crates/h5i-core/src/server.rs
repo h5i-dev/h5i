@@ -150,10 +150,10 @@ pub fn authorize(
     expected: &str,
     self_origin: &str,
 ) -> Result<(), Refusal> {
-    if let Some(o) = origin {
-        if o != self_origin {
-            return Err(Refusal::ForeignOrigin);
-        }
+    if let Some(o) = origin
+        && o != self_origin
+    {
+        return Err(Refusal::ForeignOrigin);
     }
     let presented = query
         .and_then(|q| param(q, "token"))

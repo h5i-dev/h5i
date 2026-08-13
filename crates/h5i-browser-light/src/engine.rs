@@ -199,13 +199,13 @@ impl Page {
             // Decided before the page is built, because the marker lives in the
             // markup we already hold and building is the expensive half.
             let refresh = meta_refresh(&html, &final_url);
-            if let Some((delay, next)) = &refresh {
-                if *delay <= META_REFRESH_MAX_DELAY_SECONDS && !visited.contains(next) {
-                    followed.push(final_url.to_string());
-                    visited.push(next.clone());
-                    target = next.clone();
-                    continue;
-                }
+            if let Some((delay, next)) = &refresh
+                && *delay <= META_REFRESH_MAX_DELAY_SECONDS && !visited.contains(next)
+            {
+                followed.push(final_url.to_string());
+                visited.push(next.clone());
+                target = next.clone();
+                continue;
             }
 
             let mut page = Self::from_html(&html, &final_url, broker, fonts, options);
@@ -783,10 +783,10 @@ impl Page {
     /// the fact that the document was laid out incompletely — and an outline
     /// read from it is short for a reason the agent should be told.
     fn note_layout_failure(&mut self, outcome: Result<(), String>) {
-        if let Err(detail) = outcome {
-            if self.layout_failure.is_none() {
-                self.layout_failure = Some(detail);
-            }
+        if let Err(detail) = outcome
+            && self.layout_failure.is_none()
+        {
+            self.layout_failure = Some(detail);
         }
     }
 
@@ -843,10 +843,10 @@ impl Page {
             ));
         }
 
-        if let Some(settled) = &self.settled {
-            if settled.cut_off {
-                snapshot.notes.push(settled.render());
-            }
+        if let Some(settled) = &self.settled
+            && settled.cut_off
+        {
+            snapshot.notes.push(settled.render());
         }
 
         let unsupported = self.unsupported();
@@ -1238,10 +1238,10 @@ impl PageFactory {
             self.fonts(),
             self.options.clone(),
         );
-        if self.options.script {
-            if let Err(error) = page.run_scripts(self.broker.clone()) {
-                eprintln!("h5i-browser-light: the script realm failed to start: {error}");
-            }
+        if self.options.script
+            && let Err(error) = page.run_scripts(self.broker.clone())
+        {
+            eprintln!("h5i-browser-light: the script realm failed to start: {error}");
         }
         page
     }
@@ -1254,10 +1254,10 @@ impl PageFactory {
             self.fonts(),
             self.options.clone(),
         );
-        if self.options.script {
-            if let Err(error) = page.run_scripts(self.broker.clone()) {
-                eprintln!("h5i-browser-light: the script realm failed to start: {error}");
-            }
+        if self.options.script
+            && let Err(error) = page.run_scripts(self.broker.clone())
+        {
+            eprintln!("h5i-browser-light: the script realm failed to start: {error}");
         }
         page
     }
@@ -1282,12 +1282,12 @@ fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
 
     outcome.map_err(|payload| {
-        let detail = payload
+        
+        payload
             .downcast_ref::<&str>()
             .map(|s| (*s).to_string())
             .or_else(|| payload.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "the layout engine panicked".to_string());
-        detail
+            .unwrap_or_else(|| "the layout engine panicked".to_string())
     })
 }
 

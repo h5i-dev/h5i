@@ -58,11 +58,11 @@ impl ConsoleLine {
 /// twice, and collapsing across the whole log would lose the order an agent
 /// reads for cause and effect.
 pub fn push_console(log: &mut Vec<ConsoleLine>, line: ConsoleLine) {
-    if let Some(last) = log.last_mut() {
-        if last.text == line.text && last.level == line.level && last.source == line.source {
-            last.repeats += 1;
-            return;
-        }
+    if let Some(last) = log.last_mut()
+        && last.text == line.text && last.level == line.level && last.source == line.source
+    {
+        last.repeats += 1;
+        return;
     }
     log.push(line);
 }
