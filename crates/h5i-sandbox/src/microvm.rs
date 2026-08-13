@@ -1780,7 +1780,7 @@ pub fn spawn_background(
          setsid sh -c 'echo $$ > \"$0\"; exec \"$@\"' {pidfile} {command} >>{log} 2>&1 &\n\
          i=0\n\
          while [ ! -s {pidfile} ] && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.05; done\n\
-         cat {pidfile}\n",
+         printf '%s %s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\" \"$(cat {pidfile})\"\n",
         script = sh_quote(&guest_script),
         work = WORK_MOUNT,
         pidfile = sh_quote(&guest_pidfile),
@@ -1818,26 +1818,29 @@ pub fn spawn_background(
             String::from_utf8_lossy(&out.stderr).trim()
         )));
     }
-    let pid: u32 = String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .next_back()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| {
-            H5iError::Metadata(format!(
-                "the microVM guest did not report a pid for service '{service}' (got {:?})",
-                String::from_utf8_lossy(&out.stdout)
-            ))
-        })?;
-    // Captured now, so a later liveness check can tell this guest's life from
-    // the next one's — the pid alone cannot.
-    let boot = guest_boot_id(&rt, &name).ok_or_else(|| {
+    // Boot id and pid come back from the *same* exec, so they describe the same
+    // life of the guest. Read separately, a restart in between would pair a new
+    // boot with a pid from the old one — a record that reads alive forever and
+    // whose stop signals whoever inherited the number.
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut fields = text.split_whitespace();
+    let (Some(boot), Some(pid)) = (fields.next(), fields.next_back()) else {
+        return Err(H5iError::Metadata(format!(
+            "the microVM guest did not report a boot id and pid for service '{service}' \
+             (got {text:?})"
+        )));
+    };
+    let boot = boot.to_string();
+    let pid: u32 = pid.parse().map_err(|_| {
         H5iError::Metadata(format!(
-            "could not read the microVM guest's boot id after starting '{service}' — \
-             refusing to record a pid that could not later be told apart from a \
-             recycled one"
+            "the microVM guest reported an unreadable pid for service '{service}' (got {text:?})"
         ))
     })?;
-    Ok(ServiceHandle { pid, sandbox: name, boot })
+    Ok(ServiceHandle {
+        pid,
+        sandbox: name,
+        boot,
+    })
 }
 
 /// A service started inside a guest: its pid, the guest, and that guest's boot
@@ -1889,8 +1892,28 @@ pub fn service_state(sandbox: &str, pid: u32, boot: &str) -> Option<bool> {
     // would read as dead — and, on the signalling path below, would never
     // actually be stopped.
     //
-    // `kill -0` distinguishes "no such process" (exit 1) from a runtime that
-    // could not answer (no exit status at all), so the two do not collapse.
+    Some(service_pid_running(&rt, sandbox, pid))
+}
+
+/// Just "does this pid exist in that guest" — one exec, no guest-state or
+/// boot-id round trips.
+///
+/// For polling a service as it shuts down, where the caller has *already*
+/// established that the guest is running and is the same life the record names.
+/// [`service_state`] re-checks all three, and a 30-iteration wait loop calling
+/// it made ninety runtime round trips out of what should be one per poll.
+pub fn service_pid_running(rt: &Runtime, sandbox: &str, pid: u32) -> bool {
+    // `kill -0` alone is not liveness: it succeeds on a **zombie**, and a
+    // service that exits inside a guest stays one until something reaps it.
+    // Guest init reparents it to pid 1 and may never do so, so a finished dev
+    // server would read as running forever — `service status` reporting a
+    // corpse as healthy, `service start` refusing because of it, and
+    // `service stop` waiting out its whole grace period before sending a
+    // pointless KILL. Seen in exactly that order before this line existed.
+    //
+    // `/proc/<pid>/status` is read rather than `stat` because the `comm` field
+    // in `stat` may contain spaces and parentheses, which makes positional
+    // parsing of the state wrong for a process that chose the wrong name.
     let mut cmd = std::process::Command::new(&rt.bin);
     cmd.args([
         "exec",
@@ -1899,9 +1922,21 @@ pub fn service_state(sandbox: &str, pid: u32, boot: &str) -> Option<bool> {
         "--",
         "sh",
         "-c",
-        &format!("kill -0 {pid}"),
+        &pid_running_probe(pid),
     ]);
-    run_bounded(cmd, GUEST_QUERY_TIMEOUT).map(|o| o.status.success())
+    run_bounded(cmd, GUEST_QUERY_TIMEOUT).is_some_and(|o| o.status.success())
+}
+
+/// The shell test for "pid `pid` is a live process in this guest". Pure, so the
+/// rule survives in a test rather than only in a string.
+pub fn pid_running_probe(pid: u32) -> String {
+    format!("kill -0 {pid} 2>/dev/null && ! grep -qs '^State:.*Z' /proc/{pid}/status")
+}
+
+/// The detected runtime, for a caller that needs several guest round trips and
+/// should not re-probe for each one.
+pub fn runtime() -> Option<Runtime> {
+    probe()
 }
 
 /// This guest's boot identity — the kernel's own, so it changes on every boot
@@ -3203,6 +3238,24 @@ mod tests {
                 "unreadable output must not be mistaken for an answer"
             );
         }
+    }
+
+    /// `kill -0` succeeds on a zombie, and a service that exits inside a guest
+    /// stays one until something reaps it — which guest init may never do. Left
+    /// at `kill -0`, a finished dev server read as running forever: status
+    /// reported a corpse as healthy, `start` refused because of it, and `stop`
+    /// waited out its whole grace period before a pointless KILL.
+    #[test]
+    fn liveness_excludes_a_zombie() {
+        let probe = pid_running_probe(4242);
+        assert!(probe.contains("kill -0 4242"), "{probe}");
+        assert!(
+            probe.contains("/proc/4242/status"),
+            "a zombie is only visible in the process's state: {probe}"
+        );
+        assert!(probe.contains("State:.*Z"), "{probe}");
+        // The two tests are ANDed, so a zombie fails the whole probe.
+        assert!(probe.contains("&&"), "{probe}");
     }
 
     /// A service must not inherit the per-command bounds. rlimits survive

@@ -7422,14 +7422,22 @@ pub fn service_stop(
             })?;
             if alive {
                 h5i_sandbox::microvm::service_signal(sandbox, rec.pid, "TERM");
-                for _ in 0..30 {
-                    if !h5i_sandbox::microvm::service_alive(sandbox, rec.pid, boot) {
-                        break;
+                // The guest and its boot were just verified and cannot change
+                // under us here, so the wait polls the pid alone. Re-running
+                // the full check would make ninety runtime round trips out of
+                // a thirty-iteration grace period.
+                let rt = h5i_sandbox::microvm::runtime();
+                let running = |rt: &_| h5i_sandbox::microvm::service_pid_running(rt, sandbox, rec.pid);
+                if let Some(rt) = rt {
+                    for _ in 0..30 {
+                        if !running(&rt) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                if h5i_sandbox::microvm::service_alive(sandbox, rec.pid, boot) {
-                    h5i_sandbox::microvm::service_signal(sandbox, rec.pid, "KILL");
+                    if running(&rt) {
+                        h5i_sandbox::microvm::service_signal(sandbox, rec.pid, "KILL");
+                    }
                 }
             }
         }
