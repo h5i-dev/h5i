@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import shutil
@@ -106,7 +107,10 @@ class Series:
         ordered = sorted(values)
         # Nearest-rank p90: with 5 samples this is the 5th, i.e. the worst.
         # Stated plainly because a p90 over few samples is a range, not a tail.
-        rank = max(0, min(len(ordered) - 1, round(0.9 * len(ordered)) - 1))
+        # `ceil`, not `round` — Python rounds halves to even, so `round(4.5)`
+        # is 4 and the default 5-sample run would report the 4th value as p90,
+        # understating the tail in every published table.
+        rank = max(0, min(len(ordered) - 1, math.ceil(0.9 * len(ordered)) - 1))
         return {
             "n": len(ordered),
             "median": statistics.median(ordered),

@@ -1248,9 +1248,15 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
     // services die with it. Read from the *declared* set rather than from what
     // is running, because the guest's idle bound is fixed when it is created
     // and services start later.
-    policy.hosts_services = !load_service_defs(h5i_root, m)
-        .unwrap_or_default()
-        .is_empty();
+    //
+    // From the **pinned** manifest only, never the worktree fallback that
+    // `load_service_defs` allows for pre-pinning envs: that file lives inside
+    // `$WORK`, which the box can write. This value feeds `--idle-timeout`,
+    // which is hashed into the guest's name, so reading it from a box-writable
+    // path would let an in-box agent change its own guest's identity — the next
+    // command would resolve to a new name and reap the running guest, killing
+    // whatever was in it. Nothing the box controls belongs in that hash.
+    policy.hosts_services = pinned_service_defs(h5i_root, m).is_some_and(|d| !d.is_empty());
     Ok(policy)
 }
 
@@ -6991,6 +6997,17 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// The port this service actually listens on, host-allocated or declared.
+///
+/// The kernel tiers allocate one per env and inject it, because every box
+/// shares the host's network and two would collide. A microvm box has its own
+/// stack, so nothing is allocated and the declared port is the answer — which
+/// still has to be *reported*, or the tier that just gained services would be
+/// the one whose ports never show up.
+fn service_port(rec: &ServiceRecord) -> Option<u16> {
+    rec.dynamic_port.or(rec.port)
+}
+
 /// Is this service still running, wherever its pid lives?
 ///
 /// The single place liveness is decided, so no caller can reach for
@@ -7081,6 +7098,18 @@ fn pin_services_at_create(work_path: &Path, env_dir: &Path) -> Result<String, H5
 /// editing the (writable) worktree `.h5i/env.toml` after create can't change
 /// which long-lived command a service runs. Falls back to the worktree/repo
 /// config only for envs created before pinning existed (no recorded digest).
+/// The service definitions pinned at box creation, or `None` when this env
+/// predates pinning. Deliberately does **not** fall back to the worktree copy:
+/// callers that must not read box-writable input use this one.
+fn pinned_service_defs(
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Option<std::collections::BTreeMap<String, ServiceDef>> {
+    let pinned = pinned_services_path(h5i_root, m);
+    let text = std::fs::read_to_string(&pinned).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 fn load_service_defs(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -7141,6 +7170,13 @@ pub fn service_start(
     name: &str,
 ) -> Result<ServiceRecord, H5iError> {
     validate_service_name(name)?;
+    // Serialized against `run` and `shell`, which take the same lock. Starting
+    // a service now creates or starts the box's warm guest, and two unserialized
+    // creates race exactly the way this design works to prevent: both see no
+    // guest, both issue `create --replace` under the same name, and the loser's
+    // guest — with whatever was running in it — is destroyed.
+    #[cfg(unix)]
+    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
     let defs = load_service_defs(h5i_root, m)?;
     let def = defs.get(name).ok_or_else(|| {
         H5iError::Metadata(format!(
@@ -7227,11 +7263,21 @@ pub fn service_start(
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
     let argv = vec!["sh".to_string(), "-c".to_string(), def.command.clone()];
-    let handle = sandbox::spawn_background(&policy, &work, &argv, &injected, &log, name)?;
-    // Restores the worktree exactly as `run` and `shell` do. The service keeps
-    // running: at the microvm tier its mounts were fixed when the guest was
-    // created, and at the kernel tiers the lockdown is a property of the
-    // launched process, not of the files afterwards.
+    // Restored on **both** paths. `prepare` writes empty sentinel configs into
+    // `$WORK` at the image-backed tiers when none exist, so returning early
+    // through `?` would leave them there for good: they show up in the user's
+    // `git status`, and the next guard reads the empty file as the original and
+    // reports a spurious tamper when the agent later writes a real one.
+    let handle = match sandbox::spawn_background(&policy, &work, &argv, &injected, &log, name) {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = protected_hook_configs.finish();
+            return Err(e);
+        }
+    };
+    // The service keeps running: at the microvm tier its mounts were fixed when
+    // the guest was created, and at the kernel tiers the lockdown is a property
+    // of the launched process, not of the files afterwards.
     if let Err(e) = protected_hook_configs.finish() {
         eprintln!("service start: could not restore the agent hook config: {e}");
     }
@@ -7447,7 +7493,8 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
         let port = s
             .record
             .dynamic_port
-            .map(|p| format!(" injected PORT={p}"))
+            .or(s.record.port)
+            .map(|p| format!(" PORT={p}"))
             .unwrap_or_default();
         out.push_str(&format!(
             "  {:<16} {:<8} pid={}{}  `{}`\n",
@@ -7466,9 +7513,13 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
 pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
     let mut out = String::new();
     out.push_str(&format!("── injected ports for {env_id} ──\n"));
+    // A guest service has no *injected* host port — its box owns a whole
+    // network stack, so it binds the port it declared and nothing was allocated
+    // to keep it from colliding. Filtering on `dynamic_port` alone therefore
+    // hid the port for exactly the tier that just gained services.
     let with_ports: Vec<&ServiceStatus> = rows
         .iter()
-        .filter(|s| s.record.dynamic_port.is_some())
+        .filter(|s| service_port(&s.record).is_some())
         .collect();
     if with_ports.is_empty() {
         out.push_str("  (no running service has a declared port)\n");
@@ -7483,16 +7534,22 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
         "SERVICE", "DECLARED", "INJECTED", "URL (if the service binds the injected port)"
     ));
     for s in with_ports {
-        let injected = s.record.dynamic_port.unwrap();
+        let port = service_port(&s.record).unwrap_or_default();
+        // In a guest the port is bound inside the box's own network stack, so
+        // it is not a host URL. Saying so beats printing one that cannot work.
+        let url = match &s.record.runtime {
+            ServiceRuntime::Guest { .. } => "in the box's network (see `box share`)".to_string(),
+            ServiceRuntime::Host => format!("http://127.0.0.1:{port}"),
+        };
         out.push_str(&format!(
-            "  {:<16} {:<10} {:<10} http://127.0.0.1:{}\n",
+            "  {:<16} {:<10} {:<10} {}\n",
             s.record.name,
             s.record
                 .port
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".into()),
-            injected,
-            injected
+            port,
+            url
         ));
     }
     out

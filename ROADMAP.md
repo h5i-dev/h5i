@@ -2794,6 +2794,16 @@ Being explicit about these is a feature, since the claim is a security claim.
   state does not survive a policy change**, because that is a different guest
   by construction. And separate boxes still get separate guests, so nothing
   about box↔box isolation changes.
+- **A microvm box that declares a service keeps its guest until you remove it.**
+  A guest is normally stopped after 30 minutes idle. A box whose
+  `.h5i/env.toml` declares any `[service.*]` gets no such bound, because `msb`
+  measures idleness in commands and cannot see a dev server busy serving —
+  the bound would kill the service it was meant to protect, and it is fixed
+  when the guest is created, so it cannot be lifted later. The cost is real
+  and stated rather than hidden: such a box holds its `mem_bytes` allocation
+  from its first command until `box rm`, **even if the service is never
+  started**. Declared is the signal because started is not knowable in time.
+  `box rm` and the orphan sweep are what reclaim it.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy respecting tooling only. The `supervised` tier enforces at
   L3/L4 with nftables and does not have that hole, which is why M4 starts

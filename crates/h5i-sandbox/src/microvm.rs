@@ -808,6 +808,15 @@ pub struct ExecPlan<'a> {
     /// `None` → captured run (wall-clock enforced). `Some(tty)` → interactive
     /// session, allocating a pseudo-TTY when the caller has one.
     pub tty: Option<bool>,
+    /// Apply the profile's per-command bounds (`--timeout`, `--rlimit`).
+    ///
+    /// False for a service launcher. rlimits are inherited across `setsid` and
+    /// `exec`, so a CPU bound meant for one command would follow the detached
+    /// service and `SIGXCPU` it once it had accumulated that much CPU — a dev
+    /// server dying hours later with nothing to explain it. The kernel tiers
+    /// deliberately give services no wall or CPU bound either; a service is
+    /// bounded by the operator, not by a per-command timer.
+    pub bounded: bool,
 }
 
 /// Build the `msb exec` argv for one command in an already-running guest.
@@ -828,20 +837,23 @@ pub fn build_exec_argv(rt: &Runtime, policy: &ResolvedPolicy, plan: &ExecPlan) -
 
     // Per-process limits are per *command*: two commands in one warm guest each
     // get the profile's ceiling, which is what they would have got from two
-    // one-shot runs.
-    if let Some(n) = p.max_procs {
-        a.push("--rlimit".into());
-        a.push(format!("nproc={n}"));
-    }
-    if let Some(secs) = p.cpu_secs {
-        a.push("--rlimit".into());
-        a.push(format!("cpu={secs}"));
-    }
-    // Wall clock, captured runs only — an interactive session is bounded by the
-    // operator, not a timer (same rule as every other tier).
-    if plan.tty.is_none() {
-        a.push("--timeout".into());
-        a.push(format!("{}s", p.wall().as_secs()));
+    // one-shot runs. Skipped for a service launcher, whose limits would be
+    // inherited by the service it detaches — see [`ExecPlan::bounded`].
+    if plan.bounded {
+        if let Some(n) = p.max_procs {
+            a.push("--rlimit".into());
+            a.push(format!("nproc={n}"));
+        }
+        if let Some(secs) = p.cpu_secs {
+            a.push("--rlimit".into());
+            a.push(format!("cpu={secs}"));
+        }
+        // Wall clock, captured runs only — an interactive session is bounded by
+        // the operator, not a timer (same rule as every other tier).
+        if plan.tty.is_none() {
+            a.push("--timeout".into());
+            a.push(format!("{}s", p.wall().as_secs()));
+        }
     }
 
     match plan.tty {
@@ -954,6 +966,14 @@ pub enum GuestState {
     /// Running — exec straight into it, which is the ~9 ms path this whole
     /// milestone exists to reach.
     Running,
+    /// The runtime could not be asked, or did not answer in time.
+    ///
+    /// Emphatically **not** [`GuestState::Absent`]. Treating "I do not know"
+    /// as "there is none" leads to `msb create --replace`, which destroys a
+    /// guest that may be running a dev server — so one flaky `msb list` would
+    /// silently kill a service while the run that caused it carried on. The
+    /// caller fails instead.
+    Unknown,
 }
 
 /// Read a guest's state out of `msb list --format json`. Pure, so the state
@@ -1328,10 +1348,11 @@ fn guest_state(bin: &str, name: &str) -> GuestState {
         Some(o) if o.status.success() => {
             parse_guest_state(&String::from_utf8_lossy(&o.stdout), name)
         }
-        // A runtime that cannot answer — or does not answer in time — is
-        // treated as "no guest": the caller creates one, and `--replace` makes
-        // that safe even if it did exist.
-        _ => GuestState::Absent,
+        // A runtime that cannot answer, exits non-zero, or overruns the
+        // deadline has told us nothing. Reporting `Absent` here would send the
+        // caller into `create --replace` and destroy a live guest — and adding
+        // the deadline made that *more* reachable, not less.
+        _ => GuestState::Unknown,
     }
 }
 
@@ -1351,6 +1372,14 @@ fn ensure_guest(
 ) -> Result<(), H5iError> {
     match guest_state(&rt.bin, name) {
         GuestState::Running => {}
+        GuestState::Unknown => {
+            return Err(H5iError::Metadata(format!(
+                "could not ask the microVM runtime whether this box's guest '{name}' exists \
+                 (`{} list` failed or timed out) — refusing to continue, because creating a \
+                 guest on a maybe would replace one that may be running this box's services",
+                rt.bin
+            )));
+        }
         GuestState::Stopped => {
             let mut cmd = std::process::Command::new(&rt.bin);
             cmd.args(["start", name]);
@@ -1630,6 +1659,7 @@ fn run_warm(
             argv,
             env_script: &guest_script,
             tty: None,
+            bounded: true,
         },
     );
 
@@ -1735,6 +1765,7 @@ pub fn spawn_background(
             // directly rather than through the per-run env wrapper.
             env_script: SHELL_DIRECT,
             tty: None,
+            bounded: false,
         },
     );
     let out = std::process::Command::new(&exec_argv[0])
@@ -1983,6 +2014,7 @@ fn run_interactive_warm(
             argv,
             env_script: &guest_script,
             tty: Some(tty),
+            bounded: true,
         },
     );
 
@@ -2913,6 +2945,7 @@ mod tests {
                 argv: &["sh".into(), "-c".into(), "true".into()],
                 env_script: "/.h5i/run/env-1-0.sh",
                 tty,
+                bounded: true,
             },
         )
     }
@@ -3000,6 +3033,36 @@ mod tests {
         assert_eq!(parse_guest_state("[]", "g"), GuestState::Absent);
         assert_eq!(parse_guest_state("not json", "g"), GuestState::Absent);
         assert_eq!(parse_guest_state(r#"{"name":"g"}"#, "g"), GuestState::Absent);
+    }
+
+    /// A service must not inherit the per-command bounds. rlimits survive
+    /// `setsid` and `exec`, so a CPU bound meant for one command would follow
+    /// the detached dev server and `SIGXCPU` it hours later, unexplained.
+    #[test]
+    fn a_service_launcher_carries_no_per_command_bounds() {
+        let mut pol = policy();
+        pol.profile.cpu_secs = Some(600);
+        pol.profile.max_procs = Some(512);
+        pol.profile.wall_secs = 900;
+
+        let launcher = build_exec_argv(
+            &rt(),
+            &pol,
+            &ExecPlan {
+                name: "h5i-e1-abc",
+                argv: &["-c".into(), "true".into()],
+                env_script: SHELL_DIRECT,
+                tty: None,
+                bounded: false,
+            },
+        );
+        assert!(window(&launcher, "--rlimit").is_empty(), "{launcher:?}");
+        assert!(window(&launcher, "--timeout").is_empty(), "{launcher:?}");
+
+        // A captured run still gets all of them.
+        let run = exec_argv_for(&pol, None);
+        assert_eq!(window(&run, "--rlimit"), vec!["nproc=512", "cpu=600"]);
+        assert_eq!(window(&run, "--timeout"), vec!["900s"]);
     }
 
     // ─── warm guests: reuse eligibility ─────────────────────────────────────
@@ -3124,6 +3187,7 @@ mod tests {
                 argv: &["-c".into(), "echo hi".into()],
                 env_script: SHELL_DIRECT,
                 tty: None,
+                bounded: false,
             },
         );
         let sep = direct.iter().position(|x| x == "--").unwrap();
