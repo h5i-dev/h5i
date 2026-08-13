@@ -2436,6 +2436,27 @@ at create time rather than lazily; and **an exec can hang** (see the anomaly in
 in 6 controlled attempts), so exec needs its own deadline the way `wait_vm`
 already gives `msb run` a host-side backstop.
 
+**Six prerequisites measured before writing any of it (2026-08-13), because
+two assumptions had already died that way.** None reshaped the design; one
+resized it. **A state check costs ~7.5 ms** (`msb list --format json`, the
+cheapest of list/status/ping), which is the same order as the exec it guards,
+so checking before every command roughly *doubles* per-command cost to ~16 ms
+rather than being free — still ~29× better than today, but it means one list
+per run, not one per decision, and it is the reason to keep guest state in the
+box manifest rather than re-derive it. **Mounts are live in both directions**:
+a host write after boot is visible inside a running guest and vice versa,
+which is what lets per-run credentials go through the existing `/.h5i/spool`
+mount instead of `msb exec -e`. **`--timeout` enforces exactly** (2 s killed at
+2.02 s, `rc=1`, "exec timed out after 2s"), so the profile wall clock survives
+the switch. **`--tty` works under a real pty** (guest reports `/dev/pts/0`,
+`TERM=xterm-256color`) and `--no-tty` under a pipe, so `box shell` and captured
+runs both keep their current shapes. **Eight concurrent execs into one guest**
+all returned their own correct output in 26 ms of wall clock, so a single warm
+guest is not a serialization point — which is what later makes `box service`
+and the browser sidecar plausible here. And **names take 128 characters,
+dots and underscores, but reject `/`**, so a box id like `env/human/slug` must
+be sanitized before it can carry a policy digest in the guest name.
+
 **h5i must track guest state, and `msb exec`'s auto-start is a trap.** An
 earlier draft of this section said the opposite, on the strength of upstream's
 "exec auto-starts a stopped sandbox" — measurement corrected it. Exec into a
