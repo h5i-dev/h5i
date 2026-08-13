@@ -2587,6 +2587,94 @@ mechanism *is* the host kernel's copy-on-write over `mmap(MAP_PRIVATE)` —
 so the macOS story stays msb plus reuse, and the platform split is stated,
 not smoothed over.
 
+### M14. `box service` at the microvm tier: proposed, 2026-08-14
+
+Services are the first of the three things M13 step 2 unlocks, and the one the
+other two wait on: a dev server has to exist before it can be shared or driven
+by a browser. `spawn_background` refuses every tier but `workspace` and
+`process` today, and the reason is not a missing feature — it is that **every
+mechanism in the service machinery is a host-process mechanism**, and a guest
+process is not a host process.
+
+| What a service needs | How it works today | Why it does not survive the boundary |
+|---|---|---|
+| Identity | a host pid from `spawn_background` | a guest process has no host pid |
+| Liveness | `pid_alive(rec.pid)` | asks the host about a guest pid |
+| Stop | `killpg` after `setsid` | cannot signal into the guest |
+| Logs | the child writes a host file directly | the guest cannot see a host path |
+| Ports | a *host* port allocated and injected as `PORT` | the server binds inside the guest; nothing listens on the host |
+
+**The one that is dangerous rather than merely absent** is identity, and it
+decides the shape of the whole design. `ServiceRecord.pid` is a host pid, and a
+guest pid put in the same field is not a different value — it is the *same
+number in a different namespace*. `pid_alive` would answer about an unrelated
+host process, and `service_stop`'s `killpg` would signal an unrelated host
+**process group**. So the record has to say where the pid lives, every consumer
+has to dispatch on that, and the host signal path has to **refuse** a guest
+record rather than fall through to the pid it cannot interpret.
+
+The design, then:
+
+**A record says which world its pid belongs to.** `ServiceRecord` gains a
+runtime discriminator carrying the guest name, `serde`-defaulted to the host
+variant so records written before this still parse. That name is also the
+cheapest liveness precondition there is: if it is not the box's *current* guest
+name, the service is dead by construction, because a policy change rotated the
+guest — no exec required to know it. Which is the second thing to state plainly:
+**rotating a guest kills its services**, since the guest is the machine they
+run on, and the records must be invalidated when it happens.
+
+**Launch is an exec that detaches.** `msb exec <guest> -- sh -c 'cd /work &&
+setsid nohup sh -c "<cmd>" >/.h5i/services/<name>.log 2>&1 & echo $!'`, taking
+the printed guest pid. `setsid` makes it a session leader, so a later
+`kill -TERM -<pid>` reaps the whole descendant tree — the same semantics the
+kernel tiers get from `killpg`, which is why the same `setsid` appears in
+`spawn_background`. Measured to survive: a server started this way answered
+after unrelated execs in between (`docs/benchmarks/microvm-exec-tunnel.md`).
+
+**Logs go through a mount, not a pipe.** `<env_dir>/services` mounted
+read-write at `/.h5i/services`, the guest redirecting into it, the host reading
+the same file. `service logs` and the stop-time capture ingest then work
+unchanged. The content is box-written and therefore untrusted, which the
+existing ingest already assumes — this changes who writes the bytes, not how
+they are treated.
+
+**Stop is the same escalation, one exec away.** `kill -TERM -<pgid>`, wait,
+escalate to `-KILL`, then ingest the log as evidence exactly as today.
+
+**Ports are guest ports, and `box ports` must say so.** This is the one place
+the user-visible semantics genuinely differ, so it should not be papered over.
+Two consequences, one of them a simplification:
+
+- *Dynamic allocation stops being necessary.* Host ports are allocated per env
+  because concurrent boxes share one host network and would collide. Each
+  microvm box has its own network stack, so nothing can collide: the service
+  binds the port its definition declares, and `PORT` is injected as that.
+- *Nothing on the host listens.* `box ports` at this tier is reporting a port
+  inside a machine, and reachability is `box share` — over the exec tunnel
+  measured in `docs/benchmarks/microvm-exec-tunnel.md`, not over a published
+  port.
+
+**Publishing the port with `msb -p` was considered and rejected.** It is
+create-time only, so the set of published ports becomes part of the guest's
+identity: changing a service definition would rotate the guest and kill every
+service running in it, and a box would carry an ingress hole for its whole life
+against the possibility of a share that most boxes never ask for. The tunnel
+opens nothing and works even on a `--no-net` box, which is the property worth
+protecting.
+
+**What does not change**, and deliberately: the service definition
+(`[service.<name>]` in `.h5i/env.toml`, digest-pinned), the records directory,
+the event log, the capture ingest at stop, and the whole CLI surface. Only the
+execution backend is new — `spawn_background` grows a microvm arm and a return
+type that can carry a guest name, rather than a second service subsystem.
+
+Then, and only then, share (M15): the tunnel is measured and the isolation
+property is verified, but its remaining unknown is the in-guest forwarder — no
+slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
+small static binary staged into a mounted directory is the first thing that
+work has to decide.
+
 ## 9. Limits we state up front
 
 Being explicit about these is a feature, since the claim is a security claim.
