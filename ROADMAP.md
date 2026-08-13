@@ -2704,6 +2704,31 @@ boundary*:
   own `$$` to a pidfile and then `exec`s, so the recorded pid *is* the service
   and *is* the session leader `kill -TERM -<pid>` reaps as a group.
 
+An adversarial pass over the result found three more, the first of which was
+shipping a silent data-loss bug:
+
+- **The idle timeout killed the services.** A guest is created with
+  `--idle-timeout 30m`, and `msb` measures idleness in *commands* — it cannot
+  see that a dev server inside is busy serving. So a service died 30 minutes
+  after the operator's last h5i command, while still handling traffic, and the
+  box looked fine. Measured rather than reasoned about: a guest with a 20 s
+  bound stopped at ~25 s and took its service with it. A box that declares
+  services now gets **no** idle bound (`ResolvedPolicy::hosts_services`, read
+  from the pinned `[service.*]` set, which is known at create time — the bound
+  cannot be changed later). Such a guest is reclaimed by `box rm` and by the
+  sweep instead. The two are different guests by name, which is right: whether
+  a box may be stopped is part of what its guest is.
+- **Nothing had a deadline.** `service_alive`, `guest_state`, and guest
+  create/start all blocked forever. Given an `msb exec` that has been seen to
+  hang — rarely, still undiagnosed — `box service status` would hang with it,
+  with no way out but Ctrl-C. All of them now run under `run_bounded`; a query
+  that overruns reads as "not running", which is the safe direction.
+- **The escape hatch broke services silently.** With `H5I_MICROVM_NO_REUSE=1`,
+  a service would have been started in a warm guest while every `box run` got
+  its own throwaway one — so the box could never reach its own service, and
+  nothing would look wrong. Starting a service now refuses under that flag and
+  says why.
+
 Then, and only then, share (M15): the tunnel is measured and the isolation
 property is verified, but its remaining unknown is the in-guest forwarder — no
 slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a

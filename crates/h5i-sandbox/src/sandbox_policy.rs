@@ -1942,6 +1942,20 @@ pub struct ResolvedPolicy {
     /// tier (the only tier that enforces a domain allowlist).
     #[serde(skip)]
     pub user_egress_allow: Vec<String>,
+    /// Runtime-only: does this box declare background services?
+    ///
+    /// Only the microvm tier reads it, and only to decide whether its guest may
+    /// be stopped for idleness. A guest is stopped by `msb --idle-timeout` when
+    /// no *command* has run for a while, and `msb` cannot see that a dev server
+    /// inside it is busy serving — so an idle bound on a box that runs services
+    /// silently kills them. Measured: a guest with a 20s bound stopped at ~25s
+    /// and took its service with it.
+    ///
+    /// Declared rather than observed, because the bound is fixed when the guest
+    /// is created and services start later; `.h5i/env.toml`'s `[service.*]` is
+    /// pinned at box creation, so this is known in time.
+    #[serde(skip)]
+    pub hosts_services: bool,
     /// Runtime-only: the loopback ports this box may dial, and the only ones.
     ///
     /// On macOS a box shares the *host's* loopback, so `network_rules` refuses
@@ -1998,6 +2012,7 @@ impl ResolvedPolicy {
             claim,
             profile,
             audit: AuditPolicy::default(),
+            hosts_services: false,
             box_git: Vec::new(),
             env_capture_spool: None,
             env_inbox: None,

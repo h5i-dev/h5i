@@ -1322,16 +1322,15 @@ impl Drop for SandboxGuard {
 /// ~7.5 ms, the same order as the exec it guards, which is why the caller makes
 /// exactly one of these per command rather than one per decision.
 fn guest_state(bin: &str, name: &str) -> GuestState {
-    let out = std::process::Command::new(bin)
-        .args(["list", "--format", "json"])
-        .stderr(std::process::Stdio::null())
-        .output();
-    match out {
-        Ok(o) if o.status.success() => {
+    let mut cmd = std::process::Command::new(bin);
+    cmd.args(["list", "--format", "json"]);
+    match run_bounded(cmd, GUEST_QUERY_TIMEOUT) {
+        Some(o) if o.status.success() => {
             parse_guest_state(&String::from_utf8_lossy(&o.stdout), name)
         }
-        // A runtime that cannot answer is treated as "no guest": the caller
-        // creates one, and `--replace` makes that safe even if it did exist.
+        // A runtime that cannot answer — or does not answer in time — is
+        // treated as "no guest": the caller creates one, and `--replace` makes
+        // that safe even if it did exist.
         _ => GuestState::Absent,
     }
 }
@@ -1353,11 +1352,14 @@ fn ensure_guest(
     match guest_state(&rt.bin, name) {
         GuestState::Running => {}
         GuestState::Stopped => {
-            let out = std::process::Command::new(&rt.bin)
-                .args(["start", name])
-                .stdout(std::process::Stdio::null())
-                .output()
-                .map_err(|e| H5iError::Metadata(format!("failed to start microvm guest: {e}")))?;
+            let mut cmd = std::process::Command::new(&rt.bin);
+            cmd.args(["start", name]);
+            let out = run_bounded(cmd, GUEST_LIFECYCLE_TIMEOUT).ok_or_else(|| {
+                H5iError::Metadata(format!(
+                    "starting this box's microVM guest '{name}' did not finish in {}s",
+                    GUEST_LIFECYCLE_TIMEOUT.as_secs()
+                ))
+            })?;
             if !out.status.success() {
                 return Err(H5iError::Metadata(format!(
                     "could not start this box's microVM guest '{name}': {}",
@@ -1371,11 +1373,14 @@ fn ensure_guest(
             // it now, while we still know which box it belonged to.
             reap_stale_siblings(&rt.bin, work, name);
             let _ = policy; // policy shaped `create_argv`; kept for symmetry
-            let out = std::process::Command::new(&create_argv[0])
-                .args(&create_argv[1..])
-                .stdout(std::process::Stdio::null())
-                .output()
-                .map_err(|e| H5iError::Metadata(format!("failed to create microvm guest: {e}")))?;
+            let mut cmd = std::process::Command::new(&create_argv[0]);
+            cmd.args(&create_argv[1..]);
+            let out = run_bounded(cmd, GUEST_LIFECYCLE_TIMEOUT).ok_or_else(|| {
+                H5iError::Metadata(format!(
+                    "creating this box's microVM guest did not finish in {}s",
+                    GUEST_LIFECYCLE_TIMEOUT.as_secs()
+                ))
+            })?;
             if !out.status.success() {
                 return Err(H5iError::Metadata(format!(
                     "could not create this box's microVM guest: {}",
@@ -1527,6 +1532,7 @@ fn warm_create_plan<'a>(
     net: &'a NetPlan,
     run_stage: &'a Path,
     service_logs: &'a Path,
+    idle_timeout: Option<&'a str>,
 ) -> CreatePlan<'a> {
     CreatePlan {
         image,
@@ -1535,7 +1541,7 @@ fn warm_create_plan<'a>(
         run_stage,
         service_logs,
         managed_settings: None,
-        idle_timeout: Some(GUEST_IDLE_TIMEOUT),
+        idle_timeout,
     }
 }
 
@@ -1578,7 +1584,12 @@ fn ensure_warm_guest(policy: &ResolvedPolicy, work: &Path) -> Result<WarmGuest, 
     // guests that reap each other; the only caller passes `None` today anyway,
     // deliberately (see `env::shell`). Re-enabling it needs a design for warm
     // guests, not an argument here.
-    let placeholder = warm_create_plan(&image, GUEST_NAME_PLACEHOLDER, &net, &stage, &logs);
+    // A box that runs services must not have its guest stopped for idleness:
+    // `msb` measures idleness in commands, not in the traffic a dev server is
+    // serving, so the bound would kill the very thing the box exists to run.
+    // Such a guest is reclaimed by `box rm` and by the sweep instead.
+    let idle = (!policy.hosts_services).then_some(GUEST_IDLE_TIMEOUT);
+    let placeholder = warm_create_plan(&image, GUEST_NAME_PLACEHOLDER, &net, &stage, &logs, idle);
     let hashed = build_create_argv(&rt, policy, work, &placeholder);
     // A box that keeps getting a new guest is a box whose create argv is not
     // stable across entry points, and the argv is the only way to see which
@@ -1587,7 +1598,7 @@ fn ensure_warm_guest(policy: &ResolvedPolicy, work: &Path) -> Result<WarmGuest, 
         eprintln!("h5i microvm create argv:\n  {}", hashed.join("\n  "));
     }
     let name = guest_name(work, &hashed);
-    let named = warm_create_plan(&image, &name, &net, &stage, &logs);
+    let named = warm_create_plan(&image, &name, &net, &stage, &logs, idle);
     let create_argv = build_create_argv(&rt, policy, work, &named);
 
     // Sweep leftovers from an h5i that died without running Drop, and guests
@@ -1656,6 +1667,18 @@ pub fn spawn_background(
     injected_env: &[(String, String)],
     service: &str,
 ) -> Result<(u32, String), H5iError> {
+    // A service *is* a process outliving the command that started it, so it has
+    // nowhere to live without guest reuse. Refusing is the honest outcome:
+    // starting one anyway would put it in a warm guest while every `box run`
+    // got its own throwaway one, so the box could never reach its own service
+    // and nothing would look wrong.
+    if !reuse_available(policy) {
+        return Err(H5iError::Metadata(format!(
+            "services need a persistent microVM guest, and guest reuse is disabled here \
+             ({NO_REUSE_ENV} is set) — a service started now would run in a guest that \
+             `box run` never enters. Unset {NO_REUSE_ENV} to run services at this tier."
+        )));
+    }
     let WarmGuest { rt, name, stage } = ensure_warm_guest(policy, work)?;
 
     // Exports only: the launcher sources these into its own shell and then has
@@ -1759,14 +1782,75 @@ pub fn service_alive(sandbox: &str, pid: u32) -> bool {
 
 /// Run one line of shell in the guest, reporting whether it succeeded.
 fn guest_sh(bin: &str, sandbox: &str, script: &str) -> bool {
-    std::process::Command::new(bin)
-        .args(["exec", "--quiet", sandbox, "--", "sh", "-c", script])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let mut cmd = std::process::Command::new(bin);
+    cmd.args(["exec", "--quiet", sandbox, "--", "sh", "-c", script]);
+    // A hang here reads as "not running", which is the safe direction: it stops
+    // a stuck runtime from stalling `box service status`, and the worst it
+    // costs is a service reported dead that is not.
+    run_bounded(cmd, GUEST_QUERY_TIMEOUT).is_some_and(|o| o.status.success())
+}
+
+/// How long a question to the runtime may take before we stop waiting.
+const GUEST_QUERY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long creating or starting a guest may take. Generous — a cold boot is
+/// hundreds of milliseconds, but a host under load is not a failure.
+const GUEST_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Run `cmd` to completion or to `limit`, whichever comes first. `None` means
+/// it overran and was killed.
+///
+/// Every call into the runtime goes through this. `msb exec` has been observed
+/// to hang indefinitely — rarely, and still undiagnosed
+/// (`docs/benchmarks/microvm-boot.md`) — and these calls sit behind
+/// `box service status` and `box run`, so an unbounded one hangs the CLI with
+/// no way out but Ctrl-C.
+fn run_bounded(
+    mut cmd: std::process::Command,
+    limit: Duration,
+) -> Option<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().ok()?;
+    let mut out_pipe = child.stdout.take()?;
+    let mut err_pipe = child.stderr.take()?;
+    let out_h = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = out_pipe.read_to_end(&mut b);
+        b
+    });
+    let err_h = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = err_pipe.read_to_end(&mut b);
+        b
+    });
+    let deadline = std::time::Instant::now() + limit;
+    let mut poll = Duration::from_millis(1);
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) => {
+                return Some(std::process::Output {
+                    status,
+                    stdout: out_h.join().unwrap_or_default(),
+                    stderr: err_h.join().unwrap_or_default(),
+                });
+            }
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    // The reader threads are left to finish on their own: the
+                    // kill closes the pipes, and joining a thread blocked on a
+                    // pipe some grandchild still holds would reintroduce the
+                    // hang this function exists to prevent.
+                    return None;
+                }
+                std::thread::sleep(poll);
+                poll = (poll * 2).min(POLL_MAX);
+            }
+        }
+    }
 }
 
 /// Signal the service's whole process group inside the guest. `sig` is a name
@@ -2632,6 +2716,7 @@ mod tests {
                 net,
                 Path::new("/h5i/envs/e1/microvm/run"),
                 Path::new("/h5i/envs/e1/microvm/service-logs"),
+                Some(GUEST_IDLE_TIMEOUT),
             ),
         )
     }
@@ -2740,6 +2825,42 @@ mod tests {
     fn a_guest_always_gets_an_idle_bound_since_msb_has_no_default() {
         let a = create_argv_for(&policy(), &NetPlan::None, "h5i-e1-abc");
         assert_eq!(window(&a, "--idle-timeout"), vec![GUEST_IDLE_TIMEOUT]);
+    }
+
+    /// …but a box that runs services must not get one. `msb` measures idleness
+    /// in commands, not in the traffic a dev server is serving, so the bound
+    /// would stop the guest and kill the service. Measured before it was
+    /// believed: a 20s bound stopped a guest at ~25s and its service died.
+    #[test]
+    fn a_box_that_declares_services_gets_no_idle_bound() {
+        let net = NetPlan::None;
+        let stage = Path::new("/h5i/envs/e1/microvm/run");
+        let logs = Path::new("/h5i/envs/e1/microvm/service-logs");
+
+        let serviceless = build_create_argv(
+            &rt(),
+            &policy(),
+            Path::new("/h5i/envs/e1/work"),
+            &warm_create_plan("alpine", "g", &net, stage, logs, Some(GUEST_IDLE_TIMEOUT)),
+        );
+        assert_eq!(window(&serviceless, "--idle-timeout"), vec![GUEST_IDLE_TIMEOUT]);
+
+        let with_services = build_create_argv(
+            &rt(),
+            &policy(),
+            Path::new("/h5i/envs/e1/work"),
+            &warm_create_plan("alpine", "g", &net, stage, logs, None),
+        );
+        assert!(
+            window(&with_services, "--idle-timeout").is_empty(),
+            "a service-hosting guest must never be stopped for idleness: {with_services:?}"
+        );
+        // And the two are different guests, which is correct: whether a box may
+        // be stopped is part of what its guest *is*.
+        assert_ne!(
+            guest_name(Path::new("/h5i/envs/e1/work"), &serviceless),
+            guest_name(Path::new("/h5i/envs/e1/work"), &with_services),
+        );
     }
 
     #[test]
@@ -2941,7 +3062,7 @@ mod tests {
             &rt(),
             &pol,
             Path::new("/h5i/envs/e1/work"),
-            &warm_create_plan("alpine", GUEST_NAME_PLACEHOLDER, &net, stage, logs),
+            &warm_create_plan("alpine", GUEST_NAME_PLACEHOLDER, &net, stage, logs, Some("30m")),
         );
         // The helper is the single description; anything reconstructing a plan
         // by hand would diverge here.
@@ -2949,7 +3070,7 @@ mod tests {
             &rt(),
             &pol,
             Path::new("/h5i/envs/e1/work"),
-            &warm_create_plan("alpine", GUEST_NAME_PLACEHOLDER, &net, stage, logs),
+            &warm_create_plan("alpine", GUEST_NAME_PLACEHOLDER, &net, stage, logs, Some("30m")),
         );
         assert_eq!(a, b);
         // Managed settings are never part of a warm guest: a create-time mount

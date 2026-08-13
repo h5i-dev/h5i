@@ -1242,6 +1242,15 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
             m.id, m.policy_digest, m.slug
         )));
     }
+    let mut policy = policy;
+    // Runtime-only, and set here so every caller gets it: a box that declares
+    // services must not have its microVM guest stopped for idleness, or the
+    // services die with it. Read from the *declared* set rather than from what
+    // is running, because the guest's idle bound is fixed when it is created
+    // and services start later.
+    policy.hosts_services = !load_service_defs(h5i_root, m)
+        .unwrap_or_default()
+        .is_empty();
     Ok(policy)
 }
 
