@@ -2398,6 +2398,32 @@ architectural unlock for three gaps 9. lists as costs: a persistent guest is
 what background services (`box service`), port-based share, and an in-guest
 tee shim each require before they can be built at this tier.
 
+**The semantics question is decided, and 9. now states it: reuse is the
+default.** Reuse means commands in a box stop getting a pristine guest each
+time, which reads as a weakening until you notice that `workspace`,
+`process`, `supervised` and `container` have all always shared state across a
+box's commands — the worktree is the whole point of a box. Per-command
+amnesia at `microvm` is an artifact of shelling to a one-shot `msb run`, not a
+promise the tier made, so ending it is alignment rather than a loss. The
+boundary that carries the security claim is box↔host and box↔box, and neither
+changes: separate boxes still get separate guests. Recreation per command
+stays available for anyone who wants today's behaviour; it just stops being
+the only option. The one hard requirement is the digest rule in 9. — a guest
+whose policy has changed underneath it is recreated, never reused.
+
+Not borrowed from forkd here, deliberately. Their answer to the same question
+is "fork a fresh child per task", which needs a memory-fork primitive `msb`
+does not have (its snapshots are disk-only and offline) and economics we do
+not have (~20–100 ms to re-create, against our 237–460 ms). It is also the
+weakest part of their implementation: `DESIGN.md:118-128` describes per-child
+overlayfs in the present tense, `grep` finds no overlayfs anywhere in the
+shipped code, and children in fact share one read-write rootfs file whose
+writes are cross-visible and durable — a cross-sandbox channel their
+`SECURITY.md` does not mention. The transferable lesson is the one their
+`/tmp`-as-tmpfs convention encodes (name one place where guest-local writable
+state belongs) plus the negative one: a design doc that drifts into the
+present tense about unbuilt behaviour is how that happens.
+
 It should carry the memory trick from step 1, because a persistent guest is
 what makes it usable: `msb create --memory 512M --max-memory <ceiling>` boots
 at 237 ms instead of 384 ms, one `msb modify --memory <ceiling>` at ~9 ms
@@ -2492,6 +2518,33 @@ Being explicit about these is a feature, since the claim is a security claim.
   hotplug (`--max-memory` plus a live `msb modify`), which needs a guest that
   outlives one command, which is M13 step 2. The Linux/KVM path remains
   unmeasured.
+- **A box is the trust domain, not a command.** Successive commands in one box
+  share state, and that is the point rather than a leak: the workspace
+  persists, which is what a box *is* — a worktree plus a branch plus an agent
+  session, whose commands are meant to be related (build, then test, then
+  commit). So the boundary we claim is box↔host and box↔box. It is never
+  command↔command, at any tier. An agent that leaves a file behind or a
+  process running will meet them again on its next command, and a run that
+  depends on the previous one having happened is a supported way to use a box,
+  not a misuse of it.
+
+  **The `microvm` tier is currently stricter than that, and it is an artifact
+  rather than a promise.** It boots a guest per command and destroys it after,
+  so guest-local state — anything outside the mounted workspace — does not
+  survive to the next command. That falls out of shelling to a one-shot `msb
+  run`; it is not a decision that microvm boxes ought to forget. M13 step 2
+  ends it, and when that lands this tier will behave like the other four.
+  Nothing should be built on per-command amnesia here in the meantime, and it
+  is not a property the tier is claiming.
+
+  Two things hold either way. The durable work product lives in `/work`, a
+  host mount, so it outlives the guest whatever the guest's lifetime turns out
+  to be. And reuse, when it arrives, will be scoped to one box under one
+  policy digest: a guest created under a profile, allowlist, or mount set that
+  has since changed must be recreated rather than reused, because reusing it
+  would quietly keep enforcing the policy the box no longer has. That rule is
+  a requirement on step 2, stated here before the code exists so that it is
+  not discovered afterwards.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy respecting tooling only. The `supervised` tier enforces at
   L3/L4 with nftables and does not have that hole, which is why M4 starts
