@@ -72,7 +72,7 @@
           "Lightweight sandboxes that start in under 200 ms for everyday agent tasks",
           "MicroVM isolation with a separate kernel when stronger boundaries matter",
           "Isolated browsers that agents can securely control from inside the sandbox",
-          "Self-contained environments with the agent, toolchain, dependencies and browser in one boundary",
+          "Securely share demo services from inside the sandbox over encrypted P2P connections or browser-ready links",
           "Reviewable patches and execution logs showing what changed, what ran and what was denied",
           "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
           "A credential broker that keeps API keys, SSH keys and browser profiles on the host",
@@ -223,6 +223,11 @@
   <link rel="stylesheet" href="/_static/blog.css">
   <link rel="stylesheet" href="/_static/console-mock.css">
   <link rel="stylesheet" href="/_static/highlight.css">
+  <style>
+    @media (min-width: 900px) {
+      .feat-grid.feat-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
 <script>if (new URLSearchParams(location.search).has('workbench')) document.documentElement.classList.add('workbench-only');</script>
 </head>
 <body>
@@ -248,7 +253,7 @@
 <!-- ── Hero ─────────────────────────────────────────────────── -->
 <section id="hero" tabindex="-1">
   <div class="hero-inner">
-    <div class="hero-badge">Disposable boxes · Confined agents · A browser inside · A reviewed patch out</div>
+    <div class="hero-badge">Confined agents · Isolated browsers · Secure demos · Reviewed changes</div>
     <h1 class="hero-title"><em>Integrated Sandbox</em> for AI Coding Agents</h1>
     <p class="hero-sub">
       Give a coding agent <strong>full autonomy</strong> inside a secure, disposable environment. The agent,
@@ -289,47 +294,35 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">What h5i gives you</span>
-      <h2 class="section-title">All-in-one, local-first sandbox for agents.</h2>
-      <p class="section-sub">The agent, workspace, shell, dependencies, dev server and browser all run together
-        inside the sandbox, while your host files and credentials stay outside. When the work is done, h5i
-        exports a reviewable patch and execution logs.</p>
+      <h2 class="section-title">One box for the whole agent workflow.</h2>
+      <p class="section-sub">Run the agent, test what it builds, share the result, and review the work without
+        moving any part of the workflow outside the sandbox.</p>
     </div>
-    <div class="feat-grid">
+    <div class="feat-grid feat-grid-four">
       <div class="feat-card">
-        <div class="feat-name">Lightweight sandboxes</div>
-        <div class="feat-desc">Start in <strong>under 200 ms</strong> for everyday agent tasks, which is what
-          makes a box worth creating for ordinary work and not only for a risky branch.</div>
-        <div class="feat-proves">isolation = workspace | process</div>
+        <div class="feat-name">Run coding agents in secure sandboxes</div>
+        <div class="feat-desc">Give Claude Code, Codex, and their child processes room to work inside a
+          disposable boundary. Start lightweight in <strong>under 200 ms</strong>, or choose a rootless container
+          or microVM when stronger isolation matters.</div>
+        <div class="feat-proves">lightweight &#183; container &#183; microVM</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">MicroVM isolation</div>
-        <div class="feat-desc">A guest with <strong>its own kernel</strong> when stronger boundaries matter. The
-          one tier where the boundary is a hypervisor rather than a policy applied to a host process.</div>
-        <div class="feat-proves">isolation = microvm</div>
+        <div class="feat-name">Test web apps in isolated browsers</div>
+        <div class="feat-desc">Run Chromium or the lightweight pure-Rust browser beside the dev server, inside
+          the same boundary. The agent can drive it while you watch the viewport and take over.</div>
+        <div class="feat-proves">Chromium &#183; h5i-browser-light &#183; h5i box view</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Isolated browsers</div>
-        <div class="feat-desc">Chrome and a fresh profile inside the boundary, next to the dev server. Agents
-          drive it securely from within the sandbox; you can watch the same viewport and take over.</div>
-        <div class="feat-proves">h5i box view &#183; agent-browser</div>
+        <div class="feat-name">Share demo services securely with others</div>
+        <div class="feat-desc">Share a web app straight from its box over an <strong>end-to-end encrypted P2P
+          connection</strong>, or create a browser-ready demo link for anyone else.</div>
+        <div class="feat-proves">h5i box share &#183; P2P | tunnel</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Self-contained environments</div>
-        <div class="feat-desc">The agent, toolchain, dependencies and browser in one boundary. Everything the
-          session spawns is contained by construction rather than one command at a time.</div>
-        <div class="feat-proves">one boundary, not one command</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">Reviewable patches and execution logs</div>
-        <div class="feat-desc">What changed, what ran, and what was denied. Exit codes come from the supervisor
-          and refused destinations from the proxy, so none of it is the agent's account of itself.</div>
+        <div class="feat-name">Review agent changes and activity</div>
+        <div class="feat-desc">Inspect what changed, what ran, and what was denied before anything returns to
+          your repository. The evidence comes from the boundary, not from the agent describing itself.</div>
         <div class="feat-proves">patch.diff &#183; report.md &#183; receipt.json</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">Local-first</div>
-        <div class="feat-desc">One Rust binary on your own machine. <strong>No hosted sandbox and no SaaS
-          account required</strong>, and nothing to sign up for before the first box.</div>
-        <div class="feat-proves">Apache 2.0 &#183; no server, no daemon</div>
       </div>
     </div>
   </div>
@@ -607,27 +600,34 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The problem</span>
-      <h2 class="section-title">Full autonomy is the point. Your laptop is the risk.</h2>
-      <p class="section-sub">An agent that has to ask permission for every command is an agent you are
-        babysitting. An agent that does not is one running with your SSH keys, your cloud credentials, your
-        browser session and write access to everything you own. The usual answer is to narrow what the agent may
-        do. h5i narrows <em>where it is</em> instead, so it can have the run of the place.</p>
+      <h2 class="section-title">Coding agents cross every boundary in the development workflow.</h2>
+      <p class="section-sub">A coding agent does more than run shell commands. It installs untrusted code, starts
+        servers, drives a browser, and hands results to other people. Securing only the command line leaves the
+        rest of that workflow exposed.</p>
     </div>
-    <div class="feat-grid">
+    <div class="feat-grid feat-grid-four">
       <div class="feat-card">
-        <div class="feat-name">Approving every command is not security</div>
-        <div class="feat-desc">A prompt before each shell command makes you the sandbox. It is slow, and by the
-          twentieth one you are approving without reading. The agent is only as autonomous as your patience.</div>
+        <div class="feat-name">Autonomy comes bundled with host access</div>
+        <div class="feat-desc">Run an agent directly on your laptop and it inherits your repositories, SSH keys,
+          cloud credentials, and everything its dependencies can reach. Per-command approval just turns you into
+          the security boundary.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">The agent inherits your whole machine</div>
-        <div class="feat-desc">Skip the prompts and it runs as you: SSH keys, cloud credentials, browser
-          sessions, every repository on disk. One postinstall script in one dependency is enough to use all of it.</div>
+        <div class="feat-name">Testing escapes into your real browser</div>
+        <div class="feat-desc">If the dev server is isolated but the browser is not, testing crosses the boundary
+          again. Your real profile, cookies, extensions, and local network become part of the agent's test
+          environment.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">The summary is the agent's own account</div>
-        <div class="feat-desc">"I ran the tests and they pass" is a sentence the agent wrote. What actually
-          executed, what it reached on the network, and what the page did are not in it.</div>
+        <div class="feat-name">Sharing a demo creates another exposure</div>
+        <div class="feat-desc">To show a local result, you usually deploy a second copy, expose a host port through
+          a tunnel, or ask someone else to reproduce it. Each option creates another environment or trust boundary
+          to manage.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">An agent summary is not an audit trail</div>
+        <div class="feat-desc">"The tests pass" does not show what actually ran, which destinations were denied,
+          what the page reported, or exactly which changes are about to return to your repository.</div>
       </div>
     </div>
   </div>
@@ -638,11 +638,10 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">How h5i solves it</span>
-      <h2 class="section-title">A contained agentic development environment.</h2>
-      <p class="section-sub">h5i (pronounced <em>high-five</em>) is a throwaway box that holds the code, the agent,
-        the toolchain, the dev server and a real browser. Your host directories are not mounted into it, your
-        credentials never enter it, and the only thing that comes out is a patch you reviewed, next to a receipt
-        of everything that ran. One Rust binary. No server, no daemon, no SaaS.</p>
+      <h2 class="section-title">One secure path from task to reviewed result.</h2>
+      <p class="section-sub">h5i (pronounced <em>high-five</em>) puts the whole session inside one disposable box.
+        Creating the environment, testing in a browser, sharing a demo, and bringing the work back are explicit
+        stages of the same local-first workflow.</p>
     </div>
   </div>
 </section>
@@ -652,85 +651,52 @@
   <a class="cap" href="/features/">
     <div class="n">01</div>
     <div>
-      <h3>A disposable workspace<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>The code is copied in: a pull request, a repository, or nothing at all. No host directory is mounted
-        read-write into the agent's reach.</p>
+      <h3>Create the right boundary<span class="arw">&nbsp;&rarr;</span></h3>
+      <p>Start from a repository or pull request and choose the isolation the task needs: lightweight OS controls,
+        a rootless container, or a microVM with its own kernel. An unavailable tier fails closed.</p>
     </div>
     <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i box . --pr 1234</span></div>
-      <div class="ev-note">worktree &#183; own branch &#183; shared object store</div>
+      <div class="tape"><b>$</b> <span>h5i box create fix-auth --profile agent-claude</span></div>
+      <div class="ev-note">under 200 ms lightweight &#183; container &#183; microVM</div>
     </div>
   </a>
 
   <a class="cap" href="/blog/choosing-agent-isolation/">
     <div class="n">02</div>
     <div>
-      <h3>A sandboxed coding agent<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Claude Code or Codex, its child processes, package managers, builds, tests and dev server all inside
-        the same boundary. A runaway agent stays in the box.</p>
+      <h3>Build and test inside it<span class="arw">&nbsp;&rarr;</span></h3>
+      <p>The agent, child processes, dependencies, dev server, and browser run in the same boundary. Host files,
+        browser profiles, and credentials stay outside.</p>
     </div>
     <div class="ev">
-      <div class="ev-row"><span>workspace</span><b>no confinement</b></div>
-      <div class="ev-row"><span>process</span><b>files + syscalls</b></div>
-      <div class="ev-row"><span>supervised</span><b class="ok">egress at L3/L4</b></div>
-      <div class="ev-row"><span>container</span><b>egress at L7</b></div>
-      <div class="ev-row"><span>microvm</span><b class="ok">own kernel</b></div>
-    </div>
-  </a>
-
-  <a class="cap" href="/guides/write-a-box-policy/">
-    <div class="n">03</div>
-    <div>
-      <h3>Credentials that stay outside<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>No SSH key, API key or browser profile enters the box. A host-side proxy authenticates the calls the
-        policy allows, and egress is an allowlist.</p>
-    </div>
-    <div class="ev">
-      <div class="ev-row"><span>api.anthropic.com</span><b class="ok">allowed</b></div>
-      <div class="ev-row"><span>registry.npmjs.org</span><b class="ok">allowed</b></div>
-      <div class="ev-row"><span>everything else</span><b class="no">refused</b></div>
-      <div class="ev-note">the shape of a profile's <code>net.egress</code>, and the refusal is the proxy's</div>
+      <div class="tape"><b>$</b> <span>h5i box view fix-auth</span></div>
+      <div class="ev-note">agent + toolchain + dev server + browser &#183; one boundary</div>
     </div>
   </a>
 
   <a class="cap" href="/features/">
-    <div class="n">04</div>
+    <div class="n">03</div>
     <div>
-      <h3>A browser in the box<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Chrome and a fresh profile live inside. The agent drives it through a CLI and reads the accessibility
-        tree; you can watch the same viewport and take over.</p>
+      <h3>Share only the demo service<span class="arw">&nbsp;&rarr;</span></h3>
+      <p>Expose one port from the box without exposing your laptop. Use an end-to-end encrypted P2P connection
+        when both sides have h5i, or generate a browser-ready demo link for everyone else.</p>
     </div>
     <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i box view fix-auth</span></div>
-      <div class="ev-note">loopback-only forward &#183; per-box token &#183; take control at any point</div>
+      <div class="tape"><b>$</b> <span>h5i box share fix-auth --port 3000</span></div>
+      <div class="ev-note">encrypted P2P &#183; add <code>--tunnel</code> for a browser-ready link</div>
     </div>
   </a>
 
   <a class="cap" href="/workflows/">
-    <div class="n">05</div>
+    <div class="n">04</div>
     <div>
-      <h3>An output gate<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>A patch, a report and an execution receipt, after inspection. The agent has no direct write path to
-        your repository.</p>
+      <h3>Review, then take the work<span class="arw">&nbsp;&rarr;</span></h3>
+      <p>Inspect the proposed diff and the boundary's record of what ran and what was denied. Only then apply the
+        snapshot to the parent branch.</p>
     </div>
     <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i box export fix-auth --out ./review</span></div>
-      <div class="ev-note">patch.diff &#183; report.md &#183; receipt.json</div>
-    </div>
-  </a>
-
-  <a class="cap" href="/guides/review-a-pull-request/">
-    <div class="n">06</div>
-    <div>
-      <h3>Receipts, not testimony<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Exit codes and resource use come from the supervisor. Denied egress comes from the proxy. Console
-        errors come from the page. None of it is the agent's account of itself.</p>
-    </div>
-    <div class="ev">
-      <div class="ev-row"><span>exit codes, resource use</span><b>the supervisor</b></div>
-      <div class="ev-row"><span>denied egress</span><b>the proxy</b></div>
-      <div class="ev-row"><span>console errors</span><b>the page</b></div>
-      <div class="ev-note">every record names who observed it, and none of them is the agent</div>
+      <div class="tape"><b>$</b> <span>h5i box propose fix-auth</span></div>
+      <div class="ev-note">review diff &#183; export receipt &#183; apply snapshot</div>
     </div>
   </a>
 
