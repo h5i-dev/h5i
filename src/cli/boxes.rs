@@ -374,6 +374,11 @@ pub enum EnvServiceCommands {
 /// Who is creating this env. `$H5I_AGENT` is injected per host (Claude Code
 /// sets `claude`, Codex sets `codex`); a human on a bare shell gets `human`.
 /// The identity scopes the env's branch namespace and the agent-in-box profile.
+///
+/// Unset is `human` and says nothing — that is the normal bare-shell case. A
+/// value that is present but unusable warns instead of falling through in
+/// silence, so a typo'd identity does not quietly scatter a run's envs into the
+/// `human` namespace, where the agent then fails to find them by their own name.
 fn agent_identity() -> String {
     match std::env::var("H5I_AGENT") {
         Err(std::env::VarError::NotPresent) => "human".to_string(),
@@ -394,6 +399,10 @@ fn agent_identity() -> String {
     }
 }
 
+/// The stderr line for a rejected `$H5I_AGENT`, returning the `human` fallback
+/// it announces. The offending value is deliberately not echoed: it is ambient
+/// input of unknown provenance, and a raw `\e[` in it would repaint the
+/// terminal. The rule is stated instead, which is what the reader needs anyway.
 fn warn_invalid_agent_identity() -> String {
     eprintln!(
         "{} invalid H5I_AGENT; expected 1-64 ASCII letters, digits, hyphens, or underscores; using 'human'",

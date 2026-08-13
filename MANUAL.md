@@ -914,7 +914,7 @@ All optional; h5i ships with working defaults.
 
 | Variable | Purpose |
 |---|---|
-| `H5I_AGENT` | Agent identity used for the branch namespace and automatic runtime profile selection. Leading and trailing whitespace is trimmed; valid values contain 1–64 ASCII letters, digits, hyphens, or underscores. An unset value silently uses `human`; a present invalid value warns on stderr and falls back to `human`. |
+| `H5I_AGENT` | Which runtime a box is scoped to (`claude`, `codex`). Decides the env's branch namespace and the `agent` profile's credentials and egress. The namespace takes 1–64 ASCII letters, digits, hyphens, or underscores after trimming; unset is `human` silently, anything else warns on stderr and namespaces the box under `human`. |
 | `H5I_DEFAULT_ISOLATION` | Pin this clone's default tier when `--isolation` is not given. `--isolation auto` re-probes past it. |
 | `H5I_SECRET_<NAME>` | Default source for a secret grant `<NAME>`. Injected for one run, redacted from evidence, audited by fingerprint. |
 | `H5I_SKILL_DIR` | Where `h5i skill install` writes. |
