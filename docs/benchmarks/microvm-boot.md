@@ -106,9 +106,58 @@ and its own CLI startup accounts for the rest of the 463 ms end-to-end figure.
 So the tax has two removable parts, and they are independent:
 
 1. **The profile asks for 8 GiB and pays ~154 ms for it on every command.**
-   Right-sizing `mem_bytes` is a configuration change, available today, with
-   no architectural work and no new failure modes.
+   This looked like a configuration change available today. It is not — see
+   the next section, which is where that idea was tested and had to be
+   revised.
 2. **The remaining ~230 ms is the boot itself**, which only reuse removes.
+
+## The memory cost is recoverable, but not by editing a number
+
+The obvious reading of the table above is "lower `mem_bytes` and take the
+154 ms". That trades a ceiling for latency: the guest's RAM *is* its memory
+limit at this tier, so a smaller number is a weaker cap, and how much headroom
+an agent box needs is a policy question this benchmark cannot answer.
+
+`msb` offers a way out of the trade, and it works. `--max-memory` sets a
+boot-time hotpluggable ceiling independently of `--memory`, and it is free:
+
+| Configuration | Boot median | Guest `MemTotal` |
+|---|---:|---:|
+| `--memory 8192M` | 378.5 ms | 8,140,356 kB |
+| `--memory 512M` | 243.8 ms | 491,608 kB |
+| `--memory 512M --max-memory 8G` | **237.2 ms** | 491,608 kB |
+
+**But `--max-memory` alone does not grow anything**, and that is the first
+thing worth knowing: a 512M/max-8G guest fails a 1.5 GiB allocation with
+`MemoryError`, exactly like a plain 512M guest. Booting small and hoping is
+not a design.
+
+Growth needs an explicit `msb modify`, and that *does* work on a live guest:
+
+```
+$ msb modify <name> --memory 4G          # 9.2 ms
+FIELD     REQUESTED    ACTUAL     ENFORCED    STATE
+memory    4 GiB        512 MiB    4 GiB       converging
+```
+
+The resize is asynchronous — `MemTotal` still read 491,608 kB immediately
+after — but the guest then allocated and touched 1.5 GiB successfully where
+the un-modified guest had failed, and `MemTotal` settled at 4,161,624 kB.
+
+**The ceiling survives the trick**, which is the part that had to be checked
+before recommending any of this: against a 4 GiB enforced cap, allocating
+6 GiB fails with `MemoryError` and `MemTotal` stays at 4 GiB. Boot-small-then-
+grow is not a way to hand the guest more memory than its profile allows.
+
+The catch is architectural. `msb modify` acts on a **named, running** sandbox,
+and today's tier boots a VM, runs one command inside it, and destroys it —
+there is no moment between "guest exists" and "command runs" in which h5i
+could issue the modify. So this 141 ms is **not** available to the current
+one-shot design at any price short of lowering the ceiling. It composes with
+M13 step 2 instead, where the sequence becomes `msb create --memory 512M
+--max-memory <ceiling>` once, one `msb modify` at ~9 ms, and then execs — and
+where it is worth having anyway, because it also cuts the one boot per box
+that reuse cannot amortise.
 
 ### What reuse is worth
 
@@ -149,16 +198,33 @@ though everything was tried and everything mattered.
   in `microvm.rs` is not paid for in latency. That matters for M13 step 2,
   where the same mechanism has to carry over to `msb exec`.
 
-## One anomaly, unexplained
+## One anomaly, unexplained — seen twice
 
-The first `msb exec` issued after `msb create` — a `sh -c 'echo … > /tmp/…'`
-with stdin inherited from a background shell — hung indefinitely and was
-killed after 600 s. It did not reproduce: the same command afterwards, with
-stdin as `/dev/null`, as an open pipe, and inherited, completed in ~9 ms every
-time, across four command shapes. It is recorded because a warm-guest design
-makes `exec` the hot path and a rare hang there is worth knowing about before
-it is load-bearing, not because a cause is known. It is one observation, and
-one observation is not a defect report.
+**`msb exec` has hung indefinitely twice**, both times killed after 600 s,
+against roughly a hundred successful execs across this work. Both were run
+directly from an interactive shell in the form
+`msb exec <name> -- sh -c '<cmd>' 2>&1 | tail -N`. The second occurrence was
+on the first exec after a `create`; the first was on a later exec into a
+sandbox that had already served five.
+
+Deliberate attempts to reproduce it have all failed:
+
+- The same command shape, driven from a controlled harness with a fresh
+  sandbox each time: **0 hangs in 6 attempts**.
+- Stdin as `/dev/null`, as an open pipe, and inherited: no difference, ~9 ms
+  each, across four command shapes.
+- With and without `--max-memory` (the flag the second hung sandbox happened
+  to carry, which made it the obvious suspect): both fine, ~10–38 ms.
+- The sandbox that hung was still `running` afterwards and answered the same
+  exec normally minutes later.
+
+So: intermittent, roughly 2 in 100, not tied to any variable tested, and not
+diagnosed. It is recorded rather than filed because a warm-guest design makes
+`exec` the hot path, and a rare unbounded hang there is exactly the kind of
+thing that is cheap to know about now and expensive to discover once it is
+load-bearing. **M13 step 2 should treat an exec as something that can hang and
+needs its own deadline**, which is the same lesson `wait_vm`'s existing
+host-side backstop already encodes for `msb run`.
 
 ## Host
 

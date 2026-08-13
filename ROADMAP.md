@@ -2349,14 +2349,28 @@ Three results changed what steps 2 and 3 should be:
   −7.3 ms — noise around zero — and it does not slow CPU-bound work. The tier
   is not a slow place to work, it is an expensive place to start, which is the
   cost profile that amortises and the reason reuse leads.
-- **A third of that tax is a config value, not architecture.** Adding one h5i
-  behaviour at a time to a bare `msb run` found mounts nearly free (+17 ms for
-  the full 16-mount set over a 74 MiB `.git/objects`), egress rules free, and
-  the preload script +9 ms — all three inside the control's own 230–245 ms
-  run-to-run drift, so read as no measurable cost — but the profile's **8 GiB
-  `mem_bytes` costs +154 ms on every command**, scaling at roughly 20 ms per
-  GiB. Right-sizing it is available today, needs no new machinery, and is
-  worth taking before step 2 rather than as part of it.
+- **A third of that tax is the memory cap — and it belongs to step 2, not
+  before it.** Adding one h5i behaviour at a time to a bare `msb run` found
+  mounts nearly free (+17 ms for the full 16-mount set over a 74 MiB
+  `.git/objects`), egress rules free, and the preload script +9 ms — all three
+  inside the control's own 230–245 ms run-to-run drift, so read as no
+  measurable cost — but the profile's **8 GiB `mem_bytes` costs +154 ms on
+  every command**, scaling at roughly 20 ms per GiB.
+
+  This was first written up here as a free win available today. **That was
+  wrong, and testing it is what corrected it.** Guest RAM *is* the memory
+  limit at this tier, so simply lowering the number trades enforcement
+  headroom for latency. The trade can be avoided — `msb` takes a
+  `--max-memory` hotplug ceiling independently of `--memory`, and booting
+  `512M` with `--max-memory 8G` costs 237 ms against 384 ms — but
+  `--max-memory` **does not grow anything by itself** (a 512M/max-8G guest
+  fails a 1.5 GiB allocation exactly like a plain 512M one). Growth takes an
+  explicit `msb modify --memory`, which works on a live guest in ~9 ms, is
+  asynchronous ("converging"), and **keeps the cap honest**: 6 GiB against a
+  4 GiB ceiling still fails with `MemoryError`. But `modify` needs a named,
+  running sandbox, and today's tier destroys the guest after one command, so
+  there is no moment to issue it. The 141 ms is real, recoverable, and
+  reachable only once guests persist.
 - **The ordering inverts on macOS.** `microvm` runs a realistic short command
   in 474 ms against `process` at 1604 ms and `supervised` at 1629 ms, because
   those two add ~1.5 s to Python startup under Seatbelt while the VM adds
@@ -2383,6 +2397,19 @@ snapshot or restore and fork-from-warm cannot exist. It is also the
 architectural unlock for three gaps 9. lists as costs: a persistent guest is
 what background services (`box service`), port-based share, and an in-guest
 tee shim each require before they can be built at this tier.
+
+It should carry the memory trick from step 1, because a persistent guest is
+what makes it usable: `msb create --memory 512M --max-memory <ceiling>` boots
+at 237 ms instead of 384 ms, one `msb modify --memory <ceiling>` at ~9 ms
+restores the enforced cap, and every exec after that is ~9 ms. That removes
+the +154 ms from the one boot per box which reuse alone cannot amortise, and
+the enforcement claim survives it. Two constraints the measurements attach to
+it: the resize is asynchronous, so a box whose first command immediately wants
+4 GiB may meet a guest that has not converged yet and needs the modify issued
+at create time rather than lazily; and **an exec can hang** (see the anomaly in
+`docs/benchmarks/microvm-boot.md` — twice in ~100, undiagnosed, unreproduced
+in 6 controlled attempts), so exec needs its own deadline the way `wait_vm`
+already gives `msb run` a host-side backstop.
 
 Four things the upstream check turned up that the design has to carry.
 `--idle-timeout` and `--max-duration` exist but **have no default**, so a
@@ -2459,8 +2486,12 @@ Being explicit about these is a feature, since the claim is a security claim.
   461 ms of it**, because the guest is torn down after each one — M13 step 2
   is the plan to amortise that, and the same host reaches a warm guest in
   ~9 ms. And **~154 ms of that is the profile's 8 GiB memory cap**, which
-  scales at roughly 20 ms per GiB and is a configuration choice, not a
-  property of the tier. The Linux/KVM path remains unmeasured.
+  scales at roughly 20 ms per GiB — not a property of the tier, but not a
+  number we can simply lower either, since at this tier the guest's RAM *is*
+  its memory limit. Recovering it without weakening the cap needs `msb`'s
+  hotplug (`--max-memory` plus a live `msb modify`), which needs a guest that
+  outlives one command, which is M13 step 2. The Linux/KVM path remains
+  unmeasured.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy respecting tooling only. The `supervised` tier enforces at
   L3/L4 with nftables and does not have that hole, which is why M4 starts
