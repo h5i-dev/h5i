@@ -523,13 +523,34 @@
           </div>
 
           <div class="bt-pane bt-page">
-            <header><h3>page</h3><p>last page h5i saw this box open</p></header>
+            <header><h3>page</h3><p>box-claimed: the box's own rendering of its page</p></header>
             <div class="bt-page-body">
-              <p class="bt-url">http://localhost:3000/checkout</p>
-              <p class="bt-state">No live view is running in this box, so there are no frames to show. Start one
-                with <code>h5i-browser-light serve &lt;page&gt;</code> inside the box.</p>
-              <p class="bt-state">The console watches and never drives. To take the control lock and type into the
-                page, use <code>h5i box view fix-auth</code>.</p>
+              <!-- The frame is the page the box rendered, so it is drawn as a page and not as
+                   console furniture. It is also the story the panes below tell: the total is
+                   $NaN because `total is undefined` threw, and the tracker is missing because
+                   the allowlist refused it. -->
+              <figure class="bt-frame">
+                <div class="bt-shot" aria-hidden="true">
+                  <div class="shot-nav"><b>acme</b><span>Store</span><span>Cart</span><span class="on">Checkout</span></div>
+                  <div class="shot-body">
+                    <h4>Checkout</h4>
+                    <div class="shot-line"><span>Mechanical keyboard</span><b>$89.00</b></div>
+                    <div class="shot-line"><span>USB-C cable &#215; 2</span><b>$24.00</b></div>
+                    <div class="shot-line total"><span>Total</span><b class="broken">$NaN</b></div>
+                    <div class="shot-pay">Pay</div>
+                    <div class="shot-foot">Ships in 2&#8211;4 days &#183; free returns</div>
+                  </div>
+                </div>
+                <figcaption>frame #418 &#183; pixels the box rendered and reported. Nothing derived from this
+                  reaches the trusted row above.</figcaption>
+              </figure>
+              <div class="bt-page-side">
+                <p class="bt-url">http://localhost:3000/checkout</p>
+                <p class="bt-state">The console watches and never drives. To take the control lock and type into
+                  the page, use <code>h5i box view fix-auth</code>.</p>
+                <p class="bt-state">This box is pinned to <code>h5i-light</code>, which has no resident session, so
+                  the frame is the page the serving process was started on.</p>
+              </div>
             </div>
           </div>
 
@@ -585,14 +606,10 @@
     </div>
   </div>
   <p class="figcap">
-    <b>Fleet &amp; evidence</b>: every box with its tier, status and one signal, and for the box you picked, the
-    findings, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced.
-    <b>Browser terminal</b>: for a box with a browser in it, what that browser did &#8212; every row carrying the
-    lane that observed it and how complete that record is, as words rather than as a colour.
-    <strong>Red</strong> means something was refused &#183; <strong>amber</strong> means look at this &#183;
-    <strong>grey</strong> means the evidence is weak. Nothing on either screen is a score, and every route is a
-    <b>GET</b>: the console watches and cannot drive a box. The layout is real; the fleet in it is an example.
-    Prefer moving pictures? <a href="/demo/" target="_blank">Watch a box from create to export</a>.
+    The fleet and one box's evidence; then what that box's browser did, every row labelled with who observed it.
+    Nothing here is a score, and every route is a <b>GET</b>: the console watches, it cannot drive a box.
+    The layout is real, the fleet in it an example.
+    <a href="/demo/" target="_blank">Watch a box from create to export</a>.
   </p>
 </section>
 

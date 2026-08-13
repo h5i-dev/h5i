@@ -292,11 +292,57 @@
    documentation nobody reads while looking at a refusal. */
 .bt-pane header p { margin: 0.25em 0 0; color: var(--dim); font-size: 0.85em; line-height: 1.5; }
 
-.bt-page-body { padding: 0.9em 1.1em; }
+.bt-page-body {
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 1.1em; padding: 0.9em 1.1em;
+}
 .bt-url { margin: 0; color: var(--ink); font-size: 0.95em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bt-state { margin: 0.5em 0 0; color: var(--faint); font-size: 0.85em; line-height: 1.6; }
 .bt-state code { color: var(--dim); }
+
+/* ── the frame: the page the box rendered ──
+ *
+ * Drawn as a page, in a page's own palette, because that is what a frame is:
+ * pixels from inside the box, arriving on a screen made of everything else.
+ * The seam is the point — nothing in here is evidence, and the caption under
+ * it says so in the console's own words.
+ */
+.bt-frame { margin: 0; min-width: 0; }
+.bt-shot {
+  border: 1px solid var(--line2);
+  background: #f4f5f7;
+  color: #14141a;
+  font-family: var(--sans);
+  font-size: 1.05em; line-height: 1.4;
+}
+.shot-nav {
+  display: flex; align-items: baseline; gap: 1em;
+  padding: 0.55em 0.9em;
+  border-bottom: 1px solid #d9dbe0; background: #fff;
+  font-size: 0.85em; color: #6b6f78;
+}
+.shot-nav b { color: #14141a; letter-spacing: -0.02em; }
+.shot-nav .on { color: #14141a; box-shadow: inset 0 -2px 0 var(--spot-solid); }
+.shot-body { padding: 0.9em 1em 1.1em; }
+.shot-body h4 { margin: 0 0 0.7em; font-size: 1.25em; font-weight: 700; letter-spacing: -0.02em; }
+.shot-line {
+  display: flex; justify-content: space-between; gap: 1em;
+  padding: 0.4em 0; border-bottom: 1px solid #e3e5ea;
+  font-size: 0.9em; color: #43474f;
+}
+.shot-line b { color: #14141a; font-weight: 500; }
+.shot-line.total { border-bottom: 0; margin-top: 0.2em; font-size: 1em; color: #14141a; }
+/* The symptom the console pane names one column over: `total is undefined`
+   threw, so the page rendered this instead of a number. */
+.shot-line .broken { color: #b0121a; font-weight: 700; }
+.shot-pay {
+  margin-top: 0.8em; padding: 0.5em 1em;
+  background: #14141a; color: #fff;
+  font-size: 0.9em; text-align: center;
+}
+.shot-foot { margin-top: 0.6em; color: #83878f; font-size: 0.78em; }
+.bt-frame figcaption { margin-top: 0.4em; color: var(--faint); font-size: 0.78em; line-height: 1.5; }
 
 .bt-tabs { display: flex; flex-wrap: wrap; background: var(--bg); border-bottom: 1px solid var(--line2); }
 .bt-tabs span {
@@ -349,4 +395,5 @@
   .bt { font-size: clamp(8px, 2.1cqw, 13px); }
   .bt-panes { grid-template-columns: minmax(0, 1fr); }
   .bt-panes > .bt-pane { border-right: 0; }
+  .bt-page-body { grid-template-columns: minmax(0, 1fr); }
 }
