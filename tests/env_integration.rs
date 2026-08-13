@@ -410,13 +410,14 @@ fn create_warns_for_invalid_agent_identity_without_contaminating_json() {
             assert_eq!(stderr.lines().count(), 1, "{stderr}");
             assert!(stderr.contains("warning: invalid H5I_AGENT"), "{stderr}");
             assert!(stderr.contains("using 'human'"), "{stderr}");
-            if let Some(value) = value {
-                if !value.is_empty() {
-                    assert!(
-                        !stderr.contains(value),
-                        "the invalid value must not be echoed: {stderr}"
-                    );
-                }
+            // Skip the empty-string case: it has nothing to look for, and
+            // `contains("")` is true for every haystack. Filtered rather than
+            // nested so the check reads as one condition on both editions.
+            if let Some(value) = value.filter(|v| !v.is_empty()) {
+                assert!(
+                    !stderr.contains(value),
+                    "the invalid value must not be echoed: {stderr}"
+                );
             }
         } else {
             assert!(stderr.is_empty(), "unexpected warning: {stderr}");
