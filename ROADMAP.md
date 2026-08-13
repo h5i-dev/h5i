@@ -2323,7 +2323,7 @@ exercised against a hole punch that actually *fails*. The refusal is the half
 that matters and it needs two hostile NATs to reach. Those are what remains of
 the exit criteria.
 
-### M13. The microvm tier, warmed: step 1 done 2026-08-13, steps 2 and 3 proposed
+### M13. The microvm tier, warmed: steps 1 and 2 built 2026-08-13, step 3 proposed
 
 The tier shipped correct and slow: one `msb run` per command, a full guest boot
 each time, torn down on drop, and — as 9. said until today — never booted end
@@ -2379,8 +2379,49 @@ Three results changed what steps 2 and 3 should be:
   own investigation rather than to this milestone — but it means "microvm is
   the slow tier" was never quite the right framing on this platform.
 
-**Second, amortize the boot: session-scoped guest reuse. The prerequisite is
-answered — `msb` supports this, and it is measured.** `msb create --name X`
+**Second, amortize the boot: session-scoped guest reuse. Built 2026-08-13, and
+it delivered 10.7×.** Fixed cost per command fell from **461.0 ms to 43.0 ms**,
+which makes `microvm` the *cheapest* of the four tiers on this host —
+`workspace` is 53.0 ms, `process` 62.9 ms, `supervised` 98.9 ms. The strongest
+boundary is now also the least expensive to cross, because what is left at
+every tier is h5i's own CLI overhead and this path has the least host-side
+machinery to set up.
+
+`crates/h5i-sandbox/src/microvm.rs` grew a warm path beside the one-shot one,
+which stays and is still reachable by `H5I_MICROVM_NO_REUSE=1` — the escape
+hatch, and the per-command-freshness option 9. promises. **The guest name is a
+SHA-256 over its own create argv** (`h5i-<box>-<digest12>`), which is what makes
+the fail-closed rule structural instead of a check somebody has to remember:
+image, mounts, memory or egress change → different name → new guest → the old
+one reaped, so a box can never be served a guest still enforcing a policy it no
+longer has. Verified end to end: widening a box's allowlist rotated it from
+`…08839c…` to `…a4d7c6…`, the old guest was reaped, and the new one enforced
+the wider list. Deliberately *not* the pinned policy digest, which excludes the
+runtime-only mounts by design.
+
+Per-run credentials reach the guest through one small host-owned directory
+mounted at `/.h5i/run` rather than `msb exec -e`, preserving the property this
+module exists for — no value ever appears in a host command line — and the
+staged script is unlinked when the run ends. `cache_write` runs stay one-shot,
+being the only ones whose mount set differs from the box's.
+
+Two things the build found that the design had not:
+
+- **The 25 ms completion poll became the dominant cost** once the boot was
+  gone. It was flagged in the very first benchmark (2026-07-19) as inflating a
+  4 ms command to 30 ms, and it turned a 9 ms exec into 35 ms. A backoff
+  (1 ms doubling to 25 ms) brought h5i's reported wall to 10 ms, matching the
+  runtime's own cost, and the fixed cost from 65.5 ms to 43.0 ms.
+- **The orphan sweep had never reaped anything.** `marker_path("").parent()`
+  walked up past the marker directory (joining an empty component leaves a
+  trailing separator), so it scanned `/tmp` for names that live one level down,
+  matched nothing, and said nothing, being best-effort throughout. Harmless
+  while guests died with their process; not harmless now that they outlive it.
+  Fixed, with a test.
+
+The original analysis, and what it was measured against:
+
+**The prerequisite was answered — `msb` supports this, and it is measured.** `msb create --name X`
 boots a guest detached and `msb exec X -- cmd` attaches to it over its agent
 relay socket without booting. Measured on the same host: **233.9 ms cold per
 command against 8.4 ms warm, 28× on the `msb` primitive alone**, and the warm
@@ -2540,16 +2581,17 @@ Being explicit about these is a feature, since the claim is a security claim.
   credential proxy. **Demonstrated end to end 2026-08-13** on Apple Silicon
   with `msb` 0.6.8: a box creates, runs, enforces its allowlist in the guest
   netstack, and exits 0. Two costs are now measured rather than assumed
-  (`docs/benchmarks/microvm-boot.md`). It is **a full boot per command,
-  461 ms of it**, because the guest is torn down after each one — M13 step 2
-  is the plan to amortise that, and the same host reaches a warm guest in
-  ~9 ms. And **~154 ms of that is the profile's 8 GiB memory cap**, which
-  scales at roughly 20 ms per GiB — not a property of the tier, but not a
-  number we can simply lower either, since at this tier the guest's RAM *is*
-  its memory limit. Recovering it without weakening the cap needs `msb`'s
-  hotplug (`--max-memory` plus a live `msb modify`), which needs a guest that
-  outlives one command, which is M13 step 2. The Linux/KVM path remains
-  unmeasured.
+  (`docs/benchmarks/microvm-boot.md`). It **was** a full boot per command,
+  461 ms of it, because the guest was torn down after each one; **M13 step 2
+  (built 2026-08-13) gives each box one guest instead, and the per-command cost
+  is now 43 ms** — the cheapest of the four tiers on this host. What that costs
+  is stated one bullet down: a box's commands share a guest, as they already
+  shared everything at every other tier. The **8 GiB memory cap still costs
+  ~154 ms** at roughly 20 ms per GiB, but it is now paid once per box rather
+  than once per command, which is why recovering it via `msb`'s hotplug
+  (`--max-memory` plus a live `msb modify`) was measured, understood, and then
+  deliberately not built: it trades an async convergence window for a one-time
+  saving. The Linux/KVM path remains unmeasured.
 - **A box is the trust domain, not a command.** Successive commands in one box
   share state, and that is the point rather than a leak: the workspace
   persists, which is what a box *is* — a worktree plus a branch plus an agent
@@ -2560,23 +2602,25 @@ Being explicit about these is a feature, since the claim is a security claim.
   depends on the previous one having happened is a supported way to use a box,
   not a misuse of it.
 
-  **The `microvm` tier is currently stricter than that, and it is an artifact
-  rather than a promise.** It boots a guest per command and destroys it after,
-  so guest-local state — anything outside the mounted workspace — does not
-  survive to the next command. That falls out of shelling to a one-shot `msb
-  run`; it is not a decision that microvm boxes ought to forget. M13 step 2
-  ends it, and when that lands this tier will behave like the other four.
-  Nothing should be built on per-command amnesia here in the meantime, and it
-  is not a property the tier is claiming.
+  **The `microvm` tier joined them on 2026-08-13** (M13 step 2). It used to
+  boot a guest per command and destroy it after, so guest-local state did not
+  survive to the next command — an artifact of shelling to a one-shot `msb
+  run` rather than a promise the tier made. Now a box gets one guest, so its
+  commands share `/tmp`, the process table, and anything written outside the
+  mounted workspace, exactly as they already did everywhere else.
+  `H5I_MICROVM_NO_REUSE=1` restores a fresh guest per command for anyone who
+  wants it.
 
-  Two things hold either way. The durable work product lives in `/work`, a
-  host mount, so it outlives the guest whatever the guest's lifetime turns out
-  to be. And reuse, when it arrives, will be scoped to one box under one
-  policy digest: a guest created under a profile, allowlist, or mount set that
-  has since changed must be recreated rather than reused, because reusing it
-  would quietly keep enforcing the policy the box no longer has. That rule is
-  a requirement on step 2, stated here before the code exists so that it is
-  not discovered afterwards.
+  Three things hold. The durable work product lives in `/work`, a host mount,
+  so it outlives the guest either way. **Reuse is scoped to one box under one
+  configuration**: the guest's name is a hash of the argv that created it, so a
+  changed profile, allowlist, image or mount set resolves to a different guest
+  and the previous one is reaped — a box cannot be served a guest still
+  enforcing a policy it no longer has, and this is structural rather than a
+  check that could be forgotten. The corollary is worth stating: **guest-local
+  state does not survive a policy change**, because that is a different guest
+  by construction. And separate boxes still get separate guests, so nothing
+  about box↔box isolation changes.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy respecting tooling only. The `supervised` tier enforces at
   L3/L4 with nftables and does not have that hole, which is why M4 starts

@@ -88,6 +88,34 @@ const SPOOL_MOUNT: &str = "/.h5i/spool";
 /// Per-env inbound mailbox, mounted READ-ONLY (the host fans messages in).
 const INBOX_MOUNT: &str = "/.h5i/inbox";
 
+/// Where per-run material staged by the host lands inside a **warm** guest.
+///
+/// A reused guest cannot carry per-run secrets the way a one-shot run does:
+/// `--script-path` is create-time, and the brokered credentials it would carry
+/// are minted per run. `msb exec --env KEY=VALUE` is not an option either — it
+/// is the `/proc/<pid>/cmdline` exposure this module exists to avoid. So the
+/// warm path mounts one small host-owned directory read-write and stages the
+/// same generated script into it per run, keeping values out of argv exactly as
+/// before.
+const RUN_MOUNT: &str = "/.h5i/run";
+
+/// Set to `1` to force the one-shot path (a fresh guest per command) even where
+/// reuse is available. Both the escape hatch for a box that wants a pristine
+/// guest every time, and the way to bisect a suspected reuse bug.
+pub const NO_REUSE_ENV: &str = "H5I_MICROVM_NO_REUSE";
+
+/// How long a warm guest may sit idle before `msb` stops it. Stopping is
+/// lossless (the guest's disk survives) but it is *not* free to undo: an exec
+/// into a stopped guest costs a full boot and leaves it stopped again, so
+/// [`ensure_guest`] starts it explicitly rather than letting exec do it. The
+/// timeout exists because a guest with no bound is a guest that outlives the
+/// laptop lid closing — `msb` ships no default of its own.
+const GUEST_IDLE_TIMEOUT: &str = "30m";
+
+/// `msb` accepts names well past this; the cap keeps a guest name readable in
+/// `msb list` while leaving room for the digest suffix that makes it correct.
+const GUEST_LABEL_MAX: usize = 40;
+
 // ─── runtime detection ──────────────────────────────────────────────────────
 
 /// A detected microVM runtime.
@@ -333,18 +361,40 @@ pub fn preload_script(env: &[(String, String)]) -> String {
 /// silently ran without it would be a box missing its credentials and its
 /// `H5I_ENV_*` wiring. Any failure is an error.
 fn write_preload(work: &Path, env: &[(String, String)]) -> Result<PreloadScript, H5iError> {
+    let dir = microvm_dir(work)?;
+    write_env_script(&dir, "preload", env)
+}
+
+/// `<env_dir>/microvm` — where this tier stages host-side material for a box.
+fn microvm_dir(work: &Path) -> Result<PathBuf, H5iError> {
     let env_dir = work.parent().ok_or_else(|| {
         H5iError::Metadata(format!(
             "workspace '{}' has no parent env directory to stage the preload script in",
             work.display()
         ))
     })?;
-    let dir = env_dir.join("microvm");
-    std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+    Ok(env_dir.join("microvm"))
+}
+
+/// `<env_dir>/microvm/run` — the per-run staging directory mounted read-write
+/// into a warm guest at [`RUN_MOUNT`]. Separate from [`microvm_dir`] because
+/// *this* one is visible to the box, and nothing else h5i keeps under the env
+/// directory should be.
+fn run_stage_dir(work: &Path) -> Result<PathBuf, H5iError> {
+    Ok(microvm_dir(work)?.join("run"))
+}
+
+/// Write one `0600` env script into `dir`, named `<prefix>-<pid>-<seq>.sh`.
+fn write_env_script(
+    dir: &Path,
+    prefix: &str,
+    env: &[(String, String)],
+) -> Result<PreloadScript, H5iError> {
+    std::fs::create_dir_all(dir).map_err(|e| H5iError::with_path(e, dir))?;
     // pid **and** sequence, matching `SandboxGuard::new`: a pid alone repeats
     // across invocations, and two runs inside one process would share a name.
     let path = dir.join(format!(
-        "preload-{}-{}.sh",
+        "{prefix}-{}-{}.sh",
         std::process::id(),
         RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
@@ -413,37 +463,25 @@ pub struct RunPlan<'a> {
     pub managed_settings: Option<&'a Path>,
 }
 
-/// Build the `msb run` argv for `plan` under `policy`. Pure — no process is
-/// spawned and no file is written, so the security-critical flag set is
-/// unit-tested directly.
+/// Push every mount the box gets, in one place.
 ///
-/// Every host path reaching a `SOURCE:DEST` spec has already been checked for
-/// `:` by [`run`]/[`run_interactive`]; this function assumes that and emits the
-/// mounts unconditionally, because silently dropping one would weaken the box
-/// exactly where the caller believes it was hardened.
-pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: &RunPlan) -> Vec<String> {
-    let p = &policy.profile;
-    let mut a: Vec<String> = vec![
-        rt.bin.clone(),
-        "run".into(),
-        "--quiet".into(),
-        "--name".into(),
-        plan.name.into(),
-        // A stale sandbox of the same name is this process's own leftover
-        // (the name carries our pid); replace it rather than fail the run.
-        "--replace".into(),
-        // The image must already be in msb's local cache. A run is not the
-        // place to discover the network is down, and an implicit pull would
-        // make the box's contents depend on when it happened to boot.
-        "--pull".into(),
-        "never".into(),
-        // The guest rootfs is the image; only the mounts below are shared with
-        // the host, and the workspace is the only one writable by default.
-        "--mount-dir".into(),
-        format!("{}:{WORK_MOUNT}:rw", work.display()),
-        "--workdir".into(),
-        WORK_MOUNT.into(),
-    ];
+/// Both the one-shot ([`build_run_argv`]) and warm ([`build_create_argv`])
+/// paths call this, which is the point: the mount set *is* a large part of what
+/// the box may touch, and two copies of it would be two policies that drift
+/// apart on the next change. The one-shot path passes the same arguments it
+/// always did, so its argv is byte-identical to before this was factored out.
+fn push_mount_set(
+    a: &mut Vec<String>,
+    policy: &ResolvedPolicy,
+    work: &Path,
+    managed_settings: Option<&Path>,
+) {
+    // The guest rootfs is the image; only the mounts below are shared with the
+    // host, and the workspace is the only one writable by default.
+    a.push("--mount-dir".into());
+    a.push(format!("{}:{WORK_MOUNT}:rw", work.display()));
+    a.push("--workdir".into());
+    a.push(WORK_MOUNT.into());
 
     // Warm dependency caches, read-only at the package manager's own path — a
     // cache a box could write is a mutable surface shared between boxes.
@@ -491,7 +529,7 @@ pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: 
     // user config — so in-box observation cannot be silenced from inside.
     // microsandbox's guest init creates the parent directory and the bind
     // target, so the path need not exist in the image.
-    if let Some(ms) = plan.managed_settings {
+    if let Some(ms) = managed_settings {
         a.push("--mount-file".into());
         a.push(format!(
             "{}:{}:ro",
@@ -523,6 +561,58 @@ pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: 
             b.rel.trim_matches('/')
         ));
     }
+}
+
+/// Push the network flags. Shared for the same reason as the mount set: the
+/// allowlist is the whole reason this tier exists, and it must mean exactly the
+/// same thing whether the guest is created for one command or for a box.
+fn push_net(a: &mut Vec<String>, net: &NetPlan) {
+    match net {
+        NetPlan::None => a.push("--no-net".into()),
+        NetPlan::Host => {
+            a.push("--net".into());
+            a.push("public".into());
+        }
+        NetPlan::Allow(rules) => {
+            a.push("--net-default-egress".into());
+            a.push("deny".into());
+            a.push("--net-default-ingress".into());
+            a.push("deny".into());
+            for rule in rules {
+                a.push("--net-rule".into());
+                a.push(rule.clone());
+            }
+        }
+    }
+}
+
+/// Build the `msb run` argv for `plan` under `policy`. Pure — no process is
+/// spawned and no file is written, so the security-critical flag set is
+/// unit-tested directly.
+///
+/// Every host path reaching a `SOURCE:DEST` spec has already been checked for
+/// `:` by [`run`]/[`run_interactive`]; this function assumes that and emits the
+/// mounts unconditionally, because silently dropping one would weaken the box
+/// exactly where the caller believes it was hardened.
+pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: &RunPlan) -> Vec<String> {
+    let p = &policy.profile;
+    let mut a: Vec<String> = vec![
+        rt.bin.clone(),
+        "run".into(),
+        "--quiet".into(),
+        "--name".into(),
+        plan.name.into(),
+        // A stale sandbox of the same name is this process's own leftover
+        // (the name carries our pid); replace it rather than fail the run.
+        "--replace".into(),
+        // The image must already be in msb's local cache. A run is not the
+        // place to discover the network is down, and an implicit pull would
+        // make the box's contents depend on when it happened to boot.
+        "--pull".into(),
+        "never".into(),
+    ];
+
+    push_mount_set(&mut a, policy, work, plan.managed_settings);
 
     // Resource limits. Memory is the VM's, so it is a hard ceiling rather than
     // a cgroup the guest can pressure its way around.
@@ -547,23 +637,7 @@ pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: 
 
     // Network. The allowlist is the whole reason this tier exists: default-deny
     // in both directions, then exactly the rules the policy asked for.
-    match plan.net {
-        NetPlan::None => a.push("--no-net".into()),
-        NetPlan::Host => {
-            a.push("--net".into());
-            a.push("public".into());
-        }
-        NetPlan::Allow(rules) => {
-            a.push("--net-default-egress".into());
-            a.push("deny".into());
-            a.push("--net-default-ingress".into());
-            a.push("deny".into());
-            for rule in rules {
-                a.push("--net-rule".into());
-                a.push(rule.clone());
-            }
-        }
-    }
+    push_net(&mut a, plan.net);
 
     // The env preload. Its *contents* (the allowlist values and every brokered
     // secret) reach the runtime over a config fd; only this path is in argv.
@@ -582,6 +656,267 @@ pub fn build_run_argv(rt: &Runtime, policy: &ResolvedPolicy, work: &Path, plan: 
     a.push(format!("{GUEST_SCRIPTS_DIR}/{PRELOAD_SCRIPT_NAME}"));
     a.extend(plan.argv.iter().cloned());
     a
+}
+
+// ─── warm guests: one per box, reused across its commands ───────────────────
+
+/// Everything [`build_create_argv`] needs beyond the policy. The guest created
+/// from this outlives the command that caused it, so every field here is a
+/// property of the *box* rather than of one run.
+pub struct CreatePlan<'a> {
+    /// Resolved base image (`container.image` in the profile).
+    pub image: &'a str,
+    /// Guest name — see [`guest_name`], which ties it to the create argv.
+    pub name: &'a str,
+    /// Networking for this box.
+    pub net: &'a NetPlan,
+    /// Host directory staged per-run env scripts land in, mounted read-write at
+    /// [`RUN_MOUNT`]. This is the warm path's replacement for `--script-path`.
+    pub run_stage: &'a Path,
+    /// Managed-settings.json to mount read-only, as on the one-shot path.
+    pub managed_settings: Option<&'a Path>,
+    /// Idle bound, e.g. `30m`. `None` leaves the guest up indefinitely.
+    pub idle_timeout: Option<&'a str>,
+}
+
+/// Build the `msb create` argv for a box's warm guest. Pure, like
+/// [`build_run_argv`], and for the same reason: this decides what the box may
+/// touch for its whole life rather than for one command, so it is the more
+/// security-critical of the two and is unit-tested directly.
+///
+/// What is deliberately *not* here: the command, the TTY choice, the wall
+/// clock, and the per-run rlimits. Those are per-command and belong to
+/// [`build_exec_argv`]. Memory is here because it sizes the VM itself.
+pub fn build_create_argv(
+    rt: &Runtime,
+    policy: &ResolvedPolicy,
+    work: &Path,
+    plan: &CreatePlan,
+) -> Vec<String> {
+    let p = &policy.profile;
+    let mut a: Vec<String> = vec![
+        rt.bin.clone(),
+        "create".into(),
+        "--quiet".into(),
+        "--name".into(),
+        plan.name.into(),
+        // The name is a hash of this very argv, so a same-named guest is one we
+        // created under an identical configuration. Replacing it is the safe
+        // resolution of a half-created leftover.
+        "--replace".into(),
+        "--pull".into(),
+        "never".into(),
+    ];
+
+    push_mount_set(&mut a, policy, work, plan.managed_settings);
+
+    // The per-run staging directory: small, host-owned, and the only writable
+    // surface the warm path adds over the one-shot one.
+    a.push("--mount-dir".into());
+    a.push(format!("{}:{RUN_MOUNT}:rw", plan.run_stage.display()));
+
+    // The VM's own memory. A hard ceiling, not a cgroup the guest can pressure
+    // its way around — and paid once per box here rather than once per command.
+    if let Some(bytes) = p.mem_bytes {
+        a.push("--memory".into());
+        a.push(format!("{}M", (bytes / (1024 * 1024)).max(1)));
+    }
+
+    push_net(&mut a, plan.net);
+
+    // A guest with no bound outlives the work that wanted it. `msb` has no
+    // default of its own, so not setting this leaks a VM per box.
+    if let Some(idle) = plan.idle_timeout {
+        a.push("--idle-timeout".into());
+        a.push(idle.to_string());
+    }
+
+    a.push(plan.image.to_string());
+    a
+}
+
+/// Everything [`build_exec_argv`] needs. All per-command: the same warm guest
+/// serves many of these.
+pub struct ExecPlan<'a> {
+    /// The warm guest to run in.
+    pub name: &'a str,
+    /// The command to run inside the guest.
+    pub argv: &'a [String],
+    /// Guest-visible path of this run's env script, under [`RUN_MOUNT`].
+    pub env_script: &'a str,
+    /// `None` → captured run (wall-clock enforced). `Some(tty)` → interactive
+    /// session, allocating a pseudo-TTY when the caller has one.
+    pub tty: Option<bool>,
+}
+
+/// Build the `msb exec` argv for one command in an already-running guest.
+///
+/// The command is run *through* this run's generated env script, exactly as the
+/// one-shot path runs it through the `--script-path` preload: the script
+/// `export`s each value and then `exec "$@"`, so argv, stdin, the TTY and the
+/// exit code pass through untouched and no value ever appears in a host
+/// command line.
+pub fn build_exec_argv(rt: &Runtime, policy: &ResolvedPolicy, plan: &ExecPlan) -> Vec<String> {
+    let p = &policy.profile;
+    let mut a: Vec<String> = vec![rt.bin.clone(), "exec".into(), "--quiet".into()];
+
+    // The workspace is the working directory for every command, as on the
+    // one-shot path. Set per exec rather than relying on the guest's default.
+    a.push("--workdir".into());
+    a.push(WORK_MOUNT.into());
+
+    // Per-process limits are per *command*: two commands in one warm guest each
+    // get the profile's ceiling, which is what they would have got from two
+    // one-shot runs.
+    if let Some(n) = p.max_procs {
+        a.push("--rlimit".into());
+        a.push(format!("nproc={n}"));
+    }
+    if let Some(secs) = p.cpu_secs {
+        a.push("--rlimit".into());
+        a.push(format!("cpu={secs}"));
+    }
+    // Wall clock, captured runs only — an interactive session is bounded by the
+    // operator, not a timer (same rule as every other tier).
+    if plan.tty.is_none() {
+        a.push("--timeout".into());
+        a.push(format!("{}s", p.wall().as_secs()));
+    }
+
+    match plan.tty {
+        Some(true) => a.push("--tty".into()),
+        Some(false) | None => a.push("--no-tty".into()),
+    }
+
+    a.push(plan.name.to_string());
+    a.push("--".into());
+    // `/bin/sh <script> <argv…>` rather than executing the script directly: the
+    // staging mount is host-owned and need not carry the execute bit.
+    a.push("/bin/sh".into());
+    a.push(plan.env_script.to_string());
+    a.extend(plan.argv.iter().cloned());
+    a
+}
+
+/// Reduce `raw` to something `msb` accepts as part of a sandbox name, for the
+/// human half of [`guest_name`].
+///
+/// `msb` requires a name to start alphanumeric and rejects `/`, which every box
+/// id contains (`env/human/slug`). Anything outside `[a-z0-9]` becomes `-`,
+/// runs collapse, and the result is trimmed and capped — this half only has to
+/// be recognisable in `msb list`, since the digest that follows is what makes
+/// the name *correct*.
+pub fn sanitize_label(raw: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = true; // leading dashes are dropped
+    for ch in raw.chars() {
+        let c = ch.to_ascii_lowercase();
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+        if out.len() >= GUEST_LABEL_MAX {
+            break;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    out
+}
+
+/// The name of the warm guest for this box under this configuration.
+///
+/// `h5i-<label>-<12 hex>`, where the hex is a SHA-256 over the **create argv
+/// itself**. That choice is the whole reuse-safety argument, so it is worth
+/// stating plainly: the guest's mounts, image, memory and egress rules are
+/// fixed when it is created, and the create argv is exactly the list of those
+/// things. Hashing it means a box whose profile, allowlist, image, or mount set
+/// has changed resolves to a *different name*, so it gets a new guest and can
+/// never be served a stale one still enforcing the old policy. The rule is
+/// structural rather than a comparison somebody has to remember to write.
+///
+/// It is deliberately not the pinned policy digest: that digest excludes the
+/// runtime-only mounts (`box_git`, `private_binds`, the spool, the inbox) by
+/// design, and those *do* change what a guest can reach.
+pub fn guest_name(work: &Path, create_argv: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for arg in create_argv {
+        hasher.update(arg.as_bytes());
+        hasher.update([0u8]); // unambiguous separator: no arg can forge a boundary
+    }
+    let digest = hasher.finalize();
+    let hex: String = digest.iter().take(6).map(|b| format!("{b:02x}")).collect();
+
+    // `<env_dir>/work` → `<slug>`, with the agent above it, for a name a human
+    // can match to a box in `msb list`.
+    let label = work
+        .parent()
+        .map(|env_dir| {
+            let slug = env_dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let agent = env_dir
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if agent.is_empty() { slug } else { format!("{agent}-{slug}") }
+        })
+        .map(|raw| sanitize_label(&raw))
+        .unwrap_or_default();
+
+    if label.is_empty() {
+        format!("h5i-{hex}")
+    } else {
+        format!("h5i-{label}-{hex}")
+    }
+}
+
+/// What `msb` says about a guest we might reuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuestState {
+    /// No such guest — create it.
+    Absent,
+    /// It exists but is not running. **Start it explicitly**: an `msb exec`
+    /// into a stopped guest boots it, runs, and stops it again, so it costs a
+    /// full boot *and* leaves the next command to pay the same. See
+    /// `docs/benchmarks/microvm-boot.md`.
+    Stopped,
+    /// Running — exec straight into it, which is the ~9 ms path this whole
+    /// milestone exists to reach.
+    Running,
+}
+
+/// Read a guest's state out of `msb list --format json`. Pure, so the state
+/// machine's input can be tested without a runtime.
+///
+/// Anything present but not `Running` is reported [`GuestState::Stopped`] so
+/// the caller starts it: for a guest we created, the reachable states are
+/// running and stopped, and treating an unexpected one as "needs starting"
+/// fails towards a working box with a clear error rather than towards a silent
+/// exec into something that cannot serve it.
+pub fn parse_guest_state(json: &str, name: &str) -> GuestState {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return GuestState::Absent;
+    };
+    let Some(rows) = value.as_array() else {
+        return GuestState::Absent;
+    };
+    for row in rows {
+        if row.get("name").and_then(|n| n.as_str()) != Some(name) {
+            continue;
+        }
+        let status = row.get("status").and_then(|s| s.as_str()).unwrap_or_default();
+        return if status.eq_ignore_ascii_case("running") {
+            GuestState::Running
+        } else {
+            GuestState::Stopped
+        };
+    }
+    GuestState::Absent
 }
 
 // ─── execution ──────────────────────────────────────────────────────────────
@@ -725,38 +1060,59 @@ fn remove_named(bin: &str, name: &str) {
         .status();
 }
 
+/// The directory holding one marker per live named sandbox.
+///
+/// A function of its own rather than `marker_path("").parent()`, which is what
+/// this was: joining an empty component yields a trailing separator, and
+/// `parent()` then walks up *past* the marker directory to the temp directory
+/// itself. The sweep consequently scanned `/tmp` for names that only ever exist
+/// one level down, so it matched nothing and reaped nothing — silently, since
+/// every step of it is best-effort.
+fn marker_dir() -> PathBuf {
+    std::env::temp_dir().join("h5i-msb-live")
+}
+
 /// Where the marker for a live named sandbox lives.
 fn marker_path(name: &str) -> Option<PathBuf> {
-    Some(std::env::temp_dir().join("h5i-msb-live").join(name))
+    Some(marker_dir().join(name))
 }
 
 /// Reap named sandboxes an earlier h5i left behind.
 ///
-/// Keyed on the pid embedded in the name (`h5i-<pid>-<seq>`): a marker whose
-/// process is gone can only be a leftover, because a live run holds its own
-/// marker until Drop removes it. Best-effort throughout — a failed sweep must
-/// never turn a good run into an error.
+/// Two kinds of marker, because there are two kinds of guest:
+///
+/// - **One-shot** (`h5i-<pid>-<seq>`, empty marker). Keyed on the pid in the
+///   name: a marker whose process is gone can only be a leftover, because a
+///   live run holds its own marker until Drop removes it.
+/// - **Warm** (`h5i-<label>-<digest>`, marker holds the workspace path). These
+///   outlive their process deliberately, so a pid says nothing. The box's
+///   existence is the signal: once its workspace is gone, so is any reason to
+///   keep a VM configured for it.
+///
+/// Best-effort throughout — a failed sweep must never turn a good run into an
+/// error.
 pub fn reap_orphaned_sandboxes(bin: &str) {
-    let Some(dir) = marker_path("").and_then(|p| p.parent().map(PathBuf::from)) else {
-        return;
-    };
-    let Ok(rd) = std::fs::read_dir(&dir) else {
-        return;
-    };
-    for e in rd.flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        let Some(pid) = name
-            .strip_prefix("h5i-")
-            .and_then(|r| r.split('-').next())
-            .and_then(|p| p.parse::<i32>().ok())
-        else {
-            continue;
+    for (name, owner) in live_markers() {
+        let reap = match &owner {
+            // Warm guest: reap once the box it belongs to is gone.
+            Some(work) => !Path::new(work).exists(),
+            // One-shot guest: reap once the process that owned it is gone.
+            None => match name
+                .strip_prefix("h5i-")
+                .and_then(|r| r.split('-').next())
+                .and_then(|p| p.parse::<i32>().ok())
+            {
+                Some(pid) => pid != std::process::id() as i32 && !pid_alive(pid),
+                None => false,
+            },
         };
-        if pid == std::process::id() as i32 || pid_alive(pid) {
+        if !reap {
             continue;
         }
         remove_named(bin, &name);
-        let _ = std::fs::remove_file(e.path());
+        if let Some(m) = marker_path(&name) {
+            let _ = std::fs::remove_file(m);
+        }
     }
 }
 
@@ -784,6 +1140,148 @@ impl Drop for SandboxGuard {
     }
 }
 
+// ─── warm guest lifecycle ───────────────────────────────────────────────────
+
+/// Ask `msb` whether `name` exists and is running. One `list` call — measured at
+/// ~7.5 ms, the same order as the exec it guards, which is why the caller makes
+/// exactly one of these per command rather than one per decision.
+fn guest_state(bin: &str, name: &str) -> GuestState {
+    let out = std::process::Command::new(bin)
+        .args(["list", "--format", "json"])
+        .stderr(std::process::Stdio::null())
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            parse_guest_state(&String::from_utf8_lossy(&o.stdout), name)
+        }
+        // A runtime that cannot answer is treated as "no guest": the caller
+        // creates one, and `--replace` makes that safe even if it did exist.
+        _ => GuestState::Absent,
+    }
+}
+
+/// Bring the box's guest to `Running`, creating or starting it as needed.
+///
+/// The `Stopped` branch is the one that matters and the one measurement
+/// corrected: `msb exec` will auto-start a stopped guest, but it boots it, runs
+/// the command, and stops it again — ~236 ms, and the next command pays it too.
+/// An explicit `start` costs ~143 ms once and leaves the guest running for
+/// every command after.
+fn ensure_guest(
+    rt: &Runtime,
+    policy: &ResolvedPolicy,
+    work: &Path,
+    create_argv: &[String],
+    name: &str,
+) -> Result<(), H5iError> {
+    match guest_state(&rt.bin, name) {
+        GuestState::Running => {}
+        GuestState::Stopped => {
+            let out = std::process::Command::new(&rt.bin)
+                .args(["start", name])
+                .stdout(std::process::Stdio::null())
+                .output()
+                .map_err(|e| H5iError::Metadata(format!("failed to start microvm guest: {e}")))?;
+            if !out.status.success() {
+                return Err(H5iError::Metadata(format!(
+                    "could not start this box's microVM guest '{name}': {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )));
+            }
+        }
+        GuestState::Absent => {
+            // A configuration change gives the box a new guest name, which
+            // leaves the previous guest behind holding memory and a disk. Reap
+            // it now, while we still know which box it belonged to.
+            reap_stale_siblings(&rt.bin, work, name);
+            let _ = policy; // policy shaped `create_argv`; kept for symmetry
+            let out = std::process::Command::new(&create_argv[0])
+                .args(&create_argv[1..])
+                .stdout(std::process::Stdio::null())
+                .output()
+                .map_err(|e| H5iError::Metadata(format!("failed to create microvm guest: {e}")))?;
+            if !out.status.success() {
+                return Err(H5iError::Metadata(format!(
+                    "could not create this box's microVM guest: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )));
+            }
+        }
+    }
+    write_marker(name, work);
+    Ok(())
+}
+
+/// Record a live warm guest, and which box it belongs to.
+///
+/// The one-shot guard writes an empty marker and is reaped by the pid in its
+/// name. A warm guest deliberately outlives the process that made it, so its
+/// marker carries the **workspace path** instead: the box's existence, not a
+/// pid, is what says whether the guest is still wanted.
+fn write_marker(name: &str, work: &Path) {
+    if let Some(m) = marker_path(name) {
+        if let Some(d) = m.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(&m, work.display().to_string().as_bytes());
+    }
+}
+
+/// Remove any other warm guest belonging to this box.
+///
+/// Called when a box resolves to a new guest name — which happens exactly when
+/// its image, mounts, memory or egress rules changed, since the name is a hash
+/// of those. The old guest is not merely wasteful: it is a VM still configured
+/// under the policy the box no longer has.
+fn reap_stale_siblings(bin: &str, work: &Path, keep: &str) {
+    for (name, owner) in live_markers() {
+        if name == keep || owner.as_deref() != Some(work.display().to_string().as_str()) {
+            continue;
+        }
+        remove_named(bin, &name);
+        if let Some(m) = marker_path(&name) {
+            let _ = std::fs::remove_file(m);
+        }
+    }
+}
+
+/// Every marker currently on disk, as `(sandbox name, owning workspace)`.
+/// `None` for the owner means a one-shot marker (empty file), which the pid
+/// rule in [`reap_orphaned_sandboxes`] handles instead.
+fn live_markers() -> Vec<(String, Option<String>)> {
+    let Ok(rd) = std::fs::read_dir(marker_dir()) else {
+        return Vec::new();
+    };
+    rd.flatten()
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let owner = std::fs::read_to_string(e.path())
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            (name, owner)
+        })
+        .collect()
+}
+
+/// Remove the warm guest belonging to `work`, if any. Called when a box is torn
+/// down, so its VM goes with it rather than waiting for a later sweep.
+/// Best-effort: a box is still removed even if its guest cannot be.
+pub fn remove_guest_for_workspace(work: &Path) {
+    let Some(rt) = probe() else {
+        return;
+    };
+    for (name, owner) in live_markers() {
+        if owner.as_deref() != Some(work.display().to_string().as_str()) {
+            continue;
+        }
+        remove_named(&rt.bin, &name);
+        if let Some(m) = marker_path(&name) {
+            let _ = std::fs::remove_file(m);
+        }
+    }
+}
+
 /// Write the managed-settings.json (carrying the unkillable `wrap-bash`
 /// observation hook) under the env dir, to be mounted read-only into the guest.
 /// Best-effort: `None` (injection skipped, session otherwise unaffected) on any
@@ -805,6 +1303,129 @@ fn prepare_managed_settings(work: &Path, content: &str) -> Option<PathBuf> {
 /// VM's network stack, which drops packets rather than reporting them. See the
 /// module docs — stronger enforcement, and no tally to pretend otherwise with.
 pub fn run(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
+    if reuse_available(policy) {
+        return run_warm(policy, work, argv, injected_env);
+    }
+    run_one_shot(policy, work, argv, injected_env)
+}
+
+/// May this run reuse a warm guest?
+///
+/// Reuse is the default (ROADMAP 9., "a box is the trust domain, not a
+/// command"), with two exclusions:
+///
+/// - [`NO_REUSE_ENV`], the operator's escape hatch and the way to get a
+///   pristine guest per command.
+/// - A run carrying `cache_write`. It is the one run whose mount set differs
+///   from the box's — `h5i box cache refresh` and nothing else — and letting it
+///   define the box's guest would either give every later command a writable
+///   cache mount it should not have, or make the two configurations evict each
+///   other's guest on every alternation. A one-shot guest is both correct and
+///   rare here.
+fn reuse_available(policy: &ResolvedPolicy) -> bool {
+    if std::env::var_os(NO_REUSE_ENV).is_some_and(|v| v != "0") {
+        return false;
+    }
+    policy.cache_write.is_none()
+}
+
+/// The warm path: one guest per box, one `msb exec` per command.
+fn run_warm(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
+    let rt = runtime_or_refuse()?;
+    let image = image_or_refuse(&policy.profile)?;
+    check_mount_paths(policy, work)?;
+
+    let net = net_plan(policy)?;
+    let stage = run_stage_dir(work)?;
+    std::fs::create_dir_all(&stage).map_err(|e| H5iError::with_path(e, &stage))?;
+    check_spec_path(&stage, "per-run staging")?;
+
+    let create_argv = build_create_argv(
+        &rt,
+        policy,
+        work,
+        &CreatePlan {
+            image: &image,
+            // Named below from this very argv; a placeholder keeps the hash
+            // covering everything *except* the name it produces.
+            name: GUEST_NAME_PLACEHOLDER,
+            net: &net,
+            run_stage: &stage,
+            managed_settings: None,
+            idle_timeout: Some(GUEST_IDLE_TIMEOUT),
+        },
+    );
+    let name = guest_name(work, &create_argv);
+    // Rebuild with the real name: only the `--name` value differs, so the hash
+    // above still describes this guest's configuration exactly.
+    let create_argv = build_create_argv(
+        &rt,
+        policy,
+        work,
+        &CreatePlan {
+            image: &image,
+            name: &name,
+            net: &net,
+            run_stage: &stage,
+            managed_settings: None,
+            idle_timeout: Some(GUEST_IDLE_TIMEOUT),
+        },
+    );
+
+    // Sweep leftovers from an h5i that died without running Drop, and guests
+    // whose box has since been removed.
+    reap_orphaned_sandboxes(&rt.bin);
+    ensure_guest(&rt, policy, work, &create_argv, &name)?;
+
+    // Per-run credentials, staged into the guest-visible directory rather than
+    // passed on a command line. Dropped (and unlinked) when this run ends.
+    let script = write_env_script(&stage, "env", &guest_env(policy, injected_env))?;
+    let guest_script = guest_script_path(&script.path)?;
+
+    let exec_argv = build_exec_argv(
+        &rt,
+        policy,
+        &ExecPlan {
+            name: &name,
+            argv,
+            env_script: &guest_script,
+            tty: None,
+        },
+    );
+
+    let started = std::time::Instant::now();
+    let mut cmd = std::process::Command::new(&exec_argv[0]);
+    cmd.args(&exec_argv[1..]);
+    let outcome = wait_exec(cmd, policy.profile.wall(), &exec_argv)?;
+    Ok(ExecOutcome {
+        wall_ms: started.elapsed().as_millis(),
+        ..outcome
+    })
+}
+
+/// The guest-visible path of a script staged in the per-run directory.
+fn guest_script_path(host: &Path) -> Result<String, H5iError> {
+    let file = host.file_name().ok_or_else(|| {
+        H5iError::Metadata(format!("staged env script has no file name: {}", host.display()))
+    })?;
+    Ok(format!("{RUN_MOUNT}/{}", file.to_string_lossy()))
+}
+
+/// Stand-in `--name` used while hashing a create argv into the real name.
+const GUEST_NAME_PLACEHOLDER: &str = "h5i-unnamed";
+
+/// The original one-shot path: a fresh guest per command, destroyed after.
+fn run_one_shot(
     policy: &ResolvedPolicy,
     work: &Path,
     argv: &[String],
@@ -849,6 +1470,109 @@ pub fn run(
 /// is confined by the VM boundary and the netstack allowlist. Captures nothing
 /// and applies no wall clock; the operator owns the session.
 pub fn run_interactive(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+    managed_settings_content: Option<&str>,
+) -> Result<InteractiveOutcome, H5iError> {
+    if reuse_available(policy) {
+        return run_interactive_warm(policy, work, argv, injected_env, managed_settings_content);
+    }
+    run_interactive_one_shot(policy, work, argv, injected_env, managed_settings_content)
+}
+
+/// The warm agent-in-box path: exec a session into the box's own guest, so the
+/// shell shares state with the box's captured runs — which is what every other
+/// tier already does, and why 9. calls per-command amnesia an artifact.
+fn run_interactive_warm(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+    managed_settings_content: Option<&str>,
+) -> Result<InteractiveOutcome, H5iError> {
+    use std::io::IsTerminal;
+    let rt = runtime_or_refuse()?;
+    let image = image_or_refuse(&policy.profile)?;
+    check_mount_paths(policy, work)?;
+
+    let net = net_plan(policy)?;
+    let stage = run_stage_dir(work)?;
+    std::fs::create_dir_all(&stage).map_err(|e| H5iError::with_path(e, &stage))?;
+    check_spec_path(&stage, "per-run staging")?;
+
+    // Managed-settings injection is Claude's managed scope and inert for Codex,
+    // whose hook hardening is separate; `default`/custom profiles may run Claude,
+    // so they get it too. Create-time here, since the mount belongs to the guest.
+    let is_codex = crate::sandbox_policy::AgentRuntime::from_profile_name(&policy.profile.name)
+        == Some(crate::sandbox_policy::AgentRuntime::Codex);
+    let managed_settings = match (is_codex, managed_settings_content) {
+        (false, Some(content)) => prepare_managed_settings(work, content),
+        _ => None,
+    };
+
+    let create_argv = build_create_argv(
+        &rt,
+        policy,
+        work,
+        &CreatePlan {
+            image: &image,
+            name: GUEST_NAME_PLACEHOLDER,
+            net: &net,
+            run_stage: &stage,
+            managed_settings: managed_settings.as_deref(),
+            idle_timeout: Some(GUEST_IDLE_TIMEOUT),
+        },
+    );
+    let name = guest_name(work, &create_argv);
+    let create_argv = build_create_argv(
+        &rt,
+        policy,
+        work,
+        &CreatePlan {
+            image: &image,
+            name: &name,
+            net: &net,
+            run_stage: &stage,
+            managed_settings: managed_settings.as_deref(),
+            idle_timeout: Some(GUEST_IDLE_TIMEOUT),
+        },
+    );
+
+    reap_orphaned_sandboxes(&rt.bin);
+    ensure_guest(&rt, policy, work, &create_argv, &name)?;
+
+    let script = write_env_script(&stage, "env", &guest_env(policy, injected_env))?;
+    let guest_script = guest_script_path(&script.path)?;
+
+    // Only ask for a pseudo-TTY when we have one on both ends — msb rejects
+    // `--tty` under a pipe, which would turn a CI `env shell` into a hard error.
+    let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let exec_argv = build_exec_argv(
+        &rt,
+        policy,
+        &ExecPlan {
+            name: &name,
+            argv,
+            env_script: &guest_script,
+            tty: Some(tty),
+        },
+    );
+
+    let status = std::process::Command::new(&exec_argv[0])
+        .args(&exec_argv[1..])
+        .status()
+        .map_err(|e| H5iError::Metadata(format!("failed to start microvm session: {e}")))?;
+    Ok(InteractiveOutcome {
+        exit_code: status.code().unwrap_or(130),
+        egress: None,
+    })
+}
+
+/// The original one-shot session: a guest booted for this session and destroyed
+/// with it.
+fn run_interactive_one_shot(
     policy: &ResolvedPolicy,
     work: &Path,
     argv: &[String],
@@ -920,6 +1644,80 @@ fn guest_env(policy: &ResolvedPolicy, injected_env: &[(String, String)]) -> Vec<
     }
     env
 }
+
+/// Spawn `msb exec`, stream output, and enforce the wall clock — the warm-path
+/// twin of [`wait_vm`], differing in exactly one way that matters.
+///
+/// **It never removes the sandbox.** `wait_vm` does, because there the guest
+/// belongs to the one command it was booted for. Here the guest belongs to the
+/// *box*: destroying it on a timeout would take out a session, a dev server, or
+/// a concurrent command that has nothing to do with the run that overran.
+/// `msb exec --timeout` already bounds the guest-side command, so this deadline
+/// is the host-side backstop for a client that hangs — which has been observed,
+/// rarely and undiagnosed, and is exactly why the backstop exists.
+fn wait_exec(
+    mut cmd: std::process::Command,
+    wall: Duration,
+    full: &[String],
+) -> Result<ExecOutcome, H5iError> {
+    use std::io::Read;
+    use std::process::Stdio;
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| H5iError::Metadata(format!("failed to run `{}`: {e}", full.join(" "))))?;
+
+    let mut out_pipe = child.stdout.take().expect("piped stdout");
+    let mut err_pipe = child.stderr.take().expect("piped stderr");
+    let out_h = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = out_pipe.read_to_end(&mut b);
+        b
+    });
+    let err_h = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = err_pipe.read_to_end(&mut b);
+        b
+    });
+
+    let deadline = std::time::Instant::now() + wall + Duration::from_secs(10);
+    let mut timed_out = false;
+    // Backoff rather than a flat 25 ms. On the one-shot path the poll is lost in
+    // a ~230 ms boot, but a warm exec finishes in single-digit milliseconds, so
+    // a flat cadence *is* the measured cost: it turned a 9 ms command into a
+    // 35 ms one. Start fine and widen, so a fast command is noticed almost at
+    // once while a long one still costs one wakeup every 25 ms.
+    let mut poll = Duration::from_millis(1);
+    let status = loop {
+        match child.try_wait().map_err(H5iError::Io)? {
+            Some(s) => break s,
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break child.wait().map_err(H5iError::Io)?;
+                }
+                std::thread::sleep(poll);
+                poll = (poll * 2).min(POLL_MAX);
+            }
+        }
+    };
+
+    Ok(ExecOutcome {
+        stdout: out_h.join().unwrap_or_default(),
+        stderr: err_h.join().unwrap_or_default(),
+        exit_code: status.code(),
+        timed_out,
+        wall_ms: 0,
+        cpu_ms: 0,
+        max_rss_kb: None,
+        egress: None,
+    })
+}
+
+/// Ceiling for the completion-poll backoff, and the flat cadence the one-shot
+/// path still uses.
+const POLL_MAX: Duration = Duration::from_millis(25);
 
 /// Spawn `msb`, stream output, and enforce the wall clock. On timeout, stop the
 /// sandbox itself (the client dying does not stop a detached VM) then kill the
@@ -1476,6 +2274,338 @@ mod tests {
         assert_eq!(
             env,
             vec![("H5I_MICROVM_TEST_VAR".to_string(), "brokered".to_string())]
+        );
+    }
+
+    // ─── warm guests: naming ────────────────────────────────────────────────
+
+    fn create_argv_for(policy: &ResolvedPolicy, net: &NetPlan, name: &str) -> Vec<String> {
+        build_create_argv(
+            &rt(),
+            policy,
+            Path::new("/h5i/envs/e1/work"),
+            &CreatePlan {
+                image: "alpine",
+                name,
+                net,
+                run_stage: Path::new("/h5i/envs/e1/microvm/run"),
+                managed_settings: None,
+                idle_timeout: Some("30m"),
+            },
+        )
+    }
+
+    #[test]
+    fn a_label_is_reduced_to_what_msb_accepts_in_a_name() {
+        // `/` is the one msb rejects outright, and every box id has them.
+        assert_eq!(sanitize_label("env/human/my-box"), "env-human-my-box");
+        // Runs collapse, leading separators are dropped, trailing ones trimmed.
+        assert_eq!(sanitize_label("///a///b///"), "a-b");
+        assert_eq!(sanitize_label("Feature/ABC_123"), "feature-abc-123");
+        // A name must start alphanumeric; the `h5i-` prefix guarantees it even
+        // when the label itself is empty.
+        assert_eq!(sanitize_label("///"), "");
+        assert!(sanitize_label(&"x".repeat(200)).len() <= GUEST_LABEL_MAX);
+    }
+
+    /// The reuse-safety property, stated as a test: a guest is only ever reused
+    /// for a configuration identical to the one it was created under, because
+    /// the name is a hash of that configuration.
+    #[test]
+    fn a_changed_configuration_yields_a_different_guest_name() {
+        let base = policy();
+        let a = create_argv_for(&base, &NetPlan::None, GUEST_NAME_PLACEHOLDER);
+        let name_a = guest_name(Path::new("/h5i/envs/e1/work"), &a);
+
+        // Same policy, same everything → same guest.
+        let again = create_argv_for(&base, &NetPlan::None, GUEST_NAME_PLACEHOLDER);
+        assert_eq!(name_a, guest_name(Path::new("/h5i/envs/e1/work"), &again));
+
+        // A widened egress allowlist must not be served the old guest, which is
+        // still enforcing the narrower one.
+        let net = NetPlan::Allow(vec!["allow@pypi.org".into()]);
+        let b = create_argv_for(&base, &net, GUEST_NAME_PLACEHOLDER);
+        assert_ne!(name_a, guest_name(Path::new("/h5i/envs/e1/work"), &b));
+
+        // A memory change resizes the VM, so it cannot be the same VM.
+        let mut heavier = policy();
+        heavier.profile.mem_bytes = Some(9 * 1024 * 1024 * 1024);
+        let c = create_argv_for(&heavier, &NetPlan::None, GUEST_NAME_PLACEHOLDER);
+        assert_ne!(name_a, guest_name(Path::new("/h5i/envs/e1/work"), &c));
+
+        // A new read-only mount changes what the box can reach.
+        let mut mounted = policy();
+        mounted.ro_binds = vec![RoBind {
+            backing: "/host/cache".into(),
+            target: "/root/.cache".into(),
+        }];
+        let d = create_argv_for(&mounted, &NetPlan::None, GUEST_NAME_PLACEHOLDER);
+        assert_ne!(name_a, guest_name(Path::new("/h5i/envs/e1/work"), &d));
+    }
+
+    #[test]
+    fn two_boxes_never_share_a_guest() {
+        let pol = policy();
+        let argv = create_argv_for(&pol, &NetPlan::None, GUEST_NAME_PLACEHOLDER);
+        let one = guest_name(Path::new("/h5i/envs/e1/work"), &argv);
+        let two = guest_name(Path::new("/h5i/envs/e2/work"), &argv);
+        assert_ne!(one, two, "the box label is part of the name");
+        assert!(one.starts_with("h5i-"), "{one}");
+        assert!(one.len() <= 128, "msb rejects nothing this short: {one}");
+    }
+
+    #[test]
+    fn a_guest_name_is_readable_and_carries_its_box() {
+        let pol = policy();
+        let argv = create_argv_for(&pol, &NetPlan::None, GUEST_NAME_PLACEHOLDER);
+        let name = guest_name(Path::new("/h5i/.h5i/env/human/web-ui/work"), &argv);
+        assert!(name.starts_with("h5i-human-web-ui-"), "{name}");
+    }
+
+    // ─── warm guests: create argv ───────────────────────────────────────────
+
+    #[test]
+    fn create_carries_the_mounts_memory_and_egress_but_no_command() {
+        let mut pol = policy();
+        pol.profile.mem_bytes = Some(2 * 1024 * 1024 * 1024);
+        let net = NetPlan::Allow(vec!["allow@api.anthropic.com".into()]);
+        let a = create_argv_for(&pol, &net, "h5i-e1-abc");
+
+        assert_eq!(a[1], "create");
+        assert_eq!(window(&a, "--name"), vec!["h5i-e1-abc"]);
+        assert_eq!(window(&a, "--pull"), vec!["never"]);
+        assert_eq!(window(&a, "--memory"), vec!["2048M"]);
+        assert_eq!(window(&a, "--net-default-egress"), vec!["deny"]);
+        assert_eq!(window(&a, "--net-rule"), vec!["allow@api.anthropic.com"]);
+        assert_eq!(window(&a, "--idle-timeout"), vec!["30m"]);
+        // The workspace and the per-run staging directory are both mounted.
+        assert!(window(&a, "--mount-dir").contains(&"/h5i/envs/e1/work:/work:rw"));
+        assert!(
+            window(&a, "--mount-dir").contains(&"/h5i/envs/e1/microvm/run:/.h5i/run:rw"),
+            "{a:?}"
+        );
+        // The image is last, and no command follows it: a create boots a guest
+        // and nothing else.
+        assert_eq!(a.last().unwrap(), "alpine");
+        assert!(!a.contains(&"--".to_string()), "{a:?}");
+        // Per-command concerns belong to exec, not to the guest.
+        assert!(window(&a, "--timeout").is_empty(), "{a:?}");
+        assert!(window(&a, "--rlimit").is_empty(), "{a:?}");
+        assert!(!a.contains(&"--tty".to_string()));
+        assert!(!a.contains(&"--no-tty".to_string()));
+    }
+
+    #[test]
+    fn a_guest_always_gets_an_idle_bound_since_msb_has_no_default() {
+        let a = create_argv_for(&policy(), &NetPlan::None, "h5i-e1-abc");
+        assert_eq!(window(&a, "--idle-timeout"), vec![GUEST_IDLE_TIMEOUT]);
+    }
+
+    #[test]
+    fn a_deny_all_box_gets_no_network_at_create() {
+        let a = create_argv_for(&policy(), &NetPlan::None, "h5i-e1-abc");
+        assert!(a.contains(&"--no-net".to_string()), "{a:?}");
+    }
+
+    /// The mount set is factored so one-shot and warm cannot drift. If it ever
+    /// does, this is the test that says so.
+    #[test]
+    fn one_shot_and_warm_mount_the_same_things() {
+        let mut pol = policy();
+        pol.ro_binds = vec![RoBind {
+            backing: "/host/cache".into(),
+            target: "/root/.cache".into(),
+        }];
+        pol.private_binds = vec![PrivateBind {
+            backing: "/host/private".into(),
+            rel: "target".into(),
+        }];
+        pol.env_capture_spool = Some("/host/spool".into());
+        pol.env_inbox = Some("/host/inbox".into());
+
+        let one = argv_for(&pol, &NetPlan::None, None);
+        let warm = create_argv_for(&pol, &NetPlan::None, "h5i-e1-abc");
+
+        for m in window(&one, "--mount-dir") {
+            assert!(
+                window(&warm, "--mount-dir").contains(&m),
+                "warm guest is missing the one-shot mount {m}"
+            );
+        }
+        for m in window(&one, "--mount-file") {
+            assert!(
+                window(&warm, "--mount-file").contains(&m),
+                "warm guest is missing the one-shot mount {m}"
+            );
+        }
+    }
+
+    // ─── warm guests: exec argv ─────────────────────────────────────────────
+
+    fn exec_argv_for(policy: &ResolvedPolicy, tty: Option<bool>) -> Vec<String> {
+        build_exec_argv(
+            &rt(),
+            policy,
+            &ExecPlan {
+                name: "h5i-e1-abc",
+                argv: &["sh".into(), "-c".into(), "true".into()],
+                env_script: "/.h5i/run/env-1-0.sh",
+                tty,
+            },
+        )
+    }
+
+    #[test]
+    fn exec_runs_the_command_through_this_run_s_env_script() {
+        let a = exec_argv_for(&policy(), None);
+        assert_eq!(a[1], "exec");
+        // Flags, then the guest name, then the command after `--`.
+        let sep = a.iter().position(|x| x == "--").expect("a `--` separator");
+        assert_eq!(a[sep - 1], "h5i-e1-abc");
+        assert_eq!(
+            &a[sep + 1..],
+            &[
+                "/bin/sh".to_string(),
+                "/.h5i/run/env-1-0.sh".to_string(),
+                "sh".to_string(),
+                "-c".to_string(),
+                "true".to_string(),
+            ]
+        );
+    }
+
+    /// The reason the staging mount exists: a credential must never reach a
+    /// host command line, on either path.
+    #[test]
+    fn exec_never_carries_an_env_value_in_argv() {
+        let a = exec_argv_for(&policy(), None);
+        assert!(window(&a, "--env").is_empty(), "{a:?}");
+        assert!(window(&a, "-e").is_empty(), "{a:?}");
+        assert!(!a.iter().any(|x| x.contains('=') && x.contains("SECRET")), "{a:?}");
+    }
+
+    #[test]
+    fn a_captured_run_is_wall_clocked_and_a_session_is_not() {
+        let mut pol = policy();
+        pol.profile.wall_secs = 900;
+        pol.profile.max_procs = Some(512);
+        pol.profile.cpu_secs = Some(600);
+
+        let captured = exec_argv_for(&pol, None);
+        assert_eq!(window(&captured, "--timeout"), vec!["900s"]);
+        assert!(captured.contains(&"--no-tty".to_string()));
+        assert_eq!(window(&captured, "--rlimit"), vec!["nproc=512", "cpu=600"]);
+        assert_eq!(window(&captured, "--workdir"), vec![WORK_MOUNT]);
+
+        let session = exec_argv_for(&pol, Some(true));
+        assert!(window(&session, "--timeout").is_empty(), "{session:?}");
+        assert!(session.contains(&"--tty".to_string()));
+
+        // A piped session must not ask for a pseudo-TTY.
+        let piped = exec_argv_for(&pol, Some(false));
+        assert!(piped.contains(&"--no-tty".to_string()));
+    }
+
+    // ─── warm guests: state machine ─────────────────────────────────────────
+
+    #[test]
+    fn guest_state_is_read_from_the_list_json() {
+        let json = r#"[
+            {"name":"other","status":"Running","image":"alpine"},
+            {"name":"h5i-e1-abc","status":"Running","image":"alpine"}
+        ]"#;
+        assert_eq!(parse_guest_state(json, "h5i-e1-abc"), GuestState::Running);
+        assert_eq!(parse_guest_state(json, "nope"), GuestState::Absent);
+    }
+
+    /// A stopped guest must be *started*, never exec'd into: exec would boot it,
+    /// run, and stop it again, paying a full boot every command forever.
+    #[test]
+    fn anything_not_running_is_reported_stopped_so_the_caller_starts_it() {
+        for status in ["Stopped", "stopped", "Starting", "Draining", "Paused"] {
+            let json = format!(r#"[{{"name":"g","status":"{status}"}}]"#);
+            assert_eq!(
+                parse_guest_state(&json, "g"),
+                GuestState::Stopped,
+                "status {status} must not be mistaken for a warm guest"
+            );
+        }
+    }
+
+    #[test]
+    fn unparseable_or_empty_list_output_reads_as_absent() {
+        assert_eq!(parse_guest_state("", "g"), GuestState::Absent);
+        assert_eq!(parse_guest_state("[]", "g"), GuestState::Absent);
+        assert_eq!(parse_guest_state("not json", "g"), GuestState::Absent);
+        assert_eq!(parse_guest_state(r#"{"name":"g"}"#, "g"), GuestState::Absent);
+    }
+
+    // ─── warm guests: reuse eligibility ─────────────────────────────────────
+
+    #[test]
+    fn a_cache_refresh_run_never_defines_the_box_s_guest() {
+        let mut pol = policy();
+        assert!(reuse_available(&pol), "an ordinary run reuses");
+        pol.cache_write = Some(RoBind {
+            backing: "/host/cache".into(),
+            target: "/root/.cache".into(),
+        });
+        assert!(
+            !reuse_available(&pol),
+            "the one run whose mount set differs must stay one-shot"
+        );
+    }
+
+    // ─── warm guests: marker bookkeeping ────────────────────────────────────
+
+    /// A warm guest outlives its process on purpose, so the pid rule that reaps
+    /// one-shot guests must not touch it — the box's existence is the signal.
+    #[test]
+    fn a_warm_marker_records_its_box_and_a_one_shot_marker_does_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+
+        let name = format!("h5i-test-warm-{}", std::process::id());
+        write_marker(&name, &work);
+        let found: Vec<_> = live_markers().into_iter().filter(|(n, _)| n == &name).collect();
+        assert_eq!(found.len(), 1, "the marker is on disk");
+        assert_eq!(
+            found[0].1.as_deref(),
+            Some(work.display().to_string().as_str()),
+            "a warm marker names the box it belongs to"
+        );
+
+        let g = SandboxGuard::new("true");
+        let one_shot: Vec<_> = live_markers().into_iter().filter(|(n, _)| n == &g.name).collect();
+        assert_eq!(one_shot[0].1, None, "a one-shot marker carries no box");
+
+        // Cleanup: the sweep would otherwise see a live box and keep this.
+        if let Some(m) = marker_path(&name) {
+            let _ = std::fs::remove_file(m);
+        }
+    }
+
+    /// The reason a warm marker exists at all: once the box is gone, so is any
+    /// reason to keep a VM configured for it.
+    #[test]
+    fn the_sweep_reaps_a_warm_guest_whose_box_is_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let name = format!("h5i-test-gone-{}", std::process::id());
+        write_marker(&name, &work);
+
+        // Box still present: the sweep must leave it alone. `true` stands in for
+        // the runtime, so nothing is actually removed either way.
+        reap_orphaned_sandboxes("true");
+        assert!(marker_path(&name).unwrap().exists(), "a live box keeps its guest");
+
+        std::fs::remove_dir_all(&work).unwrap();
+        reap_orphaned_sandboxes("true");
+        assert!(
+            !marker_path(&name).unwrap().exists(),
+            "a removed box's guest is reaped"
         );
     }
 }

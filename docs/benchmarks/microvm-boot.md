@@ -229,6 +229,49 @@ One reassurance from the same run: guest state survives the cycle. The `/opt`
 write made before a `stop` was still readable after `start`, so stopping a
 guest is a latency decision rather than a data-loss one.
 
+## What reuse actually delivered (M13 step 2, built 2026-08-13)
+
+The warm-guest path is implemented, and re-running the same harness against it
+turns the projection above into a measurement. **Fixed cost per command fell
+from 461.0 ms to 43.0 ms — 10.7×** — and the tier's position among its
+neighbours inverted completely:
+
+| Isolation | Fixed cost before | Fixed cost after | e2e noop | h5i's own `wall` |
+|---|---:|---:|---:|---:|
+| `workspace` | 52.5 ms | 53.0 ms | 55.2 ms | 35 ms |
+| `process` | 62.2 ms | 62.9 ms | 65.1 ms | 35 ms |
+| `supervised` | 99.3 ms | 98.9 ms | 101.1 ms | 34 ms |
+| `microvm` | **461.0 ms** | **43.0 ms** | 45.3 ms | **10 ms** |
+
+**The strongest tier is now the cheapest one on this host.** A microVM box pays
+less per command than a `workspace` box, because what remains at every tier is
+h5i's own CLI overhead — and the microvm path, having no host-side sandbox
+machinery to set up, has less of it than the tiers that do.
+
+Two implementation findings are worth recording because neither was predicted:
+
+- **The 25 ms completion poll became the dominant cost.** `docs/benchmarks/env-overhead.md`
+  flagged this cadence back in 2026-07-19, when it inflated a 4 ms command to
+  30 ms; on a 230 ms boot it was invisible, and on a 9 ms exec it was most of
+  the number. The first working warm path reported 35 ms for an exec `msb` does
+  in ~9 ms. Replacing the flat cadence with a backoff (1 ms doubling to 25 ms)
+  took h5i's reported wall to **10 ms**, which matches the runtime's own cost
+  almost exactly, and the fixed cost from 65.5 ms to 43.0 ms. The one-shot path
+  keeps the flat cadence, where it is still lost in the boot.
+- **A pre-existing bug meant the orphan sweep had never reaped anything.** The
+  marker directory was computed as `marker_path("").parent()`, and joining an
+  empty component yields a trailing separator, so `parent()` walked up past the
+  marker directory to the temp directory itself. The sweep scanned `/tmp` for
+  names that only ever exist one level below it, matched nothing, and — being
+  best-effort at every step — said nothing. It mattered little while guests
+  died with their process; it matters a great deal now that they outlive it, so
+  it is fixed and covered by a test.
+
+The long workload confirms the guest is no slower to work in than before
+(+36.6 ms over bare, against `workspace`'s +42.9 ms), and the syscall-heavy
+short workload still shows the VM charging nothing per syscall (−7.0 ms, noise)
+while `process` and `supervised` charge ~1.5 s.
+
 ## Negative and null results
 
 Kept deliberately, because a benchmark that reports only what moved reads as

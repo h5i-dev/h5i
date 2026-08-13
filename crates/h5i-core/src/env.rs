@@ -8860,6 +8860,14 @@ pub fn rm(
     // `-1` would turn "remove this env" into "SIGTERM everything I own". See
     // [`browser_pid`].
     stop_browser(&dir.join("browser/state"));
+    // Same rationale one tier down: a `microvm` box keeps a warm guest alive
+    // between commands, so removing the box has to remove the VM or it outlives
+    // everything that knows about it — holding its memory and its disk until
+    // some later run's sweep happens to notice the workspace is gone. Done here
+    // rather than left to that sweep because *now* is when we still know which
+    // box the guest belonged to. Best-effort and keyed on this box's own
+    // workspace path, so it can only ever match this box's guest.
+    h5i_sandbox::microvm::remove_guest_for_workspace(&m.work_dir(h5i_root));
     // On macOS the private `/tmp` backing lives outside the env dir (see
     // [`private_tmp_backing`]), so erasing the env dir no longer takes it with
     // it. Best-effort: a leftover scratch dir is tidiness, not correctness, and
