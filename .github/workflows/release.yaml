@@ -276,7 +276,12 @@ jobs:
             |--------|---------|
             | `x86_64-unknown-linux-musl` | Linux x86_64 (static, glibc-free) |
             | `aarch64-unknown-linux-musl` | Linux arm64 (static, glibc-free) |
-            | `aarch64-apple-darwin` | macOS (Apple Silicon + Rosetta) |
+            | `aarch64-apple-darwin` | macOS Apple Silicon (arm64) |
             | `x86_64-pc-windows-msvc` | Windows x86_64 |
+
+            Intel Macs have no published build: Rosetta 2 translates x86_64 to
+            arm64, not the reverse, so the `aarch64-apple-darwin` archive will
+            not run there. Build from source instead:
+            `cargo install --git https://github.com/${{ github.repository }}`
 
             Each archive is accompanied by a `.sha256` checksum file.
