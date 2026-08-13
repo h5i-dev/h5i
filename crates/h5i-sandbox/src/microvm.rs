@@ -88,6 +88,16 @@ const SPOOL_MOUNT: &str = "/.h5i/spool";
 /// Per-env inbound mailbox, mounted READ-ONLY (the host fans messages in).
 const INBOX_MOUNT: &str = "/.h5i/inbox";
 
+/// Where a background service's log lands inside the guest.
+///
+/// **Logs only, never the service records.** The records
+/// (`<env_dir>/services/<name>.json`) carry the pid the host later signals, and
+/// a box able to rewrite one could set `runtime: host` with a pid of its
+/// choosing and have `service_stop` `killpg` an arbitrary process group on the
+/// host. So the guest gets a directory of its own that holds nothing but log
+/// bytes, and the records stay where the box cannot reach them.
+const SERVICES_MOUNT: &str = "/.h5i/services";
+
 /// Where per-run material staged by the host lands inside a **warm** guest.
 ///
 /// A reused guest cannot carry per-run secrets the way a one-shot run does:
@@ -341,6 +351,20 @@ impl Drop for PreloadScript {
 /// containing quotes, `$`, backticks or newlines survives verbatim and cannot
 /// break out into command position. Pure, so the quoting rule is unit-tested.
 pub fn preload_script(env: &[(String, String)]) -> String {
+    let mut s = env_exports(env);
+    s.push_str("exec \"$@\"\n");
+    s
+}
+
+/// The `export` half on its own, for a caller that wants the values in *its*
+/// shell rather than in a command it is about to exec.
+///
+/// A background service needs this: it is started by a shell that must source
+/// the values, delete the file, and only then detach the service, so the
+/// credentials exist on disk for the length of one exec rather than for the
+/// life of the service. `exec "$@"` would be wrong there — the sourcing shell
+/// has more to do afterwards.
+pub fn env_exports(env: &[(String, String)]) -> String {
     let mut s = String::from(
         "#!/bin/sh\n\
          # h5i microvm env preload — generated per run, never checked in.\n\
@@ -349,7 +373,6 @@ pub fn preload_script(env: &[(String, String)]) -> String {
     for (key, value) in env {
         s.push_str(&format!("export {key}='{}'\n", value.replace('\'', r"'\''")));
     }
-    s.push_str("exec \"$@\"\n");
     s
 }
 
@@ -384,11 +407,34 @@ fn run_stage_dir(work: &Path) -> Result<PathBuf, H5iError> {
     Ok(microvm_dir(work)?.join("run"))
 }
 
+/// `<env_dir>/microvm/service-logs` — mounted read-write into the guest at
+/// [`SERVICES_MOUNT`]. Under the microvm staging directory rather than beside
+/// the service *records*, which the box must never be able to rewrite.
+fn service_log_dir(work: &Path) -> Result<PathBuf, H5iError> {
+    Ok(microvm_dir(work)?.join("service-logs"))
+}
+
+/// The host path of a service's log, for the record the host keeps.
+pub fn service_log_path(work: &Path, service: &str) -> Result<PathBuf, H5iError> {
+    Ok(service_log_dir(work)?.join(format!("{service}.log")))
+}
+
 /// Write one `0600` env script into `dir`, named `<prefix>-<pid>-<seq>.sh`.
 fn write_env_script(
     dir: &Path,
     prefix: &str,
     env: &[(String, String)],
+) -> Result<PreloadScript, H5iError> {
+    write_env_script_with(dir, prefix, env, preload_script)
+}
+
+/// [`write_env_script`], with the caller choosing how the script is rendered —
+/// [`preload_script`] to wrap a command, [`env_exports`] to be sourced.
+fn write_env_script_with(
+    dir: &Path,
+    prefix: &str,
+    env: &[(String, String)],
+    render: fn(&[(String, String)]) -> String,
 ) -> Result<PreloadScript, H5iError> {
     std::fs::create_dir_all(dir).map_err(|e| H5iError::with_path(e, dir))?;
     // pid **and** sequence, matching `SandboxGuard::new`: a pid alone repeats
@@ -416,11 +462,11 @@ fn write_env_script(
             .mode(0o600)
             .open(&path)
             .map_err(|e| H5iError::with_path(e, &path))?;
-        f.write_all(preload_script(env).as_bytes())
+        f.write_all(render(env).as_bytes())
             .map_err(|e| H5iError::with_path(e, &path))?;
     }
     #[cfg(not(unix))]
-    std::fs::write(&path, preload_script(env)).map_err(|e| H5iError::with_path(e, &path))?;
+    std::fs::write(&path, render(env)).map_err(|e| H5iError::with_path(e, &path))?;
     check_spec_path(&path, "preload script")?;
     Ok(PreloadScript { path })
 }
@@ -673,7 +719,13 @@ pub struct CreatePlan<'a> {
     /// Host directory staged per-run env scripts land in, mounted read-write at
     /// [`RUN_MOUNT`]. This is the warm path's replacement for `--script-path`.
     pub run_stage: &'a Path,
+    /// Host directory a background service's log is written into, mounted
+    /// read-write at [`SERVICES_MOUNT`]. Logs only — see that constant.
+    pub service_logs: &'a Path,
     /// Managed-settings.json to mount read-only, as on the one-shot path.
+    ///
+    /// A create-time mount cannot vary per session without splitting the box's
+    /// guest in two, so the warm paths pass `None` and say so where they do.
     pub managed_settings: Option<&'a Path>,
     /// Idle bound, e.g. `30m`. `None` leaves the guest up indefinitely.
     pub idle_timeout: Option<&'a str>,
@@ -714,6 +766,15 @@ pub fn build_create_argv(
     // surface the warm path adds over the one-shot one.
     a.push("--mount-dir".into());
     a.push(format!("{}:{RUN_MOUNT}:rw", plan.run_stage.display()));
+
+    // Service logs. Mounted unconditionally, even for a box that declares no
+    // service, and that is deliberate: this argv *is* the guest's identity, so
+    // a mount that appeared only when a service started would give the box a
+    // second guest and reap the first — killing whatever was already running
+    // in it. Every entry point must build the same argv or none of them share
+    // a guest.
+    a.push("--mount-dir".into());
+    a.push(format!("{}:{SERVICES_MOUNT}:rw", plan.service_logs.display()));
 
     // The VM's own memory. A hard ceiling, not a cgroup the guest can pressure
     // its way around — and paid once per box here rather than once per command.
@@ -793,7 +854,12 @@ pub fn build_exec_argv(rt: &Runtime, policy: &ResolvedPolicy, plan: &ExecPlan) -
     // `/bin/sh <script> <argv…>` rather than executing the script directly: the
     // staging mount is host-owned and need not carry the execute bit.
     a.push("/bin/sh".into());
-    a.push(plan.env_script.to_string());
+    // `SHELL_DIRECT` means the caller's argv is already shell text that sources
+    // whatever environment it needs — the service launcher, which must delete
+    // the credential file before it detaches.
+    if plan.env_script != SHELL_DIRECT {
+        a.push(plan.env_script.to_string());
+    }
     a.extend(plan.argv.iter().cloned());
     a
 }
@@ -1453,13 +1519,44 @@ fn reuse_available(policy: &ResolvedPolicy) -> bool {
     policy.cache_write.is_none()
 }
 
-/// The warm path: one guest per box, one `msb exec` per command.
-fn run_warm(
-    policy: &ResolvedPolicy,
-    work: &Path,
-    argv: &[String],
-    injected_env: &[(String, String)],
-) -> Result<ExecOutcome, H5iError> {
+/// The create plan every warm entry point uses. A function rather than an
+/// inline literal so there is exactly one description of a box's guest.
+fn warm_create_plan<'a>(
+    image: &'a str,
+    name: &'a str,
+    net: &'a NetPlan,
+    run_stage: &'a Path,
+    service_logs: &'a Path,
+) -> CreatePlan<'a> {
+    CreatePlan {
+        image,
+        name,
+        net,
+        run_stage,
+        service_logs,
+        managed_settings: None,
+        idle_timeout: Some(GUEST_IDLE_TIMEOUT),
+    }
+}
+
+/// A box's warm guest, ready to exec into.
+struct WarmGuest {
+    rt: Runtime,
+    /// The guest's `msb` name — a hash of the argv that created it.
+    name: String,
+    /// Host directory this run may stage material into, visible at
+    /// [`RUN_MOUNT`].
+    stage: PathBuf,
+}
+
+/// Resolve, create or start the box's guest, and hand back what an exec needs.
+///
+/// **The only place a create argv is built**, and that is the point rather than
+/// tidiness: the argv *is* the guest's identity, so `box run`, `box shell` and
+/// a service launch must produce a byte-identical one or they will each create
+/// their own guest and reap the others' — taking any service running in them
+/// with it. One construction site makes that impossible to get wrong.
+fn ensure_warm_guest(policy: &ResolvedPolicy, work: &Path) -> Result<WarmGuest, H5iError> {
     let rt = runtime_or_refuse()?;
     let image = image_or_refuse(&policy.profile)?;
     check_mount_paths(policy, work)?;
@@ -1468,43 +1565,46 @@ fn run_warm(
     let stage = run_stage_dir(work)?;
     std::fs::create_dir_all(&stage).map_err(|e| H5iError::with_path(e, &stage))?;
     check_spec_path(&stage, "per-run staging")?;
+    let logs = service_log_dir(work)?;
+    std::fs::create_dir_all(&logs).map_err(|e| H5iError::with_path(e, &logs))?;
+    check_spec_path(&logs, "service log")?;
 
-    let create_argv = build_create_argv(
-        &rt,
-        policy,
-        work,
-        &CreatePlan {
-            image: &image,
-            // Named below from this very argv; a placeholder keeps the hash
-            // covering everything *except* the name it produces.
-            name: GUEST_NAME_PLACEHOLDER,
-            net: &net,
-            run_stage: &stage,
-            managed_settings: None,
-            idle_timeout: Some(GUEST_IDLE_TIMEOUT),
-        },
-    );
-    let name = guest_name(work, &create_argv);
-    // Rebuild with the real name: only the `--name` value differs, so the hash
-    // above still describes this guest's configuration exactly.
-    let create_argv = build_create_argv(
-        &rt,
-        policy,
-        work,
-        &CreatePlan {
-            image: &image,
-            name: &name,
-            net: &net,
-            run_stage: &stage,
-            managed_settings: None,
-            idle_timeout: Some(GUEST_IDLE_TIMEOUT),
-        },
-    );
+    // Built twice: once with a placeholder to hash, once with the name that
+    // hash produced. Only the `--name` value differs, so the digest still
+    // describes this guest's configuration exactly.
+    //
+    // `managed_settings` is `None` here and not a parameter. It is a
+    // create-time mount, so letting it vary per session would give one box two
+    // guests that reap each other; the only caller passes `None` today anyway,
+    // deliberately (see `env::shell`). Re-enabling it needs a design for warm
+    // guests, not an argument here.
+    let placeholder = warm_create_plan(&image, GUEST_NAME_PLACEHOLDER, &net, &stage, &logs);
+    let hashed = build_create_argv(&rt, policy, work, &placeholder);
+    // A box that keeps getting a new guest is a box whose create argv is not
+    // stable across entry points, and the argv is the only way to see which
+    // element moved.
+    if std::env::var_os("H5I_DEBUG_MICROVM_ARGV").is_some() {
+        eprintln!("h5i microvm create argv:\n  {}", hashed.join("\n  "));
+    }
+    let name = guest_name(work, &hashed);
+    let named = warm_create_plan(&image, &name, &net, &stage, &logs);
+    let create_argv = build_create_argv(&rt, policy, work, &named);
 
     // Sweep leftovers from an h5i that died without running Drop, and guests
     // whose box has since been removed.
     reap_orphaned_sandboxes(&rt.bin);
     ensure_guest(&rt, policy, work, &create_argv, &name)?;
+    Ok(WarmGuest { rt, name, stage })
+}
+
+/// The warm path: one guest per box, one `msb exec` per command.
+fn run_warm(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+) -> Result<ExecOutcome, H5iError> {
+    let WarmGuest { rt, name, stage } = ensure_warm_guest(policy, work)?;
 
     // Per-run credentials, staged into the guest-visible directory rather than
     // passed on a command line. Dropped (and unlinked) when this run ends.
@@ -1530,6 +1630,170 @@ fn run_warm(
         wall_ms: started.elapsed().as_millis(),
         ..outcome
     })
+}
+
+// ─── background services ────────────────────────────────────────────────────
+
+/// Start `argv` as a detached service inside the box's warm guest, returning
+/// the **guest** pid of its session leader and the guest it runs in.
+///
+/// The returned pid is meaningless on this host — it names a process in the
+/// guest's pid namespace, where a number equal to some host pid is a
+/// coincidence, not a relationship. Callers must record which world it belongs
+/// to and never hand it to `kill(2)`; [`service_alive`] and [`service_signal`]
+/// are the only things that may interpret it.
+///
+/// The launcher shell sources this run's env script and **deletes it before
+/// detaching**, so the credentials exist on disk for the length of one exec
+/// rather than for the life of the service. `setsid` makes the service a
+/// session leader, so signalling `-pid` later reaps its whole descendant tree —
+/// the same property `spawn_background` gets from `setsid` + `killpg` on the
+/// kernel tiers.
+pub fn spawn_background(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    argv: &[String],
+    injected_env: &[(String, String)],
+    service: &str,
+) -> Result<(u32, String), H5iError> {
+    let WarmGuest { rt, name, stage } = ensure_warm_guest(policy, work)?;
+
+    // Exports only: the launcher sources these into its own shell and then has
+    // more to do, so `exec "$@"` would be wrong here.
+    let script = write_env_script_with(&stage, "svc", &guest_env(policy, injected_env), env_exports)?;
+    let guest_script = guest_script_path(&script.path)?;
+    let guest_log = format!("{SERVICES_MOUNT}/{service}.log");
+
+    // The command is the profile-pinned service definition, already shell text
+    // by the time it reaches here (`sh -c <def.command>` on every tier), so it
+    // is embedded as the argument to an inner `sh -c` exactly as the kernel
+    // tiers embed it. Nothing from the guest reaches this string.
+    let command = shell_join(argv);
+    let guest_pidfile = format!("{SERVICES_MOUNT}/{service}.pid");
+    let launcher = format!(
+        // Source the credentials, remove them, then detach.
+        //
+        // Sourcing failing is fatal rather than skipped: a service that started
+        // *without* its brokered credentials would look healthy and behave
+        // wrongly, which is worse than not starting.
+        //
+        // The pid comes from a file the service writes about **itself**, not
+        // from `$!`. `setsid` forks whenever it has to create a new session, so
+        // `$!` is a parent that exits immediately — recording it yields a pid
+        // that is dead on arrival and, once the number is recycled, names some
+        // unrelated process for the stop path to signal. The inner shell writes
+        // `$$` and then `exec`s, so the recorded pid *is* the service, and it
+        // is the session leader that `kill -TERM -<pid>` reaps as a group.
+        //
+        // `$0` carries the pidfile so the command words can be passed as real
+        // argv rather than re-quoted into a nested shell string.
+        ". {script} || exit 97\n\
+         rm -f {script}\n\
+         cd {work} 2>/dev/null || cd /\n\
+         rm -f {pidfile}\n\
+         setsid sh -c 'echo $$ > \"$0\"; exec \"$@\"' {pidfile} {command} >>{log} 2>&1 &\n\
+         i=0\n\
+         while [ ! -s {pidfile} ] && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.05; done\n\
+         cat {pidfile}\n",
+        script = sh_quote(&guest_script),
+        work = WORK_MOUNT,
+        pidfile = sh_quote(&guest_pidfile),
+        command = command,
+        log = sh_quote(&guest_log),
+    );
+
+    let exec_argv = build_exec_argv(
+        &rt,
+        policy,
+        &ExecPlan {
+            name: &name,
+            argv: &["-c".to_string(), launcher],
+            // The launcher *is* the command here, so it is run through `sh`
+            // directly rather than through the per-run env wrapper.
+            env_script: SHELL_DIRECT,
+            tty: None,
+        },
+    );
+    let out = std::process::Command::new(&exec_argv[0])
+        .args(&exec_argv[1..])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| H5iError::Metadata(format!("service failed to start: {e}")))?;
+    if !out.status.success() {
+        return Err(H5iError::Metadata(format!(
+            "service failed to start in the microVM guest: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let pid: u32 = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next_back()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| {
+            H5iError::Metadata(format!(
+                "the microVM guest did not report a pid for service '{service}' (got {:?})",
+                String::from_utf8_lossy(&out.stdout)
+            ))
+        })?;
+    Ok((pid, name))
+}
+
+/// Is guest pid `pid` still running inside `sandbox`?
+///
+/// `false` when the guest itself is gone, which is the common case after a
+/// policy change: the guest that held the service was reaped and replaced, so
+/// the service died with it.
+pub fn service_alive(sandbox: &str, pid: u32) -> bool {
+    let Some(rt) = probe() else {
+        return false;
+    };
+    if guest_state(&rt.bin, sandbox) != GuestState::Running {
+        return false;
+    }
+    // Through `sh -c`, because `kill` is a **shell builtin**: a slim image has
+    // no `/bin/kill`, so exec'ing it directly returns 127 and every service
+    // would read as dead — and, on the signalling path below, would never
+    // actually be stopped.
+    guest_sh(&rt.bin, sandbox, &format!("kill -0 {pid}"))
+}
+
+/// Run one line of shell in the guest, reporting whether it succeeded.
+fn guest_sh(bin: &str, sandbox: &str, script: &str) -> bool {
+    std::process::Command::new(bin)
+        .args(["exec", "--quiet", sandbox, "--", "sh", "-c", script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Signal the service's whole process group inside the guest. `sig` is a name
+/// `kill` understands (`TERM`, `KILL`). Best-effort, like its kernel-tier twin.
+pub fn service_signal(sandbox: &str, pid: u32, sig: &str) {
+    let Some(rt) = probe() else {
+        return;
+    };
+    // `-{pid}` is the process *group* — the service was `setsid`'d precisely so
+    // this reaps its whole tree, as `killpg` does on the kernel tiers. Via
+    // `sh -c` for the same builtin reason as [`service_alive`].
+    guest_sh(&rt.bin, sandbox, &format!("kill -{sig} -{pid}"));
+}
+
+/// Sentinel for [`ExecPlan::env_script`] meaning "run the command directly,
+/// with no per-run env wrapper" — used by the service launcher, which sources
+/// its own environment.
+const SHELL_DIRECT: &str = "";
+
+/// Single-quote one argument for a POSIX shell, with the total `'\''` escape.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Join argv into shell text, quoting each word.
+fn shell_join(argv: &[String]) -> String {
+    argv.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" ")
 }
 
 /// The guest-visible path of a script staged in the per-run directory.
@@ -1612,55 +1876,14 @@ fn run_interactive_warm(
     managed_settings_content: Option<&str>,
 ) -> Result<InteractiveOutcome, H5iError> {
     use std::io::IsTerminal;
-    let rt = runtime_or_refuse()?;
-    let image = image_or_refuse(&policy.profile)?;
-    check_mount_paths(policy, work)?;
-
-    let net = net_plan(policy)?;
-    let stage = run_stage_dir(work)?;
-    std::fs::create_dir_all(&stage).map_err(|e| H5iError::with_path(e, &stage))?;
-    check_spec_path(&stage, "per-run staging")?;
-
-    // Managed-settings injection is Claude's managed scope and inert for Codex,
-    // whose hook hardening is separate; `default`/custom profiles may run Claude,
-    // so they get it too. Create-time here, since the mount belongs to the guest.
-    let is_codex = crate::sandbox_policy::AgentRuntime::from_profile_name(&policy.profile.name)
-        == Some(crate::sandbox_policy::AgentRuntime::Codex);
-    let managed_settings = match (is_codex, managed_settings_content) {
-        (false, Some(content)) => prepare_managed_settings(work, content),
-        _ => None,
-    };
-
-    let create_argv = build_create_argv(
-        &rt,
-        policy,
-        work,
-        &CreatePlan {
-            image: &image,
-            name: GUEST_NAME_PLACEHOLDER,
-            net: &net,
-            run_stage: &stage,
-            managed_settings: managed_settings.as_deref(),
-            idle_timeout: Some(GUEST_IDLE_TIMEOUT),
-        },
-    );
-    let name = guest_name(work, &create_argv);
-    let create_argv = build_create_argv(
-        &rt,
-        policy,
-        work,
-        &CreatePlan {
-            image: &image,
-            name: &name,
-            net: &net,
-            run_stage: &stage,
-            managed_settings: managed_settings.as_deref(),
-            idle_timeout: Some(GUEST_IDLE_TIMEOUT),
-        },
-    );
-
-    reap_orphaned_sandboxes(&rt.bin);
-    ensure_guest(&rt, policy, work, &create_argv, &name)?;
+    // Not injected on this path, and the guest's identity is why: the mount is
+    // create-time, so a session that added it would resolve to a *different*
+    // guest than `box run` uses, and creating it would reap the other — killing
+    // any service running there. The only caller passes `None` today anyway
+    // (deliberately, see `env::shell`); re-enabling it means designing it into
+    // the create argv for every entry point, not just this one.
+    let _ = managed_settings_content;
+    let WarmGuest { rt, name, stage } = ensure_warm_guest(policy, work)?;
 
     let script = write_env_script(&stage, "env", &guest_env(policy, injected_env))?;
     let guest_script = guest_script_path(&script.path)?;
@@ -2403,14 +2626,13 @@ mod tests {
             &rt(),
             policy,
             Path::new("/h5i/envs/e1/work"),
-            &CreatePlan {
-                image: "alpine",
+            &warm_create_plan(
+                "alpine",
                 name,
                 net,
-                run_stage: Path::new("/h5i/envs/e1/microvm/run"),
-                managed_settings: None,
-                idle_timeout: Some("30m"),
-            },
+                Path::new("/h5i/envs/e1/microvm/run"),
+                Path::new("/h5i/envs/e1/microvm/service-logs"),
+            ),
         )
     }
 
@@ -2703,6 +2925,106 @@ mod tests {
         if let Some(m) = marker_path(&name) {
             let _ = std::fs::remove_file(m);
         }
+    }
+
+    // ─── background services ────────────────────────────────────────────────
+
+    /// Every warm entry point must build the same create argv, or each creates
+    /// its own guest and reaps the others' — killing any service running there.
+    #[test]
+    fn every_entry_point_describes_the_same_guest() {
+        let pol = policy();
+        let net = NetPlan::None;
+        let stage = Path::new("/h5i/envs/e1/microvm/run");
+        let logs = Path::new("/h5i/envs/e1/microvm/service-logs");
+        let a = build_create_argv(
+            &rt(),
+            &pol,
+            Path::new("/h5i/envs/e1/work"),
+            &warm_create_plan("alpine", GUEST_NAME_PLACEHOLDER, &net, stage, logs),
+        );
+        // The helper is the single description; anything reconstructing a plan
+        // by hand would diverge here.
+        let b = build_create_argv(
+            &rt(),
+            &pol,
+            Path::new("/h5i/envs/e1/work"),
+            &warm_create_plan("alpine", GUEST_NAME_PLACEHOLDER, &net, stage, logs),
+        );
+        assert_eq!(a, b);
+        // Managed settings are never part of a warm guest: a create-time mount
+        // that varied per session would split the box's guest in two.
+        assert!(
+            !a.iter().any(|x| x.contains("managed-settings")),
+            "warm guests must not vary on managed settings: {a:?}"
+        );
+    }
+
+    #[test]
+    fn the_service_log_directory_is_mounted_but_the_records_are_not() {
+        let a = create_argv_for(&policy(), &NetPlan::None, "h5i-e1-abc");
+        let mounts = window(&a, "--mount-dir");
+        assert!(
+            mounts.iter().any(|m| m.ends_with(":/.h5i/services:rw")),
+            "the guest needs somewhere to write a service log: {mounts:?}"
+        );
+        // The records carry the pid the host later signals. A box that could
+        // rewrite one could name a host pid and have `service_stop` killpg it.
+        assert!(
+            mounts.iter().all(|m| !m.contains("/services:") || m.contains("service-logs")),
+            "the service *records* directory must never be mounted: {mounts:?}"
+        );
+    }
+
+    /// The launcher sources the credentials and deletes them before detaching,
+    /// so they live on disk for one exec rather than for the service's life.
+    #[test]
+    fn a_service_launcher_removes_its_credentials_before_detaching() {
+        let script = "/.h5i/run/svc-1-0.sh";
+        let launcher = format!(
+            ". {s} && rm -f {s}\ncd /work 2>/dev/null || cd /\nsetsid 'sh' '-c' 'npm run dev' >>'/.h5i/services/web.log' 2>&1 &\nprintf '%s\\n' \"$!\"\n",
+            s = sh_quote(script)
+        );
+        let rm_at = launcher.find("rm -f").expect("the launcher removes the script");
+        let detach_at = launcher.find("setsid").expect("the launcher detaches");
+        assert!(rm_at < detach_at, "removal must precede detaching:\n{launcher}");
+        assert!(launcher.contains("setsid"), "a session leader, so -pid reaps the tree");
+    }
+
+    /// `SHELL_DIRECT` means the argv is already shell text that sources its own
+    /// environment — the service launcher. Anything else is wrapped.
+    #[test]
+    fn exec_runs_a_launcher_directly_and_a_command_through_its_env_script() {
+        let direct = build_exec_argv(
+            &rt(),
+            &policy(),
+            &ExecPlan {
+                name: "h5i-e1-abc",
+                argv: &["-c".into(), "echo hi".into()],
+                env_script: SHELL_DIRECT,
+                tty: None,
+            },
+        );
+        let sep = direct.iter().position(|x| x == "--").unwrap();
+        assert_eq!(&direct[sep + 1..], &["/bin/sh".to_string(), "-c".into(), "echo hi".into()]);
+
+        let wrapped = exec_argv_for(&policy(), None);
+        let sep = wrapped.iter().position(|x| x == "--").unwrap();
+        assert_eq!(wrapped[sep + 1], "/bin/sh");
+        assert_eq!(wrapped[sep + 2], "/.h5i/run/env-1-0.sh");
+    }
+
+    #[test]
+    fn shell_quoting_survives_every_byte_a_command_can_carry() {
+        // The same total `'\''` escape the preload uses, for the same reason.
+        assert_eq!(sh_quote("plain"), "'plain'");
+        assert_eq!(sh_quote("it's"), r"'it'\''s'");
+        assert_eq!(sh_quote("a b; rm -rf /"), "'a b; rm -rf /'");
+        assert_eq!(sh_quote("$(whoami)"), "'$(whoami)'");
+        assert_eq!(
+            shell_join(&["sh".into(), "-c".into(), "echo 'hi'".into()]),
+            r"'sh' '-c' 'echo '\''hi'\'''"
+        );
     }
 
     /// The gate between a directory listing and `msb remove --force <name>`.

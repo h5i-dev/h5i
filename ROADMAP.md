@@ -2587,7 +2587,7 @@ mechanism *is* the host kernel's copy-on-write over `mmap(MAP_PRIVATE)` —
 so the macOS story stays msb plus reuse, and the platform split is stated,
 not smoothed over.
 
-### M14. `box service` at the microvm tier: proposed, 2026-08-14
+### M14. `box service` at the microvm tier: built, 2026-08-14
 
 Services are the first of the three things M13 step 2 unlocks, and the one the
 other two wait on: a dev server has to exist before it can be shared or driven
@@ -2668,6 +2668,41 @@ protecting.
 the event log, the capture ingest at stop, and the whole CLI surface. Only the
 execution backend is new — `spawn_background` grows a microvm arm and a return
 type that can carry a guest name, rather than a second service subsystem.
+
+**Built, and verified end to end**: a declared service starts in the box's warm
+guest, `service status` reports it running, a dev server it starts answers
+`HTTP 200` from inside the box, a `box run` in between leaves it untouched,
+`service logs` reads the guest's log through the mount, and `service stop`
+reaps it and captures the log as evidence.
+
+Four things the build found that the design had not, three of them the same
+mistake wearing different clothes — *assuming a host mechanism survives the
+boundary*:
+
+- **The guest's identity is only as stable as the policy that builds it.**
+  `service_start` prepared a *different* policy than `run`: no capture spool,
+  no inbox, no cache mounts, no user egress. Different mounts, different create
+  argv, different guest — so starting a service created a second guest and
+  reaped the one `box run` was using, and the next `box run` reaped it straight
+  back, killing the service every time. Fixed by extracting `prepare_box_reach`
+  so both paths grant the same reach from one definition. Then it happened
+  *again*, two mounts smaller: the agent-config lockdown mounts are emitted
+  only when those files exist, and `run` creates them through
+  `ProtectedHookConfigGuard` while `service_start` did not. The lesson is
+  sharper than "call the same functions": **anything that makes the create argv
+  depend on transient state makes the guest unstable**, and there is now an
+  `H5I_DEBUG_MICROVM_ARGV=1` hatch that prints the argv, because the diff
+  between two of them is the only thing that shows which element moved.
+- **`kill` is a shell builtin, not a binary.** `msb exec … -- kill -0 <pid>`
+  returns 127 in a slim image, so every service read as dead and — worse — the
+  stop path signalled nothing at all while reporting success. Both go through
+  `sh -c` now.
+- **`$!` after `setsid` is the wrong pid.** `setsid` forks whenever it must
+  create a new session, so `$!` names a parent that exits immediately; the
+  recorded pid was dead on arrival, and once the number was recycled it named
+  an unrelated process for the stop path to signal. The service now writes its
+  own `$$` to a pidfile and then `exec`s, so the recorded pid *is* the service
+  and *is* the session leader `kill -TERM -<pid>` reaps as a group.
 
 Then, and only then, share (M15): the tunnel is measured and the isolation
 property is verified, but its remaining unknown is the in-guest forwarder — no

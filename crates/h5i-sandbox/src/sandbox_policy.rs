@@ -2053,6 +2053,31 @@ pub struct ExecOutcome {
     pub egress: Option<EgressSummary>,
 }
 
+/// A started background service, and **which world its pid belongs to**.
+///
+/// The distinction is not bookkeeping. A pid is only meaningful inside the pid
+/// namespace that issued it, so a guest pid and a host pid are not two values
+/// of one kind — they are the same integers naming unrelated processes. Handing
+/// a guest pid to `kill(2)` would signal whatever host process happens to hold
+/// that number, and signalling a *process group* (which is how a service is
+/// stopped) would take its whole tree. So the runtime travels with the pid, and
+/// every consumer dispatches on it rather than assuming.
+#[derive(Debug, Clone)]
+pub struct BackgroundHandle {
+    /// The service's session-leader pid, in the namespace named by `sandbox`.
+    pub pid: u32,
+    /// `None` → a host process, signalable directly. `Some(name)` → a process
+    /// inside that microVM guest, reachable only through the runtime.
+    pub sandbox: Option<String>,
+}
+
+impl BackgroundHandle {
+    /// A service running as a host process (the kernel tiers).
+    pub fn host(pid: u32) -> Self {
+        BackgroundHandle { pid, sandbox: None }
+    }
+}
+
 /// Outcome of one **interactive** session (`env shell`): the child's exit code
 /// plus, on the container tier, the egress proxy's allow/deny tally — so an
 /// interactive session leaves the same network evidence a captured run does.
