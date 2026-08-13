@@ -2966,6 +2966,18 @@ fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
         else {
             continue;
         };
+        // Deliberately `dynamic_port` and **not** [`service_port`], which falls
+        // back to the declared port. Two reasons, both load-bearing:
+        //
+        // - These become host-side loopback grants. A guest service's port is
+        //   bound inside the box's own network stack, so granting it on the
+        //   host would open a port that has nothing to do with this box.
+        // - `pid_alive` is a *host* pid check. A guest record must never reach
+        //   it, and `dynamic_port` being `None` for guest records is what keeps
+        //   it out of this branch.
+        //
+        // So this is not an oversight to tidy into consistency with
+        // `service_port`; the asymmetry is the correctness.
         if let Some(port) = rec.dynamic_port
             && pid_alive(rec.pid)
         {
