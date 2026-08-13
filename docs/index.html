@@ -221,6 +221,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/_static/blog.css">
+  <link rel="stylesheet" href="/_static/console-mock.css">
   <link rel="stylesheet" href="/_static/highlight.css">
 <script>if (new URLSearchParams(location.search).has('workbench')) document.documentElement.classList.add('workbench-only');</script>
 </head>
@@ -334,19 +335,264 @@
   </div>
 </section>
 
-<!-- ── FIG 01 · the film ────────────────────────────────────── -->
+<!-- ── FIG 01 · the console ─────────────────────────────────────
+     Two tabs over one plate, because the console really does have two: the
+     fleet and its evidence, and — for a box with a browser in it — what that
+     browser did. Drawn in HTML off the site's own tokens rather than
+     screenshotted: it stays sharp at any density, it is selectable text a
+     screen reader can read, and it cannot go stale in the one way a PNG does,
+     by outliving the screen it was taken of.
+
+     The tabs are two radio inputs and their labels. No script: a figure on the
+     front page that needs JavaScript to show its second half is a figure that
+     shows nothing when the script is still in flight. -->
 <section class="fig">
   <div class="fighd">
-    <span><i>Fig. 01</i> &nbsp;·&nbsp; A box from create to export</span>
-    <span class="r">Silent · runs in the page</span>
+    <span><i>Fig. 01</i> &nbsp;·&nbsp; <b>h5i ui</b> &nbsp;·&nbsp; the fleet, and what the box's browser did</span>
+    <span class="r">Real layout · drawn in HTML</span>
   </div>
-  <div class="plate film">
-    <iframe src="demo/?embed" title="h5i demo film" loading="lazy" allow="fullscreen"></iframe>
+  <div class="console-plate tabbed">
+    <input class="tabpick" type="radio" name="fig01" id="fig01-fleet" checked>
+    <input class="tabpick" type="radio" name="fig01" id="fig01-browser">
+    <div class="console-tabs">
+      <label for="fig01-fleet">Fleet &amp; evidence</label>
+      <label for="fig01-browser">Browser terminal</label>
+    </div>
+    <div class="console-views">
+
+      <!-- ── tab 1: the fleet and one box's evidence ── -->
+      <div class="console-view">
+        <div class="console" role="img" aria-label="The h5i box console: a top strip of what this host can enforce and fleet vitals, the fleet on the left with each box's tier, status and one signal, and on the right one box's findings, its flight recorder across five lanes, and the policy that was actually enforced.">
+
+          <div class="console-strip">
+            <div class="grp">
+              <span class="console-label">host</span>
+              <span class="console-tag ok">workspace &#10003;</span>
+              <span class="console-tag ok">process &#10003;</span>
+              <span class="console-tag ok">supervised &#10003;</span>
+              <span class="console-tag ok">container &#10003;</span>
+              <span class="console-tag off">microvm &#10007;</span>
+              <span class="console-tag ok">egress &#10003;</span>
+              <span class="console-tag ok">limits &#10003;</span>
+              <span class="console-tag">strongest: supervised</span>
+            </div>
+            <div class="console-vitals">
+              <span class="console-vital"><b>4</b><span>boxes</span></span>
+              <span class="console-vital"><b>2</b><span>active</span></span>
+              <span class="console-vital"><b>1</b><span>proposed</span></span>
+              <span class="console-vital alert"><b>1</b><span>denials</span></span>
+              <span class="console-vital"><b>31</b><span>runs</span></span>
+            </div>
+          </div>
+
+          <div class="console-body">
+
+            <div class="console-fleet">
+              <div class="console-head">Boxes <span class="count">4</span></div>
+              <div class="console-chips">
+                <span class="console-chip active">all</span>
+                <span class="console-chip">running</span>
+                <span class="console-chip">proposed</span>
+                <span class="console-chip">pressure</span>
+                <span class="console-chip">drifted</span>
+                <span class="console-chip">container</span>
+                <span class="console-chip">supervised</span>
+                <span class="console-chip">process</span>
+                <span class="console-chip">workspace</span>
+              </div>
+              <div class="console-colhead"><span>Box</span><span>Isolation</span><span>Status</span><span>Signal</span></div>
+
+              <div class="console-row selected">
+                <span class="name">claude/fix-auth</span>
+                <span class="console-tag ok">supervised</span>
+                <span class="status">idle</span>
+                <span class="sig blocked">&#9940; blocked</span>
+                <span class="sub">14 runs &#183; 6f +212/&#8722;48</span>
+              </div>
+              <div class="console-row">
+                <span class="name">codex/pr-1234</span>
+                <span class="console-tag ok">container</span>
+                <span class="status">running</span>
+                <span class="sig attention">&#9888; 2 kinds</span>
+                <span class="sub">9 runs &#183; 3f +61/&#8722;7 &#183; detached</span>
+              </div>
+              <div class="console-row">
+                <span class="name">claude/preview</span>
+                <span class="console-tag ok">container</span>
+                <span class="status">running</span>
+                <span class="sig clean">clean</span>
+                <span class="sub">8 runs</span>
+                <!-- the one lane that lets somebody *in*, said on the row -->
+                <span class="shared">&#8646; shared :3000 tunnel</span>
+              </div>
+              <div class="console-row">
+                <span class="name">codex/spike-ui</span>
+                <span class="console-tag off">workspace</span>
+                <span class="status">proposed</span>
+                <span class="sig weak">&#9676; box-claimed</span>
+                <span class="sub">0 runs &#183; proposed</span>
+              </div>
+            </div>
+
+            <div class="console-detail">
+              <div class="console-head">
+                claude/fix-auth
+                <span class="console-tag ok">supervised</span>
+                <span class="console-tag">agent-claude</span>
+                <span class="digest">a1f4c9e70b32</span>
+              </div>
+
+              <div class="console-note bad">
+                <b>The egress allowlist refused 3 requests</b> to <code>paste.example.invalid:443</code>.
+                This is host-observed: the proxy recorded it, not the box.
+              </div>
+
+              <div class="console-panel">
+                <div class="console-panel-head">Flight recorder &#183; 14 records &#183; 9 older folded</div>
+                <div class="lane-row head">
+                  <div><span class="lane-name">policy allows &#8594;</span></div>
+                  <div><div class="lane-name">FS</div><div class="lane-allow">$WORK</div></div>
+                  <div><div class="lane-name">NET</div><div class="lane-allow">3 hosts</div></div>
+                  <div><div class="lane-name">PROC</div><div class="lane-allow">any</div></div>
+                  <div><div class="lane-name">RES</div><div class="lane-allow">wall 1800s</div></div>
+                  <div><div class="lane-name">PAGE</div><div class="lane-allow">in-box</div></div>
+                </div>
+                <div class="lane-row">
+                  <div>
+                    <div class="run-cmd">npm ci &amp;&amp; npm test</div>
+                    <div class="run-meta"><span class="src observed">host-observed</span> exit 0 &#183; 48.2s &#183; 11:04:19</div>
+                  </div>
+                  <div><span class="v info">31 files</span></div>
+                  <div><span class="v ok">&#10003; 42</span></div>
+                  <div><span class="v ok">&#10003;</span></div>
+                  <div><span class="v info">412 MB</span></div>
+                  <div><span class="v none">&#183;</span></div>
+                </div>
+                <div class="lane-row">
+                  <div>
+                    <div class="run-cmd">curl https://paste.example.invalid</div>
+                    <div class="run-meta"><span class="src observed">host-observed</span> exit 7 &#183; 0.3s &#183; 11:07:02</div>
+                  </div>
+                  <div><span class="v none">&#183;</span></div>
+                  <div><span class="v bad">&#9940; 3 refused</span></div>
+                  <div><span class="v warn">&#9888; exit 7</span></div>
+                  <div><span class="v none">&#183;</span></div>
+                  <div><span class="v none">&#183;</span></div>
+                </div>
+                <div class="lane-row">
+                  <div>
+                    <div class="run-cmd">agent-browser open http://localhost:3000</div>
+                    <div class="run-meta"><span class="src claimed">box-claimed</span> exit 0 &#183; 1.9s &#183; 11:09:44</div>
+                  </div>
+                  <div><span class="v none">&#183;</span></div>
+                  <div><span class="v ok">&#10003; 6</span></div>
+                  <div><span class="v ok">&#10003;</span></div>
+                  <div><span class="v none">&#183;</span></div>
+                  <div><span class="v warn">&#9888; 2 console</span></div>
+                </div>
+              </div>
+
+              <div class="console-panel">
+                <div class="console-panel-head">Enforced policy &#183; what was actually allowed</div>
+                <div class="pol">
+                  <div><span class="k">isolation</span><span class="val on">supervised</span></div>
+                  <div><span class="k">net.mode</span><span class="val">allowlist</span></div>
+                  <div><span class="k">net.egress</span><span class="val">api.anthropic.com, registry.npmjs.org, github.com</span></div>
+                  <div><span class="k">fs.write</span><span class="val">$WORK</span></div>
+                  <div><span class="k">fs.read</span><span class="val">$WORK, /usr, /etc/ssl</span></div>
+                  <div><span class="k">secrets</span><span class="val">GITHUB_TOKEN (brokered)</span></div>
+                  <div><span class="k">wall</span><span class="val">1800s</span></div>
+                  <div><span class="k">mem</span><span class="val">4.0G</span></div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ── tab 2: what the browser in that box actually did ── -->
+      <div class="console-view">
+        <div class="bt" role="img" aria-label="The browser terminal in the h5i console: a trusted status row, the page pane, and four panes of rows — agent actions, network, console and policy verdicts — each row labelled with the lane that observed it and how complete that record is.">
+
+          <div class="bt-status">
+            <span class="bt-badge">box</span><span class="bt-val">claude/fix-auth</span>
+            <span class="bt-badge">engine</span><span class="bt-val">h5i-light</span>
+            <span class="bt-badge">page</span><span class="bt-val url">http://localhost:3000/checkout</span>
+            <span class="bt-badge">requests</span><span class="bt-val">18 allowed, <em>1 denied</em></span>
+          </div>
+
+          <div class="bt-pane bt-page">
+            <header><h3>page</h3><p>last page h5i saw this box open</p></header>
+            <div class="bt-page-body">
+              <p class="bt-url">http://localhost:3000/checkout</p>
+              <p class="bt-state">No live view is running in this box, so there are no frames to show. Start one
+                with <code>h5i-browser-light serve &lt;page&gt;</code> inside the box.</p>
+              <p class="bt-state">The console watches and never drives. To take the control lock and type into the
+                page, use <code>h5i box view fix-auth</code>.</p>
+            </div>
+          </div>
+
+          <div class="bt-tabs">
+            <span class="on">all panes</span>
+            <span>agent actions <b>3</b></span>
+            <span>network <b>19</b></span>
+            <span>console <b>2</b></span>
+            <span>policy verdicts <b>1</b></span>
+          </div>
+
+          <div class="bt-panes">
+
+            <div class="bt-pane">
+              <header><h3>agent actions</h3><p>box-claimed: the engine reports its own verbs &#8212; there is no
+                socket for h5i to watch</p></header>
+              <div class="bt-rows">
+                <div class="bt-row action"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">open http://localhost:3000/checkout</span></div>
+                <div class="bt-row action"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">click #pay</span></div>
+                <div class="bt-row refused"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">REFUSED read /etc/shadow &#8212; outside the box's reach</span></div>
+              </div>
+            </div>
+
+            <div class="bt-pane">
+              <header><h3>network</h3><p>box-claimed, fail-closed: the engine will not fetch what it cannot
+                record</p></header>
+              <div class="bt-rows">
+                <div class="bt-row ok"><span class="prov"><span class="lane box">box</span><span class="grade closed">fail-closed</span></span><span class="text">GET http://localhost:3000/api/cart (subresource)</span><span class="cause">&#8592; #7</span></div>
+                <div class="bt-row ok"><span class="prov"><span class="lane box">box</span><span class="grade closed">fail-closed</span></span><span class="text">#12 200 &#183; 1841 B &#183; 23 ms</span><span class="cause">&#8592; #12</span></div>
+                <div class="bt-row refused"><span class="prov"><span class="lane box">box</span><span class="grade closed">fail-closed</span></span><span class="text">REFUSED GET https://px.example.invalid/t.js &#8212; not on this box's allowlist</span></div>
+              </div>
+            </div>
+
+            <div class="bt-pane">
+              <header><h3>console</h3><p>box-claimed, best-effort: drained from the page after the fact</p></header>
+              <div class="bt-rows">
+                <div class="bt-row error"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">page-error: Uncaught TypeError: total is undefined</span></div>
+                <div class="bt-row warn"><span class="prov"><span class="lane box">box</span><span class="grade effort">best-effort</span></span><span class="text">warning: failed to load https://px.example.invalid/t.js</span></div>
+              </div>
+            </div>
+
+            <div class="bt-pane">
+              <header><h3>policy verdicts</h3><p>what h5i refused, and why</p></header>
+              <div class="bt-rows">
+                <div class="bt-row refused"><span class="prov"><span class="lane box">box</span><span class="grade closed">fail-closed</span></span><span class="text">https://px.example.invalid/t.js &#8212; not on this box's allowlist</span><span class="cause">&#8592; #13</span></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
   </div>
   <p class="figcap">
-    One command makes the box, the agent works inside it with the dev server and browser it needs, and the only
-    way out is <b>h5i box export</b>. Nothing in this film is a mockup: it is the terminal.
-    <a href="demo/" target="_blank">Watch it full-screen</a>.
+    <b>Fleet &amp; evidence</b>: every box with its tier, status and one signal, and for the box you picked, the
+    findings, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced.
+    <b>Browser terminal</b>: for a box with a browser in it, what that browser did &#8212; every row carrying the
+    lane that observed it and how complete that record is, as words rather than as a colour.
+    <strong>Red</strong> means something was refused &#183; <strong>amber</strong> means look at this &#183;
+    <strong>grey</strong> means the evidence is weak. Nothing on either screen is a score, and every route is a
+    <b>GET</b>: the console watches and cannot drive a box. The layout is real; the fleet in it is an example.
+    Prefer moving pictures? <a href="/demo/" target="_blank">Watch a box from create to export</a>.
   </p>
 </section>
 
@@ -579,6 +825,7 @@
       <a href="/blog/">Blog</a>
       <a href="/workflows/">Workflow</a>
       <a href="/pitch/">Pitch deck</a>
+      <a href="/demo/">Demo film</a>
       <a href="https://github.com/h5i-dev/h5i">GitHub</a>
       <a href="https://github.com/h5i-dev/h5i/issues">Issues</a>
     </nav>
