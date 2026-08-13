@@ -355,6 +355,77 @@ fn create_builds_worktree_branch_policy_and_event() {
 }
 
 #[test]
+fn create_warns_for_invalid_agent_identity_without_contaminating_json() {
+    let r = Repo::new();
+    let create = |name: &str, agent: Option<&str>| {
+        let mut command = Command::new(H5I);
+        command
+            .args([
+                "box",
+                "create",
+                name,
+                "--isolation",
+                "workspace",
+                "--profile",
+                "default",
+                "--json",
+            ])
+            .current_dir(&r.dir);
+        match agent {
+            Some(value) => {
+                command.env("H5I_AGENT", value);
+            }
+            None => {
+                command.env_remove("H5I_AGENT");
+            }
+        }
+        command.output().expect("failed to run h5i")
+    };
+
+    let overlong = "a".repeat(65);
+    let cases = [
+        ("d", Some("codex.code"), "human", true),
+        ("s", Some("claude code"), "human", true),
+        ("e", Some(""), "human", true),
+        ("l", Some(overlong.as_str()), "human", true),
+        ("u", Some("雪"), "human", true),
+        ("v", Some("codex"), "codex", false),
+        ("t", Some(" codex "), "codex", false),
+        ("n", None, "human", false),
+    ];
+    for (name, value, expected_agent, should_warn) in cases {
+        let out = create(name, value);
+        assert_eq!(out.status.code(), Some(0), "{}", out_str(&out));
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&out.stdout).expect("create stdout must remain valid JSON");
+        assert_eq!(manifest["agent"], expected_agent);
+        assert_eq!(manifest["id"], format!("env/{expected_agent}/{name}"));
+        assert_eq!(
+            manifest["branch"],
+            format!("refs/heads/h5i/env/{expected_agent}/{name}")
+        );
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if should_warn {
+            assert_eq!(stderr.lines().count(), 1, "{stderr}");
+            assert!(stderr.contains("warning: invalid H5I_AGENT"), "{stderr}");
+            assert!(stderr.contains("using 'human'"), "{stderr}");
+            // Skip the empty-string case: it has nothing to look for, and
+            // `contains("")` is true for every haystack. Filtered rather than
+            // nested so the check reads as one condition on both editions.
+            if let Some(value) = value.filter(|v| !v.is_empty()) {
+                assert!(
+                    !stderr.contains(value),
+                    "the invalid value must not be echoed: {stderr}"
+                );
+            }
+        } else {
+            assert!(stderr.is_empty(), "unexpected warning: {stderr}");
+        }
+    }
+}
+
+#[test]
 fn create_audit_all_pins_capture_policy() {
     let r = Repo::new();
     r.h5i_ok(&["env", "create", "audit-all", "--audit", "all"]);

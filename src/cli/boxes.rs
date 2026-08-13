@@ -406,16 +406,41 @@ pub enum EnvServiceCommands {
 /// Who is creating this env. `$H5I_AGENT` is injected per host (Claude Code
 /// sets `claude`, Codex sets `codex`); a human on a bare shell gets `human`.
 /// The identity scopes the env's branch namespace and the agent-in-box profile.
+///
+/// Unset is `human` and says nothing — that is the normal bare-shell case. A
+/// value that is present but unusable warns instead of falling through in
+/// silence, so a typo'd identity does not quietly scatter a run's envs into the
+/// `human` namespace, where the agent then fails to find them by their own name.
 fn agent_identity() -> String {
-    std::env::var("H5I_AGENT")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| {
-            !s.is_empty()
-                && s.len() <= 64
-                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        })
-        .unwrap_or_else(|| "human".to_string())
+    match std::env::var("H5I_AGENT") {
+        Err(std::env::VarError::NotPresent) => "human".to_string(),
+        Ok(value) => {
+            let identity = value.trim();
+            if !identity.is_empty()
+                && identity.len() <= 64
+                && identity
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                identity.to_string()
+            } else {
+                warn_invalid_agent_identity()
+            }
+        }
+        Err(std::env::VarError::NotUnicode(_)) => warn_invalid_agent_identity(),
+    }
+}
+
+/// The stderr line for a rejected `$H5I_AGENT`, returning the `human` fallback
+/// it announces. The offending value is deliberately not echoed: it is ambient
+/// input of unknown provenance, and a raw `\e[` in it would repaint the
+/// terminal. The rule is stated instead, which is what the reader needs anyway.
+fn warn_invalid_agent_identity() -> String {
+    eprintln!(
+        "{} invalid H5I_AGENT; expected 1-64 ASCII letters, digits, hyphens, or underscores; using 'human'",
+        style("warning:").yellow()
+    );
+    "human".to_string()
 }
 
 /// Is `source` a pull request spec (a number, `#number`, or a GitHub PR URL)?

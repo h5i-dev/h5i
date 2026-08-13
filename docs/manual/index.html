@@ -1525,7 +1525,7 @@ the box. <code>h5i box probe</code> names the mechanism and the gaps.</p>
 <tbody>
 <tr>
 <td><code>H5I_AGENT</code></td>
-<td>Which runtime a box is scoped to (<code>claude</code>, <code>codex</code>). Decides the <code>agent</code> profile's credentials and egress.</td>
+<td>Which runtime a box is scoped to (<code>claude</code>, <code>codex</code>). Decides the env's branch namespace and the <code>agent</code> profile's credentials and egress. The namespace takes 1–64 ASCII letters, digits, hyphens, or underscores after trimming; unset is <code>human</code> silently, anything else warns on stderr and namespaces the box under <code>human</code>.</td>
 </tr>
 <tr>
 <td><code>H5I_DEFAULT_ISOLATION</code></td>
