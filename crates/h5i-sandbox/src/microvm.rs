@@ -1060,7 +1060,8 @@ fn remove_named(bin: &str, name: &str) {
         .status();
 }
 
-/// The directory holding one marker per live named sandbox.
+/// The directory holding one marker per live named sandbox, or `None` when this
+/// process has no directory it can trust to hold them.
 ///
 /// A function of its own rather than `marker_path("").parent()`, which is what
 /// this was: joining an empty component yields a trailing separator, and
@@ -1068,13 +1069,107 @@ fn remove_named(bin: &str, name: &str) {
 /// itself. The sweep consequently scanned `/tmp` for names that only ever exist
 /// one level down, so it matched nothing and reaped nothing — silently, since
 /// every step of it is best-effort.
-fn marker_dir() -> PathBuf {
-    std::env::temp_dir().join("h5i-msb-live")
+///
+/// **Per user, not per host.** These markers decide which VMs get destroyed, so
+/// a directory shared between logins is the wrong place for them. On a shared
+/// Linux box the old `/tmp/h5i-msb-live` belonged to whoever ran the tier
+/// first: everyone else's marker writes then failed silently (so their guests
+/// were never reaped), and worse, their sweeps *read the first user's markers*
+/// and saw `exists() == false` for a workspace under a home directory they
+/// cannot traverse — concluding that a live box was gone and removing its VM.
+/// `$XDG_RUNTIME_DIR` is per-user and `0700` by definition; without one, the
+/// uid keeps the fallback distinct and [`ensure_private_dir`] refuses to use a
+/// path somebody else got to first.
+fn marker_dir() -> Option<PathBuf> {
+    let base = match std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
+        Some(rt) => PathBuf::from(rt).join("h5i"),
+        // No runtime dir: macOS always, plus cron without a session and some
+        // containers. macOS's `$TMPDIR` is already a per-user `0700` directory;
+        // elsewhere this lands in the shared `/tmp`, where the uid separates
+        // users and the ownership check below is what actually protects us.
+        None => std::env::temp_dir().join(format!("h5i-{}", current_uid())),
+    };
+    let dir = base.join("msb-live");
+    ensure_private_dir(&dir).then_some(dir)
+}
+
+/// This process's uid, or `0` where there is no such concept. Only ever used to
+/// name a directory and to compare against one's owner.
+fn current_uid() -> u32 {
+    #[cfg(unix)]
+    {
+        unsafe { libc::getuid() }
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+/// Create `dir` mode `0700` if absent, then confirm it is a real directory this
+/// user owns and nobody else can write to.
+///
+/// Returning `false` costs a sweep — guests leak until the box is removed —
+/// which is the safe direction: acting on another user's markers is how a live
+/// VM gets destroyed by mistake. The check is `symlink_metadata`, so a symlink
+/// planted at the path is rejected rather than followed.
+fn ensure_private_dir(dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        if !dir.exists() {
+            let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
+        }
+        let Ok(md) = std::fs::symlink_metadata(dir) else {
+            return false;
+        };
+        // `symlink_metadata` does not traverse, so a symlink reports as a
+        // symlink and fails this test rather than being followed to its target.
+        if !md.is_dir() || md.uid() != current_uid() || md.permissions().mode() & 0o022 != 0 {
+            warn_unusable_marker_dir(dir);
+            return false;
+        }
+        true
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir).is_ok()
+    }
+}
+
+/// Say so once. A marker directory we cannot use means this box's VM will
+/// outlive its policy — the one consequence of the sweep not running that an
+/// operator would want to know about — and saying it per run would be noise.
+fn warn_unusable_marker_dir(dir: &Path) {
+    static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    WARNED.get_or_init(|| {
+        eprintln!(
+            "h5i: {} is not a private directory owned by this user — microVM guests will not \
+             be reaped until it is removed or fixed",
+            dir.display()
+        );
+    });
 }
 
 /// Where the marker for a live named sandbox lives.
 fn marker_path(name: &str) -> Option<PathBuf> {
-    Some(marker_dir().join(name))
+    Some(marker_dir()?.join(name))
+}
+
+/// Does `name` have the shape h5i gives a sandbox it created?
+///
+/// The gate between a directory listing and `msb remove --force <name>`. Both
+/// name forms this module produces are `h5i-` followed by lowercase
+/// alphanumerics and dashes ([`SandboxGuard::new`] and [`guest_name`]), so
+/// anything else in the marker directory is not ours to act on — and a name
+/// that could be read as a flag can never reach the runtime's argv.
+fn is_h5i_sandbox_name(name: &str) -> bool {
+    name.strip_prefix("h5i-").is_some_and(|rest| {
+        !rest.is_empty()
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    })
 }
 
 /// Reap named sandboxes an earlier h5i left behind.
@@ -1095,7 +1190,7 @@ pub fn reap_orphaned_sandboxes(bin: &str) {
     for (name, owner) in live_markers() {
         let reap = match &owner {
             // Warm guest: reap once the box it belongs to is gone.
-            Some(work) => !Path::new(work).exists(),
+            Some(work) => box_is_gone(Path::new(work)),
             // One-shot guest: reap once the process that owned it is gone.
             None => match name
                 .strip_prefix("h5i-")
@@ -1113,6 +1208,21 @@ pub fn reap_orphaned_sandboxes(bin: &str) {
         if let Some(m) = marker_path(&name) {
             let _ = std::fs::remove_file(m);
         }
+    }
+}
+
+/// Has this box's workspace really gone, or can we merely not see it?
+///
+/// `Path::exists()` answers `false` to both, and the difference decides whether
+/// a VM is destroyed. A workspace under a home directory this process cannot
+/// traverse, an unmounted network path, or a transient I/O error all report
+/// "does not exist" through `exists()` while the box is very much alive. Only a
+/// definite `NotFound` counts as gone; every other error leaves the guest
+/// alone, so an unreadable path costs a leaked VM rather than a destroyed one.
+fn box_is_gone(work: &Path) -> bool {
+    match std::fs::symlink_metadata(work) {
+        Ok(_) => false,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
     }
 }
 
@@ -1249,17 +1359,26 @@ fn reap_stale_siblings(bin: &str, work: &Path, keep: &str) {
 /// `None` for the owner means a one-shot marker (empty file), which the pid
 /// rule in [`reap_orphaned_sandboxes`] handles instead.
 fn live_markers() -> Vec<(String, Option<String>)> {
-    let Ok(rd) = std::fs::read_dir(marker_dir()) else {
+    let Some(dir) = marker_dir() else {
+        return Vec::new();
+    };
+    let Ok(rd) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     rd.flatten()
-        .map(|e| {
+        .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
+            // The one choke point between a directory listing and
+            // `msb remove --force`. Anything not shaped like a name we produce
+            // is not ours to reap.
+            if !is_h5i_sandbox_name(&name) {
+                return None;
+            }
             let owner = std::fs::read_to_string(e.path())
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            (name, owner)
+            Some((name, owner))
         })
         .collect()
 }
@@ -2583,6 +2702,110 @@ mod tests {
         // Cleanup: the sweep would otherwise see a live box and keep this.
         if let Some(m) = marker_path(&name) {
             let _ = std::fs::remove_file(m);
+        }
+    }
+
+    /// The gate between a directory listing and `msb remove --force <name>`.
+    /// A marker directory is not a place we control the contents of, so only
+    /// names shaped like the ones this module produces may reach the runtime.
+    #[test]
+    fn only_names_h5i_produces_can_reach_the_runtime() {
+        // Both forms this module writes.
+        assert!(is_h5i_sandbox_name("h5i-12345-0"), "one-shot");
+        assert!(is_h5i_sandbox_name("h5i-human-web-ui-08839c208e2d"), "warm");
+        // Not ours.
+        assert!(!is_h5i_sandbox_name("some-victim-sandbox"));
+        assert!(!is_h5i_sandbox_name("h5i-"), "the prefix alone is not a name");
+        assert!(!is_h5i_sandbox_name(""));
+        // A name that clap could read as a flag must never get through.
+        assert!(!is_h5i_sandbox_name("--all"));
+        assert!(!is_h5i_sandbox_name("-rf"));
+        // Nor anything that could confuse a shell or a spec parser if the call
+        // shape ever changed.
+        assert!(!is_h5i_sandbox_name("h5i-a/b"));
+        assert!(!is_h5i_sandbox_name("h5i-a b"));
+        assert!(!is_h5i_sandbox_name("h5i-a:b"));
+        assert!(!is_h5i_sandbox_name("h5i-A"), "uppercase is not a shape we emit");
+    }
+
+    /// `exists()` answers `false` both for "removed" and for "cannot look", and
+    /// the difference is whether somebody's running VM gets destroyed.
+    #[test]
+    fn an_unreadable_workspace_is_not_mistaken_for_a_removed_box() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        assert!(!box_is_gone(&work), "a live box is not gone");
+
+        let missing = tmp.path().join("never-existed");
+        assert!(box_is_gone(&missing), "a removed box is gone");
+
+        // A path whose parent denies traversal reports NotFound through
+        // `exists()` but errors with PermissionDenied through metadata — the
+        // case that had one user's sweep destroying another user's guests.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = tmp.path().join("locked");
+            std::fs::create_dir_all(locked.join("work")).unwrap();
+            let inner = locked.join("work");
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            // Root ignores the mode bits, so only assert where the denial is real.
+            if std::fs::symlink_metadata(&inner)
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+            {
+                assert!(
+                    !box_is_gone(&inner),
+                    "a workspace we cannot see must never be read as removed"
+                );
+            }
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+
+    /// Markers decide which VMs are destroyed, so they must not live somewhere
+    /// another login can write.
+    #[test]
+    fn the_marker_directory_is_private_to_this_user() {
+        let Some(dir) = marker_dir() else {
+            return; // no usable directory here; nothing to assert about one
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let md = std::fs::symlink_metadata(&dir).expect("marker dir exists once resolved");
+            assert!(md.is_dir());
+            assert_eq!(md.uid(), current_uid(), "owned by this user");
+            assert_eq!(md.permissions().mode() & 0o022, 0, "not group/other-writable");
+        }
+        // And it is never the bare shared temp dir the first version used.
+        assert_ne!(dir, std::env::temp_dir().join("h5i-msb-live"));
+    }
+
+    #[test]
+    fn a_squatted_marker_directory_is_refused_rather_than_used() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let tmp = tempfile::tempdir().unwrap();
+            // World-writable: the shape a squatter leaves behind.
+            let open = tmp.path().join("open");
+            std::fs::create_dir_all(&open).unwrap();
+            std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+            assert!(!ensure_private_dir(&open), "a world-writable dir is refused");
+
+            // A symlink is rejected rather than followed.
+            let target = tmp.path().join("target");
+            std::fs::create_dir_all(&target).unwrap();
+            let link = tmp.path().join("link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            assert!(!ensure_private_dir(&link), "a symlink is refused");
+
+            // The ordinary case still works, and is created 0700.
+            let fresh = tmp.path().join("fresh").join("msb-live");
+            assert!(ensure_private_dir(&fresh));
+            let mode = std::fs::symlink_metadata(&fresh).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "created private, mode {mode:o}");
         }
     }
 

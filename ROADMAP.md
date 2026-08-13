@@ -2419,6 +2419,31 @@ Two things the build found that the design had not:
   while guests died with their process; not harmless now that they outlive it.
   Fixed, with a test.
 
+A security review of the branch reported no exploitable finding, and closed two
+candidates for reasons worth keeping: the unvalidated-name path into
+`msb remove --force` was **pre-existing and strictly more reachable before**
+this work (the `parent()` bug meant the sweep read `/tmp` itself, so a marker
+needed no directory squat at all), and the 48-bit name digest is not grindable
+by anyone in the threat model — `sanitize_label`'s output is not in the hash
+input, so the box-controlled half of the name buys no freedom over it, and a
+colliding guest would mount a different workspace and fail loudly rather than
+run under a laxer allowlist.
+
+It did surface a real multi-user correctness bug, now fixed. **Markers decided
+which VMs get destroyed while living in a directory shared between logins.** On
+a shared Linux host whoever ran the tier first owned `/tmp/h5i-msb-live`;
+everyone else's marker writes then failed silently, so their guests were never
+reaped — and worse, their sweeps read the *first* user's markers and saw
+`exists() == false` for a workspace under a home they cannot traverse,
+concluding a live box was gone and removing its VM. Three changes: the marker
+directory is now per-user (`$XDG_RUNTIME_DIR/h5i/msb-live`, falling back to a
+uid-scoped temp path) and is refused unless it is a real directory this user
+owns that nobody else can write; `box_is_gone` distinguishes a definite
+`NotFound` from "cannot look", so an unreadable workspace costs a leaked VM
+rather than a destroyed one; and only names shaped like the ones this module
+emits (`h5i-` plus lowercase alphanumerics and dashes) may reach the runtime at
+all, which also means no marker can present a flag-shaped argument to `msb`.
+
 The original analysis, and what it was measured against:
 
 **The prerequisite was answered — `msb` supports this, and it is measured.** `msb create --name X`
