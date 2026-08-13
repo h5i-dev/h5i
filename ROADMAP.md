@@ -2729,6 +2729,36 @@ shipping a silent data-loss bug:
   nothing would look wrong. Starting a service now refuses under that flag and
   says why.
 
+A second review round, aimed at the fixes the first one produced, found nine
+more. Two are worth stating because they are the same mistake at different
+depths, and both were introduced *by* a fix:
+
+- **"I could not read the answer" is not "there is nothing there."** Round one
+  fixed `guest_state` so a failed or timed-out `msb list` no longer read as
+  `Absent` — because `Absent` is answered with `create --replace`, which
+  destroys a live guest and every service in it. Round two found the same bug
+  one layer down: `parse_guest_state` still returned `Absent` when the output
+  parsed as anything other than an array, so a banner line on stdout would have
+  done it on *every command*. Worse, the unit test asserted that behaviour, so
+  the bug had a test defending it. Only a well-formed list that does not name
+  the guest is `Absent` now; everything else is `Unknown`.
+- **A guest name is not a guest life.** A guest keeps its name across
+  `stop`/`start` and restarts its pids from 1, so a stale record naming pid 42
+  could match an unrelated process in the guest's next life — refusing a start
+  that should succeed, and signalling a process group that was never ours. The
+  record now carries the guest's kernel boot id, and a mismatch reads as dead.
+
+The rest: the service launcher was the last runtime call without a deadline;
+`wait_exec` joined its reader threads after killing the child, reintroducing
+the hang its own deadline exists to prevent; crashed runs left brokered
+credentials in a directory the long-lived guest can read, so it is swept before
+each use; `live_service_ports` still called host `pid_alive` on a record that
+may hold a guest pid, safe only by an accident of ordering; `env shell` was the
+one entry point never routed through `prepare_box_reach`, leaving the
+"one construction site" invariant true only by coincidence; and the benchmark
+harness resolved workload binaries on the host and executed them in the guest,
+which would abort the sweep for the very tier it exists to measure.
+
 Then, and only then, share (M15): the tunnel is measured and the isolation
 property is verified, but its remaining unknown is the in-guest forwarder — no
 slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a

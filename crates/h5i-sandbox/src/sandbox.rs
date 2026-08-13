@@ -1807,11 +1807,11 @@ pub fn spawn_background(
     // neither wants a host log fd (the guest cannot write one) nor produces a
     // host pid. Handled before the fd is opened for that reason.
     if policy.claim == IsolationClaim::Microvm {
-        let (pid, sandbox) =
-            crate::microvm::spawn_background(policy, work, argv, injected_env, service)?;
+        let h = crate::microvm::spawn_background(policy, work, argv, injected_env, service)?;
         return Ok(BackgroundHandle {
-            pid,
-            sandbox: Some(sandbox),
+            pid: h.pid,
+            sandbox: Some(h.sandbox),
+            boot: Some(h.boot),
         });
     }
 

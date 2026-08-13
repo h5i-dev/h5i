@@ -407,6 +407,33 @@ fn run_stage_dir(work: &Path) -> Result<PathBuf, H5iError> {
     Ok(microvm_dir(work)?.join("run"))
 }
 
+/// Remove credential scripts a previous run left in the staging directory.
+///
+/// [`PreloadScript`]'s `Drop` is the normal cleanup and it cannot cover SIGKILL,
+/// a `panic = "abort"` build, or an OOM. That was harmless while the directory
+/// was never mounted — on the one-shot path the script reached the runtime over
+/// a config fd. The warm path mounts it into a guest that now **outlives the
+/// run**, so a crashed `box run` would otherwise leave its brokered credentials
+/// readable by that box's long-lived services indefinitely, including after the
+/// credential was rotated host-side.
+///
+/// Safe to do unconditionally here: every entry point that stages a script
+/// holds the box's run lock, so no other run's script is live when this runs.
+fn sweep_stale_env_scripts(stage: &Path) {
+    let Ok(rd) = std::fs::read_dir(stage) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        // Only the shapes this module writes, for the same reason the marker
+        // sweep is gated: this directory is writable by the box.
+        let ours = (name.starts_with("env-") || name.starts_with("svc-")) && name.ends_with(".sh");
+        if ours {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
 /// `<env_dir>/microvm/service-logs` — mounted read-write into the guest at
 /// [`SERVICES_MOUNT`]. Under the microvm staging directory rather than beside
 /// the service *records*, which the box must never be able to rewrite.
@@ -985,11 +1012,16 @@ pub enum GuestState {
 /// fails towards a working box with a clear error rather than towards a silent
 /// exec into something that cannot serve it.
 pub fn parse_guest_state(json: &str, name: &str) -> GuestState {
+    // Output we cannot read is not an empty list. `msb list` printing a banner,
+    // a warning, or a future `{"sandboxes": […]}` wrapper would otherwise mean
+    // "no guest" — and `ensure_guest` answers that with `create --replace`,
+    // destroying a live guest and every service in it, on every command.
+    // Only a well-formed array that does not mention this name is `Absent`.
     let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
-        return GuestState::Absent;
+        return GuestState::Unknown;
     };
     let Some(rows) = value.as_array() else {
-        return GuestState::Absent;
+        return GuestState::Unknown;
     };
     for row in rows {
         if row.get("name").and_then(|n| n.as_str()) != Some(name) {
@@ -1343,7 +1375,7 @@ impl Drop for SandboxGuard {
 /// exactly one of these per command rather than one per decision.
 fn guest_state(bin: &str, name: &str) -> GuestState {
     let mut cmd = std::process::Command::new(bin);
-    cmd.args(["list", "--format", "json"]);
+    cmd.args(["list", "--quiet", "--format", "json"]);
     match run_bounded(cmd, GUEST_QUERY_TIMEOUT) {
         Some(o) if o.status.success() => {
             parse_guest_state(&String::from_utf8_lossy(&o.stdout), name)
@@ -1600,6 +1632,7 @@ fn ensure_warm_guest(policy: &ResolvedPolicy, work: &Path) -> Result<WarmGuest, 
     let stage = run_stage_dir(work)?;
     std::fs::create_dir_all(&stage).map_err(|e| H5iError::with_path(e, &stage))?;
     check_spec_path(&stage, "per-run staging")?;
+    sweep_stale_env_scripts(&stage);
     let logs = service_log_dir(work)?;
     std::fs::create_dir_all(&logs).map_err(|e| H5iError::with_path(e, &logs))?;
     check_spec_path(&logs, "service log")?;
@@ -1696,7 +1729,7 @@ pub fn spawn_background(
     argv: &[String],
     injected_env: &[(String, String)],
     service: &str,
-) -> Result<(u32, String), H5iError> {
+) -> Result<ServiceHandle, H5iError> {
     // A service *is* a process outliving the command that started it, so it has
     // nowhere to live without guest reuse. Refusing is the honest outcome:
     // starting one anyway would put it in a warm guest while every `box run`
@@ -1795,7 +1828,24 @@ pub fn spawn_background(
                 String::from_utf8_lossy(&out.stdout)
             ))
         })?;
-    Ok((pid, name))
+    // Captured now, so a later liveness check can tell this guest's life from
+    // the next one's — the pid alone cannot.
+    let boot = guest_boot_id(&rt, &name).ok_or_else(|| {
+        H5iError::Metadata(format!(
+            "could not read the microVM guest's boot id after starting '{service}' — \
+             refusing to record a pid that could not later be told apart from a \
+             recycled one"
+        ))
+    })?;
+    Ok(ServiceHandle { pid, sandbox: name, boot })
+}
+
+/// A service started inside a guest: its pid, the guest, and that guest's boot
+/// identity, which is what keeps the pid meaningful across a restart.
+pub struct ServiceHandle {
+    pub pid: u32,
+    pub sandbox: String,
+    pub boot: String,
 }
 
 /// Is guest pid `pid` still running inside `sandbox`?
@@ -1803,8 +1853,8 @@ pub fn spawn_background(
 /// `false` when the guest itself is gone, which is the common case after a
 /// policy change: the guest that held the service was reaped and replaced, so
 /// the service died with it.
-pub fn service_alive(sandbox: &str, pid: u32) -> bool {
-    service_state(sandbox, pid).unwrap_or(false)
+pub fn service_alive(sandbox: &str, pid: u32, boot: &str) -> bool {
+    service_state(sandbox, pid, boot).unwrap_or(false)
 }
 
 /// Liveness as a *tri-state*: `None` means the runtime could not be asked.
@@ -1813,7 +1863,7 @@ pub fn service_alive(sandbox: &str, pid: u32) -> bool {
 /// display and wrong for stopping: a stop that reads a transient failure as
 /// "already dead" skips the signal, removes the record, and leaves the service
 /// running in the guest with nothing on the host that knows about it.
-pub fn service_state(sandbox: &str, pid: u32) -> Option<bool> {
+pub fn service_state(sandbox: &str, pid: u32, boot: &str) -> Option<bool> {
     let rt = probe()?;
     match guest_state(&rt.bin, sandbox) {
         // The guest is gone or stopped, so anything inside it is too. That is
@@ -1821,6 +1871,18 @@ pub fn service_state(sandbox: &str, pid: u32) -> Option<bool> {
         GuestState::Absent | GuestState::Stopped => return Some(false),
         GuestState::Unknown => return None,
         GuestState::Running => {}
+    }
+    // A guest keeps its name across `stop`/`start`, and its pids restart from 1
+    // when it boots again. So a record saying "pid 42" can match a *different*
+    // process in the guest's next life — h5i would refuse to start a service
+    // that is dead, and `service stop` would `kill -TERM -42` an unrelated
+    // process group. The boot id makes the two lives distinguishable.
+    match guest_boot_id(&rt, sandbox) {
+        Some(now) if now == boot => {}
+        // Rebooted: whatever the record names is gone, whoever holds the
+        // number now.
+        Some(_) => return Some(false),
+        None => return None,
     }
     // Through `sh -c`, because `kill` is a **shell builtin**: a slim image has
     // no `/bin/kill`, so exec'ing it directly returns 127 and every service
@@ -1840,6 +1902,30 @@ pub fn service_state(sandbox: &str, pid: u32) -> Option<bool> {
         &format!("kill -0 {pid}"),
     ]);
     run_bounded(cmd, GUEST_QUERY_TIMEOUT).map(|o| o.status.success())
+}
+
+/// This guest's boot identity — the kernel's own, so it changes on every boot
+/// and cannot be confused with the sandbox's name, which survives a restart.
+///
+/// `None` when the runtime could not be asked, which the callers propagate as
+/// "unknown" rather than guessing.
+pub fn guest_boot_id(rt: &Runtime, sandbox: &str) -> Option<String> {
+    let mut cmd = std::process::Command::new(&rt.bin);
+    cmd.args([
+        "exec",
+        "--quiet",
+        sandbox,
+        "--",
+        "sh",
+        "-c",
+        "cat /proc/sys/kernel/random/boot_id",
+    ]);
+    let out = run_bounded(cmd, GUEST_QUERY_TIMEOUT)?;
+    if !out.status.success() {
+        return None;
+    }
+    let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!id.is_empty()).then_some(id)
 }
 
 /// Run one line of shell in the guest, reporting whether it succeeded.
@@ -2184,7 +2270,23 @@ fn wait_exec(
                 if std::time::Instant::now() >= deadline {
                     timed_out = true;
                     let _ = child.kill();
-                    break child.wait().map_err(H5iError::Io)?;
+                    let _ = child.wait();
+                    // Return **without joining**, for the reason `run_bounded`
+                    // gives: if anything the killed client left behind still
+                    // holds the pipe's write end, joining blocks forever and
+                    // `box run` hangs past its own wall clock with no error —
+                    // the exact failure this deadline exists to prevent.
+                    return Ok(ExecOutcome {
+                        stdout: Vec::new(),
+                        stderr: b"(output dropped: the microVM exec overran its deadline)\n"
+                            .to_vec(),
+                        exit_code: None,
+                        timed_out,
+                        wall_ms: 0,
+                        cpu_ms: 0,
+                        max_rss_kb: None,
+                        egress: None,
+                    });
                 }
                 std::thread::sleep(poll);
                 poll = (poll * 2).min(POLL_MAX);
@@ -3058,12 +3160,25 @@ mod tests {
         }
     }
 
+    /// Only a well-formed list that does not mention the guest is `Absent`.
+    /// Anything we could not read is `Unknown`, because `Absent` is answered
+    /// with `create --replace`, which destroys a running guest.
     #[test]
-    fn unparseable_or_empty_list_output_reads_as_absent() {
-        assert_eq!(parse_guest_state("", "g"), GuestState::Absent);
+    fn only_a_readable_list_can_say_a_guest_is_absent() {
         assert_eq!(parse_guest_state("[]", "g"), GuestState::Absent);
-        assert_eq!(parse_guest_state("not json", "g"), GuestState::Absent);
-        assert_eq!(parse_guest_state(r#"{"name":"g"}"#, "g"), GuestState::Absent);
+        assert_eq!(
+            parse_guest_state(r#"[{"name":"other","status":"Running"}]"#, "g"),
+            GuestState::Absent
+        );
+        // Unreadable in various ways — none of these may read as "no guest".
+        assert_eq!(parse_guest_state("", "g"), GuestState::Unknown);
+        assert_eq!(parse_guest_state("not json", "g"), GuestState::Unknown);
+        assert_eq!(parse_guest_state(r#"{"name":"g"}"#, "g"), GuestState::Unknown);
+        assert_eq!(
+            parse_guest_state("warning: something\n[]", "g"),
+            GuestState::Unknown,
+            "a banner on stdout must not read as an empty list"
+        );
     }
 
     /// "Could not ask" and "not running" must stay distinguishable, because
@@ -3079,14 +3194,13 @@ mod tests {
             GuestState::Stopped
         );
         // Both of those are *answers* — the guest is gone or halted, so
-        // anything inside it is too. Only a runtime that never answered is
-        // `Unknown`, and that value cannot be produced by parsing at all: it
-        // exists solely for the call failing or timing out.
-        for text in ["", "not json", "[]", r#"[{"name":"g","status":"Running"}]"#] {
-            assert_ne!(
+        // anything inside it is too, and `service_state` maps them to
+        // `Some(false)`. Output we could not read is not an answer.
+        for text in ["", "not json", r#"{"name":"g"}"#] {
+            assert_eq!(
                 parse_guest_state(text, "g"),
                 GuestState::Unknown,
-                "parsing must never invent Unknown from output it did receive"
+                "unreadable output must not be mistaken for an answer"
             );
         }
     }

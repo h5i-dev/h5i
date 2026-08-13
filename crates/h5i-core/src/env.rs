@@ -2967,19 +2967,18 @@ fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
             continue;
         };
         // Deliberately `dynamic_port` and **not** [`service_port`], which falls
-        // back to the declared port. Two reasons, both load-bearing:
+        // back to the declared port: these become *host-side* loopback grants,
+        // and a guest service's port is bound inside the box's own network
+        // stack, so granting it on the host would open a port belonging to
+        // nothing. The asymmetry is the correctness, not an oversight to tidy.
         //
-        // - These become host-side loopback grants. A guest service's port is
-        //   bound inside the box's own network stack, so granting it on the
-        //   host would open a port that has nothing to do with this box.
-        // - `pid_alive` is a *host* pid check. A guest record must never reach
-        //   it, and `dynamic_port` being `None` for guest records is what keeps
-        //   it out of this branch.
-        //
-        // So this is not an oversight to tidy into consistency with
-        // `service_port`; the asymmetry is the correctness.
+        // Liveness goes through [`service_alive`] all the same. It used to call
+        // `pid_alive` directly, which was safe only because `dynamic_port` is
+        // `None` for guest records today — an accident of ordering, not an
+        // invariant, and one that port forwarding would quietly break by
+        // testing a guest pid against the host's pid table.
         if let Some(port) = rec.dynamic_port
-            && pid_alive(rec.pid)
+            && service_alive(&rec)
         {
             out.push(port);
         }
@@ -4521,8 +4520,16 @@ fn prepare_box_reach(
     work: &Path,
     policy: &mut sandbox::ResolvedPolicy,
     cache_write: Option<(&Path, &Path)>,
+    capture_spool: bool,
 ) -> Result<BoxReachEnv, H5iError> {
-    let capture_env = prepare_env_capture_spool(h5i_root, m, policy)?;
+    // An observer session captures nothing (it changes nothing), so it gets no
+    // spool. Every other difference between callers would be a different guest,
+    // which is why this is a parameter rather than a second copy of the block.
+    let capture_env = if capture_spool {
+        prepare_env_capture_spool(h5i_root, m, policy)?
+    } else {
+        Vec::new()
+    };
     match cache_write {
         // A refresh box: this one cache is writable, at the same path the
         // read-only mount will later expose, so what is fetched is exactly what
@@ -4740,7 +4747,7 @@ fn run_inner(
         None,
     )?;
     let (env_capture_env, env_inbox_env) =
-        prepare_box_reach(h5i_root, m, &work, &mut policy, cache_write)?;
+        prepare_box_reach(h5i_root, m, &work, &mut policy, cache_write, true)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     announce_unmapped_resources(&policy);
 
@@ -5127,14 +5134,13 @@ pub fn shell(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
         session_root.as_deref().map(|r| r.join("home")).as_deref(),
     )?;
-    // An observer captures nothing (it changes nothing) — no capture spool.
-    let env_capture_env = if readonly {
-        Vec::new()
-    } else {
-        prepare_env_capture_spool(h5i_root, m, &mut policy)?
-    };
-    let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
-    prepare_cache_mounts(h5i_root, &work, &mut policy);
+    // Through the same function `run` and `service start` use. Open-coding the
+    // same four steps here worked only for as long as the two lists happened to
+    // match: the next mount added to `prepare_box_reach` would have been absent
+    // from a session, giving it a different guest name and reaping the guest
+    // `box run` was using — with any service in it.
+    let (env_capture_env, env_inbox_env) =
+        prepare_box_reach(h5i_root, m, &work, &mut policy, None, !readonly)?;
     let cargo_env = match &session_root {
         // `$WORK` is read-only for an observer, so cargo's default target dir
         // (`$WORK/.h5i/cargo-target`) is unwritable — point it at the scratch.
@@ -5187,8 +5193,7 @@ pub fn shell(
             },
         ),
     );
-    // Host-side `h5i box allow` extras + the explained-egress line.
-    apply_user_egress(&mut policy);
+    // `apply_user_egress` already ran inside `prepare_box_reach`.
     announce_unmapped_resources(&policy);
 
     // No command given → launch an interactive shell. Rather than inherit the
@@ -6985,7 +6990,17 @@ pub enum ServiceRuntime {
     /// the runtime. `sandbox` is the guest's name; if it is no longer the box's
     /// current guest, the service is dead by construction — a policy change
     /// rotated the guest out from under it.
-    Guest { sandbox: String },
+    ///
+    /// `boot` is that guest's kernel boot identity. The name alone is not
+    /// enough: a guest keeps it across `stop`/`start` while its pids restart
+    /// from 1, so without this a stale record could match an unrelated process
+    /// in the guest's next life — refusing a start that should succeed, and
+    /// signalling a process group that was never ours.
+    Guest {
+        sandbox: String,
+        #[serde(default)]
+        boot: String,
+    },
 }
 
 /// A service's record plus liveness — for `env service status` / `env ports`.
@@ -7033,7 +7048,9 @@ fn service_port(rec: &ServiceRecord) -> Option<u16> {
 fn service_alive(rec: &ServiceRecord) -> bool {
     match &rec.runtime {
         ServiceRuntime::Host => pid_alive(rec.pid),
-        ServiceRuntime::Guest { sandbox } => h5i_sandbox::microvm::service_alive(sandbox, rec.pid),
+        ServiceRuntime::Guest { sandbox, boot } => {
+            h5i_sandbox::microvm::service_alive(sandbox, rec.pid, boot)
+        }
     }
 }
 
@@ -7230,7 +7247,8 @@ pub fn service_start(
     // gives this path its own guest and reaps the one `box run` is using — with
     // whatever services were running in it. The injected vars are dropped: a
     // service is not a captured run and has no receipt to write into.
-    let (_capture_env, _inbox_env) = prepare_box_reach(h5i_root, m, &work, &mut policy, None)?;
+    let (_capture_env, _inbox_env) =
+        prepare_box_reach(h5i_root, m, &work, &mut policy, None, true)?;
     // And the same interactive config lockdown, for the same reason twice over:
     // a service must not be able to rewrite the agent's hook config any more
     // than a run can, *and* those files being present is what puts their mounts
@@ -7306,9 +7324,9 @@ pub fn service_start(
         port: def.port,
         dynamic_port,
         log: log.display().to_string(),
-        runtime: match handle.sandbox {
-            Some(sandbox) => ServiceRuntime::Guest { sandbox },
-            None => ServiceRuntime::Host,
+        runtime: match (handle.sandbox, handle.boot) {
+            (Some(sandbox), Some(boot)) => ServiceRuntime::Guest { sandbox, boot },
+            _ => ServiceRuntime::Host,
         },
     };
     atomic_write(
@@ -7335,7 +7353,7 @@ pub fn service_start(
                 where_ = match &rec.runtime {
                     // A reader of the event log must be able to tell a host pid
                     // from a guest pid; the numbers alone cannot.
-                    ServiceRuntime::Guest { sandbox } => format!(" guest={sandbox}"),
+                    ServiceRuntime::Guest { sandbox, .. } => format!(" guest={sandbox}"),
                     ServiceRuntime::Host => String::new(),
                 }
             )),
@@ -7389,13 +7407,13 @@ pub fn service_stop(
                 }
             }
         }
-        ServiceRuntime::Guest { sandbox } => {
+        ServiceRuntime::Guest { sandbox, boot } => {
             // Tri-state on purpose. Reading "the runtime did not answer" as
             // "already dead" would skip the signal and then delete the record
             // below, leaving the service running in the guest with nothing on
             // the host that knows it exists. Refuse instead, and keep the
             // record so the stop can be retried.
-            let alive = h5i_sandbox::microvm::service_state(sandbox, rec.pid).ok_or_else(|| {
+            let alive = h5i_sandbox::microvm::service_state(sandbox, rec.pid, boot).ok_or_else(|| {
                 H5iError::Metadata(format!(
                     "could not ask the microVM guest '{sandbox}' whether service '{name}' is \
                      still running — refusing to drop its record, because that would orphan a \
@@ -7405,12 +7423,12 @@ pub fn service_stop(
             if alive {
                 h5i_sandbox::microvm::service_signal(sandbox, rec.pid, "TERM");
                 for _ in 0..30 {
-                    if !h5i_sandbox::microvm::service_alive(sandbox, rec.pid) {
+                    if !h5i_sandbox::microvm::service_alive(sandbox, rec.pid, boot) {
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
-                if h5i_sandbox::microvm::service_alive(sandbox, rec.pid) {
+                if h5i_sandbox::microvm::service_alive(sandbox, rec.pid, boot) {
                     h5i_sandbox::microvm::service_signal(sandbox, rec.pid, "KILL");
                 }
             }
@@ -9132,6 +9150,46 @@ pub fn rm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pid is only meaningful inside the namespace that issued it, so the
+    /// record has to say which one — and has to keep parsing records written
+    /// before it did.
+    #[test]
+    fn a_service_record_says_whose_pid_it_holds() {
+        // A record from before the microvm tier had services: no `runtime` key
+        // at all. It must read as a host process, not fail to parse and not
+        // silently become a guest pid somebody might signal.
+        let legacy = r#"{"name":"web","pid":4242,"command":"npm run dev",
+            "started_at":"2026-08-14T00:00:00Z","port":3000,"dynamic_port":51234,
+            "log":"/tmp/web.log"}"#;
+        let rec: ServiceRecord = serde_json::from_str(legacy).expect("legacy record parses");
+        assert_eq!(rec.runtime, ServiceRuntime::Host);
+
+        // A guest record round-trips with the guest's identity *and* its boot,
+        // which is what keeps the pid meaningful across a restart.
+        let guest = ServiceRecord {
+            runtime: ServiceRuntime::Guest {
+                sandbox: "h5i-human-web-abc123".into(),
+                boot: "7488c2c3-0000-0000-0000-000000000000".into(),
+            },
+            ..rec.clone()
+        };
+        let text = serde_json::to_string(&guest).unwrap();
+        let back: ServiceRecord = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.runtime, guest.runtime);
+
+        // A guest record written before the boot id existed still parses, and
+        // its empty boot can never equal a real one — so it reads as dead
+        // rather than as a pid somebody may signal.
+        let no_boot = r#"{"name":"web","pid":42,"command":"x","started_at":"t",
+            "port":null,"dynamic_port":null,"log":"/tmp/x",
+            "runtime":{"kind":"guest","sandbox":"g"}}"#;
+        let rec: ServiceRecord = serde_json::from_str(no_boot).expect("parses");
+        match rec.runtime {
+            ServiceRuntime::Guest { boot, .. } => assert!(boot.is_empty()),
+            ServiceRuntime::Host => panic!("must stay a guest record"),
+        }
+    }
 
     /// Every supported platform must be able to prove whose pid a record is.
     ///

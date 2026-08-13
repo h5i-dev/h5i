@@ -2084,12 +2084,20 @@ pub struct BackgroundHandle {
     /// `None` → a host process, signalable directly. `Some(name)` → a process
     /// inside that microVM guest, reachable only through the runtime.
     pub sandbox: Option<String>,
+    /// The guest's boot identity when the service started. A guest keeps its
+    /// name across `stop`/`start` but restarts its pids from 1, so without this
+    /// a stale record can match an unrelated process in the guest's next life.
+    pub boot: Option<String>,
 }
 
 impl BackgroundHandle {
     /// A service running as a host process (the kernel tiers).
     pub fn host(pid: u32) -> Self {
-        BackgroundHandle { pid, sandbox: None }
+        BackgroundHandle {
+            pid,
+            sandbox: None,
+            boot: None,
+        }
     }
 }
 

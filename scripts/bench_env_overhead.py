@@ -73,6 +73,13 @@ def _true_binary() -> str:
     return found
 
 
+# The no-op probe runs in two different filesystems. `/usr/bin/true` exists on
+# macOS but not in every Linux image; `/bin/true` exists in Debian- and
+# Alpine-based images alike but not on macOS. Resolving one path on the host and
+# then executing it *inside a guest* is how this script used to abort the whole
+# sweep — for `microvm`, the tier it exists to measure.
+GUEST_TRUE = "/bin/true"
+
 WORKLOADS: dict[str, list[str]] = {
     # Fixed-cost probe. The workload does nothing, so what is left is the cost
     # of setting the tier up and tearing it down: the per-command tax, and the
@@ -196,9 +203,21 @@ def measure_bare(argv: list[str]) -> tuple[float, float | None]:
     return elapsed, None
 
 
+def guest_argv(argv: list[str]) -> list[str]:
+    """The same workload, spelled for the box's filesystem rather than the host's.
+
+    Only the no-op probe differs today: it is an absolute path, and the two
+    filesystems do not agree on it. `python3` is left as a bare name so `PATH`
+    resolves it wherever it lives.
+    """
+    if argv and argv[0].endswith("/true"):
+        return [GUEST_TRUE, *argv[1:]]
+    return argv
+
+
 def measure_boxed(binary: str, box: str, argv: list[str]) -> tuple[float, float | None]:
     """One `box run`, timed from outside and read from h5i's own envelope."""
-    full = [binary, "env", "run", "--json", box, "--", *argv]
+    full = [binary, "env", "run", "--json", box, "--", *guest_argv(argv)]
     start = time.perf_counter_ns()
     proc = subprocess.run(full, capture_output=True, text=True)
     elapsed = (time.perf_counter_ns() - start) / 1_000_000
