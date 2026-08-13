@@ -335,6 +335,21 @@ pub struct Signals {
     pub weak_isolation: bool,
     /// Runs exist and none of them was host-observed.
     pub box_claimed_only: bool,
+    /// Share sessions on this log: times somebody outside was let in to a port
+    /// inside the box.
+    ///
+    /// Deliberately outside the verdict. Letting a peer in is something an
+    /// operator did on purpose, and a screen that turned amber for it would be
+    /// grading an intent rather than reporting a boundary trip. It is counted
+    /// so the pane can *say* it happened, which is a different job.
+    pub shares: usize,
+    /// Of those, the ones whose traffic a third party could read — anything
+    /// but `p2p`, decided by [`crate::receipt::ShareEvidence::third_party_can_read`] rather
+    /// than re-derived here, so one rule answers this question everywhere.
+    pub shares_third_party_readable: usize,
+    /// Distinct peers admitted across every recorded share, including any past
+    /// an individual receipt's record cap.
+    pub share_peers: u64,
 }
 
 fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
@@ -373,6 +388,13 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         }
         if let Some(b) = &r.browser {
             s.browser_issues += b.console.len() + b.errors.len() + b.failed_requests.len();
+        }
+        if let Some(sh) = &r.share {
+            s.shares += 1;
+            if sh.third_party_can_read() {
+                s.shares_third_party_readable += 1;
+            }
+            s.share_peers += sh.peers;
         }
     }
     denied_hosts.truncate(DENIED_HOSTS_CAP);
@@ -1077,6 +1099,50 @@ mod tests {
         // all, which is the grey "the box told us this" badge — for the one
         // lane the box cannot touch.
         assert!(HOST_OBSERVED_LANES.contains(&"share"));
+    }
+
+    #[test]
+    fn ended_shares_are_counted_without_grading_the_box() {
+        // The evidence a share leaves behind was on the receipt and nowhere the
+        // console could reach it: the pane knew a box was shared *now* and
+        // forgot the moment the share ended, which is the moment the record
+        // finally exists.
+        let m = manifest("container");
+        let share = |transport: &str, peers: u64| {
+            let mut r = receipt("share", 0);
+            r.share = Some(crate::receipt::ShareEvidence {
+                transport: transport.into(),
+                port: 3000,
+                peers,
+                seconds: 61,
+                turned_away: 1,
+            });
+            r
+        };
+
+        let s = signals(&m, &[share("p2p", 2), share("tunnel", 1)]);
+        assert_eq!(s.shares, 2);
+        assert_eq!(s.share_peers, 3);
+        // The transport is read as a field. Recovering it from the rendered
+        // command line is what reported a P2P share of a box called `tunnel`
+        // as Cloudflare-terminated.
+        assert_eq!(s.shares_third_party_readable, 1);
+
+        // And none of it moves the verdict. A share is an operator letting
+        // somebody in on purpose, not the boundary saying no.
+        assert_eq!(s.verdict, "clean");
+        assert_eq!(s.failed, 0);
+
+        // A transport this h5i does not know is not a promise of end-to-end
+        // encryption, and the count follows the same rule the receipt does.
+        let unknown = signals(&m, &[share("something-later", 1)]);
+        assert_eq!(unknown.shares_third_party_readable, 1);
+
+        // A box that was never shared says nothing at all.
+        let quiet = signals(&m, &[receipt("host-env-run", 0)]);
+        assert_eq!(quiet.shares, 0);
+        assert_eq!(quiet.share_peers, 0);
+        assert_eq!(quiet.shares_third_party_readable, 0);
     }
 
     #[test]

@@ -23,6 +23,59 @@
   overflow: hidden;
 }
 
+/* ── two views of one console, switched without script ──
+ *
+ * The plate can carry tabs: the fleet screen, and the browser terminal a box
+ * with a browser in it gets. Radio inputs and their labels, because a figure
+ * that needs JavaScript to show its second half shows nothing while the script
+ * is still in flight — and because arrow keys move between radios for free.
+ *
+ * Positional rather than by id: the nth input checks the nth label and shows
+ * the nth view, so a page adds a tab by adding a pair and nothing here changes.
+ * Two is what the front page needs; the rules below carry four.
+ */
+.tabpick {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.console-tabs { display: flex; flex-wrap: wrap; background: var(--bg); }
+.console-tabs label {
+  padding: 0.7em 1.2em;
+  border-right: 1px solid var(--line2);
+  border-bottom: 1px solid var(--line2);
+  font-family: var(--mono); font-size: 12px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--faint); cursor: pointer;
+}
+.console-tabs label:hover { color: var(--dim); }
+.console-views > .console-view { display: none; }
+
+.tabpick:nth-of-type(1):checked ~ .console-tabs label:nth-of-type(1),
+.tabpick:nth-of-type(2):checked ~ .console-tabs label:nth-of-type(2),
+.tabpick:nth-of-type(3):checked ~ .console-tabs label:nth-of-type(3),
+.tabpick:nth-of-type(4):checked ~ .console-tabs label:nth-of-type(4) {
+  color: var(--ink);
+  background: var(--panel);
+  border-bottom-color: transparent;
+}
+.tabpick:nth-of-type(1):checked ~ .console-views > .console-view:nth-of-type(1),
+.tabpick:nth-of-type(2):checked ~ .console-views > .console-view:nth-of-type(2),
+.tabpick:nth-of-type(3):checked ~ .console-views > .console-view:nth-of-type(3),
+.tabpick:nth-of-type(4):checked ~ .console-views > .console-view:nth-of-type(4) {
+  display: block;
+}
+/* The input is off-screen, so the ring has to land on its label or a keyboard
+   reader loses the selection entirely. */
+.tabpick:nth-of-type(1):focus-visible ~ .console-tabs label:nth-of-type(1),
+.tabpick:nth-of-type(2):focus-visible ~ .console-tabs label:nth-of-type(2),
+.tabpick:nth-of-type(3):focus-visible ~ .console-tabs label:nth-of-type(3),
+.tabpick:nth-of-type(4):focus-visible ~ .console-tabs label:nth-of-type(4) {
+  outline: 2px solid var(--spot-solid);
+  outline-offset: -2px;
+}
+
 .console {
   /* the one control: everything below is em-relative to this */
   font-size: clamp(5.5px, 1.02cqw, 13px);
@@ -182,6 +235,146 @@
 .pol .val { color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pol .val.on { color: var(--green); }
 
+/* a share admitting somebody into a box right now. Its own line in the row,
+   and never red: red on this screen is enforcement that fired, and nothing was
+   refused here — a door is standing open because somebody opened it. */
+.console-row .shared {
+  grid-column: 1 / -1;
+  color: var(--warn); font-size: 0.85em;
+}
+
+/* ── the browser terminal ──────────────────────────────────────
+ *
+ * The second view: for a box with a browser in it, what that browser did.
+ * Structure and wording follow web/src/BrowserTerminal.tsx, including the two
+ * labels every row carries — the lane that observed it, and how complete that
+ * record is. Both are words here for the same reason they are words there: the
+ * colour carries severity, provenance is not severity, and a reader who is
+ * colour-blind or looking at a screenshot still has to be able to tell.
+ */
+.bt {
+  font-size: clamp(5.5px, 1.02cqw, 13px);
+  font-family: var(--mono);
+  line-height: 1.5;
+  color: var(--dim);
+  user-select: none;
+}
+
+/* the row the page cannot reach: host-derived values only */
+.bt-status {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4em 0.7em;
+  padding: 0.8em 1.2em;
+  border-bottom: 1px solid var(--line2);
+  background: var(--bg);
+  font-size: 0.92em;
+}
+.bt-badge {
+  color: var(--faint); font-size: 0.82em;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+.bt-val { color: var(--ink); margin-right: 0.6em; min-width: 0; max-width: 100%; }
+/* `min-width: 0` and a shrink factor, or the flex item's automatic minimum is
+   the whole URL: it refuses to shrink, the plate grows past the viewport, and
+   a phone gets a page that scrolls sideways. */
+.bt-val.url {
+  color: var(--dim); flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bt-val em { font-style: normal; color: var(--danger); }
+
+.bt-pane { border-bottom: 1px solid var(--line); min-width: 0; }
+.bt-pane header { padding: 0.6em 1.1em; border-bottom: 1px solid var(--line); background: var(--bg); }
+.bt-pane h3 {
+  margin: 0; color: var(--faint); font-size: 0.82em; font-weight: 400;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+/* What this pane's evidence actually is, said in the pane rather than in
+   documentation nobody reads while looking at a refusal. */
+.bt-pane header p { margin: 0.25em 0 0; color: var(--dim); font-size: 0.85em; line-height: 1.5; }
+
+.bt-page-body { padding: 1.1em; }
+
+/* ── the frame: the page the box rendered ──
+ *
+ * Drawn as a page, in a page's own palette, because that is what a frame is:
+ * pixels from inside the box, arriving on a screen made of everything else.
+ * The seam is the point — nothing in here is evidence, and the caption under
+ * it says so in the console's own words.
+ *
+ * Centred, and capped rather than stretched: a checkout page run out to the
+ * full width of a wide display stops looking like a page somebody opened.
+ */
+.bt-frame { margin: 0 auto; min-width: 0; max-width: 42em; }
+.bt-shot {
+  border: 1px solid var(--line2);
+  background: #f4f5f7;
+  color: #14141a;
+  font-family: var(--sans);
+  font-size: 1.05em; line-height: 1.4;
+}
+.shot-nav {
+  display: flex; align-items: baseline; gap: 1em;
+  padding: 0.55em 0.9em;
+  border-bottom: 1px solid #d9dbe0; background: #fff;
+  font-size: 0.85em; color: #6b6f78;
+}
+.shot-nav b { color: #14141a; letter-spacing: -0.02em; }
+.shot-nav .on { color: #14141a; box-shadow: inset 0 -2px 0 var(--spot-solid); }
+.shot-body { padding: 0.9em 1em 1.1em; }
+.shot-body h4 { margin: 0 0 0.7em; font-size: 1.25em; font-weight: 700; letter-spacing: -0.02em; }
+.shot-line {
+  display: flex; justify-content: space-between; gap: 1em;
+  padding: 0.4em 0; border-bottom: 1px solid #e3e5ea;
+  font-size: 0.9em; color: #43474f;
+}
+.shot-line b { color: #14141a; font-weight: 500; }
+.shot-line.total { border-bottom: 0; margin-top: 0.2em; font-size: 1em; color: #14141a; }
+/* The symptom the console pane names one column over: `total is undefined`
+   threw, so the page rendered this instead of a number. */
+.shot-line .broken { color: #b0121a; font-weight: 700; }
+.shot-pay {
+  margin-top: 0.8em; padding: 0.5em 1em;
+  background: #14141a; color: #fff;
+  font-size: 0.9em; text-align: center;
+}
+.shot-foot { margin-top: 0.6em; color: #83878f; font-size: 0.78em; }
+.bt-frame figcaption { margin-top: 0.4em; color: var(--faint); font-size: 0.78em; line-height: 1.5; }
+
+.bt-tabs { display: flex; flex-wrap: wrap; background: var(--bg); border-bottom: 1px solid var(--line2); }
+.bt-tabs span {
+  padding: 0.5em 0.9em; border-right: 1px solid var(--line);
+  color: var(--faint); font-size: 0.85em;
+}
+.bt-tabs span.on { color: var(--ink); background: var(--panel); }
+.bt-tabs b { margin-left: 0.5em; color: var(--faint); font-weight: 400; }
+
+.bt-panes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.bt-panes > .bt-pane { border-right: 1px solid var(--line); }
+.bt-panes > .bt-pane:nth-child(2n) { border-right: 0; }
+.bt-rows { padding: 0.3em 0; }
+
+.bt-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.6em; align-items: baseline;
+  padding: 0.35em 1.1em;
+  font-size: 0.88em;
+}
+.bt-row .text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the link a source actually carried, never one inferred from timing */
+.bt-row .cause { color: var(--faint); font-size: 0.9em; }
+.bt-row.ok .text { color: var(--dim); }
+.bt-row.action .text { color: var(--ink); }
+.bt-row.warn .text { color: var(--warn); }
+.bt-row.error .text,
+.bt-row.refused .text { color: var(--danger); }
+
+.prov { display: inline-flex; gap: 0.3em; }
+.prov .lane, .prov .grade { border: 1px solid var(--line2); padding: 0 0.35em; font-size: 0.85em; }
+.prov .lane.host { color: var(--dim); }
+.prov .lane.box { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.prov .grade.closed { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+.prov .grade.effort { color: var(--faint); }
+
 /* Below the point where five lanes stop being legible, the console becomes the
    fleet alone. A shrunken-to-illegible screenshot is worse than a smaller one
    that still says something. */
@@ -190,4 +383,12 @@
   .console-detail { display: none; }
   .console { font-size: clamp(8px, 2.1cqw, 13px); }
   .console-vitals { margin-left: 0; }
+  /* Two tabs, one row, split evenly: left-aligned they wrap, and a tab strip
+     whose second tab sits on its own line under a gap reads as two things. */
+  .console-tabs label { flex: 1 1 0; text-align: center; padding: 0.7em 0.6em; font-size: 11px; }
+  /* The browser terminal keeps every pane — its panes are rows of text, which
+     stack down to a phone; it is the five-lane grid that does not. */
+  .bt { font-size: clamp(8px, 2.1cqw, 13px); }
+  .bt-panes { grid-template-columns: minmax(0, 1fr); }
+  .bt-panes > .bt-pane { border-right: 0; }
 }

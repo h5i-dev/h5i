@@ -71,6 +71,40 @@ export interface BrowserEvidence {
   unavailable?: boolean;
 }
 
+/**
+ * What an ingress session was — `h5i_core::receipt::ShareEvidence`. Present on
+ * a receipt whose `source` is `share`, and on no other.
+ *
+ * Host-observed without qualification: h5i owned both ends of the bridge and
+ * the box supplied none of it.
+ */
+export interface ShareEvidence {
+  /** `p2p` or `tunnel`, as `h5i-share` recorded it. */
+  transport: string;
+  /** The port inside the box that was exposed. */
+  port: number;
+  /** Distinct peers admitted, including any past the receipt's record cap. */
+  peers: number;
+  /** How long the share ran, from the monotonic clock. */
+  seconds: number;
+  /** Connections refused before a ticket was weighed at all. */
+  turned_away?: number;
+}
+
+/**
+ * Can a third party read this share's traffic?
+ *
+ * The rule is `ShareEvidence::third_party_can_read` in `h5i-core`, mirrored
+ * here for the per-row case; the fleet-wide counts in {@link Signals} are
+ * computed by that method itself. Read off the transport *field* — recovering
+ * it from the rendered command line is what once reported a plain P2P share of
+ * a box named `tunnel` as Cloudflare-terminated. A transport this console does
+ * not know is not a promise of end-to-end encryption, so it answers true.
+ */
+export function thirdPartyCanRead(share: ShareEvidence): boolean {
+  return share.transport !== "p2p";
+}
+
 /** One observed execution — `h5i_core::receipt::ExecRecord`. */
 export interface ExecRecord {
   id: string;
@@ -90,6 +124,7 @@ export interface ExecRecord {
   files?: string[];
   egress?: EgressSummary;
   browser?: BrowserEvidence;
+  share?: ShareEvidence;
   redactions?: string[];
   raw_oid: string;
   raw_size: number;
@@ -114,6 +149,12 @@ export interface Signals {
   verdict: Verdict;
   weak_isolation: boolean;
   box_claimed_only: boolean;
+  /** Ended share sessions on this log. Never folded into the verdict. */
+  shares: number;
+  /** Of those, the ones a third party could read. */
+  shares_third_party_readable: number;
+  /** Distinct peers admitted across every recorded share. */
+  share_peers: number;
 }
 
 /** A share serving this box right now. Absent when nobody is being let in. */

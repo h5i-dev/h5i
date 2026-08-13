@@ -248,6 +248,24 @@ body.sbx-dragging {
 .sbx-drift {
   color: var(--bp-orange);
 }
+/* a share admitting somebody right now. Not red — red is reserved for
+   enforcement firing, and nothing was refused here: a door is standing open
+   because an operator opened it. Bright enough to read without hovering,
+   which is the whole point of it no longer being drift-coloured grey. */
+.sbx-shared {
+  /* Its own line rather than another ` · ` clause: the fleet column is narrow,
+     and a nowrap run of facts wedged into the tail of the drift line pushed
+     the run count onto a line of its own. */
+  display: block;
+  color: var(--bp-violet);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sbx-shared.relayed {
+  color: var(--bp-orange);
+}
 .sbx-status {
   font-size: 12px;
   color: var(--bp-text-muted);
@@ -397,6 +415,16 @@ body.sbx-dragging {
   align-items: center;
   gap: 4px;
   flex-wrap: wrap;
+}
+/* the facts of an ended share, under its receipt row. The security claim is
+   words, not a colour: the colour only says which of the two it is. */
+.sbx-run-share {
+  font-size: 10px;
+  color: var(--bp-violet);
+  margin-top: 2px;
+}
+.sbx-run-share.relayed {
+  color: var(--bp-orange);
 }
 .sbx-source {
   font-size: 9px;
