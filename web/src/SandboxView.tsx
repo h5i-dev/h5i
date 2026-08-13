@@ -25,7 +25,10 @@ import {
   type EnvEvent,
   type ExecRecord,
   type ServiceStatus,
+  type ShareEvidence,
+  type SharedNow,
   type Signals,
+  thirdPartyCanRead,
 } from "./api";
 
 // The box console: a read-only operator view of the h5i fleet. It answers, at
@@ -503,12 +506,7 @@ function FleetPane(props: {
                         </span>
                       ) : null}
                       {b.shared_now ? (
-                        <span
-                          className="sbx-drift"
-                          title={`somebody outside can reach port ${b.shared_now.port} inside this box right now, over ${b.shared_now.transport} (${b.shared_now.grants} live ticket(s)). The receipt for it lands when the share ends.`}
-                        >
-                          {" · shared now"}
-                        </span>
+                        <SharedNowChip shared={b.shared_now} />
                       ) : null}
                       {b.stale_running ? (
                         <span
@@ -577,6 +575,38 @@ function IsolationTag({
     >
       {isolation}
     </Tag>
+  );
+}
+
+/**
+ * A share admitting somebody into this box right now.
+ *
+ * The one lane that lets a stranger *in*, and it used to be four dim grey
+ * words in the drift line with every fact behind a hover. On a screen whose
+ * job is saying what is pressing on a boundary, the reader should not have to
+ * find the tooltip to learn which port is open and over what. The transport is
+ * named on the row, because `p2p` and `tunnel` are different security claims
+ * and only one of them is end to end.
+ *
+ * Not red: the fleet's red means enforcement fired. Nothing was refused here —
+ * an operator opened a door on purpose, and it is standing open.
+ */
+function SharedNowChip({ shared }: { shared: SharedNow }) {
+  const relayed = shared.transport !== "p2p";
+  return (
+    <span
+      className={"sbx-shared" + (relayed ? " relayed" : "")}
+      title={
+        `somebody outside can reach port ${shared.port} inside this box right now, ` +
+        `over ${shared.transport}, on ${shared.grants} live ticket(s).` +
+        (relayed
+          ? "\nThis transport is relayed: it is not end-to-end encrypted, and a third party terminates TLS."
+          : "\nDirect peer to peer: no relay carries the application bytes.") +
+        "\nThe receipt lands when the share ends."
+      }
+    >
+      ⇄ shared :{shared.port} {shared.transport}
+    </span>
   );
 }
 
@@ -768,7 +798,15 @@ function DetailPane({ box, tick }: { box: BoxRow | null; tick: number }) {
 
 function SignalSummary({ box }: { box: BoxRow }) {
   const s = box.signals;
+  // Enforcement notes, and only those, decide whether the green "nothing to
+  // report" line appears. Share notes sit outside that list: a box can have
+  // been shared and still have run clean, and folding the two together would
+  // have let an ingress session silently delete the summary of the runs.
   const notes: ReactElement[] = [];
+  // A share admitting somebody *now* leads the pane; a record of shares that
+  // have ended trails it, behind anything enforcement had to say.
+  const live: ReactElement[] = [];
+  const history: ReactElement[] = [];
 
   if (s.egress_denied > 0) {
     notes.push(
@@ -799,6 +837,41 @@ function SignalSummary({ box }: { box: BoxRow }) {
           : ""}
         . A failing command is not a boundary trip — it is just a failing
         command.
+      </Callout>,
+    );
+  }
+  // First on the pane, ahead of every enforcement note: a door standing open
+  // right now outranks a record of what already happened, and it is the only
+  // fact here that can change while the reader is looking at it.
+  if (box.shared_now) {
+    const sn = box.shared_now;
+    const relayed = sn.transport !== "p2p";
+    live.push(
+      <Callout
+        key="shared-now"
+        intent="warning"
+        icon="globe-network"
+        className="sbx-callout"
+      >
+        Somebody outside can reach port <Code>{sn.port}</Code> inside this box
+        right now, over <Code>{sn.transport}</Code>, on {sn.grants} live ticket
+        {sn.grants === 1 ? "" : "s"}.{" "}
+        {relayed
+          ? "This transport is relayed — a third party terminates TLS, so it is not end-to-end encrypted."
+          : "Direct peer to peer — no relay carries the application bytes."}{" "}
+        The receipt for it lands when the share ends.
+      </Callout>,
+    );
+  }
+  if (s.shares > 0) {
+    history.push(
+      <Callout key="shares" icon="exchange" className="sbx-callout">
+        {s.shares} share session{s.shares === 1 ? "" : "s"} admitted{" "}
+        {s.share_peers} peer{s.share_peers === 1 ? "" : "s"} into this box.{" "}
+        {s.shares_third_party_readable > 0
+          ? `${s.shares_third_party_readable} of them ran over a relayed transport, so a third party could read that traffic.`
+          : "All of them ran peer to peer."}{" "}
+        Each one is a receipt below, host-observed.
       </Callout>,
     );
   }
@@ -833,7 +906,7 @@ function SignalSummary({ box }: { box: BoxRow }) {
       </Callout>,
     );
   }
-  return <div className="sbx-findings">{notes}</div>;
+  return <div className="sbx-findings">{[...live, ...notes, ...history]}</div>;
 }
 
 function Services({ services }: { services: ServiceStatus[] }) {
@@ -1001,6 +1074,7 @@ function TimelineRow({
             {shortTime(r.timestamp)}
             {r.redactions && r.redactions.length > 0 ? " · redacted" : ""}
           </div>
+          {r.share ? <ShareLine share={r.share} /> : null}
         </div>
         {LANES.map((l) => (
           <div key={l.key} className="sbx-lane-cell">
@@ -1018,6 +1092,30 @@ function TimelineRow({
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * What an ended share was, spelled out under its row.
+ *
+ * The transport is the security claim, so it is stated in words rather than
+ * left to a colour or a hover: `tunnel` means a third party terminated TLS and
+ * could read every byte, and a reader who has to guess that from a row is a
+ * reader who will guess wrong. Read off the receipt's `share` field — the
+ * command line beside it contains the box's name, and a box called `tunnel`
+ * once made a plain peer-to-peer session read as relayed.
+ */
+function ShareLine({ share }: { share: ShareEvidence }) {
+  const relayed = thirdPartyCanRead(share);
+  return (
+    <div className={"sbx-run-share" + (relayed ? " relayed" : "")}>
+      ⇄ inbound · {share.transport} :{share.port} · {share.peers} peer
+      {share.peers === 1 ? "" : "s"} · {fmtSecs(share.seconds)}
+      {share.turned_away ? ` · ${share.turned_away} turned away` : ""} ·{" "}
+      {relayed
+        ? "a third party terminated TLS — not end-to-end encrypted"
+        : "direct peer to peer"}
+    </div>
   );
 }
 
@@ -1054,6 +1152,29 @@ function LaneVerdict({ lane, receipt }: { lane: LaneKey; receipt: ExecRecord }) 
       );
     }
     case "net": {
+      // A share is network activity in the one direction this lane never had a
+      // word for: inbound. It carries no egress summary, so the row for the
+      // only session that let a stranger reach the box rendered as an empty
+      // dot in every lane it has.
+      const sh = receipt.share;
+      if (sh) {
+        const relayed = thirdPartyCanRead(sh);
+        return (
+          <span
+            className={"sbx-verdict " + (relayed ? "warning" : "info")}
+            title={
+              `inbound: ${sh.peers} peer(s) admitted to port ${sh.port} over ${sh.transport}, ` +
+              `${fmtSecs(sh.seconds)}` +
+              (sh.turned_away ? `, ${sh.turned_away} connection(s) turned away` : "") +
+              (relayed
+                ? "\nRelayed transport: a third party terminated TLS, so this traffic was not end-to-end encrypted."
+                : "\nDirect peer to peer: no relay carried the application bytes.")
+            }
+          >
+            ⇄ {sh.peers} in
+          </span>
+        );
+      }
       const e = receipt.egress;
       if (!e) return <span className="sbx-verdict none">·</span>;
       if (e.denied > 0) {
@@ -1233,6 +1354,13 @@ function shortTime(ts: string): string {
 
 function fmtMs(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function fmtSecs(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m${s % 60 ? ` ${s % 60}s` : ""}`;
+  return `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
 }
 
 function fmtKb(kb: number): string {
