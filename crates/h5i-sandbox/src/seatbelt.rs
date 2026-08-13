@@ -395,13 +395,13 @@ fn path_aliases(path: &str) -> Vec<String> {
     }
     // The inverse: a policy that already names /private/... also matches the
     // firmlinked spelling, which is what a shell in the box will type.
-    if let Some(rest) = path.strip_prefix("/private") {
-        if ["/tmp", "/var", "/etc"]
+    if let Some(rest) = path.strip_prefix("/private")
+        && ["/tmp", "/var", "/etc"]
             .iter()
             .any(|p| rest == *p || rest.starts_with(&format!("{p}/")))
-        {
-            out.push(rest.to_string());
-        }
+
+    {
+        out.push(rest.to_string());
     }
     out
 }

@@ -42,12 +42,11 @@ pub fn sniff(bytes: &[u8], content_type: Option<&str>) -> &'static Encoding {
     if let Some((encoding, _)) = Encoding::for_bom(bytes) {
         return encoding;
     }
-    if let Some(header) = content_type {
-        if let Some(label) = charset_from_content_type(header) {
-            if let Some(encoding) = Encoding::for_label(label.trim().as_bytes()) {
-                return encoding;
-            }
-        }
+    if let Some(header) = content_type
+        && let Some(label) = charset_from_content_type(header)
+        && let Some(encoding) = Encoding::for_label(label.trim().as_bytes())
+    {
+        return encoding;
     }
     if let Some(encoding) = prescan(bytes) {
         return encoding;
@@ -117,23 +116,21 @@ fn prescan(bytes: &[u8]) -> Option<&'static Encoding> {
         at = end.max(start + 1);
 
         // `<meta charset="euc-jp">`
-        if let Some(label) = attribute(tag, "charset") {
-            if let Some(encoding) = Encoding::for_label(label.trim().as_bytes()) {
-                return Some(encoding);
-            }
+        if let Some(label) = attribute(tag, "charset")
+            && let Some(encoding) = Encoding::for_label(label.trim().as_bytes())
+        {
+            return Some(encoding);
         }
         // `<meta http-equiv="content-type" content="text/html; charset=euc-jp">`
         let is_content_type = attribute(tag, "http-equiv")
             .map(|value| value.trim().eq_ignore_ascii_case("content-type"))
             .unwrap_or(false);
-        if is_content_type {
-            if let Some(content) = attribute(tag, "content") {
-                if let Some(label) = charset_from_content_type(&content) {
-                    if let Some(encoding) = Encoding::for_label(label.trim().as_bytes()) {
-                        return Some(encoding);
-                    }
-                }
-            }
+        if is_content_type
+            && let Some(content) = attribute(tag, "content")
+            && let Some(label) = charset_from_content_type(&content)
+            && let Some(encoding) = Encoding::for_label(label.trim().as_bytes())
+        {
+            return Some(encoding);
         }
     }
     None

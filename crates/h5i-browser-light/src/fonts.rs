@@ -153,10 +153,10 @@ fn collect_font_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
         };
         if file_type.is_dir() {
             collect_font_files(&path, depth + 1, out);
-        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if FONT_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()) {
-                out.push(path);
-            }
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && FONT_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
+        {
+            out.push(path);
         }
     }
 }

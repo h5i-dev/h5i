@@ -400,10 +400,10 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
             }
         }
         // Pin DNS for a *hostname* (an IP literal needs no /etc/hosts entry).
-        if host.parse::<IpAddr>().is_err() {
-            if let Some(ip) = first_ip {
-                r.host_pins.push((host.to_string(), ip));
-            }
+        if host.parse::<IpAddr>().is_err()
+            && let Some(ip) = first_ip
+        {
+            r.host_pins.push((host.to_string(), ip));
         }
     }
     r
@@ -615,11 +615,11 @@ impl EgressNetns {
 impl Drop for EgressNetns {
     fn drop(&mut self) {
         // Stop the uplink first, so the helper has nothing left to supervise.
-        if let Ok(mut g) = self.slirp.lock() {
-            if let Some(mut c) = g.take() {
-                let _ = c.kill();
-                let _ = c.wait();
-            }
+        if let Ok(mut g) = self.slirp.lock()
+            && let Some(mut c) = g.take()
+        {
+            let _ = c.kill();
+            let _ = c.wait();
         }
         // Close the pid pipe's WRITE ends BEFORE joining. The helper parks in
         // `read(pid_r, .., 4)` waiting for the child to report its pid, and its

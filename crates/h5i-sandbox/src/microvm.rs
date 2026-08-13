@@ -1464,9 +1464,15 @@ mod tests {
     fn brokered_grants_win_over_the_env_pass_allowlist() {
         let mut pol = policy();
         pol.profile.env_pass = vec!["H5I_MICROVM_TEST_VAR".into()];
-        std::env::set_var("H5I_MICROVM_TEST_VAR", "from-host");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_MICROVM_TEST_VAR", "from-host");
+        }
         let env = guest_env(&pol, &[("H5I_MICROVM_TEST_VAR".into(), "brokered".into())]);
-        std::env::remove_var("H5I_MICROVM_TEST_VAR");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_MICROVM_TEST_VAR");
+        }
         assert_eq!(
             env,
             vec![("H5I_MICROVM_TEST_VAR".to_string(), "brokered".to_string())]

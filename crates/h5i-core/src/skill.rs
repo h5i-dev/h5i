@@ -58,10 +58,10 @@ pub const NAME: &str = "h5i";
 /// runtime we are running under. `$H5I_SKILL_DIR` overrides it, which is how
 /// box bootstrap points it at the in-box location.
 pub fn default_target() -> Result<PathBuf, H5iError> {
-    if let Ok(dir) = std::env::var("H5I_SKILL_DIR") {
-        if !dir.trim().is_empty() {
-            return Ok(PathBuf::from(dir).join(NAME));
-        }
+    if let Ok(dir) = std::env::var("H5I_SKILL_DIR")
+        && !dir.trim().is_empty()
+    {
+        return Ok(PathBuf::from(dir).join(NAME));
     }
     let home = std::env::var("HOME")
         .ok()

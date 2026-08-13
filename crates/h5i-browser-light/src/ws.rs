@@ -76,10 +76,10 @@ pub fn accept(stream: &mut TcpStream) -> Result<String, H5iError> {
         if read == 0 || line == "\r\n" || line == "\n" {
             break;
         }
-        if let Some((name, value)) = line.split_once(':') {
-            if name.trim().eq_ignore_ascii_case("sec-websocket-key") {
-                key = Some(value.trim().to_string());
-            }
+        if let Some((name, value)) = line.split_once(':')
+            && name.trim().eq_ignore_ascii_case("sec-websocket-key")
+        {
+            key = Some(value.trim().to_string());
         }
     }
 

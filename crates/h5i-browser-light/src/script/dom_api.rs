@@ -196,8 +196,8 @@ fn collect_matches(
 ) {
     let Some(node) = doc.get_node(id) else { return };
     for child in node.children.clone() {
-        if let Some(child_node) = doc.get_node(child) {
-            if child_node.is_element()
+        if let Some(child_node) = doc.get_node(child)
+            && child_node.is_element()
                 // Standards mode: this engine parses HTML5 and never emulates
                 // the quirks the flag exists to preserve.
                 && style::dom_apis::element_matches(
@@ -205,9 +205,9 @@ fn collect_matches(
                     list,
                     style::context::QuirksMode::NoQuirks,
                 )
-            {
-                out.push(child);
-            }
+
+        {
+            out.push(child);
         }
         collect_matches(doc, child, list, out);
     }

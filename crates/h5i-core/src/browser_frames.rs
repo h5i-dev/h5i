@@ -110,10 +110,10 @@ impl FrameRelay {
             let stop = stop.clone();
             let error = error.clone();
             std::thread::spawn(move || {
-                if let Err(e) = pump(pid, port, &latest, &stop) {
-                    if let Ok(mut slot) = error.lock() {
-                        *slot = Some(e.to_string());
-                    }
+                if let Err(e) = pump(pid, port, &latest, &stop)
+                    && let Ok(mut slot) = error.lock()
+                {
+                    *slot = Some(e.to_string());
                 }
                 finished.store(true, Ordering::SeqCst);
             })
@@ -157,10 +157,10 @@ impl Drop for FrameRelay {
         // It is a detached read on a socket owned by this process; letting the
         // thread go and closing the descriptor on process exit is the honest
         // trade against carrying a shutdown channel through a blocking read.
-        if let Some(join) = self.join.take() {
-            if join.is_finished() {
-                let _ = join.join();
-            }
+        if let Some(join) = self.join.take()
+            && join.is_finished()
+        {
+            let _ = join.join();
         }
     }
 }

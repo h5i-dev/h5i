@@ -1,7 +1,7 @@
 [package]
 name = "h5i-error"
 version = "0.2.8"
-edition = "2021"
+edition = "2024"
 description = "Shared error type for the h5i workspace (temporal/intentional/empirical/associative categories)."
 
 [dependencies]

@@ -407,13 +407,13 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
         // under a path with no manifest, which every tool answers "no
         // environment named that" for and only `rm -rf` clears. Guarding one
         // caller left the next one armed.
-        if let Some(env_dir) = parent.parent() {
-            if !env_dir.exists() {
-                return Err(H5iError::Metadata(format!(
-                    "the box directory {} is gone, so there is nowhere to record this",
-                    env_dir.display()
-                )));
-            }
+        if let Some(env_dir) = parent.parent()
+            && !env_dir.exists()
+        {
+            return Err(H5iError::Metadata(format!(
+                "the box directory {} is gone, so there is nowhere to record this",
+                env_dir.display()
+            )));
         }
         std::fs::create_dir_all(parent)?;
     }
@@ -520,12 +520,12 @@ pub fn find(env_dir: &Path, handle: &str) -> Result<ExecRecord, H5iError> {
 /// before that split used the payload digest as their id, so a direct hit on the
 /// handle is tried as a fallback and keeps those readable.
 pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
-    if let Ok(rec) = find(env_dir, id) {
-        if let Some(key) = blob_key(&rec.raw_oid) {
-            let p = raw_path(env_dir, &key);
-            if p.exists() {
-                return Ok(std::fs::read(p)?);
-            }
+    if let Ok(rec) = find(env_dir, id)
+        && let Some(key) = blob_key(&rec.raw_oid)
+    {
+        let p = raw_path(env_dir, &key);
+        if p.exists() {
+            return Ok(std::fs::read(p)?);
         }
     }
     if !valid_handle(id) {

@@ -133,10 +133,10 @@ fn sources_newer_than(web: &Path, dist_marker: &Path) -> bool {
         web.join("vite.config.ts"),
         web.join("tsconfig.json"),
     ] {
-        if let Some(t) = mtime(&entry) {
-            if t > dist_time {
-                return true;
-            }
+        if let Some(t) = mtime(&entry)
+            && t > dist_time
+        {
+            return true;
         }
     }
     walk_newer_than(&web.join("src"), dist_time)
@@ -152,10 +152,10 @@ fn walk_newer_than(dir: &Path, threshold: SystemTime) -> bool {
             if walk_newer_than(&p, threshold) {
                 return true;
             }
-        } else if let Some(t) = mtime(&p) {
-            if t > threshold {
-                return true;
-            }
+        } else if let Some(t) = mtime(&p)
+            && t > threshold
+        {
+            return true;
         }
     }
     false

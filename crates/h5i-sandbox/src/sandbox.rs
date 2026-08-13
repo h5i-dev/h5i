@@ -616,20 +616,20 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // author is told rather than silently getting a wider box. (Harmless with
     // no `net.egress` — there is no proxy to shadow — so it is not refused
     // there.)
-    if !p.net_egress.iter().all(|e| e.trim().is_empty()) {
-        if let Some(bad) = p
+    if !p.net_egress.iter().all(|e| e.trim().is_empty())
+        && let Some(bad) = p
             .env_pass
             .iter()
             .find(|k| crate::container::is_proxy_wiring_var(k))
-        {
-            return Err(H5iError::Metadata(format!(
-                "profile '{}': env.pass carries '{bad}', which is part of the egress proxy \
-                 wiring. Passing it through would replace the allowlist proxy's address with \
-                 the host's and let the box egress unfiltered — remove it from env.pass \
-                 (fail-closed).",
-                p.name
-            )));
-        }
+
+    {
+        return Err(H5iError::Metadata(format!(
+            "profile '{}': env.pass carries '{bad}', which is part of the egress proxy \
+             wiring. Passing it through would replace the allowlist proxy's address with \
+             the host's and let the box egress unfiltered — remove it from env.pass \
+             (fail-closed).",
+            p.name
+        )));
     }
 
     // An [[auth]] grant that cannot hand the box its gate token is inert: the
@@ -934,11 +934,11 @@ fn validate_private_paths(p: &Profile) -> Result<(), H5iError> {
 /// Expand a leading `~/` (or bare `~`) to `$HOME`. Symbolic placeholders like
 /// `$WORK` / `$REPO` are left as-is (they expand at enforcement time).
 fn expand_tilde(path: &str) -> String {
-    if path == "~" || path.starts_with("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = home.to_string_lossy();
-            return format!("{}{}", home, &path[1..]);
-        }
+    if (path == "~" || path.starts_with("~/"))
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        let home = home.to_string_lossy();
+        return format!("{}{}", home, &path[1..]);
     }
     path.to_string()
 }
@@ -2235,31 +2235,35 @@ pub(crate) struct EgressJail {
 /// owns no other users of those descriptors.
 #[cfg(target_os = "linux")]
 unsafe fn close_inherited_fds() {
-    // close_range(2) is Linux 5.9+; Landlock needs 5.13+, so on any host that
-    // reaches this code it is present and this is the only branch that runs.
-    // `syscall` is variadic, so each argument is read as a `long`. Passing a
-    // 32-bit `c_uint` happens to work on x86-64 and aarch64 because the ABI
-    // zero-extends, but the widths should agree by construction rather than by
-    // the platform being forgiving.
-    if libc::syscall(
-        libc::SYS_close_range,
-        3 as libc::c_long,
-        libc::c_uint::MAX as libc::c_long,
-        0 as libc::c_long,
-    ) == 0
-    {
-        return;
-    }
-    // Fallback for a kernel (or seccomp policy) without close_range: walk the
-    // descriptor table. Bounded so a huge RLIMIT_NOFILE cannot stall the fork.
-    let mut lim: libc::rlimit = std::mem::zeroed();
-    let max = if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) == 0 && lim.rlim_cur > 3 {
-        lim.rlim_cur.min(65536) as i32
-    } else {
-        4096
-    };
-    for fd in 3..max {
-        libc::close(fd);
+    // Safety: discharged by this function's own contract — the caller promises
+    // no other user of these descriptors exists in the forked child.
+    unsafe {
+        // close_range(2) is Linux 5.9+; Landlock needs 5.13+, so on any host that
+        // reaches this code it is present and this is the only branch that runs.
+        // `syscall` is variadic, so each argument is read as a `long`. Passing a
+        // 32-bit `c_uint` happens to work on x86-64 and aarch64 because the ABI
+        // zero-extends, but the widths should agree by construction rather than by
+        // the platform being forgiving.
+        if libc::syscall(
+            libc::SYS_close_range,
+            3 as libc::c_long,
+            libc::c_uint::MAX as libc::c_long,
+            0 as libc::c_long,
+        ) == 0
+        {
+            return;
+        }
+        // Fallback for a kernel (or seccomp policy) without close_range: walk the
+        // descriptor table. Bounded so a huge RLIMIT_NOFILE cannot stall the fork.
+        let mut lim: libc::rlimit = std::mem::zeroed();
+        let max = if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) == 0 && lim.rlim_cur > 3 {
+            lim.rlim_cur.min(65536) as i32
+        } else {
+            4096
+        };
+        for fd in 3..max {
+            libc::close(fd);
+        }
     }
 }
 
@@ -2293,14 +2297,17 @@ fn fmt_u32(mut v: u32, buf: &mut [u8; 24]) -> &[u8] {
 /// `path` must be a valid NUL-terminated C string.
 #[cfg(target_os = "linux")]
 unsafe fn write_proc_file(path: *const libc::c_char, bytes: &[u8]) -> Result<(), std::io::Error> {
-    let fd = libc::open(path, libc::O_WRONLY | libc::O_CLOEXEC);
+    // Safety: discharged by this function's own contract — the caller promises
+    // `path` is a valid NUL-terminated C string.
+    let fd = unsafe { libc::open(path, libc::O_WRONLY | libc::O_CLOEXEC) };
     if fd < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    let n = libc::write(fd, bytes.as_ptr().cast(), bytes.len());
+    // Safety: `fd` is open and owned here, and the buffer is valid for `len`.
+    let n = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
     // `close` can clobber errno, so capture the write's error first.
     let err = std::io::Error::last_os_error();
-    libc::close(fd);
+    unsafe { libc::close(fd) };
     if n != bytes.len() as isize {
         return Err(err);
     }
@@ -2867,20 +2874,20 @@ pub(crate) fn build_confined_command(
             // 1h. The writable cache bind (refresh only). Its target is created
             //     by the caller host-side; a failure here is fatal rather than
             //     silently producing an empty cache.
-            if let Some((backing, target)) = &cache_write_c {
-                if libc::mount(
+            if let Some((backing, target)) = &cache_write_c
+                && libc::mount(
                     backing.as_ptr(),
                     target.as_ptr(),
                     std::ptr::null(),
                     libc::MS_BIND,
                     std::ptr::null(),
                 ) != 0
-                {
-                    return Err(Error::other(format!(
-                        "cache write bind failed: {}",
-                        Error::last_os_error()
-                    )));
-                }
+
+            {
+                return Err(Error::other(format!(
+                    "cache write bind failed: {}",
+                    Error::last_os_error()
+                )));
             }
 
             // 2. Resource caps (cooperative, no cgroups needed).
@@ -4655,7 +4662,10 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
         // A host variable nobody put on the allowlist. Set inside the test rather
         // than assumed, so the assertion is about the allowlist and not about
         // whatever the ambient environment happens to hold.
-        std::env::set_var("H5I_TEST_UNLISTED_HOST_VAR", "must-not-reach-the-child");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_TEST_UNLISTED_HOST_VAR", "must-not-reach-the-child");
+        }
         let out = run(
             &policy,
             dir.path(),
@@ -4666,7 +4676,10 @@ fs.deny = ["~/.ssh", "$REPO/.git/hooks"]
             ],
         )
         .expect("workspace run");
-        std::env::remove_var("H5I_TEST_UNLISTED_HOST_VAR");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_TEST_UNLISTED_HOST_VAR");
+        }
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(
             text.contains("unlisted=[]"),

@@ -81,10 +81,10 @@ pub fn serve(req: Request, announce: impl FnOnce(&Started)) -> Result<(), H5iErr
     // dialling a network. It is **not** the check that matters — `session::claim`
     // re-does it under the lock, because between here and there is a window two
     // starts could both walk through.
-    if let Some(existing) = session::read(&req.env_dir) {
-        if session::is_live(&existing) {
-            return Err(session::already_shared(&existing, &req.box_name));
-        }
+    if let Some(existing) = session::read(&req.env_dir)
+        && session::is_live(&existing)
+    {
+        return Err(session::already_shared(&existing, &req.box_name));
     }
 
     // Before the runtime. See the module note; this is the whole reason this

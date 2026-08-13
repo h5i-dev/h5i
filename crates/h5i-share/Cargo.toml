@@ -1,7 +1,7 @@
 [package]
 name = "h5i-share"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "h5i share: the bridge that lets one other person try a box's web app, over P2P or a quick tunnel."
 
 [features]
