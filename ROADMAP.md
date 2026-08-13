@@ -2323,6 +2323,119 @@ exercised against a hole punch that actually *fails*. The refusal is the half
 that matters and it needs two hostile NATs to reach. Those are what remains of
 the exit criteria.
 
+### M13. The microvm tier, warmed: step 1 done 2026-08-13, steps 2 and 3 proposed
+
+The tier shipped correct and slow: one `msb run` per command, a full guest boot
+each time, torn down on drop, and — as 9. said until today — never booted end
+to end anywhere. A reading of forkd (deeplethe/forkd, a Firecracker runtime
+whose whole premise is fork-from-warm: each child `mmap`s a warmed parent's
+snapshot memory copy-on-write and spawns in ~100 ms instead of booting)
+sharpened what to do about that into three steps, in order, each gated on the
+one before.
+
+**First, demonstrate and measure: done, and it moved the plan.** The tier
+boots a real guest — a microvm box creates, runs, enforces its allowlist in
+the guest netstack, and exits 0 — so the "not yet demonstrated end to end"
+caveat is retired. The numbers are in `docs/benchmarks/microvm-boot.md`,
+taken with `scripts/bench_env_overhead.py`, which is committed so they can be
+re-derived rather than trusted. What it borrowed from forkd was the
+discipline, not a mechanism: every sample kept, the tier that could not run
+recorded with the probe's own refusal, and the null results written down.
+
+Three results changed what steps 2 and 3 should be:
+
+- **461 ms of fixed cost per command, and almost none of it is isolation.**
+  Subtracting each tier's own no-op cost, the VM's per-syscall charge is
+  −7.3 ms — noise around zero — and it does not slow CPU-bound work. The tier
+  is not a slow place to work, it is an expensive place to start, which is the
+  cost profile that amortises and the reason reuse leads.
+- **A third of that tax is a config value, not architecture.** Adding one h5i
+  behaviour at a time to a bare `msb run` found mounts nearly free (+17 ms for
+  the full 16-mount set over a 74 MiB `.git/objects`), egress rules free, and
+  the preload script +9 ms — all three inside the control's own 230–245 ms
+  run-to-run drift, so read as no measurable cost — but the profile's **8 GiB
+  `mem_bytes` costs +154 ms on every command**, scaling at roughly 20 ms per
+  GiB. Right-sizing it is available today, needs no new machinery, and is
+  worth taking before step 2 rather than as part of it.
+- **The ordering inverts on macOS.** `microvm` runs a realistic short command
+  in 474 ms against `process` at 1604 ms and `supervised` at 1629 ms, because
+  those two add ~1.5 s to Python startup under Seatbelt while the VM adds
+  none. The strongest tier is the quickest of the three here. That Seatbelt
+  cost is undiagnosed, is not a fixed cost reuse can hide, and belongs to its
+  own investigation rather than to this milestone — but it means "microvm is
+  the slow tier" was never quite the right framing on this platform.
+
+**Second, amortize the boot: session-scoped guest reuse. The prerequisite is
+answered — `msb` supports this, and it is measured.** `msb create --name X`
+boots a guest detached and `msb exec X -- cmd` attaches to it over its agent
+relay socket without booting; `exec` auto-starts a stopped sandbox, so h5i
+need not track guest state. Measured on the same host: **233.9 ms cold per
+command against 8.4 ms warm, 28× on the `msb` primitive alone**, and the warm
+path is independent of guest size (8.9 ms into an 8 GiB guest, the same as
+into a 512 MiB one), so reuse absorbs the memory cost of the previous
+paragraph as well. Against h5i's 461 ms of fixed cost, a warm guest reachable
+in ~9 ms is roughly **50×**. State persists across execs as expected.
+
+So the shape is: boot on a box's first command, exec later commands into the
+same guest, tear down with the box or an idle timer. This is backend-neutral
+and it is the only speed move that works on macOS, where libkrun has no
+snapshot or restore and fork-from-warm cannot exist. It is also the
+architectural unlock for three gaps 9. lists as costs: a persistent guest is
+what background services (`box service`), port-based share, and an in-guest
+tee shim each require before they can be built at this tier.
+
+Four things the upstream check turned up that the design has to carry.
+`--idle-timeout` and `--max-duration` exist but **have no default**, so a
+detached guest outlives its box unless h5i sets one — the orphan-marker sweep
+becomes load-bearing rather than a backstop, and `msb touch` is what keeps a
+guest alive during an active session. `msb exec` takes `-e KEY=value` on argv,
+which is the same `/proc/<pid>/cmdline` exposure the preload script exists to
+avoid, so that mechanism carries over unchanged and costs ~9 ms. There is **no
+daemon** — 0.2.x's `msb server` is gone and each sandbox is its own detached
+host process, so a pool's ceiling is host RAM. And the upstream repo has moved
+from `microsandbox/microsandbox` to `superradcompany/microsandbox`, so the
+references in our docs and error strings will rot. The lifecycle shape to
+extend is `SandboxGuard` and the orphan-marker sweep in
+`crates/h5i-sandbox/src/microvm.rs`, which already own naming and cleanup.
+
+**Third, on Linux only, a second backend: fork-from-warm — and step 1 lowered
+its priority.** Reuse gets a command to ~9 ms, so what remains for
+fork-from-warm is the *first* command of a box and fan-out across many boxes
+at once, not the steady state. It should be judged on that narrower prize
+rather than on the 50× headline, which step 2 already collects. Worth noting
+for the same reason: `msb` does have snapshots, but they are **disk-only and
+offline** — a stopped sandbox, no memory image — so the warm-fork primitive
+cannot be built on the macOS backend even in principle, and this step stays a
+Linux-only second backend rather than something to retrofit.
+
+The prize is a prewarmed agent snapshot — a parent guest with the agent CLI,
+node, and toolchain already resident — so a microvm box's *first* command
+skips a boot plus an agent cold start. forkd's pack format (sha256-pinned
+snapshot bundles on a serverless registry) is a distribution story parallel
+to our OCI images. The adapter seams are
+narrow and already isolated: the `Runtime` enum, the pure and fully-tested
+`build_run_argv`, and the two dispatch sites in `sandbox.rs`. The catch is
+disqualifying until fixed: forkd has no default-deny egress — its own
+README says so — and this tier advertises `egress_enforced_l3`, so under
+the fail-closed rule a forkd backend refuses every profile with an egress
+allowlist, which is most of them. The candidate closure is the netns forkd
+already gives each child: a netns is a natural L3 enforcement point, and
+the same egress-rule grammar the msb translation compiles from
+(`container::parse_egress_rule`) can compile to nftables rules programmed
+into it. That fix is upstreamable, the way forkd upstreamed its own
+Firecracker `MAP_SHARED` patch.
+
+**Not borrowed, deliberately.** The live-BRANCH stack — vendored
+Firecracker, userfaultfd write-protect, a seccomp workaround — is the
+highest-maintenance part of forkd and "start boxes fast" does not need it:
+plain restore-from-warm-snapshot works on stock Firecracker. KSM tuning is
+skipped on forkd's own negative result, and hugepages wait until the first
+step's measurements say the tail matters. And the core CoW primitive does
+not port to macOS at all — forkd's design doc rules macOS out because the
+mechanism *is* the host kernel's copy-on-write over `mmap(MAP_PRIVATE)` —
+so the macOS story stays msb plus reuse, and the platform split is stated,
+not smoothed over.
+
 ## 9. Limits we state up front
 
 Being explicit about these is a feature, since the claim is a security claim.
@@ -2339,9 +2452,15 @@ Being explicit about these is a feature, since the claim is a security claim.
   in the VM's network stack. What it costs is honest and stated in MANUAL.md: it
   needs host virtualization (`/dev/kvm`, or Apple Silicon), it produces no
   per-request egress tally, and it does not yet route the authenticated-egress
-  credential proxy. **Not yet demonstrated end to end**: this development host
-  has no nested virtualization, so the adapter is unit-tested against its argv
-  and rule translation and has never booted a real guest here.
+  credential proxy. **Demonstrated end to end 2026-08-13** on Apple Silicon
+  with `msb` 0.6.8: a box creates, runs, enforces its allowlist in the guest
+  netstack, and exits 0. Two costs are now measured rather than assumed
+  (`docs/benchmarks/microvm-boot.md`). It is **a full boot per command,
+  461 ms of it**, because the guest is torn down after each one — M13 step 2
+  is the plan to amortise that, and the same host reaches a warm guest in
+  ~9 ms. And **~154 ms of that is the profile's 8 GiB memory cap**, which
+  scales at roughly 20 ms per GiB and is a configuration choice, not a
+  property of the tier. The Linux/KVM path remains unmeasured.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy respecting tooling only. The `supervised` tier enforces at
   L3/L4 with nftables and does not have that hole, which is why M4 starts
@@ -2554,6 +2673,31 @@ Being explicit about these is a feature, since the claim is a security claim.
    open-sourcing decides how much of the M10 crate is ours to write. Until
    that drop, the only commitment is the shape: fetch through our proxy,
    receipts as the network log, script off by default for untrusted origins.
+6. **The microvm plan's gating questions (M13): one answered, one still
+   open, one new.**
+
+   **Answered 2026-08-13: `msb` holds a sandbox open and execs into it.**
+   `msb create --name X` boots detached, `msb exec X -- cmd` attaches over
+   the guest's agent relay socket without booting, and `exec` auto-starts a
+   stopped sandbox so h5i need not track guest state. Measured at 8.4 ms warm
+   against 233.9 ms cold. The reuse step needs no upstream ask; what it needs
+   is an idle timeout, because `--idle-timeout` has no default and a detached
+   guest otherwise outlives its box.
+
+   **Still open: default-deny egress inside forkd's per-child netns.**
+   Whether the existing egress-rule grammar can compile to nftables rules
+   programmed into it. Without that, a forkd backend fails closed against
+   every profile with an egress allowlist and is not worth carrying. This one
+   needs a Linux host with KVM, which the 2026-08-13 run did not provide —
+   everything measured so far is macOS, and the Linux path is untested.
+
+   **New, and not a microvm question at all: why `process` and `supervised`
+   add ~1.5 s to Python startup on macOS.** Found while benchmarking
+   something else. It is not a fixed cost, so no amount of reuse hides it,
+   and it lands on the tiers macOS users get by default. The suspects are the
+   `/usr/bin/python3` Command Line Tools shim and SBPL evaluation over a
+   startup that opens hundreds of files; neither is established. Whether it
+   reproduces with a non-system interpreter is the cheapest next probe.
 
 ## 12. The browser: a local engine that runs script, and the order to build it
 

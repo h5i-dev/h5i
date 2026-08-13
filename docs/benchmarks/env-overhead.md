@@ -7,6 +7,13 @@ tier was within 1% of bare execution for a 338 ms CPU workload. Short
 
 These results are one Apple Silicon VM sample, not a cross-platform claim.
 
+> Superseded for the image-backed tiers and partly contradicted for the kernel
+> ones: `docs/benchmarks/microvm-boot.md` (2026-08-13) measures `microvm` for
+> the first time and finds that on a macOS *host* — rather than the Linux
+> guest used here — `process` and `supervised` add about 1.5 s to Python
+> startup, which this run did not see. The two pages are different hosts and
+> are not comparable cell by cell; neither replaces the other.
+
 ## Results
 
 Each cell is the median wall-clock time from five measured runs after one
