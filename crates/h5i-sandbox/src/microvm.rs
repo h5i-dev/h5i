@@ -1768,11 +1768,17 @@ pub fn spawn_background(
             bounded: false,
         },
     );
-    let out = std::process::Command::new(&exec_argv[0])
-        .args(&exec_argv[1..])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| H5iError::Metadata(format!("service failed to start: {e}")))?;
+    // Bounded like every other call into the runtime. The launcher exits as
+    // soon as it has the pid, so overrunning means the runtime is stuck — and
+    // an unbounded wait here hangs `box service start` with no way out.
+    let mut cmd = std::process::Command::new(&exec_argv[0]);
+    cmd.args(&exec_argv[1..]);
+    let out = run_bounded(cmd, GUEST_LIFECYCLE_TIMEOUT).ok_or_else(|| {
+        H5iError::Metadata(format!(
+            "starting service '{service}' in the microVM guest did not finish in {}s",
+            GUEST_LIFECYCLE_TIMEOUT.as_secs()
+        ))
+    })?;
     if !out.status.success() {
         return Err(H5iError::Metadata(format!(
             "service failed to start in the microVM guest: {}",
@@ -1798,17 +1804,42 @@ pub fn spawn_background(
 /// policy change: the guest that held the service was reaped and replaced, so
 /// the service died with it.
 pub fn service_alive(sandbox: &str, pid: u32) -> bool {
-    let Some(rt) = probe() else {
-        return false;
-    };
-    if guest_state(&rt.bin, sandbox) != GuestState::Running {
-        return false;
+    service_state(sandbox, pid).unwrap_or(false)
+}
+
+/// Liveness as a *tri-state*: `None` means the runtime could not be asked.
+///
+/// `service_alive` collapses that to "not running", which is right for a status
+/// display and wrong for stopping: a stop that reads a transient failure as
+/// "already dead" skips the signal, removes the record, and leaves the service
+/// running in the guest with nothing on the host that knows about it.
+pub fn service_state(sandbox: &str, pid: u32) -> Option<bool> {
+    let rt = probe()?;
+    match guest_state(&rt.bin, sandbox) {
+        // The guest is gone or stopped, so anything inside it is too. That is
+        // an answer, not an absence of one.
+        GuestState::Absent | GuestState::Stopped => return Some(false),
+        GuestState::Unknown => return None,
+        GuestState::Running => {}
     }
     // Through `sh -c`, because `kill` is a **shell builtin**: a slim image has
     // no `/bin/kill`, so exec'ing it directly returns 127 and every service
     // would read as dead — and, on the signalling path below, would never
     // actually be stopped.
-    guest_sh(&rt.bin, sandbox, &format!("kill -0 {pid}"))
+    //
+    // `kill -0` distinguishes "no such process" (exit 1) from a runtime that
+    // could not answer (no exit status at all), so the two do not collapse.
+    let mut cmd = std::process::Command::new(&rt.bin);
+    cmd.args([
+        "exec",
+        "--quiet",
+        sandbox,
+        "--",
+        "sh",
+        "-c",
+        &format!("kill -0 {pid}"),
+    ]);
+    run_bounded(cmd, GUEST_QUERY_TIMEOUT).map(|o| o.status.success())
 }
 
 /// Run one line of shell in the guest, reporting whether it succeeded.
@@ -3033,6 +3064,31 @@ mod tests {
         assert_eq!(parse_guest_state("[]", "g"), GuestState::Absent);
         assert_eq!(parse_guest_state("not json", "g"), GuestState::Absent);
         assert_eq!(parse_guest_state(r#"{"name":"g"}"#, "g"), GuestState::Absent);
+    }
+
+    /// "Could not ask" and "not running" must stay distinguishable, because
+    /// `service_stop` deletes the record after deciding — and deleting it on a
+    /// transient failure orphans a service that is still running.
+    #[test]
+    fn a_runtime_that_cannot_answer_is_not_the_same_as_a_dead_guest() {
+        // The distinction is carried by `GuestState`, which `service_state`
+        // maps to `Some(false)` / `None`.
+        assert_eq!(parse_guest_state("[]", "g"), GuestState::Absent);
+        assert_eq!(
+            parse_guest_state(r#"[{"name":"g","status":"Stopped"}]"#, "g"),
+            GuestState::Stopped
+        );
+        // Both of those are *answers* — the guest is gone or halted, so
+        // anything inside it is too. Only a runtime that never answered is
+        // `Unknown`, and that value cannot be produced by parsing at all: it
+        // exists solely for the call failing or timing out.
+        for text in ["", "not json", "[]", r#"[{"name":"g","status":"Running"}]"#] {
+            assert_ne!(
+                parse_guest_state(text, "g"),
+                GuestState::Unknown,
+                "parsing must never invent Unknown from output it did receive"
+            );
+        }
     }
 
     /// A service must not inherit the per-command bounds. rlimits survive

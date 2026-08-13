@@ -1256,7 +1256,11 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
     // path would let an in-box agent change its own guest's identity — the next
     // command would resolve to a new name and reap the running guest, killing
     // whatever was in it. Nothing the box controls belongs in that hash.
-    policy.hosts_services = pinned_service_defs(h5i_root, m).is_some_and(|d| !d.is_empty());
+    // Unknown counts as "may host services". Every env created since service
+    // pinning has a manifest, so this is the pre-pinning tail — and there the
+    // two errors are not symmetric: guessing false costs a killed dev server,
+    // guessing true costs a guest that lives until `box rm`.
+    policy.hosts_services = pinned_service_defs(h5i_root, m).is_none_or(|d| !d.is_empty());
     Ok(policy)
 }
 
@@ -7374,7 +7378,19 @@ pub fn service_stop(
             }
         }
         ServiceRuntime::Guest { sandbox } => {
-            if h5i_sandbox::microvm::service_alive(sandbox, rec.pid) {
+            // Tri-state on purpose. Reading "the runtime did not answer" as
+            // "already dead" would skip the signal and then delete the record
+            // below, leaving the service running in the guest with nothing on
+            // the host that knows it exists. Refuse instead, and keep the
+            // record so the stop can be retried.
+            let alive = h5i_sandbox::microvm::service_state(sandbox, rec.pid).ok_or_else(|| {
+                H5iError::Metadata(format!(
+                    "could not ask the microVM guest '{sandbox}' whether service '{name}' is \
+                     still running — refusing to drop its record, because that would orphan a \
+                     live service. Retry once the runtime responds."
+                ))
+            })?;
+            if alive {
                 h5i_sandbox::microvm::service_signal(sandbox, rec.pid, "TERM");
                 for _ in 0..30 {
                     if !h5i_sandbox::microvm::service_alive(sandbox, rec.pid) {
