@@ -2382,8 +2382,7 @@ Three results changed what steps 2 and 3 should be:
 **Second, amortize the boot: session-scoped guest reuse. The prerequisite is
 answered — `msb` supports this, and it is measured.** `msb create --name X`
 boots a guest detached and `msb exec X -- cmd` attaches to it over its agent
-relay socket without booting; `exec` auto-starts a stopped sandbox, so h5i
-need not track guest state. Measured on the same host: **233.9 ms cold per
+relay socket without booting. Measured on the same host: **233.9 ms cold per
 command against 8.4 ms warm, 28× on the `msb` primitive alone**, and the warm
 path is independent of guest size (8.9 ms into an 8 GiB guest, the same as
 into a 512 MiB one), so reuse absorbs the memory cost of the previous
@@ -2437,7 +2436,19 @@ at create time rather than lazily; and **an exec can hang** (see the anomaly in
 in 6 controlled attempts), so exec needs its own deadline the way `wait_vm`
 already gives `msb run` a host-side backstop.
 
-Four things the upstream check turned up that the design has to carry.
+**h5i must track guest state, and `msb exec`'s auto-start is a trap.** An
+earlier draft of this section said the opposite, on the strength of upstream's
+"exec auto-starts a stopped sandbox" — measurement corrected it. Exec into a
+**running** guest is 8.5–9.3 ms. Exec into a **stopped** one is ~236 ms *and
+leaves it stopped*, so it is a one-shot boot wearing the fast path's name:
+every later exec pays the same again and the guest never re-warms. An explicit
+`msb start` (~143 ms) is what returns it to `running`, after which execs are
+9.3 ms again. So an idle timeout that stops a guest silently reverts the tier
+to its current per-command cost, permanently, until something starts it — the
+reuse design has to own the state machine rather than lean on exec's
+convenience.
+
+Four more things the upstream check turned up that the design has to carry.
 `--idle-timeout` and `--max-duration` exist but **have no default**, so a
 detached guest outlives its box unless h5i sets one — the orphan-marker sweep
 becomes load-bearing rather than a backstop, and `msb touch` is what keeps a

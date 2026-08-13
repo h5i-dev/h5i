@@ -177,6 +177,58 @@ guest size: exec into an 8 GiB guest measured 8.9 ms, the same as into a
 claims. State persists across execs as expected — a file written by one exec
 is readable by the next.
 
+## Two things reuse depends on, checked
+
+### Sandboxes do not share a writable filesystem
+
+forkd's children share one `rootfs.ext4` host file read-write, which is how
+they got ext4 corruption when three wrote concurrently. Whether `msb` has the
+same shape decides if concurrent microvm boxes are safe, and it matters more
+once guests are long-lived. It does not. A write to `/opt` — deliberately not
+`/tmp` — in one sandbox was visible only to itself:
+
+| Reader | Sees `/opt/marker-A`? |
+|---|---|
+| the writing sandbox, on a later exec | yes |
+| a sibling running concurrently from the same image | **no** |
+| a sandbox created *after* the write | **no** |
+| a fresh one-shot `msb run` off the same image | **no** |
+
+Each sandbox carries ~3.8 MB of its own state under
+`$MSB_HOME/sandboxes/<name>/`, released on `msb rm` (the directory returns to
+0 B). The exact mechanism — differencing layer, overlay, or copy — was not
+established; only the observable behaviour above, which is what the design
+question needed. **So the `/tmp`-only convention forkd has to enforce is not a
+constraint h5i inherits**, and concurrent boxes from one image do not race for
+a shared inode.
+
+### `msb exec` auto-start is a trap, and the state machine is h5i's to own
+
+Upstream documents that `exec` auto-starts a stopped sandbox. It does — but
+not into the fast path, and this is the single most important measurement for
+a reuse design:
+
+| Guest state | `msb exec` median | State afterwards |
+|---|---:|---|
+| `running` | **8.5–9.3 ms** | `running` |
+| `stopped` | **~236 ms** | still `stopped` |
+
+Exec into a stopped guest is a one-shot boot wearing the fast path's name: it
+boots, runs, tears down, and leaves the sandbox stopped, so the *next* exec
+pays ~236 ms again and the guest never re-warms on its own. What restores it
+is an explicit `msb start` (~143 ms), after which execs are 9.3 ms and the
+state stays `running`.
+
+The consequence is that **an idle timeout which stops a guest silently reverts
+the tier to its current per-command cost, permanently, until something starts
+it** — the worst of both designs, since it also keeps the guest's disk around.
+Reuse has to track state and start explicitly rather than lean on exec's
+convenience.
+
+One reassurance from the same run: guest state survives the cycle. The `/opt`
+write made before a `stop` was still readable after `start`, so stopping a
+guest is a latency decision rather than a data-loss one.
+
 ## Negative and null results
 
 Kept deliberately, because a benchmark that reports only what moved reads as
