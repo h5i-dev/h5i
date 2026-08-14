@@ -1310,11 +1310,14 @@ pub fn reap_orphaned_sandboxes(bin: &str) {
             // Warm guest: reap once the box it belongs to is gone.
             Some(work) => box_is_gone(Path::new(work)),
             // One-shot guest: reap once the process that owned it is gone.
-            None => match name
-                .strip_prefix("h5i-")
-                .and_then(|r| r.split('-').next())
-                .and_then(|p| p.parse::<i32>().ok())
-            {
+            //
+            // Gated on the name matching `h5i-<digits>-<digits>` exactly, not
+            // merely on the marker body being unreadable. A *warm* marker whose
+            // body failed to read falls through to here, and a box label whose
+            // first segment happens to be digits (an agent directory named
+            // numerically → `h5i-2-web-abc123`) would parse as pid 2 — reaping
+            // a live box's guest, and every service in it, if pid 2 is gone.
+            None => match one_shot_pid(&name) {
                 Some(pid) => pid != std::process::id() as i32 && !pid_alive(pid),
                 None => false,
             },
@@ -1342,6 +1345,24 @@ fn box_is_gone(work: &Path) -> bool {
         Ok(_) => false,
         Err(e) => e.kind() == std::io::ErrorKind::NotFound,
     }
+}
+
+/// The pid in a one-shot guest's name, or `None` if this is not one.
+///
+/// `h5i-<pid>-<seq>` and nothing else: both segments must be digits and there
+/// must be exactly two, so no warm guest's label can be read as a pid.
+fn one_shot_pid(name: &str) -> Option<i32> {
+    let rest = name.strip_prefix("h5i-")?;
+    let mut parts = rest.split('-');
+    let pid = parts.next()?;
+    let seq = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if !seq.bytes().all(|b| b.is_ascii_digit()) || seq.is_empty() {
+        return None;
+    }
+    pid.parse().ok()
 }
 
 /// Is `pid` still around? `kill(pid, 0)` reports EPERM for a live process we do
@@ -1606,6 +1627,45 @@ fn warm_create_plan<'a>(
     }
 }
 
+/// Held while a box's guest is created or started, so two h5i processes cannot
+/// both conclude there is no guest and both `create --replace` it.
+///
+/// Blocking, and best-effort: if the lock file cannot be made, the work still
+/// happens — an unserialized create is worse than a refused command only in a
+/// race, whereas refusing outright is worse always.
+struct GuestLock {
+    #[cfg(unix)]
+    _file: Option<std::fs::File>,
+}
+
+impl GuestLock {
+    fn acquire(work: &Path) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let file = microvm_dir(work).ok().and_then(|dir| {
+                std::fs::create_dir_all(&dir).ok()?;
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(dir.join("guest.lock"))
+                    .ok()
+            });
+            if let Some(f) = &file {
+                unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+            }
+            GuestLock { _file: file }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = work;
+            GuestLock {}
+        }
+    }
+}
+
 /// A box's warm guest, ready to exec into.
 struct WarmGuest {
     rt: Runtime,
@@ -1662,6 +1722,16 @@ fn ensure_warm_guest(policy: &ResolvedPolicy, work: &Path) -> Result<WarmGuest, 
     let name = guest_name(work, &hashed);
     let named = warm_create_plan(&image, &name, &net, &stage, &logs, idle);
     let create_argv = build_create_argv(&rt, policy, work, &named);
+
+    // Serialize guest creation for this box, and only that.
+    //
+    // Two processes that both see no guest both issue `create --replace` under
+    // the same name, and the loser's guest — with whatever was running in it —
+    // is destroyed. This lock lives here rather than in the callers because the
+    // race is here: `box run`, `box shell` and a service launch all pass
+    // through, and the alternative (the box's writer lock) is held by a whole
+    // interactive session and would refuse a service start for its duration.
+    let _guest_lock = GuestLock::acquire(work);
 
     // Sweep leftovers from an h5i that died without running Drop, and guests
     // whose box has since been removed.
@@ -1755,35 +1825,40 @@ pub fn spawn_background(
     // is embedded as the argument to an inner `sh -c` exactly as the kernel
     // tiers embed it. Nothing from the guest reaches this string.
     let command = shell_join(argv);
-    let guest_pidfile = format!("{SERVICES_MOUNT}/{service}.pid");
+    // No pidfile, and no fd gymnastics: `$!` is the service.
+    //
+    // `setsid` only forks when it is already a process-group leader, and a
+    // background job in a non-interactive shell is not one — so it `setsid()`s
+    // in place and `$!` names the session leader itself. That was verified on
+    // this runtime rather than assumed, because an earlier reading of it was
+    // wrong: a broken liveness check (exec'ing `kill`, which is a builtin) made
+    // a perfectly good pid look dead and sent this down a detour through a
+    // pidfile — which had to live in a mounted directory, where any process in
+    // the box could win a race and choose the pid the host records.
+    //
+    // The session id is reported alongside and checked, so a shell that *does*
+    // fork fails loudly here instead of silently recording a pid whose process
+    // group is somebody else's.
     let launcher = format!(
-        // Source the credentials, remove them, then detach.
-        //
         // Sourcing failing is fatal rather than skipped: a service that started
         // *without* its brokered credentials would look healthy and behave
         // wrongly, which is worse than not starting.
         //
-        // The pid comes from a file the service writes about **itself**, not
-        // from `$!`. `setsid` forks whenever it has to create a new session, so
-        // `$!` is a parent that exits immediately — recording it yields a pid
-        // that is dead on arrival and, once the number is recycled, names some
-        // unrelated process for the stop path to signal. The inner shell writes
-        // `$$` and then `exec`s, so the recorded pid *is* the service, and it
-        // is the session leader that `kill -TERM -<pid>` reaps as a group.
-        //
-        // `$0` carries the pidfile so the command words can be passed as real
-        // argv rather than re-quoted into a nested shell string.
+        // `sed`/`cut` rather than a positional field: the `comm` field in
+        // /proc/<pid>/stat may contain spaces and parentheses, so anything that
+        // counts columns from the left is wrong for a process that chose an
+        // awkward name.
         ". {script} || exit 97\n\
          rm -f {script}\n\
          cd {work} 2>/dev/null || cd /\n\
-         rm -f {pidfile}\n\
-         setsid sh -c 'echo $$ > \"$0\"; exec \"$@\"' {pidfile} {command} >>{log} 2>&1 &\n\
-         i=0\n\
-         while [ ! -s {pidfile} ] && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.05; done\n\
-         printf '%s %s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\" \"$(cat {pidfile})\"\n",
+         setsid {command} >>{log} 2>&1 &\n\
+         p=$!\n\
+         printf '#h5i-pid %s\\n' \"$p\" >>{log}\n\
+         printf 'boot %s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\"\n\
+         printf 'pid %s\\n' \"$p\"\n\
+         printf 'sid %s\\n' \"$(sed -e 's/^.*) //' /proc/$p/stat 2>/dev/null | cut -d' ' -f4)\"\n",
         script = sh_quote(&guest_script),
         work = WORK_MOUNT,
-        pidfile = sh_quote(&guest_pidfile),
         command = command,
         log = sh_quote(&guest_log),
     );
@@ -1806,41 +1881,139 @@ pub fn spawn_background(
     // an unbounded wait here hangs `box service start` with no way out.
     let mut cmd = std::process::Command::new(&exec_argv[0]);
     cmd.args(&exec_argv[1..]);
-    let out = run_bounded(cmd, GUEST_LIFECYCLE_TIMEOUT).ok_or_else(|| {
-        H5iError::Metadata(format!(
+    // Past this point the launcher may already have detached the service, so
+    // every failure has to clean up after itself: the guest outlives the
+    // command, and an unrecorded service in it is invisible to `service status`
+    // and unreachable by `service stop`, with a retry starting a second copy.
+    // The launcher writes its pid into the log for exactly this.
+    let reap_detached = || {
+        if let Some(pid) = logged_service_pid(work, service) {
+            stop_group(&rt, &name, pid);
+        }
+    };
+    let Some(out) = run_bounded(cmd, GUEST_LIFECYCLE_TIMEOUT) else {
+        reap_detached();
+        return Err(H5iError::Metadata(format!(
             "starting service '{service}' in the microVM guest did not finish in {}s",
             GUEST_LIFECYCLE_TIMEOUT.as_secs()
-        ))
-    })?;
+        )));
+    };
     if !out.status.success() {
+        reap_detached();
         return Err(H5iError::Metadata(format!(
             "service failed to start in the microVM guest: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         )));
     }
-    // Boot id and pid come back from the *same* exec, so they describe the same
-    // life of the guest. Read separately, a restart in between would pair a new
-    // boot with a pid from the old one — a record that reads alive forever and
-    // whose stop signals whoever inherited the number.
+    // Both lines arrive on the same pipe, from the same exec, so they describe
+    // the same life of the guest — read separately, a restart in between would
+    // pair a new boot with a pid from the old one. Tagged rather than
+    // positional because the launcher and the detached shell write
+    // independently and either may land first.
     let text = String::from_utf8_lossy(&out.stdout);
-    let mut fields = text.split_whitespace();
-    let (Some(boot), Some(pid)) = (fields.next(), fields.next_back()) else {
+    let field = |tag: &str| {
+        text.lines()
+            .filter_map(|l| l.strip_prefix(tag))
+            .map(|v| v.trim().to_string())
+            .next()
+    };
+    let (Some(boot), Some(pid_text), Some(sid_text)) =
+        (field("boot "), field("pid "), field("sid "))
+    else {
+        reap_detached();
         return Err(H5iError::Metadata(format!(
-            "the microVM guest did not report a boot id and pid for service '{service}' \
-             (got {text:?})"
+            "the microVM guest did not report a boot id, pid and session for service \
+             '{service}' (got {text:?})"
         )));
     };
-    let boot = boot.to_string();
-    let pid: u32 = pid.parse().map_err(|_| {
-        H5iError::Metadata(format!(
-            "the microVM guest reported an unreadable pid for service '{service}' (got {text:?})"
-        ))
-    })?;
+    let pid: u32 = match pid_text.parse() {
+        Ok(p) => p,
+        Err(_) => {
+            reap_detached();
+            return Err(H5iError::Metadata(format!(
+                "the microVM guest reported an unreadable pid for service '{service}' \
+                 (got {text:?})"
+            )));
+        }
+    };
+    // The recorded pid is later used as a process *group* to signal, so it has
+    // to be the session leader. An empty session also lands here, which is what
+    // a service that died before the launcher could look at it produces — worth
+    // failing on rather than recording.
+    if sid_text != pid_text {
+        stop_group(&rt, &name, pid);
+        return Err(H5iError::Metadata(format!(
+            "service '{service}' did not become its own session leader in the microVM guest \
+             (pid {pid_text}, session {sid_text:?}) — refusing to record a pid whose process \
+             group is not this service's"
+        )));
+    }
+
+    // A service that dies on its first breath — a port already bound, a missing
+    // interpreter — would otherwise be reported as started, and the failure
+    // would only surface later as a record naming a dead pid. Give it a moment,
+    // then insist it is still there.
+    std::thread::sleep(SERVICE_SETTLE);
+    if service_pid_state(&rt, &name, pid) != Some(true) {
+        let tail = tail_service_log(work, service);
+        return Err(H5iError::Metadata(format!(
+            "service '{service}' exited immediately after starting in the microVM guest{tail}"
+        )));
+    }
     Ok(ServiceHandle {
         pid,
         sandbox: name,
         boot,
     })
+}
+
+/// How long a service is given to fail before it is called started.
+const SERVICE_SETTLE: Duration = Duration::from_millis(300);
+
+/// Best-effort TERM+KILL of a service's process group inside the guest.
+fn stop_group(rt: &Runtime, sandbox: &str, pid: u32) {
+    guest_sh(&rt.bin, sandbox, &format!("kill -TERM -{pid} 2>/dev/null"));
+    guest_sh(&rt.bin, sandbox, &format!("kill -KILL -{pid} 2>/dev/null"));
+}
+
+/// The last few lines of a service's log, for an error message.
+fn tail_service_log(work: &Path, service: &str) -> String {
+    let Ok(path) = service_log_path(work, service) else {
+        return String::new();
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return String::new();
+    };
+    let tail: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.starts_with("#h5i-pid "))
+        .rev()
+        .take(5)
+        .collect();
+    if tail.is_empty() {
+        return " (its log is empty)".into();
+    }
+    format!(
+        ". Its log ends:\n  {}",
+        tail.into_iter().rev().collect::<Vec<_>>().join("\n  ")
+    )
+}
+
+/// The pid a launcher recorded into the service log, for cleaning up after a
+/// start that failed **after** the service had already detached.
+///
+/// Without this, a host-side failure past the point of no return — the launcher
+/// exec timing out, say — leaves the service running in a guest that outlives
+/// the command, invisible to `service status` and unreachable by
+/// `service stop`, with a retry starting a second copy beside it.
+fn logged_service_pid(work: &Path, service: &str) -> Option<u32> {
+    let path = service_log_path(work, service).ok()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines()
+        .rev()
+        .filter_map(|l| l.strip_prefix("#h5i-pid "))
+        .next()
+        .and_then(|v| v.trim().parse().ok())
 }
 
 /// A service started inside a guest: its pid, the guest, and that guest's boot
@@ -1892,7 +2065,7 @@ pub fn service_state(sandbox: &str, pid: u32, boot: &str) -> Option<bool> {
     // would read as dead — and, on the signalling path below, would never
     // actually be stopped.
     //
-    Some(service_pid_running(&rt, sandbox, pid))
+    service_pid_state(&rt, sandbox, pid)
 }
 
 /// Just "does this pid exist in that guest" — one exec, no guest-state or
@@ -1903,6 +2076,22 @@ pub fn service_state(sandbox: &str, pid: u32, boot: &str) -> Option<bool> {
 /// [`service_state`] re-checks all three, and a 30-iteration wait loop calling
 /// it made ninety runtime round trips out of what should be one per poll.
 pub fn service_pid_running(rt: &Runtime, sandbox: &str, pid: u32) -> bool {
+    // Collapsing here is deliberate and safe: the only caller is the shutdown
+    // poll, where "could not ask" simply ends the wait early and the KILL that
+    // follows is harmless. Anything that *decides* something — whether to
+    // signal at all, whether a record may be deleted — must use
+    // [`service_pid_state`] instead.
+    service_pid_state(rt, sandbox, pid).unwrap_or(false)
+}
+
+/// [`service_pid_running`] as a tri-state: `None` when the runtime could not be
+/// asked.
+///
+/// This distinction is the whole point of `service_state`, and collapsing it
+/// here once already turned a hung `msb exec` into "the service is dead" —
+/// which makes `service_stop` skip its signal and delete the record anyway,
+/// leaving a live dev server in the guest that nothing on the host can reach.
+pub fn service_pid_state(rt: &Runtime, sandbox: &str, pid: u32) -> Option<bool> {
     // `kill -0` alone is not liveness: it succeeds on a **zombie**, and a
     // service that exits inside a guest stays one until something reaps it.
     // Guest init reparents it to pid 1 and may never do so, so a finished dev
@@ -1924,7 +2113,7 @@ pub fn service_pid_running(rt: &Runtime, sandbox: &str, pid: u32) -> bool {
         "-c",
         &pid_running_probe(pid),
     ]);
-    run_bounded(cmd, GUEST_QUERY_TIMEOUT).is_some_and(|o| o.status.success())
+    run_bounded(cmd, GUEST_QUERY_TIMEOUT).map(|o| o.status.success())
 }
 
 /// The shell test for "pid `pid` is a live process in this guest". Pure, so the

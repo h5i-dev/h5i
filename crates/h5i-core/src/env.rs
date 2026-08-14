@@ -120,6 +120,49 @@ struct RunLock {
     _file: std::fs::File,
 }
 
+/// Serializes **service** operations for one box, and nothing else.
+///
+/// Distinct from [`RunLock`] on purpose: that one is held by an `env shell` for
+/// the whole interactive session, so serializing services on it meant
+/// `box service start` failed outright whenever an agent session was open — at
+/// every tier, including the kernel ones with no guest to race over. What
+/// actually needs serializing is two service operations touching one box's
+/// records; guest creation serializes itself in the sandbox layer.
+///
+/// Blocking rather than fail-fast: these operations are short, and a caller
+/// that waits 40 ms is better than one that tells the user to try again.
+struct ServiceLock {
+    #[cfg(unix)]
+    _file: std::fs::File,
+}
+
+impl ServiceLock {
+    fn acquire(env_dir: &Path) -> Result<Self, H5iError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            std::fs::create_dir_all(env_dir).map_err(|e| H5iError::with_path(e, env_dir))?;
+            let path = env_dir.join("services.lock");
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .map_err(|e| H5iError::with_path(e, &path))?;
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+                return Err(H5iError::Io(std::io::Error::last_os_error()));
+            }
+            Ok(ServiceLock { _file: file })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = env_dir;
+            Ok(ServiceLock {})
+        }
+    }
+}
+
 #[cfg(unix)]
 #[derive(Clone, Copy)]
 enum LockMode {
@@ -7203,13 +7246,13 @@ pub fn service_start(
     name: &str,
 ) -> Result<ServiceRecord, H5iError> {
     validate_service_name(name)?;
-    // Serialized against `run` and `shell`, which take the same lock. Starting
-    // a service now creates or starts the box's warm guest, and two unserialized
-    // creates race exactly the way this design works to prevent: both see no
-    // guest, both issue `create --replace` under the same name, and the loser's
-    // guest — with whatever was running in it — is destroyed.
-    #[cfg(unix)]
-    let _run_lock = RunLock::acquire(&m.dir(h5i_root))?;
+    // Deliberately **not** `RunLock`. That is the exclusive writer lock an
+    // `env shell` holds for its entire session, so taking it here made
+    // `box service start` fail outright while an agent session was open — at
+    // every tier, including the kernel ones that have no guest to race over.
+    // A service is not a run; it needs to serialize against other *service*
+    // operations, and guest creation serializes itself one layer down.
+    let _svc_lock = ServiceLock::acquire(&m.dir(h5i_root))?;
     let defs = load_service_defs(h5i_root, m)?;
     let def = defs.get(name).ok_or_else(|| {
         H5iError::Metadata(format!(
@@ -7373,6 +7416,11 @@ pub fn service_stop(
     name: &str,
 ) -> Result<Option<String>, H5iError> {
     validate_service_name(name)?;
+    // Same lock as `service_start`: a stop racing a start for one name could
+    // otherwise read the old record, signal the old pid, and then delete the
+    // record the concurrent start had just written — orphaning the service it
+    // started.
+    let _svc_lock = ServiceLock::acquire(&m.dir(h5i_root))?;
     let svc_dir = services_dir(h5i_root, m);
     let rec = read_service_record(&svc_dir, name).ok_or_else(|| {
         H5iError::Metadata(format!("service '{name}' is not running (no record)"))
