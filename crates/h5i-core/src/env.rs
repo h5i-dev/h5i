@@ -7371,7 +7371,23 @@ fn pinned_service_defs(
 ) -> Option<std::collections::BTreeMap<String, ServiceDef>> {
     let pinned = pinned_services_path(h5i_root, m);
     let text = std::fs::read_to_string(&pinned).ok()?;
-    serde_json::from_str(&text).ok()
+    let defs: std::collections::BTreeMap<String, ServiceDef> = serde_json::from_str(&text).ok()?;
+    // The digest, like `load_service_defs` checks on the same file. This
+    // function is the one documented as being for "callers that must not read
+    // box-writable input", and it was reading the file without the check that
+    // establishes the file is the one that was pinned — a weaker guarantee than
+    // its sibling's, under a stronger claim.
+    //
+    // A mismatch answers `None`, which `load_policy` reads as "may host
+    // services". That is the conservative direction the caller's own comment
+    // names: guessing false costs a killed dev server, guessing true costs a
+    // guest that lives until `box rm`.
+    if let Some(expected) = &m.service_digest
+        && &service_defs_digest(&defs) != expected
+    {
+        return None;
+    }
+    Some(defs)
 }
 
 fn load_service_defs(
@@ -10360,6 +10376,52 @@ mod tests {
         assert_eq!(out, b"a [redacted secret] b [redacted secret]");
         assert_eq!(scrub_exact(b"abc", &["".to_string()]), b"abc");
         assert_eq!(scrub_exact(b"abc", &[]), b"abc");
+    }
+
+    /// Two readers of `services.json`, one digest check between them.
+    ///
+    /// `pinned_service_defs` is the one documented as being for "callers that
+    /// must not read box-writable input", and it was the one *without* the
+    /// check that establishes the file is the one that was pinned — a weaker
+    /// guarantee than its sibling's, under a stronger claim.
+    #[test]
+    fn both_readers_of_the_pinned_service_manifest_check_its_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let mut m = canonical_manifest("claude", "fix");
+        let env = m.dir(h5i_root);
+        std::fs::create_dir_all(&env).unwrap();
+
+        let mut defs = std::collections::BTreeMap::new();
+        defs.insert(
+            "web".to_string(),
+            ServiceDef {
+                command: "npm run dev".into(),
+                port: Some(3000),
+                restart: None,
+                logs: true,
+            },
+        );
+        std::fs::write(
+            env.join("services.json"),
+            serde_json::to_vec_pretty(&defs).unwrap(),
+        )
+        .unwrap();
+
+        // Pinned to what is there: both readers agree.
+        m.service_digest = Some(service_defs_digest(&defs));
+        assert_eq!(pinned_service_defs(h5i_root, &m).unwrap().len(), 1);
+        assert_eq!(load_service_defs(h5i_root, &m).unwrap().len(), 1);
+
+        // Pinned to something else: the sibling already refused, and this one
+        // now answers `None` rather than handing back a manifest that does not
+        // match the digest.
+        m.service_digest = Some("0".repeat(64));
+        assert!(
+            pinned_service_defs(h5i_root, &m).is_none(),
+            "a manifest that does not match its pin is not the pinned manifest"
+        );
+        assert!(load_service_defs(h5i_root, &m).is_err());
     }
 
     /// A manifest is read far more often than it is imported, and only the
