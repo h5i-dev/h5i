@@ -517,6 +517,27 @@ fn effective_config_written_at_create_and_pinned_per_run() {
     r.h5i_ok(&["env", "create", "ws"]);
     assert!(!r.env_dir("ws").join("policy.effective.json").exists());
     assert!(r.manifest("ws").get("effective_digest").is_none());
+
+    // With only dump-less neighbors, the run's receipt claims no overlap
+    // (the field is omitted when empty) — the machine-checked strong answer.
+    assert!(rec.get("fs_overlap").is_none(), "solo box must record no overlap: {rec}");
+
+    // A second kernel-tier box on the same repo DOES overlap the first:
+    // both hold rw grants into the shared git plumbing (`grant_box_git`),
+    // which is true cross-box influence and must be said, not smoothed.
+    r.h5i_ok(&["env", "create", "eff2", "--isolation", "process"]);
+    r.h5i_ok(&["env", "run", "eff2", "--", "sh", "-c", "true"]);
+    let rec2 = r.capture_manifest("eff2");
+    let overlap: Vec<&str> = rec2["fs_overlap"]
+        .as_array()
+        .unwrap_or_else(|| panic!("second box must record its overlap: {rec2}"))
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(
+        overlap.iter().any(|o| o.starts_with("env/tester/eff via ")),
+        "overlap must name the sibling box and the shared path: {overlap:?}"
+    );
 }
 
 #[test]

@@ -2791,8 +2791,43 @@ box's `policy.effective.json` what the kernel must allow and deny, and
 `tests/effective_probes.rs` runs those accesses in a real process-tier box —
 seven of seven agree on this host. The probe harness's own first failure was
 educational and is now a comment: a test repo under `/tmp` vanishes behind
-the box's private-tmp bind, which is exactly the bind-semantics gap the
-prediction layer names.
+the box's private-tmp bind, which was exactly the bind-semantics gap the
+prediction layer named — until the follow-ons below closed it.
+
+**The four follow-ons, built 2026-08-15.**
+
+- *The profile-corpus sweep.* `builtin_and_repo_profiles_agree` runs the
+  builtin profile family plus this repo's own `.h5i/env.toml` profiles —
+  five profiles, the agent and browser ones carrying dozens of tilde-laden
+  real-host grants — through the same Rust-versus-Lean diff, with the world
+  taken from read-only stats of the real host.
+- *The HOME-controlled lane.* `interactive_and_tilde_cases_agree`
+  re-executes itself as a child whose `$HOME` is a disposable directory, so
+  it can generate what the other lanes must not touch: `interactive` shapes
+  (config-lock binds, whose `$HOME` config files it materializes per case)
+  and `~` grants. 200 cases; a deliberate mutation of the model's
+  config-lock file order produced 48 mismatches before being reverted, so
+  the lane has teeth.
+- *Bind semantics in the prediction layer.* `H5iSpec/Predict.lean`:
+  accesses beneath a bind target are judged on the path rebased into the
+  bind's source subtree, a read-only remount denies writes before Landlock
+  is consulted (`ro_bind_denies_write` — the theorem behind the config-lock
+  pin), and away from every bind the prediction is exactly the compiled
+  ruleset, so `compile_sound` bounds it. The probes now predict against the
+  *run-shape* dump (binds are runtime state; a warmup run writes them) and
+  probe the private-`/tmp` redirect itself — nine probes, nine agreements.
+- *The `fs_overlap` receipt.* `effective::interferes` in Rust mirrors the
+  Lean `interferesCheck` (differentially tested against it,
+  `rust_and_lean_interferes_agree`), and every kernel-tier run and shell
+  record now carries `fs_overlap`: the other materialized boxes whose
+  effective grants overlap this box's, each with the shared path. Empty is
+  the strong answer — by `interferesCheck_sound` plus `noninterference`,
+  such boxes cannot influence each other through their granted filesystems
+  — and the field's docs state the claim's exact scope (grants only; binds
+  and the network are not covered). Honesty note the integration test pins:
+  two boxes on one repo DO overlap, through the shared git plumbing
+  `grant_box_git` writes into both, and the receipt says so rather than
+  smoothing it.
 
 A Lean 4 model of the policy layer, developed beside the Rust and never linked
 into it, connected by differential testing over a machine-readable dump of the
@@ -2832,9 +2867,9 @@ Exit criteria for the first cut:
   the first handful of cases before being restored. CI:
   `.github/workflows/lean-drt.yml`, a separate non-gating lane at 5000
   cases; the harness skips loudly for contributors without a Lean toolchain.
-  Named generator gaps, not silent ones: `interactive` shapes and `~` grants
-  need a HOME-controlled subprocess harness, and the `examples/` corpus
-  sweep is not wired yet — both stay open under this criterion.
+  The generator gaps this text originally named — `interactive` shapes, `~`
+  grants, the profile-corpus sweep — closed the same day; see the follow-ons
+  paragraph below.
 - The Landlock fragment of the mechanism semantics is mechanized, and the
   conditional phase-transition theorem is machine-checked, including the
   counterexample the agent profile's shared `/tmp` provides (V3). **Step 3
@@ -5674,8 +5709,8 @@ The trusted base, in the same spirit as section 9:
 2. **The model, executable.** `lean/` package, L1 for the fs and net
    subset, the JSON interface, DRT over `examples/` plus 10k generated
    profiles. Exit: the M16 criterion, zero unexplained diffs. **Built and
-   driven, 2026-08-15 — see M16; the examples-corpus sweep and the
-   interactive/tilde generator gaps stay open.**
+   driven, 2026-08-15 — see M16; the profile-corpus sweep and the
+   interactive/tilde lanes landed with the follow-ons the same day.**
 3. **The Landlock fragment.** L0 domains, intersection, fd rights, and the
    two phase theorems, including the shared-`/tmp` counterexample as a Lean
    example, not prose. Exit: theorems check in CI. **Built, 2026-08-15 —

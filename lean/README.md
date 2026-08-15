@@ -41,10 +41,16 @@ by differential testing.
   decidable `interferesCheck` with its soundness proof, and the instances:
   two agent-profile boxes really interfere through `/tmp`, two
   workspace-only boxes provably do not.
-- `Main.lean`: the executable, two modes — DRT (`DrtInput` array in,
-  `EffectiveConfig` array out) and `--predict` (a dump plus probes in,
+- `H5iSpec/Predict.lean`: the bind-aware probe verdicts — accesses beneath
+  a bind target judged on the rebased source path, read-only remounts deny
+  writes outright (`ro_bind_denies_write`), and away from binds the verdict
+  is exactly the compiled ruleset.
+- `Main.lean`: the executable, three modes — DRT (`DrtInput` array in,
+  `EffectiveConfig` array out), `--predict` (a dump plus probes in,
   per-probe allow/deny out; `tests/effective_probes.rs` holds a real box to
-  those verdicts).
+  those verdicts), and `--interferes` (config pairs in, `interferesCheck`
+  verdicts out; the oracle for the Rust `effective::interferes` behind the
+  `fs_overlap` receipt).
 
 ## Build and test
 

@@ -6,3 +6,4 @@ import H5iSpec.Landlock
 import H5iSpec.Phase
 import H5iSpec.Refinement
 import H5iSpec.Noninterference
+import H5iSpec.Predict

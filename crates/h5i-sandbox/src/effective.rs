@@ -367,6 +367,49 @@ pub fn compute_effective(
     }
 }
 
+/// Component view of an absolute path, mirroring the Lean model's
+/// `parsePath`: split on `/`, empty components dropped.
+fn components(s: &str) -> Vec<&str> {
+    s.split('/').filter(|c| !c.is_empty()).collect()
+}
+
+fn is_component_prefix(a: &[&str], b: &[&str]) -> bool {
+    b.len() >= a.len() && a.iter().zip(b).all(|(x, y)| x == y)
+}
+
+/// Do two path-beneath scopes overlap (share any path)? Two prefix scopes
+/// overlap iff one is a component-prefix of the other — the Lean
+/// `scopesOverlap`, whose role in the noninterference argument is proved
+/// there (`isPrefixOf_comparable`).
+fn scopes_overlap(a: &str, b: &str) -> bool {
+    let (ca, cb) = (components(a), components(b));
+    is_component_prefix(&ca, &cb) || is_component_prefix(&cb, &ca)
+}
+
+/// One direction of the machine-checked interference condition
+/// (`lean/H5iSpec/Noninterference.lean`): a path `writer` may write and
+/// `reader` may read. Returns the first witnessing (write grant, read
+/// grant) pair, or `None` — and `None` is the strong answer: by
+/// `interferesCheck_sound` + `noninterference`, a clean check in BOTH
+/// directions means the two boxes cannot influence each other through
+/// their Landlock-granted filesystems. The claim's scope is exactly the
+/// grant lists: binds, the network, and anything outside the dumps are not
+/// covered. Kept semantically identical to the Lean `interferesCheck`;
+/// `tests/effective_drt.rs` diffs the two on random pairs.
+pub fn interferes(
+    writer: &EffectiveConfig,
+    reader: &EffectiveConfig,
+) -> Option<(String, String)> {
+    for w in &writer.landlock.rw {
+        for r in reader.landlock.ro.iter().chain(reader.landlock.rw.iter()) {
+            if scopes_overlap(w, r) {
+                return Some((w.clone(), r.clone()));
+            }
+        }
+    }
+    None
+}
+
 /// The canonical captured-run shape per kernel tier — what `env create` dumps
 /// before any run exists. `None` for the tiers this schema does not describe
 /// (workspace runs unconfined; Seatbelt, container and microvm enforce through
@@ -467,6 +510,40 @@ mod tests {
         h.update(&bytes);
         assert_eq!(digest, format!("{:x}", h.finalize()));
         assert_eq!(digest, cfg.digest().unwrap());
+    }
+
+    #[test]
+    fn interferes_fires_on_shared_grants_and_not_on_disjoint_boxes() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Each box gets its own worktree; grants are fully controlled so the
+        // builtin profile's own entries can't decide the outcome.
+        let eff = |work: &str, rw: &[&str]| {
+            let work = tmp.path().join(work);
+            std::fs::create_dir_all(&work).unwrap();
+            let mut p = policy(false);
+            p.profile.fs_read = Vec::new();
+            p.profile.fs_write =
+                rw.iter().map(|s| tmp.path().join(s).to_string_lossy().into_owned()).collect();
+            compute_effective(&p, &work, 3, &shape())
+        };
+        std::fs::create_dir_all(tmp.path().join("shared")).unwrap();
+        let shared = tmp.path().join("shared").to_string_lossy().into_owned();
+        // The agent-profile shape: a path both boxes may write (and read).
+        let a = eff("work-a", &["shared"]);
+        let b = eff("work-b", &["shared"]);
+        let (w, r) = interferes(&a, &b).expect("shared writable path must fire");
+        assert_eq!(w, shared);
+        assert_eq!(r, shared);
+        // Disjoint worktrees, no shared grants: clean in both directions —
+        // the precondition of the machine-checked noninterference theorem.
+        let da = eff("work-c", &[]);
+        let db = eff("work-d", &[]);
+        assert!(interferes(&da, &db).is_none());
+        assert!(interferes(&db, &da).is_none());
+        // Scope nesting counts as overlap: a parent grant reaches the child.
+        assert!(scopes_overlap("/a/b", "/a"));
+        assert!(scopes_overlap("/a", "/a/b"));
+        assert!(!scopes_overlap("/a/b", "/a/c"));
     }
 
     #[test]

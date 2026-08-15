@@ -1055,6 +1055,7 @@ mod tests {
             env_id: "env/claude/fix-auth".into(),
             policy_digest: None,
             effective_digest: None,
+            fs_overlap: Vec::new(),
             source: source.into(),
             cmd: Some("cargo test".into()),
             cwd: None,

@@ -693,6 +693,7 @@ mod tests {
             env_id: "env/tester/ui".into(),
             policy_digest: None,
             effective_digest: None,
+            fs_overlap: Vec::new(),
             source: "host-env-run".into(),
             cmd: Some("agent-browser click @e2".into()),
             cwd: None,

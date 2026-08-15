@@ -18,9 +18,15 @@
 //!   the env dir): a write denial on a system path would be DAC's answer as
 //!   often as Landlock's, and a conformance test must not launder one as
 //!   the other.
-//! - No `/tmp` (kernel tiers redirect it per env — bind semantics are not
-//!   in the prediction layer yet) and no `/proc` (the pidns re-grant is
-//!   not either).
+//! - Bind semantics ARE in the prediction layer (`H5iSpec/Predict.lean`):
+//!   accesses beneath a bind target are judged on the rebased source path,
+//!   and a read-only remount denies writes outright. So the private-`/tmp`
+//!   redirect is probed — through the *run-shape* dump, because binds are
+//!   runtime state: the test runs a warmup command first and reads the dump
+//!   that run wrote at the apply seam. What the layer still does not model
+//!   is *existence*, so `/tmp` probes touch only the directory itself and a
+//!   file the probe creates; and `/proc` stays out (the pidns re-grant is
+//!   not modeled).
 
 #![cfg(target_os = "linux")]
 
@@ -143,8 +149,14 @@ fn kernel_agrees_with_model_predictions() {
 
     let env_dir = r.env_dir("probes");
     let dump_path = env_dir.join("policy.effective.json");
+    assert!(dump_path.is_file(), "dump written at create");
+    // Binds are runtime state (`prepare_*` runs per invocation), so predict
+    // against the RUN-shape dump: a warmup run rewrites the file at the
+    // apply seam with the binds every later probe run will get too.
+    let warmup = r.h5i(&["env", "run", "probes", "--", "sh", "-c", "true"]);
+    assert!(warmup.status.success(), "warmup run failed:\n{}", out_str(&warmup));
     let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&dump_path).expect("dump written at create"))
+        serde_json::from_str(&std::fs::read_to_string(&dump_path).expect("run rewrote the dump"))
             .unwrap();
 
     // The probe set, from the dump itself plus the two owner-writable
@@ -162,6 +174,26 @@ fn kernel_agrees_with_model_predictions() {
         if p.exists() {
             probes.push(read_probe(&p, "dump ro grant must be readable"));
         }
+    }
+    // The private-`/tmp` redirect, when the run dump declares it: reads and
+    // writes under `/tmp` are judged on the rebased backing path, and the
+    // box's own scratch must be usable.
+    let binds = dump["binds"].as_array().unwrap();
+    if binds.iter().any(|b| b["target"] == "/tmp" && b["writable"] == true) {
+        probes.push(Probe {
+            path: "/tmp".into(),
+            access: "read",
+            cmd: "ls /tmp > /dev/null && echo PROBE_OK".into(),
+            why: "private tmp bind must be readable",
+        });
+        probes.push(Probe {
+            path: "/tmp/h5i-probe.txt".into(),
+            access: "write",
+            cmd: "echo x >> /tmp/h5i-probe.txt && echo PROBE_OK".into(),
+            why: "private tmp bind must be writable",
+        });
+    } else {
+        eprintln!("probe cap: run dump declares no writable /tmp bind — tmp probes skipped");
     }
 
     // The model's verdicts, from the dump the box actually enforces.

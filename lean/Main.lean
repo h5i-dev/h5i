@@ -7,10 +7,15 @@ The model's executable face, two modes:
   model's `EffectiveConfig` for each as a JSON array on stdout. One process
   per harness run, not per case.
 - **Predict** (`--predict`): an `EffectiveConfig` plus a probe list on
-  stdin, the compiled ruleset's verdict per probe on stdout — the
-  conformance-probe generator (§V4, "model versus kernel"): the *model*
-  says what the box must allow and deny, and `tests/effective_probes.rs`
-  holds a real box to it.
+  stdin, the bind-aware verdict per probe on stdout — the conformance-probe
+  generator (§V4, "model versus kernel"): the *model* says what the box
+  must allow and deny (`predictAllows`, Landlock plus bind rebasing plus
+  read-only remounts), and `tests/effective_probes.rs` holds a real box to
+  it.
+- **Interferes** (`--interferes`): an array of `{a, b}` config pairs on
+  stdin, `interferesCheck` over their compiled rulesets per pair on stdout
+  — the oracle the Rust-side `interferes` implementation is
+  differentially tested against.
 
 Any parse failure is a loud exit — a malformed case must fail the harness,
 never skip silently.
@@ -58,9 +63,26 @@ def runPredict (text : String) : IO UInt32 := do
     IO.eprintln s!"h5i-spec: bad predict input: {e}"
     return 1
   | .ok inp =>
-    let rs := compileLandlock inp.config.landlock
     let out := Json.arr <| inp.probes.map fun pr =>
-      Json.bool (rs.allows (parsePath pr.path) pr.access)
+      Json.bool (predictAllows inp.config (parsePath pr.path) pr.access)
+    IO.println out.compress
+    return 0
+
+/-- One interference query: does box `a` (writer) reach box `b` (reader)? -/
+structure InterferesPair where
+  a : EffectiveConfig
+  b : EffectiveConfig
+deriving FromJson
+
+def runInterferes (text : String) : IO UInt32 := do
+  match Json.parse text >>= fromJson? (α := Array InterferesPair) with
+  | .error e =>
+    IO.eprintln s!"h5i-spec: bad interferes input: {e}"
+    return 1
+  | .ok pairs =>
+    let out := Json.arr <| pairs.map fun pr =>
+      Json.bool (interferesCheck (compileLandlock pr.a.landlock)
+        (compileLandlock pr.b.landlock))
     IO.println out.compress
     return 0
 
@@ -70,6 +92,7 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | [] => runDrt text
   | ["--predict"] => runPredict text
+  | ["--interferes"] => runInterferes text
   | _ =>
-    IO.eprintln "usage: h5i-spec [--predict]  (input on stdin)"
+    IO.eprintln "usage: h5i-spec [--predict|--interferes]  (input on stdin)"
     return 2

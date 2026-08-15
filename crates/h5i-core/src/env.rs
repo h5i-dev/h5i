@@ -2018,6 +2018,48 @@ fn effective_digest_of(_env_dir: &Path) -> Option<String> {
     None
 }
 
+/// Other boxes materialized on this host whose effective Landlock grants
+/// overlap this env's, as `env/<id> via <path>` strings for the capture
+/// record. "Materialized" means their `policy.effective.json` exists — a
+/// pulled or gc'd box has none and cannot run here. Both directions are
+/// checked (influence has no preferred direction on a console), and an empty
+/// answer cites the machine-checked noninterference theorem; see the field
+/// docs on [`crate::receipt::ExecRecord::fs_overlap`] for the claim's exact
+/// scope. Best-effort on read errors: a corrupt neighbor dump is skipped,
+/// never a reason to fail this box's run.
+#[cfg(target_os = "linux")]
+fn fs_overlap_with_boxes(h5i_root: &Path, m: &EnvManifest) -> Vec<String> {
+    let read = |dir: &Path| -> Option<crate::effective::EffectiveConfig> {
+        let text =
+            std::fs::read_to_string(dir.join(crate::effective::EFFECTIVE_CONFIG_FILE)).ok()?;
+        serde_json::from_str(&text).ok()
+    };
+    let Some(mine) = read(&m.dir(h5i_root)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for other in list(h5i_root) {
+        if other.id == m.id {
+            continue;
+        }
+        let Some(theirs) = read(&other.dir(h5i_root)) else {
+            continue;
+        };
+        let hit = crate::effective::interferes(&mine, &theirs)
+            .or_else(|| crate::effective::interferes(&theirs, &mine));
+        if let Some((path, _)) = hit {
+            out.push(format!("{} via {}", other.id, path));
+        }
+    }
+    out.sort();
+    out
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fs_overlap_with_boxes(_h5i_root: &Path, _m: &EnvManifest) -> Vec<String> {
+    Vec::new()
+}
+
 /// Bake the profile's `persona = [...]` sources into a single `PERSONA.md` at
 /// the worktree root. Sources ride in the repo at the pinned base, so they are
 /// present in the freshly checked-out worktree; their contents are concatenated
@@ -5214,6 +5256,7 @@ fn run_inner(
         env_id: m.id.clone(),
         policy_digest: Some(m.policy_digest.clone()),
         effective_digest: effective_digest_of(&env_dir_path),
+        fs_overlap: fs_overlap_with_boxes(h5i_root, m),
         source: "host-env-run".into(),
         cmd: Some(argv.join(" ")),
         cwd: Some(work.display().to_string()),
@@ -5728,6 +5771,7 @@ fn capture_shell_egress(
         env_id: m.id.clone(),
         policy_digest: Some(m.policy_digest.clone()),
         effective_digest: effective_digest_of(&m.dir(h5i_root)),
+        fs_overlap: fs_overlap_with_boxes(h5i_root, m),
         source: "host-env-shell".into(),
         cmd: Some(format!("env shell {}", m.id)),
         cwd: Some(work.display().to_string()),
