@@ -582,6 +582,32 @@ const SPOOL_STREAM_CAP: u64 = 4 * 1024 * 1024;
 /// exhaust host threads.
 const MAX_PROXY_CONNECTIONS: usize = 64;
 
+/// How many *consecutive* failed `accept()` calls end the accept loop. Sized so
+/// transient per-connection and fd-pressure errors (which retry at 25 ms) never
+/// reach it, while a permanently broken listener still stops the thread instead
+/// of spinning. Mirrors the credential proxy's bound, for the same reason.
+const MAX_CONSECUTIVE_ACCEPT_ERRORS: usize = 256;
+
+/// Holds one of the [`MAX_PROXY_CONNECTIONS`] slots and releases it on drop —
+/// including when the worker unwinds.
+///
+/// The count is the only thing between the box and an unbounded number of host
+/// threads, so the release has to be unconditional. A bare `fetch_sub` after
+/// the call is not: `splice` calls `std::thread::spawn`, which **panics** when
+/// the OS refuses a thread, and that is reachable from exactly the load this
+/// cap exists to bound. A leaked slot is permanent, and after
+/// `MAX_PROXY_CONNECTIONS` of them the proxy answers 503 for the life of the
+/// box — which, since the proxy is the box's only route out, is the box losing
+/// the network entirely. `auth_proxy::InFlightSlot` is the same guard for the
+/// same reason; this sibling never got it.
+struct ProxySlot(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for ProxySlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// A running egress proxy: a localhost TCP listener gating CONNECT/HTTP by the
 /// allowlist. Dropping the handle shuts the accept loop down.
 pub struct ProxyHandle {
@@ -664,36 +690,59 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
     // benefits from unbounded parallelism here.
     let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let join = std::thread::spawn(move || {
+        // `accept` reports per-connection and per-host conditions that say
+        // nothing about the listener: `ECONNABORTED` when a client RSTs between
+        // SYN and accept, `EMFILE`/`ENFILE` under fd pressure. Treating any of
+        // them as fatal ended the accept loop for good — and this proxy is the
+        // box's only route out, so that is the box losing the network. The
+        // listener is loopback and unauthenticated by design (see the note on
+        // `NetPlan::Proxy`), which means any local process could do it with a
+        // connect and a reset.
+        let mut consecutive_errors = 0usize;
         while !stop_thread.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((mut client, _)) => {
+                    consecutive_errors = 0;
                     if stop_thread.load(Ordering::SeqCst) {
                         break;
-                    }
-                    if live.load(Ordering::SeqCst) >= MAX_PROXY_CONNECTIONS {
-                        // Refuse rather than queue: a queued connection still
-                        // holds an fd, and the client sees a clear 503.
-                        let _ = client.write_all(
-                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
-                        );
-                        continue;
                     }
                     // The accepted socket may arrive non-blocking (see
                     // `handle_proxy_client`, which is where that is corrected —
                     // at the point the blocking reads are actually made).
                     let allow = allow.clone();
                     let tally = tally_thread.clone();
-                    let live_slot = live.clone();
-                    live_slot.fetch_add(1, Ordering::SeqCst);
+                    // Claimed with one atomic, not a `load` followed by a
+                    // `fetch_add`: between those two, every thread that read
+                    // the same value took a slot, so the cap was advisory.
+                    let taken = live.fetch_add(1, Ordering::SeqCst);
+                    let slot = ProxySlot(live.clone());
+                    if taken >= MAX_PROXY_CONNECTIONS {
+                        // Refuse rather than queue: a queued connection still
+                        // holds an fd, and the client sees a clear 503. The
+                        // guard returns the slot as it goes out of scope.
+                        drop(slot);
+                        let _ = client.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+                        );
+                        continue;
+                    }
                     std::thread::spawn(move || {
+                        // Moved in, so the release happens on unwind too.
+                        let _slot = slot;
                         let _ = handle_proxy_client(client, &allow, &tally, HEAD_READ_TIMEOUT);
-                        live_slot.fetch_sub(1, Ordering::SeqCst);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    consecutive_errors = 0;
                     std::thread::sleep(Duration::from_millis(25));
                 }
-                Err(_) => break,
+                Err(_) => {
+                    consecutive_errors += 1;
+                    if consecutive_errors > MAX_CONSECUTIVE_ACCEPT_ERRORS {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
             }
         }
     });
@@ -707,10 +756,23 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
 }
 
 /// Read the request head (up to the blank line) from `s`.
+///
+/// Bounded overall, not just per `read()`. The socket's read timeout bounds a
+/// single syscall, so a client dribbling one header byte just under that
+/// interval held its slot indefinitely — and sixty-four such connections take
+/// the box's only route out away from it. The listener is loopback and
+/// unauthenticated by design, so the actor need not even be the box.
 fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    let deadline = std::time::Instant::now() + HEAD_DEADLINE;
     let mut buf = Vec::with_capacity(256);
     let mut byte = [0u8; 1];
     loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request head exceeded its deadline",
+            ));
+        }
         let n = s.read(&mut byte)?;
         if n == 0 {
             break;
@@ -722,6 +784,11 @@ fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
     }
     Ok(buf)
 }
+
+/// Whole-head deadline, as distinct from the per-`read()` timeout below.
+/// Generous for a real client on a slow link, short enough that a stalled
+/// connection cannot hold a slot for the life of the box.
+const HEAD_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Host:port target from a CONNECT line or an absolute-form request line.
 /// Returns `(host, port, is_connect)`.
@@ -2971,6 +3038,31 @@ mod tests {
         // only assert the gate's accept/deny verdict.
         let allow = AllowList::parse(&["allowed.invalid:443".into()]).unwrap();
         let proxy = spawn_proxy(allow).unwrap();
+
+        // A connect-and-reset used to end the accept loop for good, and this
+        // proxy is the box's only route out — so any local process could take
+        // the box's network away with one socket. Do it several times, then
+        // prove the proxy is still answering.
+        #[cfg(unix)]
+        for _ in 0..8 {
+            use std::os::fd::AsRawFd;
+            if let Ok(s) = TcpStream::connect(("127.0.0.1", proxy.port)) {
+                // `SO_LINGER` with a zero timeout makes `close` send an RST
+                // rather than a FIN, which is what produces `ECONNABORTED` on
+                // the accepting side. (`TcpStream::set_linger` is still
+                // unstable, so this goes through libc.)
+                let l = libc::linger { l_onoff: 1, l_linger: 0 };
+                unsafe {
+                    libc::setsockopt(
+                        s.as_raw_fd(),
+                        libc::SOL_SOCKET,
+                        libc::SO_LINGER,
+                        (&raw const l).cast(),
+                        std::mem::size_of::<libc::linger>() as libc::socklen_t,
+                    );
+                }
+            }
+        }
 
         // Denied host → 403, fail-closed.
         let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();
