@@ -2815,7 +2815,22 @@ prediction layer named — until the follow-ons below closed it.
   pin), and away from every bind the prediction is exactly the compiled
   ruleset, so `compile_sound` bounds it. The probes now predict against the
   *run-shape* dump (binds are runtime state; a warmup run writes them) and
-  probe the private-`/tmp` redirect itself — nine probes, nine agreements.
+  probe the private-`/tmp` redirect itself. Extended the same day with
+  **nesting and existence**: resolution recurses through the bind stack
+  (later shallower binds shadow earlier deeper ones, chained
+  source-under-target paths resolve through both — the four `nested_*`
+  facts pin it), and each verdict is `{allow, real, check}` — the
+  mechanisms' permission, the resolved host object, and what must exist
+  there — with the harness supplying the existence facts by stat'ing
+  `real`. That split let the probes cover what permission alone cannot: a
+  host `/tmp` file predicted invisible behind the private-tmp bind (the
+  confusion that broke the harness's first version, now a passing
+  prediction), and a same-run scratch round-trip. Eleven probes, eleven
+  agreements — after the suite caught one more true fact the honest way:
+  the private-tmp scratch is wiped per run (`prepare_private_tmp`), env
+  lifecycle above the mount layer, so existence facts are valid only
+  within the invocation that measured them. Named as an exclusion in the
+  layer's docs.
 - *The `fs_overlap` receipt.* `effective::interferes` in Rust mirrors the
   Lean `interferesCheck` (differentially tested against it,
   `rust_and_lean_interferes_agree`), and every kernel-tier run and shell

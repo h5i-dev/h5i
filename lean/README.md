@@ -41,10 +41,14 @@ by differential testing.
   decidable `interferesCheck` with its soundness proof, and the instances:
   two agent-profile boxes really interfere through `/tmp`, two
   workspace-only boxes provably do not.
-- `H5iSpec/Predict.lean`: the bind-aware probe verdicts — accesses beneath
-  a bind target judged on the rebased source path, read-only remounts deny
-  writes outright (`ro_bind_denies_write`), and away from binds the verdict
-  is exactly the compiled ruleset.
+- `H5iSpec/Predict.lean`: the probe verdicts, bind- and existence-aware.
+  Resolution recurses through the bind stack (`resolveBinds`; the four
+  `nested_*` facts pin shadowing in both directions and chained
+  source-under-target resolution), read-only remounts deny writes outright
+  (`ro_bind_denies_write`), away from binds the verdict is exactly the
+  compiled ruleset, and each verdict carries the resolved host path plus
+  the existence check the harness must measure — the model owns the
+  semantics, the harness owns the stat.
 - `Main.lean`: the executable, three modes — DRT (`DrtInput` array in,
   `EffectiveConfig` array out), `--predict` (a dump plus probes in,
   per-probe allow/deny out; `tests/effective_probes.rs` holds a real box to

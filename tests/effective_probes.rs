@@ -152,8 +152,13 @@ fn kernel_agrees_with_model_predictions() {
     assert!(dump_path.is_file(), "dump written at create");
     // Binds are runtime state (`prepare_*` runs per invocation), so predict
     // against the RUN-shape dump: a warmup run rewrites the file at the
-    // apply seam with the binds every later probe run will get too.
-    let warmup = r.h5i(&["env", "run", "probes", "--", "sh", "-c", "true"]);
+    // apply seam with the binds every later probe run will get too. The
+    // warmup also seeds a file in the box's private `/tmp`, for the
+    // existence probes below.
+    let warmup = r.h5i(&[
+        "env", "run", "probes", "--", "sh", "-c",
+        "echo seeded > /tmp/h5i-seeded.txt",
+    ]);
     assert!(warmup.status.success(), "warmup run failed:\n{}", out_str(&warmup));
     let dump: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&dump_path).expect("run rewrote the dump"))
@@ -178,6 +183,8 @@ fn kernel_agrees_with_model_predictions() {
     // The private-`/tmp` redirect, when the run dump declares it: reads and
     // writes under `/tmp` are judged on the rebased backing path, and the
     // box's own scratch must be usable.
+    let host_tmp_file =
+        PathBuf::from(format!("/tmp/h5i-host-probe-{}.txt", std::process::id()));
     let binds = dump["binds"].as_array().unwrap();
     if binds.iter().any(|b| b["target"] == "/tmp" && b["writable"] == true) {
         probes.push(Probe {
@@ -191,6 +198,36 @@ fn kernel_agrees_with_model_predictions() {
             access: "write",
             cmd: "echo x >> /tmp/h5i-probe.txt && echo PROBE_OK".into(),
             why: "private tmp bind must be writable",
+        });
+        // Existence through the bind, WITHIN one run: seed and read back in
+        // the same invocation. Not across runs — this suite's own first
+        // failure established that the private-tmp scratch is wiped per run
+        // (`prepare_private_tmp` re-runs each invocation), which is env
+        // lifecycle above the mount layer: the model correctly resolved the
+        // warmup's seeded file to an existing backing path, and the next
+        // run's wipe removed it before the probe could look. So existence
+        // facts are only carried within the invocation that stats them.
+        probes.push(Probe {
+            path: "/tmp/h5i-roundtrip.txt".into(),
+            access: "write",
+            cmd: "echo s > /tmp/h5i-roundtrip.txt \
+                  && cat /tmp/h5i-roundtrip.txt > /dev/null && echo PROBE_OK"
+                .into(),
+            why: "private tmp scratch must round-trip within a run",
+        });
+        // …and a file planted on the HOST's real /tmp: permitted, but the
+        // resolved backing path has no such object, so the read must fail
+        // with ENOENT — the exact confusion that broke the first version of
+        // this harness, now a prediction instead of a surprise.
+        std::fs::write(&host_tmp_file, b"host side\n").expect("plant host /tmp file");
+        probes.push(Probe {
+            path: host_tmp_file.to_string_lossy().into_owned(),
+            access: "read",
+            cmd: format!(
+                "cat {} > /dev/null && echo PROBE_OK",
+                host_tmp_file.to_string_lossy()
+            ),
+            why: "host /tmp file must be invisible behind the private-tmp bind",
         });
     } else {
         eprintln!("probe cap: run dump declares no writable /tmp bind — tmp probes skipped");
@@ -213,27 +250,49 @@ fn kernel_agrees_with_model_predictions() {
     child.stdin.take().unwrap().write_all(predict_input.to_string().as_bytes()).unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "lean predict exited with {:?}", out.status);
-    let predictions: Vec<bool> = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(predictions.len(), probes.len());
+    let verdicts: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(verdicts.len(), probes.len());
 
-    // The kernel's verdicts, from the real box.
+    // The model owns the semantics (permission, resolution through the
+    // binds, what must exist); the harness owns the measurement: stat the
+    // model-resolved `real` path on the host, BEFORE any probe runs, so a
+    // probe's own writes cannot retroactively change an expectation.
+    let expected: Vec<(bool, String)> = verdicts
+        .iter()
+        .map(|v| {
+            let allow = v["allow"].as_bool().unwrap();
+            let real = PathBuf::from(v["real"].as_str().unwrap());
+            let present = match v["check"].as_str().unwrap() {
+                "exists" => real.exists(),
+                "creatable" => {
+                    real.exists() || real.parent().is_some_and(|p| p.is_dir())
+                }
+                other => panic!("unknown existence check '{other}'"),
+            };
+            (allow && present, format!("allow={allow} real={} present={present}", real.display()))
+        })
+        .collect();
+
+    // The kernel's answers, from the real box.
     let mut mismatches = Vec::new();
-    for (probe, predicted) in probes.iter().zip(&predictions) {
+    for (probe, (want, verdict)) in probes.iter().zip(&expected) {
         let run = r.h5i(&["env", "run", "probes", "--", "sh", "-c", &probe.cmd]);
         let observed = out_str(&run).contains("PROBE_OK");
-        if observed != *predicted {
+        if observed != *want {
             mismatches.push(format!(
-                "{} {} — model says {}, kernel says {} ({})\n  cmd: {}\n  output:\n{}",
+                "{} {} — model expects {}, kernel says {} ({})\n  model: {}\n  cmd: {}\n  output:\n{}",
                 probe.access,
                 probe.path,
-                if *predicted { "allow" } else { "deny" },
-                if observed { "allowed" } else { "denied" },
+                if *want { "success" } else { "failure" },
+                if observed { "success" } else { "failure" },
                 probe.why,
+                verdict,
                 probe.cmd,
                 out_str(&run)
             ));
         }
     }
+    let _ = std::fs::remove_file(&host_tmp_file);
     assert!(
         mismatches.is_empty(),
         "the kernel disagreed with the model on {} of {} probes:\n{}",

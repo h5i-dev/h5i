@@ -7,11 +7,13 @@ The model's executable face, two modes:
   model's `EffectiveConfig` for each as a JSON array on stdout. One process
   per harness run, not per case.
 - **Predict** (`--predict`): an `EffectiveConfig` plus a probe list on
-  stdin, the bind-aware verdict per probe on stdout — the conformance-probe
-  generator (§V4, "model versus kernel"): the *model* says what the box
-  must allow and deny (`predictAllows`, Landlock plus bind rebasing plus
-  read-only remounts), and `tests/effective_probes.rs` holds a real box to
-  it.
+  stdin, the full verdict per probe on stdout — `{allow, real, check}`:
+  whether the mechanisms permit the access (Landlock plus nested-bind
+  resolution plus read-only remounts), which host object the access
+  reaches, and what must exist there for the probe to succeed. The model
+  owns the semantics; `tests/effective_probes.rs` supplies the existence
+  facts by stat'ing `real` on the host and holds a real box to the
+  combined expectation.
 - **Interferes** (`--interferes`): an array of `{a, b}` config pairs on
   stdin, `interferesCheck` over their compiled rulesets per pair on stdout
   — the oracle the Rust-side `interferes` implementation is
@@ -64,7 +66,14 @@ def runPredict (text : String) : IO UInt32 := do
     return 1
   | .ok inp =>
     let out := Json.arr <| inp.probes.map fun pr =>
-      Json.bool (predictAllows inp.config (parsePath pr.path) pr.access)
+      let v := predictVerdict inp.config (parsePath pr.path) pr.access
+      Json.mkObj [
+        ("allow", Json.bool v.allow),
+        ("real", Json.str ("/" ++ String.intercalate "/" v.real)),
+        ("check", Json.str (match v.check with
+          | .«exists» => "exists"
+          | .creatable => "creatable")),
+      ]
     IO.println out.compress
     return 0
 
