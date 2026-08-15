@@ -792,9 +792,6 @@ fn append_actions_log(env_dir: &Path, actions: &[ActionRecord]) -> std::io::Resu
     file.flush()
 }
 
-/// Tell a client that no daemon answered, echoing the id of its first request
-/// so a CLI correlating replies by id matches the reply rather than hanging.
-#[cfg(unix)]
 /// Read one line from `client`, bounded three ways: per `read()`, in total
 /// bytes, and — the one that does not follow from the other two — in wall
 /// clock. Its own function so a test can drive the deadline in milliseconds
@@ -836,6 +833,9 @@ fn read_first_line_within(
     String::from_utf8_lossy(&raw).into_owned()
 }
 
+/// Tell a client that no daemon answered, echoing the id of its first request
+/// so a CLI correlating replies by id matches the reply rather than hanging.
+#[cfg(unix)]
 fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
     use std::io::Write;
 
