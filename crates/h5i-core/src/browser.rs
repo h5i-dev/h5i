@@ -277,20 +277,36 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
         return ev;
     };
 
-    let mut truncated = false;
+    // `Cell`, because both closures below need to set it and the borrow
+    // checker will not hand the same `&mut bool` to two of them.
+    let truncated = std::cell::Cell::new(false);
     // Take everything past the cursor, capped. A buffer shorter than the cursor
     // means the session restarted and the numbering began again, so the whole
     // buffer is new.
-    let mut slice = |items: &[serde_json::Value], seen: &mut usize| -> Vec<serde_json::Value> {
+    let slice = |items: &[serde_json::Value], seen: &mut usize| -> Vec<serde_json::Value> {
         let start = if items.len() < *seen { 0 } else { *seen };
         *seen = items.len();
         let fresh = &items[start..];
         if fresh.len() > MAX_LINES {
-            truncated = true;
+            truncated.set(true);
             fresh[fresh.len() - MAX_LINES..].to_vec()
         } else {
             fresh.to_vec()
         }
+    };
+
+    // `slice` caps each *array*, and the outer list has no cap at all — so a
+    // batch of ten thousand entries, each carrying its own `messages` array,
+    // multiplied straight through into `ev` and from there into a receipt line.
+    // The box writes this JSON, so the total is what has to be bounded, not the
+    // per-array slice. Kept as a closure over the three vectors so the rule is
+    // stated once and cannot apply to two of the three.
+    let keep = |v: &mut Vec<String>, line: String| {
+        if v.len() >= MAX_LINES {
+            truncated.set(true);
+            return;
+        }
+        v.push(line);
     };
 
     for entry in entries {
@@ -304,12 +320,12 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
                     continue;
                 }
                 let text = m["text"].as_str().unwrap_or_default();
-                ev.console.push(clip(&format!("[{level}] {text}")));
+                keep(&mut ev.console, clip(&format!("[{level}] {text}")));
             }
         }
         if let Some(errs) = result["errors"].as_array() {
             for e in slice(errs, &mut cursor.errors) {
-                ev.errors.push(clip(e["text"].as_str().unwrap_or_default()));
+                keep(&mut ev.errors, clip(e["text"].as_str().unwrap_or_default()));
             }
         }
         if let Some(reqs) = result["requests"].as_array() {
@@ -327,11 +343,11 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
                 let shown = status
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "no response".into());
-                ev.failed_requests.push(clip(&format!("{shown} {method} {url}")));
+                keep(&mut ev.failed_requests, clip(&format!("{shown} {method} {url}")));
             }
         }
     }
-    ev.truncated = truncated;
+    ev.truncated = truncated.get();
     ev
 }
 
@@ -557,6 +573,34 @@ mod tests {
         // The tail is what is kept: the most recent failures are the ones that
         // explain the state the run ended in.
         assert!(ev.failed_requests.last().unwrap().ends_with("/r49"));
+    }
+
+    /// The per-array cap bounded one `messages` list; the outer batch had none,
+    /// so a box returning ten thousand entries multiplied straight through into
+    /// the evidence and from there into a receipt line. The box writes this
+    /// JSON, so the *total* is what has to be bounded.
+    #[test]
+    fn a_flood_spread_across_many_entries_is_capped_too() {
+        // Each entry's buffer is one longer than the last, which is what an
+        // accumulating buffer actually looks like — so the cursor advances by
+        // one per entry and every entry contributes a fresh line.
+        let entries: Vec<String> = (0..200)
+            .map(|i| {
+                let errs: Vec<String> = (0..=i)
+                    .map(|j| format!(r#"{{"text":"boom {j}"}}"#))
+                    .collect();
+                format!(
+                    r#"{{"result":{{"errors":[{}],"messages":[],"requests":[]}}}}"#,
+                    errs.join(",")
+                )
+            })
+            .collect();
+        let batch = format!("[{}]", entries.join(","));
+
+        let mut c = Cursor::default();
+        let ev = parse_batch(batch.as_bytes(), &mut c);
+        assert_eq!(ev.errors.len(), MAX_LINES, "the total must be bounded");
+        assert!(ev.truncated, "a capped record must say it was capped");
     }
 
     #[test]
