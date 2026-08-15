@@ -4,7 +4,7 @@ Status: in progress, 2026-08-05. Supersedes the "auditable workspaces /
 provenance" positioning for the product surface. Design docs under `roadmap/`
 stay as history for the parts we keep.
 
-This document has two parts:
+This document has three parts:
 
 - **The environment**, sections 1 to 12. Scope, architecture, phases and the
   decisions behind them. Decisions already taken are in section 10; what is
@@ -14,6 +14,9 @@ This document has two parts:
   carry a `B` prefix so the two numbering schemes never collide. Section 12
   stays the authority on the engine's *scope and why*; the B sections are the
   authority on *order*.
+- **Formal verification**, sections V1 to V6. A Lean 4 model of the policy
+  layer beside the Rust, connected by differential testing, Cedar-style. M16
+  is its milestone stub; the V sections are the authority on design and order.
 
 **M0 through M5 are built. M6 is mostly built. M7 (the terminal viewer) is
 built but undriven.** What is not done, stated plainly so it is not read as
@@ -2765,6 +2768,26 @@ slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
 small static binary staged into a mounted directory is the first thing that
 work has to decide.
 
+### M16. The Lean model beside the Rust: proposed, 2026-08-15
+
+A Lean 4 model of the policy layer, developed beside the Rust and never linked
+into it, connected by differential testing over a machine-readable dump of the
+effective configuration. The design, the theorems, and the order live in
+sections V1 to V6. M16 does not depend on M15 or on any browser work; its only
+touch on the existing code is the dump (V2).
+
+Exit criteria for the first cut:
+
+- `policy.effective.json` is written at box creation from the same values the
+  mechanism appliers receive, and its digest is recorded in the capture
+  manifest (V2).
+- A `lean/` package builds in CI and its executable model agrees with the Rust
+  resolver on the `examples/` corpus plus 10k generated profiles, with every
+  mismatch either fixed or checked in as a named regression (V4).
+- The Landlock fragment of the mechanism semantics is mechanized, and the
+  conditional phase-transition theorem is machine-checked, including the
+  counterexample the agent profile's shared `/tmp` provides (V3).
+
 ## 9. Limits we state up front
 
 Being explicit about these is a feature, since the claim is a security claim.
@@ -5350,3 +5373,250 @@ Reading code found some. Running a conformance suite found more, and found the
 per hour, and, the part worth internalising, **it found bugs in code whose own
 comments had reasoned carefully to the wrong conclusion.** A comment cannot
 falsify itself. Another implementation can.
+
+---
+
+# Formal verification: a Lean model beside the Rust
+
+Status: proposed, 2026-08-15. Milestone stub: M16. Mode: the model is a
+sibling of the implementation, never a dependency of it. No Lean code is
+linked into the `h5i` binary, no Lean runs inside a box, and nothing on any
+runtime path changes. Enforcement stays where it is today: in the kernel,
+installed once at box setup. Verification touches only policy resolution,
+which runs once per `env create`.
+
+## V1. What is being claimed, and why an interactive prover
+
+The precedent is Cedar, AWS's authorization language: a production Rust
+implementation, an executable formal model of the same semantics in Lean 4,
+metatheorems proved against the model, and millions of differential tests
+checking that the two agree ("verification-guided development", Amazon
+Verified Permissions ships on it). Cedar is h5i minus the operating system:
+its policies denote over an abstract request, and the story ends there. Ours
+bottoms out in Landlock rule sets, seccomp filters, and mount tables, and that
+is where the open ground is:
+
+- seccomp has been formalized once, at the JIT level, in Coq (Jitk, OSDI
+  2014). iptables has Isabelle semantics (Diekmann). seL4 proved intransitive
+  noninterference for a whole kernel. **Landlock has no mechanized semantics
+  at all, and neither does the composition of Landlock with seccomp and mount
+  namespaces.** That composition is exactly what `build_confined_command`
+  emits.
+- No published system treats **phase-aware** sandbox policy: a policy that is
+  deliberately different during dependency installation than during the run,
+  with a transition between them. h5i has this in miniature (`box cache
+  refresh` is the one moment a cache bind is writable; every run mounts it
+  read-only), and senv is built on it wholesale (network to the registry
+  during install, no network during run).
+
+Why an interactive prover rather than a solver: every property worth claiming
+here is quantified over all policies, all reachable states, or pairs of
+traces. Refinement ("the compiled mechanisms admit no trace the policy
+forbids") and noninterference ("box A's secrets never influence box B's
+observations") are not per-instance queries. And once the semantics is in
+Lean, the per-instance facts a solver would have provided fall out for free:
+a concrete policy against a decidable semantics is discharged by `decide`.
+One toolchain, no gap between the checker and the theorems.
+
+What a green result means, stated exactly, because the pieces compose and
+none substitutes for another:
+
+1. The DRT harness green (V4) means: the Rust resolver and the Lean model
+   compute the same effective configuration on every input tried.
+2. The refinement theorem (V3, L2) means: the model's compilation of any
+   policy is sound against the model's mechanism semantics.
+3. The conformance probes (V4) mean: on the hosts we run them, the mechanism
+   semantics predicts what the kernel actually does, for the behaviours
+   probed.
+
+Together they say the deployed configuration enforces the written policy, up
+to the trusted base in V5. Separately each is much less, and this chapter
+will not blur them.
+
+## V2. The one Rust change: dump the effective configuration at the apply seam
+
+`policy.resolved.toml` is the digested *intent*. The *enforced* state is
+larger: `ResolvedPolicy` carries runtime-only, serde-skipped fields that never
+enter the digest and are still applied as mounts and grants, deliberately
+(`crates/h5i-sandbox/src/sandbox_policy.rs:1899`): `ro_binds`, `home_binds`,
+`private_binds`, `cache_write`, `work_readonly`, `user_egress_allow`, the
+loopback port list, `box_git`. A model that reads only the toml verifies less
+than what a box gets.
+
+So the single change to the existing code is a second serialization,
+`policy.effective.json`, written at box creation, with one rule that is the
+whole point:
+
+**The dump serializes the exact values handed to the mechanism appliers in
+`build_confined_command`, not a parallel pretty-printer.** If the dump is
+computed by separate code that re-derives "what we probably applied", the
+model verifies a brochure. The serializer takes the same structs, at the seam
+where Landlock rules, mount calls, and the seccomp filter are constructed,
+after `$WORK` expansion and after `prepare_private_paths` and
+`prepare_home_state` have run.
+
+Contents, version 1 of a versioned schema, canonically ordered so the digest
+is stable:
+
+- the tier actually selected, and the claim it resolved from;
+- Landlock grants as absolute paths with their access-right sets, read and
+  write separately, `$WORK` expanded;
+- every bind, with source, target, and writability: the ro binds, home
+  binds, private binds, and the single `cache_write` if present;
+- net mode, egress allowlist including host-side extras, the loopback port
+  list, and the AF_UNIX flag;
+- the seccomp template identifier and its parameters (the filter itself is a
+  fixed artifact per template; the model treats templates as named
+  semantics, V3);
+- rlimits, `env_pass`, the tools allowlist.
+
+`fs_deny` appears in the dump under resolution metadata, not under
+enforcement, because it is not a kernel rule: Landlock is allowlist-only and
+`fs_deny` is a preflight refusal condition on the *policy*. The model gives
+it exactly that semantics, so what gets proved about it is "resolution
+refuses", never "the kernel denies". Writing that distinction into the schema
+keeps the model honest by construction.
+
+The dump's digest is recorded in the capture manifest beside the policy
+digest. That makes the verified artifact tamper-evident the same way the
+policy already is, and it costs one hash.
+
+## V3. The Lean development, layer by layer
+
+A `lean/` package (lake project, built in CI, pinned toolchain). Four layers,
+each meaningful without the ones above it.
+
+**L0, mechanism semantics.** Small-step operational semantics of the
+contracts h5i composes, at the level of their documented behaviour, not
+kernel C:
+
+- *Landlock*: a rule set is an allowlist of access rights over path
+  prefixes; domains nest and **a nested domain can only intersect, never
+  widen**; and the rights of a file descriptor are fixed at `open` and
+  travel with the fd afterwards, through `fork`, `exec`, and `SCM_RIGHTS`.
+  Paths are component lists; symlinks are out of scope in v1 and listed in
+  V5, not silently ignored.
+- *Mounts*: per-namespace tables, bind then read-only remount, private
+  propagation. The interesting lemma is that a bind can re-expose a path a
+  Landlock grant did not name, which is why the two are modeled together or
+  not usefully at all.
+- *seccomp*: a stack of pure functions over syscall number and arguments,
+  most-restrictive result wins. h5i ships fixed filter templates, so the
+  model gives each template a name and a denotation rather than modeling
+  BPF.
+- *Process state*: processes with fd tables and domain stacks; spawn
+  inherits both.
+
+The fd-as-capability rule is the scientific core. It is why phase
+transitions are dangerous, it has never been mechanized, and every theorem
+in L3 leans on it.
+
+**L1, policy denotation.** The v1 `Profile` subset (fs grants, deny
+preconditions, net mode, the unix flag, tools) denotes a predicate over
+abstract actions: read p, write p, connect h, spawn t. Phases are policy
+transformers with an explicit transition action. senv's install/run is the
+motivating client; h5i's cache-refresh/run split is the in-repo instance,
+so the phase machinery is exercised without waiting on senv.
+
+**L2, compilation and refinement.** A pure `compile : Profile → MechConfig`
+mirroring the decisions `build_confined_command` takes, and per backend the
+theorem: every trace the L0 semantics admits under `compile p` maps to
+actions `p` allows. Trace inclusion, proved as a simulation. Kernel tier
+first. Container, microvm, and Seatbelt each get their own refinement later
+or stay DRT-only, and the claim is **sound under-approximation per backend,
+never cross-backend equivalence**: the tiers genuinely differ (private
+`/tmp` on container, loopback semantics on macOS) and a theorem that denied
+that would be false.
+
+**L3, hyperproperties.** Three, in order of what they teach:
+
+- *Monotone narrowing.* A phase transition never widens effective
+  permissions. Under Landlock's intersection rule this is nearly free at
+  the mechanism level; the content is that mounts and inherited fds do not
+  break it.
+- *The conditional fd theorem.* "Run phase forbids credentials" is **not**
+  implied by the run-phase policy: an fd opened during install keeps its
+  rights across the transition. The theorem comes out conditional: run-phase
+  confidentiality holds if and only if the install phase could not open the
+  resource, or the transition is an exec boundary that closes the fds. That
+  conditional is a design output, not a caveat: it says senv must deny
+  credentials in install too, or the transition must be an exec with
+  close-on-exec discipline the dump can attest.
+- *Box-to-box noninterference.* Two boxes whose writable grant sets are
+  disjoint cannot influence each other, seL4-style, by unwinding
+  conditions. Also conditional, and **the side condition is false today for
+  two agent-profile boxes**, which share host `/tmp` by design. The theorem
+  does not condemn that choice; it turns it into a checkable disjointness
+  obligation per host, and the console can count it like any other receipt.
+
+Nothing in v1 proves anything about the browser, the share tunnel, or the
+viewer. The policy layer is the subject.
+
+## V4. The differential harness, and the probes that check the model itself
+
+Two loops, in the two directions a model can be wrong.
+
+**Model versus Rust (drift).** A generator (proptest on the Rust side)
+produces profiles, including the adversarial shapes that found real bugs in
+this repo's history: grants overlapping a deny parent, `$WORK`-relative
+escapes, an egress list on the process tier (must fail closed), home-state
+redirects colliding with explicit grants. The Lean model compiles to a native
+executable that reads a profile as JSON and emits its resolution and its
+`MechConfig`; the harness diffs both against the Rust resolver's output and
+the `policy.effective.json` dump. Corpus: everything under `examples/`, plus
+generated cases, plus every past mismatch checked in as a named regression.
+Cedar's experience, which we adopt as a working assumption, is that this loop
+finds bugs in both directions. The CI job is separate and non-gating until it
+has been quiet for a while; then it gates.
+
+**Model versus kernel (fidelity).** The semantics is executable, so `#eval`
+on an action trace predicts allow or deny. The harness emits those
+predictions as small probe programs and runs them inside real boxes,
+comparing outcome to prediction. This is `sandbox::verify_exec` generalized:
+that function exists because mechanism-present is not mechanism-works, and
+the same discipline applies to a model. Linux first; Seatbelt probes read
+their denials from `log show`, which is the only place Seatbelt puts them.
+
+## V5. What is not modeled, stated up front
+
+The trusted base, in the same spirit as section 9:
+
+- **The kernel.** Landlock, seccomp, and namespaces are assumed to implement
+  their documented contracts. The probes sample this assumption; they do not
+  discharge it. Kernel bugs and side channels are out of scope.
+- **Symlinks**, in v1. Landlock resolves them at access time and the model
+  does not, yet. Until it does, the refinement theorem is stated over
+  symlink-free traces and says so in its hypotheses.
+- **/proc and ptrace**, beyond what the seccomp templates already block.
+- **Container and microvm tiers.** Their enforcement runs through an OCI
+  runtime and a guest kernel the model does not describe. They stay in the
+  DRT loop (the resolver is shared) but carry no refinement claim until
+  someone writes their L0.
+- **The Lean toolchain and its extraction**, as with any mechanized proof.
+- **Model drift.** The model is hand-written against the Rust; the DRT loop
+  is the control, and a quiet DRT job is evidence, not proof. The upgrade
+  path that removes this line is translating the resolver itself
+  (Aeneas-style, Rust to Lean); it is deliberately not in scope for M16,
+  because it requires carving the resolution logic into a pure core and
+  nothing above requires that to start.
+
+## V6. The order
+
+1. **The dump.** `policy.effective.json` at the apply seam, schema v1,
+   digest into the capture manifest. Small, pure Rust, useful on its own for
+   debugging. Exit: every serde-skipped field of `ResolvedPolicy` is either
+   in the dump or named in the schema as excluded, with a reason.
+2. **The model, executable.** `lean/` package, L1 for the fs and net
+   subset, the JSON interface, DRT over `examples/` plus 10k generated
+   profiles. Exit: the M16 criterion, zero unexplained diffs.
+3. **The Landlock fragment.** L0 domains, intersection, fd rights, and the
+   two phase theorems, including the shared-`/tmp` counterexample as a Lean
+   example, not prose. Exit: theorems check in CI.
+4. **Refinement.** L2 for the kernel tier over the v1 action alphabet.
+5. **Noninterference and probes.** L3 with unwinding conditions; probe
+   generation running against real boxes on Linux in CI.
+
+Steps 1 and 2 are weeks, not months, and step 3 is the first thing worth
+writing up. Everything after that earns its own status line here when it
+exists, in this document's usual voice: built when driven, proposed until
+then.
