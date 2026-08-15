@@ -602,7 +602,14 @@ pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
         if rec.timed_out { " (timed out)" } else { "" }
     ));
     if let Some(d) = &rec.policy_digest {
-        out.push_str(&format!("  policy   : {}\n", &d[..12.min(d.len())]));
+        // `crate::env::short`, not `&d[..12]`. The digest is a field of a
+        // record deserialized from `receipt.jsonl`, so it is whatever the file
+        // says — and a byte index into a multi-byte string aborts. Same slice,
+        // same reasoning, as the one a manifest's `base_commit` needed.
+        out.push_str(&format!(
+            "  policy   : {}\n",
+            clean(crate::env::short(d, 12))
+        ));
     }
     out.push_str(&format!("  source   : {}\n", clean(&rec.source)));
     if let (Some(w), Some(c)) = (rec.wall_ms, rec.cpu_ms) {
@@ -809,6 +816,11 @@ mod tests {
                 // Clear the screen, then print a reassuring line over the top.
                 cmd: Some("rm -rf /\u{1b}[2J\u{1b}[H  cmd      : ls".into()),
                 exit_code: Some(1),
+                // Every other field `render` shows, including the one that is
+                // *sliced*: `&d[..12]` on a multi-byte digest aborts, which is
+                // the same defect a manifest's `base_commit` had.
+                source: "tee-shim\u{1b}[1A\u{202e}".into(),
+                policy_digest: Some("a日日日日日日".into()),
                 browser: Some(BrowserEvidence {
                     verb: Some("click\u{1b}[1A".into()),
                     errors: vec!["boom\u{1b}[31m".into()],
@@ -822,6 +834,7 @@ mod tests {
 
         let text = render(&rec, &raw_bytes(td.path(), &rec.id).unwrap());
         assert!(!text.contains('\u{1b}'), "no escape may survive: {text:?}");
+        assert!(!text.contains('\u{202e}'), "nor a bidi override: {text:?}");
         // The payload is still a payload: its lines are intact.
         assert!(text.contains("line one\n"), "{text:?}");
         assert!(text.contains("line two"), "{text:?}");
