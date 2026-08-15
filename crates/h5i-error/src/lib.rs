@@ -1,6 +1,15 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Neutralising terminal control sequences in untrusted text.
+///
+/// This lives in the error crate because the error crate is the floor: every
+/// other crate in the workspace depends on it, and the strings that need
+/// sanitising — box-written logs, manifest fields, a peer's refusal reason —
+/// reach a terminal from all of them, including the ones that sit below
+/// `h5i-core` where this module used to be.
+pub mod redact;
+
 #[derive(Error, Debug)]
 pub enum H5iError {
     /// 1. Temporal Dimension (History): Git operations
