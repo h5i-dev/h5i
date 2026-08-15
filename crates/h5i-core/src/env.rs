@@ -1981,8 +1981,12 @@ const MAX_PERSONA_BYTES: u64 = 1024 * 1024;
 /// `private_paths` has the same shape and got `create_dirs_within` for exactly
 /// this reason — "it never *resolves* the path". This is the read side of that
 /// argument, and it is bounded as well, because the source is repo-supplied.
-fn read_within_work(work: &Path, rel: &str) -> std::io::Result<String> {
-    use std::io::Read;
+/// Resolve `rel` under `work`, refusing a symlink at any component.
+///
+/// The check both [`read_within_work`] and [`resolve_work_rcfile`] need: each
+/// takes a repo-declared, `validate`-approved relative path and then does
+/// something with the file it names, and neither validator resolves anything.
+fn resolve_within_work(work: &Path, rel: &str) -> std::io::Result<PathBuf> {
     let mut cur = work.to_path_buf();
     let comps: Vec<&str> = rel
         .trim_matches('/')
@@ -1990,18 +1994,24 @@ fn read_within_work(work: &Path, rel: &str) -> std::io::Result<String> {
         .filter(|c| !c.is_empty() && *c != ".")
         .collect();
     if comps.is_empty() {
-        return Err(std::io::Error::other("empty persona source"));
+        return Err(std::io::Error::other("empty path"));
     }
     for c in &comps {
         cur.push(c);
         if std::fs::symlink_metadata(&cur)?.file_type().is_symlink() {
             return Err(std::io::Error::other(format!(
-                "'{}' is a symlink, and h5i will not follow one out of the workspace to bake a \
-                 persona (fail-closed)",
+                "'{}' is a symlink, and h5i will not follow one out of the workspace \
+                 (fail-closed)",
                 cur.display()
             )));
         }
     }
+    Ok(cur)
+}
+
+fn read_within_work(work: &Path, rel: &str) -> std::io::Result<String> {
+    use std::io::Read;
+    let cur = resolve_within_work(work, rel)?;
     // `O_NOFOLLOW` as well as the walk: the walk is a check and this is the
     // open, and between them is a window a repo's own build step could use.
     let mut opts = std::fs::OpenOptions::new();
@@ -5848,8 +5858,17 @@ fn resolve_work_rcfile(work: &Path, rel: &str) -> Result<String, H5iError> {
             "[shell] rcfile '{rel}' must not escape the worktree with '..'"
         )));
     }
-    let full = work.join(p);
-    if !full.is_file() {
+    // Resolved, not just validated. The two checks above are the same pair the
+    // persona sources get, and they have the same blind spot: a repo shipping
+    // this path as a symlink puts a file from outside the worktree in front of
+    // `bash --rcfile`, which *sources* it. `is_file()` follows links and would
+    // have said yes.
+    let full = resolve_within_work(work, rel).map_err(|e| {
+        H5iError::Metadata(format!(
+            "[shell] rcfile '{rel}' is not readable in the worktree: {e}"
+        ))
+    })?;
+    if !std::fs::symlink_metadata(&full).is_ok_and(|md| md.is_file()) {
         return Err(H5iError::Metadata(format!(
             "[shell] rcfile '{rel}' not found in the worktree (expected at {})",
             full.display()
@@ -9761,6 +9780,33 @@ mod tests {
         );
         // Missing file → empty, not an error.
         assert!(user_allow_list_at(Some(&dir.path().join("absent"))).is_empty());
+    }
+
+    /// The rcfile path gets the same pair of checks the persona sources get —
+    /// not absolute, no `..` — and had the same blind spot: neither resolves.
+    /// A repo shipping this path as a symlink puts a file from outside the
+    /// worktree in front of `bash --rcfile`, which *sources* it. `is_file()`
+    /// follows links and said yes.
+    #[test]
+    #[cfg(unix)]
+    fn the_rcfile_will_not_follow_a_symlink_out_of_the_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(work.join(".h5i")).unwrap();
+        std::fs::write(dir.path().join("outside.sh"), "echo pwned").unwrap();
+
+        // In-tree still resolves.
+        std::fs::write(work.join(".h5i").join("box.bashrc"), "PS1=x").unwrap();
+        assert!(resolve_work_rcfile(&work, ".h5i/box.bashrc").is_ok());
+
+        // A symlinked leaf is refused rather than sourced.
+        std::os::unix::fs::symlink(dir.path().join("outside.sh"), work.join(".h5i").join("evil.bashrc"))
+            .unwrap();
+        assert!(resolve_work_rcfile(&work, ".h5i/evil.bashrc").is_err());
+
+        // And a symlinked ancestor.
+        std::os::unix::fs::symlink(dir.path(), work.join("up")).unwrap();
+        assert!(resolve_work_rcfile(&work, "up/outside.sh").is_err());
     }
 
     #[test]
