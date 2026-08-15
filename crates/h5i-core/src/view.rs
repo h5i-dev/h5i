@@ -1083,23 +1083,50 @@ pub fn record_session(
 }
 
 /// Read up to the end of the HTTP headers.
+/// How long one `read()` may block, and how long the whole head may take.
+///
+/// Two numbers because they answer two questions, and having only the first was
+/// the bug: `SO_RCVTIMEO` bounds a single syscall, so a peer sending one byte
+/// every nine seconds never triggered it and never finished either. `serve()`
+/// handles one connection at a time and this runs *before* the token is checked,
+/// so that peer — any local process — held the human's viewer shut for as long
+/// as it cared to, with nothing in the log to say why.
+const HEAD_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+
 fn read_head(s: &mut TcpStream) -> std::io::Result<String> {
-    // Bounded in time as well as size. `serve()` handles one connection at a
-    // time, so a peer that connects and sends nothing — a browser's speculative
-    // preconnect is the ordinary case — used to stall every later viewer until
-    // it went away on its own.
+    read_head_within(s, HEAD_READ_TIMEOUT, HEAD_DEADLINE)
+}
+
+/// [`read_head`] with both bounds given, so a test can drive the deadline
+/// without waiting on the production one.
+fn read_head_within(
+    s: &mut TcpStream,
+    per_read: std::time::Duration,
+    whole: std::time::Duration,
+) -> std::io::Result<String> {
+    // Bounded in time as well as size. A peer that connects and sends nothing —
+    // a browser's speculative preconnect is the ordinary case — used to stall
+    // every later viewer until it went away on its own.
     let prev = s.read_timeout()?;
-    s.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
-    let out = read_head_inner(s);
+    s.set_read_timeout(Some(per_read))?;
+    let out = read_head_inner(s, whole);
     let _ = s.set_read_timeout(prev);
     out
 }
 
-fn read_head_inner(s: &mut TcpStream) -> std::io::Result<String> {
+fn read_head_inner(s: &mut TcpStream, whole: std::time::Duration) -> std::io::Result<String> {
+    let deadline = std::time::Instant::now() + whole;
     let mut buf = Vec::new();
     let mut byte = [0u8; 1];
     // Bounded: a header block this large is a client we do not want to serve.
     while buf.len() < 16 * 1024 {
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request head exceeded its deadline",
+            ));
+        }
         if s.read(&mut byte)? == 0 {
             break;
         }
@@ -1183,6 +1210,50 @@ fn viewer_page(holder: crate::control::Holder) -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// `SO_RCVTIMEO` bounds one `read()`, not the head. `serve()` takes one
+    /// connection at a time and this runs *before* the token is checked, so a
+    /// peer sending one byte just inside the per-read timeout held the human's
+    /// viewer shut for as long as it cared to — no token, no log line.
+    #[test]
+    fn a_peer_that_dribbles_a_head_cannot_hold_the_viewer_shut() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let dribbler = std::thread::spawn(move || {
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            // A byte at a time, each comfortably inside the per-read timeout,
+            // and never the blank line that ends a head.
+            for _ in 0..200 {
+                if c.write_all(b"X").is_err() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+
+        let (mut server, _) = listener.accept().unwrap();
+        let started = std::time::Instant::now();
+        let out = read_head_within(
+            &mut server,
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(300),
+        );
+        let took = started.elapsed();
+
+        assert!(
+            out.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::TimedOut),
+            "the whole head must have a deadline of its own: {out:?}"
+        );
+        assert!(
+            took < std::time::Duration::from_secs(3),
+            "it gave up after {took:?}, which is not a bound"
+        );
+        drop(server);
+        let _ = dribbler.join();
+    }
 
     #[test]
     fn the_token_is_minted_once_and_kept_out_of_the_boxs_reach() {

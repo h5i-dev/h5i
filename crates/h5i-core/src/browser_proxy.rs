@@ -690,7 +690,7 @@ fn append_actions_log(env_dir: &Path, actions: &[ActionRecord]) -> std::io::Resu
 /// so a CLI correlating replies by id matches the reply rather than hanging.
 #[cfg(unix)]
 fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
-    use std::io::{BufRead, Write};
+    use std::io::{BufRead, Read, Write};
 
     // Read one line — the request the client is waiting on a reply to. Best
     // effort, and *bounded*: a client that connects to probe liveness and waits
@@ -698,9 +698,17 @@ fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
     // never receive the refusal, which is the hang this branch exists to
     // prevent. Threads here are detached, so an unbounded wait also leaks one
     // per retry while a daemon is failing to start.
+    //
+    // Bounded in *bytes* as well as time, which is the half the timeout does
+    // not cover: `SO_RCVTIMEO` ends one `read()`, while `read_line` keeps
+    // calling it and growing its `String` until a newline arrives. A peer
+    // sending a byte a second, or a megabyte with no newline in it, was neither
+    // timed out nor capped. A request id is a short JSON line; anything past
+    // this cap is not one.
+    const MAX_FIRST_LINE: u64 = 64 * 1024;
     let _ = client.set_read_timeout(Some(std::time::Duration::from_secs(2)));
     let mut first = String::new();
-    let _ = std::io::BufReader::new(client).read_line(&mut first);
+    let _ = std::io::BufReader::new(client.take(MAX_FIRST_LINE)).read_line(&mut first);
     let _ = client.set_read_timeout(None);
     let id = serde_json::from_str::<Value>(&first)
         .ok()
