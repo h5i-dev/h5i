@@ -133,6 +133,18 @@ pub fn stream_port(env_dir: &Path) -> Option<u16> {
 /// succeeds, and the forward then finds nothing listening — so it is worth
 /// doing by observation rather than by assuming which pid means what.
 pub fn box_pid(env_dir: &Path) -> Option<u32> {
+    box_pid_ns(env_dir).map(|(pid, _)| pid)
+}
+
+/// [`box_pid`], keeping the namespace it was identified by.
+///
+/// The pid alone is not an identity — pids are reissued, and this one is a
+/// descendant that carries none of the `started_ticks` binding
+/// [`session_pid_verified`] gives the session pid. Every caller that goes on to
+/// *enter* the namespace wants the link this walk actually matched on, so
+/// [`connect_in_netns`] can check that it arrived where the walk was looking
+/// rather than wherever the pid points by the time it is used.
+pub fn box_pid_ns(env_dir: &Path) -> Option<(u32, std::ffi::OsString)> {
     // Verified, because this pid decides which network namespace a share
     // publishes a port out of. See [`session_pid_verified`].
     let session = session_pid_verified(env_dir, true)?;
@@ -147,7 +159,7 @@ pub fn box_pid(env_dir: &Path) -> Option<u32> {
         if let Ok(ns) = std::fs::read_link(format!("/proc/{pid}/ns/net"))
             && ns != own_netns
         {
-            return Some(pid);
+            return Some((pid, ns.into_os_string()));
         }
         for &child in children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
             if seen.insert(child) {
@@ -277,13 +289,61 @@ fn pid_alive(pid: u32) -> bool {
 /// The user namespace comes first and is not optional: the box's netns was
 /// created by an unprivileged `unshare`, so it is owned by that userns and
 /// joining it requires being in it.
+///
+/// ### Why `want_ns` is a parameter and not read from `pid`
+///
+/// `pid` is a *descendant* of the session pid — [`box_pid`] walks the process
+/// tree for the first process whose netns differs from ours. The session pid is
+/// bound to its identity by `started_ticks` ([`session_pid_verified`]) exactly
+/// so that a reissued pid cannot be mistaken for a box, and **none of that
+/// binding reaches the descendant**, which is the number that gets entered. Nor
+/// is the descendant looked up again: [`Forward`] resolves it once and reuses it
+/// for every connection for as long as the viewer stays open, and
+/// `FrameRelay` does the same across reconnects. A box at the `process` tier
+/// shares the host uid, so it can end the session that holds the namespace and
+/// then fork until the kernel hands that pid to something of its own.
+///
+/// So the namespace `box_pid` observed travels with the pid and is checked here
+/// against the one actually entered. Deriving it from `/proc/<pid>` at this
+/// point instead would re-read whatever holds the pid *now*, which is the thing
+/// in question.
+///
+/// Two things this is **not** claiming, both measured rather than assumed
+/// (`setns(2)` on 6.x, unprivileged, uid 501):
+///
+/// * It is not what stops a stale pid from putting this connect on the host's
+///   loopback. Joining the initial netns needs `CAP_SYS_ADMIN` in the initial
+///   userns, and an unprivileged viewer does not have it — the `setns` returns
+///   `EPERM` and the child already reported `EXIT_SETNS`. That defense is the
+///   kernel's, and it is absent for a viewer run as root.
+/// * It is not proof of freshness. `setns` into a namespace one is *already* in
+///   succeeds (measured: rc 0, from inside a userns of one's own), so the return
+///   code says nothing about where the thread ended up; the readlink after it
+///   does.
+///
+/// What the check does close is the pid being reissued between discovery and
+/// use to a process in any namespace this user can join — another box of
+/// theirs, or a bare `unshare -Urn` — which is a namespace `setns` enters
+/// happily and which is not the box the viewer named.
 #[cfg(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
+pub fn connect_in_netns(pid: u32, port: u16, want_ns: &std::ffi::OsStr) -> Result<TcpStream, H5iError> {
     use h5i_sandbox::seccomp_notify::recv_fd;
     use std::os::fd::FromRawFd;
+
+    // Read before forking: the parent may allocate, the child may not.
+    let own_ns = std::fs::read_link("/proc/self/ns/net")
+        .ok()
+        .map(|p| p.into_os_string());
+    if own_ns.as_deref() == Some(want_ns) {
+        return Err(H5iError::Metadata(format!(
+            "the namespace recorded for pid {pid} is this process's own, so it is not a box — \
+             refusing to connect to 127.0.0.1:{port} on the host (fail-closed)."
+        )));
+    }
+    let want_ns = want_ns.as_encoded_bytes();
 
     let mut sv = [0i32; 2];
     let rc = unsafe {
@@ -310,7 +370,9 @@ pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
         // Child. Nothing here may allocate through a lock the parent held at
         // fork time, so it stays to raw syscalls and exits via `_exit`.
         close(parent_end);
-        let code = enter_and_connect(pid, port, child_end);
+        // `want_ns` is memory the parent allocated before the fork, so reading
+        // it here allocates nothing and takes no lock.
+        let code = enter_and_connect(pid, port, child_end, want_ns);
         unsafe { libc::_exit(code) };
     }
 
@@ -334,6 +396,11 @@ pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
         -1
     };
     Err(H5iError::Metadata(match code {
+        EXIT_WRONG_NS => format!(
+            "entering the box's network namespace (pid {pid}) landed somewhere else — \
+             refusing to connect to 127.0.0.1:{port} from a namespace that is not the box's. \
+             The session that held it has ended and its pid has been reissued (fail-closed)."
+        ),
         EXIT_NO_NS => format!(
             "the box (pid {pid}) is gone — its namespaces no longer exist. \
              A box only has them while a session is running; start one with \
@@ -376,6 +443,13 @@ const EXIT_SETNS: i32 = 3;
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 const EXIT_CONNECT: i32 = 4;
+/// `setns` returned success and the thread is not in the namespace it aimed at
+/// — including the case where it never left the one it started in.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+const EXIT_WRONG_NS: i32 = 5;
 
 /// The child half of [`connect_in_netns`]. Returns the exit code the parent
 /// turns back into a message, since a forked child cannot safely format one.
@@ -383,7 +457,7 @@ const EXIT_CONNECT: i32 = 4;
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-fn enter_and_connect(pid: u32, port: u16, sock: i32) -> i32 {
+fn enter_and_connect(pid: u32, port: u16, sock: i32, want_ns: &[u8]) -> i32 {
     use h5i_sandbox::seccomp_notify::send_fd;
     use std::os::fd::AsRawFd;
 
@@ -407,6 +481,23 @@ fn enter_and_connect(pid: u32, port: u16, sock: i32) -> i32 {
         }
     }
 
+    // Where the thread actually ended up, not where `setns` was pointed, and
+    // not where `/proc/<pid>` says it should be — that is the reading in
+    // question. `setns` into the namespace you are already in returns 0, so the
+    // return code above is not an answer; this readlink is. Checked before the
+    // connect rather than after, because the connect is the thing being aimed.
+    let mut got = [0u8; 64];
+    let n = unsafe {
+        libc::readlink(
+            c"/proc/self/ns/net".as_ptr(),
+            got.as_mut_ptr() as *mut libc::c_char,
+            got.len(),
+        )
+    };
+    if n <= 0 || got[..n as usize] != *want_ns {
+        return EXIT_WRONG_NS;
+    }
+
     let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) else {
         return EXIT_CONNECT;
     };
@@ -428,8 +519,14 @@ fn enter_and_connect(pid: u32, port: u16, sock: i32) -> i32 {
 /// port directly. The viewer's token gate still governs *this* path; it cannot
 /// govern the port itself.
 #[cfg(target_os = "macos")]
-pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
-    let _ = pid;
+pub fn connect_in_netns(
+    pid: u32,
+    port: u16,
+    want_ns: &std::ffi::OsStr,
+) -> Result<TcpStream, H5iError> {
+    // No namespace to enter and none to check: the box's listener is on the
+    // host's shared loopback, which is the point the doc above makes.
+    let _ = (pid, want_ns);
     TcpStream::connect(("127.0.0.1", port)).map_err(|e| {
         H5iError::Metadata(format!(
             "viewer could not reach the box's stream port {port} on loopback: {e}"
@@ -444,7 +541,11 @@ pub fn connect_in_netns(pid: u32, port: u16) -> Result<TcpStream, H5iError> {
     ),
     target_os = "macos"
 )))]
-pub fn connect_in_netns(_pid: u32, _port: u16) -> Result<TcpStream, H5iError> {
+pub fn connect_in_netns(
+    _pid: u32,
+    _port: u16,
+    _want_ns: &std::ffi::OsStr,
+) -> Result<TcpStream, H5iError> {
     Err(H5iError::Metadata(
         "the viewer forward needs Linux namespaces or macOS loopback; it is not available on \
          this platform"
@@ -810,6 +911,10 @@ pub struct Forward {
     policy_digest: String,
     token: String,
     pid: u32,
+    /// The namespace `pid` was identified by, carried so the connect can check
+    /// it arrived there. A pid on its own is not an identity — see
+    /// [`connect_in_netns`].
+    pid_ns: std::ffi::OsString,
     stream_port: u16,
 }
 
@@ -832,7 +937,7 @@ impl Forward {
                     .into(),
             )
         })?;
-        let pid = box_pid(env_dir).ok_or_else(|| {
+        let (pid, pid_ns) = box_pid_ns(env_dir).ok_or_else(|| {
             H5iError::Metadata(
                 "this box is not running, so there is no browser to watch. Start a session \
                  (`h5i box shell <name>`) and try again."
@@ -855,6 +960,7 @@ impl Forward {
             policy_digest: policy_digest.to_string(),
             token,
             pid,
+            pid_ns,
             stream_port,
         })
     }
@@ -911,7 +1017,7 @@ impl Forward {
         // Enter the box, connect, and relay the handshake verbatim so
         // agent-browser negotiates with the client directly (we never have to
         // know its subprotocol or its Sec-WebSocket-Accept).
-        let mut upstream = connect_in_netns(self.pid, self.stream_port)?;
+        let mut upstream = connect_in_netns(self.pid, self.stream_port, &self.pid_ns)?;
         upstream.write_all(rewrite_head_for_upstream(&head).as_bytes())?;
         upstream.flush()?;
 
@@ -1723,6 +1829,41 @@ mod tests {
             human.contains("control at page load"),
             "and it says what it knows"
         );
+    }
+
+    /// The stale-pid case, made deterministic: hand the connect the namespace
+    /// this process is already in, which is what a reissued pid looks like from
+    /// here. The answer has to be a refusal, because what follows otherwise is
+    /// `TcpStream::connect(("127.0.0.1", port))` in *this* namespace — with the
+    /// port read out of `<env>/tmp`, one of the two paths the box can write.
+    ///
+    /// Unprivileged, the kernel refuses the `setns` that would get there
+    /// anyway; run as root it does not, and either way this says no before the
+    /// fork rather than relying on which.
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn the_viewer_refuses_to_connect_in_its_own_network_namespace() {
+        let own = std::fs::read_link("/proc/self/ns/net").expect("a netns link");
+        // Port 9 is discard; nothing should listen, and nothing should get far
+        // enough to find out.
+        let err = connect_in_netns(std::process::id(), 9, own.as_os_str())
+            .expect_err("a connect inside our own namespace must be refused");
+        let text = format!("{err}");
+        assert!(text.contains("not a box"), "{text}");
+        assert!(text.contains("fail-closed"), "{text}");
+    }
+
+    /// `box_pid` is the same walk as `box_pid_ns` with the namespace dropped —
+    /// asserted so a later edit cannot give the two different answers, which
+    /// would mean the identity checked at connect time is not the identity the
+    /// pid was chosen by.
+    #[test]
+    fn the_pid_and_the_namespace_come_out_of_one_walk() {
+        let td = TempDir::new().unwrap();
+        assert_eq!(box_pid(td.path()), box_pid_ns(td.path()).map(|(p, _)| p));
     }
 
     #[test]

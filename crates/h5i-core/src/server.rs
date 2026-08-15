@@ -824,6 +824,7 @@ async fn api_browser(
         // namespace entry is slow and the event stream should not wait on it.
         let env_dir = m.dir(&h5i_root);
         let located = crate::browser_frames::locate(&env_dir);
+        let live_view = located.is_some();
         let (frame_seq, frame_error) = tend_relay(&frames, &m.id, located);
 
         Some(BrowserStream {
@@ -831,7 +832,7 @@ async fn api_browser(
             cursor,
             dropped,
             engine,
-            live_view: located.is_some(),
+            live_view,
             frame_seq,
             frame_error,
         })
@@ -863,11 +864,11 @@ type Relays = std::sync::Mutex<std::collections::HashMap<String, crate::browser_
 fn tend_relay(
     relays: &Arc<Relays>,
     box_id: &str,
-    located: Option<(u32, u16)>,
+    located: Option<(u32, u16, std::ffi::OsString)>,
 ) -> (Option<u64>, Option<String>) {
     let mut held = relays.lock().unwrap_or_else(|e| e.into_inner());
 
-    let Some((pid, port)) = located else {
+    let Some((pid, port, pid_ns)) = located else {
         held.remove(box_id);
         return (None, None);
     };
@@ -877,7 +878,7 @@ fn tend_relay(
     }
     let relay = held
         .entry(box_id.to_string())
-        .or_insert_with(|| crate::browser_frames::FrameRelay::start(pid, port));
+        .or_insert_with(|| crate::browser_frames::FrameRelay::start(pid, port, pid_ns));
 
     let seq = relay.latest().map(|f| f.seq);
     // Only worth reporting while there is nothing to show. A relay that died
