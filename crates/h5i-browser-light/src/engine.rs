@@ -1263,6 +1263,13 @@ impl PageFactory {
     /// must precede `run_scripts`, or the drop happens after the script that
     /// was the reason for it.
     fn finish(&self, mut page: Page) -> Result<Page, H5iError> {
+        self.finish_page(&mut page)?;
+        Ok(page)
+    }
+
+    /// The rule itself, on a borrow, so the two infallible constructors can run
+    /// it too rather than keeping their own copy of half of it.
+    fn finish_page(&self, page: &mut Page) -> Result<(), H5iError> {
         if self.broker.jar().retain_origin(page.url()) {
             page.note(
                 "cookies from the previous origin were dropped on navigation: this engine \
@@ -1272,7 +1279,19 @@ impl PageFactory {
         if self.options.script {
             page.run_scripts(self.broker.clone())?;
         }
-        Ok(page)
+        Ok(())
+    }
+
+    /// [`Self::finish`] for the constructors that cannot fail.
+    ///
+    /// They ran scripts themselves and did not drop the previous origin's
+    /// cookies — a third and fourth copy of half the rule, which is how
+    /// `open_submission` came to be missing it entirely.
+    fn finish_reporting(&self, mut page: Page) -> Page {
+        if let Err(error) = self.finish_page(&mut page) {
+            eprintln!("h5i-browser-light: the script realm failed to start: {error}");
+        }
+        page
     }
 
     /// Whether this factory runs page script, for `capabilities` and for the
@@ -1299,36 +1318,24 @@ impl PageFactory {
     /// The same as [`PageFactory::from_html`], but from bytes whose encoding is
     /// not yet known — so the document gets to say what it is written in.
     pub fn from_bytes(&self, bytes: &[u8], content_type: Option<&str>, base_url: &Url) -> Page {
-        let mut page = Page::from_bytes(
+        self.finish_reporting(Page::from_bytes(
             bytes,
             content_type,
             base_url,
             self.broker.clone(),
             self.fonts(),
             self.options.clone(),
-        );
-        if self.options.script
-            && let Err(error) = page.run_scripts(self.broker.clone())
-        {
-            eprintln!("h5i-browser-light: the script realm failed to start: {error}");
-        }
-        page
+        ))
     }
 
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
-        let mut page = Page::from_html(
+        self.finish_reporting(Page::from_html(
             html,
             base_url,
             self.broker.clone(),
             self.fonts(),
             self.options.clone(),
-        );
-        if self.options.script
-            && let Err(error) = page.run_scripts(self.broker.clone())
-        {
-            eprintln!("h5i-browser-light: the script realm failed to start: {error}");
-        }
-        page
+        ))
     }
 }
 
