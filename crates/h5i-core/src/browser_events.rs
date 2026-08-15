@@ -827,6 +827,16 @@ struct Growth {
     restarted: bool,
 }
 
+/// Most bytes one poll will read out of a growing log.
+///
+/// Two of the three logs live under `<env>/tmp`, which is one of the two paths a
+/// box can write — and the console polls them on a timer. A bare `read_to_end`
+/// there is the box choosing how much memory the *console* allocates: a
+/// four-gigabyte `browser-requests.jsonl` is a four-gigabyte read on the next
+/// poll. Nothing is lost by pacing it, because the offset advances by exactly
+/// what was consumed and the next poll resumes from there.
+const MAX_GROWTH_PER_POLL: u64 = 8 * 1024 * 1024;
+
 /// Read the complete lines `path` has grown by since `*offset`, advancing it.
 ///
 /// `None` when there is nothing new to fold in — no file, no growth, or growth
@@ -836,6 +846,8 @@ struct Growth {
 /// decoding: a partial write can split a multi-byte character, and decoding
 /// first would either fail or silently corrupt the tail. Cutting at a newline
 /// guarantees whole lines, which are whole characters.
+///
+/// Bounded per call — see [`MAX_GROWTH_PER_POLL`].
 fn grown(path: &std::path::Path, offset: &mut u64) -> Option<Growth> {
     use std::io::{Read, Seek, SeekFrom};
 
@@ -870,7 +882,7 @@ fn grown(path: &std::path::Path, offset: &mut u64) -> Option<Growth> {
     let mut file = std::fs::File::open(path).ok()?;
     file.seek(SeekFrom::Start(*offset)).ok()?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).ok()?;
+    file.take(MAX_GROWTH_PER_POLL).read_to_end(&mut buf).ok()?;
 
     // Stop at the last newline; anything after it is a line still being
     // written, and it stays unconsumed until it is whole.
@@ -1162,6 +1174,41 @@ mod tests {
         write(&path, "{\"a\":1}\n{\"b\":2}\n");
         let second = grown(&path, &mut at).expect("the completed line");
         assert_eq!(second.text, "{\"b\":2}\n", "and it is not re-read");
+    }
+
+    /// Two of the three logs live under `<env>/tmp`, one of the two paths a box
+    /// can write, and the console polls them on a timer. A bare `read_to_end`
+    /// there is the box choosing how much memory the console allocates.
+    #[test]
+    fn one_poll_reads_a_bounded_amount_and_comes_back_for_the_rest() {
+        let td = tempfile::TempDir::new().unwrap();
+        let path = td.path().join("log.jsonl");
+        let mut at = 0u64;
+
+        // One line per 16 bytes, comfortably over the per-poll cap.
+        let line = format!("{{\"x\":\"{}\"}}\n", "y".repeat(6));
+        let lines = (MAX_GROWTH_PER_POLL as usize / line.len()) + 4096;
+        write(&path, &line.repeat(lines));
+
+        let first = grown(&path, &mut at).expect("something to read");
+        assert!(
+            (first.text.len() as u64) <= MAX_GROWTH_PER_POLL,
+            "one poll read {} bytes",
+            first.text.len()
+        );
+        // Whole lines only, as before.
+        assert!(first.text.ends_with('\n'));
+        assert_eq!(at, first.text.len() as u64);
+
+        // Nothing is lost: the rest arrives on the polls that follow.
+        let mut total = first.text.len();
+        while let Some(g) = grown(&path, &mut at) {
+            if g.text.is_empty() {
+                break;
+            }
+            total += g.text.len();
+        }
+        assert_eq!(total, line.len() * lines, "every byte still arrives");
     }
 
     #[test]
