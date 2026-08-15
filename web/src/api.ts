@@ -111,6 +111,10 @@ export interface ExecRecord {
   timestamp: string;
   env_id: string;
   policy_digest?: string;
+  /** sha256 of policy.effective.json as this run enforced it. */
+  effective_digest?: string;
+  /** Boxes whose effective grants overlap this one's (`env/<id> via <path>`). */
+  fs_overlap?: string[];
   /** Which lane observed this: `host-env-run`, `tee-shim`, `shell-egress`. */
   source: string;
   cmd?: string;
@@ -155,6 +159,8 @@ export interface Signals {
   shares_third_party_readable: number;
   /** Distinct peers admitted across every recorded share. */
   share_peers: number;
+  /** Boxes overlapping this one's writable grants, per the newest run. */
+  fs_overlap: string[];
 }
 
 /** A share serving this box right now. Absent when nobody is being let in. */

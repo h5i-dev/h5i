@@ -353,6 +353,16 @@ pub struct EnvManifest {
     pub profile: String,
     /// sha256 of `policy.resolved.toml` as enforced.
     pub policy_digest: String,
+    /// sha256 of `policy.effective.json` as written at create — the enforced
+    /// kernel-tier configuration for the canonical captured-run shape
+    /// (ROADMAP.md §V2). `None` for tiers with no kernel-mechanism dump
+    /// (workspace/container/microvm, and everything off Linux) and for envs
+    /// from before it existed. Runs rewrite the file at the apply seam and pin
+    /// that run's digest in its capture record; this is the create-time
+    /// baseline, so a difference between the two is host drift made visible,
+    /// not tampering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_digest: Option<String>,
     /// Resolved claim (workspace|process|…) — what the host could actually satisfy.
     pub isolation_claim: String,
     /// Workspace backend (`worktree` today; pluggable later).
@@ -2021,6 +2031,7 @@ pub fn create(
         source: opts.source.as_manifest_str(),
         profile: profile.name.clone(),
         policy_digest: policy_digest.clone(),
+        effective_digest: write_effective_baseline(&policy, &dir, &work_path)?,
         isolation_claim: policy.claim.as_str().to_string(),
         backend: backend.to_string(),
         created_at: now_ts(),
@@ -2061,6 +2072,109 @@ pub fn create(
         Some(&policy_toml),
     )?;
     Ok(manifest)
+}
+
+/// Write the create-time `policy.effective.json` baseline (ROADMAP.md §V2):
+/// the enforced kernel-tier configuration for the canonical captured-run
+/// shape, produced by the same `compute_effective` that
+/// `build_confined_command` applies at run time. `None` when the tier has no
+/// kernel-mechanism dump (workspace, container, microvm) or off Linux — the
+/// schema describes Landlock/seccomp/namespaces and nothing else, so those
+/// tiers are excluded rather than half-described.
+#[cfg(target_os = "linux")]
+fn write_effective_baseline(
+    policy: &ResolvedPolicy,
+    env_dir: &Path,
+    work: &Path,
+) -> Result<Option<String>, H5iError> {
+    let Some(shape) = crate::effective::captured_run_shape(policy.claim, &policy.profile) else {
+        return Ok(None);
+    };
+    let caps = sandbox::probe_host_for(policy.claim);
+    let work = work.canonicalize().map_err(|e| H5iError::with_path(e, work))?;
+    let cfg = crate::effective::compute_effective(
+        policy,
+        &work,
+        caps.landlock_abi.unwrap_or(1),
+        &shape,
+    );
+    let digest = cfg.write_to(&env_dir.join(crate::effective::EFFECTIVE_CONFIG_FILE))?;
+    Ok(Some(digest))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn write_effective_baseline(
+    _policy: &ResolvedPolicy,
+    _env_dir: &Path,
+    _work: &Path,
+) -> Result<Option<String>, H5iError> {
+    Ok(None)
+}
+
+/// sha256 of the env's `policy.effective.json` as the just-finished invocation
+/// left it — the digest a capture record pins (§V2). `None` when no kernel
+/// tier wrote one. Hashed from the file bytes, not recomputed: the record
+/// attests to what is on disk.
+#[cfg(target_os = "linux")]
+fn effective_digest_of(env_dir: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(env_dir.join(crate::effective::EFFECTIVE_CONFIG_FILE)).ok()?;
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    Some(format!("{:x}", h.finalize()))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn effective_digest_of(_env_dir: &Path) -> Option<String> {
+    None
+}
+
+/// Other boxes **of this repository** whose effective Landlock grants
+/// overlap this env's, as `env/<id> via <path>` strings for the capture
+/// record. Per-repo on purpose and by construction: [`list`] walks this
+/// repo's `.h5i/env`, so a box of a *different* repo on the same host is
+/// outside the scan — the receipt must not read as a host-wide claim.
+/// "Materialized" means their `policy.effective.json` exists — a pulled or
+/// gc'd box has none and cannot run here. One more honesty bound: each
+/// neighbor's dump reflects its *latest invocation's shape*, so a box whose
+/// last session was a readonly shell shows a narrower rw set until its next
+/// ordinary run rewrites the dump. Both directions are
+/// checked (influence has no preferred direction on a console), and an empty
+/// answer cites the machine-checked noninterference theorem; see the field
+/// docs on [`crate::receipt::ExecRecord::fs_overlap`] for the claim's exact
+/// scope. Best-effort on read errors: a corrupt neighbor dump is skipped,
+/// never a reason to fail this box's run.
+#[cfg(target_os = "linux")]
+fn fs_overlap_with_boxes(h5i_root: &Path, m: &EnvManifest) -> Vec<String> {
+    let read = |dir: &Path| -> Option<crate::effective::EffectiveConfig> {
+        let text =
+            std::fs::read_to_string(dir.join(crate::effective::EFFECTIVE_CONFIG_FILE)).ok()?;
+        serde_json::from_str(&text).ok()
+    };
+    let Some(mine) = read(&m.dir(h5i_root)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for other in list(h5i_root) {
+        if other.id == m.id {
+            continue;
+        }
+        let Some(theirs) = read(&other.dir(h5i_root)) else {
+            continue;
+        };
+        let hit = crate::effective::interferes(&mine, &theirs)
+            .or_else(|| crate::effective::interferes(&theirs, &mine));
+        if let Some((path, _)) = hit {
+            out.push(format!("{} via {}", other.id, path));
+        }
+    }
+    out.sort();
+    out
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fs_overlap_with_boxes(_h5i_root: &Path, _m: &EnvManifest) -> Vec<String> {
+    Vec::new()
 }
 
 /// Bake the profile's `persona = [...]` sources into a single `PERSONA.md` at
@@ -5090,6 +5204,14 @@ fn run_inner(
         prepare_box_reach(h5i_root, m, &work, &mut policy, cache_write, true)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     announce_unmapped_resources(&policy);
+    // §V2: a kernel-tier invocation serializes what it enforces to
+    // `policy.effective.json`, written inside `build_confined_command` at the
+    // apply seam; this run's capture record pins the digest below.
+    #[cfg(target_os = "linux")]
+    {
+        policy.effective_out =
+            Some(m.dir(h5i_root).join(crate::effective::EFFECTIVE_CONFIG_FILE));
+    }
 
     // Broker any declared secrets BEFORE marking the env running, so a
     // fail-closed grant (missing source, unsupported inject) aborts cleanly
@@ -5250,6 +5372,8 @@ fn run_inner(
     let input = crate::receipt::RecordInput {
         env_id: m.id.clone(),
         policy_digest: Some(m.policy_digest.clone()),
+        effective_digest: effective_digest_of(&env_dir_path),
+        fs_overlap: fs_overlap_with_boxes(h5i_root, m),
         source: "host-env-run".into(),
         cmd: Some(argv.join(" ")),
         cwd: Some(work.display().to_string()),
@@ -5529,6 +5653,13 @@ pub fn shell(
     );
     // `apply_user_egress` already ran inside `prepare_box_reach`.
     announce_unmapped_resources(&policy);
+    // §V2: the interactive session serializes what it enforces too — its
+    // capture record pins the digest, same as a run.
+    #[cfg(target_os = "linux")]
+    {
+        policy.effective_out =
+            Some(m.dir(h5i_root).join(crate::effective::EFFECTIVE_CONFIG_FILE));
+    }
 
     // No command given → launch an interactive shell. Rather than inherit the
     // host `~/.bashrc` (which, under confinement, routinely references tools the
@@ -5756,6 +5887,8 @@ fn capture_shell_egress(
     let input = crate::receipt::RecordInput {
         env_id: m.id.clone(),
         policy_digest: Some(m.policy_digest.clone()),
+        effective_digest: effective_digest_of(&m.dir(h5i_root)),
+        fs_overlap: fs_overlap_with_boxes(h5i_root, m),
         source: "host-env-shell".into(),
         cmd: Some(format!("env shell {}", m.id)),
         cwd: Some(work.display().to_string()),
@@ -10257,6 +10390,7 @@ mod tests {
             source: "repo".into(),
             profile: "default".into(),
             policy_digest: "d".repeat(64),
+            effective_digest: None,
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),
@@ -12322,6 +12456,7 @@ mod tests {
             source: "repo".into(),
             profile: "default".into(),
             policy_digest: "d".repeat(64),
+            effective_digest: None,
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),
@@ -12435,6 +12570,7 @@ mod tests {
                 source: "repo".into(),
                 profile: "default".into(),
                 policy_digest: "d".repeat(64),
+                effective_digest: None,
                 isolation_claim: "workspace".into(),
                 backend: "worktree".into(),
                 created_at: now_ts(),
@@ -12902,6 +13038,7 @@ mod tests {
             source: "repo".into(),
             profile: "default".into(),
             policy_digest: "c".repeat(64),
+            effective_digest: None,
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),

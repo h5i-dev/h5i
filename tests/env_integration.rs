@@ -214,6 +214,7 @@ fn synthetic_env_manifest(
         source: "repo".into(),
         profile: "default".into(),
         policy_digest: "d".repeat(64),
+        effective_digest: None,
         isolation_claim: "workspace".into(),
         backend: "worktree".into(),
         created_at: "2026-06-11T00:00:00.000000Z".into(),
@@ -561,6 +562,76 @@ fn create_pins_an_explicit_base_revision() {
     assert_eq!(m["base_commit"].as_str().unwrap(), first);
     // The worktree reflects the OLD base — later.txt is absent.
     assert!(!r.work("old-base").join("later.txt").exists());
+}
+
+/// ROADMAP §V2 (M16 step 1): a kernel-tier create writes
+/// `policy.effective.json` from the same computation the sandbox applies and
+/// pins its digest in the manifest; a run rewrites it at the apply seam and
+/// pins the digest of what it enforced in the capture record. A workspace-tier
+/// env writes none — the schema describes the kernel mechanisms and nothing
+/// else.
+#[test]
+#[cfg(target_os = "linux")]
+fn effective_config_written_at_create_and_pinned_per_run() {
+    if !process_tier_runnable() {
+        return;
+    }
+    let r = Repo::new();
+    r.h5i_ok(&["env", "create", "eff", "--isolation", "process"]);
+
+    let path = r.env_dir("eff").join("policy.effective.json");
+    let text = std::fs::read_to_string(&path).expect("policy.effective.json written at create");
+    let cfg: h5i_core::effective::EffectiveConfig =
+        serde_json::from_str(&text).expect("effective config parses");
+    assert_eq!(cfg.schema, 1);
+    assert_eq!(cfg.claim, "process");
+    // The worktree is a rw Landlock grant; fs_deny lives under resolution
+    // metadata, never as an enforcement rule (Landlock is allowlist-only).
+    let work = r.work("eff").canonicalize().unwrap();
+    assert!(cfg.landlock.rw.contains(&work.to_string_lossy().into_owned()));
+    // The manifest pins the digest of the exact bytes on disk.
+    let m = r.manifest("eff");
+    assert_eq!(
+        m["effective_digest"].as_str().expect("manifest pins effective_digest"),
+        cfg.digest().unwrap()
+    );
+
+    // A run rewrites the dump at the apply seam and its capture pins the digest.
+    r.h5i_ok(&["env", "run", "eff", "--", "sh", "-c", "echo evidence"]);
+    let run_text = std::fs::read_to_string(&path).expect("run rewrote the dump");
+    let run_cfg: h5i_core::effective::EffectiveConfig =
+        serde_json::from_str(&run_text).unwrap();
+    let rec = r.capture_manifest("eff");
+    assert_eq!(
+        rec["effective_digest"].as_str().expect("capture pins effective_digest"),
+        run_cfg.digest().unwrap()
+    );
+
+    // The workspace tier writes no dump and pins nothing.
+    r.h5i_ok(&["env", "create", "ws"]);
+    assert!(!r.env_dir("ws").join("policy.effective.json").exists());
+    assert!(r.manifest("ws").get("effective_digest").is_none());
+
+    // With only dump-less neighbors, the run's receipt claims no overlap
+    // (the field is omitted when empty) — the machine-checked strong answer.
+    assert!(rec.get("fs_overlap").is_none(), "solo box must record no overlap: {rec}");
+
+    // A second kernel-tier box on the same repo DOES overlap the first:
+    // both hold rw grants into the shared git plumbing (`grant_box_git`),
+    // which is true cross-box influence and must be said, not smoothed.
+    r.h5i_ok(&["env", "create", "eff2", "--isolation", "process"]);
+    r.h5i_ok(&["env", "run", "eff2", "--", "sh", "-c", "true"]);
+    let rec2 = r.capture_manifest("eff2");
+    let overlap: Vec<&str> = rec2["fs_overlap"]
+        .as_array()
+        .unwrap_or_else(|| panic!("second box must record its overlap: {rec2}"))
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(
+        overlap.iter().any(|o| o.starts_with("env/tester/eff via ")),
+        "overlap must name the sibling box and the shared path: {overlap:?}"
+    );
 }
 
 #[test]

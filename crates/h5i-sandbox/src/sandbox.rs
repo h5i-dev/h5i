@@ -123,7 +123,7 @@ pub(crate) fn config_lock_paths(work: &Path, home: Option<&Path>) -> Vec<PathBuf
 /// copies can live below a repository in `/tmp`; mounting it first hides those
 /// sources before their own binds run.
 #[cfg(target_os = "linux")]
-fn home_binds_in_mount_order(binds: &[HomeBind]) -> Vec<&HomeBind> {
+pub(crate) fn home_binds_in_mount_order(binds: &[HomeBind]) -> Vec<&HomeBind> {
     let mut ordered: Vec<_> = binds.iter().collect();
     ordered.sort_by_key(|bind| bind.target == Path::new("/tmp"));
     ordered
@@ -1091,7 +1091,7 @@ fn validate_private_paths(p: &Profile) -> Result<(), H5iError> {
 
 /// Expand a leading `~/` (or bare `~`) to `$HOME`. Symbolic placeholders like
 /// `$WORK` / `$REPO` are left as-is (they expand at enforcement time).
-fn expand_tilde(path: &str) -> String {
+pub(crate) fn expand_tilde(path: &str) -> String {
     if (path == "~" || path.starts_with("~/"))
         && let Some(home) = std::env::var_os("HOME")
     {
@@ -2551,30 +2551,59 @@ pub(crate) fn build_confined_command(
     let caps = probe_host_for(policy.claim);
     resolve(p, &caps)?;
 
-    // ── Landlock ruleset (built pre-fork; restricted in the child) ──
-    // Grants: rw on $WORK + fs.write, ro on fs.read. Paths that don't exist on
-    // this host are skipped — skipping a *grant* narrows the sandbox, which is
-    // the fail-closed direction.
-    let abi = landlock_abi_for(caps.landlock_abi.unwrap_or(1));
-    // A read-only observer session (`env shell --readonly`) grants `$WORK`
-    // read-only instead of read-write, so the box cannot mutate the shared
-    // worktree. The caller (`env::shell`) has already stripped every writable
-    // grant that would reach the worktree (box-git plumbing is granted ro,
-    // per-env private-path binds are skipped), so `$WORK` is the only entry that
-    // moves from the rw set to the ro set here.
-    let ro_work = policy.work_readonly;
-    let rw_paths: Vec<PathBuf> = std::iter::once(work.clone())
-        .filter(|_| !ro_work)
-        .chain(p.fs_write.iter().filter(|s| s.as_str() != "$WORK").map(|s| PathBuf::from(expand_tilde(s))))
-        .filter(|p| p.exists())
-        .collect();
-    let ro_paths: Vec<PathBuf> = p
-        .fs_read
+    // ── The effective configuration (ROADMAP.md §V2) ──
+    // Computed once by `effective::compute_effective` and consumed below for
+    // the Landlock path sets and the bind lists, so the serialized dump and
+    // the enforcement are the same values by construction. The semantics
+    // (grants: rw on $WORK + fs.write, ro on fs.read; a missing path skips
+    // the grant, which narrows the sandbox — the fail-closed direction; a
+    // readonly observer session moves `$WORK` from the rw set to the ro set)
+    // live in that function now — change enforcement there, never beside it.
+    // The effective-config layer serializes paths as UTF-8. A path this
+    // host cannot represent as UTF-8 would round-trip through the dump
+    // mangled and then fail closed in *confusing* ways — a silently skipped
+    // worktree grant (`path_beneath_rules` drops unopenable paths), a bind
+    // mount aimed at a path that does not exist. Refuse explicitly instead:
+    // same fail-closed direction, a legible error.
+    if work.to_str().is_none() {
+        return Err(H5iError::Metadata(format!(
+            "workspace path {} is not valid UTF-8 — the kernel tiers cannot \
+             represent it in the effective config (fail-closed)",
+            work.display()
+        )));
+    }
+    if let Some(bad) = policy
+        .private_binds
         .iter()
-        .map(|s| PathBuf::from(expand_tilde(s)))
-        .chain(std::iter::once(work.clone()).filter(|_| ro_work))
-        .filter(|p| p.exists())
-        .collect();
+        .map(|b| &b.backing)
+        .chain(policy.home_binds.iter().flat_map(|b| [&b.backing, &b.target]))
+        .chain(policy.ro_binds.iter().flat_map(|b| [&b.backing, &b.target]))
+        .chain(policy.cache_write.iter().flat_map(|b| [&b.backing, &b.target]))
+        .find(|p| p.to_str().is_none())
+    {
+        return Err(H5iError::Metadata(format!(
+            "bind path {} is not valid UTF-8 — refusing the run (fail-closed)",
+            bad.display()
+        )));
+    }
+    let abi_int = caps.landlock_abi.unwrap_or(1);
+    let abi = landlock_abi_for(abi_int);
+    let shape = crate::effective::RunShape {
+        force_netns,
+        notify: notify_sock.is_some(),
+        egress: egress.is_some(),
+        pidns,
+        interactive,
+    };
+    let eff = crate::effective::compute_effective(policy, &work, abi_int, &shape);
+    // Persist at the apply seam, before anything is spawned: the file records
+    // what this invocation is about to enforce. Fail-closed — an env that
+    // asked for the record does not run without it.
+    if let Some(out) = &policy.effective_out {
+        eff.write_to(out)?;
+    }
+    let rw_paths: Vec<PathBuf> = eff.landlock.rw.iter().map(PathBuf::from).collect();
+    let ro_paths: Vec<PathBuf> = eff.landlock.ro.iter().map(PathBuf::from).collect();
 
     let ruleset = {
         use landlock::{
@@ -2595,7 +2624,11 @@ pub(crate) fn build_confined_command(
     // ── seccomp deny-list program (compiled pre-fork) ──
     let bpf = seccomp_deny_program()?;
 
-    let want_netns = p.net_mode == NetMode::Deny || force_netns;
+    // The netns decision also comes from the effective config — one formula,
+    // two readers, exactly like the path sets and bind lists above. A second
+    // spelling of `net_mode == Deny || force_netns` here would be the drift
+    // the apply-seam rule exists to prevent.
+    let want_netns = eff.namespaces.net;
     let uid = unsafe { libc::geteuid() };
     let gid = unsafe { libc::getegid() };
     let mem = p.mem_bytes;
@@ -2611,71 +2644,32 @@ pub(crate) fn build_confined_command(
     let cgroup_procs_c: Option<std::ffi::CString> = cgroup_procs
         .and_then(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok());
 
-    // Config-lockdown targets (interactive agent sessions only), pre-resolved to
-    // CStrings so the post-fork child does no allocation when binding them. A
-    // non-empty list forces a mount namespace below — supervised is pidns=false,
-    // so without this there is no private mount ns and a bind would be unsafe.
-    let config_lock_c: Vec<std::ffi::CString> = if interactive {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        config_lock_paths(&work, home.as_deref())
+    // Bind lists, from the effective config, pre-resolved to CStrings so the
+    // post-fork child does no allocation when mounting them. `eff.binds` is in
+    // apply order (config-lock, private, home-state, cache-ro, cache-rw — the
+    // child's steps 1d–1h) and carries the semantics each kind documents in
+    // `effective.rs`; a non-empty list forces a mount namespace below.
+    let bind_pairs = |kind: crate::effective::BindKind| -> Vec<(std::ffi::CString, std::ffi::CString)> {
+        eff.binds
             .iter()
-            .filter_map(|p| std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok())
+            .filter(|b| b.kind == kind)
+            .filter_map(|b| {
+                let sc = std::ffi::CString::new(b.source.as_bytes()).ok()?;
+                let tc = std::ffi::CString::new(b.target.as_bytes()).ok()?;
+                Some((sc, tc))
+            })
             .collect()
-    } else {
-        Vec::new()
     };
-
-    // Private-path binds (Idea 3): (backing, target) CString pairs, pre-resolved
-    // so the post-fork child does no allocation. `target` is the workspace path
-    // the per-env backing dir shadows. A non-empty list forces a mount namespace
-    // below, exactly like config lockdown.
-    let private_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> = policy
-        .private_binds
-        .iter()
-        .filter_map(|b| {
-            let target = work.join(&b.rel);
-            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
-            let tc = std::ffi::CString::new(target.as_os_str().as_encoded_bytes()).ok()?;
-            Some((bc, tc))
-        })
-        .collect();
-
-    // HOME-state redirect binds (#1, per-env credential/session isolation): each
-    // per-env copy backing the agent runtime's real `~/.claude`/`~/.codex`, bound
-    // over the real absolute path so the box's writes land in its own copy and
-    // never race the shared real files. Like the private binds these force a mount
-    // namespace and are applied before Landlock, in the (egress-)private ns.
-    let home_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> =
-        home_binds_in_mount_order(&policy.home_binds)
+    // Config lockdown binds a path read-only over itself, so only the target is kept.
+    let config_lock_c: Vec<std::ffi::CString> = bind_pairs(crate::effective::BindKind::ConfigLock)
         .into_iter()
-        .filter_map(|b| {
-            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
-            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
-            Some((bc, tc))
-        })
+        .map(|(_, tc)| tc)
         .collect();
-
-    // Read-only binds (warm dependency caches): the box sees the cache at the
-    // package manager's own path and cannot write it. Same private ns, before
-    // Landlock, bind then remount-ro.
-    let ro_bind_c: Vec<(std::ffi::CString, std::ffi::CString)> = policy
-        .ro_binds
-        .iter()
-        .filter_map(|b| {
-            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
-            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
-            Some((bc, tc))
-        })
-        .collect();
-
-    // The writable cache bind, if this is a refresh box. Same shape as the
-    // read-only ones, minus the remount.
+    let private_bind_c = bind_pairs(crate::effective::BindKind::Private);
+    let home_bind_c = bind_pairs(crate::effective::BindKind::HomeState);
+    let ro_bind_c = bind_pairs(crate::effective::BindKind::CacheRo);
     let cache_write_c: Option<(std::ffi::CString, std::ffi::CString)> =
-        policy.cache_write.as_ref().and_then(|b| {
-            let bc = std::ffi::CString::new(b.backing.as_os_str().as_encoded_bytes()).ok()?;
-            let tc = std::ffi::CString::new(b.target.as_os_str().as_encoded_bytes()).ok()?;
-            Some((bc, tc))
-        });
+        bind_pairs(crate::effective::BindKind::CacheRw).into_iter().next();
 
     // uid/gid map contents, rendered HERE rather than post-fork. The egress path
     // execs `nft` and so needs root-in-userns (capabilities only survive execve

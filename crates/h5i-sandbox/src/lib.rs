@@ -18,6 +18,10 @@ pub mod sandbox_policy;
 pub mod auth_proxy;
 pub mod cgroup;
 pub mod container;
+/// The effective configuration a kernel-tier invocation applies
+/// (ROADMAP.md §V2) — Linux only, like the mechanisms it describes.
+#[cfg(target_os = "linux")]
+pub mod effective;
 pub mod microvm;
 pub mod sandbox;
 /// macOS Seatbelt backend. Compiled on every Unix target (so its profile

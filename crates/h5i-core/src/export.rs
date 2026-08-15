@@ -48,6 +48,11 @@ pub struct ExportSummary {
     pub egress_denied: u64,
     /// Distinct secret-redaction rules that fired while recording.
     pub redactions: Vec<String>,
+    /// Boxes whose effective filesystem grants overlapped this one's, as the
+    /// newest run/shell receipt recorded them (`env/<id> via <path>`) —
+    /// latest-record semantics, matching the console. A reviewer applying
+    /// this bundle should know the box did not run alone.
+    pub fs_overlap: Vec<String>,
 }
 
 /// The machine-readable half of the bundle.
@@ -193,6 +198,11 @@ pub fn export(
         .collect();
     redactions.sort();
     redactions.dedup();
+    let fs_overlap: Vec<String> = records
+        .iter()
+        .rfind(|r| matches!(r.source.as_str(), "host-env-run" | "host-env-shell"))
+        .map(|r| r.fs_overlap.clone())
+        .unwrap_or_default();
 
     std::fs::create_dir_all(out).map_err(|e| H5iError::with_path(e, out))?;
     let patch_path = out.join("patch.diff");
@@ -234,6 +244,7 @@ pub fn export(
         receipts: records.len(),
         egress_denied,
         redactions,
+        fs_overlap,
     };
 
     let report_path = out.join("report.md");
@@ -339,6 +350,12 @@ fn report(
         out.push_str(&format!(
             "- secrets redacted while recording: {}\n",
             s.redactions.join(", ")
+        ));
+    }
+    if !s.fs_overlap.is_empty() {
+        out.push_str(&format!(
+            "- writable-path overlap with other boxes (last run): {}\n",
+            s.fs_overlap.join("; ")
         ));
     }
 
@@ -658,6 +675,7 @@ mod tests {
             source: "repo".into(),
             profile: "browser".into(),
             policy_digest: "d".repeat(64),
+            effective_digest: None,
             isolation_claim: "supervised".into(),
             backend: "worktree".into(),
             created_at: "2026-08-05T00:00:00.000000Z".into(),
@@ -682,6 +700,7 @@ mod tests {
             receipts: 1,
             egress_denied: 0,
             redactions: Vec::new(),
+            fs_overlap: Vec::new(),
         }
     }
 
@@ -691,6 +710,8 @@ mod tests {
             timestamp: "2026-08-05T00:00:01.000000Z".into(),
             env_id: "env/tester/ui".into(),
             policy_digest: None,
+            effective_digest: None,
+            fs_overlap: Vec::new(),
             source: "host-env-run".into(),
             cmd: Some("agent-browser click @e2".into()),
             cwd: None,
