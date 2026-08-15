@@ -26,9 +26,12 @@
 //!   It lives in this process's memory — nothing on disk, so nothing a box can
 //!   read. The page trades it for a `SameSite=Strict` cookie, which a
 //!   cross-site request never carries.
-//! * **Foreign origins refused.** A page on another origin cannot read these
-//!   responses anyway, but saying no at the door is cheaper than reasoning
-//!   about it.
+//! * **Foreign origins refused**, by `Origin` *and* by `Sec-Fetch-Site`. The
+//!   second is not belt-and-braces: `Origin` is absent on a markup-driven GET,
+//!   and `SameSite=Strict` constrains cross-*site* requests only — two loopback
+//!   ports are different origins and the same site. Without it, a page on any
+//!   other local port could `<img src>` this console with its cookie attached
+//!   and nothing in the head to refuse.
 //!
 //! # Honesty
 //!
@@ -143,10 +146,27 @@ impl Refusal {
 /// `Origin` is checked first: a request from another origin is refused even
 /// when it somehow carries the right token, because at that point the token is
 /// the thing that has leaked and honouring it would be the bug.
+/// `sec_fetch_site` is every value of that header, because a second copy is a
+/// disagreement about where a request came from and this resolves it against
+/// the request. It closes the gap `Origin` alone cannot: **`Origin` is not sent
+/// on a subresource GET at all**, and the cookie is `SameSite=Strict`, which
+/// constrains cross-*site* requests only. Two loopback ports are different
+/// origins and the *same site*, so a page served by any other local service —
+/// `h5i join` puts somebody else's agent-written app on exactly such a port —
+/// could `<img src="http://127.0.0.1:<console>/api/…">` with this console's
+/// cookie attached and no `Origin` for the check above to look at. The module
+/// header's "foreign origins refused" was true of `fetch` and false of every
+/// markup-driven request.
+///
+/// A `cross-site` request that carries the token **in the query** is the
+/// printed invite link being followed, and is allowed for the same reason
+/// `h5i-share`'s gate allows it: the capability arrived with the request rather
+/// than out of the browser's jar. Nothing else gets the carve-out.
 pub fn authorize(
     query: Option<&str>,
     cookie_header: Option<&str>,
     origin: Option<&str>,
+    sec_fetch_site: &[&str],
     expected: &str,
     self_origin: &str,
 ) -> Result<(), Refusal> {
@@ -155,9 +175,16 @@ pub fn authorize(
     {
         return Err(Refusal::ForeignOrigin);
     }
-    let presented = query
-        .and_then(|q| param(q, "token"))
-        .or_else(|| cookie_header.and_then(|c| cookie(c, COOKIE)));
+    let from_query = query.and_then(|q| param(q, "token"));
+    // Foreign if *any* reading of the head says so: one value answers for
+    // itself, two that disagree are a head no browser produced.
+    if sec_fetch_site.iter().any(|site| {
+        !matches!(site.trim(), "same-origin" | "none") && from_query.is_none()
+    }) {
+        return Err(Refusal::ForeignOrigin);
+    }
+    let presented =
+        from_query.or_else(|| cookie_header.and_then(|c| cookie(c, COOKIE)));
     match presented {
         Some(t) if token_matches(expected, &t) => Ok(()),
         _ => Err(Refusal::Unauthorized),
@@ -209,6 +236,15 @@ async fn gate(State(state): State<Arc<AppState>>, req: Request, next: Next) -> R
         return Refusal::ForeignOrigin.status().into_response();
     }
     let self_origin = format!("http://{host}");
+    // Every value, not the first: see `authorize`. A repeated field arrives as
+    // two lines through any HTTP/2-to-1.1 hop, and reading only one of them
+    // lets the other say something else.
+    let sites: Vec<&str> = req
+        .headers()
+        .get_all("sec-fetch-site")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
     let verdict = authorize(
         req.uri().query(),
         req.headers()
@@ -217,6 +253,7 @@ async fn gate(State(state): State<Arc<AppState>>, req: Request, next: Next) -> R
         req.headers()
             .get(header::ORIGIN)
             .and_then(|h| h.to_str().ok()),
+        &sites,
         &state.token,
         &self_origin,
     );
@@ -1258,7 +1295,7 @@ mod tests {
     fn nothing_gets_in_without_the_token() {
         let tok = "0123456789abcdef";
         let ok = |q: Option<&str>, c: Option<&str>| {
-            authorize(q, c, None, tok, "http://127.0.0.1:8765").is_ok()
+            authorize(q, c, None, &[], tok, "http://127.0.0.1:8765").is_ok()
         };
         assert!(ok(Some("token=0123456789abcdef"), None));
         assert!(ok(None, Some("h5i_console=0123456789abcdef")));
@@ -1275,11 +1312,75 @@ mod tests {
         let tok = "0123456789abcdef";
         let me = "http://127.0.0.1:8765";
         assert_eq!(
-            authorize(Some("token=0123456789abcdef"), None, Some("http://evil.test"), tok, me),
+            authorize(
+                Some("token=0123456789abcdef"),
+                None,
+                Some("http://evil.test"),
+                &[],
+                tok,
+                me
+            ),
             Err(Refusal::ForeignOrigin)
         );
         // Same-origin XHR sends Origin too, and must still work.
-        assert!(authorize(None, Some("h5i_console=0123456789abcdef"), Some(me), tok, me).is_ok());
+        assert!(
+            authorize(None, Some("h5i_console=0123456789abcdef"), Some(me), &["same-origin"], tok, me)
+                .is_ok()
+        );
+    }
+
+    /// The gap `Origin` alone cannot close.
+    ///
+    /// A markup-driven GET — `<img>`, `<script src>`, `<link>` — sends no
+    /// `Origin` at all, and the console's cookie is `SameSite=Strict`, which
+    /// constrains cross-*site* requests only. Two loopback ports are different
+    /// origins and the same site, so a page served by any other local service
+    /// (`h5i join` puts somebody else's agent-written app on exactly such a
+    /// port) reached this console with its cookie attached and nothing in the
+    /// head for the origin check to look at.
+    #[test]
+    fn a_page_on_another_loopback_port_cannot_ride_the_console_cookie() {
+        let tok = "0123456789abcdef";
+        let me = "http://127.0.0.1:8765";
+        let cookie = Some("h5i_console=0123456789abcdef");
+
+        // What a subresource fetch from 127.0.0.1:<other> looks like: no
+        // `Origin`, the cookie attached, `same-site` because the port is not
+        // part of a site.
+        assert_eq!(
+            authorize(None, cookie, None, &["same-site"], tok, me),
+            Err(Refusal::ForeignOrigin)
+        );
+        // And from off the machine entirely, on the cookie alone.
+        assert_eq!(
+            authorize(None, cookie, None, &["cross-site"], tok, me),
+            Err(Refusal::ForeignOrigin)
+        );
+        // A head that says two things does not get to pick the generous one.
+        assert_eq!(
+            authorize(None, cookie, None, &["same-origin", "cross-site"], tok, me),
+            Err(Refusal::ForeignOrigin)
+        );
+
+        // The console's own requests, and a URL typed or clicked from outside
+        // the browser, still work.
+        assert!(authorize(None, cookie, None, &["same-origin"], tok, me).is_ok());
+        assert!(authorize(None, cookie, None, &["none"], tok, me).is_ok());
+
+        // ...and so does the printed invite link, wherever it was clicked from:
+        // the capability arrived *with* the request rather than out of the jar,
+        // which is the whole distinction.
+        assert!(
+            authorize(
+                Some("token=0123456789abcdef"),
+                None,
+                None,
+                &["cross-site"],
+                tok,
+                me
+            )
+            .is_ok()
+        );
     }
 
     #[test]
