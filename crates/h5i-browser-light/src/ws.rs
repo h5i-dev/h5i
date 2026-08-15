@@ -28,6 +28,15 @@ const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /// controls; anything larger is a bug or an attack, not a config frame.
 const MAX_MESSAGE: usize = 1 << 20;
 
+/// Cap on the whole upgrade request. `read_line` grows its `String` until it
+/// meets a newline, so a client that opens a socket and sends bytes without one
+/// is an unbounded allocation on this side — and the handshake happens before
+/// anything about the peer has been established.
+const MAX_HANDSHAKE: u64 = 32 * 1024;
+
+/// The largest payload a control frame may carry (RFC 6455 §5.5).
+const MAX_CONTROL_PAYLOAD: usize = 125;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Incoming {
     Text(String),
@@ -50,10 +59,16 @@ pub fn accept_key(client_key: &str) -> String {
 /// always use `/`, and the web forward rewrites the request line to strip its
 /// `?token=`, so a server that insisted on a query string would break it.
 pub fn accept(stream: &mut TcpStream) -> Result<String, H5iError> {
+    // `.take`, so the head is bounded as a whole rather than per line: a client
+    // dribbling one endless header line grows a `String` on this side without
+    // ever reaching a newline, and every `read_line` below would happily follow
+    // it. Past the cap the reads return EOF and the handshake fails for want of
+    // a key, which is the right answer for a peer that never sent a head.
     let mut reader = BufReader::new(
         stream
             .try_clone()
-            .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?,
+            .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?
+            .take(MAX_HANDSHAKE),
     );
 
     let mut request_line = String::new();
@@ -145,21 +160,48 @@ pub fn read_message(reader: &mut impl Read) -> Result<Incoming, H5iError> {
         let fin = head[0] & 0x80 != 0;
         let opcode = head[0] & 0x0F;
         let masked = head[1] & 0x80 != 0;
-        let mut len = (head[1] & 0x7F) as usize;
+        // Carried as `u64` until it has been checked against the cap. Casting
+        // first and checking after truncates on a 32-bit target — a declared
+        // length of 2^32+1 became 1, the cap waved it through, and the reader
+        // then sat one byte into a payload the peer is still sending, reading
+        // its own body as frame headers.
+        let mut len = (head[1] & 0x7F) as u64;
 
         if len == 126 {
             let mut ext = [0u8; 2];
             reader.read_exact(&mut ext).map_err(H5iError::Io)?;
-            len = u16::from_be_bytes(ext) as usize;
+            len = u16::from_be_bytes(ext) as u64;
         } else if len == 127 {
             let mut ext = [0u8; 8];
             reader.read_exact(&mut ext).map_err(H5iError::Io)?;
-            len = u64::from_be_bytes(ext) as usize;
+            len = u64::from_be_bytes(ext);
         }
 
-        if len > MAX_MESSAGE || assembled.len().saturating_add(len) > MAX_MESSAGE {
+        if len > MAX_MESSAGE as u64
+            || (assembled.len() as u64).saturating_add(len) > MAX_MESSAGE as u64
+        {
             return Err(H5iError::Metadata(format!(
                 "client message exceeds the {MAX_MESSAGE} byte cap"
+            )));
+        }
+        let len = len as usize;
+
+        // A control frame is never fragmented and never carries more than 125
+        // bytes (RFC 6455 §5.5), and a reserved opcode is not something to
+        // guess at. All three used to be accepted: a `Ping` with FIN clear was
+        // answered as a whole message and left the next read starting on a
+        // continuation frame, and a reserved opcode was reassembled as if it
+        // were text. The connection is failed instead, which is what the RFC
+        // asks for and the only reading that keeps the stream in step.
+        let is_control = opcode & 0x8 != 0;
+        if is_control && (!fin || len > MAX_CONTROL_PAYLOAD) {
+            return Err(H5iError::Metadata(
+                "control frame is fragmented or oversized — refusing the connection".to_string(),
+            ));
+        }
+        if !matches!(opcode, 0x0 | 0x1 | 0x2 | 0x8 | 0x9 | 0xA) {
+            return Err(H5iError::Metadata(format!(
+                "reserved websocket opcode {opcode:#x} — refusing the connection"
             )));
         }
 
@@ -323,6 +365,44 @@ mod tests {
             read_message(&mut frame.as_slice()).expect("decodes"),
             Incoming::Ping(b"abc".to_vec())
         );
+    }
+
+    /// RFC 6455 §5.5: a control frame is never fragmented and never carries
+    /// more than 125 bytes. A fragmented `Ping` was answered as a whole message
+    /// and left the next read starting on a continuation frame — the stream and
+    /// the reader no longer agreeing about where a frame begins.
+    #[test]
+    fn a_control_frame_that_breaks_the_rules_fails_the_connection() {
+        // Ping with FIN clear.
+        let frame = [0x09u8, 2, b'h', b'i'];
+        assert!(read_message(&mut frame.as_slice()).is_err());
+
+        // Ping over 125 bytes (escaped to the 16-bit length form).
+        let mut big = vec![0x89u8, 126, 0, 200];
+        big.extend(std::iter::repeat_n(b'x', 200));
+        assert!(read_message(&mut big.as_slice()).is_err());
+
+        // A reserved opcode is refused rather than reassembled as text.
+        let frame = [0x83u8, 1, b'x'];
+        assert!(read_message(&mut frame.as_slice()).is_err());
+
+        // And the legal shapes still pass.
+        let frame = [0x89u8, 3, b'a', b'b', b'c'];
+        assert!(read_message(&mut frame.as_slice()).is_ok());
+    }
+
+    /// A declared length is checked before it is narrowed to `usize`, so a
+    /// 32-bit build cannot truncate `2^32 + 1` to `1` and then read one byte of
+    /// a payload the peer is still sending.
+    #[test]
+    fn an_enormous_declared_length_is_refused_not_truncated() {
+        let mut frame = vec![0x81u8, 127];
+        frame.extend_from_slice(&(u64::MAX).to_be_bytes());
+        assert!(read_message(&mut frame.as_slice()).is_err());
+
+        let mut frame = vec![0x81u8, 127];
+        frame.extend_from_slice(&(0x1_0000_0001u64).to_be_bytes());
+        assert!(read_message(&mut frame.as_slice()).is_err());
     }
 
     #[test]
