@@ -1960,6 +1960,66 @@ pub fn create(
 /// even when `h5i init` did not add it to a tracked `.gitignore`). Returns the
 /// sha256 of the written `PERSONA.md` for provenance, or `None` when the profile
 /// declares no persona. Paths are validated (relative, no `..`) at policy load.
+/// Largest persona source that will be baked in. A standing instruction is
+/// prose; anything past this is not one, and the file is repo-supplied.
+const MAX_PERSONA_BYTES: u64 = 1024 * 1024;
+
+/// Read `rel` under `work` **without following a symlink at any component**.
+///
+/// `validate_profile` pins a persona source inside `$WORK`: relative, no `..`,
+/// no absolute path. What it cannot do is *resolve* it — and both the entry and
+/// the worktree contents are repo-supplied, so a branch that ships `notes.md` as
+/// a symlink to `~/.ssh/id_rsa` turns a valid-looking entry into a read of the
+/// operator's key. Git checks symlinks out faithfully, and `read_to_string`
+/// follows them.
+///
+/// The consequence is worse here than for most reads: what is read is
+/// concatenated into `PERSONA.md` *inside the box*, which the agent is told to
+/// open. A host file would be handed to the agent by the mechanism whose whole
+/// purpose is to tell it how to behave.
+///
+/// `private_paths` has the same shape and got `create_dirs_within` for exactly
+/// this reason — "it never *resolves* the path". This is the read side of that
+/// argument, and it is bounded as well, because the source is repo-supplied.
+fn read_within_work(work: &Path, rel: &str) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut cur = work.to_path_buf();
+    let comps: Vec<&str> = rel
+        .trim_matches('/')
+        .split('/')
+        .filter(|c| !c.is_empty() && *c != ".")
+        .collect();
+    if comps.is_empty() {
+        return Err(std::io::Error::other("empty persona source"));
+    }
+    for c in &comps {
+        cur.push(c);
+        if std::fs::symlink_metadata(&cur)?.file_type().is_symlink() {
+            return Err(std::io::Error::other(format!(
+                "'{}' is a symlink, and h5i will not follow one out of the workspace to bake a \
+                 persona (fail-closed)",
+                cur.display()
+            )));
+        }
+    }
+    // `O_NOFOLLOW` as well as the walk: the walk is a check and this is the
+    // open, and between them is a window a repo's own build step could use.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    let f = opts.open(&cur)?;
+    if !f.metadata()?.file_type().is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    let mut buf = String::new();
+    f.take(MAX_PERSONA_BYTES).read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
 fn materialize_persona(work: &Path, persona: &[String]) -> Result<Option<String>, H5iError> {
     if persona.is_empty() {
         return Ok(None);
@@ -1967,10 +2027,10 @@ fn materialize_persona(work: &Path, persona: &[String]) -> Result<Option<String>
     let mut body = String::new();
     for src in persona {
         let path = work.join(src);
-        let text = std::fs::read_to_string(&path).map_err(|e| {
+        let text = read_within_work(work, src).map_err(|e| {
             H5iError::Metadata(format!(
-                "persona source '{src}' is not in the worktree ({}): {e} — commit it at the \
-                 base revision or fix `persona` in .h5i/env.toml (fail-closed)",
+                "persona source '{src}' is not readable in the worktree ({}): {e} — commit it \
+                 at the base revision or fix `persona` in .h5i/env.toml (fail-closed)",
                 path.display()
             ))
         })?;
@@ -10376,6 +10436,51 @@ mod tests {
         assert_eq!(out, b"a [redacted secret] b [redacted secret]");
         assert_eq!(scrub_exact(b"abc", &["".to_string()]), b"abc");
         assert_eq!(scrub_exact(b"abc", &[]), b"abc");
+    }
+
+    /// `validate_profile` pins a persona source inside `$WORK` — relative, no
+    /// `..` — and cannot resolve it. Both the entry and the worktree are
+    /// repo-supplied, so a branch shipping `notes.md` as a symlink to a host
+    /// file turned a valid-looking entry into a read of it, concatenated into
+    /// `PERSONA.md` *inside the box*, which the agent is told to open.
+    ///
+    /// `private_paths` has the same shape and got `create_dirs_within` for
+    /// exactly this reason. This is the read side of that argument.
+    #[test]
+    #[cfg(unix)]
+    fn a_persona_source_will_not_follow_a_symlink_out_of_the_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(work.join("docs")).unwrap();
+
+        let secret = dir.path().join("id_rsa");
+        std::fs::write(&secret, "PRIVATE KEY MATERIAL").unwrap();
+
+        // The ordinary case still reads.
+        std::fs::write(work.join("docs").join("style.md"), "be brief").unwrap();
+        assert_eq!(
+            read_within_work(&work, "docs/style.md").unwrap(),
+            "be brief"
+        );
+
+        // A symlinked leaf is refused.
+        std::os::unix::fs::symlink(&secret, work.join("docs").join("notes.md")).unwrap();
+        let err = read_within_work(&work, "docs/notes.md").unwrap_err().to_string();
+        assert!(err.contains("symlink"), "{err}");
+
+        // And a symlinked *ancestor*, which the leaf check alone would miss.
+        std::os::unix::fs::symlink(dir.path(), work.join("out")).unwrap();
+        assert!(read_within_work(&work, "out/id_rsa").is_err());
+
+        // The whole bake fails closed rather than baking part of a persona.
+        let err = materialize_persona(&work, &["docs/notes.md".to_string()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("fail-closed"), "{err}");
+        assert!(
+            !work.join(PERSONA_FILE).exists(),
+            "a refused source must not leave a partial PERSONA.md"
+        );
     }
 
     /// Two readers of `services.json`, one digest check between them.
