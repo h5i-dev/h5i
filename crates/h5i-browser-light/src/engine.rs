@@ -1224,8 +1224,12 @@ impl PageFactory {
         }
         // A form's response is a document like any other, so it gets the same
         // encoding treatment: a legacy site that answers a POST in shift_jis
-        // must not come back as replacement characters.
-        Ok(Page::from_bytes(
+        // must not come back as replacement characters — and the same `finish`,
+        // which is where the cookie-origin drop and the script run live. This
+        // returned the page directly, so a submission was the one navigation
+        // that both kept the previous origin's session and never ran its own
+        // scripts.
+        self.finish(Page::from_bytes(
             &outcome.body,
             declared_content_type(&outcome).as_deref(),
             &outcome.final_url,
@@ -1239,7 +1243,32 @@ impl PageFactory {
     ///
     /// One place rather than at each call site, so no path can load a page with
     /// script configured on and quietly not run it.
+    ///
+    /// The cookie-origin drop lives here too, and for the same reason. It used
+    /// to sit in `open`, against the URL that was *asked for* — which left two
+    /// ways to arrive at an origin with somebody else's session still in the
+    /// jar:
+    ///
+    /// * **A form submission.** `open_submission` reached neither this function
+    ///   nor the drop, so posting to another origin navigated there with the
+    ///   previous origin's cookies intact. The jar is host-scoped, so the
+    ///   arriving page's script could then `fetch` the previous origin *with its
+    ///   credentials* — the cross-origin credentialed read that
+    ///   `Jar::retain_origin`'s doc says cannot happen, since it "cannot be
+    ///   fixed without a process split, so it is bounded instead".
+    /// * **A redirect.** `open` dropped against the requested URL and the fetch
+    ///   then followed hops, so a page served from B ran with A's cookies.
+    ///
+    /// Against `page.url()` — the origin actually loaded — both close. And it
+    /// must precede `run_scripts`, or the drop happens after the script that
+    /// was the reason for it.
     fn finish(&self, mut page: Page) -> Result<Page, H5iError> {
+        if self.broker.jar().retain_origin(page.url()) {
+            page.note(
+                "cookies from the previous origin were dropped on navigation: this engine \
+                 holds a session only for the origin currently loaded",
+            );
+        }
         if self.options.script {
             page.run_scripts(self.broker.clone())?;
         }
@@ -1253,18 +1282,12 @@ impl PageFactory {
     }
 
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
-        // Leaving an origin drops its cookies. See `cookies::Jar::retain_origin`
-        // for why that bound exists and what it costs.
-        let dropped = self.broker.jar().retain_origin(url);
+        // Leaving an origin drops its cookies — in `finish`, against the origin
+        // actually loaded rather than the one asked for. See
+        // `cookies::Jar::retain_origin` for why that bound exists and what it
+        // costs, and `finish` for why it moved.
         let page = Page::open(url, self.broker.clone(), self.fonts(), self.options.clone())?;
-        let mut page = self.finish(page)?;
-        if dropped {
-            page.note(
-                "cookies from the previous origin were dropped on navigation: this engine \
-                 holds a session only for the origin currently loaded",
-            );
-        }
-        Ok(page)
+        self.finish(page)
     }
 
     /// Load HTML already in hand, running its scripts if the options ask.
@@ -1844,6 +1867,103 @@ mod tests {
         let text = page.text();
         assert!(text.contains("Title"));
         assert!(text.contains("Body copy."));
+    }
+}
+
+#[cfg(test)]
+mod navigation_origin_tests {
+    use super::*;
+    use crate::policy::Policy;
+    use crate::receipt::MemorySink;
+
+    /// The jar bound `Jar::retain_origin` documents — "at any moment the jar
+    /// holds only cookies for the origin currently loaded" — rested on a drop
+    /// that `open` performed and `open_submission` did not.
+    ///
+    /// The jar is host-scoped, so arriving at another origin with the previous
+    /// one's cookies still in it means the new page's script can `fetch` the
+    /// previous origin *with its credentials*. That is the cross-origin
+    /// credentialed read the bound exists to make impossible, reached by
+    /// pressing a submit button.
+    #[test]
+    fn a_form_submission_drops_the_previous_origins_cookies() {
+        let broker = Arc::new(
+            Broker::new(
+                Policy::new().allow("bank.example").allow("evil.example"),
+                Arc::new(MemorySink::new()),
+                None,
+            )
+            .expect("broker"),
+        );
+        // A live session on one origin.
+        broker.jar().store(
+            &Url::parse("https://bank.example/").unwrap(),
+            ["sid=secret; HttpOnly"],
+        );
+        assert_eq!(broker.jar().len(), 1);
+
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+
+        // Landing on another origin — however we got there — must drop it.
+        let page = Page::from_bytes(
+            b"<html><body>hi</body></html>",
+            Some("text/html"),
+            &Url::parse("https://evil.example/collect").unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let page = factory.finish(page).expect("finish");
+
+        assert!(
+            broker.jar().is_empty(),
+            "the previous origin's session survived the navigation"
+        );
+        assert!(
+            broker
+                .jar()
+                .header_for(&Url::parse("https://bank.example/").unwrap())
+                .is_none(),
+            "and it must not be sendable"
+        );
+        assert!(
+            page.notes.iter().any(|n| n.contains("dropped on navigation")),
+            "the drop is stated, not silent: {:?}",
+            page.notes
+        );
+    }
+
+    /// Same-origin navigation keeps the session, which is the whole point of
+    /// having one.
+    #[test]
+    fn staying_on_an_origin_keeps_the_session_through_finish() {
+        let broker = Arc::new(
+            Broker::new(
+                Policy::new().allow("bank.example"),
+                Arc::new(MemorySink::new()),
+                None,
+            )
+            .expect("broker"),
+        );
+        broker.jar().store(
+            &Url::parse("https://bank.example/").unwrap(),
+            ["sid=secret; HttpOnly"],
+        );
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+
+        let page = Page::from_bytes(
+            b"<html><body>ok</body></html>",
+            Some("text/html"),
+            &Url::parse("https://bank.example/account").unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let page = factory.finish(page).expect("finish");
+        assert_eq!(broker.jar().len(), 1);
+        assert!(!page.notes.iter().any(|n| n.contains("dropped on navigation")));
     }
 }
 
