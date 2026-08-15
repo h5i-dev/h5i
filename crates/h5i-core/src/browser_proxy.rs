@@ -448,6 +448,32 @@ const UPSTREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 #[cfg(unix)] // only the unix-gated listener references this
 const MAX_ACCEPT_ERRORS: usize = 20;
 
+/// Connections served at once. The accept loop spawns one thread per
+/// connection and the socket sits in `<env>/tmp`, which is one of the two
+/// paths the box can write — so without a ceiling a loop of `connect()` calls
+/// inside the box spawns unbounded *host* threads. `auth_proxy` has carried
+/// this bound since it was written ("the box is one client"); this sibling,
+/// reachable the same way and by the same actor, had none.
+///
+/// 64, matching that sibling. The box's browser CLI opens one connection per
+/// command and nothing legitimate approaches it.
+#[cfg(unix)]
+const MAX_IN_FLIGHT: usize = 64;
+
+/// Holds one of the [`MAX_IN_FLIGHT`] slots and releases it on drop, including
+/// when the worker unwinds — a bare decrement at the end of the closure is
+/// skipped by a panic, and the slot is then held forever by a thread that no
+/// longer exists.
+#[cfg(unix)]
+struct InFlightSlot(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(unix)]
+impl Drop for InFlightSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Start mediating `socket_path` in front of `upstream`.
 ///
 /// Both are `AF_UNIX` paths. `socket_path` is what the box is told to use
@@ -495,6 +521,7 @@ pub fn spawn(
         let actions = actions.clone();
         let upstream = upstream.to_path_buf();
         let env_dir = env_dir.to_path_buf();
+        let in_flight = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         std::thread::spawn(move || {
             let mut consecutive_errors = 0usize;
             while !stop.load(Ordering::SeqCst) {
@@ -504,6 +531,16 @@ pub fn spawn(
                         if stop.load(Ordering::SeqCst) {
                             break;
                         }
+                        // Refuse rather than queue: a queued connection still
+                        // holds a descriptor, and the actor filling these slots
+                        // is a box in a loop. Not counted as an accept error —
+                        // the listener is healthy, it is the load that is not.
+                        if in_flight.load(Ordering::SeqCst) >= MAX_IN_FLIGHT {
+                            drop(client);
+                            continue;
+                        }
+                        in_flight.fetch_add(1, Ordering::SeqCst);
+                        let slot = InFlightSlot(in_flight.clone());
                         let actions = actions.clone();
                         let upstream = upstream.clone();
                         let env_dir = env_dir.clone();
@@ -516,6 +553,9 @@ pub fn spawn(
                         // exhausts threads, and it is also the case this
                         // mediator exists for.
                         let spawned = std::thread::Builder::new().spawn(move || {
+                            // Moved in, so the slot is released when this
+                            // worker ends however it ends.
+                            let _slot = slot;
                             let _ = client.set_nonblocking(false);
                             let Some(daemon) = connect_upstream(&upstream) else {
                                 // Nothing came up. Answer in the daemon's own
@@ -712,8 +752,49 @@ fn append_actions_log(env_dir: &Path, actions: &[ActionRecord]) -> std::io::Resu
 /// Tell a client that no daemon answered, echoing the id of its first request
 /// so a CLI correlating replies by id matches the reply rather than hanging.
 #[cfg(unix)]
+/// Read one line from `client`, bounded three ways: per `read()`, in total
+/// bytes, and — the one that does not follow from the other two — in wall
+/// clock. Its own function so a test can drive the deadline in milliseconds
+/// instead of waiting out the production one, which is the shape
+/// `view::read_head_within` already uses for the same reason.
+///
+/// Returns whatever arrived. The caller only parses it as JSON, so a partial
+/// line, a timed-out one and an empty one all fail the same way.
+#[cfg(unix)]
+fn read_first_line_within(
+    client: &std::os::unix::net::UnixStream,
+    per_read: std::time::Duration,
+    whole: std::time::Duration,
+    cap: u64,
+) -> String {
+    use std::io::Read;
+    let deadline = std::time::Instant::now() + whole;
+    let _ = client.set_read_timeout(Some(per_read));
+    let mut raw: Vec<u8> = Vec::new();
+    {
+        let mut reader = std::io::BufReader::new(client.take(cap));
+        let mut byte = [0u8; 1];
+        while std::time::Instant::now() < deadline {
+            match reader.read(&mut byte) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    raw.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    let _ = client.set_read_timeout(None);
+    // Lossy rather than `read_line`'s "error on invalid UTF-8": this is only
+    // ever parsed as JSON, and a replacement character fails that parse the
+    // same way the bytes would have. Nothing here is echoed anywhere.
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
 fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
-    use std::io::{BufRead, Read, Write};
+    use std::io::Write;
 
     // Read one line — the request the client is waiting on a reply to. Best
     // effort, and *bounded*: a client that connects to probe liveness and waits
@@ -729,9 +810,18 @@ fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
     // timed out nor capped. A request id is a short JSON line; anything past
     // this cap is not one.
     const MAX_FIRST_LINE: u64 = 64 * 1024;
-    let _ = client.set_read_timeout(Some(std::time::Duration::from_secs(2)));
-    let mut first = String::new();
-    let _ = std::io::BufReader::new(client.take(MAX_FIRST_LINE)).read_line(&mut first);
+    // And bounded overall, which the two above still do not add up to. The
+    // timeout ends one `read()` and the cap ends the *bytes*; the loop between
+    // them is ended by neither. A peer that lets every read *succeed* — one
+    // byte just inside each interval — never trips the timeout, because a
+    // timeout is an error and a byte is not, so it walks the whole cap at its
+    // own pace: 64 Ki reads of up to two seconds each is a day and a half
+    // holding a host thread, from a socket in `<env>/tmp` that the box writes.
+    // `auth_proxy::read_head` spells out the same arithmetic and answers it
+    // with a deadline; this path had the two halves and not the whole.
+    const FIRST_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+    const PER_READ: std::time::Duration = std::time::Duration::from_secs(2);
+    let first = read_first_line_within(client, PER_READ, FIRST_LINE_DEADLINE, MAX_FIRST_LINE);
     let _ = client.set_read_timeout(None);
     let id = serde_json::from_str::<Value>(&first)
         .ok()
@@ -1116,6 +1206,91 @@ mod tests {
         let parsed: Value = serde_json::from_str(&reply).expect("a JSON reply");
         assert_eq!(parsed["id"], "42", "the reply must carry the request id");
         assert_eq!(parsed["success"], false);
+    }
+
+    /// The dribble the byte cap and the per-read timeout both miss.
+    ///
+    /// A peer that lets every `read()` *succeed* — one byte, comfortably inside
+    /// the per-read interval, forever — never trips that timeout, because a
+    /// timeout is an error and a byte is not. `read_line` keeps going, and the
+    /// only other bound is 64 KiB of bytes: at this rate that is a day and a
+    /// half of a host thread, asked for from a socket in `<env>/tmp`.
+    ///
+    /// Driven at production's shape with the clock scaled down, which is why
+    /// the bounds are parameters: 100 ms per read, a 400 ms deadline, and a
+    /// peer feeding a byte every 20 ms so no read ever fails.
+    #[test]
+    #[cfg(unix)]
+    fn a_dribbling_peer_cannot_hold_the_refusal_thread() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        let (client, server) = UnixStream::pair().expect("socketpair");
+        let mut writer = client.try_clone().unwrap();
+        let feeding = std::thread::spawn(move || {
+            // Never a newline, and never a pause long enough to time a read
+            // out. Stops well after the deadline should have fired.
+            for _ in 0..200 {
+                if writer.write_all(b"x").is_err() {
+                    return;
+                }
+                let _ = writer.flush();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+
+        let started = std::time::Instant::now();
+        let line = read_first_line_within(
+            &server,
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(400),
+            64 * 1024,
+        );
+        let took = started.elapsed();
+        drop(server);
+        let _ = feeding.join();
+
+        assert!(
+            took < std::time::Duration::from_secs(2),
+            "the read ran for {took:?} against a 400ms deadline — the loop is bounded by \
+             neither the per-read timeout nor the byte cap, and now by nothing else either"
+        );
+        // It read *something* — otherwise the test would pass on a read that
+        // never started, which proves nothing about the deadline.
+        assert!(!line.is_empty(), "the dribble should have been read, not skipped");
+        assert!(!line.contains('\n'), "the peer never sent one");
+    }
+
+    /// One thread per connection, and the socket is in `<env>/tmp` — which the
+    /// box writes. Without a ceiling a loop of `connect()` inside the box
+    /// spawns unbounded *host* threads; `auth_proxy` has bounded this since it
+    /// was written and this sibling did not.
+    #[test]
+    #[cfg(unix)]
+    fn the_front_serves_a_bounded_number_of_connections_at_once() {
+        let td = TempDir::new().unwrap();
+        let upstream = td.path().join("u.sock");
+        let front = td.path().join("f.sock");
+        // No daemon behind it: every accepted connection lands in the refusal
+        // path, which is where a box would park them.
+        let handle = spawn(&front, &upstream, td.path(), ActionPolicy::default()).unwrap();
+
+        // Open more than the cap and keep them open. The ones past the ceiling
+        // are closed by the front rather than queued, which is what the read
+        // below observes: EOF with nothing written.
+        let mut held = Vec::new();
+        for _ in 0..(MAX_IN_FLIGHT + 16) {
+            if let Ok(c) = std::os::unix::net::UnixStream::connect(&front) {
+                held.push(c);
+            }
+        }
+        assert!(
+            held.len() >= MAX_IN_FLIGHT,
+            "the front should accept up to its cap, got {}",
+            held.len()
+        );
+        drop(held);
+        drop(handle);
     }
 
     #[test]
