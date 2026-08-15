@@ -370,11 +370,68 @@ pub struct ResolvedEgress {
     pub dests: Vec<EgressDest>,
     /// `(hostname, ip)` — only for non-IP-literal entries; pins DNS via files.
     pub host_pins: Vec<(String, IpAddr)>,
+    /// `(entry, ip)` for every answer refused by [`is_pinnable`]. Reported
+    /// rather than dropped: the entry looked reasonable and resolved to
+    /// somewhere a box has no business dialling, and that is the operator's
+    /// news, not a detail to swallow.
+    pub refused: Vec<(String, IpAddr)>,
+}
+
+/// May a `net.egress` entry pin to this address?
+///
+/// The policy an operator reads is a *hostname*, and the thing nftables
+/// enforces is whatever that name resolved to — so the readable policy and the
+/// enforced destination are only as close as DNS chooses to make them. A repo
+/// that ships `.h5i/env.toml` picks the names, and it can equally pick what
+/// they answer. `net.egress = ["assets.example-cdn.com"]` reads like a CDN and
+/// pins to whatever that zone returns.
+///
+/// What that buys, on the tier whose whole claim is airtight L3/L4 filtering:
+///
+/// * **`169.254.169.254`** — the cloud instance metadata service, and the
+///   highest-value target on any cloud host. slirp4netns NATs through the
+///   host's routing, and `--disable-host-loopback` does not cover it: it hides
+///   the host's *loopback*, not its link-local. A name resolving here hands the
+///   box the instance's role credentials.
+/// * **`fe80::/10`**, the same thing over IPv6, and `::ffff:169.254.169.254`,
+///   the same thing spelled as a mapped address so a v4-only test misses it.
+/// * **multicast, broadcast, unspecified** — no reachable service a repo could
+///   mean, and each of them means something else here.
+///
+/// Loopback is deliberately *not* refused. Inside the netns `127.0.0.1` is the
+/// box's own, `oif "lo" accept` already permits it, and the host's loopback is
+/// reached (when it is reached at all) through the slirp gateway rather than
+/// through this address — so a name answering `127.0.0.1` is redundant, not
+/// dangerous, and refusing it would break naming a service the box itself runs.
+///
+/// RFC1918 and IPv6 unique-local are deliberately *not* refused: an internal
+/// registry or a company mirror is a real thing to name, and refusing it would
+/// break boxes that work. They are reachable through the host's routing and
+/// that is worth knowing, which is what `refused` reporting and the receipt's
+/// pinned addresses are for — this function only closes the cases where no
+/// legitimate entry exists at all.
+fn is_pinnable(ip: &IpAddr) -> bool {
+    // A v4 address written as `::ffff:a.b.c.d` is the same address. Unwrap it
+    // and judge it once, or every check below is one spelling short.
+    let ip = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(*ip),
+        v4 => *v4,
+    };
+    if ip.is_multicast() || ip.is_unspecified() {
+        return false;
+    }
+    match ip {
+        IpAddr::V4(v4) => !v4.is_link_local() && !v4.is_broadcast(),
+        // `fe80::/10`. Spelled out rather than via `is_unicast_link_local`,
+        // which is unstable.
+        IpAddr::V6(v6) => v6.segments()[0] & 0xffc0 != 0xfe80,
+    }
 }
 
 /// Resolve `net.egress` entries (`host`, `host:port`, defaulting to 443) to
 /// pinned destinations + host pins. A host that fails to resolve contributes
-/// nothing (fail-closed: it simply won't be reachable). Pure apart from DNS.
+/// nothing (fail-closed: it simply won't be reachable), and an answer
+/// [`is_pinnable`] refuses is dropped and reported. Pure apart from DNS.
 pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
     use std::net::ToSocketAddrs;
     let mut r = ResolvedEgress::default();
@@ -393,7 +450,15 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
         let Ok(addrs) = (host, port).to_socket_addrs() else { continue };
         let mut first_ip: Option<IpAddr> = None;
         for a in addrs {
+            if !is_pinnable(&a.ip()) {
+                r.refused.push((raw.to_string(), a.ip()));
+                continue;
+            }
             let dest = EgressDest { ip: a.ip(), port };
+            // The *pinned* address has to be one that survived the check too:
+            // this is what goes into the box's `/etc/hosts`, and pinning a
+            // refused answer would point the name at an address nftables then
+            // has no rule for — a name that reads as allowed and never works.
             first_ip.get_or_insert(a.ip());
             if !r.dests.contains(&dest) {
                 r.dests.push(dest);
@@ -728,6 +793,20 @@ fn setup_egress(
         Some(port) => (vec![EgressDest { ip: SLIRP_GATEWAY, port }], Vec::new()),
         None => {
             let resolved = resolve_egress(&policy.profile.net_egress);
+            // Loud, not silent. The entry read like an ordinary host and
+            // answered with an address this tier will not dial, and the two
+            // facts only make sense together — dropping it quietly would leave
+            // a box that fails to reach something its policy plainly allows,
+            // with the reason nowhere.
+            if let Some((entry, ip)) = resolved.refused.first() {
+                return Err(H5iError::Metadata(format!(
+                    "net.egress entry {entry:?} resolves to {ip}, which this tier refuses to \
+                     pin: it is a link-local, multicast, broadcast or unspecified address, \
+                     not a host on the network. 169.254.169.254 is the cloud instance metadata \
+                     service; a name answering there would hand the box the instance's \
+                     credentials, and nothing in the policy text would show it (fail-closed)."
+                )));
+            }
             if resolved.dests.is_empty() {
                 return Err(H5iError::Metadata(
                     "net.egress resolved to no reachable address — refusing (fail-closed)".into(),
@@ -1339,6 +1418,50 @@ mod tests {
         assert!(pinned.iter().all(|d| d.ip.is_loopback()));
         // An empty/garbage entry contributes nothing (fail-closed).
         assert!(pin_egress(&["".into(), "   ".into()]).is_empty());
+    }
+
+    /// The policy an operator reads is a hostname; the thing nftables enforces
+    /// is whatever it resolved to. A repo ships `.h5i/env.toml`, so it picks
+    /// the names *and* what they answer — and `169.254.169.254` is the cloud
+    /// instance metadata service, reachable through slirp's NAT, invisible in
+    /// the policy text, and worth the instance's credentials.
+    #[test]
+    fn an_egress_name_cannot_pin_to_somewhere_no_host_lives() {
+        let never: &[IpAddr] = &[
+            // The one that matters.
+            "169.254.169.254".parse().unwrap(),
+            // The rest of the link-local range, and the v6 spelling of it.
+            "169.254.1.1".parse().unwrap(),
+            "fe80::1".parse().unwrap(),
+            // Same address as the first, written so a v4-only check misses it.
+            "::ffff:169.254.169.254".parse().unwrap(),
+            "224.0.0.1".parse().unwrap(),
+            "ff02::1".parse().unwrap(),
+            "255.255.255.255".parse().unwrap(),
+            "0.0.0.0".parse().unwrap(),
+            "::".parse().unwrap(),
+        ];
+        for ip in never {
+            assert!(!is_pinnable(ip), "{ip} must not be pinnable");
+        }
+
+        // And the ones that must keep working, or this refuses boxes that work:
+        // an ordinary internet host, a company mirror on RFC1918, its v6
+        // equivalent, and the box's own loopback (already `oif lo accept`, and
+        // named by services the box itself runs).
+        let fine: &[IpAddr] = &[
+            "93.184.216.34".parse().unwrap(),
+            "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap(),
+            "10.1.2.3".parse().unwrap(),
+            "192.168.1.10".parse().unwrap(),
+            "172.16.0.1".parse().unwrap(),
+            "fd00::1".parse().unwrap(),
+            "127.0.0.1".parse().unwrap(),
+            "::1".parse().unwrap(),
+        ];
+        for ip in fine {
+            assert!(is_pinnable(ip), "{ip} must stay pinnable");
+        }
     }
 
     #[test]
