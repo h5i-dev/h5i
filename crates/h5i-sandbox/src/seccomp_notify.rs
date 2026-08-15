@@ -104,6 +104,42 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
 /// allocation-free and therefore async-signal-safe to call in a `fork`ed child —
 /// a `Vec` here would risk a malloc-lock deadlock when the parent is
 /// multithreaded (e.g. the cargo test harness). Pure; structurally unit-tested.
+///
+/// ### Why this set cannot simply grow
+///
+/// An allow here is `SECCOMP_USER_NOTIF_FLAG_CONTINUE`, and `seccomp_unotify(2)`
+/// is blunt about that flag: it "should not be used for security purposes",
+/// because between the supervisor's verdict and the kernel re-running the
+/// syscall another thread in the tracee can rewrite whatever the syscall reads.
+/// That warning is about arguments living in the tracee's *memory*.
+///
+/// It does not apply here, and the reason is the whole reason `CONTINUE` is
+/// sound in this tier: `socket(domain, type, protocol)` and the first three
+/// arguments of `socketpair` are **scalars the kernel already captured into the
+/// notification** when it trapped. They are register values. No other thread
+/// can change them, because there is nothing left to re-read — the decision and
+/// the syscall see the same bytes by construction.
+///
+/// So adding a comparison for anything that takes a pointer — `connect`,
+/// `bind`, `sendto` — is not a local edit. Deciding on `*sockaddr` means
+/// reading the tracee's memory, and with `CONTINUE` that is the textbook
+/// double-fetch: the check passes on `127.0.0.1` and the kernel connects to
+/// whatever the address holds a microsecond later. Such a syscall has to be
+/// answered with a `Decision::Deny` (never `CONTINUE`), or mediated by
+/// `SECCOMP_IOCTL_NOTIF_ADDFD` so the supervisor supplies the result itself.
+/// `only_syscalls_whose_arguments_are_registers_are_notified` pins the set so
+/// the choice has to be made deliberately.
+///
+/// The other half of the argument lives in [`crate::sandbox::denied_syscalls`]:
+/// this filter's fall-through is ALLOW, and io_uring executes submitted
+/// operations without ever passing a syscall filter — `IORING_OP_SOCKET` builds
+/// the `AF_PACKET`/`SOCK_RAW` socket [`crate::supervisor::decide_socket`]
+/// exists to refuse, and no notification is generated. Measured on 7.1/aarch64:
+/// inside a private user+net namespace, where the box holds `CAP_NET_RAW`,
+/// `socket(AF_PACKET, SOCK_RAW)` returns `EPERM` and the io_uring form returns a
+/// live fd. The deny-list blocks the whole io_uring interface, and — also
+/// measured — its `ERRNO` still outranks this filter's `ALLOW` once the two are
+/// stacked, which is what makes that block hold for this tier.
 pub fn build_socket_notify_program() -> [SockFilter; 10] {
     [
         // 0: A = arch
@@ -591,6 +627,42 @@ mod tests {
         assert_eq!(
             p.iter().filter(|i| i.code == (BPF_RET | BPF_K) && i.k == SECCOMP_RET_ALLOW).count(),
             1
+        );
+    }
+
+    /// The notified set is a closed list, and closing it is a security
+    /// property rather than tidiness.
+    ///
+    /// Every allow this filter can produce is `CONTINUE`, which re-runs the
+    /// real syscall after the verdict. That is only safe while every argument
+    /// the verdict looks at is a scalar the kernel already copied into the
+    /// notification — a register, which no other thread can rewrite in the
+    /// meantime. `socket` and `socketpair` are such syscalls. `connect`,
+    /// `bind` and `sendto` are not: their address argument is a pointer into
+    /// the tracee's memory, and deciding on what it points at while replying
+    /// `CONTINUE` is a double-fetch a second thread wins.
+    ///
+    /// So a new comparison here is a decision to give up `CONTINUE` for that
+    /// syscall, not a one-line addition. This fails if one appears.
+    #[test]
+    fn only_syscalls_whose_arguments_are_registers_are_notified() {
+        let p = build_socket_notify_program();
+        let notified: std::collections::BTreeSet<u32> = p
+            .iter()
+            .enumerate()
+            .filter(|(_, ins)| ins.code == (BPF_JMP | BPF_JEQ | BPF_K))
+            .filter(|(i, ins)| {
+                let target = i + 1 + ins.jt as usize;
+                p.get(target) == Some(&stmt(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF))
+            })
+            .map(|(_, ins)| ins.k)
+            .collect();
+        assert_eq!(
+            notified,
+            std::collections::BTreeSet::from([NR_SOCKET, NR_SOCKETPAIR]),
+            "a syscall was added to the notify set. If its arguments include a pointer \
+             into the tracee's memory, it must not be answered with CONTINUE — see \
+             `build_socket_notify_program`."
         );
     }
 
