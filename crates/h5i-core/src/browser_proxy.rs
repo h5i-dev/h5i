@@ -508,7 +508,14 @@ pub fn spawn(
                         let upstream = upstream.clone();
                         let env_dir = env_dir.clone();
                         let policy = policy.clone();
-                        std::thread::spawn(move || {
+                        // `Builder::spawn`, not `thread::spawn`: the latter
+                        // *panics* when the OS refuses a thread, and that panic
+                        // is in this loop — which lands exactly where the
+                        // comment on the error arm below says it must not.
+                        // A box running a browser and a build is the case that
+                        // exhausts threads, and it is also the case this
+                        // mediator exists for.
+                        let spawned = std::thread::Builder::new().spawn(move || {
                             let _ = client.set_nonblocking(false);
                             let Some(daemon) = connect_upstream(&upstream) else {
                                 // Nothing came up. Answer in the daemon's own
@@ -540,6 +547,22 @@ pub fn spawn(
                                 },
                             );
                         });
+                        if spawned.is_err() {
+                            // Counted with the accept failures: it is the same
+                            // exhaustion, it recovers the same way, and if it
+                            // never does the operator gets the same sentence
+                            // rather than a loop spinning on it.
+                            consecutive_errors += 1;
+                            if consecutive_errors >= MAX_ACCEPT_ERRORS {
+                                eprintln!(
+                                    "h5i: browser mediation stopped after {consecutive_errors} \
+                                     consecutive failures to serve a connection; the control \
+                                     lock is no longer enforced for this session."
+                                );
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         // A healthy idle poll. It has to clear the counter, or

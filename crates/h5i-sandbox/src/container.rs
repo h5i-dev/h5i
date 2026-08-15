@@ -1003,10 +1003,17 @@ fn splice(a: TcpStream, b: TcpStream) {
     let a2 = a1.try_clone();
     let b2 = b1.try_clone();
     if let (Ok(mut a2), Ok(mut b2)) = (a2, b2) {
-        let t = std::thread::spawn(move || {
+        // `Builder::spawn`, not `thread::spawn`: the latter *panics* when the
+        // OS refuses a thread. The in-flight guard means that unwind costs one
+        // connection rather than the slot, but a panic is still the wrong way
+        // to say "out of threads" — and a half-open tunnel is not a tunnel, so
+        // the honest answer is to close both ends.
+        let Ok(t) = std::thread::Builder::new().spawn(move || {
             let _ = std::io::copy(&mut a2, &mut b2);
             let _ = b2.shutdown(std::net::Shutdown::Write);
-        });
+        }) else {
+            return;
+        };
         let _ = std::io::copy(&mut b1, &mut a1);
         let _ = a1.shutdown(std::net::Shutdown::Write);
         let _ = t.join();
