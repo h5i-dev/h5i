@@ -162,9 +162,14 @@ struct Session {
 
     /// Whether a human is typing a credential right now.
     ///
-    /// While this is set the page is not readable by the agent — see
-    /// [`Session::login_refusal`]. The viewer keeps streaming, because the
-    /// human doing the typing has to see what they are typing.
+    /// While this is set every control verb that reads the page is refused —
+    /// see [`Session::login_refusal`]. The viewer keeps streaming, because the
+    /// human doing the typing has to see what they are typing, and that is the
+    /// limit of the mode: the viewer socket is inside the box, where there is
+    /// no privilege boundary, so an agent that goes looking can attach to it
+    /// and watch the same frames. ROADMAP §5.10 specified withholding frames
+    /// *and* snapshots; only the snapshot half is built, and the refusal text
+    /// says so rather than implying the other half.
     login: bool,
 }
 
@@ -173,19 +178,27 @@ impl Session {
     ///
     /// The whole point of the mode: a credential typed into a page the agent
     /// can snapshot has been handed to the agent. Refusing the *read* is what
-    /// makes "log in for me" a thing a person can safely do, and it is
+    /// makes "log in for me" a thing a person can reasonably do, and it is
     /// deliberately not a refusal of the session — the page still works, the
     /// jar still fills, and everything resumes when the human says so.
+    ///
+    /// The message says what is refused rather than that the page is unreadable.
+    /// It is not: frames still go to the live view, by design, and the viewer
+    /// socket is in the box. Claiming otherwise here would be the one thing
+    /// this project says it does not do.
     fn login_refusal(verb: &str) -> Value {
         json!({
             "ok": false,
             "error": format!(
                 "`{verb}` is refused while this session is in login mode: a credential typed \
-                 into a page the agent can read has been given to the agent. End login mode \
-                 with `session login --off` and the page becomes readable again, with whatever \
-                 session the login established still in the jar."
+                 into a page the agent can read has been given to the agent. The live view \
+                 still streams — the person typing has to see the page — so this refuses the \
+                 control path and not an agent that attaches to the viewer socket itself. End \
+                 login mode with `session login --off` and reads resume, with whatever session \
+                 the login established still in the jar."
             ),
             "login": true,
+            "frames_withheld": false,
         })
     }
 
@@ -1758,6 +1771,23 @@ mod delta_and_login_tests {
         let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot", "delta": true}));
         assert_eq!(reply["kind"], "full");
         assert!(reply["text"].as_str().unwrap().contains("wholly"));
+    }
+
+    #[test]
+    /// The refusal is what a person reads to decide whether typing a password
+    /// here is safe, so it has to name the half that is not enforced. Frames
+    /// keep streaming by design, and the viewer socket is inside the box.
+    #[test]
+    fn the_login_refusal_does_not_claim_the_frames_are_withheld() {
+        let refusal = Session::login_refusal("snapshot");
+        assert_eq!(refusal["login"], true);
+        assert_eq!(
+            refusal["frames_withheld"], false,
+            "the mode must not imply it hides the live view"
+        );
+        let text = refusal["error"].as_str().expect("a reason");
+        assert!(text.contains("live view still streams"), "{text}");
+        assert!(text.contains("viewer socket"), "{text}");
     }
 
     #[test]

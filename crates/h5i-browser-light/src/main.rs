@@ -175,10 +175,20 @@ enum SessionVerb {
     },
     /// Hand the page to the human at the live view for as long as a login takes.
     ///
-    /// While this is on the agent cannot read the page: a credential typed into
-    /// a page the agent can snapshot has been handed to the agent. The session
-    /// that the login establishes stays in the jar afterwards, and the agent can
-    /// see that it is logged in without ever reading the cookie that says so.
+    /// While this is on, every control verb that reads the page is refused: a
+    /// credential typed into a page the agent can snapshot has been handed to
+    /// the agent. The session the login establishes stays in the jar
+    /// afterwards, and the agent can see that it is logged in without ever
+    /// reading the cookie that says so.
+    ///
+    /// **The live view keeps streaming, and that is the limit of this mode.**
+    /// The human doing the typing has to see what they are typing, so frames
+    /// are not withheld — and the viewer socket is inside the box, where there
+    /// is no privilege boundary, so an agent that goes looking can attach to it
+    /// and watch the same pixels. This refuses the documented path, which is
+    /// the threat it was written for; it is not containment against an agent
+    /// that is trying. Type a password here only where that distinction is one
+    /// you are willing to make.
     Login {
         /// End login mode and make the page readable again.
         #[arg(long, conflicts_with = "on")]
