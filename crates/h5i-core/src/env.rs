@@ -1624,6 +1624,56 @@ fn manifest_worktree_name(agent: &str, slug: &str) -> String {
     format!("h5i-env-{agent}-{slug}")
 }
 
+/// The files a directory under `.git/worktrees/` must hold to be a worktree
+/// registration rather than a leftover. libgit2 requires all three before it
+/// will even list the entry (`is_worktree_dir`); git's own `worktree prune`
+/// drops an entry the moment `gitdir` is gone.
+const WORKTREE_REG_FILES: [&str; 3] = ["gitdir", "commondir", "HEAD"];
+
+/// Drop directories under `.git/worktrees/` that are not worktree
+/// registrations, and report how many went.
+///
+/// This is not tidiness, it is a prerequisite for creating *any* worktree.
+/// libgit2's `git_worktree_lookup` fails on such a directory, and
+/// `git_repository_foreach_worktree` propagates that failure as a **truthy**
+/// return (`error = lookup(...) < 0` — the comparison lands in `error`, so a
+/// failure arrives as `1`, never as `GIT_ENOTFOUND`). Its one caller is
+/// `git_branch_is_checked_out`, which reads `== 1` as "yes, checked out". So a
+/// single stale directory makes libgit2 answer *checked out* for **every**
+/// branch in the repository, and `git_worktree_add` then refuses every
+/// worktree with
+///
+/// ```text
+/// reference refs/heads/<branch> is already checked out
+/// ```
+///
+/// — a repo-wide, permanent break of `box create` caused by an empty directory
+/// nothing is using, reported against a branch that was created seconds ago
+/// and is checked out nowhere (libgit2 1.9.2 / git2 0.20). Sweeping first both
+/// heals a repo already in that state and keeps `create` from tripping over a
+/// leftover of its own.
+///
+/// Only invalid entries go. A *valid* registration whose working tree has
+/// vanished is left alone: it is still a worktree as far as git is concerned,
+/// and whether the env behind it is still wanted is `gc`/`rm`'s question, not
+/// this function's.
+fn sweep_invalid_worktree_registrations(repo: &Repository) -> usize {
+    let Ok(entries) = std::fs::read_dir(repo.commondir().join("worktrees")) else {
+        return 0;
+    };
+    let mut swept = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || WORKTREE_REG_FILES.iter().all(|f| path.join(f).is_file()) {
+            continue;
+        }
+        if std::fs::remove_dir_all(&path).is_ok() {
+            swept += 1;
+        }
+    }
+    swept
+}
+
 /// Undo a half-built env if `create` fails before the manifest exists.
 ///
 /// Only that window needs it: once `manifest.json` is on disk the env is
@@ -1655,6 +1705,11 @@ impl Drop for CreateRollback<'_> {
             .args(["worktree", "prune", "--expire=now"])
             .current_dir(self.repo.commondir())
             .output();
+        // …and again without git: a half-written registration left by a
+        // `worktree_add` that failed part-way is the exact thing that poisons
+        // every later `create` (see `sweep_invalid_worktree_registrations`), so
+        // clearing it must not depend on a `git` binary being on PATH.
+        sweep_invalid_worktree_registrations(self.repo);
         if let Some(b) = &self.branch
             && let Ok(mut r) = self.repo.find_branch(b, git2::BranchType::Local)
         {
@@ -1690,14 +1745,37 @@ pub fn create(
     let branch_short = format!("{BRANCH_PREFIX}{agent}/{slug}");
     let branch_full = format!("refs/heads/{branch_short}");
     if dir.exists() {
-        return Err(H5iError::Metadata(format!(
-            "environment {id} already exists"
-        )));
+        // A directory with no `manifest.json` is not an environment — it is
+        // what a `create` that died before the manifest landed leaves behind.
+        // Reporting it as "already exists" sends the reader to `box rm`, which
+        // resolves envs *through* the manifest and so cannot see this one, and
+        // `list` cannot either: the name is simply burnt. An empty leftover has
+        // nothing in it to lose, so reclaim it and carry on; one that still
+        // holds a workspace is left for a human to look at, with the paths
+        // named rather than implied.
+        let orphan = !dir.join(MANIFEST_FILE).exists();
+        let has_work = dir.join(WORK_DIR).exists();
+        if orphan && !has_work {
+            std::fs::remove_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+        } else if orphan {
+            return Err(H5iError::Metadata(format!(
+                "{} holds a workspace but no manifest — a leftover from a `create` that failed \
+                 part-way, which `h5i box rm` cannot resolve. Remove it by hand (and its branch, \
+                 `git branch -D {branch_short}`), or pick another name",
+                dir.display()
+            )));
+        } else {
+            return Err(H5iError::Metadata(format!(
+                "environment {id} already exists"
+            )));
+        }
     }
     if repo.find_reference(&branch_full).is_ok() {
         return Err(H5iError::Metadata(format!(
-            "branch {branch_full} already exists — `h5i box gc` keeps applied/aborted env \
-             branches for provenance; pick a new name"
+            "branch {branch_full} already exists with no environment {id} behind it — either \
+             `h5i box gc` kept it for provenance after the env was applied/aborted, or a `create` \
+             failed and left it. Reuse the name with `git branch -D {branch_short}` first, or \
+             pick a new one"
         )));
     }
 
@@ -1787,15 +1865,32 @@ pub fn create(
         let missing = sandbox::engine_tooling_missing(engine);
         if !missing.is_empty() {
             let (_, install) = engine.required_tooling();
+            // "pick another engine" has to name one that is actually *another*
+            // engine and actually runnable here — a hint that offers the engine
+            // the reader just failed on reads as a bug in the tool, and one that
+            // offers an equally-missing engine only costs them a second attempt.
+            let fallback = sandbox::BROWSER_ENGINES
+                .iter()
+                .copied()
+                .find(|e| *e != engine && sandbox::engine_tooling_missing(*e).is_empty());
+            let alternative = match fallback {
+                Some(e) => format!(
+                    "Then create the box again, or run it on the engine this host already has: \
+                     `--engine {}`.",
+                    e.as_str()
+                ),
+                None => "Then create the box again — no other browser engine is installed here \
+                         either, so there is nothing to fall back to (fail-closed)."
+                    .to_string(),
+            };
             return Err(H5iError::Metadata(format!(
                 "the `{}` profile is pinned to the `{}` engine, which needs {} on this host, \
-                 and it is not there.\n  Install with:  {}\n  \
-                 Then create the box again, or pick another engine with \
-                 `--engine chromium` (fail-closed).",
+                 and it is not there.\n  Install with:  {}\n  {}",
                 profile.name,
                 engine.as_str(),
                 missing.join(" and "),
-                install
+                install,
+                alternative
             )));
         }
     }
@@ -1812,6 +1907,26 @@ pub fn create(
 
     let work_path = dir.join(WORK_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
+
+    // Armed *before* the branch and the worktree exist, not after they both do.
+    //
+    // The window it used to open on was the one that actually bites: making the
+    // worktree is the step most likely to fail (a poisoned registration
+    // directory, a full disk, a name git refuses), and failing there left the
+    // branch and `<env>/` behind with no manifest — so `list` showed nothing,
+    // `rm` could not resolve the name, and the same `create` retried reported
+    // "already exists" for an env that never existed. `branch` is filled in
+    // below only once `repo.branch` has actually created one (a detached box's
+    // repository lives inside `work` and goes with the directory).
+    let mut rollback = CreateRollback {
+        repo,
+        h5i_root,
+        dir: dir.clone(),
+        work: work_path.clone(),
+        worktree: manifest_worktree_name(agent, slug),
+        branch: None,
+        armed: true,
+    };
 
     // Where the code comes from decides the shape of the workspace.
     //
@@ -1842,8 +1957,14 @@ pub fn create(
         });
 
         repo.branch(&branch_short, &base_commit, false)?;
+        rollback.branch = Some(branch_short.clone());
         let wt_name = format!("h5i-env-{agent}-{slug}");
         {
+            // One directory under `.git/worktrees/` that is not a worktree makes
+            // libgit2 report *every* branch as already checked out, so the add
+            // below would fail for this env and every future one. Clear those
+            // before asking (see `sweep_invalid_worktree_registrations`).
+            sweep_invalid_worktree_registrations(repo);
             let branch_ref = repo.find_reference(&branch_full)?;
             let mut wt_opts = git2::WorktreeAddOptions::new();
             wt_opts.reference(Some(&branch_ref));
@@ -1867,19 +1988,9 @@ pub fn create(
     // `[service.*]` table, a persona source missing at the base revision), and
     // without a rollback their failure left a registered+locked worktree and a
     // branch that `create` refuses to reuse and `rm` cannot see, recoverable
-    // only by hand with `git worktree prune` and `git branch -D`.
-    //
-    // `CreateRollback` undoes exactly what has been built so far unless it is
+    // only by hand with `git worktree prune` and `git branch -D`. `rollback`,
+    // armed above, undoes exactly what has been built so far unless it is
     // disarmed once the manifest lands.
-    let mut rollback = CreateRollback {
-        repo,
-        h5i_root,
-        dir: dir.clone(),
-        work: work_path.clone(),
-        worktree: manifest_worktree_name(agent, slug),
-        branch: (!opts.source.is_detached()).then(|| branch_short.clone()),
-        armed: true,
-    };
 
     // Pin service declarations from the base worktree into an env-local,
     // box-immutable manifest, recording its digest (review #1). Always Some for
@@ -9333,6 +9444,17 @@ fn prune_workspace(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Resul
         let mut opts = git2::WorktreePruneOptions::new();
         opts.valid(true).locked(true).working_tree(true);
         wt.prune(Some(&mut opts))?;
+    } else {
+        // `find_worktree` failing means the registration is there but no longer
+        // readable as a worktree — and leaving it is not the harmless no-op the
+        // early `if let Ok` reads as: libgit2 turns one such directory into
+        // "every branch is already checked out", which breaks `box create` for
+        // the whole repository (see `sweep_invalid_worktree_registrations`).
+        // Reclaiming the workspace has to reclaim that too.
+        let reg = repo.commondir().join("worktrees").join(m.worktree_name());
+        if reg.is_dir() && !WORKTREE_REG_FILES.iter().all(|f| reg.join(f).is_file()) {
+            std::fs::remove_dir_all(&reg).map_err(|e| H5iError::with_path(e, &reg))?;
+        }
     }
     let work = m.work_dir(h5i_root);
     if work.exists() {
