@@ -120,6 +120,49 @@ struct RunLock {
     _file: std::fs::File,
 }
 
+/// Serializes **service** operations for one box, and nothing else.
+///
+/// Distinct from [`RunLock`] on purpose: that one is held by an `env shell` for
+/// the whole interactive session, so serializing services on it meant
+/// `box service start` failed outright whenever an agent session was open — at
+/// every tier, including the kernel ones with no guest to race over. What
+/// actually needs serializing is two service operations touching one box's
+/// records; guest creation serializes itself in the sandbox layer.
+///
+/// Blocking rather than fail-fast: these operations are short, and a caller
+/// that waits 40 ms is better than one that tells the user to try again.
+struct ServiceLock {
+    #[cfg(unix)]
+    _file: std::fs::File,
+}
+
+impl ServiceLock {
+    fn acquire(env_dir: &Path) -> Result<Self, H5iError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            std::fs::create_dir_all(env_dir).map_err(|e| H5iError::with_path(e, env_dir))?;
+            let path = env_dir.join("services.lock");
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .map_err(|e| H5iError::with_path(e, &path))?;
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+                return Err(H5iError::Io(std::io::Error::last_os_error()));
+            }
+            Ok(ServiceLock { _file: file })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = env_dir;
+            Ok(ServiceLock {})
+        }
+    }
+}
+
 #[cfg(unix)]
 #[derive(Clone, Copy)]
 enum LockMode {
@@ -1242,6 +1285,25 @@ pub fn load_policy(h5i_root: &Path, m: &EnvManifest) -> Result<ResolvedPolicy, H
             m.id, m.policy_digest, m.slug
         )));
     }
+    let mut policy = policy;
+    // Runtime-only, and set here so every caller gets it: a box that declares
+    // services must not have its microVM guest stopped for idleness, or the
+    // services die with it. Read from the *declared* set rather than from what
+    // is running, because the guest's idle bound is fixed when it is created
+    // and services start later.
+    //
+    // From the **pinned** manifest only, never the worktree fallback that
+    // `load_service_defs` allows for pre-pinning envs: that file lives inside
+    // `$WORK`, which the box can write. This value feeds `--idle-timeout`,
+    // which is hashed into the guest's name, so reading it from a box-writable
+    // path would let an in-box agent change its own guest's identity — the next
+    // command would resolve to a new name and reap the running guest, killing
+    // whatever was in it. Nothing the box controls belongs in that hash.
+    // Unknown counts as "may host services". Every env created since service
+    // pinning has a manifest, so this is the pre-pinning tail — and there the
+    // two errors are not symmetric: guessing false costs a killed dev server,
+    // guessing true costs a guest that lives until `box rm`.
+    policy.hosts_services = pinned_service_defs(h5i_root, m).is_none_or(|d| !d.is_empty());
     Ok(policy)
 }
 
@@ -2947,8 +3009,19 @@ fn live_service_ports(h5i_root: &Path, m: &EnvManifest) -> Vec<u16> {
         else {
             continue;
         };
+        // Deliberately `dynamic_port` and **not** [`service_port`], which falls
+        // back to the declared port: these become *host-side* loopback grants,
+        // and a guest service's port is bound inside the box's own network
+        // stack, so granting it on the host would open a port belonging to
+        // nothing. The asymmetry is the correctness, not an oversight to tidy.
+        //
+        // Liveness goes through [`service_alive`] all the same. It used to call
+        // `pid_alive` directly, which was safe only because `dynamic_port` is
+        // `None` for guest records today — an accident of ordering, not an
+        // invariant, and one that port forwarding would quietly break by
+        // testing a guest pid against the host's pid table.
         if let Some(port) = rec.dynamic_port
-            && pid_alive(rec.pid)
+            && service_alive(&rec)
         {
             out.push(port);
         }
@@ -4470,6 +4543,57 @@ fn write_user_allow(path: &Path, rules: &[String]) -> Result<(), H5iError> {
 /// tiers have no domain allowlist to widen). Explained, not silent: the
 /// effective list is printed at session start so an in-box
 /// `403 Blocked by network policy` is self-diagnosing.
+/// The env vars [`prepare_box_reach`] wants injected: `(capture spool, inbox)`.
+type BoxReachEnv = (Vec<(String, String)>, Vec<(String, String)>);
+
+/// The runtime-only grants that decide **what a box can reach**: its capture
+/// spool, its inbox, its warm caches, and the host-side egress extras.
+///
+/// One function because the microvm tier hashes exactly these into its guest's
+/// name. Two paths that prepare different sets resolve to different guests, and
+/// creating one reaps the other — so a `box run` would silently kill a service
+/// started moments earlier, and neither would look wrong on its own. That is
+/// not hypothetical: it is what this function was extracted to fix.
+///
+/// Returns the env vars the capture spool and inbox want injected, in the order
+/// `run` already injected them.
+fn prepare_box_reach(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    work: &Path,
+    policy: &mut sandbox::ResolvedPolicy,
+    cache_write: Option<(&Path, &Path)>,
+    capture_spool: bool,
+) -> Result<BoxReachEnv, H5iError> {
+    // An observer session captures nothing (it changes nothing), so it gets no
+    // spool. Every other difference between callers would be a different guest,
+    // which is why this is a parameter rather than a second copy of the block.
+    let capture_env = if capture_spool {
+        prepare_env_capture_spool(h5i_root, m, policy)?
+    } else {
+        Vec::new()
+    };
+    match cache_write {
+        // A refresh box: this one cache is writable, at the same path the
+        // read-only mount will later expose, so what is fetched is exactly what
+        // a later box sees.
+        Some((host, target)) => {
+            policy.profile.fs_write.push(host.display().to_string());
+            policy.cache_write = Some(sandbox::RoBind {
+                backing: host.to_path_buf(),
+                target: target.to_path_buf(),
+            });
+        }
+        None => prepare_cache_mounts(h5i_root, work, policy),
+    }
+    let inbox_env = prepare_env_inbox(h5i_root, m, policy)?;
+    // Host-side `h5i box allow` extras. Part of "what it can reach" and so part
+    // of the guest's identity — a box whose allowlist widened must not be
+    // served the guest that was enforcing the narrower one.
+    apply_user_egress(policy);
+    Ok((capture_env, inbox_env))
+}
+
 fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
     let user = user_allow_list();
     let enforced =
@@ -4665,24 +4789,9 @@ fn run_inner(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
         None,
     )?;
-    let env_capture_env = prepare_env_capture_spool(h5i_root, m, &mut policy)?;
-    match cache_write {
-        // A refresh box: this one cache is writable, at the same path the
-        // read-only mount will later expose, so what is fetched is exactly what
-        // a later box sees.
-        Some((host, target)) => {
-            policy.profile.fs_write.push(host.display().to_string());
-            policy.cache_write = Some(sandbox::RoBind {
-                backing: host.to_path_buf(),
-                target: target.to_path_buf(),
-            });
-        }
-        None => prepare_cache_mounts(h5i_root, &work, &mut policy),
-    }
-    let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
+    let (env_capture_env, env_inbox_env) =
+        prepare_box_reach(h5i_root, m, &work, &mut policy, cache_write, true)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
-    // Host-side `h5i box allow` extras + the explained-egress line.
-    apply_user_egress(&mut policy);
     announce_unmapped_resources(&policy);
 
     // Broker any declared secrets BEFORE marking the env running, so a
@@ -5068,14 +5177,13 @@ pub fn shell(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
         session_root.as_deref().map(|r| r.join("home")).as_deref(),
     )?;
-    // An observer captures nothing (it changes nothing) — no capture spool.
-    let env_capture_env = if readonly {
-        Vec::new()
-    } else {
-        prepare_env_capture_spool(h5i_root, m, &mut policy)?
-    };
-    let env_inbox_env = prepare_env_inbox(h5i_root, m, &mut policy)?;
-    prepare_cache_mounts(h5i_root, &work, &mut policy);
+    // Through the same function `run` and `service start` use. Open-coding the
+    // same four steps here worked only for as long as the two lists happened to
+    // match: the next mount added to `prepare_box_reach` would have been absent
+    // from a session, giving it a different guest name and reaping the guest
+    // `box run` was using — with any service in it.
+    let (env_capture_env, env_inbox_env) =
+        prepare_box_reach(h5i_root, m, &work, &mut policy, None, !readonly)?;
     let cargo_env = match &session_root {
         // `$WORK` is read-only for an observer, so cargo's default target dir
         // (`$WORK/.h5i/cargo-target`) is unwritable — point it at the scratch.
@@ -5128,8 +5236,7 @@ pub fn shell(
             },
         ),
     );
-    // Host-side `h5i box allow` extras + the explained-egress line.
-    apply_user_egress(&mut policy);
+    // `apply_user_egress` already ran inside `prepare_box_reach`.
     announce_unmapped_resources(&policy);
 
     // No command given → launch an interactive shell. Rather than inherit the
@@ -6891,13 +6998,52 @@ pub fn live_sessions(env_dir: &Path) -> Vec<LiveSession> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceRecord {
     pub name: String,
+    /// The service's session-leader pid, **in the namespace `runtime` names**.
+    /// Never signal this without dispatching on `runtime` first: a guest pid
+    /// handed to `kill(2)` names an unrelated host process.
     pub pid: u32,
     pub command: String,
     pub started_at: String,
     pub port: Option<u16>,
     /// Allocated per-env host port, injected as `H5I_ENV_PORT_<NAME>` (Idea 2).
+    /// `None` at the microvm tier, where the box has its own network stack and
+    /// so nothing to collide with — the service binds its declared port.
     pub dynamic_port: Option<u16>,
     pub log: String,
+    /// Where `pid` lives. Defaulted, so records written before the microvm tier
+    /// gained services still parse — they were all host processes.
+    #[serde(default)]
+    pub runtime: ServiceRuntime,
+}
+
+/// Which world a [`ServiceRecord`]'s pid belongs to.
+///
+/// A pid only means something inside the pid namespace that issued it. A guest
+/// pid and a host pid are not two values of one kind; they are the same
+/// integers naming unrelated processes. This exists so that no code path can
+/// signal one believing it is the other — `service_stop` signals a process
+/// *group*, so getting it wrong would take out an unrelated tree on the host.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ServiceRuntime {
+    /// A host process, signalable directly. Every tier but `microvm`.
+    #[default]
+    Host,
+    /// A process inside the box's warm microVM guest, reachable only through
+    /// the runtime. `sandbox` is the guest's name; if it is no longer the box's
+    /// current guest, the service is dead by construction — a policy change
+    /// rotated the guest out from under it.
+    ///
+    /// `boot` is that guest's kernel boot identity. The name alone is not
+    /// enough: a guest keeps it across `stop`/`start` while its pids restart
+    /// from 1, so without this a stale record could match an unrelated process
+    /// in the guest's next life — refusing a start that should succeed, and
+    /// signalling a process group that was never ours.
+    Guest {
+        sandbox: String,
+        #[serde(default)]
+        boot: String,
+    },
 }
 
 /// A service's record plus liveness — for `env service status` / `env ports`.
@@ -6922,6 +7068,32 @@ fn pid_alive(pid: u32) -> bool {
     {
         let _ = pid;
         false
+    }
+}
+
+/// The port this service actually listens on, host-allocated or declared.
+///
+/// The kernel tiers allocate one per env and inject it, because every box
+/// shares the host's network and two would collide. A microvm box has its own
+/// stack, so nothing is allocated and the declared port is the answer — which
+/// still has to be *reported*, or the tier that just gained services would be
+/// the one whose ports never show up.
+fn service_port(rec: &ServiceRecord) -> Option<u16> {
+    rec.dynamic_port.or(rec.port)
+}
+
+/// Is this service still running, wherever its pid lives?
+///
+/// The single place liveness is decided, so no caller can reach for
+/// [`pid_alive`] with a pid that is not a host pid. At the microvm tier the
+/// question is asked of the guest, and a guest that no longer exists answers
+/// it: the service died when the guest was rotated or removed.
+fn service_alive(rec: &ServiceRecord) -> bool {
+    match &rec.runtime {
+        ServiceRuntime::Host => pid_alive(rec.pid),
+        ServiceRuntime::Guest { sandbox, boot } => {
+            h5i_sandbox::microvm::service_alive(sandbox, rec.pid, boot)
+        }
     }
 }
 
@@ -7002,6 +7174,18 @@ fn pin_services_at_create(work_path: &Path, env_dir: &Path) -> Result<String, H5
 /// editing the (writable) worktree `.h5i/env.toml` after create can't change
 /// which long-lived command a service runs. Falls back to the worktree/repo
 /// config only for envs created before pinning existed (no recorded digest).
+/// The service definitions pinned at box creation, or `None` when this env
+/// predates pinning. Deliberately does **not** fall back to the worktree copy:
+/// callers that must not read box-writable input use this one.
+fn pinned_service_defs(
+    h5i_root: &Path,
+    m: &EnvManifest,
+) -> Option<std::collections::BTreeMap<String, ServiceDef>> {
+    let pinned = pinned_services_path(h5i_root, m);
+    let text = std::fs::read_to_string(&pinned).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 fn load_service_defs(
     h5i_root: &Path,
     m: &EnvManifest,
@@ -7062,6 +7246,13 @@ pub fn service_start(
     name: &str,
 ) -> Result<ServiceRecord, H5iError> {
     validate_service_name(name)?;
+    // Deliberately **not** `RunLock`. That is the exclusive writer lock an
+    // `env shell` holds for its entire session, so taking it here made
+    // `box service start` fail outright while an agent session was open — at
+    // every tier, including the kernel ones that have no guest to race over.
+    // A service is not a run; it needs to serialize against other *service*
+    // operations, and guest creation serializes itself one layer down.
+    let _svc_lock = ServiceLock::acquire(&m.dir(h5i_root))?;
     let defs = load_service_defs(h5i_root, m)?;
     let def = defs.get(name).ok_or_else(|| {
         H5iError::Metadata(format!(
@@ -7071,7 +7262,7 @@ pub fn service_start(
     let svc_dir = services_dir(h5i_root, m);
     std::fs::create_dir_all(&svc_dir).map_err(|e| H5iError::with_path(e, &svc_dir))?;
     if let Some(rec) = read_service_record(&svc_dir, name)
-        && pid_alive(rec.pid)
+        && service_alive(&rec)
     {
         return Err(H5iError::Metadata(format!(
             "service '{name}' is already running (pid {}) — stop it first",
@@ -7095,34 +7286,91 @@ pub fn service_start(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
         None,
     )?;
+    // The same reach `run` grants, and it must be the same or the microvm tier
+    // gives this path its own guest and reaps the one `box run` is using — with
+    // whatever services were running in it. The injected vars are dropped: a
+    // service is not a captured run and has no receipt to write into.
+    let (_capture_env, _inbox_env) =
+        prepare_box_reach(h5i_root, m, &work, &mut policy, None, true)?;
+    // And the same interactive config lockdown, for the same reason twice over:
+    // a service must not be able to rewrite the agent's hook config any more
+    // than a run can, *and* those files being present is what puts their mounts
+    // in the microvm create argv. Prepared only here, they would be absent, the
+    // argv would differ by two mounts, and this path would quietly get a guest
+    // of its own — the failure that made this call necessary.
+    let protected_hook_configs = ProtectedHookConfigGuard::prepare(&work, policy.claim)?;
 
+    // A guest has its own network stack, so two boxes cannot collide on a port
+    // and there is nothing for a dynamic allocation to solve. The service binds
+    // the port it declares, and `PORT` says so. On the kernel tiers, where every
+    // box shares the host's network, the allocation is what keeps them apart.
+    let in_guest = policy.claim == sandbox::IsolationClaim::Microvm;
     let mut injected: Vec<(String, String)> = Vec::new();
-    let dynamic_port = if def.port.is_some() {
-        let p = alloc_free_port().ok_or_else(|| {
-            H5iError::Metadata("could not allocate a free host port for the service".into())
-        })?;
-        let key = env_key(name);
-        injected.push((format!("H5I_ENV_PORT_{key}"), p.to_string()));
-        injected.push((format!("{key}_DYNAMIC_PORT"), p.to_string()));
-        // PORT is the de-facto convention many dev servers read.
-        injected.push(("PORT".into(), p.to_string()));
-        Some(p)
-    } else {
-        None
+    let dynamic_port = match (def.port, in_guest) {
+        (Some(declared), true) => {
+            let key = env_key(name);
+            injected.push((format!("H5I_ENV_PORT_{key}"), declared.to_string()));
+            injected.push((format!("{key}_DYNAMIC_PORT"), declared.to_string()));
+            injected.push(("PORT".into(), declared.to_string()));
+            None
+        }
+        (Some(_), false) => {
+            let p = alloc_free_port().ok_or_else(|| {
+                H5iError::Metadata("could not allocate a free host port for the service".into())
+            })?;
+            let key = env_key(name);
+            injected.push((format!("H5I_ENV_PORT_{key}"), p.to_string()));
+            injected.push((format!("{key}_DYNAMIC_PORT"), p.to_string()));
+            // PORT is the de-facto convention many dev servers read.
+            injected.push(("PORT".into(), p.to_string()));
+            Some(p)
+        }
+        (None, _) => None,
     };
 
-    let log = svc_dir.join(format!("{name}.log"));
+    // At the microvm tier the log is written by the guest into a directory
+    // mounted for that purpose, so the host reads it at a path of the tier's
+    // choosing rather than one it created here.
+    let log = if in_guest {
+        h5i_sandbox::microvm::service_log_path(&work, name)?
+    } else {
+        svc_dir.join(format!("{name}.log"))
+    };
+    if let Some(parent) = log.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
     let argv = vec!["sh".to_string(), "-c".to_string(), def.command.clone()];
-    let pid = sandbox::spawn_background(&policy, &work, &argv, &injected, &log)?;
+    // Restored on **both** paths. `prepare` writes empty sentinel configs into
+    // `$WORK` at the image-backed tiers when none exist, so returning early
+    // through `?` would leave them there for good: they show up in the user's
+    // `git status`, and the next guard reads the empty file as the original and
+    // reports a spurious tamper when the agent later writes a real one.
+    let handle = match sandbox::spawn_background(&policy, &work, &argv, &injected, &log, name) {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = protected_hook_configs.finish();
+            return Err(e);
+        }
+    };
+    // The service keeps running: at the microvm tier its mounts were fixed when
+    // the guest was created, and at the kernel tiers the lockdown is a property
+    // of the launched process, not of the files afterwards.
+    if let Err(e) = protected_hook_configs.finish() {
+        eprintln!("service start: could not restore the agent hook config: {e}");
+    }
 
     let rec = ServiceRecord {
         name: name.to_string(),
-        pid,
+        pid: handle.pid,
         command: def.command.clone(),
         started_at: now_ts(),
         port: def.port,
         dynamic_port,
         log: log.display().to_string(),
+        runtime: match (handle.sandbox, handle.boot) {
+            (Some(sandbox), Some(boot)) => ServiceRuntime::Guest { sandbox, boot },
+            _ => ServiceRuntime::Host,
+        },
     };
     atomic_write(
         &service_record_path(&svc_dir, name),
@@ -7143,7 +7391,14 @@ pub fn service_start(
             agent: m.agent.clone(),
             event: "service".into(),
             detail: Some(format!(
-                "start {name} pid={pid}{port_note} cmd=`{safe_cmd}`"
+                "start {name} pid={}{where_}{port_note} cmd=`{safe_cmd}`",
+                rec.pid,
+                where_ = match &rec.runtime {
+                    // A reader of the event log must be able to tell a host pid
+                    // from a guest pid; the numbers alone cannot.
+                    ServiceRuntime::Guest { sandbox, .. } => format!(" guest={sandbox}"),
+                    ServiceRuntime::Host => String::new(),
+                }
             )),
             capture: None,
         },
@@ -7161,28 +7416,76 @@ pub fn service_stop(
     name: &str,
 ) -> Result<Option<String>, H5iError> {
     validate_service_name(name)?;
+    // Same lock as `service_start`: a stop racing a start for one name could
+    // otherwise read the old record, signal the old pid, and then delete the
+    // record the concurrent start had just written — orphaning the service it
+    // started.
+    let _svc_lock = ServiceLock::acquire(&m.dir(h5i_root))?;
     let svc_dir = services_dir(h5i_root, m);
     let rec = read_service_record(&svc_dir, name).ok_or_else(|| {
         H5iError::Metadata(format!("service '{name}' is not running (no record)"))
     })?;
 
-    #[cfg(unix)]
-    {
-        let pgid = rec.pid as i32;
-        if pid_alive(rec.pid) {
-            unsafe {
-                libc::kill(-pgid, libc::SIGTERM);
-            }
-            // Brief grace period, then escalate.
-            for _ in 0..30 {
-                if !pid_alive(rec.pid) {
-                    break;
+    // TERM the whole process group, grace, then KILL — identically on both
+    // sides of the boundary. What differs is *who* may interpret the pid: the
+    // host branch is guarded by `ServiceRuntime::Host` and never sees a guest
+    // pid, which if signalled here would take out an unrelated host process
+    // group that merely shares the number.
+    match &rec.runtime {
+        ServiceRuntime::Host => {
+            #[cfg(unix)]
+            {
+                let pgid = rec.pid as i32;
+                if pid_alive(rec.pid) {
+                    unsafe {
+                        libc::kill(-pgid, libc::SIGTERM);
+                    }
+                    // Brief grace period, then escalate.
+                    for _ in 0..30 {
+                        if !pid_alive(rec.pid) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    if pid_alive(rec.pid) {
+                        unsafe {
+                            libc::kill(-pgid, libc::SIGKILL);
+                        }
+                    }
                 }
-                std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            if pid_alive(rec.pid) {
-                unsafe {
-                    libc::kill(-pgid, libc::SIGKILL);
+        }
+        ServiceRuntime::Guest { sandbox, boot } => {
+            // Tri-state on purpose. Reading "the runtime did not answer" as
+            // "already dead" would skip the signal and then delete the record
+            // below, leaving the service running in the guest with nothing on
+            // the host that knows it exists. Refuse instead, and keep the
+            // record so the stop can be retried.
+            let alive = h5i_sandbox::microvm::service_state(sandbox, rec.pid, boot).ok_or_else(|| {
+                H5iError::Metadata(format!(
+                    "could not ask the microVM guest '{sandbox}' whether service '{name}' is \
+                     still running — refusing to drop its record, because that would orphan a \
+                     live service. Retry once the runtime responds."
+                ))
+            })?;
+            if alive {
+                h5i_sandbox::microvm::service_signal(sandbox, rec.pid, "TERM");
+                // The guest and its boot were just verified and cannot change
+                // under us here, so the wait polls the pid alone. Re-running
+                // the full check would make ninety runtime round trips out of
+                // a thirty-iteration grace period.
+                let rt = h5i_sandbox::microvm::runtime();
+                let running = |rt: &_| h5i_sandbox::microvm::service_pid_running(rt, sandbox, rec.pid);
+                if let Some(rt) = rt {
+                    for _ in 0..30 {
+                        if !running(&rt) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    if running(&rt) {
+                        h5i_sandbox::microvm::service_signal(sandbox, rec.pid, "KILL");
+                    }
                 }
             }
         }
@@ -7254,7 +7557,7 @@ pub fn service_status(h5i_root: &Path, m: &EnvManifest) -> Vec<ServiceStatus> {
         if let Some(name) = p.file_stem().and_then(|s| s.to_str())
             && let Some(record) = read_service_record(&svc_dir, name)
         {
-            let alive = pid_alive(record.pid);
+            let alive = service_alive(&record);
             out.push(ServiceStatus { record, alive });
         }
     }
@@ -7292,7 +7595,8 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
         let port = s
             .record
             .dynamic_port
-            .map(|p| format!(" injected PORT={p}"))
+            .or(s.record.port)
+            .map(|p| format!(" PORT={p}"))
             .unwrap_or_default();
         out.push_str(&format!(
             "  {:<16} {:<8} pid={}{}  `{}`\n",
@@ -7311,9 +7615,13 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
 pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
     let mut out = String::new();
     out.push_str(&format!("── injected ports for {env_id} ──\n"));
+    // A guest service has no *injected* host port — its box owns a whole
+    // network stack, so it binds the port it declared and nothing was allocated
+    // to keep it from colliding. Filtering on `dynamic_port` alone therefore
+    // hid the port for exactly the tier that just gained services.
     let with_ports: Vec<&ServiceStatus> = rows
         .iter()
-        .filter(|s| s.record.dynamic_port.is_some())
+        .filter(|s| service_port(&s.record).is_some())
         .collect();
     if with_ports.is_empty() {
         out.push_str("  (no running service has a declared port)\n");
@@ -7328,16 +7636,22 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
         "SERVICE", "DECLARED", "INJECTED", "URL (if the service binds the injected port)"
     ));
     for s in with_ports {
-        let injected = s.record.dynamic_port.unwrap();
+        let port = service_port(&s.record).unwrap_or_default();
+        // In a guest the port is bound inside the box's own network stack, so
+        // it is not a host URL. Saying so beats printing one that cannot work.
+        let url = match &s.record.runtime {
+            ServiceRuntime::Guest { .. } => "in the box's network (see `box share`)".to_string(),
+            ServiceRuntime::Host => format!("http://127.0.0.1:{port}"),
+        };
         out.push_str(&format!(
-            "  {:<16} {:<10} {:<10} http://127.0.0.1:{}\n",
+            "  {:<16} {:<10} {:<10} {}\n",
             s.record.name,
             s.record
                 .port
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".into()),
-            injected,
-            injected
+            port,
+            url
         ));
     }
     out
@@ -8860,6 +9174,14 @@ pub fn rm(
     // `-1` would turn "remove this env" into "SIGTERM everything I own". See
     // [`browser_pid`].
     stop_browser(&dir.join("browser/state"));
+    // Same rationale one tier down: a `microvm` box keeps a warm guest alive
+    // between commands, so removing the box has to remove the VM or it outlives
+    // everything that knows about it — holding its memory and its disk until
+    // some later run's sweep happens to notice the workspace is gone. Done here
+    // rather than left to that sweep because *now* is when we still know which
+    // box the guest belonged to. Best-effort and keyed on this box's own
+    // workspace path, so it can only ever match this box's guest.
+    h5i_sandbox::microvm::remove_guest_for_workspace(&m.work_dir(h5i_root));
     // On macOS the private `/tmp` backing lives outside the env dir (see
     // [`private_tmp_backing`]), so erasing the env dir no longer takes it with
     // it. Best-effort: a leftover scratch dir is tidiness, not correctness, and
@@ -8884,6 +9206,46 @@ pub fn rm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pid is only meaningful inside the namespace that issued it, so the
+    /// record has to say which one — and has to keep parsing records written
+    /// before it did.
+    #[test]
+    fn a_service_record_says_whose_pid_it_holds() {
+        // A record from before the microvm tier had services: no `runtime` key
+        // at all. It must read as a host process, not fail to parse and not
+        // silently become a guest pid somebody might signal.
+        let legacy = r#"{"name":"web","pid":4242,"command":"npm run dev",
+            "started_at":"2026-08-14T00:00:00Z","port":3000,"dynamic_port":51234,
+            "log":"/tmp/web.log"}"#;
+        let rec: ServiceRecord = serde_json::from_str(legacy).expect("legacy record parses");
+        assert_eq!(rec.runtime, ServiceRuntime::Host);
+
+        // A guest record round-trips with the guest's identity *and* its boot,
+        // which is what keeps the pid meaningful across a restart.
+        let guest = ServiceRecord {
+            runtime: ServiceRuntime::Guest {
+                sandbox: "h5i-human-web-abc123".into(),
+                boot: "7488c2c3-0000-0000-0000-000000000000".into(),
+            },
+            ..rec.clone()
+        };
+        let text = serde_json::to_string(&guest).unwrap();
+        let back: ServiceRecord = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.runtime, guest.runtime);
+
+        // A guest record written before the boot id existed still parses, and
+        // its empty boot can never equal a real one — so it reads as dead
+        // rather than as a pid somebody may signal.
+        let no_boot = r#"{"name":"web","pid":42,"command":"x","started_at":"t",
+            "port":null,"dynamic_port":null,"log":"/tmp/x",
+            "runtime":{"kind":"guest","sandbox":"g"}}"#;
+        let rec: ServiceRecord = serde_json::from_str(no_boot).expect("parses");
+        match rec.runtime {
+            ServiceRuntime::Guest { boot, .. } => assert!(boot.is_empty()),
+            ServiceRuntime::Host => panic!("must stay a guest record"),
+        }
+    }
 
     /// Every supported platform must be able to prove whose pid a record is.
     ///

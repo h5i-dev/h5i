@@ -1409,14 +1409,20 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     EnvServiceCommands::Start { env, service } => {
                         let m = h5i_core::env::find(&h5i_root, &env)?;
                         let rec = h5i_core::env::service_start(git, &h5i_root, &m, &service)?;
-                        let port = rec
-                            .dynamic_port
-                            .map(|p| {
-                                format!(
-                                    " (injected PORT={p}; reachable at http://127.0.0.1:{p} if it binds the port)"
-                                )
-                            })
-                            .unwrap_or_default();
+                        // A guest service has no *injected* host port — its box
+                        // owns a network stack, so it binds the port it declared
+                        // and nothing had to be allocated. Reading only
+                        // `dynamic_port` here left the tier that just gained
+                        // services as the one whose start said nothing about it.
+                        let port = match (rec.dynamic_port, rec.port, &rec.runtime) {
+                            (Some(p), _, _) => format!(
+                                " (injected PORT={p}; reachable at http://127.0.0.1:{p} if it binds the port)"
+                            ),
+                            (None, Some(p), h5i_core::env::ServiceRuntime::Guest { .. }) => {
+                                format!(" (PORT={p}, inside the box's network — see `h5i box share`)")
+                            }
+                            _ => String::new(),
+                        };
                         println!(
                             "{} service {} started (pid {}){}",
                             SUCCESS, rec.name, rec.pid, port
@@ -1454,7 +1460,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     if json {
                         let ports: Vec<_> = rows
                             .iter()
-                            .filter(|s| s.record.dynamic_port.is_some())
+                            .filter(|s| s.record.dynamic_port.is_some() || s.record.port.is_some())
                             .collect();
                         println!("{}", serde_json::to_string_pretty(&ports)?);
                     } else {

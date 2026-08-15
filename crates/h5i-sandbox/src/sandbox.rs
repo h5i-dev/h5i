@@ -48,7 +48,7 @@ pub use crate::sandbox_policy::{
     agent_browser_binary, browser_light_binary, browser_read_grants, browser_tooling_present,
     chrome_binary, chrome_exec_patterns, engine_tooling_missing, AgentRuntime, AuditCapture,
     BrowserEngine,
-    AuditPolicy,
+    AuditPolicy, BackgroundHandle,
     BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
     PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,
 };
@@ -1794,13 +1794,27 @@ pub fn spawn_background(
     argv: &[String],
     injected_env: &[(String, String)],
     log: &Path,
-) -> Result<u32, H5iError> {
+    service: &str,
+) -> Result<BackgroundHandle, H5iError> {
     if argv.is_empty() {
         return Err(H5iError::Metadata("empty command".into()));
     }
     check_tool_allowlist(policy, argv)?;
     let injected = augment_injected_env(policy, injected_env);
     let injected_env = injected.as_slice();
+
+    // The microVM tier runs the service inside the box's warm guest, so it
+    // neither wants a host log fd (the guest cannot write one) nor produces a
+    // host pid. Handled before the fd is opened for that reason.
+    if policy.claim == IsolationClaim::Microvm {
+        let h = crate::microvm::spawn_background(policy, work, argv, injected_env, service)?;
+        return Ok(BackgroundHandle {
+            pid: h.pid,
+            sandbox: Some(h.sandbox),
+            boot: Some(h.boot),
+        });
+    }
+
     let out = std::fs::File::create(log).map_err(|e| H5iError::with_path(e, log))?;
     let err = out.try_clone().map_err(H5iError::Io)?;
     match policy.claim {
@@ -1826,11 +1840,12 @@ pub fn spawn_background(
             let child = cmd
                 .spawn()
                 .map_err(|e| H5iError::Metadata(format!("service failed to start: {e}")))?;
-            Ok(child.id())
+            Ok(BackgroundHandle::host(child.id()))
         }
-        IsolationClaim::Process => spawn_background_confined(policy, work, argv, injected_env, out, err),
+        IsolationClaim::Process => spawn_background_confined(policy, work, argv, injected_env, out, err)
+            .map(BackgroundHandle::host),
         claim => Err(H5iError::Metadata(format!(
-            "services are not supported at isolation '{}' in v1 — use workspace or process",
+            "services are not supported at isolation '{}' — use workspace, process, or microvm",
             claim.as_str()
         ))),
     }

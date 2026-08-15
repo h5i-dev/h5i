@@ -1942,6 +1942,20 @@ pub struct ResolvedPolicy {
     /// tier (the only tier that enforces a domain allowlist).
     #[serde(skip)]
     pub user_egress_allow: Vec<String>,
+    /// Runtime-only: does this box declare background services?
+    ///
+    /// Only the microvm tier reads it, and only to decide whether its guest may
+    /// be stopped for idleness. A guest is stopped by `msb --idle-timeout` when
+    /// no *command* has run for a while, and `msb` cannot see that a dev server
+    /// inside it is busy serving — so an idle bound on a box that runs services
+    /// silently kills them. Measured: a guest with a 20s bound stopped at ~25s
+    /// and took its service with it.
+    ///
+    /// Declared rather than observed, because the bound is fixed when the guest
+    /// is created and services start later; `.h5i/env.toml`'s `[service.*]` is
+    /// pinned at box creation, so this is known in time.
+    #[serde(skip)]
+    pub hosts_services: bool,
     /// Runtime-only: the loopback ports this box may dial, and the only ones.
     ///
     /// On macOS a box shares the *host's* loopback, so `network_rules` refuses
@@ -1998,6 +2012,7 @@ impl ResolvedPolicy {
             claim,
             profile,
             audit: AuditPolicy::default(),
+            hosts_services: false,
             box_git: Vec::new(),
             env_capture_spool: None,
             env_inbox: None,
@@ -2051,6 +2066,39 @@ pub struct ExecOutcome {
     /// `isolation=container` tier (whose allowlist proxy sees every request)
     /// populates this; `None` for `workspace`/`process`.
     pub egress: Option<EgressSummary>,
+}
+
+/// A started background service, and **which world its pid belongs to**.
+///
+/// The distinction is not bookkeeping. A pid is only meaningful inside the pid
+/// namespace that issued it, so a guest pid and a host pid are not two values
+/// of one kind — they are the same integers naming unrelated processes. Handing
+/// a guest pid to `kill(2)` would signal whatever host process happens to hold
+/// that number, and signalling a *process group* (which is how a service is
+/// stopped) would take its whole tree. So the runtime travels with the pid, and
+/// every consumer dispatches on it rather than assuming.
+#[derive(Debug, Clone)]
+pub struct BackgroundHandle {
+    /// The service's session-leader pid, in the namespace named by `sandbox`.
+    pub pid: u32,
+    /// `None` → a host process, signalable directly. `Some(name)` → a process
+    /// inside that microVM guest, reachable only through the runtime.
+    pub sandbox: Option<String>,
+    /// The guest's boot identity when the service started. A guest keeps its
+    /// name across `stop`/`start` but restarts its pids from 1, so without this
+    /// a stale record can match an unrelated process in the guest's next life.
+    pub boot: Option<String>,
+}
+
+impl BackgroundHandle {
+    /// A service running as a host process (the kernel tiers).
+    pub fn host(pid: u32) -> Self {
+        BackgroundHandle {
+            pid,
+            sandbox: None,
+            boot: None,
+        }
+    }
 }
 
 /// Outcome of one **interactive** session (`env shell`): the child's exit code

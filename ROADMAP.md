@@ -2323,6 +2323,448 @@ exercised against a hole punch that actually *fails*. The refusal is the half
 that matters and it needs two hostile NATs to reach. Those are what remains of
 the exit criteria.
 
+### M13. The microvm tier, warmed: steps 1 and 2 built 2026-08-13, step 3 proposed
+
+The tier shipped correct and slow: one `msb run` per command, a full guest boot
+each time, torn down on drop, and — as 9. said until today — never booted end
+to end anywhere. A reading of forkd (deeplethe/forkd, a Firecracker runtime
+whose whole premise is fork-from-warm: each child `mmap`s a warmed parent's
+snapshot memory copy-on-write and spawns in ~100 ms instead of booting)
+sharpened what to do about that into three steps, in order, each gated on the
+one before.
+
+**First, demonstrate and measure: done, and it moved the plan.** The tier
+boots a real guest — a microvm box creates, runs, enforces its allowlist in
+the guest netstack, and exits 0 — so the "not yet demonstrated end to end"
+caveat is retired. The numbers are in `docs/benchmarks/microvm-boot.md`,
+taken with `scripts/bench_env_overhead.py`, which is committed so they can be
+re-derived rather than trusted. What it borrowed from forkd was the
+discipline, not a mechanism: every sample kept, the tier that could not run
+recorded with the probe's own refusal, and the null results written down.
+
+Three results changed what steps 2 and 3 should be:
+
+- **461 ms of fixed cost per command, and almost none of it is isolation.**
+  Subtracting each tier's own no-op cost, the VM's per-syscall charge is
+  −7.3 ms — noise around zero — and it does not slow CPU-bound work. The tier
+  is not a slow place to work, it is an expensive place to start, which is the
+  cost profile that amortises and the reason reuse leads.
+- **A third of that tax is the memory cap — and it belongs to step 2, not
+  before it.** Adding one h5i behaviour at a time to a bare `msb run` found
+  mounts nearly free (+17 ms for the full 16-mount set over a 74 MiB
+  `.git/objects`), egress rules free, and the preload script +9 ms — all three
+  inside the control's own 230–245 ms run-to-run drift, so read as no
+  measurable cost — but the profile's **8 GiB `mem_bytes` costs +154 ms on
+  every command**, scaling at roughly 20 ms per GiB.
+
+  This was first written up here as a free win available today. **That was
+  wrong, and testing it is what corrected it.** Guest RAM *is* the memory
+  limit at this tier, so simply lowering the number trades enforcement
+  headroom for latency. The trade can be avoided — `msb` takes a
+  `--max-memory` hotplug ceiling independently of `--memory`, and booting
+  `512M` with `--max-memory 8G` costs 237 ms against 384 ms — but
+  `--max-memory` **does not grow anything by itself** (a 512M/max-8G guest
+  fails a 1.5 GiB allocation exactly like a plain 512M one). Growth takes an
+  explicit `msb modify --memory`, which works on a live guest in ~9 ms, is
+  asynchronous ("converging"), and **keeps the cap honest**: 6 GiB against a
+  4 GiB ceiling still fails with `MemoryError`. But `modify` needs a named,
+  running sandbox, and today's tier destroys the guest after one command, so
+  there is no moment to issue it. The 141 ms is real, recoverable, and
+  reachable only once guests persist.
+- **The ordering inverts on macOS.** `microvm` runs a realistic short command
+  in 474 ms against `process` at 1604 ms and `supervised` at 1629 ms, because
+  those two add ~1.5 s to Python startup under Seatbelt while the VM adds
+  none. The strongest tier is the quickest of the three here. That Seatbelt
+  cost is undiagnosed, is not a fixed cost reuse can hide, and belongs to its
+  own investigation rather than to this milestone — but it means "microvm is
+  the slow tier" was never quite the right framing on this platform.
+
+**Second, amortize the boot: session-scoped guest reuse. Built 2026-08-13, and
+it delivered 10.7×.** Fixed cost per command fell from **461.0 ms to 43.0 ms**,
+which makes `microvm` the *cheapest* of the four tiers on this host —
+`workspace` is 53.0 ms, `process` 62.9 ms, `supervised` 98.9 ms. The strongest
+boundary is now also the least expensive to cross, because what is left at
+every tier is h5i's own CLI overhead and this path has the least host-side
+machinery to set up.
+
+`crates/h5i-sandbox/src/microvm.rs` grew a warm path beside the one-shot one,
+which stays and is still reachable by `H5I_MICROVM_NO_REUSE=1` — the escape
+hatch, and the per-command-freshness option 9. promises. **The guest name is a
+SHA-256 over its own create argv** (`h5i-<box>-<digest12>`), which is what makes
+the fail-closed rule structural instead of a check somebody has to remember:
+image, mounts, memory or egress change → different name → new guest → the old
+one reaped, so a box can never be served a guest still enforcing a policy it no
+longer has. Verified end to end: widening a box's allowlist rotated it from
+`…08839c…` to `…a4d7c6…`, the old guest was reaped, and the new one enforced
+the wider list. Deliberately *not* the pinned policy digest, which excludes the
+runtime-only mounts by design.
+
+Per-run credentials reach the guest through one small host-owned directory
+mounted at `/.h5i/run` rather than `msb exec -e`, preserving the property this
+module exists for — no value ever appears in a host command line — and the
+staged script is unlinked when the run ends. `cache_write` runs stay one-shot,
+being the only ones whose mount set differs from the box's.
+
+Two things the build found that the design had not:
+
+- **The 25 ms completion poll became the dominant cost** once the boot was
+  gone. It was flagged in the very first benchmark (2026-07-19) as inflating a
+  4 ms command to 30 ms, and it turned a 9 ms exec into 35 ms. A backoff
+  (1 ms doubling to 25 ms) brought h5i's reported wall to 10 ms, matching the
+  runtime's own cost, and the fixed cost from 65.5 ms to 43.0 ms.
+- **The orphan sweep had never reaped anything.** `marker_path("").parent()`
+  walked up past the marker directory (joining an empty component leaves a
+  trailing separator), so it scanned `/tmp` for names that live one level down,
+  matched nothing, and said nothing, being best-effort throughout. Harmless
+  while guests died with their process; not harmless now that they outlive it.
+  Fixed, with a test.
+
+A security review of the branch reported no exploitable finding, and closed two
+candidates for reasons worth keeping: the unvalidated-name path into
+`msb remove --force` was **pre-existing and strictly more reachable before**
+this work (the `parent()` bug meant the sweep read `/tmp` itself, so a marker
+needed no directory squat at all), and the 48-bit name digest is not grindable
+by anyone in the threat model — `sanitize_label`'s output is not in the hash
+input, so the box-controlled half of the name buys no freedom over it, and a
+colliding guest would mount a different workspace and fail loudly rather than
+run under a laxer allowlist.
+
+It did surface a real multi-user correctness bug, now fixed. **Markers decided
+which VMs get destroyed while living in a directory shared between logins.** On
+a shared Linux host whoever ran the tier first owned `/tmp/h5i-msb-live`;
+everyone else's marker writes then failed silently, so their guests were never
+reaped — and worse, their sweeps read the *first* user's markers and saw
+`exists() == false` for a workspace under a home they cannot traverse,
+concluding a live box was gone and removing its VM. Three changes: the marker
+directory is now per-user (`$XDG_RUNTIME_DIR/h5i/msb-live`, falling back to a
+uid-scoped temp path) and is refused unless it is a real directory this user
+owns that nobody else can write; `box_is_gone` distinguishes a definite
+`NotFound` from "cannot look", so an unreadable workspace costs a leaked VM
+rather than a destroyed one; and only names shaped like the ones this module
+emits (`h5i-` plus lowercase alphanumerics and dashes) may reach the runtime at
+all, which also means no marker can present a flag-shaped argument to `msb`.
+
+The original analysis, and what it was measured against:
+
+**The prerequisite was answered — `msb` supports this, and it is measured.** `msb create --name X`
+boots a guest detached and `msb exec X -- cmd` attaches to it over its agent
+relay socket without booting. Measured on the same host: **233.9 ms cold per
+command against 8.4 ms warm, 28× on the `msb` primitive alone**, and the warm
+path is independent of guest size (8.9 ms into an 8 GiB guest, the same as
+into a 512 MiB one), so reuse absorbs the memory cost of the previous
+paragraph as well. Against h5i's 461 ms of fixed cost, a warm guest reachable
+in ~9 ms is roughly **50×**. State persists across execs as expected.
+
+So the shape is: boot on a box's first command, exec later commands into the
+same guest, tear down with the box or an idle timer. This is backend-neutral
+and it is the only speed move that works on macOS, where libkrun has no
+snapshot or restore and fork-from-warm cannot exist. It is also the
+architectural unlock for three gaps 9. lists as costs: a persistent guest is
+what background services (`box service`), port-based share, and an in-guest
+tee shim each require before they can be built at this tier.
+
+**The semantics question is decided, and 9. now states it: reuse is the
+default.** Reuse means commands in a box stop getting a pristine guest each
+time, which reads as a weakening until you notice that `workspace`,
+`process`, `supervised` and `container` have all always shared state across a
+box's commands — the worktree is the whole point of a box. Per-command
+amnesia at `microvm` is an artifact of shelling to a one-shot `msb run`, not a
+promise the tier made, so ending it is alignment rather than a loss. The
+boundary that carries the security claim is box↔host and box↔box, and neither
+changes: separate boxes still get separate guests. Recreation per command
+stays available for anyone who wants today's behaviour; it just stops being
+the only option. The one hard requirement is the digest rule in 9. — a guest
+whose policy has changed underneath it is recreated, never reused.
+
+Not borrowed from forkd here, deliberately. Their answer to the same question
+is "fork a fresh child per task", which needs a memory-fork primitive `msb`
+does not have (its snapshots are disk-only and offline) and economics we do
+not have (~20–100 ms to re-create, against our 237–460 ms). It is also the
+weakest part of their implementation: `DESIGN.md:118-128` describes per-child
+overlayfs in the present tense, `grep` finds no overlayfs anywhere in the
+shipped code, and children in fact share one read-write rootfs file whose
+writes are cross-visible and durable — a cross-sandbox channel their
+`SECURITY.md` does not mention. The transferable lesson is the one their
+`/tmp`-as-tmpfs convention encodes (name one place where guest-local writable
+state belongs) plus the negative one: a design doc that drifts into the
+present tense about unbuilt behaviour is how that happens.
+
+It should carry the memory trick from step 1, because a persistent guest is
+what makes it usable: `msb create --memory 512M --max-memory <ceiling>` boots
+at 237 ms instead of 384 ms, one `msb modify --memory <ceiling>` at ~9 ms
+restores the enforced cap, and every exec after that is ~9 ms. That removes
+the +154 ms from the one boot per box which reuse alone cannot amortise, and
+the enforcement claim survives it. Two constraints the measurements attach to
+it: the resize is asynchronous, so a box whose first command immediately wants
+4 GiB may meet a guest that has not converged yet and needs the modify issued
+at create time rather than lazily; and **an exec can hang** (see the anomaly in
+`docs/benchmarks/microvm-boot.md` — twice in ~100, undiagnosed, unreproduced
+in 6 controlled attempts), so exec needs its own deadline the way `wait_vm`
+already gives `msb run` a host-side backstop.
+
+**Six prerequisites measured before writing any of it (2026-08-13), because
+two assumptions had already died that way.** None reshaped the design; one
+resized it. **A state check costs ~7.5 ms** (`msb list --format json`, the
+cheapest of list/status/ping), which is the same order as the exec it guards,
+so checking before every command roughly *doubles* per-command cost to ~16 ms
+rather than being free — still ~29× better than today, but it means one list
+per run, not one per decision, and it is the reason to keep guest state in the
+box manifest rather than re-derive it. **Mounts are live in both directions**:
+a host write after boot is visible inside a running guest and vice versa,
+which is what lets per-run credentials go through the existing `/.h5i/spool`
+mount instead of `msb exec -e`. **`--timeout` enforces exactly** (2 s killed at
+2.02 s, `rc=1`, "exec timed out after 2s"), so the profile wall clock survives
+the switch. **`--tty` works under a real pty** (guest reports `/dev/pts/0`,
+`TERM=xterm-256color`) and `--no-tty` under a pipe, so `box shell` and captured
+runs both keep their current shapes. **Eight concurrent execs into one guest**
+all returned their own correct output in 26 ms of wall clock, so a single warm
+guest is not a serialization point — which is what later makes `box service`
+and the browser sidecar plausible here. And **names take 128 characters,
+dots and underscores, but reject `/`**, so a box id like `env/human/slug` must
+be sanitized before it can carry a policy digest in the guest name.
+
+**h5i must track guest state, and `msb exec`'s auto-start is a trap.** An
+earlier draft of this section said the opposite, on the strength of upstream's
+"exec auto-starts a stopped sandbox" — measurement corrected it. Exec into a
+**running** guest is 8.5–9.3 ms. Exec into a **stopped** one is ~236 ms *and
+leaves it stopped*, so it is a one-shot boot wearing the fast path's name:
+every later exec pays the same again and the guest never re-warms. An explicit
+`msb start` (~143 ms) is what returns it to `running`, after which execs are
+9.3 ms again. So an idle timeout that stops a guest silently reverts the tier
+to its current per-command cost, permanently, until something starts it — the
+reuse design has to own the state machine rather than lean on exec's
+convenience.
+
+Four more things the upstream check turned up that the design has to carry.
+`--idle-timeout` and `--max-duration` exist but **have no default**, so a
+detached guest outlives its box unless h5i sets one — the orphan-marker sweep
+becomes load-bearing rather than a backstop, and `msb touch` is what keeps a
+guest alive during an active session. `msb exec` takes `-e KEY=value` on argv,
+which is the same `/proc/<pid>/cmdline` exposure the preload script exists to
+avoid, so that mechanism carries over unchanged and costs ~9 ms. There is **no
+daemon** — 0.2.x's `msb server` is gone and each sandbox is its own detached
+host process, so a pool's ceiling is host RAM. And the upstream repo has moved
+from `microsandbox/microsandbox` to `superradcompany/microsandbox`, so the
+references in our docs and error strings will rot. The lifecycle shape to
+extend is `SandboxGuard` and the orphan-marker sweep in
+`crates/h5i-sandbox/src/microvm.rs`, which already own naming and cleanup.
+
+**Third, on Linux only, a second backend: fork-from-warm — and step 1 lowered
+its priority.** Reuse gets a command to ~9 ms, so what remains for
+fork-from-warm is the *first* command of a box and fan-out across many boxes
+at once, not the steady state. It should be judged on that narrower prize
+rather than on the 50× headline, which step 2 already collects. Worth noting
+for the same reason: `msb` does have snapshots, but they are **disk-only and
+offline** — a stopped sandbox, no memory image — so the warm-fork primitive
+cannot be built on the macOS backend even in principle, and this step stays a
+Linux-only second backend rather than something to retrofit.
+
+The prize is a prewarmed agent snapshot — a parent guest with the agent CLI,
+node, and toolchain already resident — so a microvm box's *first* command
+skips a boot plus an agent cold start. forkd's pack format (sha256-pinned
+snapshot bundles on a serverless registry) is a distribution story parallel
+to our OCI images. The adapter seams are
+narrow and already isolated: the `Runtime` enum, the pure and fully-tested
+`build_run_argv`, and the two dispatch sites in `sandbox.rs`. The catch is
+disqualifying until fixed: forkd has no default-deny egress — its own
+README says so — and this tier advertises `egress_enforced_l3`, so under
+the fail-closed rule a forkd backend refuses every profile with an egress
+allowlist, which is most of them. The candidate closure is the netns forkd
+already gives each child: a netns is a natural L3 enforcement point, and
+the same egress-rule grammar the msb translation compiles from
+(`container::parse_egress_rule`) can compile to nftables rules programmed
+into it. That fix is upstreamable, the way forkd upstreamed its own
+Firecracker `MAP_SHARED` patch.
+
+**Not borrowed, deliberately.** The live-BRANCH stack — vendored
+Firecracker, userfaultfd write-protect, a seccomp workaround — is the
+highest-maintenance part of forkd and "start boxes fast" does not need it:
+plain restore-from-warm-snapshot works on stock Firecracker. KSM tuning is
+skipped on forkd's own negative result, and hugepages wait until the first
+step's measurements say the tail matters. And the core CoW primitive does
+not port to macOS at all — forkd's design doc rules macOS out because the
+mechanism *is* the host kernel's copy-on-write over `mmap(MAP_PRIVATE)` —
+so the macOS story stays msb plus reuse, and the platform split is stated,
+not smoothed over.
+
+### M14. `box service` at the microvm tier: built, 2026-08-14
+
+Services are the first of the three things M13 step 2 unlocks, and the one the
+other two wait on: a dev server has to exist before it can be shared or driven
+by a browser. `spawn_background` refuses every tier but `workspace` and
+`process` today, and the reason is not a missing feature — it is that **every
+mechanism in the service machinery is a host-process mechanism**, and a guest
+process is not a host process.
+
+| What a service needs | How it works today | Why it does not survive the boundary |
+|---|---|---|
+| Identity | a host pid from `spawn_background` | a guest process has no host pid |
+| Liveness | `pid_alive(rec.pid)` | asks the host about a guest pid |
+| Stop | `killpg` after `setsid` | cannot signal into the guest |
+| Logs | the child writes a host file directly | the guest cannot see a host path |
+| Ports | a *host* port allocated and injected as `PORT` | the server binds inside the guest; nothing listens on the host |
+
+**The one that is dangerous rather than merely absent** is identity, and it
+decides the shape of the whole design. `ServiceRecord.pid` is a host pid, and a
+guest pid put in the same field is not a different value — it is the *same
+number in a different namespace*. `pid_alive` would answer about an unrelated
+host process, and `service_stop`'s `killpg` would signal an unrelated host
+**process group**. So the record has to say where the pid lives, every consumer
+has to dispatch on that, and the host signal path has to **refuse** a guest
+record rather than fall through to the pid it cannot interpret.
+
+The design, then:
+
+**A record says which world its pid belongs to.** `ServiceRecord` gains a
+runtime discriminator carrying the guest name, `serde`-defaulted to the host
+variant so records written before this still parse. That name is also the
+cheapest liveness precondition there is: if it is not the box's *current* guest
+name, the service is dead by construction, because a policy change rotated the
+guest — no exec required to know it. Which is the second thing to state plainly:
+**rotating a guest kills its services**, since the guest is the machine they
+run on, and the records must be invalidated when it happens.
+
+**Launch is an exec that detaches.** `msb exec <guest> -- sh -c 'cd /work &&
+setsid nohup sh -c "<cmd>" >/.h5i/services/<name>.log 2>&1 & echo $!'`, taking
+the printed guest pid. `setsid` makes it a session leader, so a later
+`kill -TERM -<pid>` reaps the whole descendant tree — the same semantics the
+kernel tiers get from `killpg`, which is why the same `setsid` appears in
+`spawn_background`. Measured to survive: a server started this way answered
+after unrelated execs in between (`docs/benchmarks/microvm-exec-tunnel.md`).
+
+**Logs go through a mount, not a pipe.** `<env_dir>/services` mounted
+read-write at `/.h5i/services`, the guest redirecting into it, the host reading
+the same file. `service logs` and the stop-time capture ingest then work
+unchanged. The content is box-written and therefore untrusted, which the
+existing ingest already assumes — this changes who writes the bytes, not how
+they are treated.
+
+**Stop is the same escalation, one exec away.** `kill -TERM -<pgid>`, wait,
+escalate to `-KILL`, then ingest the log as evidence exactly as today.
+
+**Ports are guest ports, and `box ports` must say so.** This is the one place
+the user-visible semantics genuinely differ, so it should not be papered over.
+Two consequences, one of them a simplification:
+
+- *Dynamic allocation stops being necessary.* Host ports are allocated per env
+  because concurrent boxes share one host network and would collide. Each
+  microvm box has its own network stack, so nothing can collide: the service
+  binds the port its definition declares, and `PORT` is injected as that.
+- *Nothing on the host listens.* `box ports` at this tier is reporting a port
+  inside a machine, and reachability is `box share` — over the exec tunnel
+  measured in `docs/benchmarks/microvm-exec-tunnel.md`, not over a published
+  port.
+
+**Publishing the port with `msb -p` was considered and rejected.** It is
+create-time only, so the set of published ports becomes part of the guest's
+identity: changing a service definition would rotate the guest and kill every
+service running in it, and a box would carry an ingress hole for its whole life
+against the possibility of a share that most boxes never ask for. The tunnel
+opens nothing and works even on a `--no-net` box, which is the property worth
+protecting.
+
+**What does not change**, and deliberately: the service definition
+(`[service.<name>]` in `.h5i/env.toml`, digest-pinned), the records directory,
+the event log, the capture ingest at stop, and the whole CLI surface. Only the
+execution backend is new — `spawn_background` grows a microvm arm and a return
+type that can carry a guest name, rather than a second service subsystem.
+
+**Built, and verified end to end**: a declared service starts in the box's warm
+guest, `service status` reports it running, a dev server it starts answers
+`HTTP 200` from inside the box, a `box run` in between leaves it untouched,
+`service logs` reads the guest's log through the mount, and `service stop`
+reaps it and captures the log as evidence.
+
+Four things the build found that the design had not, three of them the same
+mistake wearing different clothes — *assuming a host mechanism survives the
+boundary*:
+
+- **The guest's identity is only as stable as the policy that builds it.**
+  `service_start` prepared a *different* policy than `run`: no capture spool,
+  no inbox, no cache mounts, no user egress. Different mounts, different create
+  argv, different guest — so starting a service created a second guest and
+  reaped the one `box run` was using, and the next `box run` reaped it straight
+  back, killing the service every time. Fixed by extracting `prepare_box_reach`
+  so both paths grant the same reach from one definition. Then it happened
+  *again*, two mounts smaller: the agent-config lockdown mounts are emitted
+  only when those files exist, and `run` creates them through
+  `ProtectedHookConfigGuard` while `service_start` did not. The lesson is
+  sharper than "call the same functions": **anything that makes the create argv
+  depend on transient state makes the guest unstable**, and there is now an
+  `H5I_DEBUG_MICROVM_ARGV=1` hatch that prints the argv, because the diff
+  between two of them is the only thing that shows which element moved.
+- **`kill` is a shell builtin, not a binary.** `msb exec … -- kill -0 <pid>`
+  returns 127 in a slim image, so every service read as dead and — worse — the
+  stop path signalled nothing at all while reporting success. Both go through
+  `sh -c` now.
+- **`$!` after `setsid` is the wrong pid.** `setsid` forks whenever it must
+  create a new session, so `$!` names a parent that exits immediately; the
+  recorded pid was dead on arrival, and once the number was recycled it named
+  an unrelated process for the stop path to signal. The service now writes its
+  own `$$` to a pidfile and then `exec`s, so the recorded pid *is* the service
+  and *is* the session leader `kill -TERM -<pid>` reaps as a group.
+
+An adversarial pass over the result found three more, the first of which was
+shipping a silent data-loss bug:
+
+- **The idle timeout killed the services.** A guest is created with
+  `--idle-timeout 30m`, and `msb` measures idleness in *commands* — it cannot
+  see that a dev server inside is busy serving. So a service died 30 minutes
+  after the operator's last h5i command, while still handling traffic, and the
+  box looked fine. Measured rather than reasoned about: a guest with a 20 s
+  bound stopped at ~25 s and took its service with it. A box that declares
+  services now gets **no** idle bound (`ResolvedPolicy::hosts_services`, read
+  from the pinned `[service.*]` set, which is known at create time — the bound
+  cannot be changed later). Such a guest is reclaimed by `box rm` and by the
+  sweep instead. The two are different guests by name, which is right: whether
+  a box may be stopped is part of what its guest is.
+- **Nothing had a deadline.** `service_alive`, `guest_state`, and guest
+  create/start all blocked forever. Given an `msb exec` that has been seen to
+  hang — rarely, still undiagnosed — `box service status` would hang with it,
+  with no way out but Ctrl-C. All of them now run under `run_bounded`; a query
+  that overruns reads as "not running", which is the safe direction.
+- **The escape hatch broke services silently.** With `H5I_MICROVM_NO_REUSE=1`,
+  a service would have been started in a warm guest while every `box run` got
+  its own throwaway one — so the box could never reach its own service, and
+  nothing would look wrong. Starting a service now refuses under that flag and
+  says why.
+
+A second review round, aimed at the fixes the first one produced, found nine
+more. Two are worth stating because they are the same mistake at different
+depths, and both were introduced *by* a fix:
+
+- **"I could not read the answer" is not "there is nothing there."** Round one
+  fixed `guest_state` so a failed or timed-out `msb list` no longer read as
+  `Absent` — because `Absent` is answered with `create --replace`, which
+  destroys a live guest and every service in it. Round two found the same bug
+  one layer down: `parse_guest_state` still returned `Absent` when the output
+  parsed as anything other than an array, so a banner line on stdout would have
+  done it on *every command*. Worse, the unit test asserted that behaviour, so
+  the bug had a test defending it. Only a well-formed list that does not name
+  the guest is `Absent` now; everything else is `Unknown`.
+- **A guest name is not a guest life.** A guest keeps its name across
+  `stop`/`start` and restarts its pids from 1, so a stale record naming pid 42
+  could match an unrelated process in the guest's next life — refusing a start
+  that should succeed, and signalling a process group that was never ours. The
+  record now carries the guest's kernel boot id, and a mismatch reads as dead.
+
+The rest: the service launcher was the last runtime call without a deadline;
+`wait_exec` joined its reader threads after killing the child, reintroducing
+the hang its own deadline exists to prevent; crashed runs left brokered
+credentials in a directory the long-lived guest can read, so it is swept before
+each use; `live_service_ports` still called host `pid_alive` on a record that
+may hold a guest pid, safe only by an accident of ordering; `env shell` was the
+one entry point never routed through `prepare_box_reach`, leaving the
+"one construction site" invariant true only by coincidence; and the benchmark
+harness resolved workload binaries on the host and executed them in the guest,
+which would abort the sweep for the very tier it exists to measure.
+
+Then, and only then, share (M15): the tunnel is measured and the isolation
+property is verified, but its remaining unknown is the in-guest forwarder — no
+slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
+small static binary staged into a mounted directory is the first thing that
+work has to decide.
+
 ## 9. Limits we state up front
 
 Being explicit about these is a feature, since the claim is a security claim.
@@ -2339,9 +2781,59 @@ Being explicit about these is a feature, since the claim is a security claim.
   in the VM's network stack. What it costs is honest and stated in MANUAL.md: it
   needs host virtualization (`/dev/kvm`, or Apple Silicon), it produces no
   per-request egress tally, and it does not yet route the authenticated-egress
-  credential proxy. **Not yet demonstrated end to end**: this development host
-  has no nested virtualization, so the adapter is unit-tested against its argv
-  and rule translation and has never booted a real guest here.
+  credential proxy. **Demonstrated end to end 2026-08-13** on Apple Silicon
+  with `msb` 0.6.8: a box creates, runs, enforces its allowlist in the guest
+  netstack, and exits 0. Two costs are now measured rather than assumed
+  (`docs/benchmarks/microvm-boot.md`). It **was** a full boot per command,
+  461 ms of it, because the guest was torn down after each one; **M13 step 2
+  (built 2026-08-13) gives each box one guest instead, and the per-command cost
+  is now 43 ms** — the cheapest of the four tiers on this host. What that costs
+  is stated one bullet down: a box's commands share a guest, as they already
+  shared everything at every other tier. The **8 GiB memory cap still costs
+  ~154 ms** at roughly 20 ms per GiB, but it is now paid once per box rather
+  than once per command, which is why recovering it via `msb`'s hotplug
+  (`--max-memory` plus a live `msb modify`) was measured, understood, and then
+  deliberately not built: it trades an async convergence window for a one-time
+  saving. The Linux/KVM path remains unmeasured.
+- **A box is the trust domain, not a command.** Successive commands in one box
+  share state, and that is the point rather than a leak: the workspace
+  persists, which is what a box *is* — a worktree plus a branch plus an agent
+  session, whose commands are meant to be related (build, then test, then
+  commit). So the boundary we claim is box↔host and box↔box. It is never
+  command↔command, at any tier. An agent that leaves a file behind or a
+  process running will meet them again on its next command, and a run that
+  depends on the previous one having happened is a supported way to use a box,
+  not a misuse of it.
+
+  **The `microvm` tier joined them on 2026-08-13** (M13 step 2). It used to
+  boot a guest per command and destroy it after, so guest-local state did not
+  survive to the next command — an artifact of shelling to a one-shot `msb
+  run` rather than a promise the tier made. Now a box gets one guest, so its
+  commands share `/tmp`, the process table, and anything written outside the
+  mounted workspace, exactly as they already did everywhere else.
+  `H5I_MICROVM_NO_REUSE=1` restores a fresh guest per command for anyone who
+  wants it.
+
+  Three things hold. The durable work product lives in `/work`, a host mount,
+  so it outlives the guest either way. **Reuse is scoped to one box under one
+  configuration**: the guest's name is a hash of the argv that created it, so a
+  changed profile, allowlist, image or mount set resolves to a different guest
+  and the previous one is reaped — a box cannot be served a guest still
+  enforcing a policy it no longer has, and this is structural rather than a
+  check that could be forgotten. The corollary is worth stating: **guest-local
+  state does not survive a policy change**, because that is a different guest
+  by construction. And separate boxes still get separate guests, so nothing
+  about box↔box isolation changes.
+- **A microvm box that declares a service keeps its guest until you remove it.**
+  A guest is normally stopped after 30 minutes idle. A box whose
+  `.h5i/env.toml` declares any `[service.*]` gets no such bound, because `msb`
+  measures idleness in commands and cannot see a dev server busy serving —
+  the bound would kill the service it was meant to protect, and it is fixed
+  when the guest is created, so it cannot be lifted later. The cost is real
+  and stated rather than hidden: such a box holds its `mem_bytes` allocation
+  from its first command until `box rm`, **even if the service is never
+  started**. Declared is the signal because started is not knowable in time.
+  `box rm` and the orphan sweep are what reclaim it.
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
   it binds proxy respecting tooling only. The `supervised` tier enforces at
   L3/L4 with nftables and does not have that hole, which is why M4 starts
@@ -2554,6 +3046,31 @@ Being explicit about these is a feature, since the claim is a security claim.
    open-sourcing decides how much of the M10 crate is ours to write. Until
    that drop, the only commitment is the shape: fetch through our proxy,
    receipts as the network log, script off by default for untrusted origins.
+6. **The microvm plan's gating questions (M13): one answered, one still
+   open, one new.**
+
+   **Answered 2026-08-13: `msb` holds a sandbox open and execs into it.**
+   `msb create --name X` boots detached, `msb exec X -- cmd` attaches over
+   the guest's agent relay socket without booting, and `exec` auto-starts a
+   stopped sandbox so h5i need not track guest state. Measured at 8.4 ms warm
+   against 233.9 ms cold. The reuse step needs no upstream ask; what it needs
+   is an idle timeout, because `--idle-timeout` has no default and a detached
+   guest otherwise outlives its box.
+
+   **Still open: default-deny egress inside forkd's per-child netns.**
+   Whether the existing egress-rule grammar can compile to nftables rules
+   programmed into it. Without that, a forkd backend fails closed against
+   every profile with an egress allowlist and is not worth carrying. This one
+   needs a Linux host with KVM, which the 2026-08-13 run did not provide —
+   everything measured so far is macOS, and the Linux path is untested.
+
+   **New, and not a microvm question at all: why `process` and `supervised`
+   add ~1.5 s to Python startup on macOS.** Found while benchmarking
+   something else. It is not a fixed cost, so no amount of reuse hides it,
+   and it lands on the tiers macOS users get by default. The suspects are the
+   `/usr/bin/python3` Command Line Tools shim and SBPL evaluation over a
+   startup that opens hundreds of files; neither is established. Whether it
+   reproduces with a non-system interpreter is the cheapest next probe.
 
 ## 12. The browser: a local engine that runs script, and the order to build it
 
