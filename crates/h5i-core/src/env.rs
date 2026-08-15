@@ -1522,10 +1522,7 @@ fn init_detached_workspace(
             let hooks = work.parent().unwrap_or(work).join("clone-hooks-disabled");
             std::fs::create_dir_all(&hooks).map_err(|e| H5iError::with_path(e, &hooks))?;
             let out = std::process::Command::new("git")
-                .arg("-c")
-                .arg(format!("core.hooksPath={}", hooks.display()))
-                .args(["clone", "--depth", "1", url])
-                .arg(work)
+                .args(clone_argv(&hooks, url, work))
                 .output()
                 .map_err(|e| H5iError::Metadata(format!("failed to invoke git clone: {e}")))?;
             if !out.status.success() {
@@ -1548,6 +1545,47 @@ fn init_detached_workspace(
             Ok((oid, tree))
         }
     }
+}
+
+/// The `git` argv for cloning a box's source, built here so it can be read as a
+/// whole and tested without a network.
+///
+/// This clone runs on the **host**, unconfined, on a string somebody typed or
+/// pasted. Three things make that safe, and two of them were missing:
+///
+/// * **`core.hooksPath`** at an empty directory, so a hostile repository cannot
+///   ship a hook that runs here. This was already the case.
+///
+/// * **`protocol.ext.allow=never`.** `ext::` is not a URL, it is a command:
+///   `git clone 'ext::sh -c …'` runs it. Git refuses that transport by default,
+///   but the default is *config*, and an operator whose `~/.gitconfig` carries
+///   `protocol.ext.allow = always` — a setting people do add — turned a pasted
+///   "repository URL" into host command execution. Verified both ways against
+///   git 2.50: permissive config runs the command, and a later `-c` pinning it
+///   to `never` refuses it.
+///
+/// * **`--end-of-options` before the URL.** Otherwise git reads a leading `-`
+///   as an option, so `--upload-pack=<cmd>` is an argument rather than a
+///   repository. `source::resolve_pr_base` has carried exactly this guard, with
+///   exactly this reasoning, since it was written; the clone path never got it.
+///   Today the injected option is defanged by the destination argument that
+///   follows it (an empty directory is not a repository, so the clone fails
+///   before a transport opens) — which is an accident of argument order, not a
+///   property to rest a host boundary on.
+fn clone_argv(hooks: &Path, url: &str, work: &Path) -> Vec<std::ffi::OsString> {
+    use std::ffi::OsString;
+    vec![
+        OsString::from("-c"),
+        OsString::from(format!("core.hooksPath={}", hooks.display())),
+        OsString::from("-c"),
+        OsString::from("protocol.ext.allow=never"),
+        OsString::from("clone"),
+        OsString::from("--depth"),
+        OsString::from("1"),
+        OsString::from("--end-of-options"),
+        OsString::from(url),
+        work.as_os_str().to_os_string(),
+    ]
 }
 
 /// The registered worktree name for an env, matching `EnvManifest::worktree_name`
@@ -10126,6 +10164,57 @@ mod tests {
                 "a field that is not an object id is rejected"
             );
         }
+    }
+
+    /// `git clone` runs on the host, unconfined, on a string somebody typed or
+    /// pasted. `ext::` is not a URL — it is a command — and an operator whose
+    /// `~/.gitconfig` says `protocol.ext.allow = always` turned a pasted
+    /// "repository URL" into host command execution. A leading `-` was read as
+    /// an option for the same reason `source::resolve_pr_base` passes
+    /// `--end-of-options`.
+    #[test]
+    fn the_clone_argv_refuses_to_be_an_argument_or_a_command() {
+        let argv = clone_argv(
+            Path::new("/envs/a/clone-hooks-disabled"),
+            "--upload-pack=touch /tmp/pwned",
+            Path::new("/envs/a/work"),
+        );
+        let argv: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        // The URL cannot be read as an option.
+        let eoo = argv.iter().position(|a| a == "--end-of-options").expect("--end-of-options");
+        let url = argv
+            .iter()
+            .position(|a| a == "--upload-pack=touch /tmp/pwned")
+            .expect("the url is still passed");
+        assert!(eoo < url, "the separator must come first: {argv:?}");
+
+        // ...and cannot be a command, whatever the host's gitconfig says.
+        assert!(
+            argv.windows(2)
+                .any(|w| w[0] == "-c" && w[1] == "protocol.ext.allow=never"),
+            "{argv:?}"
+        );
+        // The hook lockdown that was already here stays.
+        assert!(
+            argv.windows(2).any(|w| {
+                w[0] == "-c" && w[1].starts_with("core.hooksPath=")
+            }),
+            "{argv:?}"
+        );
+        // Both `-c` settings precede the subcommand, or git does not read them.
+        let sub = argv.iter().position(|a| a == "clone").expect("clone");
+        for (i, a) in argv.iter().enumerate() {
+            if a == "-c" {
+                assert!(i < sub, "a `-c` after the subcommand is ignored: {argv:?}");
+            }
+        }
+        // Still a shallow clone into the box's own workspace.
+        assert_eq!(argv.last().map(String::as_str), Some("/envs/a/work"));
+        assert!(argv.windows(2).any(|w| w[0] == "--depth" && w[1] == "1"));
     }
 
     /// The exact-value scrub is the guaranteed half of the secret defence — the
