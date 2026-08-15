@@ -2018,10 +2018,16 @@ fn effective_digest_of(_env_dir: &Path) -> Option<String> {
     None
 }
 
-/// Other boxes materialized on this host whose effective Landlock grants
+/// Other boxes **of this repository** whose effective Landlock grants
 /// overlap this env's, as `env/<id> via <path>` strings for the capture
-/// record. "Materialized" means their `policy.effective.json` exists — a
-/// pulled or gc'd box has none and cannot run here. Both directions are
+/// record. Per-repo on purpose and by construction: [`list`] walks this
+/// repo's `.h5i/env`, so a box of a *different* repo on the same host is
+/// outside the scan — the receipt must not read as a host-wide claim.
+/// "Materialized" means their `policy.effective.json` exists — a pulled or
+/// gc'd box has none and cannot run here. One more honesty bound: each
+/// neighbor's dump reflects its *latest invocation's shape*, so a box whose
+/// last session was a readonly shell shows a narrower rw set until its next
+/// ordinary run rewrites the dump. Both directions are
 /// checked (influence has no preferred direction on a console), and an empty
 /// answer cites the machine-checked noninterference theorem; see the field
 /// docs on [`crate::receipt::ExecRecord::fs_overlap`] for the claim's exact

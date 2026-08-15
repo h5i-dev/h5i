@@ -387,7 +387,7 @@ pub struct Signals {
     /// Distinct peers admitted across every recorded share, including any past
     /// an individual receipt's record cap.
     pub share_peers: u64,
-    /// Other boxes on this host whose effective filesystem grants overlap
+    /// Other boxes of this repository whose effective grants overlap
     /// this one's, as the NEWEST host-observed run/shell receipt recorded
     /// them (`env/<id> via <path>`). Latest-record semantics on purpose:
     /// overlap is a property of what is materialized on the host right now,

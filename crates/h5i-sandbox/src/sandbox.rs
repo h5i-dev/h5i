@@ -2559,6 +2559,33 @@ pub(crate) fn build_confined_command(
     // the grant, which narrows the sandbox — the fail-closed direction; a
     // readonly observer session moves `$WORK` from the rw set to the ro set)
     // live in that function now — change enforcement there, never beside it.
+    // The effective-config layer serializes paths as UTF-8. A path this
+    // host cannot represent as UTF-8 would round-trip through the dump
+    // mangled and then fail closed in *confusing* ways — a silently skipped
+    // worktree grant (`path_beneath_rules` drops unopenable paths), a bind
+    // mount aimed at a path that does not exist. Refuse explicitly instead:
+    // same fail-closed direction, a legible error.
+    if work.to_str().is_none() {
+        return Err(H5iError::Metadata(format!(
+            "workspace path {} is not valid UTF-8 — the kernel tiers cannot \
+             represent it in the effective config (fail-closed)",
+            work.display()
+        )));
+    }
+    if let Some(bad) = policy
+        .private_binds
+        .iter()
+        .map(|b| &b.backing)
+        .chain(policy.home_binds.iter().flat_map(|b| [&b.backing, &b.target]))
+        .chain(policy.ro_binds.iter().flat_map(|b| [&b.backing, &b.target]))
+        .chain(policy.cache_write.iter().flat_map(|b| [&b.backing, &b.target]))
+        .find(|p| p.to_str().is_none())
+    {
+        return Err(H5iError::Metadata(format!(
+            "bind path {} is not valid UTF-8 — refusing the run (fail-closed)",
+            bad.display()
+        )));
+    }
     let abi_int = caps.landlock_abi.unwrap_or(1);
     let abi = landlock_abi_for(abi_int);
     let shape = crate::effective::RunShape {
@@ -2597,7 +2624,11 @@ pub(crate) fn build_confined_command(
     // ── seccomp deny-list program (compiled pre-fork) ──
     let bpf = seccomp_deny_program()?;
 
-    let want_netns = p.net_mode == NetMode::Deny || force_netns;
+    // The netns decision also comes from the effective config — one formula,
+    // two readers, exactly like the path sets and bind lists above. A second
+    // spelling of `net_mode == Deny || force_netns` here would be the drift
+    // the apply-seam rule exists to prevent.
+    let want_netns = eff.namespaces.net;
     let uid = unsafe { libc::geteuid() };
     let gid = unsafe { libc::getegid() };
     let mem = p.mem_bytes;

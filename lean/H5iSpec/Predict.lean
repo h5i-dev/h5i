@@ -144,7 +144,11 @@ and-Landlock judgment at wherever the chase lands.
 procfs inode, which the new mount shadows, so under a pidns the `/proc`
 verdict comes from the re-grant alone: reads allowed, writes denied,
 whatever the grant lists say about the host's `/proc`. Existence is
-namespace-local (`boxLocal`).
+namespace-local (`boxLocal`). As everywhere in this layer, `allow` means
+the SANDBOX MECHANISMS permit the access — DAC and procfs's own rules
+still apply on top (`/proc/<pid>/mem` fails its ptrace check regardless),
+which is why the probes touch only `/proc/self` entries whose non-sandbox
+answer is known.
 
 **symlinks**: Landlock judges the *resolved* object, so the verdict is
 taken at the end of the chase — which is exactly why a symlink planted in
@@ -230,7 +234,9 @@ theorem pidns_proc_write_denied (cfg : EffectiveConfig)
     (predictVerdict cfg links p .write).allow = false := by
   simp [predictVerdict, hp, hproc]
 
-/-- …and reads are always allowed — that is what the re-grant is for. -/
+/-- …and reads pass the sandbox mechanisms — that is what the re-grant is
+for. (Procfs's own rules and DAC still apply beyond this model; see the
+module docstring.) -/
 theorem pidns_proc_read_allowed (cfg : EffectiveConfig)
     (links : List SymlinkFact) (p : FsPath) (hp : cfg.run.pidns = true)
     (hproc : p.beneath ["proc"] = true) :

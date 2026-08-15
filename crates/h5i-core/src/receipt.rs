@@ -148,7 +148,8 @@ pub struct ExecRecord {
     /// no dump and for records from before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_digest: Option<String>,
-    /// Other boxes materialized on this host whose effective Landlock grants
+    /// Other boxes **of this repository** materialized on this host whose
+    /// effective Landlock grants
     /// overlap this box's — cross-box influence possible through the shared
     /// path each entry names (`env/<agent>/<slug> via <path>`). Empty is the
     /// strong answer: by the machine-checked noninterference theorem

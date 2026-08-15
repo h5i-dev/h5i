@@ -2880,6 +2880,46 @@ named.
   policy, not enforcement firing. The export bundle's report gains the same
   line, so a reviewer applying a patch knows the box did not run alone.
 
+**Adversarial self-review of the whole chapter, 2026-08-15.** The question
+asked of every change: did it widen the sandbox, add an exploitable path, or
+prove something vacuous. Findings, each verified in code rather than argued:
+
+- **No widening found in the enforcement refactor.** `build_confined_command`
+  still runs the re-probe and `resolve` gate; seccomp, rlimits, uid maps,
+  no-new-privs, pidns and the child's mount sequence are untouched; the
+  grant-set computation is list-for-list equivalent (order, `$WORK`
+  stripping, exists-filter, readonly flip), evidenced by the unit suites,
+  the kernel probes, and the DRT mutations.
+- **Fixed: silent non-UTF-8 mangling.** The dump layer serializes paths as
+  UTF-8; the refactor made enforcement consume those strings, so a
+  non-UTF-8 workspace or bind path would round-trip mangled. Every failure
+  mode was verified fail-closed — `path_beneath_rules` silently *skips* an
+  unopenable path (checked in the crate's source), so a mangled worktree
+  grant meant a box confined without its worktree, and a mangled bind meant
+  a refused mount — but silent-and-confusing is not a boundary story.
+  `build_confined_command` now refuses non-UTF-8 work and bind paths
+  explicitly, before anything is computed.
+- **Fixed: one more duplicated formula.** `want_netns` was still computed
+  beside the dump's `namespaces.net` — the exact drift the apply-seam rule
+  forbids. Enforcement now consumes the effective config's answer.
+- **Fixed: two honesty overclaims.** `fs_overlap` said "on this host" while
+  the scan is per-repository (`env::list` walks this repo's `.h5i/env`) —
+  a box of a different repo on the same host is outside it; the docs now
+  say so, along with the shape-staleness bound (a neighbor's dump reflects
+  its latest invocation, so a readonly-shell dump under-reports until the
+  next run). And `pidns_proc_read_allowed` reads as "any /proc read
+  succeeds"; its docstring now states the layer-wide rule that `allow`
+  means the sandbox mechanisms permit — DAC and procfs's own checks apply
+  on top.
+- **Checked and sound, for the record:** `effective_out` is serde-skipped,
+  so a tampered `policy.resolved.toml` cannot redirect the dump write; the
+  dump path's parent is not box-writable on any tier, so no symlink can be
+  planted under the host-side write; box-claimed lanes can never set
+  `fs_overlap` (unit-tested); receipt identity (`run_id`) is unchanged by
+  the new fields; overlap detection covers bind backings because h5i pushes
+  them onto `fs_write`; the console renders overlap strings through React's
+  escaping; and no Lean code is linked into or executed by the product.
+
 A Lean 4 model of the policy layer, developed beside the Rust and never linked
 into it, connected by differential testing over a machine-readable dump of the
 effective configuration. The design, the theorems, and the order live in
