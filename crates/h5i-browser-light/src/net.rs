@@ -176,8 +176,25 @@ impl Broker {
     }
 
     /// Fetch a URL, following redirects by hand and checking policy on each hop.
+    ///
+    /// No document, so the loopback rule treats this as the agent naming a URL.
+    /// Anything a *page* reaches for — a subresource, a script `src`, a form's
+    /// action — must use [`Self::fetch_from`] instead, or it is trusted like an
+    /// instruction the agent typed.
     pub fn fetch(&self, url: &Url, initiator: Initiator) -> FetchOutcome {
         self.send(url, initiator, "GET", &[], None)
+    }
+
+    /// [`Self::fetch`] for something a *document* asked for, so the policy can
+    /// tell a page reaching for loopback from the agent naming it. See
+    /// [`Policy::check_from`].
+    pub fn fetch_from(
+        &self,
+        url: &Url,
+        initiator: Initiator,
+        document: Option<&Url>,
+    ) -> FetchOutcome {
+        self.send_from(url, initiator, "GET", &[], None, document)
     }
 
     /// Send a request that may carry a body — what a form submission needs.
@@ -438,17 +455,28 @@ impl Broker {
 /// Adapts the broker to Blitz's [`NetProvider`].
 pub struct BrokerNet {
     broker: Arc<Broker>,
+    /// The document whose subresources these are.
+    ///
+    /// Load-bearing, not bookkeeping. Every image, stylesheet and font on the
+    /// page arrives through here, and without an origin to attribute them to
+    /// the policy read each one as the agent naming a URL — so
+    /// `<img src="http://127.0.0.1:3000/…">` on a page from the open web reached
+    /// the box's dev server, which is precisely what [`Policy::check_from`]
+    /// exists to refuse. `None` only for a document with no origin of its own.
+    document: Option<Url>,
 }
 
 impl BrokerNet {
-    pub fn new(broker: Arc<Broker>) -> Self {
-        Self { broker }
+    pub fn new(broker: Arc<Broker>, document: Option<Url>) -> Self {
+        Self { broker, document }
     }
 }
 
 impl NetProvider for BrokerNet {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
-        let outcome = self.broker.fetch(&request.url, Initiator::Subresource);
+        let outcome =
+            self.broker
+                .fetch_from(&request.url, Initiator::Subresource, self.document.as_ref());
 
         // The single exit. A denied or failed request completes with an empty
         // body: Blitz counts the resource as resolved and paints, having
@@ -537,7 +565,7 @@ mod tests {
         // screenshot comes back blank. See the module docs.
         let sink = Arc::new(MemorySink::new());
         let broker = broker_with(Policy::new(), sink);
-        let net = BrokerNet::new(broker);
+        let net = BrokerNet::new(broker, Some(url("https://denied.test/")));
 
         let called = Arc::new(AtomicBool::new(false));
         let body_len = Arc::new(AtomicU64::new(u64::MAX));
@@ -577,6 +605,61 @@ mod tests {
         assert!(!outcome.is_ok());
         assert_eq!(sink.denied_urls().len(), 0);
         assert_eq!(sink.fetched_urls(), vec!["http://127.0.0.1:9/"]);
+    }
+
+    /// A subresource is the *page* reaching for a URL, and it was being policed
+    /// as though the agent had named one.
+    ///
+    /// `check_from` refuses a loopback request from a document that is not
+    /// itself local — that is the rule that stops a page on the open web reading
+    /// the box's dev server. Every non-script path into the broker passed
+    /// `document: None`, which the same function documents as trusted, so
+    /// `<img src="http://127.0.0.1:3000/…">` and `<script src=…>` on a page from
+    /// the web went straight through the guard.
+    #[test]
+    fn a_page_from_the_web_cannot_reach_loopback_through_a_subresource() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = broker_with(Policy::new().allow("docs.test"), sink.clone());
+        let dev_server = url("http://127.0.0.1:9/src/main.rs");
+
+        let outcome = broker.fetch_from(
+            &dev_server,
+            Initiator::Subresource,
+            Some(&url("https://docs.test/page")),
+        );
+        assert!(!outcome.is_ok());
+        assert_eq!(sink.denied_urls(), vec![dev_server.as_str()]);
+        assert!(sink.fetched_urls().is_empty(), "nothing may reach the wire");
+
+        // ...and the dev server's own page still talks to itself, which is the
+        // whole reason loopback is reachable at all.
+        let sink = Arc::new(MemorySink::new());
+        let broker = broker_with(Policy::new(), sink.clone());
+        let _ = broker.fetch_from(
+            &dev_server,
+            Initiator::Subresource,
+            Some(&url("http://127.0.0.1:9/")),
+        );
+        assert_eq!(sink.denied_urls().len(), 0);
+        assert_eq!(sink.fetched_urls(), vec![dev_server.as_str()]);
+    }
+
+    /// The Blitz adapter is where every image, stylesheet and font arrives, so
+    /// it is the widest of those paths and carries the document explicitly.
+    #[test]
+    fn the_blitz_adapter_attributes_subresources_to_their_document() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = broker_with(Policy::new().allow("docs.test"), sink.clone());
+        let net = BrokerNet::new(broker, Some(url("https://docs.test/page")));
+
+        let handler = Box::new(SpyHandler {
+            called: Arc::new(AtomicBool::new(false)),
+            body_len: Arc::new(AtomicU64::new(u64::MAX)),
+        });
+        net.fetch(0, Request::get(url("http://127.0.0.1:9/secret")), handler);
+
+        assert_eq!(sink.denied_urls(), vec!["http://127.0.0.1:9/secret"]);
+        assert!(sink.fetched_urls().is_empty());
     }
 
     #[test]

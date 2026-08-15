@@ -55,6 +55,15 @@ impl Default for PageOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Submission {
     pub url: Url,
+    /// The document the form was in.
+    ///
+    /// A form's `action` is chosen by the page, not by the agent — the agent
+    /// asks for a button to be pressed, and the page decides where that goes.
+    /// So the submission is policed as a request *from* this origin, which is
+    /// what stops a page on the open web POSTing to the box's dev server the
+    /// moment somebody clicks its submit button. Filled in by
+    /// [`Page::submit_form`], which is the only thing that knows it.
+    pub document: Url,
     /// `GET` or `POST`. Anything else never reaches here: Blitz's own
     /// submission algorithm declines to produce it.
     pub method: String,
@@ -70,9 +79,14 @@ pub struct Submission {
 /// same thread and is picked up immediately afterwards. The `Mutex` is here to
 /// satisfy the trait's `Send + Sync` bound rather than to guard a race — the
 /// page has exactly one owner (see `stream`'s module docs).
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct CapturedNavigation {
     slot: Arc<std::sync::Mutex<Option<Submission>>>,
+    /// The document the form lives in, so the captured request carries the
+    /// origin it was made from. Filled here rather than left for the caller
+    /// because a `Submission` with no origin is one the policy trusts, and a
+    /// field that defaults to trusted is a field somebody forgets to set.
+    document: Url,
 }
 
 impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
@@ -104,6 +118,7 @@ impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
         if let Ok(mut slot) = self.slot.lock() {
             *slot = Some(Submission {
                 url: options.url.clone(),
+                document: self.document.clone(),
                 method: format!("{:?}", options.method).to_uppercase(),
                 body,
                 content_type,
@@ -327,7 +342,10 @@ impl Page {
             DocumentConfig {
                 viewport: Some(viewport),
                 base_url: Some(base_url.to_string()),
-                net_provider: Some(Arc::new(BrokerNet::new(broker))),
+                net_provider: Some(Arc::new(BrokerNet::new(
+                    broker,
+                    Some(base_url.clone()),
+                ))),
                 font_ctx: Some(fonts.context.clone()),
                 // Without this Blitz uses `DummyHtmlParserProvider` and
                 // `set_inner_html` silently does nothing: the old children are
@@ -359,7 +377,10 @@ impl Page {
             ColorScheme::Light,
         );
 
-        let captured = CapturedNavigation::default();
+        let captured = CapturedNavigation {
+            slot: Arc::default(),
+            document: base_url.clone(),
+        };
         let pending_navigation = captured.slot.clone();
 
         // Parsing can abort the process, so it is guarded and retried.
@@ -569,6 +590,10 @@ impl Page {
 
         let phase_started = std::time::Instant::now();
         let mut skipped = 0usize;
+        // The origin every `src` below is fetched on behalf of. Cloned once so
+        // the loops do not have to hold a borrow of `self` across the calls
+        // that mutate the script realm.
+        let document = self.url.clone();
 
         for (index, (node, source)) in classic.into_iter().enumerate() {
             if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
@@ -594,7 +619,16 @@ impl Page {
                         script.note_error(&format!("script src `{src}` is not a URL"));
                         continue;
                     };
-                    let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
+                    // With the document's origin: a `src` is chosen by the page,
+                    // and the response is *executed* in it. Without one the
+                    // policy read it as the agent naming a URL, so a page from
+                    // the open web could point a `<script src>` at the box's
+                    // dev server and run whatever came back.
+                    let outcome = broker.fetch_from(
+                        &url,
+                        crate::receipt::Initiator::Subresource,
+                        Some(&document),
+                    );
                     if let Some(error) = outcome.error {
                         script.note_refused_script(url.as_str());
                         script.note_error(&format!("could not load {url}: {error}"));
@@ -655,7 +689,14 @@ impl Page {
                         script.note_error(&format!("module src `{src}` is not a URL"));
                         continue;
                     };
-                    let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
+                    // Document-scoped for the same reason the classic `src`
+                    // above is: the URL is the page's choice and the body is
+                    // executed.
+                    let outcome = broker.fetch_from(
+                        &url,
+                        crate::receipt::Initiator::Subresource,
+                        Some(&document),
+                    );
                     if let Some(error) = outcome.error {
                         script.note_error(&format!("could not load {url}: {error}"));
                         continue;
@@ -1163,12 +1204,17 @@ impl PageFactory {
     /// Load whatever a form asked for, through the same broker as everything
     /// else. A refused submission is an error the agent reads, not a blank page.
     pub fn open_submission(&self, submission: &Submission) -> Result<Page, H5iError> {
-        let outcome = self.broker.send(
+        let outcome = self.broker.send_from(
             &submission.url,
             Initiator::Navigation,
             &submission.method,
             &submission.body,
             submission.content_type.as_deref(),
+            // The form's own document. A submission is a navigation the *page*
+            // chose the destination of, so it is policed as a request from that
+            // origin — a page on the open web does not get to POST to the box's
+            // dev server because somebody pressed its button.
+            Some(&submission.document),
         );
         if let Some(error) = outcome.error {
             return Err(H5iError::Metadata(format!(
