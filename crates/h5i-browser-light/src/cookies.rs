@@ -722,7 +722,7 @@ mod http_only_tests {
         // set-cookie-string, which is what stops it planting a cookie it can
         // then hide behind.
         assert_eq!(jar.store_from_script(&u, "planted=1; HttpOnly"), 0);
-        assert!(jar.header_for(&u).expect("sent").0.contains("planted") == false);
+        assert!(!jar.header_for(&u).expect("sent").0.contains("planted"));
 
         // The wire is unaffected by all of this: a server may still replace its
         // own `HttpOnly` cookie, which is how a session is rotated.
