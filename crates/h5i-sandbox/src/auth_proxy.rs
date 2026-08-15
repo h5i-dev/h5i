@@ -380,7 +380,14 @@ fn spawn_to_upstream(
                     if live >= MAX_IN_FLIGHT {
                         state.in_flight.fetch_sub(1, Ordering::SeqCst);
                         let mut client = client;
-                        write_status(&mut client, 503, "Service Unavailable");
+                        // `Drain::Buffered`: this is the one refusal answered on
+                        // the accept thread, so it must not wait on the peer.
+                        write_status_draining(
+                            &mut client,
+                            503,
+                            "Service Unavailable",
+                            Drain::Buffered,
+                        );
                         continue;
                     }
                     // The release is a guard, not a statement after the call.
@@ -628,6 +635,18 @@ fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 /// that a stalled connection cannot hold an in-flight slot for a session.
 const HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long the post-refusal drain may wait on the peer.
+#[derive(Clone, Copy)]
+enum Drain {
+    /// Wait up to [`DRAIN_TIMEOUT`] for the peer to finish sending. Safe only
+    /// on a worker thread, where the sole thing held is that worker's own
+    /// in-flight slot.
+    Waiting,
+    /// Take what the kernel has already buffered and return — never park on the
+    /// peer. For the one refusal written *on the accept loop*.
+    Buffered,
+}
+
 /// Answer with a bare status and close.
 ///
 /// Every refusal path in this module lands here, and each one refuses *before*
@@ -639,13 +658,40 @@ const HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 /// — the point is to be polite, not to read whatever the peer feels like
 /// sending.
 fn write_status(client: &mut TcpStream, code: u16, reason: &str) {
+    write_status_draining(client, code, reason, Drain::Waiting);
+}
+
+/// [`write_status`], with the drain policy named.
+///
+/// The over-capacity `503` is the one refusal answered on the accept thread,
+/// and a [`Drain::Waiting`] drain there is a stall the box can ask for: a peer
+/// that sends a request and then simply holds the connection open parks the
+/// accept loop for the whole window, once per excess connection. The loop is
+/// the proxy's only way to pick up the connections that would *free* the slots
+/// the 503 is about, so waiting on the box's slowest peer to answer "too many
+/// requests" is exactly backwards — and losing the accept loop is the outcome
+/// [`MAX_IN_FLIGHT`] and the accept-error retry above both exist to prevent.
+/// That path drains non-blocking instead: the request head is already in the
+/// receive buffer in the ordinary case, so the refusal still lands rather than
+/// being discarded by an RST, and a peer that is still mid-send costs the loop
+/// nothing.
+fn write_status_draining(client: &mut TcpStream, code: u16, reason: &str, drain: Drain) {
     let _ = client.write_all(
         format!("HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
             .as_bytes(),
     );
     let _ = client.flush();
     let _ = client.shutdown(std::net::Shutdown::Write);
-    let _ = client.set_read_timeout(Some(DRAIN_TIMEOUT));
+    match drain {
+        Drain::Waiting => {
+            let _ = client.set_read_timeout(Some(DRAIN_TIMEOUT));
+        }
+        // `WouldBlock` the moment the socket is empty, which the loop below
+        // treats as end-of-drain — so no read can outlast what is already here.
+        Drain::Buffered => {
+            let _ = client.set_nonblocking(true);
+        }
+    }
     let deadline = std::time::Instant::now() + DRAIN_TIMEOUT;
     let mut scratch = [0u8; 8192];
     let mut drained = 0usize;
@@ -1270,6 +1316,48 @@ mod tests {
             upstream.accept().is_err(),
             "a refused request must never open an upstream connection"
         );
+    }
+
+    /// The over-capacity `503` is written on the accept thread, so its drain
+    /// must never wait on the peer. A box that holds the [`MAX_IN_FLIGHT`] slots
+    /// and then connects without ever closing would otherwise park the accept
+    /// loop for the whole drain window on every excess connection — and that
+    /// loop is the only way the proxy picks up the connections that free those
+    /// slots, so the refusal would cost the box the authenticated egress the
+    /// bound exists to protect.
+    #[test]
+    fn the_accept_loop_refusal_does_not_wait_on_the_peer() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        // Deliberately kept open for the whole test: the peer sends a request
+        // and then goes quiet without closing, which is the case that stalls a
+        // waiting drain.
+        let mut peer = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let (mut server, _) = l.accept().unwrap();
+        peer.write_all(b"POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi")
+            .unwrap();
+        // Wait for the request to actually land before timing the drain: a
+        // buffered drain takes what is in the receive buffer, and asserting on
+        // an empty one would pass for the wrong reason and race the close below.
+        server.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        server.peek(&mut [0u8; 1]).unwrap();
+
+        let t0 = std::time::Instant::now();
+        write_status_draining(&mut server, 503, "Service Unavailable", Drain::Buffered);
+        let elapsed = t0.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(250),
+            "the accept-loop drain must not wait on a peer that stays open (took {elapsed:?})"
+        );
+
+        // And it is still a drain: what the peer already sent is consumed, so
+        // the close is clean and the status arrives instead of being discarded
+        // by an RST.
+        drop(server);
+        let mut resp = String::new();
+        peer.read_to_string(&mut resp).unwrap();
+        assert!(resp.starts_with("HTTP/1.1 503"), "the refusal must reach the peer, got: {resp}");
     }
 
     #[test]
