@@ -340,7 +340,64 @@ pub fn parse_egress_rule(raw: &str) -> Result<Option<(String, bool, Option<u16>)
              least two (e.g. '*.example.com', not '*.com'). Refusing (fail-closed)."
         )));
     }
+    // And the host has to be a host. Everything above constrains the
+    // *separators* — `,`, `@`, the colon, the wildcard prefix — and nothing
+    // constrained what was left, so any leftover string became a rule.
+    //
+    // That is where the two tiers stopped agreeing, which is the thing this
+    // function exists to prevent. A second colon that is not a port is kept as
+    // part of the host: `example.com:any` parses to the host
+    // `"example.com:any"`, which the container proxy compares against real
+    // hostnames and never matches — an inert rule — while the microvm tier
+    // emits it as the token `allow@example.com:any`, where the colon is
+    // microsandbox's *protocol* qualifier. One policy, denied on one tier and
+    // widened on the other.
+    //
+    // A hostname, an IPv4 address or an IPv4 CIDR, and nothing else. A trailing
+    // dot is refused rather than trimmed: `allows` trims it from the request
+    // host, so a rule carrying one matches nothing today, and trimming it here
+    // would turn a rule that never fired into one that does.
+    if !is_rule_host(&host) {
+        return Err(H5iError::Metadata(format!(
+            "net.egress entry '{raw}' is not a hostname, an IPv4 address or a CIDR — refusing \
+             rather than emitting a rule whose meaning depends on which tier reads it \
+             (fail-closed)."
+        )));
+    }
     Ok(Some((host, wildcard, port)))
+}
+
+/// Is `host` something a rule may name: a DNS name, an IPv4 address, or an IPv4
+/// CIDR? See [`parse_egress_rule`] for why this is checked at all.
+fn is_rule_host(host: &str) -> bool {
+    let (name, prefix) = match host.split_once('/') {
+        Some((n, p)) => (n, Some(p)),
+        None => (host, None),
+    };
+    if let Some(p) = prefix {
+        // A prefix length only means anything on an address.
+        let sane = !p.is_empty()
+            && p.len() <= 2
+            && p.bytes().all(|b| b.is_ascii_digit())
+            && p.parse::<u8>().is_ok_and(|n| n <= 32);
+        if !sane || name.parse::<std::net::Ipv4Addr>().is_err() {
+            return false;
+        }
+    }
+    !name.is_empty()
+        && name.len() <= 253
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                // RFC 1123: a label neither begins nor ends with a hyphen. Also
+                // what stops a bare `-` — which is a host to a charset check
+                // and an option to anything that reads argv.
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
 }
 
 impl AllowEntry {
@@ -2118,6 +2175,18 @@ mod tests {
             "2001:db8::1",            // mangled into host "2001:db8:" port 1
             "a,b.example.com",        // reserved separator
             "user@example.com",
+            // Not a host. The colon that is not a port stayed part of the host,
+            // so the container tier held an entry that matches nothing while the
+            // microvm tier emitted `allow@example.com:any` — where that colon is
+            // microsandbox's protocol qualifier. One policy, two meanings.
+            "example.com:any",
+            "example.com:tcp",
+            "exa mple.com",
+            "https://example.com",
+            "example.com/path",
+            "example.com.",           // trims to a rule that never fires
+            "..example.com",
+            "-",
         ] {
             assert!(
                 AllowList::parse(&[bad.to_string()]).is_err(),
@@ -2129,7 +2198,18 @@ mod tests {
             );
         }
         // And the well-formed shapes still parse on both.
-        for good in ["example.com", "example.com:443", ".example.com", "*.example.com"] {
+        for good in [
+            "example.com",
+            "example.com:443",
+            ".example.com",
+            "*.example.com",
+            "localhost",
+            "1.2.3.4",
+            "1.2.3.4:8080",
+            "10.0.0.0/8",
+            "_dnslink.example.com",
+            "my-host.example.com",
+        ] {
             assert!(AllowList::parse(&[good.to_string()]).is_ok(), "{good}");
             assert!(crate::microvm::egress_rule_tokens(&[good.to_string()]).is_ok(), "{good}");
         }
