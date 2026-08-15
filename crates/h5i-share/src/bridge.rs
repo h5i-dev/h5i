@@ -1244,7 +1244,14 @@ pub fn render_receipt(s: &Summary) -> String {
         "shared   port {} inside the box, never published on the host\n",
         s.port
     ));
-    out.push_str(&format!("endpoint {}\n", s.endpoint));
+    // Cleaned like the label and `failed_because` below it. A tunnel endpoint
+    // is charset-checked by `extract_url` and a node id is base32, so this is
+    // safe today — and "this field cannot hold one" is the reasoning that left
+    // four renderers in `env.rs` unfixed.
+    out.push_str(&format!(
+        "endpoint {}\n",
+        h5i_core::redact::sanitize_display(&s.endpoint)
+    ));
     if s.transport == Transport::Tunnel {
         // Said in the receipt, not only in the docs. Whoever reads this later
         // is exactly the person who needs to know a third party could read the
@@ -1286,11 +1293,11 @@ pub fn render_receipt(s: &Summary) -> String {
             let held = (closed - p.opened).num_seconds().max(0);
             out.push_str(&format!(
                 "  {} via {} — grant {}{}, {held}s, {}, {} in / {} out\n",
-                p.peer,
+                h5i_core::redact::sanitize_display(&p.peer),
                 p.path
                     .map(|x| x.as_str())
                     .unwrap_or("a path nothing observed"),
-                p.grant,
+                h5i_core::redact::sanitize_display(&p.grant),
                 // Sanitised, like `failed_because` twelve lines up and like
                 // every other string this repository renders that it did not
                 // author. A label is `--label` from a command line, so it is
@@ -1572,14 +1579,18 @@ pub fn render_status(s: &ShareSession, now: i64) -> String {
     } else {
         "— sharing"
     };
+    // Every variable field, for the reason the grant label three screens down
+    // already carries: `share.json` is read back off disk, and a receipt or a
+    // status line is read in a terminal by somebody who was not there.
+    use h5i_core::redact::sanitize_display as clean;
     out.push_str(&format!(
         "{} {headline} port {} over {}\n",
-        s.box_id,
+        clean(&s.box_id),
         s.port,
         s.transport.as_str()
     ));
-    out.push_str(&format!("  endpoint  {}\n", s.endpoint));
-    out.push_str(&format!("  started   {}\n", s.started_at));
+    out.push_str(&format!("  endpoint  {}\n", clean(&s.endpoint)));
+    out.push_str(&format!("  started   {}\n", clean(&s.started_at)));
     // A share that started in this machine's future means the clock moved
     // between then and now. Worth a line, because the serving process floors
     // its expiry decisions against a monotonic clock and this command cannot:
@@ -1640,7 +1651,7 @@ pub fn render_status(s: &ShareSession, now: i64) -> String {
         };
         out.push_str(&format!(
             "    {}  {:<10}{}\n",
-            g.id,
+            clean(&g.id),
             state,
             // Sanitised for the reason the receipt's copy is: this is a string
             // rendered straight into a terminal, and `share ls` renders it for
@@ -1813,6 +1824,48 @@ mod tests {
             failed_because: None,
             truncated: 0,
         }
+    }
+
+    /// The same property `h5i-core`'s renderers now carry, on this crate's two.
+    ///
+    /// A receipt is read in a terminal by somebody who was not there, and half
+    /// of what it names came from off this machine. Every field is safe *today*
+    /// — a peer id is base32, a tunnel endpoint is charset-checked by
+    /// `extract_url`, a grant id is minted here — and that is exactly the
+    /// reasoning that left four renderers in `env.rs` unfixed until a property
+    /// test asked them all at once.
+    #[test]
+    fn neither_share_renderer_puts_a_control_character_on_the_terminal() {
+        const HOSTILE: &str = "x\u{1b}[2J\u{1b}[1;1Hforged\u{202e}\u{7}";
+        let clean = |rendered: &str, what: &str| {
+            assert!(
+                !rendered.chars().any(|c| c.is_control() && c != '\n'),
+                "{what} put a control character on the terminal: {rendered:?}"
+            );
+            assert!(!rendered.contains('\u{202e}'), "{what} kept a bidi override");
+        };
+
+        let mut p = peer(HOSTILE, Path::Direct);
+        p.grant = HOSTILE.into();
+        p.label = Some(HOSTILE.into());
+        let mut s = summary(vec![p], vec![]);
+        s.endpoint = HOSTILE.into();
+        s.failed_because = Some(HOSTILE.into());
+        clean(&render_receipt(&s), "render_receipt");
+
+        let mut session = ShareSession::new(
+            HOSTILE,
+            3000,
+            Transport::Tunnel,
+            HOSTILE,
+            at("2026-08-10T10:00:00Z"),
+        );
+        session.started_at = HOSTILE.into();
+        let (mut g, _secret) = session::mint_grant(Some(HOSTILE.into()), 4_000_000_000)
+            .expect("mint a grant");
+        g.id = HOSTILE.into();
+        session.grants.push(g);
+        clean(&render_status(&session, 1_000), "render_status");
     }
 
     #[test]
