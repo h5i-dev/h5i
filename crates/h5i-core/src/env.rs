@@ -532,7 +532,45 @@ fn validate_imported_manifest(m: &EnvManifest) -> Result<(), H5iError> {
             )));
         }
     }
+    // The three object-id fields, because every surface that shows a manifest
+    // abbreviates them and an abbreviation is a slice. `create` writes a git
+    // OID and a sha256; a peer's ref can carry whatever it likes, and the
+    // caller has already committed to *skipping* a bad manifest rather than
+    // aborting the sync — so anything that is not an id is refused here rather
+    // than left to panic in a renderer three commands later.
+    for (field, got) in [
+        ("base_commit", &m.base_commit),
+        ("base_tree", &m.base_tree),
+        ("policy_digest", &m.policy_digest),
+    ] {
+        let ok = (7..=64).contains(&got.len()) && got.bytes().all(|b| b.is_ascii_hexdigit());
+        if !ok {
+            return Err(H5iError::Metadata(format!(
+                "manifest {field} is not an object id (got '{}')",
+                crate::redact::sanitize_display(got)
+            )));
+        }
+    }
     Ok(())
+}
+
+/// The first `n` characters of an identifier, for display.
+///
+/// `&id[..12]` is what every abbreviating site used, and it panics two ways on a
+/// manifest this machine did not write: when the field is shorter than the
+/// slice, and when the byte index lands inside a multi-byte character. A
+/// manifest arrives from a peer through `refs/h5i/env`, so `h5i box list` —
+/// which abbreviates every manifest it can see — aborted on one crafted line.
+/// That is the same "one poisoned line suppresses every legitimate env" that
+/// [`materialize_from_ref`] skips bad manifests specifically to avoid.
+///
+/// Counted in characters rather than bytes: for the hex ids this is used on the
+/// two agree, and for anything else it is the answer a reader expects.
+pub fn short(s: &str, n: usize) -> &str {
+    match s.char_indices().nth(n) {
+        Some((at, _)) => &s[..at],
+        None => s,
+    }
 }
 
 // ─── event log: CAS append + union merge (same pattern as objects/msg) ──────
@@ -1829,7 +1867,7 @@ pub fn create(
             event: "created".into(),
             detail: Some(format!(
                 "base={} profile={} isolation={} backend={backend}",
-                &manifest.base_commit[..12.min(manifest.base_commit.len())],
+                short(&manifest.base_commit, 12),
                 manifest.profile,
                 manifest.isolation_claim
             )),
@@ -6313,8 +6351,15 @@ pub fn drift(repo: &Repository, m: &EnvManifest) -> Drift {
 /// A human-readable status report for one environment: identity, lifecycle,
 /// the policy actually enforced, evidence, and base drift.
 pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> String {
+    // A manifest is not always one this machine wrote: `h5i pull` materialises
+    // a peer's from `refs/h5i/env`, and `validate_imported_manifest` pins the
+    // identity fields and the object ids and nothing else. Everything variable
+    // below is therefore box- or peer-supplied text on its way to a terminal,
+    // which is the surface an escape sequence acts on — `m.source` was already
+    // cleaned here for exactly that reason, and its neighbours were not.
+    use crate::redact::sanitize_display as clean;
     let mut out = String::new();
-    out.push_str(&format!("── {} ──\n", m.id));
+    out.push_str(&format!("── {} ──\n", clean(&m.id)));
     // Reconcile the durable status against the live registry: a `running`
     // manifest with no live writer is a crash leftover, and saying so beats
     // letting the reader trust it.
@@ -6325,20 +6370,20 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     } else {
         ""
     };
-    out.push_str(&format!("  status   : {}{}\n", m.status, stale_note));
+    out.push_str(&format!("  status   : {}{}\n", clean(&m.status), stale_note));
     for s in &live {
         out.push_str(&format!(
             "  live     : {} pid {} since {}{}\n",
-            s.kind,
+            clean(&s.kind),
             s.pid,
-            s.started_at,
+            clean(&s.started_at),
             s.command
                 .as_ref()
-                .map(|c| format!(" — {c}"))
+                .map(|c| format!(" — {}", clean(c)))
                 .unwrap_or_default()
         ));
     }
-    out.push_str(&format!("  agent    : {}\n", m.agent));
+    out.push_str(&format!("  agent    : {}\n", clean(&m.agent)));
     if is_detached(m) {
         // Say it plainly: this box's code came from outside, and nothing it
         // does can reach the repository you are standing in.
@@ -6349,15 +6394,15 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     }
     out.push_str(&format!(
         "  base     : {} (from {})\n",
-        &m.base_commit[..12.min(m.base_commit.len())],
-        m.parent_branch
+        short(&m.base_commit, 12),
+        clean(&m.parent_branch)
     ));
-    out.push_str(&format!("  branch   : {}\n", m.branch));
+    out.push_str(&format!("  branch   : {}\n", clean(&m.branch)));
     out.push_str(&format!(
         "  policy   : profile={} isolation={} digest={}\n",
-        m.profile,
-        m.isolation_claim,
-        &m.policy_digest[..12.min(m.policy_digest.len())]
+        clean(&m.profile),
+        clean(&m.isolation_claim),
+        short(&m.policy_digest, 12)
     ));
     // Resolved policy details when readable (digest-verified).
     if let Ok(policy) = load_policy(h5i_root, m) {
@@ -6535,7 +6580,7 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
             false,
             format!(
                 "policy.resolved.toml verifies against pinned digest {}",
-                &m.policy_digest[..12.min(m.policy_digest.len())]
+                short(&m.policy_digest, 12)
             )
         ),
         Err(e) => chk!("policy", false, false, format!("{e}")),
@@ -8461,7 +8506,7 @@ pub fn propose(
     brief.push_str(&format!("── Proposal: {} ──\n", m.id));
     brief.push_str(&format!(
         "  base    : {} (from {})\n",
-        &m.base_commit[..12.min(m.base_commit.len())],
+        short(&m.base_commit, 12),
         m.parent_branch
     ));
     brief.push_str(&format!("  branch  : {}\n", m.branch));
@@ -8469,7 +8514,7 @@ pub fn propose(
         "  policy  : profile={} isolation={} digest={}\n",
         m.profile,
         m.isolation_claim,
-        &m.policy_digest[..12.min(m.policy_digest.len())]
+        short(&m.policy_digest, 12)
     ));
     brief.push_str(&format!(
         "  evidence: {} capture(s): {}\n",
@@ -9734,7 +9779,9 @@ mod tests {
             agent: agent.into(),
             slug: slug.into(),
             base_commit: "c".repeat(40),
-            base_tree: "t".repeat(40),
+            // Hex, like the git tree id `create` actually writes. It was `t`
+            // repeated, which no object id can be.
+            base_tree: "e".repeat(40),
             parent_branch: "main".into(),
             branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
             source: "repo".into(),
@@ -9987,6 +10034,45 @@ mod tests {
                 "identity mismatch rejected"
             );
         }
+
+        // The object-id fields, because every surface that shows a manifest
+        // abbreviates them and an abbreviation is a slice.
+        for tamper in [
+            |m: &mut EnvManifest| m.base_commit = String::new(),
+            |m: &mut EnvManifest| m.base_commit = "abc".into(),
+            |m: &mut EnvManifest| m.base_commit = "a日日日日".into(),
+            |m: &mut EnvManifest| m.base_tree = "not-hex-at-all".into(),
+            |m: &mut EnvManifest| m.policy_digest = "\u{1b}[2Jzz".into(),
+        ] {
+            let mut m = canonical_manifest("claude", "fix");
+            tamper(&mut m);
+            assert!(
+                validate_imported_manifest(&m).is_err(),
+                "a field that is not an object id is rejected"
+            );
+        }
+    }
+
+    /// `&id[..12]` panics two ways on a manifest this machine did not write:
+    /// when the field is shorter than the slice, and when byte 12 lands inside a
+    /// multi-byte character. `h5i box list` abbreviates every manifest it can
+    /// see, so one crafted line in a peer's `refs/h5i/env` aborted the listing —
+    /// the "one poisoned line suppresses every legitimate env" outcome
+    /// `materialize_from_ref` skips bad manifests specifically to avoid.
+    #[test]
+    fn abbreviating_an_id_never_panics_however_odd_it_is() {
+        assert_eq!(short("0123456789abcdef", 12), "0123456789ab");
+        assert_eq!(short("abc", 12), "abc");
+        assert_eq!(short("", 12), "");
+        // Byte 12 is mid-character here: 1 + 3 + 3 + 3 + 3.
+        assert_eq!(short("a日日日日", 12), "a日日日日");
+        assert_eq!(short("a日日日日", 3), "a日日");
+        // And the renderers that call it survive a manifest carrying them.
+        let mut m = canonical_manifest("claude", "fix");
+        m.base_commit = "a日日日日".into();
+        m.policy_digest = String::new();
+        let _ = short(&m.base_commit, 12);
+        let _ = short(&m.policy_digest, 12);
     }
 
     // In-box git grants: the exact plumbing surface a boxed agent needs to use

@@ -828,7 +828,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     }
                     println!(
                         "   base     {}  (from {})",
-                        &m.base_commit[..12],
+                        h5i_core::env::short(&m.base_commit, 12),
                         m.parent_branch
                     );
                     println!("   branch   {}", m.branch);
@@ -900,7 +900,7 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             LOOKING,
                             style(&outcome.capture_id).magenta(),
                             m.id,
-                            &m.policy_digest[..12],
+                            h5i_core::env::short(&m.policy_digest, 12),
                             outcome
                                 .exit_code
                                 .map(|c| c.to_string())
@@ -1309,12 +1309,18 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                                 }
                                 None => String::new(),
                             };
+                            // A pulled manifest is peer data: `h5i pull`
+                            // materialises one from `refs/h5i/env`, and only
+                            // its identity fields and object ids are pinned.
+                            // These land in a terminal, so they are cleaned
+                            // the way every other box-supplied string is.
+                            let clean = h5i_core::redact::sanitize_display;
                             println!(
                                 "{:<28} {:<9} isolation={:<10} base={} captures={}{}{}",
-                                style(&m.id).magenta(),
-                                m.status,
-                                m.isolation_claim,
-                                &m.base_commit[..12],
+                                style(clean(&m.id)).magenta(),
+                                clean(&m.status),
+                                clean(&m.isolation_claim),
+                                h5i_core::env::short(&m.base_commit, 12),
                                 m.captures.len(),
                                 style(drift_mark).yellow(),
                                 style(&live_mark).green()
