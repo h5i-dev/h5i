@@ -139,6 +139,15 @@ The non-goals, which matter just as much:
   if it goes looking. The mediator enforces against an agent following the
   documented path, which is the threat the control lock was written for. See
   the module docs in `crates/h5i-core/src/browser_proxy.rs`.
+- **A user-writable install directory is a user-writable h5i.** The installer
+  puts the binary in `/usr/local/bin` by default and uses `sudo install -o root`
+  when it has to — but where that directory is already writable by you (a
+  Homebrew macOS is the common case), the file's owner and mode do not matter:
+  anything running as your uid can replace or unlink it. An agent in an
+  `isolation=workspace` box shares that uid by design, so it can rewrite the
+  binary that enforces every *other* box's confinement, and a later `sudo h5i`
+  would run it as root. The installer says so at install time; putting h5i
+  somewhere root-owned (`H5I_INSTALL_DIR=/opt/h5i/bin`) is what closes it.
 - **`session login` withholds reads, not frames.** The mode refuses every
   control verb that reads the page while a human types a credential, which is
   what stops the credential landing in a snapshot the agent asked for. The live

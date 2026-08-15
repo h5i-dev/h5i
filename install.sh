@@ -120,6 +120,21 @@ main() {
   # that enforces every box's confinement, and `sudo h5i` would run it as root.
   if [ -w "$INSTALL_DIR" ]; then
     install -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
+    # The ownership fix above only helps on the sudo branch. Here the
+    # *directory* is writable by this user, so the file's owner and mode are
+    # beside the point: anything running as this user can replace or unlink the
+    # binary whatever it is set to — and on a Homebrew macOS, a user-owned
+    # /usr/local/bin is the default rather than the exception.
+    #
+    # That is the same actor the comment above is about. An agent in a
+    # workspace-tier box shares this uid by design, so it can rewrite the
+    # binary that enforces every other box's confinement, and `sudo h5i` would
+    # then run it as root. h5i cannot fix this from inside an install script —
+    # where the operator keeps their binaries is theirs to decide — so it says
+    # so rather than leaving it to be discovered.
+    echo "!  ${INSTALL_DIR} is writable by this user, so anything running as you can replace" >&2
+    echo "   ${INSTALL_DIR}/${BINARY} — including an agent in an isolation=workspace box, which" >&2
+    echo "   shares your uid. For a root-owned install: H5I_INSTALL_DIR=/opt/h5i/bin sh install.sh" >&2
   else
     sudo install -o root -g 0 -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
   fi
