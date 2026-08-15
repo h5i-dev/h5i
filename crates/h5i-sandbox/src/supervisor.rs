@@ -370,11 +370,16 @@ pub struct ResolvedEgress {
     pub dests: Vec<EgressDest>,
     /// `(hostname, ip)` — only for non-IP-literal entries; pins DNS via files.
     pub host_pins: Vec<(String, IpAddr)>,
-    /// `(entry, ip)` for every answer refused by [`is_pinnable`]. Reported
-    /// rather than dropped: the entry looked reasonable and resolved to
-    /// somewhere a box has no business dialling, and that is the operator's
-    /// news, not a detail to swallow.
+    /// `(entry, ip)` for an answer that named somewhere the box must not be
+    /// pointed at: link-local, multicast, broadcast. Reported rather than
+    /// dropped, and **fatal** at [`setup_egress`]: the entry looked reasonable
+    /// and resolved to somewhere a box has no business dialling, and that is the
+    /// operator's news, not a detail to swallow.
     pub refused: Vec<(String, IpAddr)>,
+    /// `(entry, ip)` for an answer of `0.0.0.0` / `::`, which is what a
+    /// filtering resolver returns for a name it blocks. Unpinnable like the
+    /// above and reported like it, but **not** fatal: see [`is_sinkhole`].
+    pub sinkholed: Vec<(String, IpAddr)>,
 }
 
 /// May a `net.egress` entry pin to this address?
@@ -396,7 +401,9 @@ pub struct ResolvedEgress {
 /// * **`fe80::/10`**, the same thing over IPv6, and `::ffff:169.254.169.254`,
 ///   the same thing spelled as a mapped address so a v4-only test misses it.
 /// * **multicast, broadcast, unspecified** — no reachable service a repo could
-///   mean, and each of them means something else here.
+///   mean, and each of them means something else here. The unspecified address
+///   is unpinnable for the same reason as the rest but says something different
+///   about *why*, which is what [`is_sinkhole`] separates.
 ///
 /// Loopback is deliberately *not* refused. Inside the netns `127.0.0.1` is the
 /// box's own, `oif "lo" accept` already permits it, and the host's loopback is
@@ -428,10 +435,38 @@ fn is_pinnable(ip: &IpAddr) -> bool {
     }
 }
 
+/// Is this answer a resolver saying "blocked" rather than a name pointing
+/// somewhere it should not?
+///
+/// `0.0.0.0` and `::` are what a filtering resolver returns for a name on a
+/// blocklist: pi-hole, a corporate DNS policy, several consumer ISPs. That is a
+/// statement about the *operator's network*, not about the repo's policy, and
+/// it is the one unpinnable answer an ordinary well-meaning `net.egress` entry
+/// runs into. Treating it like a link-local answer refuses the whole box over a
+/// name the resolver had already made unreachable anyway — and the box would
+/// have been fine, because an entry that cannot be pinned is an entry the box
+/// cannot dial. So it is separated here: still never pinned, still reported,
+/// but it costs that one name instead of the run. See [`setup_egress`].
+///
+/// It is also the safe half of the split. `0.0.0.0` is not a destination this
+/// tier could be tricked into allowing: nothing about it reaches the host's
+/// link-local (the address the rest of [`is_pinnable`] exists for), it gets no
+/// nftables rule and no `/etc/hosts` pin, and inside the netns a connect to it
+/// lands on the box's own loopback — which `oif "lo" accept` already permits
+/// and [`is_pinnable`] deliberately allows by name.
+fn is_sinkhole(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(*ip),
+        v4 => *v4,
+    }
+    .is_unspecified()
+}
+
 /// Resolve `net.egress` entries (`host`, `host:port`, defaulting to 443) to
 /// pinned destinations + host pins. A host that fails to resolve contributes
 /// nothing (fail-closed: it simply won't be reachable), and an answer
-/// [`is_pinnable`] refuses is dropped and reported. Pure apart from DNS.
+/// [`is_pinnable`] refuses is dropped and reported — as `sinkholed` when
+/// [`is_sinkhole`] explains it, as `refused` otherwise. Pure apart from DNS.
 pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
     use std::net::ToSocketAddrs;
     let mut r = ResolvedEgress::default();
@@ -451,7 +486,11 @@ pub fn resolve_egress(egress: &[String]) -> ResolvedEgress {
         let mut first_ip: Option<IpAddr> = None;
         for a in addrs {
             if !is_pinnable(&a.ip()) {
-                r.refused.push((raw.to_string(), a.ip()));
+                if is_sinkhole(&a.ip()) {
+                    r.sinkholed.push((raw.to_string(), a.ip()));
+                } else {
+                    r.refused.push((raw.to_string(), a.ip()));
+                }
                 continue;
             }
             let dest = EgressDest { ip: a.ip(), port };
@@ -801,16 +840,34 @@ fn setup_egress(
             if let Some((entry, ip)) = resolved.refused.first() {
                 return Err(H5iError::Metadata(format!(
                     "net.egress entry {entry:?} resolves to {ip}, which this tier refuses to \
-                     pin: it is a link-local, multicast, broadcast or unspecified address, \
-                     not a host on the network. 169.254.169.254 is the cloud instance metadata \
-                     service; a name answering there would hand the box the instance's \
-                     credentials, and nothing in the policy text would show it (fail-closed)."
+                     pin: it is a link-local, multicast or broadcast address, not a host on \
+                     the network. 169.254.169.254 is the cloud instance metadata service; a \
+                     name answering there would hand the box the instance's credentials, and \
+                     nothing in the policy text would show it (fail-closed)."
                 )));
             }
+            // Reported, not fatal. A sinkholed answer is the operator's resolver
+            // saying it blocks the name, so refusing the run would take the
+            // whole box down over one entry the box could not have reached
+            // either way — and would blame the policy for the resolver.
+            for (entry, ip) in &resolved.sinkholed {
+                eprintln!(
+                    "h5i: net.egress entry {entry:?} resolves to {ip} — a resolver returns that \
+                     for a name it blocks, so this entry is unreachable and was not pinned. The \
+                     rest of net.egress is unaffected."
+                );
+            }
             if resolved.dests.is_empty() {
-                return Err(H5iError::Metadata(
-                    "net.egress resolved to no reachable address — refusing (fail-closed)".into(),
-                ));
+                // Which of the two it is decides where to look, so say so.
+                let why = if resolved.sinkholed.is_empty() {
+                    ""
+                } else {
+                    " (every entry was sinkholed by the resolver — the names are blocked on \
+                     this network, so check the resolver rather than the policy)"
+                };
+                return Err(H5iError::Metadata(format!(
+                    "net.egress resolved to no reachable address — refusing (fail-closed){why}"
+                )));
             }
             (resolved.dests, resolved.host_pins)
         }
@@ -1462,6 +1519,37 @@ mod tests {
         for ip in fine {
             assert!(is_pinnable(ip), "{ip} must stay pinnable");
         }
+    }
+
+    /// Unpinnable is not one thing. `0.0.0.0` is what a filtering resolver
+    /// (pi-hole, a corporate policy, a consumer ISP) answers for a name it
+    /// blocks, so it turns up on ordinary well-meaning entries — and refusing
+    /// the run over it would take the whole box down on the operator's DNS,
+    /// over a name that was already unreachable. `169.254.169.254` is the
+    /// opposite: nothing legitimate answers there, and it stays fatal.
+    #[test]
+    fn a_sinkholed_answer_and_a_metadata_answer_are_not_the_same_refusal() {
+        for ip in ["0.0.0.0", "::", "::ffff:0.0.0.0"] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(!is_pinnable(&ip), "{ip} must still never be pinned");
+            assert!(is_sinkhole(&ip), "{ip} is a resolver saying 'blocked'");
+        }
+        for ip in ["169.254.169.254", "::ffff:169.254.169.254", "fe80::1", "224.0.0.1"] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(!is_sinkhole(&ip), "{ip} must stay a hard refusal, not a sinkhole");
+        }
+
+        // End to end through `resolve_egress`, which sorts them into the two
+        // lists `setup_egress` treats differently. IP literals go through the
+        // same path as a resolved name and need no DNS to test.
+        let r = resolve_egress(&["0.0.0.0".into(), "169.254.169.254".into(), "127.0.0.1".into()]);
+        assert_eq!(r.sinkholed.len(), 1, "{:?}", r.sinkholed);
+        assert_eq!(r.sinkholed[0].0, "0.0.0.0");
+        assert_eq!(r.refused.len(), 1, "{:?}", r.refused);
+        assert_eq!(r.refused[0].0, "169.254.169.254");
+        // Neither is pinned, either way, and the good entry is untouched.
+        assert_eq!(r.dests, vec![EgressDest { ip: "127.0.0.1".parse().unwrap(), port: 443 }]);
+        assert!(r.host_pins.is_empty(), "IP literals need no /etc/hosts pin");
     }
 
     #[test]
