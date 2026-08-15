@@ -174,6 +174,12 @@ const MAX_REQUEST_BODY: usize = 32 * 1024 * 1024;
 /// loop of connections from spawning unbounded host threads.
 const MAX_IN_FLIGHT: usize = 64;
 
+/// How many *consecutive* failed `accept()` calls end the accept loop. Sized so
+/// transient per-connection and fd-pressure errors (which retry at 25 ms) never
+/// reach it, while a permanently broken listener still stops the thread inside
+/// a few seconds instead of spinning forever.
+const MAX_CONSECUTIVE_ACCEPT_ERRORS: usize = 256;
+
 /// Holds one of the [`MAX_IN_FLIGHT`] concurrent-forward slots and releases it
 /// on drop — including when the worker unwinds.
 ///
@@ -341,9 +347,22 @@ fn spawn_to_upstream(
     });
 
     let join = std::thread::spawn(move || {
+        // Consecutive non-`WouldBlock` accept failures. `accept` reports
+        // per-connection and per-host conditions that say nothing about the
+        // listener: `ECONNABORTED` when a client RSTs between SYN and accept,
+        // `EMFILE`/`ENFILE` under fd pressure. Treating any of them as fatal
+        // killed the accept loop for good — and with it the box's only
+        // authenticated egress for the rest of its life, since all it holds is
+        // the dummy. Both are triggerable by any local process (connect, then
+        // reset), which is precisely the actor the token gate exists for, so
+        // "the listener dies" cannot be their reward. Retry instead, and keep a
+        // consecutive count so a genuinely dead listener (a closed fd spinning
+        // `EBADF`) still terminates the thread rather than burning a core.
+        let mut consecutive_errors = 0usize;
         while !stop_thread.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((client, _)) => {
+                    consecutive_errors = 0;
                     if stop_thread.load(Ordering::SeqCst) {
                         break;
                     }
@@ -378,9 +397,16 @@ fn spawn_to_upstream(
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    consecutive_errors = 0;
                     std::thread::sleep(Duration::from_millis(25));
                 }
-                Err(_) => break,
+                Err(_) => {
+                    consecutive_errors += 1;
+                    if consecutive_errors > MAX_CONSECUTIVE_ACCEPT_ERRORS {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
             }
         }
     });
@@ -434,6 +460,11 @@ struct ParsedReq {
     path: String,
     headers: Vec<(String, String)>,
     content_length: usize,
+    /// The client framed its body with `Transfer-Encoding` rather than
+    /// `Content-Length`. This proxy reads a `Content-Length`-framed body only,
+    /// so such a request must be refused rather than forwarded — see
+    /// [`handle_client`].
+    chunked: bool,
 }
 
 /// Header names never forwarded upstream: hop-by-hop framing, the box's own
@@ -499,6 +530,7 @@ fn parse_request_head(head: &[u8]) -> Option<ParsedReq> {
     }
     let mut headers = Vec::new();
     let mut content_length = 0usize;
+    let mut chunked = false;
     for line in lines {
         if line.is_empty() {
             break;
@@ -509,11 +541,18 @@ fn parse_request_head(head: &[u8]) -> Option<ParsedReq> {
         if name.eq_ignore_ascii_case("content-length") {
             content_length = value.parse().ok()?;
         }
+        // Any `Transfer-Encoding` other than the no-op `identity` means the body
+        // is not `Content-Length`-framed. Recorded rather than ignored: see
+        // [`ParsedReq::chunked`].
+        if name.eq_ignore_ascii_case("transfer-encoding") && !value.eq_ignore_ascii_case("identity")
+        {
+            chunked = true;
+        }
         if !is_stripped_request_header(name) {
             headers.push((name.to_string(), value.to_string()));
         }
     }
-    Some(ParsedReq { method, path, headers, content_length })
+    Some(ParsedReq { method, path, headers, content_length, chunked })
 }
 
 /// True iff the request presents the expected per-run dummy token (as either
@@ -583,9 +622,38 @@ fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 /// that a stalled connection cannot hold an in-flight slot for a session.
 const HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Answer with a bare status and close.
+///
+/// Every refusal path in this module lands here, and each one refuses *before*
+/// the request body has been read — so the socket still holds bytes the peer
+/// sent. Closing on unread data makes the kernel send an RST, which discards
+/// the response we just wrote: the client sees `ECONNRESET`, not the `413`/`411`
+/// that says what it did wrong. A short bounded drain lets the status actually
+/// arrive. Bounded in both bytes and time because the data is attacker-supplied
+/// — the point is to be polite, not to read whatever the peer feels like
+/// sending.
 fn write_status(client: &mut TcpStream, code: u16, reason: &str) {
-    let _ = client.write_all(format!("HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").as_bytes());
+    let _ = client.write_all(
+        format!("HTTP/1.1 {code} {reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+            .as_bytes(),
+    );
+    let _ = client.flush();
+    let _ = client.shutdown(std::net::Shutdown::Write);
+    let _ = client.set_read_timeout(Some(DRAIN_TIMEOUT));
+    let deadline = std::time::Instant::now() + DRAIN_TIMEOUT;
+    let mut scratch = [0u8; 8192];
+    let mut drained = 0usize;
+    while drained < MAX_DRAIN_BYTES && std::time::Instant::now() < deadline {
+        match client.read(&mut scratch) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => drained += n,
+        }
+    }
 }
+
+/// Wall-clock and byte bounds on the post-refusal drain in [`write_status`].
+const DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+const MAX_DRAIN_BYTES: usize = 256 * 1024;
 
 /// Response headers dropped when relaying upstream→box: we re-frame the body as
 /// connection-close, so any upstream length/encoding framing must not leak.
@@ -641,6 +709,17 @@ fn handle_client(mut client: TcpStream, state: &ProxyState) -> std::io::Result<(
     // Never allocate on an attacker-supplied length.
     if req.content_length > MAX_REQUEST_BODY {
         write_status(&mut client, 413, "Payload Too Large");
+        return Ok(());
+    }
+
+    // Only `Content-Length` framing is read below, and `transfer-encoding` is
+    // stripped on the way out. A chunked request therefore had its body silently
+    // dropped and was re-originated upstream — with the real credential attached
+    // — as a bodyless request. Refuse instead: a credential-injecting proxy must
+    // never send a request that is not the one the client asked for, and the
+    // caller gets a status it can act on rather than an upstream 400.
+    if req.chunked {
+        write_status(&mut client, 411, "Length Required");
         return Ok(());
     }
 
@@ -820,7 +899,7 @@ pub fn engage_at(
         H5iError::Metadata(format!(
             "credential proxy failed to start ({e}) — refusing to run the box with its own \
              credentials and the full egress allowlist instead (fail-closed). Set \
-             H5I_NO_AUTH_PROXY=1 to opt out deliberately."
+             H5I_CREDENTIAL_PROXY=off to opt out deliberately."
         ))
     })?;
     Ok(Some(Engagement {
@@ -1148,6 +1227,74 @@ mod tests {
             "the whole body must reach upstream"
         );
         served.join().unwrap().unwrap();
+    }
+
+    /// A chunked request must be refused, not silently re-originated bodyless
+    /// with the real credential attached. Only `Content-Length` framing is read,
+    /// and `transfer-encoding` is stripped on the way out, so forwarding one
+    /// sent upstream a request the client never made — authenticated with the
+    /// genuine token.
+    #[test]
+    fn a_chunked_request_is_refused_and_never_reaches_upstream() {
+        // An upstream that fails the test if it is ever contacted.
+        let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+        let up_port = upstream.local_addr().unwrap().port();
+        upstream.set_nonblocking(true).unwrap();
+
+        let handle = spawn_to_upstream(
+            format!("http://127.0.0.1:{up_port}"),
+            "127.0.0.1".into(),
+            Credential { header: CredHeader::Bearer, value: "REAL-TOKEN".into() },
+            "the-dummy".into(),
+            false,
+        )
+        .unwrap();
+
+        let mut c = TcpStream::connect(("127.0.0.1", handle.port)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(
+            b"POST /v1/messages HTTP/1.1\r\nHost: 10.0.2.2\r\nAuthorization: Bearer the-dummy\r\n\
+              Transfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+        )
+        .unwrap();
+        let mut resp = String::new();
+        c.read_to_string(&mut resp).unwrap();
+        assert!(resp.starts_with("HTTP/1.1 411"), "chunked must be refused, got: {resp}");
+        assert!(
+            upstream.accept().is_err(),
+            "a refused request must never open an upstream connection"
+        );
+    }
+
+    #[test]
+    fn parse_head_flags_chunked_framing() {
+        let head = b"POST /v1 HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+        assert!(parse_request_head(head).unwrap().chunked);
+        // `identity` is the no-op encoding: Content-Length framing still applies.
+        let head = b"POST /v1 HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: identity\r\nContent-Length: 2\r\n\r\n";
+        let req = parse_request_head(head).unwrap();
+        assert!(!req.chunked);
+        assert_eq!(req.content_length, 2);
+        let head = b"POST /v1 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n";
+        assert!(!parse_request_head(head).unwrap().chunked);
+    }
+
+    /// The refusal message must name the variable [`opted_out`] actually reads.
+    /// It named `H5I_NO_AUTH_PROXY`, which nothing in the tree consults — so the
+    /// one escape hatch offered by a fail-closed error did nothing.
+    #[test]
+    fn the_opt_out_named_in_the_refusal_is_the_one_that_works() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::set_var("H5I_CREDENTIAL_PROXY", "off");
+        }
+        assert!(opted_out(), "the documented spelling must opt out");
+        // Safety: single-threaded test; no other thread reads the environment.
+        unsafe {
+            std::env::remove_var("H5I_CREDENTIAL_PROXY");
+        }
+        assert!(!opted_out());
     }
 
     #[test]
