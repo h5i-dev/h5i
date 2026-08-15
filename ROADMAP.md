@@ -2768,7 +2768,7 @@ slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
 small static binary staged into a mounted directory is the first thing that
 work has to decide.
 
-### M16. The Lean model beside the Rust: proposed, 2026-08-15
+### M16. The Lean model beside the Rust: step 1 built 2026-08-15, rest proposed
 
 A Lean 4 model of the policy layer, developed beside the Rust and never linked
 into it, connected by differential testing over a machine-readable dump of the
@@ -2776,11 +2776,22 @@ effective configuration. The design, the theorems, and the order live in
 sections V1 to V6. M16 does not depend on M15 or on any browser work; its only
 touch on the existing code is the dump (V2).
 
+**Step 1 (the dump) is built and driven, 2026-08-15.** `compute_effective`
+(`crates/h5i-sandbox/src/effective.rs`) is the single computation
+`build_confined_command` now consumes for its Landlock path sets and bind
+lists, so the dump and the enforcement cannot drift; every serde-skipped
+`ResolvedPolicy` field is in the dump or excluded by name with a reason in the
+module docs. `env create` writes the baseline and pins its digest in the env
+manifest; each kernel-tier run and shell rewrites the file at the apply seam
+and pins that run's digest in its capture record. Driven end to end on the
+process tier by `effective_config_written_at_create_and_pinned_per_run`
+(tests/env_integration.rs), on a host where the tier actually enforces.
+
 Exit criteria for the first cut:
 
 - `policy.effective.json` is written at box creation from the same values the
   mechanism appliers receive, and its digest is recorded in the capture
-  manifest (V2).
+  manifest (V2). **Done, as above.**
 - A `lean/` package builds in CI and its executable model agrees with the Rust
   resolver on the `examples/` corpus plus 10k generated profiles, with every
   mismatch either fixed or checked in as a named regression (V4).
@@ -5605,7 +5616,8 @@ The trusted base, in the same spirit as section 9:
 1. **The dump.** `policy.effective.json` at the apply seam, schema v1,
    digest into the capture manifest. Small, pure Rust, useful on its own for
    debugging. Exit: every serde-skipped field of `ResolvedPolicy` is either
-   in the dump or named in the schema as excluded, with a reason.
+   in the dump or named in the schema as excluded, with a reason. **Built and
+   driven, 2026-08-15 — see M16 for what shipped and where.**
 2. **The model, executable.** `lean/` package, L1 for the fs and net
    subset, the JSON interface, DRT over `examples/` plus 10k generated
    profiles. Exit: the M16 criterion, zero unexplained diffs.

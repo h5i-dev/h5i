@@ -2027,6 +2027,13 @@ pub struct ResolvedPolicy {
     /// `None` → ephemeral, the previous behaviour.
     #[serde(skip)]
     pub egress_proxy_port: Option<u16>,
+    /// Runtime-only: where the kernel tiers write `policy.effective.json` —
+    /// the enforced state, serialized at the apply seam inside
+    /// `build_confined_command` (ROADMAP.md §V2). Set by the host's `env` run
+    /// paths; never serialized. Its digest is recorded per run in the capture
+    /// record, not here.
+    #[serde(skip)]
+    pub effective_out: Option<PathBuf>,
 }
 
 impl ResolvedPolicy {
@@ -2047,6 +2054,7 @@ impl ResolvedPolicy {
             user_egress_allow: Vec::new(),
             loopback_ports: Vec::new(),
             egress_proxy_port: None,
+            effective_out: None,
         }
     }
 
