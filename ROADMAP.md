@@ -2768,7 +2768,31 @@ slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
 small static binary staged into a mounted directory is the first thing that
 work has to decide.
 
-### M16. The Lean model beside the Rust: steps 1 to 3 built 2026-08-15
+### M16. The Lean model beside the Rust: steps 1 to 5 built 2026-08-15
+
+**Steps 4 and 5 built, 2026-08-15.** Step 4 (`lean/H5iSpec/Refinement.lean`)
+is L2: `compileLandlock` mirrors what `build_confined_command` builds from
+the dump's grant lists, and the two directions are separate theorems —
+`compile_sound` (the compiled ruleset never admits an access the resolved
+policy denies, for every input and every world) and
+`compile_complete_of_world_full` (it admits everything the policy grants,
+exactly when no grant path was missing from the host; when one was, the run
+is narrower on purpose and `skipped_missing` already says so). Step 5
+(`lean/H5iSpec/Noninterference.lean`) is L3: a two-box shared-filesystem
+semantics, the `noninterference` unwinding theorem (a box's writes are
+invisible to a box it shares no writable-readable path with, over all trace
+pairs), and the side condition made decidable — `interferesCheck` scans rule
+pairs for overlapping scopes (prefix comparability), `interferesCheck_sound`
+ties a clean check to the theorem, and the instances are concrete: two
+agent-profile boxes fail the check through host-shared `/tmp` and really do
+interfere; two workspace-only boxes pass it and provably cannot. The probes
+close the loop model-to-kernel: `h5i-spec --predict` derives from a real
+box's `policy.effective.json` what the kernel must allow and deny, and
+`tests/effective_probes.rs` runs those accesses in a real process-tier box —
+seven of seven agree on this host. The probe harness's own first failure was
+educational and is now a comment: a test repo under `/tmp` vanishes behind
+the box's private-tmp bind, which is exactly the bind-semantics gap the
+prediction layer names.
 
 A Lean 4 model of the policy layer, developed beside the Rust and never linked
 into it, connected by differential testing over a machine-readable dump of the
@@ -5657,8 +5681,15 @@ The trusted base, in the same spirit as section 9:
    example, not prose. Exit: theorems check in CI. **Built, 2026-08-15 —
    see M16.**
 4. **Refinement.** L2 for the kernel tier over the v1 action alphabet.
+   **Built, 2026-08-15 — see M16**: soundness unconditional, completeness
+   conditional on a full world, both machine-checked.
 5. **Noninterference and probes.** L3 with unwinding conditions; probe
-   generation running against real boxes on Linux in CI.
+   generation running against real boxes on Linux in CI. **Built,
+   2026-08-15 — see M16**: the unwinding theorem, the decidable
+   `interferesCheck` with soundness, the agent-`/tmp` and disjoint-box
+   instances, and `--predict`-driven probes green on a real process-tier
+   box. The probes run in the Lean CI lane and skip loudly on runners that
+   cannot host the tier.
 
 Steps 1 and 2 are weeks, not months, and step 3 is the first thing worth
 writing up. Everything after that earns its own status line here when it

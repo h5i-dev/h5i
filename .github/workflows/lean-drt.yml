@@ -54,3 +54,13 @@ jobs:
           H5I_SKIP_WEB_BUILD: "1"
           H5I_DRT_CASES: "5000"
         run: cargo test --test effective_drt -- --nocapture
+
+      # Model-versus-kernel: the Lean model predicts what a real box must
+      # allow and deny, and the probes hold the kernel to it. Skips loudly
+      # on runners that cannot run the process tier (hardened runners deny
+      # unprivileged userns); the Lean binary itself is still required.
+      - name: Run the conformance probes
+        env:
+          H5I_DRT_REQUIRE: "1"
+          H5I_SKIP_WEB_BUILD: "1"
+        run: cargo test --test effective_probes -- --nocapture

@@ -30,8 +30,21 @@ by differential testing.
   alone does not — the fd-smuggle trace is the machine-checked witness),
   plus `shared_tmp_survives`, the agent profile's `/tmp` footgun as a
   `decide`-closed fact.
-- `Main.lean`: the DRT executable — `DrtInput` array on stdin, the model's
-  `EffectiveConfig` array on stdout.
+- `H5iSpec/Refinement.lean`: L2 — `compileLandlock` mirrors what
+  `build_confined_command` builds from the dump's grant lists, and two
+  theorems bound it: `compile_sound` (the sandbox never exceeds the resolved
+  policy, for every world) and `compile_complete_of_world_full` (and admits
+  everything the policy grants, exactly when no grant path was missing).
+- `H5iSpec/Noninterference.lean`: L3 — the two-box shared-filesystem
+  semantics, the `noninterference` unwinding theorem (a box's activity is
+  invisible to a box it shares no writable-readable path with), the
+  decidable `interferesCheck` with its soundness proof, and the instances:
+  two agent-profile boxes really interfere through `/tmp`, two
+  workspace-only boxes provably do not.
+- `Main.lean`: the executable, two modes — DRT (`DrtInput` array in,
+  `EffectiveConfig` array out) and `--predict` (a dump plus probes in,
+  per-probe allow/deny out; `tests/effective_probes.rs` holds a real box to
+  those verdicts).
 
 ## Build and test
 
