@@ -391,7 +391,13 @@ fn spawn_to_upstream(
                     // MAX_IN_FLIGHT of them the proxy answers 503 forever and
                     // the box loses authenticated egress for good.
                     let slot = InFlightSlot(state.clone());
-                    std::thread::spawn(move || {
+                    // `Builder::spawn`, not `thread::spawn`: the latter
+                    // *panics* when the OS refuses a thread, and that panic is
+                    // in the accept loop — so the one condition `MAX_IN_FLIGHT`
+                    // exists to bound would end the loop anyway, and the box
+                    // would lose authenticated egress for good. The slot goes
+                    // with the closure that was never run.
+                    let _ = std::thread::Builder::new().spawn(move || {
                         let slot = slot;
                         let _ = handle_client(client, &slot.0);
                     });

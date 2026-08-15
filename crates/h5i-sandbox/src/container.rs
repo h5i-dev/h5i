@@ -783,11 +783,24 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
                         );
                         continue;
                     }
-                    std::thread::spawn(move || {
+                    // `Builder::spawn`, not `thread::spawn`: the latter
+                    // *panics* when the OS refuses a thread, and that panic is
+                    // in the accept loop — so the one condition the cap above
+                    // exists to bound would end the loop anyway, which is the
+                    // box losing the network. Refused with the same 503 as a
+                    // full slot table, and the guard hands the slot back.
+                    let spawned = std::thread::Builder::new().spawn(move || {
                         // Moved in, so the release happens on unwind too.
                         let _slot = slot;
                         let _ = handle_proxy_client(client, &allow, &tally, HEAD_READ_TIMEOUT);
                     });
+                    if let Err(_e) = spawned {
+                        // `client` moved into the closure, which was not run;
+                        // it is dropped with the closure, so the peer sees a
+                        // close rather than a status. Nothing else is leaked:
+                        // the slot went with it.
+                        continue;
+                    }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     consecutive_errors = 0;
