@@ -6875,8 +6875,9 @@ pub fn secrets_status(h5i_root: &Path, policy: &ResolvedPolicy) -> Vec<SecretSta
 
 /// Plain-text rendering of [`secrets_status`].
 pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
+    use crate::redact::sanitize_display as clean;
     let mut out = String::new();
-    out.push_str(&format!("── secrets for {env_id} ──\n"));
+    out.push_str(&format!("── secrets for {} ──\n", clean(env_id)));
     if rows.is_empty() {
         out.push_str("  (no secret grants declared in this env's profile)\n");
         return out;
@@ -6892,9 +6893,18 @@ pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
             .as_deref()
             .map(|f| format!("  {f}"))
             .unwrap_or_default();
+        // `source` is repo-supplied and only its *prefix* is validated
+        // (`env:`/`file:`/`command:`), so everything after it is a free string
+        // from `.h5i/env.toml` on its way to a terminal. So are `ttl` and the
+        // status text, which quotes an error.
         out.push_str(&format!(
             "  {:<20} source={} inject={}{}  [{}]{}\n",
-            s.name, s.source, s.inject, ttl, s.status, fp
+            clean(&s.name),
+            clean(&s.source),
+            clean(&s.inject),
+            clean(&ttl),
+            clean(&s.status),
+            clean(&fp)
         ));
     }
     out
@@ -7775,7 +7785,10 @@ fn read_tail(path: &Path, cap: u64) -> String {
 /// Render the fleet of services for `env service status`.
 pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
     let mut out = String::new();
-    out.push_str(&format!("── services for {env_id} ──\n"));
+    out.push_str(&format!(
+        "── services for {} ──\n",
+        crate::redact::sanitize_display(env_id)
+    ));
     if rows.is_empty() {
         out.push_str("  (no services running; declare [service.<name>] in .h5i/env.toml)\n");
         return out;
@@ -7812,7 +7825,10 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
 /// shown as conditional, never a guarantee.
 pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
     let mut out = String::new();
-    out.push_str(&format!("── injected ports for {env_id} ──\n"));
+    out.push_str(&format!(
+        "── injected ports for {} ──\n",
+        crate::redact::sanitize_display(env_id)
+    ));
     // A guest service has no *injected* host port — its box owns a whole
     // network stack, so it binds the port it declared and nothing was allocated
     // to keep it from colliding. Filtering on `dynamic_port` alone therefore
@@ -7843,7 +7859,7 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
         };
         out.push_str(&format!(
             "  {:<16} {:<10} {:<10} {}\n",
-            s.record.name,
+            crate::redact::sanitize_display(&s.record.name),
             s.record
                 .port
                 .map(|p| p.to_string())
@@ -7858,8 +7874,13 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
 /// Plain-text rendering of a [`DoctorReport`] (the CLI adds color).
 pub fn render_doctor(r: &DoctorReport) -> String {
     let mut out = String::new();
-    out.push_str(&format!("── env doctor: {} ──\n", r.env_id));
-    out.push_str(&format!("  isolation claim : {}\n", r.isolation_claim));
+    // `isolation_claim` comes off the manifest, and a manifest can arrive from
+    // a peer through `refs/h5i/env` — `validate_imported_manifest` pins the
+    // identity fields and the object ids, not this one. `detail` quotes paths
+    // and errors.
+    use crate::redact::sanitize_display as clean;
+    out.push_str(&format!("── env doctor: {} ──\n", clean(&r.env_id)));
+    out.push_str(&format!("  isolation claim : {}\n", clean(&r.isolation_claim)));
     for c in &r.checks {
         let mark = if c.ok {
             "✓"
@@ -7868,7 +7889,11 @@ pub fn render_doctor(r: &DoctorReport) -> String {
         } else {
             "✗"
         };
-        out.push_str(&format!("  {mark} {:<15} {}\n", c.name, c.detail));
+        out.push_str(&format!(
+            "  {mark} {:<15} {}\n",
+            clean(&c.name),
+            clean(&c.detail)
+        ));
     }
     let verdict = if r.healthy {
         "healthy"
@@ -8135,7 +8160,10 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
             "  ⚠ environments do NOT share a base commit — diffs are not directly comparable\n",
         );
     } else if let Some(b) = distinct_bases.iter().next() {
-        out.push_str(&format!("  common base: {}\n", short(b, 12)));
+        out.push_str(&format!(
+            "  common base: {}\n",
+            crate::redact::sanitize_display(short(b, 12))
+        ));
     }
     out.push_str(&format!(
         "  {:<26} {:<9} {:>7} {:>7} {:>7}  {}\n",
@@ -10302,6 +10330,89 @@ mod tests {
         assert_eq!(out, b"a [redacted secret] b [redacted secret]");
         assert_eq!(scrub_exact(b"abc", &["".to_string()]), b"abc");
         assert_eq!(scrub_exact(b"abc", &[]), b"abc");
+    }
+
+    /// One property over every renderer at once: nothing a box, a repo or a
+    /// peer supplies reaches a terminal carrying a control character.
+    ///
+    /// Written as a sweep rather than one test per function because that is how
+    /// this kept going wrong — `receipt::render`, then `status_report`, then
+    /// `render_compare`, then the service lane, each found separately after the
+    /// last was fixed. A renderer added later fails this without anybody having
+    /// to remember the rule.
+    #[test]
+    fn no_renderer_puts_a_control_character_on_the_terminal() {
+        // In every string field, including the ones that "cannot" hold it.
+        const HOSTILE: &str = "x\u{1b}[2J\u{1b}[1;1Hforged\u{202e}\u{7}";
+        let clean = |rendered: &str, what: &str| {
+            assert!(
+                !rendered.chars().any(|c| c.is_control() && c != '\n'),
+                "{what} put a control character on the terminal: {rendered:?}"
+            );
+            assert!(!rendered.contains('\u{202e}'), "{what} kept a bidi override");
+        };
+
+        clean(
+            &render_secrets(
+                HOSTILE,
+                &[SecretStatus {
+                    name: HOSTILE.into(),
+                    source: HOSTILE.into(),
+                    inject: HOSTILE.into(),
+                    ttl: Some(HOSTILE.into()),
+                    status: HOSTILE.into(),
+                    fingerprint: Some(HOSTILE.into()),
+                }],
+            ),
+            "render_secrets",
+        );
+
+        let svc = ServiceStatus {
+            record: ServiceRecord {
+                name: HOSTILE.into(),
+                pid: 1,
+                command: HOSTILE.into(),
+                started_at: HOSTILE.into(),
+                port: Some(3000),
+                dynamic_port: Some(3001),
+                log: HOSTILE.into(),
+                runtime: ServiceRuntime::Host,
+            },
+            alive: true,
+        };
+        clean(&render_services(HOSTILE, std::slice::from_ref(&svc)), "render_services");
+        clean(&render_ports(HOSTILE, std::slice::from_ref(&svc)), "render_ports");
+
+        clean(
+            &render_doctor(&DoctorReport {
+                env_id: HOSTILE.into(),
+                isolation_claim: HOSTILE.into(),
+                checks: vec![DoctorCheck {
+                    name: HOSTILE.into(),
+                    ok: false,
+                    warn: false,
+                    detail: HOSTILE.into(),
+                }],
+                healthy: false,
+            }),
+            "render_doctor",
+        );
+
+        clean(
+            &render_compare(&[CompareRow {
+                id: HOSTILE.into(),
+                status: HOSTILE.into(),
+                base_commit: HOSTILE.into(),
+                files_changed: 1,
+                insertions: 2,
+                deletions: 3,
+                last_exit: Some(0),
+                last_cmd: Some(HOSTILE.into()),
+                last_source: Some(HOSTILE.into()),
+                last_egress_denied: Some(1),
+            }]),
+            "render_compare",
+        );
     }
 
     /// A service is `sh -c '<command>'` running inside the box and appending to
