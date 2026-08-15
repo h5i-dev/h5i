@@ -3126,15 +3126,32 @@ pub(crate) fn build_confined_command(
             }
 
             // 4. Landlock filesystem allowlist. Fail closed if not fully
-            //    enforced (HardRequirement should already guarantee this).
+            //    enforced — which is what the comment always said and what the
+            //    check did not do: it refused `NotEnforced` and let
+            //    `PartiallyEnforced` through. That middle state is the one worth
+            //    refusing. It means the box is confined by some of the access
+            //    rights that were asked for and not the others, so the boundary
+            //    is a shape nobody wrote down and `h5i doctor` still reports the
+            //    tier as enforced.
+            //
+            //    `CompatLevel::HardRequirement` on the ruleset is supposed to
+            //    make it unreachable by turning an unsupported right into an
+            //    error while the ruleset is still being built, and on a real
+            //    kernel it does (`landlock_enforces_fully_or_not_at_all`
+            //    measures it: ABI 9, `FullyEnforced`). "Supposed to" is the
+            //    reason to check rather than the reason not to.
             let rs = ruleset_slot
                 .take()
                 .ok_or_else(|| Error::other("landlock ruleset consumed twice"))?;
             let status = rs
                 .restrict_self()
                 .map_err(|e| Error::other(format!("landlock restrict_self: {e}")))?;
-            if status.ruleset == landlock::RulesetStatus::NotEnforced {
-                return Err(Error::other("landlock not enforced (fail-closed)"));
+            if status.ruleset != landlock::RulesetStatus::FullyEnforced {
+                return Err(Error::other(
+                    "landlock is not fully enforced (fail-closed): the kernel accepted only \
+                     part of the filesystem allowlist, so the confinement would not be the \
+                     one this tier claims",
+                ));
             }
 
             // 5. Seccomp deny-list (everything after this call is subject to
@@ -3268,6 +3285,16 @@ fn run_confined(
 
 /// Map a probed Landlock ABI version to the highest version this crate knows.
 #[cfg(target_os = "linux")]
+/// The `landlock` crate's `ABI` for a probed kernel ABI level.
+///
+/// The `_` arm caps at `V5`, which is the newest this crate knows. That is the
+/// conservative direction for *this* ruleset and worth naming as a residual:
+/// a kernel newer than the crate is asked for V5's access rights, so anything
+/// Landlock learned after V5 is simply not handled. It costs nothing today —
+/// `AccessFs` has not grown since ABI 5 (`IOCTL_DEV`); ABI 6 and later added
+/// scopes and TCP network rights, neither of which this ruleset uses — but the
+/// arm silently absorbs a future `AccessFs` bit, so a `landlock` upgrade is a
+/// reason to come back here rather than a routine bump.
 fn landlock_abi_for(probed: i32) -> landlock::ABI {
     match probed {
         1 => landlock::ABI::V1,
@@ -3899,6 +3926,71 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     /// needed), so dropping e.g. `SYS_mount` or `SYS_ptrace` fails the build —
     /// the weak old test only checked the program compiled and that libc still
     /// exported the constants, which would NOT catch a deletion from the list.
+    /// Live, capability-gated: the ruleset `resolve_process`/`resolve_supervised`
+    /// build must come back **fully** enforced on a kernel that has Landlock.
+    ///
+    /// `restrict_self` reports three states, and the one in the middle is the
+    /// dangerous one: `PartiallyEnforced` means the box is confined by some of
+    /// the access rights that were asked for and not the others, which is a
+    /// sandbox whose shape nobody wrote down. `CompatLevel::HardRequirement` is
+    /// set precisely so that cannot happen — it turns an unsupported right into
+    /// an error while the ruleset is still being built — and this is that claim
+    /// checked against a real kernel rather than against the crate's docs.
+    ///
+    /// Forked, because `restrict_self` cannot be undone: the confinement would
+    /// otherwise outlive the test and follow every test after it in the process.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_enforces_fully_or_not_at_all() {
+        let Some(probed) = probe_landlock_abi() else {
+            return; // no Landlock on this kernel; `resolve` already refuses the tier
+        };
+        let abi = landlock_abi_for(probed);
+
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0, "fork failed");
+        if child == 0 {
+            use landlock::{
+                path_beneath_rules, Access, AccessFs, CompatLevel, Compatible, Ruleset,
+                RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+            };
+            // The same construction the real path uses, with `/` standing in
+            // for the grants — what is under test is the enforcement status,
+            // not which paths were granted.
+            let code = (|| -> Option<i32> {
+                let status = Ruleset::default()
+                    .set_compatibility(CompatLevel::HardRequirement)
+                    .handle_access(AccessFs::from_all(abi))
+                    .and_then(|r| r.create())
+                    .and_then(|r| {
+                        r.add_rules(path_beneath_rules(["/"], AccessFs::from_read(abi)))
+                    })
+                    .and_then(|r| r.restrict_self())
+                    .ok()?;
+                Some(match status.ruleset {
+                    RulesetStatus::FullyEnforced => 0,
+                    RulesetStatus::PartiallyEnforced => 1,
+                    RulesetStatus::NotEnforced => 2,
+                })
+            })()
+            .unwrap_or(3);
+            unsafe { libc::_exit(code) };
+        }
+        let mut wstatus = 0;
+        unsafe { libc::waitpid(child, &mut wstatus, 0) };
+        let code = libc::WEXITSTATUS(wstatus);
+        assert_eq!(
+            code, 0,
+            "landlock ABI {probed} reported {} — the tier's confinement is only as \
+             good as this, and `restrict_self` is checked against it",
+            match code {
+                1 => "PartiallyEnforced: some requested access rights are not in force",
+                2 => "NotEnforced",
+                _ => "an error while building a ruleset HardRequirement should have accepted",
+            }
+        );
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn seccomp_deny_list_covers_security_critical_syscalls() {
