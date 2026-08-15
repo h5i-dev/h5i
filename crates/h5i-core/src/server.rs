@@ -387,6 +387,15 @@ pub struct Signals {
     /// Distinct peers admitted across every recorded share, including any past
     /// an individual receipt's record cap.
     pub share_peers: u64,
+    /// Other boxes on this host whose effective filesystem grants overlap
+    /// this one's, as the NEWEST host-observed run/shell receipt recorded
+    /// them (`env/<id> via <path>`). Latest-record semantics on purpose:
+    /// overlap is a property of what is materialized on the host right now,
+    /// and a union over history would show boxes long gone. Empty when the
+    /// last check found none — the machine-checked noninterference guarantee
+    /// applies to such pairs — and also for envs whose receipts never carried
+    /// the check; the pane only speaks when there is something recorded.
+    pub fs_overlap: Vec<String>,
 }
 
 fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
@@ -426,6 +435,11 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         if let Some(b) = &r.browser {
             s.browser_issues += b.console.len() + b.errors.len() + b.failed_requests.len();
         }
+        // Newest run/shell record wins — including winning with an empty
+        // list, which clears an overlap a departed box used to cause.
+        if matches!(r.source.as_str(), "host-env-run" | "host-env-shell") {
+            s.fs_overlap = r.fs_overlap.clone();
+        }
         if let Some(sh) = &r.share {
             s.shares += 1;
             if sh.third_party_can_read() {
@@ -436,6 +450,7 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
     }
     denied_hosts.truncate(DENIED_HOSTS_CAP);
     s.denied_hosts = denied_hosts;
+    s.fs_overlap.truncate(DENIED_HOSTS_CAP);
     // Receipts are appended in order and their timestamps sort lexically.
     s.last_run_ts = receipts.last().map(|r| r.timestamp.clone());
     s.box_claimed_only = s.runs > 0 && s.host_observed == 0;
@@ -1241,6 +1256,31 @@ mod tests {
         assert_eq!(red.verdict, "denial");
         assert_eq!(red.egress_denied, 2);
         assert_eq!(red.denied_hosts, vec!["evil.test:443".to_string()]);
+    }
+
+    #[test]
+    fn fs_overlap_takes_the_newest_run_record_including_an_empty_one() {
+        let m = manifest("process");
+        let mut first = receipt("host-env-run", 0);
+        first.fs_overlap = vec!["env/tester/other via /tmp".into()];
+        // A newer run recorded no overlap (the other box is gone): the pane
+        // must clear, not remember — overlap is a property of the host now.
+        let second = receipt("host-env-run", 0);
+        let s = signals(&m, &[first.clone(), second]);
+        assert!(s.fs_overlap.is_empty());
+        // Reversed order: the overlapping record is newest and wins.
+        let older = receipt("host-env-run", 0);
+        let s = signals(&m, &[older, first.clone()]);
+        assert_eq!(s.fs_overlap, vec!["env/tester/other via /tmp".to_string()]);
+        // A box-claimed lane never updates it: the box does not get to say
+        // who it shares paths with.
+        let mut claimed = receipt("tee-shim", 0);
+        claimed.fs_overlap = vec!["env/tester/fake via /x".into()];
+        let s = signals(&m, &[first, claimed]);
+        assert_eq!(s.fs_overlap, vec!["env/tester/other via /tmp".to_string()]);
+        // And overlap alone never moves the verdict: it is policy, not
+        // enforcement firing.
+        assert_eq!(s.verdict, "clean");
     }
 
     #[test]

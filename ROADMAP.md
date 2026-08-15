@@ -2844,6 +2844,42 @@ prediction layer named — until the follow-ons below closed it.
   `grant_box_git` writes into both, and the receipt says so rather than
   smoothing it.
 
+**The second round, built 2026-08-15**: the three items the first round left
+named.
+
+- *The Seatbelt refinement.* `lean/H5iSpec/Seatbelt.lean` models the
+  file-rule fragment `seatbelt::build_profile` emits, in its exact order,
+  under SBPL's real semantics — `(deny default)`, last match wins. That is
+  the opposite regime from Landlock (denies exist here), and the theorem
+  says so: `fs_deny_wins` proves the generator's deny tail beats every
+  grant, i.e. `fs.deny` is genuinely enforced on Seatbelt where on Linux it
+  is a resolution lint. The generator is pure and compiles on Linux, so
+  `tests/seatbelt_drt.rs` runs it here, parses the file rules out of the
+  generated SBPL, and diffs them structurally against the model — 100
+  policies green, and a mutation (dropping one path from the mirrored
+  system-read list) fails all 100. Named gaps: the network/mach/sysctl
+  sections, and `macos_developer_reads` is host-measured (empty on Linux;
+  an on-mac sweep would exercise it).
+- *Symlinks and procfs in the prediction layer.* Symlinks are chased
+  fuel-bounded (`MAXSYMLINKS`), each hop re-entering in-box resolution
+  through the binds, with the verdict taken at the resolved object — which
+  is Landlock's actual behaviour and why `symlink_no_smuggle` holds: a link
+  planted in the granted worktree confers nothing on its ungranted target.
+  Under a pidns, `/proc` is the fresh private procfs with its read-only
+  Landlock re-grant, so reads pass and writes fail whatever the grant lists
+  say about the host's `/proc`, and existence is namespace-local
+  (`box-local` checks carry the harness's a-priori knowledge). Probes now
+  cover both: sixteen probes, sixteen agreements — among them the
+  host-pid-invisible probe, which turns the tier's PID-view design claim
+  into a measured fact.
+- *Console rendering of `fs_overlap`.* `Signals` carries the newest
+  run/shell receipt's overlap list — latest-record semantics, so a departed
+  box's overlap clears rather than lingers, and a box-claimed lane can
+  never update it — and the box pane renders it as a standing-property note
+  beside `weak_isolation`, never folded into the verdict: overlap is
+  policy, not enforcement firing. The export bundle's report gains the same
+  line, so a reviewer applying a patch knows the box did not run alone.
+
 A Lean 4 model of the policy layer, developed beside the Rust and never linked
 into it, connected by differential testing over a machine-readable dump of the
 effective configuration. The design, the theorems, and the order live in

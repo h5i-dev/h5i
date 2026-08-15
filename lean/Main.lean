@@ -14,6 +14,10 @@ The model's executable face, two modes:
   owns the semantics; `tests/effective_probes.rs` supplies the existence
   facts by stat'ing `real` on the host and holds a real box to the
   combined expectation.
+- **Seatbelt** (`--seatbelt`): a `SeatbeltInput` on stdin, the modeled
+  file-rule fragment of the generated SBPL profile on stdout —
+  `tests/seatbelt_drt.rs` parses the same rules out of the Rust
+  generator's text and diffs the structures.
 - **Interferes** (`--interferes`): an array of `{a, b}` config pairs on
   stdin, `interferesCheck` over their compiled rulesets per pair on stdout
   — the oracle the Rust-side `interferes` implementation is
@@ -43,10 +47,18 @@ structure ProbeReq where
   access : Access
 deriving FromJson
 
-/-- The predict-mode input: a box's dump and its probes. -/
+instance : FromJson SymlinkFact where
+  fromJson? j := do
+    pure
+      { link := (← j.getObjValAs? String "link")
+        target := (← j.getObjValAs? String "target") }
+
+/-- The predict-mode input: a box's dump, its probes, and the symlink facts
+the harness measured (absent means none). -/
 structure PredictInput where
   config : EffectiveConfig
   probes : Array ProbeReq
+  symlinks : Option (Array SymlinkFact)
 deriving FromJson
 
 def runDrt (text : String) : IO UInt32 := do
@@ -65,14 +77,16 @@ def runPredict (text : String) : IO UInt32 := do
     IO.eprintln s!"h5i-spec: bad predict input: {e}"
     return 1
   | .ok inp =>
+    let links := (inp.symlinks.getD #[]).toList
     let out := Json.arr <| inp.probes.map fun pr =>
-      let v := predictVerdict inp.config (parsePath pr.path) pr.access
+      let v := predictVerdict inp.config links (parsePath pr.path) pr.access
       Json.mkObj [
         ("allow", Json.bool v.allow),
         ("real", Json.str ("/" ++ String.intercalate "/" v.real)),
         ("check", Json.str (match v.check with
           | .«exists» => "exists"
-          | .creatable => "creatable")),
+          | .creatable => "creatable"
+          | .boxLocal => "box-local")),
       ]
     IO.println out.compress
     return 0
@@ -95,6 +109,25 @@ def runInterferes (text : String) : IO UInt32 := do
     IO.println out.compress
     return 0
 
+def runSeatbelt (text : String) : IO UInt32 := do
+  match Json.parse text >>= fromJson? (α := SeatbeltInput) with
+  | .error e =>
+    IO.eprintln s!"h5i-spec: bad seatbelt input: {e}"
+    return 1
+  | .ok inp =>
+    let out := Json.arr <| (seatbeltFileRules inp).toArray.map fun r =>
+      Json.mkObj [
+        ("decision", Json.str (match r.decision with
+          | .allow => "allow" | .deny => "deny")),
+        ("ops", Json.arr (r.ops.toArray.map Json.str)),
+        ("kind", Json.str (match r.kind with
+          | .subpath => "subpath" | .literal => "literal"
+          | .regex => "regex")),
+        ("paths", Json.arr (r.paths.toArray.map Json.str)),
+      ]
+    IO.println out.compress
+    return 0
+
 def main (args : List String) : IO UInt32 := do
   let stdin ← IO.getStdin
   let text ← stdin.readToEnd
@@ -102,6 +135,8 @@ def main (args : List String) : IO UInt32 := do
   | [] => runDrt text
   | ["--predict"] => runPredict text
   | ["--interferes"] => runInterferes text
+  | ["--seatbelt"] => runSeatbelt text
   | _ =>
-    IO.eprintln "usage: h5i-spec [--predict|--interferes]  (input on stdin)"
+    IO.eprintln
+      "usage: h5i-spec [--predict|--interferes|--seatbelt]  (input on stdin)"
     return 2

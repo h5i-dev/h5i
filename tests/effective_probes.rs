@@ -23,10 +23,15 @@
 //!   and a read-only remount denies writes outright. So the private-`/tmp`
 //!   redirect is probed — through the *run-shape* dump, because binds are
 //!   runtime state: the test runs a warmup command first and reads the dump
-//!   that run wrote at the apply seam. What the layer still does not model
-//!   is *existence*, so `/tmp` probes touch only the directory itself and a
-//!   file the probe creates; and `/proc` stays out (the pidns re-grant is
-//!   not modeled).
+//!   that run wrote at the apply seam.
+//! - Symlinks and procfs are in the layer too. The harness plants links in
+//!   the worktree and reports them as facts (`symlinks` in the predict
+//!   input); the model chases them and judges the *resolved* object — so a
+//!   link to an ungranted path is predicted denied, links being how grants
+//!   would otherwise be smuggled. `/proc` under a pidns is the private
+//!   procfs with its read-only re-grant: reads allowed, writes denied, and
+//!   existence is namespace-local (`box-local` checks carry the harness's
+//!   a-priori knowledge: `/proc/self` exists, a host pid's entry does not).
 
 #![cfg(target_os = "linux")]
 
@@ -112,6 +117,10 @@ struct Probe {
     cmd: String,
     /// Why this probe is in the set — printed on mismatch.
     why: &'static str,
+    /// A-priori in-box presence, for `box-local` checks (private procfs):
+    /// the host cannot be stat'd for those, so the harness states what it
+    /// knows by construction. `None` for host-stattable checks.
+    present: Option<bool>,
 }
 
 fn read_probe(path: &Path, why: &'static str) -> Probe {
@@ -121,7 +130,7 @@ fn read_probe(path: &Path, why: &'static str) -> Probe {
     } else {
         format!("cat {p} > /dev/null && echo PROBE_OK")
     };
-    Probe { path: p.into_owned(), access: "read", cmd, why }
+    Probe { path: p.into_owned(), access: "read", cmd, why, present: None }
 }
 
 fn write_probe(path: &Path, why: &'static str) -> Probe {
@@ -131,6 +140,7 @@ fn write_probe(path: &Path, why: &'static str) -> Probe {
         access: "write",
         cmd: format!("echo x >> {p} && echo PROBE_OK"),
         why,
+        present: None,
     }
 }
 
@@ -192,12 +202,14 @@ fn kernel_agrees_with_model_predictions() {
             access: "read",
             cmd: "ls /tmp > /dev/null && echo PROBE_OK".into(),
             why: "private tmp bind must be readable",
+            present: None,
         });
         probes.push(Probe {
             path: "/tmp/h5i-probe.txt".into(),
             access: "write",
             cmd: "echo x >> /tmp/h5i-probe.txt && echo PROBE_OK".into(),
             why: "private tmp bind must be writable",
+            present: None,
         });
         // Existence through the bind, WITHIN one run: seed and read back in
         // the same invocation. Not across runs — this suite's own first
@@ -214,6 +226,7 @@ fn kernel_agrees_with_model_predictions() {
                   && cat /tmp/h5i-roundtrip.txt > /dev/null && echo PROBE_OK"
                 .into(),
             why: "private tmp scratch must round-trip within a run",
+            present: None,
         });
         // …and a file planted on the HOST's real /tmp: permitted, but the
         // resolved backing path has no such object, so the read must fail
@@ -228,9 +241,69 @@ fn kernel_agrees_with_model_predictions() {
                 host_tmp_file.to_string_lossy()
             ),
             why: "host /tmp file must be invisible behind the private-tmp bind",
+            present: None,
         });
     } else {
         eprintln!("probe cap: run dump declares no writable /tmp bind — tmp probes skipped");
+    }
+
+    // Symlinks: planted host-side in the worktree (unbound, so link object
+    // and host object coincide), reported to the model as facts. One at an
+    // ungranted target (the env manifest — exists, owner-readable, outside
+    // every grant: the smuggling attempt), one at a granted worktree file
+    // (the legitimate alias).
+    let link_secret = work.join("link-secret");
+    let link_alias = work.join("link-alias");
+    let manifest_path = env_dir.join("manifest.json");
+    std::os::unix::fs::symlink(&manifest_path, &link_secret).unwrap();
+    std::os::unix::fs::symlink(work.join("probe.txt"), &link_alias).unwrap();
+    let symlinks = serde_json::json!([
+        { "link": link_secret.to_string_lossy(), "target": manifest_path.to_string_lossy() },
+        { "link": link_alias.to_string_lossy(),
+          "target": work.join("probe.txt").to_string_lossy() },
+    ]);
+    probes.push(Probe {
+        path: link_secret.to_string_lossy().into_owned(),
+        access: "read",
+        cmd: format!("cat {} > /dev/null && echo PROBE_OK", link_secret.to_string_lossy()),
+        why: "a worktree symlink must not smuggle an ungranted target",
+        present: None,
+    });
+    probes.push(Probe {
+        path: link_alias.to_string_lossy().into_owned(),
+        access: "read",
+        cmd: format!("cat {} > /dev/null && echo PROBE_OK", link_alias.to_string_lossy()),
+        why: "a worktree symlink to a granted file confers exactly that file",
+        present: None,
+    });
+
+    // procfs, when the run shape carries a pid namespace: the private
+    // procfs is re-granted read-only, and its contents are namespace-local.
+    if dump["run"]["pidns"] == true {
+        probes.push(Probe {
+            path: "/proc/self/status".into(),
+            access: "read",
+            cmd: "cat /proc/self/status > /dev/null && echo PROBE_OK".into(),
+            why: "private procfs must be readable (the re-grant)",
+            present: Some(true),
+        });
+        probes.push(Probe {
+            path: "/proc/self/comm".into(),
+            access: "write",
+            cmd: "echo x > /proc/self/comm && echo PROBE_OK".into(),
+            why: "private procfs re-grant is read-only",
+            present: Some(true),
+        });
+        let host_pid = std::process::id();
+        probes.push(Probe {
+            path: format!("/proc/{host_pid}/status"),
+            access: "read",
+            cmd: format!("cat /proc/{host_pid}/status > /dev/null && echo PROBE_OK"),
+            why: "host pids must be invisible in the private pid namespace",
+            present: Some(false),
+        });
+    } else {
+        eprintln!("probe cap: run shape has no pidns — procfs probes skipped");
     }
 
     // The model's verdicts, from the dump the box actually enforces.
@@ -239,6 +312,7 @@ fn kernel_agrees_with_model_predictions() {
         "probes": probes.iter()
             .map(|p| serde_json::json!({"path": p.path, "access": p.access}))
             .collect::<Vec<_>>(),
+        "symlinks": symlinks,
     });
     let mut child = Command::new(&bin)
         .arg("--predict")
@@ -259,7 +333,8 @@ fn kernel_agrees_with_model_predictions() {
     // probe's own writes cannot retroactively change an expectation.
     let expected: Vec<(bool, String)> = verdicts
         .iter()
-        .map(|v| {
+        .zip(&probes)
+        .map(|(v, probe)| {
             let allow = v["allow"].as_bool().unwrap();
             let real = PathBuf::from(v["real"].as_str().unwrap());
             let present = match v["check"].as_str().unwrap() {
@@ -267,6 +342,11 @@ fn kernel_agrees_with_model_predictions() {
                 "creatable" => {
                     real.exists() || real.parent().is_some_and(|p| p.is_dir())
                 }
+                // Namespace-local: the harness states what it knows by
+                // construction, because no host stat can answer this.
+                "box-local" => probe
+                    .present
+                    .expect("box-local verdict on a probe without a-priori presence"),
                 other => panic!("unknown existence check '{other}'"),
             };
             (allow && present, format!("allow={allow} real={} present={present}", real.display()))

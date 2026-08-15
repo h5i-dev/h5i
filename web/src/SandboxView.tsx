@@ -884,6 +884,17 @@ function SignalSummary({ box }: { box: BoxRow }) {
       </Callout>,
     );
   }
+  if (s.fs_overlap.length > 0) {
+    notes.push(
+      <Callout key="overlap" icon="link" className="sbx-callout">
+        The last run recorded writable-path overlap with{" "}
+        {s.fs_overlap.length} other box{s.fs_overlap.length === 1 ? "" : "es"}:{" "}
+        <Code>{s.fs_overlap.join("; ")}</Code>. Cross-box influence is possible
+        through a shared path. Boxes whose recorded grants are disjoint carry a
+        machine-checked noninterference guarantee instead; this pair does not.
+      </Callout>,
+    );
+  }
   if (s.box_claimed_only) {
     notes.push(
       <Callout key="claimed" icon="eye-off" className="sbx-callout">

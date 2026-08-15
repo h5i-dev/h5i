@@ -53,7 +53,7 @@ jobs:
           H5I_DRT_REQUIRE: "1"
           H5I_SKIP_WEB_BUILD: "1"
           H5I_DRT_CASES: "5000"
-        run: cargo test --test effective_drt -- --nocapture
+        run: cargo test --test effective_drt --test seatbelt_drt -- --nocapture
 
       # Model-versus-kernel: the Lean model predicts what a real box must
       # allow and deny, and the probes hold the kernel to it. Skips loudly

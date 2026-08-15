@@ -41,20 +41,33 @@ by differential testing.
   decidable `interferesCheck` with its soundness proof, and the instances:
   two agent-profile boxes really interfere through `/tmp`, two
   workspace-only boxes provably do not.
-- `H5iSpec/Predict.lean`: the probe verdicts, bind- and existence-aware.
-  Resolution recurses through the bind stack (`resolveBinds`; the four
-  `nested_*` facts pin shadowing in both directions and chained
-  source-under-target resolution), read-only remounts deny writes outright
-  (`ro_bind_denies_write`), away from binds the verdict is exactly the
-  compiled ruleset, and each verdict carries the resolved host path plus
-  the existence check the harness must measure — the model owns the
-  semantics, the harness owns the stat.
-- `Main.lean`: the executable, three modes — DRT (`DrtInput` array in,
+- `H5iSpec/Predict.lean`: the probe verdicts — bind-, existence-, symlink-
+  and procfs-aware. Resolution recurses through the bind stack
+  (`resolveBinds`; the four `nested_*` facts pin shadowing and chained
+  source-under-target resolution), symlinks are chased fuel-bounded with
+  the verdict taken at the resolved object (`symlink_no_smuggle`: a
+  worktree link to an ungranted secret confers nothing), `/proc` under a
+  pidns is the private procfs with its read-only re-grant
+  (`pidns_proc_write_denied`/`pidns_proc_read_allowed`), read-only
+  remounts deny writes outright (`ro_bind_denies_write`), and each verdict
+  carries the resolved host path plus the existence check the harness must
+  measure — the model owns the semantics, the harness owns the stat.
+- `H5iSpec/Seatbelt.lean`: the macOS backend's own refinement — a model of
+  the file-rule fragment `seatbelt::build_profile` emits, in its exact
+  order, under SBPL's last-match-wins with `(deny default)`. The opposite
+  regime from Landlock: denies exist here, and `fs_deny_wins` proves the
+  generator's deny tail beats every grant — `fs.deny` is genuinely
+  enforced on Seatbelt where on Linux it is a resolution lint. The
+  generator is pure and compiles on Linux, so `tests/seatbelt_drt.rs`
+  parses its SBPL text and diffs the file rules against this model's
+  emission, structurally.
+- `Main.lean`: the executable, four modes — DRT (`DrtInput` array in,
   `EffectiveConfig` array out), `--predict` (a dump plus probes in,
   per-probe allow/deny out; `tests/effective_probes.rs` holds a real box to
-  those verdicts), and `--interferes` (config pairs in, `interferesCheck`
+  those verdicts), `--interferes` (config pairs in, `interferesCheck`
   verdicts out; the oracle for the Rust `effective::interferes` behind the
-  `fs_overlap` receipt).
+  `fs_overlap` receipt), and `--seatbelt` (a `SeatbeltInput` in, the
+  modeled SBPL file rules out).
 
 ## Build and test
 

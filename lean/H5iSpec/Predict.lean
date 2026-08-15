@@ -77,7 +77,36 @@ inductive ExistCheck where
   /-- An existing file or an existing parent directory both suffice —
   `open(O_CREAT|O_WRONLY)` semantics. -/
   | creatable
+  /-- The object lives in a namespace-local filesystem (the pidns's private
+  procfs): the host cannot be stat'd for it, so the harness must know the
+  in-box existence a priori (`/proc/self/…` exists by definition; a host
+  pid's entry does not, in a private pid namespace). -/
+  | boxLocal
 deriving Repr, DecidableEq
+
+/-- One symlink fact the harness measured: the object at `link` (a host
+path, i.e. post-bind-resolution) is a symbolic link whose text is `target`
+(an absolute in-box path, re-walked from the box's root through the binds —
+which is exactly what makes a link a potential smuggling vector). -/
+structure SymlinkFact where
+  link : String
+  target : String
+deriving Repr, DecidableEq
+
+/-- Chase symlinks: at each step the current in-box path resolves through
+the binds to a host object; if the world says that object is a link, its
+target re-enters in-box resolution from the top. Fuel-bounded — `none` is a
+loop (`ELOOP`), and the verdict for a loop is failure. Returns the final
+**in-box** path, so the caller's bind gates apply where the `open` finally
+lands. -/
+def chaseLinks (binds : List EffectiveBind) (links : List SymlinkFact) :
+    Nat → FsPath → Option FsPath
+  | 0, _ => none
+  | fuel + 1, p =>
+    let real := resolveBinds binds p
+    match links.find? (fun l => parsePath l.link == real) with
+    | some l => chaseLinks binds links fuel (parsePath l.target)
+    | none => some p
 
 /-- The full verdict for one probe. -/
 structure PredictVerdict where
@@ -90,8 +119,8 @@ structure PredictVerdict where
 deriving Repr, DecidableEq
 
 /-- The bind-and-existence-aware verdict for a probe of `a` on `p` in a box
-running under `cfg`. -/
-def predictVerdict (cfg : EffectiveConfig) (p : FsPath) (a : Access) :
+running under `cfg`, before symlinks and procfs. -/
+def predictVerdictAt (cfg : EffectiveConfig) (p : FsPath) (a : Access) :
     PredictVerdict :=
   let rs := compileLandlock cfg.landlock
   let real := resolveBinds cfg.binds p
@@ -103,9 +132,37 @@ def predictVerdict (cfg : EffectiveConfig) (p : FsPath) (a : Access) :
     real := real
     check := match a with | .read => .«exists» | .write => .creatable }
 
-/-- The permission half alone, for the theorems below. -/
+/-- The link-chasing budget — Linux's own `MAXSYMLINKS` is 40. -/
+def maxSymlinks : Nat := 40
+
+/-- The full verdict: procfs first, then symlink chasing, then the bind-
+and-Landlock judgment at wherever the chase lands.
+
+**procfs** (`shape.pidns`): the child mounts a fresh private procfs over
+`/proc` and re-grants it read-only through Landlock
+(`build_confined_command` step 1c) — the pre-fork grant pinned the *host*
+procfs inode, which the new mount shadows, so under a pidns the `/proc`
+verdict comes from the re-grant alone: reads allowed, writes denied,
+whatever the grant lists say about the host's `/proc`. Existence is
+namespace-local (`boxLocal`).
+
+**symlinks**: Landlock judges the *resolved* object, so the verdict is
+taken at the end of the chase — which is exactly why a symlink planted in
+the worktree cannot smuggle access to a path the policy never granted (see
+`symlink_no_smuggle` below). A chase that exhausts its fuel is `ELOOP`:
+denied, nothing to stat. -/
+def predictVerdict (cfg : EffectiveConfig) (links : List SymlinkFact)
+    (p : FsPath) (a : Access) : PredictVerdict :=
+  if cfg.run.pidns && p.beneath ["proc"] then
+    { allow := a == .read, real := p, check := .boxLocal }
+  else
+    match chaseLinks cfg.binds links maxSymlinks p with
+    | some q => predictVerdictAt cfg q a
+    | none => { allow := false, real := p, check := .«exists» }
+
+/-- The permission half of the bind layer alone, for the theorems below. -/
 def predictAllows (cfg : EffectiveConfig) (p : FsPath) (a : Access) : Bool :=
-  (predictVerdict cfg p a).allow
+  (predictVerdictAt cfg p a).allow
 
 /-- A read-only bind denies every write beneath its target, whatever
 Landlock would have said — the `MS_RDONLY` remount answers first. This is
@@ -115,7 +172,7 @@ theorem ro_bind_denies_write (cfg : EffectiveConfig) (p : FsPath)
     (b : EffectiveBind) (h : lastMatchingBind cfg.binds p = some b)
     (hro : b.writable = false) :
     predictAllows cfg p .write = false := by
-  simp [predictAllows, predictVerdict, h, hro]
+  simp [predictAllows, predictVerdictAt, h, hro]
 
 /-- With no matching bind anywhere in the list, resolution is the identity. -/
 theorem resolveThrough_id (p : FsPath) :
@@ -162,7 +219,70 @@ theorem predict_unbound_is_landlock (cfg : EffectiveConfig) (p : FsPath)
     resolveThrough_id p cfg.binds.reverse fun b hb =>
       h b (List.mem_reverse.mp hb)
   have hlast := lastMatchingBind_none cfg.binds p h
-  simp [predictAllows, predictVerdict, hlast, hres]
+  simp [predictAllows, predictVerdictAt, hlast, hres]
+
+/-- Under a pid namespace, `/proc` writes are always denied: the private
+procfs is re-granted read-only, and the host `/proc`'s grants pin an inode
+the fresh mount shadows. -/
+theorem pidns_proc_write_denied (cfg : EffectiveConfig)
+    (links : List SymlinkFact) (p : FsPath) (hp : cfg.run.pidns = true)
+    (hproc : p.beneath ["proc"] = true) :
+    (predictVerdict cfg links p .write).allow = false := by
+  simp [predictVerdict, hp, hproc]
+
+/-- …and reads are always allowed — that is what the re-grant is for. -/
+theorem pidns_proc_read_allowed (cfg : EffectiveConfig)
+    (links : List SymlinkFact) (p : FsPath) (hp : cfg.run.pidns = true)
+    (hproc : p.beneath ["proc"] = true) :
+    (predictVerdict cfg links p .read).allow = true := by
+  simp [predictVerdict, hp, hproc]
+
+section SymlinkExamples
+
+/-! Symlinks judged at the resolved object, machine-checked on a concrete
+worktree-only config (`native_decide`, like the nested-bind facts): a link
+planted in the granted worktree pointing at an ungranted secret confers
+nothing, while a link to a granted file works — Landlock semantics, in the
+model, without a mac or a kernel. -/
+
+private def workOnlyCfg : EffectiveConfig :=
+  { schema := 1, platform := "linux", claim := "process", work := "/w"
+    work_readonly := false
+    run := { force_netns := false, notify := false, egress := false,
+             pidns := false, interactive := false }
+    landlock := { abi := 3, ro := [], rw := ["/w"], skipped_missing := [] }
+    binds := []
+    namespaces := { user := true, ipc := true, uts := true, net := true,
+                    mount := false, pid := false, userns_map := "identity" }
+    net := { mode := .deny, egress := [], user_egress_allow := [],
+             loopback := [], loopback_runtime := [], unix_sockets := false }
+    seccomp := { template := "deny-v1", notify := false }
+    rlimits := { mem_bytes := none, max_procs := none, fsize_bytes := none,
+                 cpu_secs := none, wall_secs := 1 }
+    env_pass := [], tools := []
+    resolution := { profile := "default", fs_deny := [] } }
+
+/-- A worktree symlink to an ungranted secret is denied: the verdict lands
+on the chase's end, not on the link's granted parent. -/
+theorem symlink_no_smuggle :
+    (predictVerdict workOnlyCfg
+      [{ link := "/w/evil", target := "/home/u/.ssh/key" }]
+      ["w", "evil"] .read).allow = false := by native_decide
+
+/-- The control: a link to a granted file confers exactly that file. -/
+theorem symlink_within_grants_ok :
+    (predictVerdict workOnlyCfg
+      [{ link := "/w/alias", target := "/w/data.txt" }]
+      ["w", "alias"] .read).allow = true := by native_decide
+
+/-- A link cycle is `ELOOP`: denied, whatever the grants say. -/
+theorem symlink_loop_denied :
+    (predictVerdict workOnlyCfg
+      [{ link := "/w/a", target := "/w/b" },
+       { link := "/w/b", target := "/w/a" }]
+      ["w", "a"] .read).allow = false := by native_decide
+
+end SymlinkExamples
 
 section NestedExamples
 
