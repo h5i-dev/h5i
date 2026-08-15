@@ -695,7 +695,7 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // author is told rather than silently getting a wider box. (Harmless with
     // no `net.egress` — there is no proxy to shadow — so it is not refused
     // there.)
-    if !p.net_egress.iter().all(|e| e.trim().is_empty())
+    if p.scopes_egress()
         && let Some(bad) = p
             .env_pass
             .iter()

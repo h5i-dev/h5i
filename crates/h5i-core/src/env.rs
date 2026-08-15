@@ -4677,8 +4677,13 @@ fn prepare_box_reach(
 
 fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
     let user = user_allow_list();
-    let enforced =
-        policy.claim.enforces_egress_allowlist() && !policy.profile.net_egress.is_empty();
+    // `scopes_egress`, not `!net_egress.is_empty()`: a blank entry is a `Vec`
+    // element and not a rule, so `net.egress = [""]` is a deny-all that the
+    // length test reported as "the profile sets net.egress" — and the host-side
+    // allow list was then merged into a box meant to reach nothing. SECURITY.md
+    // states the property this restores: the list "merges into a profile that
+    // already sets `net.egress` and never widens a deny-all one".
+    let enforced = policy.claim.enforces_egress_allowlist() && policy.profile.scopes_egress();
     if enforced {
         policy.user_egress_allow = user
             .into_iter()

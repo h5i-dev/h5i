@@ -1007,6 +1007,29 @@ impl Profile {
         p
     }
 
+    /// Does this profile actually **name** an egress allowlist?
+    ///
+    /// Not `!net_egress.is_empty()`. A blank entry is a `Vec` element and not a
+    /// rule: `parse_egress_rule` skips it, so `net.egress = [""]` builds an
+    /// allowlist of zero entries — a deny-all — while the length test reports
+    /// that the profile "sets net.egress".
+    ///
+    /// The distinction decides whether the host-side `h5i box allow` list is
+    /// merged in, and SECURITY.md states the property it rests on: that list
+    /// "merges into a profile that already sets `net.egress` and never widens a
+    /// deny-all one". Under the length test a repo could write
+    /// `net.egress = [""]` and have the operator's own global allow rules
+    /// applied to a box that was meant to reach nothing.
+    ///
+    /// Deliberately *not* used where the length test decides whether to build
+    /// the enforcement itself (the supervisor's netns, the container proxy).
+    /// There a blank list means "an allowlist with no entries", which is
+    /// deny-all and correct; answering "no allowlist" would hand the box the
+    /// host network instead.
+    pub fn scopes_egress(&self) -> bool {
+        self.net_egress.iter().any(|e| !e.trim().is_empty())
+    }
+
     pub fn wall(&self) -> Duration {
         Duration::from_secs(self.wall_secs)
     }
@@ -2125,6 +2148,31 @@ impl InteractiveOutcome {
 
 #[cfg(test)]
 mod tests {
+
+    /// SECURITY.md: the host-side allow list "merges into a profile that
+    /// already sets `net.egress` and never widens a deny-all one". The test for
+    /// that was `!net_egress.is_empty()`, and a blank entry is a `Vec` element
+    /// and not a rule — `parse_egress_rule` skips it — so `net.egress = [""]`
+    /// built an allowlist of zero entries while reporting that the profile had
+    /// set one. A repo could write that and have the operator's own global
+    /// allow rules applied to a box meant to reach nothing.
+    #[test]
+    fn a_blank_egress_entry_is_not_a_profile_opting_into_egress() {
+        let mut p = Profile::builtin("default", IsolationClaim::Container);
+
+        p.net_egress = Vec::new();
+        assert!(!p.scopes_egress(), "an absent list names nothing");
+        p.net_egress = vec![String::new()];
+        assert!(!p.scopes_egress(), "a blank entry names nothing");
+        p.net_egress = vec!["   ".into(), "\t".into()];
+        assert!(!p.scopes_egress(), "nor several of them");
+
+        p.net_egress = vec!["pypi.org".into()];
+        assert!(p.scopes_egress());
+        // One real rule among blanks is still a rule.
+        p.net_egress = vec![String::new(), "pypi.org".into()];
+        assert!(p.scopes_egress());
+    }
     use super::*;
 
     #[test]
