@@ -1258,7 +1258,37 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
 fn load_manifest_at(dir: &Path) -> Result<EnvManifest, H5iError> {
     let path = dir.join(MANIFEST_FILE);
     let text = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
-    Ok(serde_json::from_str(&text)?)
+    let m: EnvManifest = serde_json::from_str(&text)?;
+    // The same identity check `materialize_from_ref` runs, at the point every
+    // manifest is *read* rather than only where one is imported.
+    //
+    // Its doc says the fields are validated "BEFORE its `agent`/`slug` are used
+    // to compute on-disk paths" — and that held for the import and not for the
+    // read. Everything downstream calls `m.dir(h5i_root)`, which is
+    // `env_dir(root, m.agent, m.slug)` joined unchecked, and one of the things
+    // downstream is `rm`'s `remove_dir_all`. `list` walks directory names; it
+    // is the manifest's own fields that become the path.
+    validate_imported_manifest(&m)?;
+    // And they have to name the directory they were found in. A manifest is
+    // identified by where it lives, so one that describes a different env —
+    // copied, restored from a backup, or hand-edited — is not this env's
+    // manifest whatever it says.
+    let here = dir
+        .parent()
+        .map(|p| (p.file_name(), dir.file_name()))
+        .unwrap_or((None, None));
+    let want = (
+        Some(std::ffi::OsStr::new(m.agent.as_str())),
+        Some(std::ffi::OsStr::new(m.slug.as_str())),
+    );
+    if here != want {
+        return Err(H5iError::Metadata(format!(
+            "manifest at {} names '{}' — a manifest is identified by where it lives, and this              one describes a different environment (fail-closed)",
+            path.display(),
+            crate::redact::sanitize_display(&m.id)
+        )));
+    }
+    Ok(m)
 }
 
 /// All env manifests on this clone, ordered by creation time.
@@ -10332,6 +10362,57 @@ mod tests {
         assert_eq!(scrub_exact(b"abc", &[]), b"abc");
     }
 
+    /// A manifest is read far more often than it is imported, and only the
+    /// import validated it.
+    ///
+    /// `validate_imported_manifest`'s own doc says the identity fields are
+    /// checked "BEFORE its `agent`/`slug` are used to compute on-disk paths" —
+    /// true of `materialize_from_ref` and not of `load_manifest_at`. Everything
+    /// downstream calls `m.dir(h5i_root)`, which joins those two fields
+    /// unchecked, and one of the things downstream is `rm`'s `remove_dir_all`.
+    #[test]
+    fn a_manifest_is_validated_where_it_is_read_not_only_where_it_is_imported() {
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = h5i_root.join(ENV_DIR).join("claude").join("fix");
+        std::fs::create_dir_all(&home).unwrap();
+
+        // The canonical case still reads.
+        let good = canonical_manifest("claude", "fix");
+        std::fs::write(
+            home.join(MANIFEST_FILE),
+            serde_json::to_vec(&good).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load_manifest_at(&home).unwrap().id, "env/claude/fix");
+        assert_eq!(list(h5i_root).len(), 1);
+
+        // A traversing identity is refused rather than turned into a path.
+        let mut escape = good.clone();
+        escape.agent = "../../../../tmp/evil".into();
+        escape.id = format!("env/{}/fix", escape.agent);
+        escape.branch = format!("refs/heads/h5i/env/{}/fix", escape.agent);
+        std::fs::write(
+            home.join(MANIFEST_FILE),
+            serde_json::to_vec(&escape).unwrap(),
+        )
+        .unwrap();
+        assert!(load_manifest_at(&home).is_err(), "traversal must not load");
+        assert!(list(h5i_root).is_empty(), "and `list` skips it");
+
+        // So is a manifest that is canonical but describes a different env —
+        // copied here, restored from a backup, or hand-edited. A manifest is
+        // identified by where it lives.
+        let elsewhere = canonical_manifest("codex", "other");
+        std::fs::write(
+            home.join(MANIFEST_FILE),
+            serde_json::to_vec(&elsewhere).unwrap(),
+        )
+        .unwrap();
+        let err = load_manifest_at(&home).unwrap_err().to_string();
+        assert!(err.contains("describes a different environment"), "{err}");
+    }
+
     /// One property over every renderer at once: nothing a box, a repo or a
     /// peer supplies reaches a terminal carrying a control character.
     ///
@@ -11900,7 +11981,7 @@ mod tests {
             agent: "claude".into(),
             slug: "fix".into(),
             base_commit: "c".repeat(40),
-            base_tree: "t".repeat(40),
+            base_tree: "e".repeat(40),
             parent_branch: "main".into(),
             branch: "refs/heads/h5i/env/claude/fix".into(),
             source: "repo".into(),
@@ -12013,7 +12094,7 @@ mod tests {
                 agent: agent.into(),
                 slug: slug.into(),
                 base_commit: "c".repeat(40),
-                base_tree: "t".repeat(40),
+                base_tree: "e".repeat(40),
                 parent_branch: "main".into(),
                 branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
                 source: "repo".into(),
@@ -12477,13 +12558,15 @@ mod tests {
             id: format!("env/{agent}/{slug}"),
             agent: agent.into(),
             slug: slug.into(),
-            base_commit: String::new(),
-            base_tree: String::new(),
+            // Object ids, because `load_manifest_at` checks that they are —
+            // this fixture is written to disk and read back.
+            base_commit: "a".repeat(40),
+            base_tree: "b".repeat(40),
             parent_branch: "main".into(),
             branch: format!("refs/heads/{BRANCH_PREFIX}{agent}/{slug}"),
             source: "repo".into(),
             profile: "default".into(),
-            policy_digest: String::new(),
+            policy_digest: "c".repeat(64),
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),
