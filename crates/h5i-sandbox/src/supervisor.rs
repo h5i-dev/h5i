@@ -843,7 +843,6 @@ fn run_supervised(
     interactive: bool,
 ) -> Result<crate::sandbox::ExecOutcome, H5iError> {
     use crate::seccomp_notify::{pidfd_open, recv_fd, serve_with_pidfd};
-    use std::io::Read;
     use std::process::Stdio;
 
     // Check the notify ABI *before* committing to this tier. The module doc
