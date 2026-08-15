@@ -6072,8 +6072,16 @@ fn ingest_shell_spool(
                 continue;
             }
         };
-        let raw = read_spool_capped(&path_of("raw"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default();
-        let safe_cmd: String = crate::secrets::redact_text(&meta.cmd)
+        // The same exact-value scrub the tee-shim branch above gets. These are
+        // two branches of one function reading one spool, and a credential does
+        // not care which of them recorded it.
+        let raw = scrub_exact(
+            &read_spool_capped(&path_of("raw"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default(),
+            secrets,
+        );
+        let meta_cmd =
+            String::from_utf8_lossy(&scrub_exact(meta.cmd.as_bytes(), secrets)).into_owned();
+        let safe_cmd: String = crate::secrets::redact_text(&meta_cmd)
             .replace(['\n', '\r'], " ")
             .chars()
             .take(300)

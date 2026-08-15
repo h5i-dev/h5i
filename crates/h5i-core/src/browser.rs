@@ -77,14 +77,29 @@ pub(crate) fn session_id(tmp_root: &Path) -> Option<String> {
     // run — and a cursor that never sees a session change never resets, so a
     // fresh browser producing the same number of console lines reads as a
     // clean page.
+    // Bounded in both directions, because this walks `<env>/tmp` — one of the
+    // two paths a box can write — from the *host*. A pid file holds a decimal
+    // integer; without a cap, a box could put four gigabytes in one and have the
+    // host allocate it, or fill the directory and have the host build an
+    // unbounded `ids` vector out of the names. Neither is a session
+    // fingerprint, so both are refused rather than read.
+    const MAX_PID_FILES: usize = 64;
+    const MAX_PID_BYTES: u64 = 64;
     let mut ids: Vec<String> = std::fs::read_dir(daemon_dir(tmp_root))
         .into_iter()
         .flatten()
         .chain(std::fs::read_dir(socket_dir(tmp_root)).into_iter().flatten())
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().ends_with(".pid"))
+        .take(MAX_PID_FILES)
         .filter_map(|e| {
-            let pid = std::fs::read_to_string(e.path()).ok()?;
+            use std::io::Read;
+            let mut pid = String::new();
+            std::fs::File::open(e.path())
+                .ok()?
+                .take(MAX_PID_BYTES)
+                .read_to_string(&mut pid)
+                .ok()?;
             Some(format!(
                 "{}:{}",
                 e.file_name().to_string_lossy(),
@@ -622,6 +637,40 @@ mod tests {
         // the same claim as nothing went wrong.
         assert!(ev.is_clean());
         assert_eq!(ev.verb.as_deref(), Some("click"));
+    }
+
+    /// `session_id` walks `<env>/tmp` — one of the two paths a box can write —
+    /// from the host, and read every `.pid` file whole. A pid file holds a
+    /// decimal integer; a box could put four gigabytes in one, or fill the
+    /// directory, and the host would allocate it either way.
+    #[test]
+    fn a_hostile_pid_file_is_not_a_session_fingerprint() {
+        let td = tempfile::tempdir().unwrap();
+        let tmp_root = td.path().join("tmp");
+        let sockets = tmp_root.join("agent-browser");
+        std::fs::create_dir_all(&sockets).unwrap();
+
+        std::fs::write(sockets.join("huge.pid"), "9".repeat(4 * 1024 * 1024)).unwrap();
+        for i in 0..300 {
+            std::fs::write(sockets.join(format!("f{i}.pid")), "1001").unwrap();
+        }
+
+        let id = session_id(&tmp_root).expect("some fingerprint");
+        assert!(
+            id.len() < 16 * 1024,
+            "the fingerprint grew to {} bytes",
+            id.len()
+        );
+
+        // ...and an ordinary session still fingerprints as it did.
+        let td = tempfile::tempdir().unwrap();
+        let sockets = td.path().join("tmp").join("agent-browser");
+        std::fs::create_dir_all(&sockets).unwrap();
+        std::fs::write(sockets.join("default.pid"), "1001\n").unwrap();
+        assert_eq!(
+            session_id(&td.path().join("tmp")).as_deref(),
+            Some("default.pid:1001")
+        );
     }
 
     #[test]
