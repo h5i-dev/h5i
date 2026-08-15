@@ -2768,7 +2768,7 @@ slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
 small static binary staged into a mounted directory is the first thing that
 work has to decide.
 
-### M16. The Lean model beside the Rust: step 1 built 2026-08-15, rest proposed
+### M16. The Lean model beside the Rust: steps 1 and 2 built 2026-08-15
 
 A Lean 4 model of the policy layer, developed beside the Rust and never linked
 into it, connected by differential testing over a machine-readable dump of the
@@ -2794,7 +2794,23 @@ Exit criteria for the first cut:
   manifest (V2). **Done, as above.**
 - A `lean/` package builds in CI and its executable model agrees with the Rust
   resolver on the `examples/` corpus plus 10k generated profiles, with every
-  mismatch either fixed or checked in as a named regression (V4).
+  mismatch either fixed or checked in as a named regression (V4). **Step 2
+  built, 2026-08-15**: `lean/` (Lean core only, no mathlib; toolchain pinned
+  v4.29.1) holds the schema mirror, the executable model, and five theorems
+  checked on every `lake build` — among them `readonly_work_not_rw`, which
+  came out *conditional*: `work_readonly` alone does not keep `$WORK` out of
+  the rw grants when an `fs_write` entry spells the workspace path; the
+  caller obligation `env::shell` discharges in prose is now a stated
+  hypothesis. The DRT harness (`tests/effective_drt.rs`) generates policies
+  with their filesystem world materialized in a tempdir, runs both sides,
+  and diffs null-stripped JSON; green at 2000 cases locally, and a mutation
+  test (the `/tmp` bind-order rule removed from the model) was caught within
+  the first handful of cases before being restored. CI:
+  `.github/workflows/lean-drt.yml`, a separate non-gating lane at 5000
+  cases; the harness skips loudly for contributors without a Lean toolchain.
+  Named generator gaps, not silent ones: `interactive` shapes and `~` grants
+  need a HOME-controlled subprocess harness, and the `examples/` corpus
+  sweep is not wired yet — both stay open under this criterion.
 - The Landlock fragment of the mechanism semantics is mechanized, and the
   conditional phase-transition theorem is machine-checked, including the
   counterexample the agent profile's shared `/tmp` provides (V3).
@@ -5620,7 +5636,9 @@ The trusted base, in the same spirit as section 9:
    driven, 2026-08-15 — see M16 for what shipped and where.**
 2. **The model, executable.** `lean/` package, L1 for the fs and net
    subset, the JSON interface, DRT over `examples/` plus 10k generated
-   profiles. Exit: the M16 criterion, zero unexplained diffs.
+   profiles. Exit: the M16 criterion, zero unexplained diffs. **Built and
+   driven, 2026-08-15 — see M16; the examples-corpus sweep and the
+   interactive/tilde generator gaps stay open.**
 3. **The Landlock fragment.** L0 domains, intersection, fd rights, and the
    two phase theorems, including the shared-`/tmp` counterexample as a Lean
    example, not prose. Exit: theorems check in CI.
