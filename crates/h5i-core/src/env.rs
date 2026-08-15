@@ -7724,10 +7724,52 @@ pub fn service_logs(
     let svc_dir = services_dir(h5i_root, m);
     let rec = read_service_record(&svc_dir, name)
         .ok_or_else(|| H5iError::Metadata(format!("service '{name}' is not running")))?;
-    let text = std::fs::read_to_string(&rec.log).unwrap_or_default();
+    let text = read_tail(Path::new(&rec.log), SERVICE_LOG_TAIL_BYTES);
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(tail);
-    Ok(lines[start..].join("\n"))
+    // Sanitised, like every other box-written string that reaches a terminal.
+    // A service is `sh -c '<command>'` writing to this file, so the bytes are
+    // the box's — and `h5i box service logs` prints the result straight to
+    // stdout, which is where an escape sequence executes. `sanitize_block`
+    // rather than `sanitize_display`: a log is meant to have lines.
+    Ok(crate::redact::sanitize_block(&lines[start..].join("\n")))
+}
+
+/// Most of a service log `service logs` will read.
+///
+/// The file is written by a long-lived command *inside the box*, so its size is
+/// the box's decision, and `read_to_string` on it was an unbounded host
+/// allocation to show the last fifty lines of a dev server. Reading the tail is
+/// also what the caller asked for.
+const SERVICE_LOG_TAIL_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The last `cap` bytes of `path`, starting at a line boundary.
+///
+/// An empty string for anything unreadable — this is a display path, and a
+/// service whose log has been rotated out from under it is not an error worth
+/// failing the command over.
+fn read_tail(path: &Path, cap: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let from = len.saturating_sub(cap);
+    if from > 0 && f.seek(SeekFrom::Start(from)).is_err() {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    if f.take(cap).read_to_end(&mut buf).is_err() {
+        return String::new();
+    }
+    // A seek into the middle of the file lands mid-line; drop the fragment so
+    // the first line shown is a whole one rather than a tail of one.
+    if from > 0
+        && let Some(nl) = buf.iter().position(|b| *b == b'\n')
+    {
+        buf.drain(..=nl);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// Render the fleet of services for `env service status`.
@@ -7746,9 +7788,17 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
             .or(s.record.port)
             .map(|p| format!(" PORT={p}"))
             .unwrap_or_default();
+        // The name and the command are repo-supplied policy (`[service.<name>]`
+        // in `.h5i/env.toml`) on their way to a terminal, so they are cleaned
+        // like every other such string. The command is additionally
+        // secret-scrubbed where it is *recorded*; this is the display side.
         out.push_str(&format!(
             "  {:<16} {:<8} pid={}{}  `{}`\n",
-            s.record.name, live, s.record.pid, port, s.record.command
+            crate::redact::sanitize_display(&s.record.name),
+            live,
+            s.record.pid,
+            port,
+            crate::redact::sanitize_display(&s.record.command)
         ));
     }
     out
@@ -10252,6 +10302,45 @@ mod tests {
         assert_eq!(out, b"a [redacted secret] b [redacted secret]");
         assert_eq!(scrub_exact(b"abc", &["".to_string()]), b"abc");
         assert_eq!(scrub_exact(b"abc", &[]), b"abc");
+    }
+
+    /// A service is `sh -c '<command>'` running inside the box and appending to
+    /// this file, so both its size and its bytes are the box's. `service logs`
+    /// read the whole thing to show the last few lines, and printed them to the
+    /// operator's terminal with the escapes still in.
+    #[test]
+    fn a_service_log_is_read_by_the_tail_and_cleaned_before_it_is_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("web.log");
+
+        // Far past the cap, so the read has to start part way in.
+        let line = "the dev server said something\n";
+        let repeats = (SERVICE_LOG_TAIL_BYTES as usize / line.len()) + 5_000;
+        let mut body = line.repeat(repeats);
+        body.push_str("first-visible\n");
+        body.push_str("boot\u{1b}[2Jok\n");
+        body.push_str("last-line\n");
+        std::fs::write(&path, &body).unwrap();
+
+        let tail = read_tail(&path, SERVICE_LOG_TAIL_BYTES);
+        assert!(
+            tail.len() as u64 <= SERVICE_LOG_TAIL_BYTES,
+            "read {} bytes",
+            tail.len()
+        );
+        assert!(tail.ends_with("last-line\n"), "the tail is the end of the file");
+        // Whole lines only: the seek lands mid-line and the fragment is dropped.
+        assert!(
+            tail.lines().next().unwrap() == line.trim_end(),
+            "first line was a fragment: {:?}",
+            tail.lines().next()
+        );
+
+        // And what a reader is shown has no escapes but keeps its lines.
+        let shown = crate::redact::sanitize_block(&tail);
+        assert!(!shown.contains('\u{1b}'), "an escape reached the terminal");
+        assert!(shown.contains("boot[2Jok"), "{:?}", shown.lines().rev().take(3).collect::<Vec<_>>());
+        assert!(shown.lines().count() > 3);
     }
 
     /// `<env>/spool` is one of the two paths a box can write, and what it stages
