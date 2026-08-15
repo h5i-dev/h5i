@@ -453,6 +453,100 @@ fn create_refuses_duplicates_and_bad_names() {
     }
 }
 
+/// A directory under `.git/worktrees/` that is not a worktree registration
+/// must not be able to stop `create` — for this env or any other.
+///
+/// libgit2's `git_worktree_lookup` fails on such a directory, and
+/// `git_repository_foreach_worktree` hands that failure up as `1` rather than
+/// as an error, which is exactly what `git_branch_is_checked_out` reads as
+/// "yes". So one leftover directory made libgit2 answer *checked out* for every
+/// branch in the repo, and `create` died on a branch it had made two lines
+/// earlier: `reference refs/heads/h5i/env/tester/... is already checked out`.
+/// Nothing about that message points at the leftover, and no amount of picking
+/// a different name gets past it — the repo is simply done creating boxes.
+///
+/// Several leftovers, not one: libgit2 filters the invalid entries out of
+/// `git_worktree_list` by removing them from a vector *while iterating it*, so
+/// adjacent entries survive the filter and reach the lookup that poisons the
+/// answer. A single leftover can slip through the same gap unnoticed.
+#[test]
+fn stale_worktree_registrations_do_not_break_create() {
+    let r = Repo::new();
+    let regs = r.dir.join(".git/worktrees");
+    for name in ["h5i-env-tester-gone", "stale-a", "stale-b", "stale-c"] {
+        std::fs::create_dir_all(regs.join(name)).unwrap();
+    }
+
+    r.h5i_ok(&["env", "create", "after-stale"]);
+    assert!(r.work("after-stale").join("README.md").exists());
+
+    // …and the leftovers are gone, so the next `create` is not walking back
+    // into the same hole.
+    for name in ["h5i-env-tester-gone", "stale-a", "stale-b", "stale-c"] {
+        assert!(
+            !regs.join(name).exists(),
+            "stale registration {name} should have been swept"
+        );
+    }
+    assert!(regs.join("h5i-env-tester-after-stale").is_dir());
+}
+
+/// A `create` that fails while making the worktree must leave nothing behind.
+///
+/// The branch is created immediately before the worktree, and the rollback used
+/// to be armed immediately *after* it — so a failure in between left a branch
+/// and an `<env>/` directory with no manifest. `list` resolves envs through the
+/// manifest and showed nothing; `rm` could not resolve the name either; and
+/// retrying the same name answered "already exists" for an env that had never
+/// existed. Three commands disagreeing about one box, none of them able to
+/// clear it.
+///
+/// The failure is forced by making `.git/worktrees` a regular file: git cannot
+/// register a worktree under it, and it fails at exactly that step.
+#[test]
+fn a_create_that_fails_at_the_worktree_leaves_no_branch_or_directory() {
+    let r = Repo::new();
+    std::fs::write(r.dir.join(".git/worktrees"), "not a directory\n").unwrap();
+
+    let out = r.h5i(&["env", "create", "halfmade"]);
+    assert!(!out.status.success(), "create must fail:\n{}", out_str(&out));
+
+    assert!(!r.env_dir("halfmade").exists(), "env dir must be rolled back");
+    let branches = out_str(&git(&r.dir, &["branch", "--list", "h5i/env/tester/*"]));
+    assert!(
+        branches.trim().is_empty(),
+        "branch must be rolled back, saw: {branches}"
+    );
+
+    // And the name is genuinely free again: not "already exists", not "branch
+    // already exists" — it just works.
+    std::fs::remove_file(r.dir.join(".git/worktrees")).unwrap();
+    r.h5i_ok(&["env", "create", "halfmade"]);
+}
+
+/// An `<env>/` directory with no manifest is not an environment, and `create`
+/// treats it as the leftover it is rather than reporting "already exists" for a
+/// box that `list` cannot show and `rm` cannot remove.
+#[test]
+fn create_reclaims_an_env_directory_left_without_a_manifest() {
+    let r = Repo::new();
+    std::fs::create_dir_all(r.env_dir("leftover")).unwrap();
+
+    r.h5i_ok(&["env", "create", "leftover"]);
+    assert!(r.env_dir("leftover").join("manifest.json").exists());
+
+    // A leftover that still holds a workspace is *not* silently reclaimed —
+    // there is something in it to lose, so it is reported with the paths named.
+    std::fs::create_dir_all(r.env_dir("held").join("work")).unwrap();
+    let out = r.h5i(&["env", "create", "held"]);
+    assert!(!out.status.success());
+    let text = out_str(&out);
+    assert!(
+        text.contains("holds a workspace but no manifest") && text.contains("git branch -D"),
+        "message should name the leftover and how to clear it: {text}"
+    );
+}
+
 #[test]
 fn create_pins_an_explicit_base_revision() {
     let r = Repo::new();

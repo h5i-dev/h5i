@@ -47,7 +47,7 @@ use crate::error::H5iError;
 pub use crate::sandbox_policy::{
     agent_browser_binary, browser_light_binary, browser_read_grants, browser_tooling_present,
     chrome_binary, chrome_exec_patterns, engine_tooling_missing, AgentRuntime, AuditCapture,
-    BrowserEngine,
+    BrowserEngine, BROWSER_ENGINES,
     AuditPolicy, BackgroundHandle,
     BoxGitPath, ExecOutcome, HomeBind, InteractiveOutcome, IsolationClaim, NetMode, PrivateBind,
     PrivatePath, Profile, ResolvedPolicy, RoBind, SecretGrant, DEFAULT_WALL,

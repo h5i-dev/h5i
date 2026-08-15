@@ -720,6 +720,19 @@ pub fn validate_browser_deny(entry: &str) -> Result<(), String> {
     ))
 }
 
+/// Every engine a profile may pin, in preference order (fidelity first).
+///
+/// A list rather than a derived iterator so that adding a variant to
+/// [`BrowserEngine`] and forgetting it here is a one-line diff to spot in
+/// review: the callers that walk it are the ones that pick a *fallback* engine
+/// for a host, and an engine missing from the walk is an engine the tool
+/// silently claims the host cannot run.
+pub const BROWSER_ENGINES: [BrowserEngine; 3] = [
+    BrowserEngine::Chromium,
+    BrowserEngine::Lightpanda,
+    BrowserEngine::H5iLight,
+];
+
 impl BrowserEngine {
     /// The spelling used in `.h5i/env.toml` and on `--engine`.
     pub fn as_str(&self) -> &'static str {
