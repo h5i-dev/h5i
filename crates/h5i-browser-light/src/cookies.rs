@@ -86,6 +86,16 @@ pub struct CookieActivity {
     pub stored: usize,
 }
 
+/// Who is setting a cookie. `HttpOnly` exists to tell these two apart, so the
+/// jar has to know which it is talking to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Setter {
+    /// A `Set-Cookie` header on a response.
+    Wire,
+    /// `document.cookie = …` from page script.
+    Script,
+}
+
 /// The session's cookies.
 #[derive(Default)]
 pub struct Jar {
@@ -168,7 +178,30 @@ impl Jar {
     /// Take the `Set-Cookie` headers from a response. Returns how many were
     /// actually stored, which is not how many arrived.
     pub fn store<'a>(&self, url: &Url, headers: impl IntoIterator<Item = &'a str>) -> usize {
-        self.store_at(url, headers, SystemTime::now())
+        self.store_at(url, headers, SystemTime::now(), Setter::Wire)
+    }
+
+    /// Store a cookie **page script** set, through `document.cookie`.
+    ///
+    /// Deliberately not [`Self::store`], which is what `write_cookie` called.
+    /// The wire and the script are not the same authority, and `HttpOnly` is the
+    /// whole statement of that difference — so a browser enforces two rules here
+    /// that the response path has no reason to:
+    ///
+    /// * **Script may not overwrite an `HttpOnly` cookie.** Replacement goes
+    ///   through the same identity match as deletion, so `document.cookie =
+    ///   "sid=attacker"` replaced the server's `HttpOnly` session cookie and the
+    ///   jar then sent the attacker's value on the wire. Script could not *read*
+    ///   the credential and could substitute one, which is session fixation —
+    ///   and `document.cookie = "sid=; Max-Age=0"` was a logout the server never
+    ///   asked for. Honouring the flag on reads and not on writes is honouring
+    ///   half of it.
+    /// * **Script may not *set* `HttpOnly`.** RFC 6265 §8.6 says a
+    ///   set-cookie-string carrying that attribute from script is ignored
+    ///   entirely, which is the rule that stops script planting a cookie it can
+    ///   then hide behind.
+    pub fn store_from_script(&self, url: &Url, header: &str) -> usize {
+        self.store_at(url, [header], SystemTime::now(), Setter::Script)
     }
 
     fn store_at<'a>(
@@ -176,6 +209,7 @@ impl Jar {
         url: &Url,
         headers: impl IntoIterator<Item = &'a str>,
         now: SystemTime,
+        setter: Setter,
     ) -> usize {
         let Some(host) = url.host_str().map(|h| h.to_ascii_lowercase()) else {
             return 0;
@@ -189,6 +223,23 @@ impl Jar {
             let Some(cookie) = parse_set_cookie(header, &host, url, now) else {
                 continue;
             };
+
+            if setter == Setter::Script {
+                // Ignored whole, per RFC 6265 §8.6.
+                if cookie.http_only {
+                    continue;
+                }
+                // And it may not stand on one the wire set.
+                let shadows_http_only = jar.iter().any(|c| {
+                    c.http_only
+                        && c.name == cookie.name
+                        && c.host == cookie.host
+                        && c.path == cookie.path
+                });
+                if shadows_http_only {
+                    continue;
+                }
+            }
 
             // Replacing by identity is what makes deletion work: a server
             // clears a cookie by re-sending it with an expiry in the past, so
@@ -462,6 +513,7 @@ mod tests {
             &url("https://a.example/"),
             ["old=1; Expires=Thu, 01 Jan 2015 00:00:00 GMT"],
             now,
+            Setter::Wire,
         );
         assert_eq!(jar.len(), 0, "an already-expired cookie is not kept");
 
@@ -469,6 +521,7 @@ mod tests {
             &url("https://a.example/"),
             ["new=1; Expires=Sat, 01 Jan 2050 00:00:00 GMT"],
             now,
+            Setter::Wire,
         );
         assert!(jar.header_for_at(&url("https://a.example/"), now).is_some());
     }
@@ -482,6 +535,7 @@ mod tests {
             &url("https://a.example/"),
             ["s=1; Max-Age=0; Expires=Sat, 01 Jan 2050 00:00:00 GMT"],
             now,
+            Setter::Wire,
         );
         assert_eq!(jar.len(), 0);
     }
@@ -636,6 +690,44 @@ mod http_only_tests {
         let visible = jar.document_cookie(&url("https://app.example/"));
         assert!(!visible.contains("secret"), "script must not see it: {visible}");
         assert!(visible.contains("theme=dark"), "but does see the rest: {visible}");
+    }
+
+    /// `HttpOnly` is a statement about *script*, and it was being honoured in
+    /// one direction only. `write_cookie` called `Jar::store` — the same door a
+    /// `Set-Cookie` header comes through — and replacement there goes by
+    /// name/host/path identity, so page script could substitute the server's
+    /// session credential without ever being able to read it. That is session
+    /// fixation, and the delete form is a logout the server never asked for.
+    #[test]
+    fn script_cannot_overwrite_or_clear_an_http_only_cookie() {
+        let jar = Jar::new();
+        let u = url("https://app.example/");
+        jar.store(&u, ["sid=server-value; HttpOnly", "theme=dark"]);
+
+        // Substitution is refused, and the wire still carries the real one.
+        assert_eq!(jar.store_from_script(&u, "sid=attacker"), 0);
+        let (wire, _) = jar.header_for(&u).expect("sent");
+        assert!(wire.contains("sid=server-value"), "{wire}");
+        assert!(!wire.contains("attacker"), "{wire}");
+
+        // So is deletion.
+        assert_eq!(jar.store_from_script(&u, "sid=; Max-Age=0"), 0);
+        assert!(jar.header_for(&u).expect("still there").0.contains("sid=server-value"));
+
+        // A cookie script is allowed to own is still script's to change.
+        assert_eq!(jar.store_from_script(&u, "theme=light"), 1);
+        assert!(jar.document_cookie(&u).contains("theme=light"));
+
+        // And script may not *set* `HttpOnly` — RFC 6265 §8.6 ignores the whole
+        // set-cookie-string, which is what stops it planting a cookie it can
+        // then hide behind.
+        assert_eq!(jar.store_from_script(&u, "planted=1; HttpOnly"), 0);
+        assert!(jar.header_for(&u).expect("sent").0.contains("planted") == false);
+
+        // The wire is unaffected by all of this: a server may still replace its
+        // own `HttpOnly` cookie, which is how a session is rotated.
+        assert_eq!(jar.store(&u, ["sid=rotated; HttpOnly"]), 1);
+        assert!(jar.header_for(&u).expect("sent").0.contains("sid=rotated"));
     }
 
     #[test]
