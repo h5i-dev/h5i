@@ -273,7 +273,11 @@ fn is_secure(url: &Url) -> bool {
     if url.scheme() == "https" {
         return true;
     }
-    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
+    // `[::1]` with the brackets, because that is what `host_str` returns for an
+    // IPv6 literal — the bare `::1` this listed could never match, so a dev
+    // server on IPv6 loopback was the one first-party channel the rule above
+    // did not cover.
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1" | "[::1]"))
 }
 
 /// RFC 6265 §5.1.4 default-path: the request path with its last segment
@@ -344,8 +348,19 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
 
     // Max-Age wins over Expires (RFC 6265 §5.2.2), and a non-positive one is
     // an immediate deletion.
+    //
+    // `checked_add`, because `SystemTime + Duration` **panics** on overflow and
+    // the addend here is a number off the wire. `Max-Age=9223372036854775807`
+    // in a `Set-Cookie` aborted the engine — any page the box's browser is
+    // pointed at could end the session with one response header, which is a
+    // page deciding whether the agent driving it keeps running.
+    //
+    // An expiry too far out to represent is stored as a session cookie rather
+    // than clamped to some arbitrary date. In this jar the two are the same
+    // thing: nothing is persisted, so "until the process exits" is already the
+    // longest life a cookie can have (see the module docs).
     let expires = match max_age {
-        Some(seconds) if seconds > 0 => Some(now + Duration::from_secs(seconds as u64)),
+        Some(seconds) if seconds > 0 => now.checked_add(Duration::from_secs(seconds as u64)),
         Some(_) => Some(now),
         None => expires,
     };
@@ -509,6 +524,35 @@ mod tests {
             header.starts_with("narrow=1"),
             "longer path first, per RFC 6265 §5.4: {header}"
         );
+    }
+
+    /// A `Max-Age` off the wire is a number the page chose, and
+    /// `SystemTime + Duration` panics on overflow. One response header ended
+    /// the engine — and with it whatever the agent driving it was doing.
+    #[test]
+    fn an_absurd_max_age_does_not_end_the_session() {
+        let jar = Jar::new();
+        let u = url("https://a.example/");
+        assert_eq!(jar.store(&u, [format!("s=1; Max-Age={}", i64::MAX).as_str()]), 1);
+        // Too far out to represent, so it is held as a session cookie — which
+        // in an in-memory jar is the same lifetime, and is still sent.
+        let (header, _) = jar.header_for(&u).expect("still sent");
+        assert_eq!(header, "s=1");
+
+        // The neighbouring shapes stay as they were.
+        assert_eq!(jar.store(&u, ["t=1; Max-Age=-1"]), 1);
+        assert!(jar.header_for(&u).expect("s survives").0.contains("s=1"));
+        assert_eq!(jar.store(&u, ["u=1; Max-Age=not-a-number"]), 1);
+    }
+
+    #[test]
+    fn ipv6_loopback_is_a_first_party_channel_like_the_others() {
+        // `host_str` serialises an IPv6 literal with its brackets, so the bare
+        // `::1` in the list matched nothing and a `Secure` cookie set by a dev
+        // server on `[::1]` was never sent back to it.
+        let jar = Jar::new();
+        jar.store(&url("http://[::1]:3000/"), ["sid=abc; Secure"]);
+        assert!(jar.header_for(&url("http://[::1]:3000/")).is_some());
     }
 
     #[test]
