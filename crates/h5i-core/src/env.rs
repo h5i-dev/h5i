@@ -1658,6 +1658,7 @@ pub fn create(
                 };
                 let mut prof = sandbox::load_profile(workdir, agent_profile, Some(claim))?;
                 if let Some(img) = &opts.image {
+                    sandbox::validate_image(img)?;
                     prof.image = Some(img.clone());
                 }
                 let pol = sandbox::resolve(&prof, &sandbox::probe_host_for(claim))?;
@@ -1689,6 +1690,10 @@ pub fn create(
     // resolve, so it is pinned in policy.resolved.toml and the digest like any
     // profile-declared image.
     if let Some(img) = &opts.image {
+        // `load_profile` validated the profile's own image; `--image` lands
+        // after it, so it needs the same gate or the strongest-precedence
+        // source is the one nothing checks.
+        sandbox::validate_image(img)?;
         profile.image = Some(img.clone());
     }
     // `--engine` has the same precedence as `--image`: it lands in the profile

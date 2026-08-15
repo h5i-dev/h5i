@@ -601,7 +601,56 @@ pub fn effective_auto(
 
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
 /// created — never silently weaken them.
+/// Validate a container image reference before it becomes an argument.
+///
+/// The image is repo-supplied — `[container] image` in `.h5i/env.toml`, the same
+/// untrusted file every other policy field comes from — and it reaches two
+/// places where its bytes are syntax rather than data:
+///
+/// * **Podman's positional argument.** `podman run <flags> <image> <argv…>` has
+///   no `--` before the image, so a reference beginning with `-` is parsed as a
+///   flag and `argv[0]` becomes the image instead. That mostly self-destructs
+///   (the run fails for want of an image), but "mostly" is not a property to
+///   rest a containment boundary on, and it costs one character to remove.
+/// * **`--mount type=image,source=<image>,destination=…`**, where a comma ends
+///   the value and starts an option. `private_paths` already refuses a comma at
+///   policy load for exactly this reason; the image was the field that did not.
+///
+/// The charset is every byte a real reference uses — registry host, path,
+/// `:tag`, `@sha256:…`, and the `oci-archive:` / `docker-archive:` transports —
+/// and nothing else. Whitespace, quotes, commas and control characters are not
+/// image references.
+pub fn validate_image(image: &str) -> Result<(), H5iError> {
+    let bad = |why: &str| {
+        // `{:?}`, not `{}`: the value is going to a terminal and the thing
+        // wrong with it may be a control character. Rust's `Debug` for `str`
+        // escapes those, which is the whole requirement here — and this crate
+        // sits below `h5i-core`, so `redact::sanitize_display` is not reachable.
+        Err(H5iError::Metadata(format!(
+            "container image {image:?} {why} — an image reference is a registry path, an \
+             optional `:tag` or `@sha256:…`, and nothing else (fail-closed)"
+        )))
+    };
+    if image.is_empty() || image.len() > 512 {
+        return bad("is empty or absurdly long");
+    }
+    if image.starts_with('-') {
+        // Podman would read it as a flag, and the argument after it as the image.
+        return bad("starts with '-', which Podman reads as an option");
+    }
+    if !image
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'/' | b'@' | b'+' | b'-'))
+    {
+        return bad("contains a character an image reference cannot hold");
+    }
+    Ok(())
+}
+
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
+    if let Some(image) = &p.image {
+        validate_image(image)?;
+    }
     // A deny entry that matches no action denies nothing, while the resolved
     // policy still reads as though the verb were blocked. Refuse the typo here
     // rather than let the operator discover it from an agent successfully
@@ -4084,6 +4133,47 @@ container.image = "localhost/mine:2"
         assert_eq!(p.image.as_deref(), Some("localhost/repo-default:1"));
         let p = load_from_str(toml_text, "custom", None).unwrap();
         assert_eq!(p.image.as_deref(), Some("localhost/mine:2"));
+    }
+
+    /// The image is repo-supplied and reaches two places where its bytes are
+    /// syntax: Podman's positional argument (no `--` before it, so a leading
+    /// `-` is read as a flag) and `--mount type=image,source=<image>,…`, where
+    /// a comma ends the value and starts an option.
+    #[test]
+    fn an_image_reference_that_is_really_an_argument_is_refused() {
+        for good in [
+            "alpine",
+            "alpine:3.19",
+            "docker.io/library/alpine:3.19",
+            "localhost/mine:2",
+            "ghcr.io/org/img@sha256:abc123",
+            "registry.example.com:5000/team/img:tag",
+            "oci-archive:/var/tmp/img.tar",
+        ] {
+            assert!(validate_image(good).is_ok(), "{good} must be accepted");
+        }
+        for bad in [
+            "",
+            "-v",
+            "--privileged",
+            "--security-opt=label=disable",
+            "alpine,rw",
+            "alpine destination=/etc",
+            "alpine\u{1b}[2J",
+            "alpine\n--privileged",
+        ] {
+            assert!(validate_image(bad).is_err(), "{bad:?} must be refused");
+        }
+
+        // And it is refused at policy load, not at run time.
+        let toml_text = "[profile.custom]\nisolation = \"container\"\ncontainer.image = \"--privileged\"\n";
+        let err = load_from_str(toml_text, "custom", None).unwrap_err().to_string();
+        assert!(err.contains("Podman reads as an option"), "{err}");
+
+        // The refusal shows the value without letting it reach the terminal
+        // as a control sequence.
+        let err = validate_image("a\u{1b}[2Jb").unwrap_err().to_string();
+        assert!(!err.contains('\u{1b}'), "{err:?}");
     }
 
     #[test]
