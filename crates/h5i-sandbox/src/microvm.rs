@@ -61,6 +61,7 @@ use std::time::Duration;
 
 use crate::error::H5iError;
 use crate::sandbox_policy::{ExecOutcome, InteractiveOutcome, NetMode, Profile, ResolvedPolicy};
+use h5i_error::redact::sanitize_block;
 
 /// Minimum `msb` version this adapter targets. Below it, `--net-rule`,
 /// `--net-default-egress`, `--script-path` and the explicit `--mount-dir` /
@@ -1891,8 +1892,15 @@ pub fn spawn_background(
     // command, and an unrecorded service in it is invisible to `service status`
     // and unreachable by `service stop`, with a retry starting a second copy.
     // The launcher writes its pid into the log for exactly this.
+    // The pid comes out of a log the guest writes, so it is checked the same
+    // way the success path below checks the one it was told: a pid that is not
+    // its own session leader does not name this service's process group, and
+    // signalling the group anyway is how a forged marker would aim `kill` at
+    // something else in the guest.
     let reap_detached = || {
-        if let Some(pid) = logged_service_pid(work, service) {
+        let live = logged_service_pid(work, service)
+            .filter(|p| guest_session_leader(&rt, &name, *p));
+        if let Some(pid) = live {
             stop_group(&rt, &name, pid);
         }
     };
@@ -1975,6 +1983,24 @@ pub fn spawn_background(
 /// How long a service is given to fail before it is called started.
 const SERVICE_SETTLE: Duration = Duration::from_millis(300);
 
+/// Is guest pid `pid` its own session leader — i.e. does the process group
+/// `-pid` names belong to it?
+///
+/// `sed`/`cut` rather than a positional field, for the reason the launcher
+/// gives: the `comm` field in `/proc/<pid>/stat` may contain spaces and
+/// parentheses, so counting columns from the left is wrong for a process that
+/// picked an awkward name. A runtime that cannot be asked answers "no", which
+/// skips a best-effort cleanup rather than signalling on a guess.
+fn guest_session_leader(rt: &Runtime, sandbox: &str, pid: u32) -> bool {
+    guest_sh(
+        &rt.bin,
+        sandbox,
+        &format!(
+            "test \"$(sed -e 's/^.*) //' /proc/{pid}/stat 2>/dev/null | cut -d' ' -f4)\" = {pid}"
+        ),
+    )
+}
+
 /// Best-effort TERM+KILL of a service's process group inside the guest.
 fn stop_group(rt: &Runtime, sandbox: &str, pid: u32) {
     guest_sh(&rt.bin, sandbox, &format!("kill -TERM -{pid} 2>/dev/null"));
@@ -1982,13 +2008,23 @@ fn stop_group(rt: &Runtime, sandbox: &str, pid: u32) {
 }
 
 /// The last few lines of a service's log, for an error message.
+///
+/// Every byte here was written *inside the box* — it is the service's own
+/// stdout — and this string goes straight to the operator's terminal through
+/// `Error: …`. So it is sanitised on the way out and bounded on the way in:
+///
+/// * A control sequence in a log line repaints the terminal it is printed on.
+///   Five lines is enough for `ESC[2J ESC[1;1H` and a forged h5i banner
+///   underneath it, and a service that fails to start on purpose is how a box
+///   gets that printed on demand.
+/// * The read is capped because nothing bounds the file. `box service start`
+///   reading a log the box grew to fill the disk is a host-side OOM triggered
+///   from inside a box, and only the tail is wanted anyway.
 fn tail_service_log(work: &Path, service: &str) -> String {
     let Ok(path) = service_log_path(work, service) else {
         return String::new();
     };
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return String::new();
-    };
+    let text = read_tail(&path, SERVICE_LOG_TAIL_BYTES);
     let tail: Vec<&str> = text
         .lines()
         .filter(|l| !l.starts_with("#h5i-pid "))
@@ -1998,10 +2034,35 @@ fn tail_service_log(work: &Path, service: &str) -> String {
     if tail.is_empty() {
         return " (its log is empty)".into();
     }
-    format!(
-        ". Its log ends:\n  {}",
-        tail.into_iter().rev().collect::<Vec<_>>().join("\n  ")
-    )
+    let body = tail.into_iter().rev().collect::<Vec<_>>().join("\n  ");
+    format!(". Its log ends:\n  {}", sanitize_block(&body))
+}
+
+/// How much of a service log is read before it is tailed. The lines wanted are
+/// at the end, and the file's size is the box's choice.
+const SERVICE_LOG_TAIL_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The last `cap` bytes of `path`, lossily decoded, or `""` if it cannot be
+/// read. A partial leading line is dropped rather than shown truncated.
+fn read_tail(path: &Path, cap: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let truncated = len > cap;
+    if truncated && f.seek(SeekFrom::End(-(cap as i64))).is_err() {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    if f.take(cap).read_to_end(&mut buf).is_err() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    match text.find('\n') {
+        Some(i) if truncated => text[i + 1..].to_string(),
+        _ => text,
+    }
 }
 
 /// The pid a launcher recorded into the service log, for cleaning up after a
@@ -2011,14 +2072,41 @@ fn tail_service_log(work: &Path, service: &str) -> String {
 /// exec timing out, say — leaves the service running in a guest that outlives
 /// the command, invisible to `service status` and unreachable by
 /// `service stop`, with a retry starting a second copy beside it.
+/// This marker is **guest-writable**, and that is the whole reason for the
+/// checks on it. The log is a mounted file the service itself writes to; a
+/// service that prints its own `#h5i-pid` line wins, because the last one is
+/// the one read. So the number that comes back here is a hint from inside the
+/// box, and it is used to send a signal to a process *group* — the same hazard
+/// that kept the pid out of a pidfile a few screens up, arriving through the
+/// log instead.
+///
+/// `-1` as a process group means "every process the caller can signal", so an
+/// unchecked marker of `1` turns a failed `service start` into `kill -KILL -1`
+/// as root inside the guest. Anything below 2 is refused here, and
+/// `reap_detached` confirms the pid is a session leader — the launcher's own
+/// invariant, which the success path in `start_service` already checks and this
+/// path did not — before signalling.
+///
+/// What is left is that a box can *hide* the real pid by appending a marker of
+/// its own, which loses the orphan this function exists to reap. That is a
+/// service leaking into a guest the operator can still see and stop, not a
+/// signal aimed by the box, and it cannot be closed from the host: the log is
+/// the only channel a launcher that never returned left behind.
 fn logged_service_pid(work: &Path, service: &str) -> Option<u32> {
     let path = service_log_path(work, service).ok()?;
-    let text = std::fs::read_to_string(path).ok()?;
-    text.lines()
+    // Bounded for the same reason the tail is: the box chooses this file's
+    // size, and the marker is near its end.
+    let text = read_tail(&path, SERVICE_LOG_TAIL_BYTES);
+    let pid: u32 = text
+        .lines()
         .rev()
         .filter_map(|l| l.strip_prefix("#h5i-pid "))
         .next()
-        .and_then(|v| v.trim().parse().ok())
+        .and_then(|v| v.trim().parse().ok())?;
+    // 0 is "my own process group", 1 is init, and `-1` is everything: none of
+    // them is a service, and each of them is a worse thing to signal than the
+    // orphan we came for.
+    (pid >= 2).then_some(pid)
 }
 
 /// A service started inside a guest: its pid, the guest, and that guest's boot
@@ -2186,22 +2274,13 @@ fn run_bounded(
     mut cmd: std::process::Command,
     limit: Duration,
 ) -> Option<std::process::Output> {
-    use std::io::Read;
     use std::process::Stdio;
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().ok()?;
     let mut out_pipe = child.stdout.take()?;
     let mut err_pipe = child.stderr.take()?;
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
-    });
+    let out_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe));
     let deadline = std::time::Instant::now() + limit;
     let mut poll = Duration::from_millis(1);
     loop {
@@ -2464,7 +2543,6 @@ fn wait_exec(
     wall: Duration,
     full: &[String],
 ) -> Result<ExecOutcome, H5iError> {
-    use std::io::Read;
     use std::process::Stdio;
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd
@@ -2473,16 +2551,8 @@ fn wait_exec(
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
-    });
+    let out_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe));
 
     let deadline = std::time::Instant::now() + wall + Duration::from_secs(10);
     let mut timed_out = false;
@@ -2549,7 +2619,6 @@ fn wait_vm(
     wall: Duration,
     full: &[String],
 ) -> Result<ExecOutcome, H5iError> {
-    use std::io::Read;
     use std::process::Stdio;
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd
@@ -2558,16 +2627,8 @@ fn wait_vm(
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
-    });
+    let out_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe));
 
     // `--timeout` already caps the guest command; this is the host-side backstop
     // for an `msb` that hangs before or after the guest ever runs. The grace
@@ -3529,6 +3590,93 @@ mod tests {
     }
 
     // ─── background services ────────────────────────────────────────────────
+
+    /// Write `text` as service `svc`'s log under a fresh work dir.
+    fn with_service_log(text: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let path = service_log_path(&work, "svc").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        (tmp, work)
+    }
+
+    /// The service log is written inside the box, and its tail is printed to
+    /// the operator's terminal through `Error: …`. A service that fails to
+    /// start on purpose is how a box asks for that to happen, so the escape
+    /// sequences that would repaint the terminal must not survive the trip.
+    #[test]
+    fn a_service_log_cannot_repaint_the_terminal_it_is_reported_on() {
+        let esc = '\u{1b}';
+        let (_tmp, work) = with_service_log(&format!(
+            "listening on 3000\n{esc}[2J{esc}[1;1Hh5i: policy verified, egress denied\n\
+             \u{202e}derotinom ton\ndone\r  spoof\n"
+        ));
+        let tail = tail_service_log(&work, "svc");
+        assert!(!tail.contains(esc), "{tail:?}");
+        assert!(!tail.contains('\u{202e}'), "{tail:?}");
+        assert!(!tail.contains('\r'), "{tail:?}");
+        // Sanitised, not swallowed: the operator still gets the diagnosis.
+        assert!(tail.contains("listening on 3000"), "{tail:?}");
+        // And the line structure survives, which is the point of the block form.
+        assert!(tail.lines().count() >= 4, "{tail:?}");
+    }
+
+    /// Nothing bounds the size of that file — the box writes it. Reading all of
+    /// it to print five lines is a host-side OOM a box can ask for.
+    #[test]
+    fn a_service_log_the_box_grew_is_read_by_the_tail_only() {
+        // One line longer than the whole cap, then three short ones. A read of
+        // the last `cap` bytes lands in the middle of the giant line and drops
+        // that partial, so the tail is the three short lines and nothing else.
+        // Reading the file whole would make the giant line a *complete* line
+        // and put all of it in the five the error message prints — which is the
+        // difference this asserts on, since "the read stopped early" is not
+        // otherwise visible from the outside.
+        let mut text = "x".repeat(SERVICE_LOG_TAIL_BYTES as usize + 4096);
+        text.push_str("\nfirst\nsecond\nthe last line\n");
+        let (_tmp, work) = with_service_log(&text);
+        let path = service_log_path(&work, "svc").unwrap();
+        assert!(
+            std::fs::metadata(&path).unwrap().len() > SERVICE_LOG_TAIL_BYTES,
+            "the fixture has to be bigger than the cap for this to test anything"
+        );
+        assert!(
+            read_tail(&path, SERVICE_LOG_TAIL_BYTES).len() as u64 <= SERVICE_LOG_TAIL_BYTES,
+            "the read is bounded"
+        );
+        let tail = tail_service_log(&work, "svc");
+        assert!(tail.contains("the last line"), "the tail is still the tail");
+        assert!(
+            tail.len() < 1024,
+            "the giant line reached the error message ({} bytes)",
+            tail.len()
+        );
+    }
+
+    /// The pid marker lives in the log, so the box writes it: the service's own
+    /// stdout lands in the same file, and the *last* marker is the one read.
+    /// `stop_group` turns that number into `kill -KILL -<pid>`, and `-1` is
+    /// "every process the caller can signal" — as root, inside the guest.
+    #[test]
+    fn a_forged_pid_marker_cannot_aim_the_cleanup_at_init() {
+        for forged in ["#h5i-pid 0", "#h5i-pid 1", "#h5i-pid -1", "#h5i-pid nonsense"] {
+            let (_tmp, work) = with_service_log(&format!("#h5i-pid 4242\n{forged}\n"));
+            assert_eq!(
+                logged_service_pid(&work, "svc"),
+                None,
+                "{forged:?} was accepted as a process group to signal"
+            );
+        }
+        // A real one still comes back, or the cleanup this exists for is gone.
+        let (_tmp, work) = with_service_log("starting\n#h5i-pid 4242\nlistening\n");
+        assert_eq!(logged_service_pid(&work, "svc"), Some(4242));
+        // And the newest marker wins, which is what makes it forgeable at all —
+        // asserted so the reap-vs-hide tradeoff in the doc stays honest.
+        let (_tmp, work) = with_service_log("#h5i-pid 4242\n#h5i-pid 77\n");
+        assert_eq!(logged_service_pid(&work, "svc"), Some(77));
+    }
 
     /// Every warm entry point must build the same create argv, or each creates
     /// its own guest and reaps the others' — killing any service running there.

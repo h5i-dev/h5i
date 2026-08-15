@@ -77,14 +77,29 @@ pub(crate) fn session_id(tmp_root: &Path) -> Option<String> {
     // run — and a cursor that never sees a session change never resets, so a
     // fresh browser producing the same number of console lines reads as a
     // clean page.
+    // Bounded in both directions, because this walks `<env>/tmp` — one of the
+    // two paths a box can write — from the *host*. A pid file holds a decimal
+    // integer; without a cap, a box could put four gigabytes in one and have the
+    // host allocate it, or fill the directory and have the host build an
+    // unbounded `ids` vector out of the names. Neither is a session
+    // fingerprint, so both are refused rather than read.
+    const MAX_PID_FILES: usize = 64;
+    const MAX_PID_BYTES: u64 = 64;
     let mut ids: Vec<String> = std::fs::read_dir(daemon_dir(tmp_root))
         .into_iter()
         .flatten()
         .chain(std::fs::read_dir(socket_dir(tmp_root)).into_iter().flatten())
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().ends_with(".pid"))
+        .take(MAX_PID_FILES)
         .filter_map(|e| {
-            let pid = std::fs::read_to_string(e.path()).ok()?;
+            use std::io::Read;
+            let mut pid = String::new();
+            std::fs::File::open(e.path())
+                .ok()?
+                .take(MAX_PID_BYTES)
+                .read_to_string(&mut pid)
+                .ok()?;
             Some(format!(
                 "{}:{}",
                 e.file_name().to_string_lossy(),
@@ -277,20 +292,36 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
         return ev;
     };
 
-    let mut truncated = false;
+    // `Cell`, because both closures below need to set it and the borrow
+    // checker will not hand the same `&mut bool` to two of them.
+    let truncated = std::cell::Cell::new(false);
     // Take everything past the cursor, capped. A buffer shorter than the cursor
     // means the session restarted and the numbering began again, so the whole
     // buffer is new.
-    let mut slice = |items: &[serde_json::Value], seen: &mut usize| -> Vec<serde_json::Value> {
+    let slice = |items: &[serde_json::Value], seen: &mut usize| -> Vec<serde_json::Value> {
         let start = if items.len() < *seen { 0 } else { *seen };
         *seen = items.len();
         let fresh = &items[start..];
         if fresh.len() > MAX_LINES {
-            truncated = true;
+            truncated.set(true);
             fresh[fresh.len() - MAX_LINES..].to_vec()
         } else {
             fresh.to_vec()
         }
+    };
+
+    // `slice` caps each *array*, and the outer list has no cap at all — so a
+    // batch of ten thousand entries, each carrying its own `messages` array,
+    // multiplied straight through into `ev` and from there into a receipt line.
+    // The box writes this JSON, so the total is what has to be bounded, not the
+    // per-array slice. Kept as a closure over the three vectors so the rule is
+    // stated once and cannot apply to two of the three.
+    let keep = |v: &mut Vec<String>, line: String| {
+        if v.len() >= MAX_LINES {
+            truncated.set(true);
+            return;
+        }
+        v.push(line);
     };
 
     for entry in entries {
@@ -304,12 +335,12 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
                     continue;
                 }
                 let text = m["text"].as_str().unwrap_or_default();
-                ev.console.push(clip(&format!("[{level}] {text}")));
+                keep(&mut ev.console, clip(&format!("[{level}] {text}")));
             }
         }
         if let Some(errs) = result["errors"].as_array() {
             for e in slice(errs, &mut cursor.errors) {
-                ev.errors.push(clip(e["text"].as_str().unwrap_or_default()));
+                keep(&mut ev.errors, clip(e["text"].as_str().unwrap_or_default()));
             }
         }
         if let Some(reqs) = result["requests"].as_array() {
@@ -327,11 +358,11 @@ fn parse_batch(out: &[u8], cursor: &mut Cursor) -> BrowserEvidence {
                 let shown = status
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "no response".into());
-                ev.failed_requests.push(clip(&format!("{shown} {method} {url}")));
+                keep(&mut ev.failed_requests, clip(&format!("{shown} {method} {url}")));
             }
         }
     }
-    ev.truncated = truncated;
+    ev.truncated = truncated.get();
     ev
 }
 
@@ -559,6 +590,34 @@ mod tests {
         assert!(ev.failed_requests.last().unwrap().ends_with("/r49"));
     }
 
+    /// The per-array cap bounded one `messages` list; the outer batch had none,
+    /// so a box returning ten thousand entries multiplied straight through into
+    /// the evidence and from there into a receipt line. The box writes this
+    /// JSON, so the *total* is what has to be bounded.
+    #[test]
+    fn a_flood_spread_across_many_entries_is_capped_too() {
+        // Each entry's buffer is one longer than the last, which is what an
+        // accumulating buffer actually looks like — so the cursor advances by
+        // one per entry and every entry contributes a fresh line.
+        let entries: Vec<String> = (0..200)
+            .map(|i| {
+                let errs: Vec<String> = (0..=i)
+                    .map(|j| format!(r#"{{"text":"boom {j}"}}"#))
+                    .collect();
+                format!(
+                    r#"{{"result":{{"errors":[{}],"messages":[],"requests":[]}}}}"#,
+                    errs.join(",")
+                )
+            })
+            .collect();
+        let batch = format!("[{}]", entries.join(","));
+
+        let mut c = Cursor::default();
+        let ev = parse_batch(batch.as_bytes(), &mut c);
+        assert_eq!(ev.errors.len(), MAX_LINES, "the total must be bounded");
+        assert!(ev.truncated, "a capped record must say it was capped");
+    }
+
     #[test]
     fn unparseable_output_is_empty_evidence_not_a_failed_run() {
         // Third-party JSON on the path of a run that already succeeded. A shape
@@ -578,6 +637,40 @@ mod tests {
         // the same claim as nothing went wrong.
         assert!(ev.is_clean());
         assert_eq!(ev.verb.as_deref(), Some("click"));
+    }
+
+    /// `session_id` walks `<env>/tmp` — one of the two paths a box can write —
+    /// from the host, and read every `.pid` file whole. A pid file holds a
+    /// decimal integer; a box could put four gigabytes in one, or fill the
+    /// directory, and the host would allocate it either way.
+    #[test]
+    fn a_hostile_pid_file_is_not_a_session_fingerprint() {
+        let td = tempfile::tempdir().unwrap();
+        let tmp_root = td.path().join("tmp");
+        let sockets = tmp_root.join("agent-browser");
+        std::fs::create_dir_all(&sockets).unwrap();
+
+        std::fs::write(sockets.join("huge.pid"), "9".repeat(4 * 1024 * 1024)).unwrap();
+        for i in 0..300 {
+            std::fs::write(sockets.join(format!("f{i}.pid")), "1001").unwrap();
+        }
+
+        let id = session_id(&tmp_root).expect("some fingerprint");
+        assert!(
+            id.len() < 16 * 1024,
+            "the fingerprint grew to {} bytes",
+            id.len()
+        );
+
+        // ...and an ordinary session still fingerprints as it did.
+        let td = tempfile::tempdir().unwrap();
+        let sockets = td.path().join("tmp").join("agent-browser");
+        std::fs::create_dir_all(&sockets).unwrap();
+        std::fs::write(sockets.join("default.pid"), "1001\n").unwrap();
+        assert_eq!(
+            session_id(&td.path().join("tmp")).as_deref(),
+            Some("default.pid:1001")
+        );
     }
 
     #[test]

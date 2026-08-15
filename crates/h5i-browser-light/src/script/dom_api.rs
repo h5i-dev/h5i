@@ -1820,6 +1820,8 @@ fn read_cookies(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> Js
 fn write_cookie(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let header = arg_string(args, 0, context)?;
     let host = host(context)?;
-    let stored = host.broker.jar().store(&host.base, [header.as_str()]);
+    // Not `store`: see `Jar::store_from_script`. Script may not overwrite an
+    // `HttpOnly` cookie, nor set one.
+    let stored = host.broker.jar().store_from_script(&host.base, &header);
     Ok(JsValue::from(stored as f64))
 }

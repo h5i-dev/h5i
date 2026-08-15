@@ -55,6 +55,15 @@ impl Default for PageOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Submission {
     pub url: Url,
+    /// The document the form was in.
+    ///
+    /// A form's `action` is chosen by the page, not by the agent — the agent
+    /// asks for a button to be pressed, and the page decides where that goes.
+    /// So the submission is policed as a request *from* this origin, which is
+    /// what stops a page on the open web POSTing to the box's dev server the
+    /// moment somebody clicks its submit button. Filled in by
+    /// [`Page::submit_form`], which is the only thing that knows it.
+    pub document: Url,
     /// `GET` or `POST`. Anything else never reaches here: Blitz's own
     /// submission algorithm declines to produce it.
     pub method: String,
@@ -70,9 +79,14 @@ pub struct Submission {
 /// same thread and is picked up immediately afterwards. The `Mutex` is here to
 /// satisfy the trait's `Send + Sync` bound rather than to guard a race — the
 /// page has exactly one owner (see `stream`'s module docs).
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct CapturedNavigation {
     slot: Arc<std::sync::Mutex<Option<Submission>>>,
+    /// The document the form lives in, so the captured request carries the
+    /// origin it was made from. Filled here rather than left for the caller
+    /// because a `Submission` with no origin is one the policy trusts, and a
+    /// field that defaults to trusted is a field somebody forgets to set.
+    document: Url,
 }
 
 impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
@@ -104,6 +118,7 @@ impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
         if let Ok(mut slot) = self.slot.lock() {
             *slot = Some(Submission {
                 url: options.url.clone(),
+                document: self.document.clone(),
                 method: format!("{:?}", options.method).to_uppercase(),
                 body,
                 content_type,
@@ -327,7 +342,10 @@ impl Page {
             DocumentConfig {
                 viewport: Some(viewport),
                 base_url: Some(base_url.to_string()),
-                net_provider: Some(Arc::new(BrokerNet::new(broker))),
+                net_provider: Some(Arc::new(BrokerNet::new(
+                    broker,
+                    Some(base_url.clone()),
+                ))),
                 font_ctx: Some(fonts.context.clone()),
                 // Without this Blitz uses `DummyHtmlParserProvider` and
                 // `set_inner_html` silently does nothing: the old children are
@@ -359,7 +377,10 @@ impl Page {
             ColorScheme::Light,
         );
 
-        let captured = CapturedNavigation::default();
+        let captured = CapturedNavigation {
+            slot: Arc::default(),
+            document: base_url.clone(),
+        };
         let pending_navigation = captured.slot.clone();
 
         // Parsing can abort the process, so it is guarded and retried.
@@ -569,6 +590,10 @@ impl Page {
 
         let phase_started = std::time::Instant::now();
         let mut skipped = 0usize;
+        // The origin every `src` below is fetched on behalf of. Cloned once so
+        // the loops do not have to hold a borrow of `self` across the calls
+        // that mutate the script realm.
+        let document = self.url.clone();
 
         for (index, (node, source)) in classic.into_iter().enumerate() {
             if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
@@ -594,7 +619,16 @@ impl Page {
                         script.note_error(&format!("script src `{src}` is not a URL"));
                         continue;
                     };
-                    let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
+                    // With the document's origin: a `src` is chosen by the page,
+                    // and the response is *executed* in it. Without one the
+                    // policy read it as the agent naming a URL, so a page from
+                    // the open web could point a `<script src>` at the box's
+                    // dev server and run whatever came back.
+                    let outcome = broker.fetch_from(
+                        &url,
+                        crate::receipt::Initiator::Subresource,
+                        Some(&document),
+                    );
                     if let Some(error) = outcome.error {
                         script.note_refused_script(url.as_str());
                         script.note_error(&format!("could not load {url}: {error}"));
@@ -655,7 +689,14 @@ impl Page {
                         script.note_error(&format!("module src `{src}` is not a URL"));
                         continue;
                     };
-                    let outcome = broker.fetch(&url, crate::receipt::Initiator::Subresource);
+                    // Document-scoped for the same reason the classic `src`
+                    // above is: the URL is the page's choice and the body is
+                    // executed.
+                    let outcome = broker.fetch_from(
+                        &url,
+                        crate::receipt::Initiator::Subresource,
+                        Some(&document),
+                    );
                     if let Some(error) = outcome.error {
                         script.note_error(&format!("could not load {url}: {error}"));
                         continue;
@@ -1163,12 +1204,17 @@ impl PageFactory {
     /// Load whatever a form asked for, through the same broker as everything
     /// else. A refused submission is an error the agent reads, not a blank page.
     pub fn open_submission(&self, submission: &Submission) -> Result<Page, H5iError> {
-        let outcome = self.broker.send(
+        let outcome = self.broker.send_from(
             &submission.url,
             Initiator::Navigation,
             &submission.method,
             &submission.body,
             submission.content_type.as_deref(),
+            // The form's own document. A submission is a navigation the *page*
+            // chose the destination of, so it is policed as a request from that
+            // origin — a page on the open web does not get to POST to the box's
+            // dev server because somebody pressed its button.
+            Some(&submission.document),
         );
         if let Some(error) = outcome.error {
             return Err(H5iError::Metadata(format!(
@@ -1178,8 +1224,12 @@ impl PageFactory {
         }
         // A form's response is a document like any other, so it gets the same
         // encoding treatment: a legacy site that answers a POST in shift_jis
-        // must not come back as replacement characters.
-        Ok(Page::from_bytes(
+        // must not come back as replacement characters — and the same `finish`,
+        // which is where the cookie-origin drop and the script run live. This
+        // returned the page directly, so a submission was the one navigation
+        // that both kept the previous origin's session and never ran its own
+        // scripts.
+        self.finish(Page::from_bytes(
             &outcome.body,
             declared_content_type(&outcome).as_deref(),
             &outcome.final_url,
@@ -1193,11 +1243,55 @@ impl PageFactory {
     ///
     /// One place rather than at each call site, so no path can load a page with
     /// script configured on and quietly not run it.
+    ///
+    /// The cookie-origin drop lives here too, and for the same reason. It used
+    /// to sit in `open`, against the URL that was *asked for* — which left two
+    /// ways to arrive at an origin with somebody else's session still in the
+    /// jar:
+    ///
+    /// * **A form submission.** `open_submission` reached neither this function
+    ///   nor the drop, so posting to another origin navigated there with the
+    ///   previous origin's cookies intact. The jar is host-scoped, so the
+    ///   arriving page's script could then `fetch` the previous origin *with its
+    ///   credentials* — the cross-origin credentialed read that
+    ///   `Jar::retain_origin`'s doc says cannot happen, since it "cannot be
+    ///   fixed without a process split, so it is bounded instead".
+    /// * **A redirect.** `open` dropped against the requested URL and the fetch
+    ///   then followed hops, so a page served from B ran with A's cookies.
+    ///
+    /// Against `page.url()` — the origin actually loaded — both close. And it
+    /// must precede `run_scripts`, or the drop happens after the script that
+    /// was the reason for it.
     fn finish(&self, mut page: Page) -> Result<Page, H5iError> {
+        self.finish_page(&mut page)?;
+        Ok(page)
+    }
+
+    /// The rule itself, on a borrow, so the two infallible constructors can run
+    /// it too rather than keeping their own copy of half of it.
+    fn finish_page(&self, page: &mut Page) -> Result<(), H5iError> {
+        if self.broker.jar().retain_origin(page.url()) {
+            page.note(
+                "cookies from the previous origin were dropped on navigation: this engine \
+                 holds a session only for the origin currently loaded",
+            );
+        }
         if self.options.script {
             page.run_scripts(self.broker.clone())?;
         }
-        Ok(page)
+        Ok(())
+    }
+
+    /// [`Self::finish`] for the constructors that cannot fail.
+    ///
+    /// They ran scripts themselves and did not drop the previous origin's
+    /// cookies — a third and fourth copy of half the rule, which is how
+    /// `open_submission` came to be missing it entirely.
+    fn finish_reporting(&self, mut page: Page) -> Page {
+        if let Err(error) = self.finish_page(&mut page) {
+            eprintln!("h5i-browser-light: the script realm failed to start: {error}");
+        }
+        page
     }
 
     /// Whether this factory runs page script, for `capabilities` and for the
@@ -1207,18 +1301,12 @@ impl PageFactory {
     }
 
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
-        // Leaving an origin drops its cookies. See `cookies::Jar::retain_origin`
-        // for why that bound exists and what it costs.
-        let dropped = self.broker.jar().retain_origin(url);
+        // Leaving an origin drops its cookies — in `finish`, against the origin
+        // actually loaded rather than the one asked for. See
+        // `cookies::Jar::retain_origin` for why that bound exists and what it
+        // costs, and `finish` for why it moved.
         let page = Page::open(url, self.broker.clone(), self.fonts(), self.options.clone())?;
-        let mut page = self.finish(page)?;
-        if dropped {
-            page.note(
-                "cookies from the previous origin were dropped on navigation: this engine \
-                 holds a session only for the origin currently loaded",
-            );
-        }
-        Ok(page)
+        self.finish(page)
     }
 
     /// Load HTML already in hand, running its scripts if the options ask.
@@ -1230,36 +1318,24 @@ impl PageFactory {
     /// The same as [`PageFactory::from_html`], but from bytes whose encoding is
     /// not yet known — so the document gets to say what it is written in.
     pub fn from_bytes(&self, bytes: &[u8], content_type: Option<&str>, base_url: &Url) -> Page {
-        let mut page = Page::from_bytes(
+        self.finish_reporting(Page::from_bytes(
             bytes,
             content_type,
             base_url,
             self.broker.clone(),
             self.fonts(),
             self.options.clone(),
-        );
-        if self.options.script
-            && let Err(error) = page.run_scripts(self.broker.clone())
-        {
-            eprintln!("h5i-browser-light: the script realm failed to start: {error}");
-        }
-        page
+        ))
     }
 
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
-        let mut page = Page::from_html(
+        self.finish_reporting(Page::from_html(
             html,
             base_url,
             self.broker.clone(),
             self.fonts(),
             self.options.clone(),
-        );
-        if self.options.script
-            && let Err(error) = page.run_scripts(self.broker.clone())
-        {
-            eprintln!("h5i-browser-light: the script realm failed to start: {error}");
-        }
-        page
+        ))
     }
 }
 
@@ -1798,6 +1874,103 @@ mod tests {
         let text = page.text();
         assert!(text.contains("Title"));
         assert!(text.contains("Body copy."));
+    }
+}
+
+#[cfg(test)]
+mod navigation_origin_tests {
+    use super::*;
+    use crate::policy::Policy;
+    use crate::receipt::MemorySink;
+
+    /// The jar bound `Jar::retain_origin` documents — "at any moment the jar
+    /// holds only cookies for the origin currently loaded" — rested on a drop
+    /// that `open` performed and `open_submission` did not.
+    ///
+    /// The jar is host-scoped, so arriving at another origin with the previous
+    /// one's cookies still in it means the new page's script can `fetch` the
+    /// previous origin *with its credentials*. That is the cross-origin
+    /// credentialed read the bound exists to make impossible, reached by
+    /// pressing a submit button.
+    #[test]
+    fn a_form_submission_drops_the_previous_origins_cookies() {
+        let broker = Arc::new(
+            Broker::new(
+                Policy::new().allow("bank.example").allow("evil.example"),
+                Arc::new(MemorySink::new()),
+                None,
+            )
+            .expect("broker"),
+        );
+        // A live session on one origin.
+        broker.jar().store(
+            &Url::parse("https://bank.example/").unwrap(),
+            ["sid=secret; HttpOnly"],
+        );
+        assert_eq!(broker.jar().len(), 1);
+
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+
+        // Landing on another origin — however we got there — must drop it.
+        let page = Page::from_bytes(
+            b"<html><body>hi</body></html>",
+            Some("text/html"),
+            &Url::parse("https://evil.example/collect").unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let page = factory.finish(page).expect("finish");
+
+        assert!(
+            broker.jar().is_empty(),
+            "the previous origin's session survived the navigation"
+        );
+        assert!(
+            broker
+                .jar()
+                .header_for(&Url::parse("https://bank.example/").unwrap())
+                .is_none(),
+            "and it must not be sendable"
+        );
+        assert!(
+            page.notes.iter().any(|n| n.contains("dropped on navigation")),
+            "the drop is stated, not silent: {:?}",
+            page.notes
+        );
+    }
+
+    /// Same-origin navigation keeps the session, which is the whole point of
+    /// having one.
+    #[test]
+    fn staying_on_an_origin_keeps_the_session_through_finish() {
+        let broker = Arc::new(
+            Broker::new(
+                Policy::new().allow("bank.example"),
+                Arc::new(MemorySink::new()),
+                None,
+            )
+            .expect("broker"),
+        );
+        broker.jar().store(
+            &Url::parse("https://bank.example/").unwrap(),
+            ["sid=secret; HttpOnly"],
+        );
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+
+        let page = Page::from_bytes(
+            b"<html><body>ok</body></html>",
+            Some("text/html"),
+            &Url::parse("https://bank.example/account").unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let page = factory.finish(page).expect("finish");
+        assert_eq!(broker.jar().len(), 1);
+        assert!(!page.notes.iter().any(|n| n.contains("dropped on navigation")));
     }
 }
 

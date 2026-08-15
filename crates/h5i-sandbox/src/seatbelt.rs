@@ -444,6 +444,29 @@ fn expand_home(path: &str, home: Option<&Path>) -> Option<String> {
     Some(path.to_string())
 }
 
+/// `fs.deny` entries this host cannot turn into an SBPL rule.
+///
+/// [`expand_home`] answers `None` for a `~`-relative path when `HOME` is unset,
+/// and [`build_profile`] then simply leaves it out of the deny block. For a
+/// *grant* that is fail-closed — the box loses access it was offered. For a
+/// **deny** it is fail-open, and this is the one file whose header says
+/// `fs.deny` is "genuinely enforced" here rather than being the lint it is on
+/// Linux: a profile granting `/Users/dev` and denying `~/.ssh` handed the box
+/// the key material, and `validate_profile`'s containment lint did not catch it
+/// either, because its own `expand_tilde` leaves `~/.ssh` unexpanded under the
+/// same condition and a textual prefix test then finds no overlap.
+///
+/// `$`-prefixed entries are excluded on purpose: `$REPO`-relative denies are a
+/// repo-scoped lint on every tier and were never meant to be SBPL rules.
+fn unexpandable_denies(p: &crate::sandbox_policy::Profile, home: Option<&Path>) -> Vec<String> {
+    p.fs_deny
+        .iter()
+        .filter(|d| !d.starts_with('$'))
+        .filter(|d| expand_home(d, home).is_none())
+        .cloned()
+        .collect()
+}
+
 /// Build the SBPL profile for `policy` running in `work`.
 ///
 /// Rule order is load-bearing: SBPL is **last match wins**, so the file is laid
@@ -1029,6 +1052,14 @@ pub fn build_confined_command(
             caps.detail.unwrap_or_else(|| "unknown".into())
         )));
     }
+    // A deny that cannot be expressed must stop the run, not be left out of the
+    // profile. See [`unexpandable_denies`].
+    let dropped = unexpandable_denies(&policy.profile, opts.home.as_deref());
+    if !dropped.is_empty() {
+        return Err(H5iError::Metadata(format!(
+            "profile fs.deny lists {dropped:?}, which is '~'-relative while $HOME is unset —              there is nothing to resolve it against, so the deny cannot become a Seatbelt rule.              Refusing rather than running with it silently dropped (fail-closed): set HOME, or              spell the path absolutely."
+        )));
+    }
     let work = work
         .canonicalize()
         .map_err(|e| H5iError::with_path(e, work))?;
@@ -1280,6 +1311,33 @@ mod tests {
             !writes.contains("/Users/dev/repo/w\""),
             "a read-only session must not grant write on the worktree\n{writes}"
         );
+    }
+
+    /// The deny block is what makes `fs.deny` real on macOS rather than the
+    /// lint it is on Linux, and a `~`-relative entry with no `$HOME` to resolve
+    /// it against was simply left out of it. A profile granting `/Users/dev`
+    /// and denying `~/.ssh` therefore handed the box the key material —
+    /// `validate_profile`'s containment lint misses it for the same reason (its
+    /// `expand_tilde` leaves the path unexpanded too, so the prefix test finds
+    /// no overlap).
+    #[test]
+    fn a_deny_that_cannot_be_expressed_stops_the_run() {
+        let mut p = policy(IsolationClaim::Process);
+        p.profile.fs_read.push("/Users/dev".to_string());
+        p.profile.fs_deny = vec!["~/.ssh".to_string()];
+
+        // With a home, it becomes a rule and nothing is dropped.
+        assert!(unexpandable_denies(&p.profile, Some(Path::new("/Users/dev"))).is_empty());
+        // Without one, there is nothing to resolve it against.
+        assert_eq!(
+            unexpandable_denies(&p.profile, None),
+            vec!["~/.ssh".to_string()]
+        );
+
+        // `$REPO`-relative entries are a repo-scoped lint on every tier and were
+        // never SBPL rules, so they are not what this refuses over.
+        p.profile.fs_deny = vec!["$REPO/.env".to_string()];
+        assert!(unexpandable_denies(&p.profile, None).is_empty());
     }
 
     #[test]

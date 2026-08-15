@@ -24,7 +24,6 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use crate::error::H5iError;
-use crate::refstore::sha256_hex;
 
 /// A package ecosystem h5i knows how to cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,20 +113,35 @@ pub fn cache_dir(h5i_root: &Path, eco: &Ecosystem, key: &str) -> PathBuf {
 /// The digest covers the file names as well as their contents, so adding a
 /// second lockfile changes the key even if the first is untouched.
 pub fn lock_key(workdir: &Path, eco: &Ecosystem) -> Option<String> {
-    let mut buf = Vec::new();
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    // Streamed, not buffered. A lockfile lives in `$WORK`, which is the box's
+    // own writable workspace, and this runs on every box run — so
+    // `std::fs::read` was the box choosing how much memory the host allocates
+    // to compute a *digest*. Feeding the same bytes in the same order gives the
+    // same digest, so no existing cache key changes.
+    let mut hasher = Sha256::new();
     let mut found = false;
     for name in eco.lockfiles {
         let path = workdir.join(name);
-        let Ok(bytes) = std::fs::read(&path) else {
+        let Ok(mut f) = std::fs::File::open(&path) else {
             continue;
         };
         found = true;
-        buf.extend_from_slice(name.as_bytes());
-        buf.push(0);
-        buf.extend_from_slice(&bytes);
-        buf.push(0);
+        hasher.update(name.as_bytes());
+        hasher.update([0u8]);
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            match f.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => hasher.update(&chunk[..n]),
+                Err(_) => break,
+            }
+        }
+        hasher.update([0u8]);
     }
-    found.then(|| sha256_hex(&buf)[..16].to_string())
+    found.then(|| format!("{:x}", hasher.finalize())[..16].to_string())
 }
 
 /// Every cache that exists for this repository, oldest ecosystem first.
@@ -296,14 +310,45 @@ fn box_target(eco: &Ecosystem) -> Option<PathBuf> {
     }
 }
 
+/// How deep the cache walk will go.
+///
+/// A real dependency tree is deep but finite. A symlink loop is not, and while
+/// the growing path eventually trips `ENAMETOOLONG` and ends the recursion on
+/// its own — measured, rather than assumed — that is hundreds of levels of
+/// pointless `read_dir` first, and it is the filesystem's limit doing the job
+/// rather than this function's.
+const MAX_CACHE_DEPTH: usize = 64;
+
 fn dir_bytes(path: &Path) -> u64 {
+    dir_bytes_within(path, 0)
+}
+
+/// Total bytes under `path`, **without following symlinks**.
+///
+/// `DirEntry::metadata` follows them, and this walks a directory a package
+/// manager populated — `npm` plants symlinks in `node_modules` as a matter of
+/// course, and a package tarball may carry any link it likes. So a link pointing
+/// anywhere else had `h5i box cache list` walking, and reporting the size of, a
+/// tree outside the cache entirely; a link pointing at an ancestor had it
+/// walking the same subtree over and over until the accumulating path tripped
+/// `ENAMETOOLONG`.
+///
+/// `symlink_metadata` answers about the link rather than its target, which is
+/// both the terminating choice and the accurate one: the bytes a link occupies
+/// are the link's, and whatever it points at is either counted where it really
+/// lives or is not this cache's.
+fn dir_bytes_within(path: &Path, depth: usize) -> u64 {
+    if depth >= MAX_CACHE_DEPTH {
+        return 0;
+    }
     let Ok(rd) = std::fs::read_dir(path) else {
         return 0;
     };
     let mut total = 0;
     for e in rd.flatten() {
-        match e.metadata() {
-            Ok(md) if md.is_dir() => total += dir_bytes(&e.path()),
+        match std::fs::symlink_metadata(e.path()) {
+            Ok(md) if md.file_type().is_symlink() => total += md.len(),
+            Ok(md) if md.is_dir() => total += dir_bytes_within(&e.path(), depth + 1),
             Ok(md) => total += md.len(),
             Err(_) => {}
         }
@@ -404,6 +449,57 @@ mod tests {
         assert!(list(root.path(), work.path()).is_empty());
         // Removing what is not there is not an error.
         assert_eq!(remove(root.path(), cargo(), None).unwrap(), 0);
+    }
+
+    /// `DirEntry::metadata` follows symlinks, and this walks a directory a
+    /// package manager populated — `npm` plants links in `node_modules` as a
+    /// matter of course. A link out of the cache had the walk leave it entirely
+    /// and report somebody else's bytes; a link back into it had the walk repeat
+    /// the same subtree until the path grew too long for the filesystem.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlink_loop_in_a_cache_does_not_take_the_process_down() {
+        let root = TempDir::new().unwrap();
+        let work = TempDir::new().unwrap();
+        std::fs::write(work.path().join("Cargo.lock"), "deps").unwrap();
+        let key = lock_key(work.path(), cargo()).unwrap();
+        let dir = prepare(root.path(), cargo(), &key).unwrap();
+
+        std::fs::write(dir.join("blob"), vec![0u8; 2048]).unwrap();
+        std::fs::create_dir(dir.join("pkg")).unwrap();
+        // The loop: a link back to the cache root from inside it.
+        std::os::unix::fs::symlink(&dir, dir.join("pkg").join("self")).unwrap();
+        // ...and a link out of it entirely, which used to be walked and counted.
+        std::os::unix::fs::symlink(work.path(), dir.join("elsewhere")).unwrap();
+
+        let entries = list(root.path(), work.path());
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].bytes >= 2048, "the real bytes are still counted");
+        assert!(
+            entries[0].bytes < 1024 * 1024,
+            "the walk left the cache: {} bytes",
+            entries[0].bytes
+        );
+    }
+
+    /// The digest is streamed rather than buffered, and the value it produces
+    /// has to be the one it always produced or every warm cache silently
+    /// invalidates.
+    #[test]
+    fn the_lock_digest_is_unchanged_by_being_streamed() {
+        use sha2::{Digest, Sha256};
+        let work = TempDir::new().unwrap();
+        std::fs::write(work.path().join("Cargo.lock"), "deps-v1").unwrap();
+
+        // What the buffered version hashed: `name\0contents\0`.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"Cargo.lock");
+        buf.push(0);
+        buf.extend_from_slice(b"deps-v1");
+        buf.push(0);
+        let want = format!("{:x}", Sha256::digest(&buf))[..16].to_string();
+
+        assert_eq!(lock_key(work.path(), cargo()).as_deref(), Some(want.as_str()));
     }
 
     #[test]

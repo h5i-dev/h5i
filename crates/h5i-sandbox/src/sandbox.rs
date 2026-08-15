@@ -601,7 +601,86 @@ pub fn effective_auto(
 
 /// Fail-closed policy lints (§7). These reject *policies*, before any env is
 /// created — never silently weaken them.
+/// Validate a container image reference before it becomes an argument.
+///
+/// The image is repo-supplied — `[container] image` in `.h5i/env.toml`, the same
+/// untrusted file every other policy field comes from — and it reaches two
+/// places where its bytes are syntax rather than data:
+///
+/// * **Podman's positional argument.** `podman run <flags> <image> <argv…>` has
+///   no `--` before the image, so a reference beginning with `-` is parsed as a
+///   flag and `argv[0]` becomes the image instead. That mostly self-destructs
+///   (the run fails for want of an image), but "mostly" is not a property to
+///   rest a containment boundary on, and it costs one character to remove.
+/// * **`--mount type=image,source=<image>,destination=…`**, where a comma ends
+///   the value and starts an option. `private_paths` already refuses a comma at
+///   policy load for exactly this reason; the image was the field that did not.
+///
+/// The charset is every byte a real reference uses — registry host, path,
+/// `:tag`, `@sha256:…`, and the `oci-archive:` / `docker-archive:` transports —
+/// and nothing else. Whitespace, quotes, commas and control characters are not
+/// image references.
+pub fn validate_image(image: &str) -> Result<(), H5iError> {
+    let bad = |why: &str| {
+        // `{:?}`, not `{}`: the value is going to a terminal and the thing
+        // wrong with it may be a control character. Rust's `Debug` for `str`
+        // escapes those, which is the whole requirement here — and this crate
+        // sits below `h5i-core`, so `redact::sanitize_display` is not reachable.
+        Err(H5iError::Metadata(format!(
+            "container image {image:?} {why} — an image reference is a registry path, an \
+             optional `:tag` or `@sha256:…`, and nothing else (fail-closed)"
+        )))
+    };
+    if image.is_empty() || image.len() > 512 {
+        return bad("is empty or absurdly long");
+    }
+    if image.starts_with('-') {
+        // Podman would read it as a flag, and the argument after it as the image.
+        return bad("starts with '-', which Podman reads as an option");
+    }
+    if !image
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'/' | b'@' | b'+' | b'-'))
+    {
+        return bad("contains a character an image reference cannot hold");
+    }
+    Ok(())
+}
+
+/// Filesystem entries that name `~` when there is no `$HOME` to resolve it
+/// against.
+///
+/// The lint below is the *only* thing standing between a grant and a denied
+/// child inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+/// refusal on Linux and nothing else. With `$HOME` unset, `expand_tilde` leaves
+/// `~/.ssh` as that literal string, `canonicalize` fails, and the prefix test
+/// compares it against `/Users/dev` and finds no overlap: a profile granting a
+/// home directory and denying the key material inside it loaded clean, and
+/// Landlock then granted the lot. macOS had the matching hole in the generated
+/// SBPL, where the deny was simply left out of the profile.
+///
+/// Grants are included for the mirror-image reason: one expands to nothing,
+/// Landlock skips it, and the policy silently confers none of the access it
+/// names. A policy that cannot be read is not a policy that can be enforced.
+///
+/// Takes `home_set` rather than reading the environment, so this is testable
+/// without a `remove_var` that every other test in the process would see.
+fn unresolvable_tilde_entries(p: &Profile, home_set: bool) -> Vec<&String> {
+    if home_set {
+        return Vec::new();
+    }
+    p.fs_read
+        .iter()
+        .chain(p.fs_write.iter())
+        .chain(p.fs_deny.iter())
+        .filter(|s| *s == "~" || s.starts_with("~/"))
+        .collect()
+}
+
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
+    if let Some(image) = &p.image {
+        validate_image(image)?;
+    }
     // A deny entry that matches no action denies nothing, while the resolved
     // policy still reads as though the verb were blocked. Refuse the typo here
     // rather than let the operator discover it from an agent successfully
@@ -616,7 +695,7 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // author is told rather than silently getting a wider box. (Harmless with
     // no `net.egress` — there is no proxy to shadow — so it is not refused
     // there.)
-    if !p.net_egress.iter().all(|e| e.trim().is_empty())
+    if p.scopes_egress()
         && let Some(bad) = p
             .env_pass
             .iter()
@@ -721,6 +800,32 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
             p.isolation.as_str()
         )));
     }
+    // Nothing below can reason about a `~` it cannot resolve, and the lint that
+    // follows is the *only* thing standing between a grant and a denied child
+    // inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+    // refusal on Linux and nothing else.
+    //
+    // With `$HOME` unset, `expand_tilde` leaves `~/.ssh` as the literal string
+    // `~/.ssh`, `canonicalize` fails, and the prefix test compares that against
+    // `/Users/dev` and finds no overlap. A profile granting a home directory and
+    // denying the key material inside it therefore loaded clean and granted it.
+    //
+    // A `~` grant fares no better: it expands to nothing, Landlock skips it, and
+    // the policy silently confers none of the access it names. Both are refused,
+    // because a policy that cannot be read is not a policy that can be enforced.
+    // `$`-prefixed entries are excluded: `$WORK`/`$REPO` are h5i's own tokens,
+    // resolved elsewhere.
+    let unresolvable = unresolvable_tilde_entries(p, std::env::var_os("HOME").is_some());
+    if !unresolvable.is_empty() {
+        return Err(H5iError::Metadata(format!(
+            "profile '{}' has '~'-relative filesystem entries {unresolvable:?} but $HOME is \
+             unset, so there is nothing to resolve them against. A grant would confer nothing \
+             and a deny would be silently dropped — refusing rather than enforcing something \
+             other than what the profile says (fail-closed). Set HOME, or spell the paths \
+             absolutely.",
+            p.name
+        )));
+    }
     // fs.deny preflight lint: Landlock has no deny rules, so a granted parent
     // must never contain a denied child.
     //
@@ -762,6 +867,59 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
 /// and the wall clock is not armed until `spawn()` returns.
 #[cfg(target_os = "linux")]
 pub(crate) const EGRESS_READY_TIMEOUT_MS: libc::c_int = 15_000;
+
+/// Largest amount of one captured child stream h5i will hold in memory.
+///
+/// The box decides how much it writes, and every tier drained its stdout and
+/// stderr with a bare `read_to_end` — an unbounded host allocation driven by the
+/// confined process. `yes` inside a box with the default wall clock is tens of
+/// gigabytes of host RAM before anything stops it, and the receipt store's own
+/// 4 MiB cap is applied long after the bytes have already been buffered.
+///
+/// The credential proxy states the principle for its own request bodies:
+/// "allocating on trust lets a prompt-injected box exhaust *host* memory". It is
+/// the same principle and it belongs on the same side of the boundary.
+///
+/// Generous — sixteen times what a receipt will store — so nothing a real build
+/// or test suite prints comes near it.
+pub(crate) const MAX_CAPTURED_STREAM: usize = 64 * 1024 * 1024;
+
+/// Drain a child's pipe to EOF, retaining at most [`MAX_CAPTURED_STREAM`] bytes
+/// and saying so when there was more.
+///
+/// Keeps reading past the cap rather than stopping: a reader that walks away
+/// leaves the child blocked on a full pipe until the wall clock reaps it, which
+/// turns a program that legitimately prints a lot into a program that hangs.
+/// Discarding the overflow bounds the host without changing what the child sees.
+/// Same shape as the `command:` secret extractor's drain, which had to solve
+/// this first.
+pub(crate) fn drain_capped(mut pipe: impl std::io::Read) -> Vec<u8> {
+    const MARKER: &[u8] = b"\n----- h5i: output truncated at the capture cap -----\n";
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 64 * 1024];
+    let mut over = false;
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                if buf.len() < MAX_CAPTURED_STREAM {
+                    let room = MAX_CAPTURED_STREAM - buf.len();
+                    buf.extend_from_slice(&chunk[..n.min(room)]);
+                    if n > room {
+                        over = true;
+                    }
+                } else {
+                    over = true;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    if over {
+        buf.extend_from_slice(MARKER);
+    }
+    buf
+}
 
 /// 16 hex chars of OS entropy — enough that no other local user can guess or
 /// pre-plant a scratch path before we create it.
@@ -1441,8 +1599,21 @@ pub fn limit_support(claim: IsolationClaim) -> LimitSupport {
         }
         // Kernel tiers: a per-run cgroup on Linux (and only when cgroup v2 is
         // actually delegated to this user), nothing usable on Darwin.
+        //
+        // Asked per limit, not once for both. cgroup delegation is per
+        // controller — `Delegate=memory` without `pids` is a real systemd
+        // configuration — and answering `procs` with the memory probe's result
+        // printed a process cap as enforced on a host that had silently not
+        // applied it.
         IsolationClaim::Process | IsolationClaim::Supervised => {
-            both(cfg!(target_os = "linux") && crate::cgroup::probe().usable)
+            if !cfg!(target_os = "linux") {
+                return both(false);
+            }
+            let caps = crate::cgroup::probe();
+            LimitSupport {
+                mem: caps.usable,
+                procs: caps.usable && caps.procs_enforceable,
+            }
         }
     }
 }
@@ -2955,15 +3126,32 @@ pub(crate) fn build_confined_command(
             }
 
             // 4. Landlock filesystem allowlist. Fail closed if not fully
-            //    enforced (HardRequirement should already guarantee this).
+            //    enforced — which is what the comment always said and what the
+            //    check did not do: it refused `NotEnforced` and let
+            //    `PartiallyEnforced` through. That middle state is the one worth
+            //    refusing. It means the box is confined by some of the access
+            //    rights that were asked for and not the others, so the boundary
+            //    is a shape nobody wrote down and `h5i doctor` still reports the
+            //    tier as enforced.
+            //
+            //    `CompatLevel::HardRequirement` on the ruleset is supposed to
+            //    make it unreachable by turning an unsupported right into an
+            //    error while the ruleset is still being built, and on a real
+            //    kernel it does (`landlock_enforces_fully_or_not_at_all`
+            //    measures it: ABI 9, `FullyEnforced`). "Supposed to" is the
+            //    reason to check rather than the reason not to.
             let rs = ruleset_slot
                 .take()
                 .ok_or_else(|| Error::other("landlock ruleset consumed twice"))?;
             let status = rs
                 .restrict_self()
                 .map_err(|e| Error::other(format!("landlock restrict_self: {e}")))?;
-            if status.ruleset == landlock::RulesetStatus::NotEnforced {
-                return Err(Error::other("landlock not enforced (fail-closed)"));
+            if status.ruleset != landlock::RulesetStatus::FullyEnforced {
+                return Err(Error::other(
+                    "landlock is not fully enforced (fail-closed): the kernel accepted only \
+                     part of the filesystem allowlist, so the confinement would not be the \
+                     one this tier claims",
+                ));
             }
 
             // 5. Seccomp deny-list (everything after this call is subject to
@@ -3097,6 +3285,16 @@ fn run_confined(
 
 /// Map a probed Landlock ABI version to the highest version this crate knows.
 #[cfg(target_os = "linux")]
+/// The `landlock` crate's `ABI` for a probed kernel ABI level.
+///
+/// The `_` arm caps at `V5`, which is the newest this crate knows. That is the
+/// conservative direction for *this* ruleset and worth naming as a residual:
+/// a kernel newer than the crate is asked for V5's access rights, so anything
+/// Landlock learned after V5 is simply not handled. It costs nothing today —
+/// `AccessFs` has not grown since ABI 5 (`IOCTL_DEV`); ABI 6 and later added
+/// scopes and TCP network rights, neither of which this ruleset uses — but the
+/// arm silently absorbs a future `AccessFs` bit, so a `landlock` upgrade is a
+/// reason to come back here rather than a routine bump.
 fn landlock_abi_for(probed: i32) -> landlock::ABI {
     match probed {
         1 => landlock::ABI::V1,
@@ -3267,7 +3465,6 @@ pub(crate) fn wait_with_deadline(
     argv: &[String],
     cgroup_procs: Option<&Path>,
 ) -> Result<ExecOutcome, H5iError> {
-    use std::io::Read;
     use std::process::Stdio;
 
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -3286,16 +3483,8 @@ pub(crate) fn wait_with_deadline(
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = out_pipe.read_to_end(&mut buf);
-        buf
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = err_pipe.read_to_end(&mut buf);
-        buf
-    });
+    let out_h = std::thread::spawn(move || drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || drain_capped(&mut err_pipe));
 
     let (exit_code, timed_out, cpu_ms, max_rss_kb) = wait_loop(&mut child, Some(wall));
 
@@ -3737,6 +3926,71 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
     /// needed), so dropping e.g. `SYS_mount` or `SYS_ptrace` fails the build —
     /// the weak old test only checked the program compiled and that libc still
     /// exported the constants, which would NOT catch a deletion from the list.
+    /// Live, capability-gated: the ruleset `resolve_process`/`resolve_supervised`
+    /// build must come back **fully** enforced on a kernel that has Landlock.
+    ///
+    /// `restrict_self` reports three states, and the one in the middle is the
+    /// dangerous one: `PartiallyEnforced` means the box is confined by some of
+    /// the access rights that were asked for and not the others, which is a
+    /// sandbox whose shape nobody wrote down. `CompatLevel::HardRequirement` is
+    /// set precisely so that cannot happen — it turns an unsupported right into
+    /// an error while the ruleset is still being built — and this is that claim
+    /// checked against a real kernel rather than against the crate's docs.
+    ///
+    /// Forked, because `restrict_self` cannot be undone: the confinement would
+    /// otherwise outlive the test and follow every test after it in the process.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_enforces_fully_or_not_at_all() {
+        let Some(probed) = probe_landlock_abi() else {
+            return; // no Landlock on this kernel; `resolve` already refuses the tier
+        };
+        let abi = landlock_abi_for(probed);
+
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0, "fork failed");
+        if child == 0 {
+            use landlock::{
+                path_beneath_rules, Access, AccessFs, CompatLevel, Compatible, Ruleset,
+                RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+            };
+            // The same construction the real path uses, with `/` standing in
+            // for the grants — what is under test is the enforcement status,
+            // not which paths were granted.
+            let code = (|| -> Option<i32> {
+                let status = Ruleset::default()
+                    .set_compatibility(CompatLevel::HardRequirement)
+                    .handle_access(AccessFs::from_all(abi))
+                    .and_then(|r| r.create())
+                    .and_then(|r| {
+                        r.add_rules(path_beneath_rules(["/"], AccessFs::from_read(abi)))
+                    })
+                    .and_then(|r| r.restrict_self())
+                    .ok()?;
+                Some(match status.ruleset {
+                    RulesetStatus::FullyEnforced => 0,
+                    RulesetStatus::PartiallyEnforced => 1,
+                    RulesetStatus::NotEnforced => 2,
+                })
+            })()
+            .unwrap_or(3);
+            unsafe { libc::_exit(code) };
+        }
+        let mut wstatus = 0;
+        unsafe { libc::waitpid(child, &mut wstatus, 0) };
+        let code = libc::WEXITSTATUS(wstatus);
+        assert_eq!(
+            code, 0,
+            "landlock ABI {probed} reported {} — the tier's confinement is only as \
+             good as this, and `restrict_self` is checked against it",
+            match code {
+                1 => "PartiallyEnforced: some requested access rights are not in force",
+                2 => "NotEnforced",
+                _ => "an error while building a ruleset HardRequirement should have accepted",
+            }
+        );
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn seccomp_deny_list_covers_security_critical_syscalls() {
@@ -4086,6 +4340,47 @@ container.image = "localhost/mine:2"
         assert_eq!(p.image.as_deref(), Some("localhost/mine:2"));
     }
 
+    /// The image is repo-supplied and reaches two places where its bytes are
+    /// syntax: Podman's positional argument (no `--` before it, so a leading
+    /// `-` is read as a flag) and `--mount type=image,source=<image>,…`, where
+    /// a comma ends the value and starts an option.
+    #[test]
+    fn an_image_reference_that_is_really_an_argument_is_refused() {
+        for good in [
+            "alpine",
+            "alpine:3.19",
+            "docker.io/library/alpine:3.19",
+            "localhost/mine:2",
+            "ghcr.io/org/img@sha256:abc123",
+            "registry.example.com:5000/team/img:tag",
+            "oci-archive:/var/tmp/img.tar",
+        ] {
+            assert!(validate_image(good).is_ok(), "{good} must be accepted");
+        }
+        for bad in [
+            "",
+            "-v",
+            "--privileged",
+            "--security-opt=label=disable",
+            "alpine,rw",
+            "alpine destination=/etc",
+            "alpine\u{1b}[2J",
+            "alpine\n--privileged",
+        ] {
+            assert!(validate_image(bad).is_err(), "{bad:?} must be refused");
+        }
+
+        // And it is refused at policy load, not at run time.
+        let toml_text = "[profile.custom]\nisolation = \"container\"\ncontainer.image = \"--privileged\"\n";
+        let err = load_from_str(toml_text, "custom", None).unwrap_err().to_string();
+        assert!(err.contains("Podman reads as an option"), "{err}");
+
+        // The refusal shows the value without letting it reach the terminal
+        // as a control sequence.
+        let err = validate_image("a\u{1b}[2Jb").unwrap_err().to_string();
+        assert!(!err.contains('\u{1b}'), "{err:?}");
+    }
+
     #[test]
     fn isolation_override_wins_over_profile() {
         let p = load_from_str(doc_example_toml(), "default", Some(IsolationClaim::Workspace)).unwrap();
@@ -4240,6 +4535,77 @@ fs.deny = ["~/.ssh"]
         );
         let err = load_from_str(&toml_text, "default", None).unwrap_err();
         assert!(err.to_string().contains("granted path"), "{err}");
+    }
+
+    /// The lint is the only thing standing between a grant and a denied child
+    /// inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+    /// refusal on Linux and nothing else. With `$HOME` unset it compared the
+    /// literal string `~/.ssh` against `/Users/dev`, found no overlap, and let
+    /// the policy load with the key material inside the grant.
+    ///
+    /// Driven through the helper rather than by unsetting `HOME`: cargo runs
+    /// tests as threads in one process, so a `remove_var` here is a `remove_var`
+    /// for every test that happens to be running beside it.
+    /// The box decides how much it writes, and every tier drained its output
+    /// with a bare `read_to_end` — an unbounded host allocation driven by the
+    /// confined process. `yes` inside a box is tens of gigabytes of host RAM
+    /// before the wall clock stops it, and the receipt store's own cap is
+    /// applied long after the bytes are already buffered.
+    #[test]
+    fn a_runaway_child_cannot_grow_the_hosts_memory_without_limit() {
+        // Under the cap: byte-identical, no marker.
+        let small = vec![b'x'; 1024];
+        assert_eq!(drain_capped(&small[..]), small);
+
+        // Over it: capped, and it says so rather than looking complete.
+        let big = vec![b'y'; MAX_CAPTURED_STREAM + 4096];
+        let out = drain_capped(&big[..]);
+        assert!(
+            out.len() < MAX_CAPTURED_STREAM + 1024,
+            "retained {} bytes for a {} byte stream",
+            out.len(),
+            big.len()
+        );
+        assert!(out.starts_with(&[b'y'; 16]));
+        assert!(
+            String::from_utf8_lossy(&out).contains("output truncated at the capture cap"),
+            "a silent truncation reads as a complete capture"
+        );
+
+        // Exactly at the cap is complete, not truncated.
+        let exact = vec![b'z'; MAX_CAPTURED_STREAM];
+        let out = drain_capped(&exact[..]);
+        assert_eq!(out.len(), MAX_CAPTURED_STREAM);
+        assert!(!String::from_utf8_lossy(&out).contains("truncated"));
+    }
+
+    #[test]
+    fn a_tilde_path_with_no_home_to_resolve_it_is_refused() {
+        let mut p = Profile::builtin("default", IsolationClaim::Process);
+        p.fs_read = vec!["/Users/dev".to_string()];
+        p.fs_write = Vec::new();
+        p.fs_deny = vec!["~/.ssh".to_string()];
+
+        // With a home there is nothing to complain about.
+        assert!(unresolvable_tilde_entries(&p, true).is_empty());
+        // Without one, the deny cannot be resolved and must not be ignored.
+        assert_eq!(
+            unresolvable_tilde_entries(&p, false),
+            vec![&"~/.ssh".to_string()]
+        );
+
+        // A grant counts too: it would confer nothing while claiming to.
+        p.fs_deny = Vec::new();
+        p.fs_read = vec!["~/tools".to_string(), "/usr".to_string()];
+        assert_eq!(
+            unresolvable_tilde_entries(&p, false),
+            vec![&"~/tools".to_string()]
+        );
+
+        // `$WORK`/`$REPO` are h5i's own tokens, resolved elsewhere.
+        p.fs_read = vec!["$WORK".to_string()];
+        p.fs_deny = vec!["$REPO/.env".to_string()];
+        assert!(unresolvable_tilde_entries(&p, false).is_empty());
     }
 
     #[test]

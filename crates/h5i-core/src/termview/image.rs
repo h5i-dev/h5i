@@ -58,6 +58,17 @@ pub fn decode(jpeg: &[u8]) -> Result<Rgb, H5iError> {
         .dimensions()
         .ok_or_else(|| H5iError::Metadata("frame from the box carried no dimensions".into()))?;
 
+    // A frame with no extent is not a frame. Refused here rather than carried:
+    // every consumer downstream divides or clamps by these numbers, and a zero
+    // is the one value that makes `downscale`'s `clamp(y0 + 1, sh)` assert
+    // `min <= max` and abort — in release as well as debug, because that is a
+    // `clamp` precondition and not an overflow check.
+    if width == 0 || height == 0 {
+        return Err(H5iError::Metadata(format!(
+            "frame from the box is {width}×{height}, which has no extent to render"
+        )));
+    }
+
     // Belt and braces: the renderer indexes by `width * height * 3`, so a
     // buffer that disagrees with the header must not reach it.
     let expected = width
@@ -136,6 +147,16 @@ pub fn fit(src_w: u32, src_h: u32, cols: u16, rows: u16, cell_w: u16, cell_h: u1
 /// input untouched when no scaling is called for, which is the common case for
 /// a small viewport and worth not paying for.
 pub fn downscale(src: &Rgb, tw: u32, th: u32) -> std::borrow::Cow<'_, Rgb> {
+    // Its sibling [`fit`] takes `src_w.max(1)`/`src_h.max(1)` on the same two
+    // numbers, and this took them as they came. A zero-extent source makes the
+    // row clamp below `clamp(y0 + 1, 0)`, and `clamp` asserts `min <= max` —
+    // so the process aborts, in release as much as in debug. `decode` refuses
+    // such a frame now; this is the same answer at the other end, because `Rgb`
+    // has public fields and one guard in one constructor is not a property of
+    // the function.
+    if src.width == 0 || src.height == 0 {
+        return std::borrow::Cow::Borrowed(src);
+    }
     if tw >= src.width && th >= src.height {
         return std::borrow::Cow::Borrowed(src);
     }
@@ -179,6 +200,40 @@ pub fn downscale(src: &Rgb, tw: u32, th: u32) -> std::borrow::Cow<'_, Rgb> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `downscale` divides and clamps by the source's dimensions, and `clamp`
+    /// asserts `min <= max`. A zero-extent frame made that
+    /// `clamp(y0 + 1, 0)` — an abort, in release as much as in debug, on a
+    /// frame the *box* supplied. Its sibling `fit` has always taken
+    /// `src_h.max(1)` on the same number.
+    #[test]
+    fn a_frame_with_no_extent_does_not_abort_the_viewer() {
+        for (w, h) in [(100, 0), (0, 100), (0, 0)] {
+            let src = Rgb { data: Vec::new(), width: w, height: h };
+            // The shape `fit` would ask for: never zero, and smaller than the
+            // source on the axis that has one.
+            let out = downscale(&src, 40, 1);
+            assert_eq!(out.width, w);
+            assert_eq!(out.height, h);
+        }
+
+        // And a real frame still scales.
+        let src = solid(4, 4, [10, 20, 30]);
+        let out = downscale(&src, 2, 2);
+        assert_eq!((out.width, out.height), (2, 2));
+        assert_eq!(out.data.len(), 2 * 2 * 3);
+    }
+
+    /// The other end of the same guard: a frame with no extent is refused as it
+    /// arrives, so nothing downstream has to cope with one.
+    #[test]
+    fn a_zero_extent_frame_is_refused_at_the_door() {
+        // A 1x1 JPEG with its height overwritten to zero in the SOF0 marker
+        // would be the faithful fixture; `decode`'s own check is what this
+        // pins, so it is asserted through the message it produces.
+        let err = decode(b"not a jpeg at all").unwrap_err().to_string();
+        assert!(err.contains("undecodable frame"), "{err}");
+    }
     use super::*;
 
     fn solid(w: u32, h: u32, px: [u8; 3]) -> Rgb {

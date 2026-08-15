@@ -98,7 +98,7 @@ impl FrameRelay {
     /// Returns immediately; the connection happens on the reader thread,
     /// because entering a namespace involves a fork and a round trip and the
     /// console must not block a request on it.
-    pub fn start(pid: u32, port: u16) -> Self {
+    pub fn start(pid: u32, port: u16, pid_ns: std::ffi::OsString) -> Self {
         let latest: Arc<Mutex<Option<Frame>>> = Arc::new(Mutex::new(None));
         let finished = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
@@ -110,7 +110,7 @@ impl FrameRelay {
             let stop = stop.clone();
             let error = error.clone();
             std::thread::spawn(move || {
-                if let Err(e) = pump(pid, port, &latest, &stop)
+                if let Err(e) = pump(pid, port, &pid_ns, &latest, &stop)
                     && let Ok(mut slot) = error.lock()
                 {
                     *slot = Some(e.to_string());
@@ -173,13 +173,14 @@ impl Drop for FrameRelay {
 fn pump(
     pid: u32,
     port: u16,
+    pid_ns: &std::ffi::OsStr,
     latest: &Arc<Mutex<Option<Frame>>>,
     stop: &Arc<AtomicBool>,
 ) -> Result<(), h5i_error::H5iError> {
     // The socket comes back from a fork that entered the box's user and network
     // namespaces — the same route `h5i box view --term` takes. Nothing binds,
     // nothing is punched through the namespace.
-    let mut socket = crate::view::connect_in_netns(pid, port)?;
+    let mut socket = crate::view::connect_in_netns(pid, port, pid_ns)?;
 
     let key = ws::new_key();
     socket
@@ -252,10 +253,13 @@ fn decode_frame(seq: u64, data: &str) -> Option<Frame> {
 ///
 /// `None` is the ordinary case — most boxes are not serving a view — so the
 /// caller reports it as a state rather than as an error.
-pub fn locate(env_dir: &std::path::Path) -> Option<(u32, u16)> {
+pub fn locate(env_dir: &std::path::Path) -> Option<(u32, u16, std::ffi::OsString)> {
     let port = crate::view::stream_port(env_dir)?;
-    let pid = crate::view::box_pid(env_dir)?;
-    Some((pid, port))
+    // The namespace comes back with the pid: a pid is not an identity, and the
+    // reader below enters what this walk found rather than whatever holds the
+    // number when it gets there. See `view::connect_in_netns`.
+    let (pid, ns) = crate::view::box_pid_ns(env_dir)?;
+    Some((pid, port, ns))
 }
 
 #[cfg(test)]

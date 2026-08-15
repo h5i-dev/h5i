@@ -268,7 +268,7 @@ pub fn mediate(
 /// run can use.
 #[allow(clippy::too_many_arguments)]
 pub fn mediate_observed(
-    client_in: impl BufRead,
+    mut client_in: impl BufRead,
     mut client_out: impl Write,
     mut daemon_in: impl BufRead,
     mut daemon_out: impl Write,
@@ -278,11 +278,12 @@ pub fn mediate_observed(
 ) -> Mediation {
     let mut mediation = Mediation::default();
 
-    for line in client_in.lines() {
-        let line = match line {
-            Ok(line) => line,
+    loop {
+        let line = match read_capped_line(&mut client_in, "client") {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
             Err(e) => {
-                mediation.error = Some(format!("reading from the client: {e}"));
+                mediation.error = Some(e);
                 break;
             }
         };
@@ -371,6 +372,46 @@ pub fn mediate_observed(
 }
 
 /// Send one request and relay exactly one response line back.
+/// The longest single protocol line either side may send.
+///
+/// The protocol is one line of JSON each way. `BufRead::lines` and `read_line`
+/// grow a `String` until they meet a newline, so without a ceiling a peer that
+/// sends a gigabyte and no `\n` makes *this host process* allocate a gigabyte —
+/// and both peers here are inside the box: the client is the agent's CLI on a
+/// socket in `<env>/tmp`, and the daemon is a process in the box too.
+///
+/// `refuse_no_daemon` has capped its one read since it was written, with a
+/// comment working out this exact hazard. It is the path taken when no daemon
+/// answered; the path taken the rest of the time had no cap at all.
+///
+/// 8 MiB, well past any real line — a `snapshot` of a large page is the biggest
+/// thing on this wire — and far below what a host notices.
+const MAX_LINE: u64 = 8 * 1024 * 1024;
+
+/// Read one `\n`-terminated line, refusing one that outruns [`MAX_LINE`].
+///
+/// `Ok(None)` is end of stream. An overlong line is an error rather than a
+/// truncation: half a JSON object forwarded onward is a line the other side
+/// would try to answer.
+fn read_capped_line(r: &mut impl BufRead, what: &str) -> Result<Option<String>, String> {
+    let mut buf: Vec<u8> = Vec::new();
+    // `Take` over a borrow, rebuilt per line, so the cap is per line and the
+    // reader's buffered bytes survive into the next one.
+    let read = std::io::Read::take(&mut *r, MAX_LINE)
+        .read_until(b'\n', &mut buf)
+        .map_err(|e| format!("reading from the {what}: {e}"))?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if !buf.ends_with(b"\n") && read as u64 == MAX_LINE {
+        return Err(format!(
+            "the {what} sent a line longer than {MAX_LINE} bytes with no newline in it — \
+             refusing it rather than growing to meet it"
+        ));
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+}
+
 fn forward(
     line: &str,
     daemon_out: &mut impl Write,
@@ -381,13 +422,9 @@ fn forward(
         .and_then(|_| daemon_out.flush())
         .map_err(|e| format!("writing to the daemon: {e}"))?;
 
-    let mut response = String::new();
-    let read = daemon_in
-        .read_line(&mut response)
-        .map_err(|e| format!("reading from the daemon: {e}"))?;
-    if read == 0 {
+    let Some(response) = read_capped_line(daemon_in, "daemon")? else {
         return Err("the daemon closed the connection".to_string());
-    }
+    };
 
     client_out
         .write_all(response.as_bytes())
@@ -448,6 +485,32 @@ const UPSTREAM_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 #[cfg(unix)] // only the unix-gated listener references this
 const MAX_ACCEPT_ERRORS: usize = 20;
 
+/// Connections served at once. The accept loop spawns one thread per
+/// connection and the socket sits in `<env>/tmp`, which is one of the two
+/// paths the box can write — so without a ceiling a loop of `connect()` calls
+/// inside the box spawns unbounded *host* threads. `auth_proxy` has carried
+/// this bound since it was written ("the box is one client"); this sibling,
+/// reachable the same way and by the same actor, had none.
+///
+/// 64, matching that sibling. The box's browser CLI opens one connection per
+/// command and nothing legitimate approaches it.
+#[cfg(unix)]
+const MAX_IN_FLIGHT: usize = 64;
+
+/// Holds one of the [`MAX_IN_FLIGHT`] slots and releases it on drop, including
+/// when the worker unwinds — a bare decrement at the end of the closure is
+/// skipped by a panic, and the slot is then held forever by a thread that no
+/// longer exists.
+#[cfg(unix)]
+struct InFlightSlot(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(unix)]
+impl Drop for InFlightSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Start mediating `socket_path` in front of `upstream`.
 ///
 /// Both are `AF_UNIX` paths. `socket_path` is what the box is told to use
@@ -495,6 +558,7 @@ pub fn spawn(
         let actions = actions.clone();
         let upstream = upstream.to_path_buf();
         let env_dir = env_dir.to_path_buf();
+        let in_flight = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         std::thread::spawn(move || {
             let mut consecutive_errors = 0usize;
             while !stop.load(Ordering::SeqCst) {
@@ -504,11 +568,37 @@ pub fn spawn(
                         if stop.load(Ordering::SeqCst) {
                             break;
                         }
+                        // Refuse rather than queue: a queued connection still
+                        // holds a descriptor, and the actor filling these slots
+                        // is a box in a loop. Not counted as an accept error —
+                        // the listener is healthy, it is the load that is not.
+                        // Claimed with one atomic and released by the guard,
+                        // the shape `container`'s proxy uses: a `load` followed
+                        // by a `fetch_add` is correct only because exactly one
+                        // thread accepts, and that is a property of this loop
+                        // rather than of the cap.
+                        let taken = in_flight.fetch_add(1, Ordering::SeqCst);
+                        let slot = InFlightSlot(in_flight.clone());
+                        if taken >= MAX_IN_FLIGHT {
+                            drop(slot);
+                            drop(client);
+                            continue;
+                        }
                         let actions = actions.clone();
                         let upstream = upstream.clone();
                         let env_dir = env_dir.clone();
                         let policy = policy.clone();
-                        std::thread::spawn(move || {
+                        // `Builder::spawn`, not `thread::spawn`: the latter
+                        // *panics* when the OS refuses a thread, and that panic
+                        // is in this loop — which lands exactly where the
+                        // comment on the error arm below says it must not.
+                        // A box running a browser and a build is the case that
+                        // exhausts threads, and it is also the case this
+                        // mediator exists for.
+                        let spawned = std::thread::Builder::new().spawn(move || {
+                            // Moved in, so the slot is released when this
+                            // worker ends however it ends.
+                            let _slot = slot;
                             let _ = client.set_nonblocking(false);
                             let Some(daemon) = connect_upstream(&upstream) else {
                                 // Nothing came up. Answer in the daemon's own
@@ -540,6 +630,22 @@ pub fn spawn(
                                 },
                             );
                         });
+                        if spawned.is_err() {
+                            // Counted with the accept failures: it is the same
+                            // exhaustion, it recovers the same way, and if it
+                            // never does the operator gets the same sentence
+                            // rather than a loop spinning on it.
+                            consecutive_errors += 1;
+                            if consecutive_errors >= MAX_ACCEPT_ERRORS {
+                                eprintln!(
+                                    "h5i: browser mediation stopped after {consecutive_errors} \
+                                     consecutive failures to serve a connection; the control \
+                                     lock is no longer enforced for this session."
+                                );
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         // A healthy idle poll. It has to clear the counter, or
@@ -686,11 +792,52 @@ fn append_actions_log(env_dir: &Path, actions: &[ActionRecord]) -> std::io::Resu
     file.flush()
 }
 
+/// Read one line from `client`, bounded three ways: per `read()`, in total
+/// bytes, and — the one that does not follow from the other two — in wall
+/// clock. Its own function so a test can drive the deadline in milliseconds
+/// instead of waiting out the production one, which is the shape
+/// `view::read_head_within` already uses for the same reason.
+///
+/// Returns whatever arrived. The caller only parses it as JSON, so a partial
+/// line, a timed-out one and an empty one all fail the same way.
+#[cfg(unix)]
+fn read_first_line_within(
+    client: &std::os::unix::net::UnixStream,
+    per_read: std::time::Duration,
+    whole: std::time::Duration,
+    cap: u64,
+) -> String {
+    use std::io::Read;
+    let deadline = std::time::Instant::now() + whole;
+    let _ = client.set_read_timeout(Some(per_read));
+    let mut raw: Vec<u8> = Vec::new();
+    {
+        let mut reader = std::io::BufReader::new(client.take(cap));
+        let mut byte = [0u8; 1];
+        while std::time::Instant::now() < deadline {
+            match reader.read(&mut byte) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    raw.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    let _ = client.set_read_timeout(None);
+    // Lossy rather than `read_line`'s "error on invalid UTF-8": this is only
+    // ever parsed as JSON, and a replacement character fails that parse the
+    // same way the bytes would have. Nothing here is echoed anywhere.
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
 /// Tell a client that no daemon answered, echoing the id of its first request
 /// so a CLI correlating replies by id matches the reply rather than hanging.
 #[cfg(unix)]
 fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
-    use std::io::{BufRead, Write};
+    use std::io::Write;
 
     // Read one line — the request the client is waiting on a reply to. Best
     // effort, and *bounded*: a client that connects to probe liveness and waits
@@ -698,9 +845,26 @@ fn refuse_no_daemon(client: &std::os::unix::net::UnixStream) {
     // never receive the refusal, which is the hang this branch exists to
     // prevent. Threads here are detached, so an unbounded wait also leaks one
     // per retry while a daemon is failing to start.
-    let _ = client.set_read_timeout(Some(std::time::Duration::from_secs(2)));
-    let mut first = String::new();
-    let _ = std::io::BufReader::new(client).read_line(&mut first);
+    //
+    // Bounded in *bytes* as well as time, which is the half the timeout does
+    // not cover: `SO_RCVTIMEO` ends one `read()`, while `read_line` keeps
+    // calling it and growing its `String` until a newline arrives. A peer
+    // sending a byte a second, or a megabyte with no newline in it, was neither
+    // timed out nor capped. A request id is a short JSON line; anything past
+    // this cap is not one.
+    const MAX_FIRST_LINE: u64 = 64 * 1024;
+    // And bounded overall, which the two above still do not add up to. The
+    // timeout ends one `read()` and the cap ends the *bytes*; the loop between
+    // them is ended by neither. A peer that lets every read *succeed* — one
+    // byte just inside each interval — never trips the timeout, because a
+    // timeout is an error and a byte is not, so it walks the whole cap at its
+    // own pace: 64 Ki reads of up to two seconds each is a day and a half
+    // holding a host thread, from a socket in `<env>/tmp` that the box writes.
+    // `auth_proxy::read_head` spells out the same arithmetic and answers it
+    // with a deadline; this path had the two halves and not the whole.
+    const FIRST_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+    const PER_READ: std::time::Duration = std::time::Duration::from_secs(2);
+    let first = read_first_line_within(client, PER_READ, FIRST_LINE_DEADLINE, MAX_FIRST_LINE);
     let _ = client.set_read_timeout(None);
     let id = serde_json::from_str::<Value>(&first)
         .ok()
@@ -1085,6 +1249,146 @@ mod tests {
         let parsed: Value = serde_json::from_str(&reply).expect("a JSON reply");
         assert_eq!(parsed["id"], "42", "the reply must carry the request id");
         assert_eq!(parsed["success"], false);
+    }
+
+    /// `lines()` and `read_line` grow a `String` until they meet a newline, and
+    /// both peers on this socket are inside the box — the client is the agent's
+    /// CLI on a path in `<env>/tmp`, and the daemon is a process in the box too.
+    /// So a line with no newline in it is the box choosing how much memory this
+    /// *host* process allocates.
+    ///
+    /// Driven with a line four times the cap in each direction, which is enough
+    /// to prove the ceiling exists without allocating anything a test notices.
+    #[test]
+    fn a_line_with_no_newline_in_it_cannot_grow_without_end() {
+        let over = "x".repeat((MAX_LINE as usize) * 4);
+
+        // Client side: the agent's CLI sends the flood.
+        let mut out = Vec::new();
+        let m = mediate(
+            Cursor::new(over.clone().into_bytes()),
+            &mut out,
+            Cursor::new(Vec::new()),
+            Vec::new(),
+            Path::new("/nonexistent"),
+            &ActionPolicy::default(),
+        );
+        let said = m.error.expect("an overlong client line must be refused");
+        assert!(said.contains("no newline in it"), "{said}");
+        assert!(said.contains("client"), "{said}");
+
+        // Daemon side: a real request goes out and the answer is the flood.
+        let mut out = Vec::new();
+        let m = mediate(
+            Cursor::new(req("1", "read").into_bytes()),
+            &mut out,
+            Cursor::new(over.into_bytes()),
+            Vec::new(),
+            Path::new("/nonexistent"),
+            &ActionPolicy::default(),
+        );
+        let said = m.error.expect("an overlong daemon line must be refused");
+        assert!(said.contains("no newline in it"), "{said}");
+        assert!(said.contains("daemon"), "{said}");
+
+        // And an ordinary line still round-trips, or the cap has eaten the
+        // protocol rather than bounded it.
+        let mut out = Vec::new();
+        let m = mediate(
+            Cursor::new(req("1", "read").into_bytes()),
+            &mut out,
+            fake_daemon(1),
+            Vec::new(),
+            Path::new("/nonexistent"),
+            &ActionPolicy::default(),
+        );
+        assert_eq!(m.error, None, "a normal line must still pass");
+        assert_eq!(m.forwarded(), 1);
+    }
+
+    /// The dribble the byte cap and the per-read timeout both miss.
+    ///
+    /// A peer that lets every `read()` *succeed* — one byte, comfortably inside
+    /// the per-read interval, forever — never trips that timeout, because a
+    /// timeout is an error and a byte is not. `read_line` keeps going, and the
+    /// only other bound is 64 KiB of bytes: at this rate that is a day and a
+    /// half of a host thread, asked for from a socket in `<env>/tmp`.
+    ///
+    /// Driven at production's shape with the clock scaled down, which is why
+    /// the bounds are parameters: 100 ms per read, a 400 ms deadline, and a
+    /// peer feeding a byte every 20 ms so no read ever fails.
+    #[test]
+    #[cfg(unix)]
+    fn a_dribbling_peer_cannot_hold_the_refusal_thread() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        let (client, server) = UnixStream::pair().expect("socketpair");
+        let mut writer = client.try_clone().unwrap();
+        let feeding = std::thread::spawn(move || {
+            // Never a newline, and never a pause long enough to time a read
+            // out. Stops well after the deadline should have fired.
+            for _ in 0..200 {
+                if writer.write_all(b"x").is_err() {
+                    return;
+                }
+                let _ = writer.flush();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+
+        let started = std::time::Instant::now();
+        let line = read_first_line_within(
+            &server,
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(400),
+            64 * 1024,
+        );
+        let took = started.elapsed();
+        drop(server);
+        let _ = feeding.join();
+
+        assert!(
+            took < std::time::Duration::from_secs(2),
+            "the read ran for {took:?} against a 400ms deadline — the loop is bounded by \
+             neither the per-read timeout nor the byte cap, and now by nothing else either"
+        );
+        // It read *something* — otherwise the test would pass on a read that
+        // never started, which proves nothing about the deadline.
+        assert!(!line.is_empty(), "the dribble should have been read, not skipped");
+        assert!(!line.contains('\n'), "the peer never sent one");
+    }
+
+    /// One thread per connection, and the socket is in `<env>/tmp` — which the
+    /// box writes. Without a ceiling a loop of `connect()` inside the box
+    /// spawns unbounded *host* threads; `auth_proxy` has bounded this since it
+    /// was written and this sibling did not.
+    #[test]
+    #[cfg(unix)]
+    fn the_front_serves_a_bounded_number_of_connections_at_once() {
+        let td = TempDir::new().unwrap();
+        let upstream = td.path().join("u.sock");
+        let front = td.path().join("f.sock");
+        // No daemon behind it: every accepted connection lands in the refusal
+        // path, which is where a box would park them.
+        let handle = spawn(&front, &upstream, td.path(), ActionPolicy::default()).unwrap();
+
+        // Open more than the cap and keep them open. The ones past the ceiling
+        // are closed by the front rather than queued, which is what the read
+        // below observes: EOF with nothing written.
+        let mut held = Vec::new();
+        for _ in 0..(MAX_IN_FLIGHT + 16) {
+            if let Ok(c) = std::os::unix::net::UnixStream::connect(&front) {
+                held.push(c);
+            }
+        }
+        assert!(
+            held.len() >= MAX_IN_FLIGHT,
+            "the front should accept up to its cap, got {}",
+            held.len()
+        );
+        drop(held);
+        drop(handle);
     }
 
     #[test]

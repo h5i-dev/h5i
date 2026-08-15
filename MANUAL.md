@@ -1219,10 +1219,16 @@ Being explicit about these is a feature, since the claim is a security claim.
   agent from touching the host. It does not stop it from putting private code in
   a prompt. That is a separate control (a self-hosted model, or no model egress
   at all) and we will not imply otherwise.
-- **Shared kernel.** Podman and the kernel tiers share the host kernel. Good
-  against a runaway agent and against careless dependency code. Not a claim
-  against a targeted kernel exploit. A microVM backend is the answer, and it is
-  not built.
+- **Shared kernel at four of the five tiers.** `workspace`, `process`,
+  `supervised` and `container` all share the host kernel. Good against a runaway
+  agent and against careless dependency code. Not a claim against a targeted
+  kernel exploit. `isolation=microvm` is the tier where that is not true — the
+  boundary is a hypervisor, so an exploit inside the box meets it rather than
+  the kernel it just subverted — and it buys that for thinner evidence, since a
+  netstack filter drops packets without reporting them and a microvm receipt
+  therefore carries no egress summary. It needs `msb`, host virtualization and a
+  base image, and refuses rather than downgrades when any of the three is
+  missing. See [The microvm tier](#the-microvm-tier).
 - **The container tier's egress scoping is L7.** Its allowlist is a proxy, so it
   binds proxy-respecting tooling only.
 - **An interactive session at a kernel tier shares your terminal.** `box shell`

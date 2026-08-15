@@ -198,10 +198,14 @@ limits arrived with them rather than after:
   and a redirected POST is downgraded to a bodyless GET on 301/302/303 so a
   password is not replayed to wherever a server points next.
 
-Not built: **LOGIN mode** (5.10) — withholding frames and snapshots from the
-agent while a human types a credential. ROADMAP §12 says it should land with
-cookies rather than after. It has not, and until it does a human
-taking over to type a password is doing so on a page the agent can still read.
+**LOGIN mode** (5.10) is half built, and the half matters. `session login`
+refuses every control verb that reads the page, so a credential typed during it
+is not in a snapshot the agent asked for. It does **not** withhold frames: the
+person typing has to see the page, and the viewer socket is inside the box,
+where there is no privilege boundary — so an agent that goes looking can attach
+to it and watch the same pixels. The mode refuses the documented path, which is
+the threat it was written for; it is not containment against an agent that is
+trying, and the refusal text says so rather than implying otherwise.
 
 ### JavaScript, as a limited preview
 
@@ -370,7 +374,8 @@ out of that run and are fixed: a relative path failed when the working
 directory could not be resolved by name, and `serve` accepted only one viewer at
 a time, so opening the console silently blocked `h5i box view`.
 
-Not yet done: **LOGIN mode**, so a human taking over to type a password does so
-on a page the agent can still read; **no `Domain` cookies**, so cross-subdomain
+Not yet done: **the frame half of LOGIN mode**, so a human taking over to type
+a password is protected from the agent's *reads* and not from an agent that
+attaches to the viewer socket; **no `Domain` cookies**, so cross-subdomain
 sessions do not persist; and no file uploads, which are dropped rather than
 read. Tier 3 (policy-gated script) remains deliberately unbuilt.

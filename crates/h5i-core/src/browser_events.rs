@@ -205,7 +205,7 @@ impl ConsoleLevel {
 /// What a draft event *is*, so a later draft can point at it. Resolved to real
 /// event ids by [`EventLog::extend`]; never serialized, because outside the log
 /// a correlation key means nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
     /// The engine's own request sequence number.
     Request(u64),
@@ -278,7 +278,16 @@ pub struct EventLog {
     /// without a link rather than inventing one. Keys are matched newest-first,
     /// so a sequence number reused by a later session resolves to the recent
     /// event rather than the stale one.
-    keys: Vec<(Key, u64)>,
+    keys: std::collections::VecDeque<(Key, u64)>,
+    /// The newest id for each live key, so a correlation is a lookup rather
+    /// than a scan.
+    ///
+    /// Kept beside `keys` rather than replacing it, because eviction is
+    /// ordered: the deque says which key leaves next, and the map answers
+    /// `find_key`. An evicted entry is removed from the map **only when the map
+    /// still points at the id being evicted** — otherwise a key reused by a
+    /// later event would lose its live mapping when its older twin aged out.
+    by_key: std::collections::HashMap<Key, u64>,
     capacity: usize,
     next_id: u64,
     dropped: u64,
@@ -288,7 +297,8 @@ impl EventLog {
     pub fn new(capacity: usize) -> Self {
         Self {
             events: std::collections::VecDeque::new(),
-            keys: Vec::new(),
+            keys: std::collections::VecDeque::new(),
+            by_key: std::collections::HashMap::new(),
             // A zero-capacity log would drop everything and report a clean
             // session, so the floor is one.
             capacity: capacity.max(1),
@@ -335,12 +345,25 @@ impl EventLog {
 
             let caused_by = draft.caused_by.and_then(|k| self.find_key(k));
             if let Some(key) = draft.key {
-                self.keys.push((key, id));
+                self.keys.push_back((key, id));
+                self.by_key.insert(key, id);
                 // The key table is bounded like the log itself: a session that
                 // makes a million requests must not grow an entry per request
                 // that nothing will ever point at again.
-                if self.keys.len() > self.capacity {
-                    self.keys.remove(0);
+                //
+                // `pop_front`, not `remove(0)`. Both halves of this loop used to
+                // be linear in the cap and are driven by a log the *box* writes,
+                // so one poll over the 8 MiB `grown()` will read cost a measured
+                // 127 ms shifting the vector and 125 ms scanning it — on a
+                // console that polls on a timer. 0.2 ms and O(1) now.
+                if self.keys.len() > self.capacity
+                    && let Some((old_key, old_id)) = self.keys.pop_front()
+                {
+                    // Only if it is still the mapping we are dropping: a key
+                    // seen again since keeps the newer id.
+                    if self.by_key.get(&old_key) == Some(&old_id) {
+                        self.by_key.remove(&old_key);
+                    }
                 }
             }
 
@@ -360,11 +383,9 @@ impl EventLog {
     }
 
     fn find_key(&self, key: Key) -> Option<u64> {
-        self.keys
-            .iter()
-            .rev()
-            .find(|(k, _)| *k == key)
-            .map(|(_, id)| *id)
+        // Newest-first, as the scan it replaces was: `by_key` holds the most
+        // recent id for a key because every push overwrites it.
+        self.by_key.get(&key).copied()
     }
 }
 
@@ -827,6 +848,16 @@ struct Growth {
     restarted: bool,
 }
 
+/// Most bytes one poll will read out of a growing log.
+///
+/// Two of the three logs live under `<env>/tmp`, which is one of the two paths a
+/// box can write — and the console polls them on a timer. A bare `read_to_end`
+/// there is the box choosing how much memory the *console* allocates: a
+/// four-gigabyte `browser-requests.jsonl` is a four-gigabyte read on the next
+/// poll. Nothing is lost by pacing it, because the offset advances by exactly
+/// what was consumed and the next poll resumes from there.
+const MAX_GROWTH_PER_POLL: u64 = 8 * 1024 * 1024;
+
 /// Read the complete lines `path` has grown by since `*offset`, advancing it.
 ///
 /// `None` when there is nothing new to fold in — no file, no growth, or growth
@@ -836,6 +867,8 @@ struct Growth {
 /// decoding: a partial write can split a multi-byte character, and decoding
 /// first would either fail or silently corrupt the tail. Cutting at a newline
 /// guarantees whole lines, which are whole characters.
+///
+/// Bounded per call — see [`MAX_GROWTH_PER_POLL`].
 fn grown(path: &std::path::Path, offset: &mut u64) -> Option<Growth> {
     use std::io::{Read, Seek, SeekFrom};
 
@@ -870,7 +903,7 @@ fn grown(path: &std::path::Path, offset: &mut u64) -> Option<Growth> {
     let mut file = std::fs::File::open(path).ok()?;
     file.seek(SeekFrom::Start(*offset)).ok()?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).ok()?;
+    file.take(MAX_GROWTH_PER_POLL).read_to_end(&mut buf).ok()?;
 
     // Stop at the last newline; anything after it is a line still being
     // written, and it stays unconsumed until it is whole.
@@ -1162,6 +1195,100 @@ mod tests {
         write(&path, "{\"a\":1}\n{\"b\":2}\n");
         let second = grown(&path, &mut at).expect("the completed line");
         assert_eq!(second.text, "{\"b\":2}\n", "and it is not re-read");
+    }
+
+    /// The key table is rebuilt on every poll from a log the *box* writes, and
+    /// both of its operations were linear in the cap. Measured at the real
+    /// sizes — 100k drafts against a cap of 4000 — `Vec::remove(0)` cost 127 ms
+    /// and the newest-first scan another 125 ms, per poll, on a console that
+    /// polls on a timer. The deque and the index are 0.2 ms and O(1).
+    ///
+    /// What has to survive that change is the *answer*: newest-first, and an
+    /// eviction that does not drop a key a later event has claimed again.
+    #[test]
+    fn the_key_index_answers_newest_first_and_survives_eviction() {
+        let mut log = EventLog::new(4);
+
+        // A key reused by a later event resolves to the later one.
+        let mut first = Draft::new(EventKind::Navigated { url: "a".into() }, Lane::BoxClaimed, Grade::BestEffort);
+        first.key = Some(Key::Request(7));
+        log.extend(vec![first], TS);
+        let mut again = Draft::new(EventKind::Navigated { url: "b".into() }, Lane::BoxClaimed, Grade::BestEffort);
+        again.key = Some(Key::Request(7));
+        log.extend(vec![again], TS);
+
+        let mut points_at = Draft::new(EventKind::Navigated { url: "c".into() }, Lane::BoxClaimed, Grade::BestEffort);
+        points_at.caused_by = Some(Key::Request(7));
+        log.extend(vec![points_at], TS);
+        let events = log.since(0);
+        let newer_id = events[1].id;
+        assert_eq!(
+            events[2].caused_by,
+            Some(newer_id),
+            "a reused key must resolve to the newest event that claimed it"
+        );
+
+        // Exactly enough to evict the *older* twin and no more: the deque holds
+        // both `Request(7)` entries plus three, so one `pop_front` takes the
+        // older. The mapping the newer one owns must survive that — the
+        // invariant a plain `remove` on eviction would break. (Pushing one more
+        // would age the newer twin out too, which is correct and a different
+        // case; the last assertion covers it.)
+        for i in 0..3u64 {
+            let mut d = Draft::new(EventKind::Navigated { url: i.to_string() }, Lane::BoxClaimed, Grade::BestEffort);
+            d.key = Some(Key::Request(100 + i));
+            log.extend(vec![d], TS);
+        }
+        let mut still = Draft::new(EventKind::Navigated { url: "d".into() }, Lane::BoxClaimed, Grade::BestEffort);
+        still.caused_by = Some(Key::Request(7));
+        log.extend(vec![still], TS);
+        assert_eq!(
+            log.since(0).last().unwrap().caused_by,
+            Some(newer_id),
+            "evicting the older twin dropped the live mapping"
+        );
+
+        // And a key the cap has genuinely aged out resolves to nothing rather
+        // than to something stale.
+        let mut gone = Draft::new(EventKind::Navigated { url: "e".into() }, Lane::BoxClaimed, Grade::BestEffort);
+        gone.caused_by = Some(Key::Request(9_999));
+        log.extend(vec![gone], TS);
+        assert_eq!(log.since(0).last().unwrap().caused_by, None);
+    }
+
+    /// Two of the three logs live under `<env>/tmp`, one of the two paths a box
+    /// can write, and the console polls them on a timer. A bare `read_to_end`
+    /// there is the box choosing how much memory the console allocates.
+    #[test]
+    fn one_poll_reads_a_bounded_amount_and_comes_back_for_the_rest() {
+        let td = tempfile::TempDir::new().unwrap();
+        let path = td.path().join("log.jsonl");
+        let mut at = 0u64;
+
+        // One line per 16 bytes, comfortably over the per-poll cap.
+        let line = format!("{{\"x\":\"{}\"}}\n", "y".repeat(6));
+        let lines = (MAX_GROWTH_PER_POLL as usize / line.len()) + 4096;
+        write(&path, &line.repeat(lines));
+
+        let first = grown(&path, &mut at).expect("something to read");
+        assert!(
+            (first.text.len() as u64) <= MAX_GROWTH_PER_POLL,
+            "one poll read {} bytes",
+            first.text.len()
+        );
+        // Whole lines only, as before.
+        assert!(first.text.ends_with('\n'));
+        assert_eq!(at, first.text.len() as u64);
+
+        // Nothing is lost: the rest arrives on the polls that follow.
+        let mut total = first.text.len();
+        while let Some(g) = grown(&path, &mut at) {
+            if g.text.is_empty() {
+                break;
+            }
+            total += g.text.len();
+        }
+        assert_eq!(total, line.len() * lines, "every byte still arrives");
     }
 
     #[test]

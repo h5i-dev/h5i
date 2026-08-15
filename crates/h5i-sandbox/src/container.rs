@@ -340,7 +340,64 @@ pub fn parse_egress_rule(raw: &str) -> Result<Option<(String, bool, Option<u16>)
              least two (e.g. '*.example.com', not '*.com'). Refusing (fail-closed)."
         )));
     }
+    // And the host has to be a host. Everything above constrains the
+    // *separators* — `,`, `@`, the colon, the wildcard prefix — and nothing
+    // constrained what was left, so any leftover string became a rule.
+    //
+    // That is where the two tiers stopped agreeing, which is the thing this
+    // function exists to prevent. A second colon that is not a port is kept as
+    // part of the host: `example.com:any` parses to the host
+    // `"example.com:any"`, which the container proxy compares against real
+    // hostnames and never matches — an inert rule — while the microvm tier
+    // emits it as the token `allow@example.com:any`, where the colon is
+    // microsandbox's *protocol* qualifier. One policy, denied on one tier and
+    // widened on the other.
+    //
+    // A hostname, an IPv4 address or an IPv4 CIDR, and nothing else. A trailing
+    // dot is refused rather than trimmed: `allows` trims it from the request
+    // host, so a rule carrying one matches nothing today, and trimming it here
+    // would turn a rule that never fired into one that does.
+    if !is_rule_host(&host) {
+        return Err(H5iError::Metadata(format!(
+            "net.egress entry '{raw}' is not a hostname, an IPv4 address or a CIDR — refusing \
+             rather than emitting a rule whose meaning depends on which tier reads it \
+             (fail-closed)."
+        )));
+    }
     Ok(Some((host, wildcard, port)))
+}
+
+/// Is `host` something a rule may name: a DNS name, an IPv4 address, or an IPv4
+/// CIDR? See [`parse_egress_rule`] for why this is checked at all.
+fn is_rule_host(host: &str) -> bool {
+    let (name, prefix) = match host.split_once('/') {
+        Some((n, p)) => (n, Some(p)),
+        None => (host, None),
+    };
+    if let Some(p) = prefix {
+        // A prefix length only means anything on an address.
+        let sane = !p.is_empty()
+            && p.len() <= 2
+            && p.bytes().all(|b| b.is_ascii_digit())
+            && p.parse::<u8>().is_ok_and(|n| n <= 32);
+        if !sane || name.parse::<std::net::Ipv4Addr>().is_err() {
+            return false;
+        }
+    }
+    !name.is_empty()
+        && name.len() <= 253
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                // RFC 1123: a label neither begins nor ends with a hyphen. Also
+                // what stops a bare `-` — which is a host to a charset check
+                // and an option to anything that reads argv.
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
 }
 
 impl AllowEntry {
@@ -582,6 +639,32 @@ const SPOOL_STREAM_CAP: u64 = 4 * 1024 * 1024;
 /// exhaust host threads.
 const MAX_PROXY_CONNECTIONS: usize = 64;
 
+/// How many *consecutive* failed `accept()` calls end the accept loop. Sized so
+/// transient per-connection and fd-pressure errors (which retry at 25 ms) never
+/// reach it, while a permanently broken listener still stops the thread instead
+/// of spinning. Mirrors the credential proxy's bound, for the same reason.
+const MAX_CONSECUTIVE_ACCEPT_ERRORS: usize = 256;
+
+/// Holds one of the [`MAX_PROXY_CONNECTIONS`] slots and releases it on drop —
+/// including when the worker unwinds.
+///
+/// The count is the only thing between the box and an unbounded number of host
+/// threads, so the release has to be unconditional. A bare `fetch_sub` after
+/// the call is not: `splice` calls `std::thread::spawn`, which **panics** when
+/// the OS refuses a thread, and that is reachable from exactly the load this
+/// cap exists to bound. A leaked slot is permanent, and after
+/// `MAX_PROXY_CONNECTIONS` of them the proxy answers 503 for the life of the
+/// box — which, since the proxy is the box's only route out, is the box losing
+/// the network entirely. `auth_proxy::InFlightSlot` is the same guard for the
+/// same reason; this sibling never got it.
+struct ProxySlot(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for ProxySlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// A running egress proxy: a localhost TCP listener gating CONNECT/HTTP by the
 /// allowlist. Dropping the handle shuts the accept loop down.
 pub struct ProxyHandle {
@@ -664,36 +747,72 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
     // benefits from unbounded parallelism here.
     let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let join = std::thread::spawn(move || {
+        // `accept` reports per-connection and per-host conditions that say
+        // nothing about the listener: `ECONNABORTED` when a client RSTs between
+        // SYN and accept, `EMFILE`/`ENFILE` under fd pressure. Treating any of
+        // them as fatal ended the accept loop for good — and this proxy is the
+        // box's only route out, so that is the box losing the network. The
+        // listener is loopback and unauthenticated by design (see the note on
+        // `NetPlan::Proxy`), which means any local process could do it with a
+        // connect and a reset.
+        let mut consecutive_errors = 0usize;
         while !stop_thread.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((mut client, _)) => {
+                    consecutive_errors = 0;
                     if stop_thread.load(Ordering::SeqCst) {
                         break;
-                    }
-                    if live.load(Ordering::SeqCst) >= MAX_PROXY_CONNECTIONS {
-                        // Refuse rather than queue: a queued connection still
-                        // holds an fd, and the client sees a clear 503.
-                        let _ = client.write_all(
-                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
-                        );
-                        continue;
                     }
                     // The accepted socket may arrive non-blocking (see
                     // `handle_proxy_client`, which is where that is corrected —
                     // at the point the blocking reads are actually made).
                     let allow = allow.clone();
                     let tally = tally_thread.clone();
-                    let live_slot = live.clone();
-                    live_slot.fetch_add(1, Ordering::SeqCst);
-                    std::thread::spawn(move || {
+                    // Claimed with one atomic, not a `load` followed by a
+                    // `fetch_add`: between those two, every thread that read
+                    // the same value took a slot, so the cap was advisory.
+                    let taken = live.fetch_add(1, Ordering::SeqCst);
+                    let slot = ProxySlot(live.clone());
+                    if taken >= MAX_PROXY_CONNECTIONS {
+                        // Refuse rather than queue: a queued connection still
+                        // holds an fd, and the client sees a clear 503. The
+                        // guard returns the slot as it goes out of scope.
+                        drop(slot);
+                        let _ = client.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+                        );
+                        continue;
+                    }
+                    // `Builder::spawn`, not `thread::spawn`: the latter
+                    // *panics* when the OS refuses a thread, and that panic is
+                    // in the accept loop — so the one condition the cap above
+                    // exists to bound would end the loop anyway, which is the
+                    // box losing the network. Refused with the same 503 as a
+                    // full slot table, and the guard hands the slot back.
+                    let spawned = std::thread::Builder::new().spawn(move || {
+                        // Moved in, so the release happens on unwind too.
+                        let _slot = slot;
                         let _ = handle_proxy_client(client, &allow, &tally, HEAD_READ_TIMEOUT);
-                        live_slot.fetch_sub(1, Ordering::SeqCst);
                     });
+                    if let Err(_e) = spawned {
+                        // `client` moved into the closure, which was not run;
+                        // it is dropped with the closure, so the peer sees a
+                        // close rather than a status. Nothing else is leaked:
+                        // the slot went with it.
+                        continue;
+                    }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    consecutive_errors = 0;
                     std::thread::sleep(Duration::from_millis(25));
                 }
-                Err(_) => break,
+                Err(_) => {
+                    consecutive_errors += 1;
+                    if consecutive_errors > MAX_CONSECUTIVE_ACCEPT_ERRORS {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
             }
         }
     });
@@ -707,10 +826,23 @@ pub fn spawn_proxy_on(allow: AllowList, want: Option<u16>) -> Result<ProxyHandle
 }
 
 /// Read the request head (up to the blank line) from `s`.
+///
+/// Bounded overall, not just per `read()`. The socket's read timeout bounds a
+/// single syscall, so a client dribbling one header byte just under that
+/// interval held its slot indefinitely — and sixty-four such connections take
+/// the box's only route out away from it. The listener is loopback and
+/// unauthenticated by design, so the actor need not even be the box.
 fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    let deadline = std::time::Instant::now() + HEAD_DEADLINE;
     let mut buf = Vec::with_capacity(256);
     let mut byte = [0u8; 1];
     loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request head exceeded its deadline",
+            ));
+        }
         let n = s.read(&mut byte)?;
         if n == 0 {
             break;
@@ -722,6 +854,11 @@ fn read_head(s: &mut TcpStream) -> std::io::Result<Vec<u8>> {
     }
     Ok(buf)
 }
+
+/// Whole-head deadline, as distinct from the per-`read()` timeout below.
+/// Generous for a real client on a slow link, short enough that a stalled
+/// connection cannot hold a slot for the life of the box.
+const HEAD_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Host:port target from a CONNECT line or an absolute-form request line.
 /// Returns `(host, port, is_connect)`.
@@ -866,10 +1003,17 @@ fn splice(a: TcpStream, b: TcpStream) {
     let a2 = a1.try_clone();
     let b2 = b1.try_clone();
     if let (Ok(mut a2), Ok(mut b2)) = (a2, b2) {
-        let t = std::thread::spawn(move || {
+        // `Builder::spawn`, not `thread::spawn`: the latter *panics* when the
+        // OS refuses a thread. The in-flight guard means that unwind costs one
+        // connection rather than the slot, but a panic is still the wrong way
+        // to say "out of threads" — and a half-open tunnel is not a tunnel, so
+        // the honest answer is to close both ends.
+        let Ok(t) = std::thread::Builder::new().spawn(move || {
             let _ = std::io::copy(&mut a2, &mut b2);
             let _ = b2.shutdown(std::net::Shutdown::Write);
-        });
+        }) else {
+            return;
+        };
         let _ = std::io::copy(&mut b1, &mut a1);
         let _ = a1.shutdown(std::net::Shutdown::Write);
         let _ = t.join();
@@ -1783,16 +1927,8 @@ fn wait_container(
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
-    });
+    let out_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe));
 
     let deadline = std::time::Instant::now() + wall;
     let mut timed_out = false;
@@ -2059,6 +2195,18 @@ mod tests {
             "2001:db8::1",            // mangled into host "2001:db8:" port 1
             "a,b.example.com",        // reserved separator
             "user@example.com",
+            // Not a host. The colon that is not a port stayed part of the host,
+            // so the container tier held an entry that matches nothing while the
+            // microvm tier emitted `allow@example.com:any` — where that colon is
+            // microsandbox's protocol qualifier. One policy, two meanings.
+            "example.com:any",
+            "example.com:tcp",
+            "exa mple.com",
+            "https://example.com",
+            "example.com/path",
+            "example.com.",           // trims to a rule that never fires
+            "..example.com",
+            "-",
         ] {
             assert!(
                 AllowList::parse(&[bad.to_string()]).is_err(),
@@ -2070,7 +2218,18 @@ mod tests {
             );
         }
         // And the well-formed shapes still parse on both.
-        for good in ["example.com", "example.com:443", ".example.com", "*.example.com"] {
+        for good in [
+            "example.com",
+            "example.com:443",
+            ".example.com",
+            "*.example.com",
+            "localhost",
+            "1.2.3.4",
+            "1.2.3.4:8080",
+            "10.0.0.0/8",
+            "_dnslink.example.com",
+            "my-host.example.com",
+        ] {
             assert!(AllowList::parse(&[good.to_string()]).is_ok(), "{good}");
             assert!(crate::microvm::egress_rule_tokens(&[good.to_string()]).is_ok(), "{good}");
         }
@@ -2971,6 +3130,31 @@ mod tests {
         // only assert the gate's accept/deny verdict.
         let allow = AllowList::parse(&["allowed.invalid:443".into()]).unwrap();
         let proxy = spawn_proxy(allow).unwrap();
+
+        // A connect-and-reset used to end the accept loop for good, and this
+        // proxy is the box's only route out — so any local process could take
+        // the box's network away with one socket. Do it several times, then
+        // prove the proxy is still answering.
+        #[cfg(unix)]
+        for _ in 0..8 {
+            use std::os::fd::AsRawFd;
+            if let Ok(s) = TcpStream::connect(("127.0.0.1", proxy.port)) {
+                // `SO_LINGER` with a zero timeout makes `close` send an RST
+                // rather than a FIN, which is what produces `ECONNABORTED` on
+                // the accepting side. (`TcpStream::set_linger` is still
+                // unstable, so this goes through libc.)
+                let l = libc::linger { l_onoff: 1, l_linger: 0 };
+                unsafe {
+                    libc::setsockopt(
+                        s.as_raw_fd(),
+                        libc::SOL_SOCKET,
+                        libc::SO_LINGER,
+                        (&raw const l).cast(),
+                        std::mem::size_of::<libc::linger>() as libc::socklen_t,
+                    );
+                }
+            }
+        }
 
         // Denied host → 403, fail-closed.
         let mut c = TcpStream::connect(("127.0.0.1", proxy.port)).unwrap();

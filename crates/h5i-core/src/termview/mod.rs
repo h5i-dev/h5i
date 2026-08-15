@@ -224,7 +224,7 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
     // Everything that can fail with an explanation is resolved before the
     // terminal is touched, so a failure prints a sentence on a normal screen
     // rather than on an alternate one that is about to be torn down.
-    let pid = crate::view::box_pid(&opts.env_dir).ok_or_else(|| {
+    let (pid, pid_ns) = crate::view::box_pid_ns(&opts.env_dir).ok_or_else(|| {
         H5iError::Metadata(
             "this box is not running, so there is no browser to watch. \
              Start a session (`h5i box shell <name>`) and try again."
@@ -247,7 +247,7 @@ pub fn run(opts: Options) -> Result<(), H5iError> {
 
     // The socket is a descriptor this process owns, handed back from a fork
     // that entered the box's namespaces. Nothing is listening anywhere.
-    let mut socket = crate::view::connect_in_netns(pid, port)?;
+    let mut socket = crate::view::connect_in_netns(pid, port, &pid_ns)?;
     let key = ws::new_key();
     socket
         .write_all(ws::request(&format!("127.0.0.1:{port}"), "/", &key).as_bytes())

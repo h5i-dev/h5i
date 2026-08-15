@@ -532,7 +532,45 @@ fn validate_imported_manifest(m: &EnvManifest) -> Result<(), H5iError> {
             )));
         }
     }
+    // The three object-id fields, because every surface that shows a manifest
+    // abbreviates them and an abbreviation is a slice. `create` writes a git
+    // OID and a sha256; a peer's ref can carry whatever it likes, and the
+    // caller has already committed to *skipping* a bad manifest rather than
+    // aborting the sync — so anything that is not an id is refused here rather
+    // than left to panic in a renderer three commands later.
+    for (field, got) in [
+        ("base_commit", &m.base_commit),
+        ("base_tree", &m.base_tree),
+        ("policy_digest", &m.policy_digest),
+    ] {
+        let ok = (7..=64).contains(&got.len()) && got.bytes().all(|b| b.is_ascii_hexdigit());
+        if !ok {
+            return Err(H5iError::Metadata(format!(
+                "manifest {field} is not an object id (got '{}')",
+                crate::redact::sanitize_display(got)
+            )));
+        }
+    }
     Ok(())
+}
+
+/// The first `n` characters of an identifier, for display.
+///
+/// `&id[..12]` is what every abbreviating site used, and it panics two ways on a
+/// manifest this machine did not write: when the field is shorter than the
+/// slice, and when the byte index lands inside a multi-byte character. A
+/// manifest arrives from a peer through `refs/h5i/env`, so `h5i box list` —
+/// which abbreviates every manifest it can see — aborted on one crafted line.
+/// That is the same "one poisoned line suppresses every legitimate env" that
+/// [`materialize_from_ref`] skips bad manifests specifically to avoid.
+///
+/// Counted in characters rather than bytes: for the hex ids this is used on the
+/// two agree, and for anything else it is the answer a reader expects.
+pub fn short(s: &str, n: usize) -> &str {
+    match s.char_indices().nth(n) {
+        Some((at, _)) => &s[..at],
+        None => s,
+    }
 }
 
 // ─── event log: CAS append + union merge (same pattern as objects/msg) ──────
@@ -1220,7 +1258,37 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), H5iError> {
 fn load_manifest_at(dir: &Path) -> Result<EnvManifest, H5iError> {
     let path = dir.join(MANIFEST_FILE);
     let text = std::fs::read_to_string(&path).map_err(|e| H5iError::with_path(e, &path))?;
-    Ok(serde_json::from_str(&text)?)
+    let m: EnvManifest = serde_json::from_str(&text)?;
+    // The same identity check `materialize_from_ref` runs, at the point every
+    // manifest is *read* rather than only where one is imported.
+    //
+    // Its doc says the fields are validated "BEFORE its `agent`/`slug` are used
+    // to compute on-disk paths" — and that held for the import and not for the
+    // read. Everything downstream calls `m.dir(h5i_root)`, which is
+    // `env_dir(root, m.agent, m.slug)` joined unchecked, and one of the things
+    // downstream is `rm`'s `remove_dir_all`. `list` walks directory names; it
+    // is the manifest's own fields that become the path.
+    validate_imported_manifest(&m)?;
+    // And they have to name the directory they were found in. A manifest is
+    // identified by where it lives, so one that describes a different env —
+    // copied, restored from a backup, or hand-edited — is not this env's
+    // manifest whatever it says.
+    let here = dir
+        .parent()
+        .map(|p| (p.file_name(), dir.file_name()))
+        .unwrap_or((None, None));
+    let want = (
+        Some(std::ffi::OsStr::new(m.agent.as_str())),
+        Some(std::ffi::OsStr::new(m.slug.as_str())),
+    );
+    if here != want {
+        return Err(H5iError::Metadata(format!(
+            "manifest at {} names '{}' — a manifest is identified by where it lives, and this              one describes a different environment (fail-closed)",
+            path.display(),
+            crate::redact::sanitize_display(&m.id)
+        )));
+    }
+    Ok(m)
 }
 
 /// All env manifests on this clone, ordered by creation time.
@@ -1484,10 +1552,7 @@ fn init_detached_workspace(
             let hooks = work.parent().unwrap_or(work).join("clone-hooks-disabled");
             std::fs::create_dir_all(&hooks).map_err(|e| H5iError::with_path(e, &hooks))?;
             let out = std::process::Command::new("git")
-                .arg("-c")
-                .arg(format!("core.hooksPath={}", hooks.display()))
-                .args(["clone", "--depth", "1", url])
-                .arg(work)
+                .args(clone_argv(&hooks, url, work))
                 .output()
                 .map_err(|e| H5iError::Metadata(format!("failed to invoke git clone: {e}")))?;
             if !out.status.success() {
@@ -1510,6 +1575,47 @@ fn init_detached_workspace(
             Ok((oid, tree))
         }
     }
+}
+
+/// The `git` argv for cloning a box's source, built here so it can be read as a
+/// whole and tested without a network.
+///
+/// This clone runs on the **host**, unconfined, on a string somebody typed or
+/// pasted. Three things make that safe, and two of them were missing:
+///
+/// * **`core.hooksPath`** at an empty directory, so a hostile repository cannot
+///   ship a hook that runs here. This was already the case.
+///
+/// * **`protocol.ext.allow=never`.** `ext::` is not a URL, it is a command:
+///   `git clone 'ext::sh -c …'` runs it. Git refuses that transport by default,
+///   but the default is *config*, and an operator whose `~/.gitconfig` carries
+///   `protocol.ext.allow = always` — a setting people do add — turned a pasted
+///   "repository URL" into host command execution. Verified both ways against
+///   git 2.50: permissive config runs the command, and a later `-c` pinning it
+///   to `never` refuses it.
+///
+/// * **`--end-of-options` before the URL.** Otherwise git reads a leading `-`
+///   as an option, so `--upload-pack=<cmd>` is an argument rather than a
+///   repository. `source::resolve_pr_base` has carried exactly this guard, with
+///   exactly this reasoning, since it was written; the clone path never got it.
+///   Today the injected option is defanged by the destination argument that
+///   follows it (an empty directory is not a repository, so the clone fails
+///   before a transport opens) — which is an accident of argument order, not a
+///   property to rest a host boundary on.
+fn clone_argv(hooks: &Path, url: &str, work: &Path) -> Vec<std::ffi::OsString> {
+    use std::ffi::OsString;
+    vec![
+        OsString::from("-c"),
+        OsString::from(format!("core.hooksPath={}", hooks.display())),
+        OsString::from("-c"),
+        OsString::from("protocol.ext.allow=never"),
+        OsString::from("clone"),
+        OsString::from("--depth"),
+        OsString::from("1"),
+        OsString::from("--end-of-options"),
+        OsString::from(url),
+        work.as_os_str().to_os_string(),
+    ]
 }
 
 /// The registered worktree name for an env, matching `EnvManifest::worktree_name`
@@ -1620,6 +1726,7 @@ pub fn create(
                 };
                 let mut prof = sandbox::load_profile(workdir, agent_profile, Some(claim))?;
                 if let Some(img) = &opts.image {
+                    sandbox::validate_image(img)?;
                     prof.image = Some(img.clone());
                 }
                 let pol = sandbox::resolve(&prof, &sandbox::probe_host_for(claim))?;
@@ -1651,6 +1758,10 @@ pub fn create(
     // resolve, so it is pinned in policy.resolved.toml and the digest like any
     // profile-declared image.
     if let Some(img) = &opts.image {
+        // `load_profile` validated the profile's own image; `--image` lands
+        // after it, so it needs the same gate or the strongest-precedence
+        // source is the one nothing checks.
+        sandbox::validate_image(img)?;
         profile.image = Some(img.clone());
     }
     // `--engine` has the same precedence as `--image`: it lands in the profile
@@ -1829,7 +1940,7 @@ pub fn create(
             event: "created".into(),
             detail: Some(format!(
                 "base={} profile={} isolation={} backend={backend}",
-                &manifest.base_commit[..12.min(manifest.base_commit.len())],
+                short(&manifest.base_commit, 12),
                 manifest.profile,
                 manifest.isolation_claim
             )),
@@ -1849,6 +1960,76 @@ pub fn create(
 /// even when `h5i init` did not add it to a tracked `.gitignore`). Returns the
 /// sha256 of the written `PERSONA.md` for provenance, or `None` when the profile
 /// declares no persona. Paths are validated (relative, no `..`) at policy load.
+/// Largest persona source that will be baked in. A standing instruction is
+/// prose; anything past this is not one, and the file is repo-supplied.
+const MAX_PERSONA_BYTES: u64 = 1024 * 1024;
+
+/// Read `rel` under `work` **without following a symlink at any component**.
+///
+/// `validate_profile` pins a persona source inside `$WORK`: relative, no `..`,
+/// no absolute path. What it cannot do is *resolve* it — and both the entry and
+/// the worktree contents are repo-supplied, so a branch that ships `notes.md` as
+/// a symlink to `~/.ssh/id_rsa` turns a valid-looking entry into a read of the
+/// operator's key. Git checks symlinks out faithfully, and `read_to_string`
+/// follows them.
+///
+/// The consequence is worse here than for most reads: what is read is
+/// concatenated into `PERSONA.md` *inside the box*, which the agent is told to
+/// open. A host file would be handed to the agent by the mechanism whose whole
+/// purpose is to tell it how to behave.
+///
+/// `private_paths` has the same shape and got `create_dirs_within` for exactly
+/// this reason — "it never *resolves* the path". This is the read side of that
+/// argument, and it is bounded as well, because the source is repo-supplied.
+/// Resolve `rel` under `work`, refusing a symlink at any component.
+///
+/// The check both [`read_within_work`] and [`resolve_work_rcfile`] need: each
+/// takes a repo-declared, `validate`-approved relative path and then does
+/// something with the file it names, and neither validator resolves anything.
+fn resolve_within_work(work: &Path, rel: &str) -> std::io::Result<PathBuf> {
+    let mut cur = work.to_path_buf();
+    let comps: Vec<&str> = rel
+        .trim_matches('/')
+        .split('/')
+        .filter(|c| !c.is_empty() && *c != ".")
+        .collect();
+    if comps.is_empty() {
+        return Err(std::io::Error::other("empty path"));
+    }
+    for c in &comps {
+        cur.push(c);
+        if std::fs::symlink_metadata(&cur)?.file_type().is_symlink() {
+            return Err(std::io::Error::other(format!(
+                "'{}' is a symlink, and h5i will not follow one out of the workspace \
+                 (fail-closed)",
+                cur.display()
+            )));
+        }
+    }
+    Ok(cur)
+}
+
+fn read_within_work(work: &Path, rel: &str) -> std::io::Result<String> {
+    use std::io::Read;
+    let cur = resolve_within_work(work, rel)?;
+    // `O_NOFOLLOW` as well as the walk: the walk is a check and this is the
+    // open, and between them is a window a repo's own build step could use.
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    let f = opts.open(&cur)?;
+    if !f.metadata()?.file_type().is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    let mut buf = String::new();
+    f.take(MAX_PERSONA_BYTES).read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
 fn materialize_persona(work: &Path, persona: &[String]) -> Result<Option<String>, H5iError> {
     if persona.is_empty() {
         return Ok(None);
@@ -1856,10 +2037,10 @@ fn materialize_persona(work: &Path, persona: &[String]) -> Result<Option<String>
     let mut body = String::new();
     for src in persona {
         let path = work.join(src);
-        let text = std::fs::read_to_string(&path).map_err(|e| {
+        let text = read_within_work(work, src).map_err(|e| {
             H5iError::Metadata(format!(
-                "persona source '{src}' is not in the worktree ({}): {e} — commit it at the \
-                 base revision or fix `persona` in .h5i/env.toml (fail-closed)",
+                "persona source '{src}' is not readable in the worktree ({}): {e} — commit it \
+                 at the base revision or fix `persona` in .h5i/env.toml (fail-closed)",
                 path.display()
             ))
         })?;
@@ -4596,8 +4777,13 @@ fn prepare_box_reach(
 
 fn apply_user_egress(policy: &mut sandbox::ResolvedPolicy) {
     let user = user_allow_list();
-    let enforced =
-        policy.claim.enforces_egress_allowlist() && !policy.profile.net_egress.is_empty();
+    // `scopes_egress`, not `!net_egress.is_empty()`: a blank entry is a `Vec`
+    // element and not a rule, so `net.egress = [""]` is a deny-all that the
+    // length test reported as "the profile sets net.egress" — and the host-side
+    // allow list was then merged into a box meant to reach nothing. SECURITY.md
+    // states the property this restores: the list "merges into a profile that
+    // already sets `net.egress` and never widens a deny-all one".
+    let enforced = policy.claim.enforces_egress_allowlist() && policy.profile.scopes_egress();
     if enforced {
         policy.user_egress_allow = user
             .into_iter()
@@ -4893,13 +5079,7 @@ fn run_inner(
     // Scrub brokered secret values from the evidence by exact match, on top of
     // the pattern-based redaction the capture already applies — a token echoed
     // to stdout must never reach refs/h5i/objects even if it matches no pattern.
-    if !brokered.redactions.is_empty() {
-        let mut text = String::from_utf8_lossy(&raw).into_owned();
-        for v in &brokered.redactions {
-            text = text.replace(v, "[redacted secret]");
-        }
-        raw = text.into_bytes();
-    }
+    raw = scrub_exact(&raw, &brokered.redactions);
 
     // Browser evidence: when this run drove the browser, ask the page what
     // happened before recording the run. The drain executes in the same box
@@ -4981,7 +5161,7 @@ fn run_inner(
     let capture_id = captured.id.clone();
 
     m.captures.push(capture_id.clone());
-    let observed = match ingest_shell_spool(repo, h5i_root, m) {
+    let observed = match ingest_shell_spool(repo, h5i_root, m, &brokered.redactions) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("warning: env observation ingest failed: {e}");
@@ -5354,7 +5534,7 @@ pub fn shell(
     // tee-shim records) into tagged captures BEFORE the final status event, so
     // the manifest it persists already lists them. Best-effort: a failed
     // ingest warns and never breaks the session.
-    let observed = match ingest_shell_spool(repo, h5i_root, m) {
+    let observed = match ingest_shell_spool(repo, h5i_root, m, &brokered.redactions) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("warning: shell observation ingest failed: {e}");
@@ -5678,8 +5858,17 @@ fn resolve_work_rcfile(work: &Path, rel: &str) -> Result<String, H5iError> {
             "[shell] rcfile '{rel}' must not escape the worktree with '..'"
         )));
     }
-    let full = work.join(p);
-    if !full.is_file() {
+    // Resolved, not just validated. The two checks above are the same pair the
+    // persona sources get, and they have the same blind spot: a repo shipping
+    // this path as a symlink puts a file from outside the worktree in front of
+    // `bash --rcfile`, which *sources* it. `is_file()` follows links and would
+    // have said yes.
+    let full = resolve_within_work(work, rel).map_err(|e| {
+        H5iError::Metadata(format!(
+            "[shell] rcfile '{rel}' is not readable in the worktree: {e}"
+        ))
+    })?;
+    if !std::fs::symlink_metadata(&full).is_ok_and(|md| md.is_file()) {
         return Err(H5iError::Metadata(format!(
             "[shell] rcfile '{rel}' not found in the worktree (expected at {})",
             full.display()
@@ -5804,6 +5993,46 @@ fn write_plain_zshrc(
     })
 }
 
+/// Replace every occurrence of each `secrets` value in `raw`, on the **bytes**.
+///
+/// This used to go `String::from_utf8_lossy(&raw).into_owned()` → `str::replace`
+/// → `into_bytes()`, which is two mistakes at once:
+///
+/// * A binary payload came back **rewritten**. Every byte that is not valid
+///   UTF-8 became U+FFFD, and `receipt::append` then digested and sized *that*
+///   — so `raw_oid` and `raw_size` described bytes the run never produced,
+///   whenever any secret happened to be brokered. The redaction module's own
+///   rule is that storage keeps the exact bytes; only rendering is sanitised.
+/// * It was a round trip through a lossy decoder to do a search that never
+///   needed one. A credential is a byte string and matching it as one is both
+///   exact and cheaper.
+///
+/// The marker is the same text the string version used, so nothing downstream
+/// has to learn a new one.
+fn scrub_exact(raw: &[u8], secrets: &[String]) -> Vec<u8> {
+    const MARKER: &[u8] = b"[redacted secret]";
+    let mut out = raw.to_vec();
+    for secret in secrets {
+        let needle = secret.as_bytes();
+        if needle.is_empty() {
+            continue;
+        }
+        let mut next = Vec::with_capacity(out.len());
+        let mut i = 0;
+        while i < out.len() {
+            if out[i..].starts_with(needle) {
+                next.extend_from_slice(MARKER);
+                i += needle.len();
+            } else {
+                next.push(out[i]);
+                i += 1;
+            }
+        }
+        out = next;
+    }
+    out
+}
+
 // ─── shell-spool ingest (in-box observation evidence) ────────────────────────
 
 /// Ingest caps. Container-tier spool contents are written by the **box** (the
@@ -5851,10 +6080,17 @@ fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
 /// Each becomes a secret-redacted `objects` capture tagged with the env id +
 /// policy digest (same provenance stream as `env run` execs) plus an `exec`
 /// event, and the spool files are removed. Returns how many captures landed.
+///
+/// `secrets` is the run's brokered values, scrubbed by exact match on top of the
+/// pattern-based redaction `receipt::append` applies. `env run` has done this
+/// since the broker existed — "a token echoed to stdout must never reach
+/// refs/h5i/objects even if it matches no pattern" — and this lane, which is the
+/// one an interactive agent actually works in, was not given the same list.
 fn ingest_shell_spool(
     repo: &Repository,
     h5i_root: &Path,
     m: &mut EnvManifest,
+    secrets: &[String],
 ) -> Result<usize, H5iError> {
     let spool = m.dir(h5i_root).join("spool");
     if !spool.is_dir() {
@@ -5908,8 +6144,14 @@ fn ingest_shell_spool(
             raw.extend_from_slice(&stderr);
         }
 
+        let raw = scrub_exact(&raw, secrets);
+
         // The command string is box-controlled: redact secrets, flatten to one
-        // line, and cap it before it lands in a manifest or event detail.
+        // line, and cap it before it lands in a manifest or event detail. The
+        // brokered values go too — a credential passed on a command line is at
+        // least as likely as one echoed to stdout.
+        let cmd_text = String::from_utf8_lossy(&scrub_exact(cmd_text.as_bytes(), secrets))
+            .into_owned();
         let safe_cmd: String = crate::secrets::redact_text(&cmd_text)
             .replace(['\n', '\r'], " ")
             .chars()
@@ -5982,8 +6224,16 @@ fn ingest_shell_spool(
                 continue;
             }
         };
-        let raw = read_spool_capped(&path_of("raw"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default();
-        let safe_cmd: String = crate::secrets::redact_text(&meta.cmd)
+        // The same exact-value scrub the tee-shim branch above gets. These are
+        // two branches of one function reading one spool, and a credential does
+        // not care which of them recorded it.
+        let raw = scrub_exact(
+            &read_spool_capped(&path_of("raw"), SPOOL_MAX_OUTPUT_BYTES).unwrap_or_default(),
+            secrets,
+        );
+        let meta_cmd =
+            String::from_utf8_lossy(&scrub_exact(meta.cmd.as_bytes(), secrets)).into_owned();
+        let safe_cmd: String = crate::secrets::redact_text(&meta_cmd)
             .replace(['\n', '\r'], " ")
             .chars()
             .take(300)
@@ -6313,8 +6563,15 @@ pub fn drift(repo: &Repository, m: &EnvManifest) -> Drift {
 /// A human-readable status report for one environment: identity, lifecycle,
 /// the policy actually enforced, evidence, and base drift.
 pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> String {
+    // A manifest is not always one this machine wrote: `h5i pull` materialises
+    // a peer's from `refs/h5i/env`, and `validate_imported_manifest` pins the
+    // identity fields and the object ids and nothing else. Everything variable
+    // below is therefore box- or peer-supplied text on its way to a terminal,
+    // which is the surface an escape sequence acts on — `m.source` was already
+    // cleaned here for exactly that reason, and its neighbours were not.
+    use crate::redact::sanitize_display as clean;
     let mut out = String::new();
-    out.push_str(&format!("── {} ──\n", m.id));
+    out.push_str(&format!("── {} ──\n", clean(&m.id)));
     // Reconcile the durable status against the live registry: a `running`
     // manifest with no live writer is a crash leftover, and saying so beats
     // letting the reader trust it.
@@ -6325,20 +6582,20 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     } else {
         ""
     };
-    out.push_str(&format!("  status   : {}{}\n", m.status, stale_note));
+    out.push_str(&format!("  status   : {}{}\n", clean(&m.status), stale_note));
     for s in &live {
         out.push_str(&format!(
             "  live     : {} pid {} since {}{}\n",
-            s.kind,
+            clean(&s.kind),
             s.pid,
-            s.started_at,
+            clean(&s.started_at),
             s.command
                 .as_ref()
-                .map(|c| format!(" — {c}"))
+                .map(|c| format!(" — {}", clean(c)))
                 .unwrap_or_default()
         ));
     }
-    out.push_str(&format!("  agent    : {}\n", m.agent));
+    out.push_str(&format!("  agent    : {}\n", clean(&m.agent)));
     if is_detached(m) {
         // Say it plainly: this box's code came from outside, and nothing it
         // does can reach the repository you are standing in.
@@ -6349,15 +6606,15 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     }
     out.push_str(&format!(
         "  base     : {} (from {})\n",
-        &m.base_commit[..12.min(m.base_commit.len())],
-        m.parent_branch
+        short(&m.base_commit, 12),
+        clean(&m.parent_branch)
     ));
-    out.push_str(&format!("  branch   : {}\n", m.branch));
+    out.push_str(&format!("  branch   : {}\n", clean(&m.branch)));
     out.push_str(&format!(
         "  policy   : profile={} isolation={} digest={}\n",
-        m.profile,
-        m.isolation_claim,
-        &m.policy_digest[..12.min(m.policy_digest.len())]
+        clean(&m.profile),
+        clean(&m.isolation_claim),
+        short(&m.policy_digest, 12)
     ));
     // Resolved policy details when readable (digest-verified).
     if let Ok(policy) = load_policy(h5i_root, m) {
@@ -6456,7 +6713,7 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
             .map(|(source, n)| format!("{source}={n}"))
             .collect::<Vec<_>>()
             .join(", ");
-        format!(": {} [{}]", m.captures.join(", "), sources)
+        format!(": {} [{}]", clean(&m.captures.join(", ")), clean(&sources))
     };
     out.push_str(&format!(
         "  evidence : {} capture(s){}\n",
@@ -6473,7 +6730,7 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
             pending.breakdown(),
         ));
         for cmd in pending.captures.iter().take(5) {
-            out.push_str(&format!("             ↳ capture `{cmd}`\n"));
+            out.push_str(&format!("             ↳ capture `{}`\n", clean(cmd)));
         }
     }
     let d = drift(repo, m);
@@ -6535,7 +6792,7 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
             false,
             format!(
                 "policy.resolved.toml verifies against pinned digest {}",
-                &m.policy_digest[..12.min(m.policy_digest.len())]
+                short(&m.policy_digest, 12)
             )
         ),
         Err(e) => chk!("policy", false, false, format!("{e}")),
@@ -6727,8 +6984,9 @@ pub fn secrets_status(h5i_root: &Path, policy: &ResolvedPolicy) -> Vec<SecretSta
 
 /// Plain-text rendering of [`secrets_status`].
 pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
+    use crate::redact::sanitize_display as clean;
     let mut out = String::new();
-    out.push_str(&format!("── secrets for {env_id} ──\n"));
+    out.push_str(&format!("── secrets for {} ──\n", clean(env_id)));
     if rows.is_empty() {
         out.push_str("  (no secret grants declared in this env's profile)\n");
         return out;
@@ -6744,9 +7002,18 @@ pub fn render_secrets(env_id: &str, rows: &[SecretStatus]) -> String {
             .as_deref()
             .map(|f| format!("  {f}"))
             .unwrap_or_default();
+        // `source` is repo-supplied and only its *prefix* is validated
+        // (`env:`/`file:`/`command:`), so everything after it is a free string
+        // from `.h5i/env.toml` on its way to a terminal. So are `ttl` and the
+        // status text, which quotes an error.
         out.push_str(&format!(
             "  {:<20} source={} inject={}{}  [{}]{}\n",
-            s.name, s.source, s.inject, ttl, s.status, fp
+            clean(&s.name),
+            clean(&s.source),
+            clean(&s.inject),
+            clean(&ttl),
+            clean(&s.status),
+            clean(&fp)
         ));
     }
     out
@@ -7183,7 +7450,23 @@ fn pinned_service_defs(
 ) -> Option<std::collections::BTreeMap<String, ServiceDef>> {
     let pinned = pinned_services_path(h5i_root, m);
     let text = std::fs::read_to_string(&pinned).ok()?;
-    serde_json::from_str(&text).ok()
+    let defs: std::collections::BTreeMap<String, ServiceDef> = serde_json::from_str(&text).ok()?;
+    // The digest, like `load_service_defs` checks on the same file. This
+    // function is the one documented as being for "callers that must not read
+    // box-writable input", and it was reading the file without the check that
+    // establishes the file is the one that was pinned — a weaker guarantee than
+    // its sibling's, under a stronger claim.
+    //
+    // A mismatch answers `None`, which `load_policy` reads as "may host
+    // services". That is the conservative direction the caller's own comment
+    // names: guessing false costs a killed dev server, guessing true costs a
+    // guest that lives until `box rm`.
+    if let Some(expected) = &m.service_digest
+        && &service_defs_digest(&defs) != expected
+    {
+        return None;
+    }
+    Some(defs)
 }
 
 fn load_service_defs(
@@ -7576,16 +7859,61 @@ pub fn service_logs(
     let svc_dir = services_dir(h5i_root, m);
     let rec = read_service_record(&svc_dir, name)
         .ok_or_else(|| H5iError::Metadata(format!("service '{name}' is not running")))?;
-    let text = std::fs::read_to_string(&rec.log).unwrap_or_default();
+    let text = read_tail(Path::new(&rec.log), SERVICE_LOG_TAIL_BYTES);
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(tail);
-    Ok(lines[start..].join("\n"))
+    // Sanitised, like every other box-written string that reaches a terminal.
+    // A service is `sh -c '<command>'` writing to this file, so the bytes are
+    // the box's — and `h5i box service logs` prints the result straight to
+    // stdout, which is where an escape sequence executes. `sanitize_block`
+    // rather than `sanitize_display`: a log is meant to have lines.
+    Ok(crate::redact::sanitize_block(&lines[start..].join("\n")))
+}
+
+/// Most of a service log `service logs` will read.
+///
+/// The file is written by a long-lived command *inside the box*, so its size is
+/// the box's decision, and `read_to_string` on it was an unbounded host
+/// allocation to show the last fifty lines of a dev server. Reading the tail is
+/// also what the caller asked for.
+const SERVICE_LOG_TAIL_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The last `cap` bytes of `path`, starting at a line boundary.
+///
+/// An empty string for anything unreadable — this is a display path, and a
+/// service whose log has been rotated out from under it is not an error worth
+/// failing the command over.
+fn read_tail(path: &Path, cap: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let from = len.saturating_sub(cap);
+    if from > 0 && f.seek(SeekFrom::Start(from)).is_err() {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    if f.take(cap).read_to_end(&mut buf).is_err() {
+        return String::new();
+    }
+    // A seek into the middle of the file lands mid-line; drop the fragment so
+    // the first line shown is a whole one rather than a tail of one.
+    if from > 0
+        && let Some(nl) = buf.iter().position(|b| *b == b'\n')
+    {
+        buf.drain(..=nl);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// Render the fleet of services for `env service status`.
 pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
     let mut out = String::new();
-    out.push_str(&format!("── services for {env_id} ──\n"));
+    out.push_str(&format!(
+        "── services for {} ──\n",
+        crate::redact::sanitize_display(env_id)
+    ));
     if rows.is_empty() {
         out.push_str("  (no services running; declare [service.<name>] in .h5i/env.toml)\n");
         return out;
@@ -7598,9 +7926,17 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
             .or(s.record.port)
             .map(|p| format!(" PORT={p}"))
             .unwrap_or_default();
+        // The name and the command are repo-supplied policy (`[service.<name>]`
+        // in `.h5i/env.toml`) on their way to a terminal, so they are cleaned
+        // like every other such string. The command is additionally
+        // secret-scrubbed where it is *recorded*; this is the display side.
         out.push_str(&format!(
             "  {:<16} {:<8} pid={}{}  `{}`\n",
-            s.record.name, live, s.record.pid, port, s.record.command
+            crate::redact::sanitize_display(&s.record.name),
+            live,
+            s.record.pid,
+            port,
+            crate::redact::sanitize_display(&s.record.command)
         ));
     }
     out
@@ -7614,7 +7950,10 @@ pub fn render_services(env_id: &str, rows: &[ServiceStatus]) -> String {
 /// shown as conditional, never a guarantee.
 pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
     let mut out = String::new();
-    out.push_str(&format!("── injected ports for {env_id} ──\n"));
+    out.push_str(&format!(
+        "── injected ports for {} ──\n",
+        crate::redact::sanitize_display(env_id)
+    ));
     // A guest service has no *injected* host port — its box owns a whole
     // network stack, so it binds the port it declared and nothing was allocated
     // to keep it from colliding. Filtering on `dynamic_port` alone therefore
@@ -7645,7 +7984,7 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
         };
         out.push_str(&format!(
             "  {:<16} {:<10} {:<10} {}\n",
-            s.record.name,
+            crate::redact::sanitize_display(&s.record.name),
             s.record
                 .port
                 .map(|p| p.to_string())
@@ -7660,8 +7999,13 @@ pub fn render_ports(env_id: &str, rows: &[ServiceStatus]) -> String {
 /// Plain-text rendering of a [`DoctorReport`] (the CLI adds color).
 pub fn render_doctor(r: &DoctorReport) -> String {
     let mut out = String::new();
-    out.push_str(&format!("── env doctor: {} ──\n", r.env_id));
-    out.push_str(&format!("  isolation claim : {}\n", r.isolation_claim));
+    // `isolation_claim` comes off the manifest, and a manifest can arrive from
+    // a peer through `refs/h5i/env` — `validate_imported_manifest` pins the
+    // identity fields and the object ids, not this one. `detail` quotes paths
+    // and errors.
+    use crate::redact::sanitize_display as clean;
+    out.push_str(&format!("── env doctor: {} ──\n", clean(&r.env_id)));
+    out.push_str(&format!("  isolation claim : {}\n", clean(&r.isolation_claim)));
     for c in &r.checks {
         let mark = if c.ok {
             "✓"
@@ -7670,7 +8014,11 @@ pub fn render_doctor(r: &DoctorReport) -> String {
         } else {
             "✗"
         };
-        out.push_str(&format!("  {mark} {:<15} {}\n", c.name, c.detail));
+        out.push_str(&format!(
+            "  {mark} {:<15} {}\n",
+            clean(&c.name),
+            clean(&c.detail)
+        ));
     }
     let verdict = if r.healthy {
         "healthy"
@@ -7731,11 +8079,19 @@ fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
                     .and_then(|b| serde_json::from_slice::<InboxCaptureMeta>(&b).ok())
                     .map(|meta| meta.cmd)
                     .unwrap_or_default();
-                let safe: String = crate::secrets::redact_text(&cmd)
-                    .replace(['\n', '\r'], " ")
-                    .chars()
-                    .take(120)
-                    .collect();
+                // Secret-scrubbed *and* display-sanitised. The box writes this
+                // file, `status_report` prints the string to a terminal, and
+                // flattening the two line breaks was not the same thing as
+                // dropping the escape that moves the cursor over the lines
+                // above it — `h5i box status` is where a reviewer reads what a
+                // live box has staged, so it is precisely the screen worth
+                // rewriting.
+                let safe: String = crate::redact::sanitize_display(
+                    &crate::secrets::redact_text(&cmd),
+                )
+                .chars()
+                .take(120)
+                .collect();
                 p.captures.push(safe);
             }
         } else if name.starts_with("cmd-") && name.ends_with(".cmd") {
@@ -7929,7 +8285,10 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
             "  ⚠ environments do NOT share a base commit — diffs are not directly comparable\n",
         );
     } else if let Some(b) = distinct_bases.iter().next() {
-        out.push_str(&format!("  common base: {}\n", &b[..12.min(b.len())]));
+        out.push_str(&format!(
+            "  common base: {}\n",
+            crate::redact::sanitize_display(short(b, 12))
+        ));
     }
     out.push_str(&format!(
         "  {:<26} {:<9} {:>7} {:>7} {:>7}  {}\n",
@@ -7951,9 +8310,16 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
             }
             _ => "— (no run yet)".to_string(),
         };
+        // `last_cmd` goes through `truncate_cmd`, which sanitises. Its
+        // neighbours come off the same manifest and did not.
         out.push_str(&format!(
             "  {:<26} {:<9} {:>7} {:>7} {:>7}  {}\n",
-            r.id, r.status, r.files_changed, r.insertions, r.deletions, run
+            crate::redact::sanitize_display(&r.id),
+            crate::redact::sanitize_display(&r.status),
+            r.files_changed,
+            r.insertions,
+            r.deletions,
+            run
         ));
     }
     out.push_str("\nPick a winner with `h5i box diff <name>` / `h5i box inspect <name> --capture <id>`, then `h5i box apply <name>`.\n");
@@ -8461,7 +8827,7 @@ pub fn propose(
     brief.push_str(&format!("── Proposal: {} ──\n", m.id));
     brief.push_str(&format!(
         "  base    : {} (from {})\n",
-        &m.base_commit[..12.min(m.base_commit.len())],
+        short(&m.base_commit, 12),
         m.parent_branch
     ));
     brief.push_str(&format!("  branch  : {}\n", m.branch));
@@ -8469,7 +8835,7 @@ pub fn propose(
         "  policy  : profile={} isolation={} digest={}\n",
         m.profile,
         m.isolation_claim,
-        &m.policy_digest[..12.min(m.policy_digest.len())]
+        short(&m.policy_digest, 12)
     ));
     brief.push_str(&format!(
         "  evidence: {} capture(s): {}\n",
@@ -9416,6 +9782,33 @@ mod tests {
         assert!(user_allow_list_at(Some(&dir.path().join("absent"))).is_empty());
     }
 
+    /// The rcfile path gets the same pair of checks the persona sources get —
+    /// not absolute, no `..` — and had the same blind spot: neither resolves.
+    /// A repo shipping this path as a symlink puts a file from outside the
+    /// worktree in front of `bash --rcfile`, which *sources* it. `is_file()`
+    /// follows links and said yes.
+    #[test]
+    #[cfg(unix)]
+    fn the_rcfile_will_not_follow_a_symlink_out_of_the_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(work.join(".h5i")).unwrap();
+        std::fs::write(dir.path().join("outside.sh"), "echo pwned").unwrap();
+
+        // In-tree still resolves.
+        std::fs::write(work.join(".h5i").join("box.bashrc"), "PS1=x").unwrap();
+        assert!(resolve_work_rcfile(&work, ".h5i/box.bashrc").is_ok());
+
+        // A symlinked leaf is refused rather than sourced.
+        std::os::unix::fs::symlink(dir.path().join("outside.sh"), work.join(".h5i").join("evil.bashrc"))
+            .unwrap();
+        assert!(resolve_work_rcfile(&work, ".h5i/evil.bashrc").is_err());
+
+        // And a symlinked ancestor.
+        std::os::unix::fs::symlink(dir.path(), work.join("up")).unwrap();
+        assert!(resolve_work_rcfile(&work, "up/outside.sh").is_err());
+    }
+
     #[test]
     fn resolve_work_rcfile_accepts_in_tree_and_rejects_escapes() {
         let dir = tempfile::tempdir().unwrap();
@@ -9734,7 +10127,9 @@ mod tests {
             agent: agent.into(),
             slug: slug.into(),
             base_commit: "c".repeat(40),
-            base_tree: "t".repeat(40),
+            // Hex, like the git tree id `create` actually writes. It was `t`
+            // repeated, which no object id can be.
+            base_tree: "e".repeat(40),
             parent_branch: "main".into(),
             branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
             source: "repo".into(),
@@ -9987,6 +10382,424 @@ mod tests {
                 "identity mismatch rejected"
             );
         }
+
+        // The object-id fields, because every surface that shows a manifest
+        // abbreviates them and an abbreviation is a slice.
+        for tamper in [
+            |m: &mut EnvManifest| m.base_commit = String::new(),
+            |m: &mut EnvManifest| m.base_commit = "abc".into(),
+            |m: &mut EnvManifest| m.base_commit = "a日日日日".into(),
+            |m: &mut EnvManifest| m.base_tree = "not-hex-at-all".into(),
+            |m: &mut EnvManifest| m.policy_digest = "\u{1b}[2Jzz".into(),
+        ] {
+            let mut m = canonical_manifest("claude", "fix");
+            tamper(&mut m);
+            assert!(
+                validate_imported_manifest(&m).is_err(),
+                "a field that is not an object id is rejected"
+            );
+        }
+    }
+
+    /// `git clone` runs on the host, unconfined, on a string somebody typed or
+    /// pasted. `ext::` is not a URL — it is a command — and an operator whose
+    /// `~/.gitconfig` says `protocol.ext.allow = always` turned a pasted
+    /// "repository URL" into host command execution. A leading `-` was read as
+    /// an option for the same reason `source::resolve_pr_base` passes
+    /// `--end-of-options`.
+    #[test]
+    fn the_clone_argv_refuses_to_be_an_argument_or_a_command() {
+        let argv = clone_argv(
+            Path::new("/envs/a/clone-hooks-disabled"),
+            "--upload-pack=touch /tmp/pwned",
+            Path::new("/envs/a/work"),
+        );
+        let argv: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        // The URL cannot be read as an option.
+        let eoo = argv.iter().position(|a| a == "--end-of-options").expect("--end-of-options");
+        let url = argv
+            .iter()
+            .position(|a| a == "--upload-pack=touch /tmp/pwned")
+            .expect("the url is still passed");
+        assert!(eoo < url, "the separator must come first: {argv:?}");
+
+        // ...and cannot be a command, whatever the host's gitconfig says.
+        assert!(
+            argv.windows(2)
+                .any(|w| w[0] == "-c" && w[1] == "protocol.ext.allow=never"),
+            "{argv:?}"
+        );
+        // The hook lockdown that was already here stays.
+        assert!(
+            argv.windows(2).any(|w| {
+                w[0] == "-c" && w[1].starts_with("core.hooksPath=")
+            }),
+            "{argv:?}"
+        );
+        // Both `-c` settings precede the subcommand, or git does not read them.
+        let sub = argv.iter().position(|a| a == "clone").expect("clone");
+        for (i, a) in argv.iter().enumerate() {
+            if a == "-c" {
+                assert!(i < sub, "a `-c` after the subcommand is ignored: {argv:?}");
+            }
+        }
+        // Still a shallow clone into the box's own workspace.
+        assert_eq!(argv.last().map(String::as_str), Some("/envs/a/work"));
+        assert!(argv.windows(2).any(|w| w[0] == "--depth" && w[1] == "1"));
+    }
+
+    /// The exact-value scrub is the guaranteed half of the secret defence — the
+    /// pattern scan is best-effort by construction. It went through
+    /// `String::from_utf8_lossy` → `str::replace` → `into_bytes`, so a binary
+    /// payload came back rewritten: every invalid byte became U+FFFD, and
+    /// `receipt::append` digested *that*, whenever any secret was brokered.
+    #[test]
+    fn the_exact_scrub_removes_the_secret_and_leaves_the_bytes_alone() {
+        let secrets = vec!["sk-live-abcdef".to_string()];
+
+        // Binary in, byte-identical out.
+        let binary: Vec<u8> = vec![0x00, 0xff, 0xfe, 0x80, b'o', b'k', 0xc3];
+        assert_eq!(scrub_exact(&binary, &secrets), binary);
+
+        // ...and the secret goes even when it sits next to bytes that are not
+        // UTF-8 at all, which is where the lossy round trip did its damage.
+        let mut payload = vec![0xffu8, 0xfe];
+        payload.extend_from_slice(b"token=sk-live-abcdef\n");
+        payload.push(0x80);
+        let out = scrub_exact(&payload, &secrets);
+        assert!(!out.windows(14).any(|w| w == b"sk-live-abcdef"), "{out:?}");
+        assert_eq!(&out[..2], &[0xff, 0xfe], "the surrounding bytes are untouched");
+        assert_eq!(out.last(), Some(&0x80));
+        assert!(String::from_utf8_lossy(&out).contains("[redacted secret]"));
+
+        // Every occurrence, and an empty entry is a no-op rather than an
+        // infinite marker.
+        let out = scrub_exact(b"a sk-live-abcdef b sk-live-abcdef", &secrets);
+        assert_eq!(out, b"a [redacted secret] b [redacted secret]");
+        assert_eq!(scrub_exact(b"abc", &["".to_string()]), b"abc");
+        assert_eq!(scrub_exact(b"abc", &[]), b"abc");
+    }
+
+    /// `validate_profile` pins a persona source inside `$WORK` — relative, no
+    /// `..` — and cannot resolve it. Both the entry and the worktree are
+    /// repo-supplied, so a branch shipping `notes.md` as a symlink to a host
+    /// file turned a valid-looking entry into a read of it, concatenated into
+    /// `PERSONA.md` *inside the box*, which the agent is told to open.
+    ///
+    /// `private_paths` has the same shape and got `create_dirs_within` for
+    /// exactly this reason. This is the read side of that argument.
+    #[test]
+    #[cfg(unix)]
+    fn a_persona_source_will_not_follow_a_symlink_out_of_the_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(work.join("docs")).unwrap();
+
+        let secret = dir.path().join("id_rsa");
+        std::fs::write(&secret, "PRIVATE KEY MATERIAL").unwrap();
+
+        // The ordinary case still reads.
+        std::fs::write(work.join("docs").join("style.md"), "be brief").unwrap();
+        assert_eq!(
+            read_within_work(&work, "docs/style.md").unwrap(),
+            "be brief"
+        );
+
+        // A symlinked leaf is refused.
+        std::os::unix::fs::symlink(&secret, work.join("docs").join("notes.md")).unwrap();
+        let err = read_within_work(&work, "docs/notes.md").unwrap_err().to_string();
+        assert!(err.contains("symlink"), "{err}");
+
+        // And a symlinked *ancestor*, which the leaf check alone would miss.
+        std::os::unix::fs::symlink(dir.path(), work.join("out")).unwrap();
+        assert!(read_within_work(&work, "out/id_rsa").is_err());
+
+        // The whole bake fails closed rather than baking part of a persona.
+        let err = materialize_persona(&work, &["docs/notes.md".to_string()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("fail-closed"), "{err}");
+        assert!(
+            !work.join(PERSONA_FILE).exists(),
+            "a refused source must not leave a partial PERSONA.md"
+        );
+    }
+
+    /// Two readers of `services.json`, one digest check between them.
+    ///
+    /// `pinned_service_defs` is the one documented as being for "callers that
+    /// must not read box-writable input", and it was the one *without* the
+    /// check that establishes the file is the one that was pinned — a weaker
+    /// guarantee than its sibling's, under a stronger claim.
+    #[test]
+    fn both_readers_of_the_pinned_service_manifest_check_its_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let mut m = canonical_manifest("claude", "fix");
+        let env = m.dir(h5i_root);
+        std::fs::create_dir_all(&env).unwrap();
+
+        let mut defs = std::collections::BTreeMap::new();
+        defs.insert(
+            "web".to_string(),
+            ServiceDef {
+                command: "npm run dev".into(),
+                port: Some(3000),
+                restart: None,
+                logs: true,
+            },
+        );
+        std::fs::write(
+            env.join("services.json"),
+            serde_json::to_vec_pretty(&defs).unwrap(),
+        )
+        .unwrap();
+
+        // Pinned to what is there: both readers agree.
+        m.service_digest = Some(service_defs_digest(&defs));
+        assert_eq!(pinned_service_defs(h5i_root, &m).unwrap().len(), 1);
+        assert_eq!(load_service_defs(h5i_root, &m).unwrap().len(), 1);
+
+        // Pinned to something else: the sibling already refused, and this one
+        // now answers `None` rather than handing back a manifest that does not
+        // match the digest.
+        m.service_digest = Some("0".repeat(64));
+        assert!(
+            pinned_service_defs(h5i_root, &m).is_none(),
+            "a manifest that does not match its pin is not the pinned manifest"
+        );
+        assert!(load_service_defs(h5i_root, &m).is_err());
+    }
+
+    /// A manifest is read far more often than it is imported, and only the
+    /// import validated it.
+    ///
+    /// `validate_imported_manifest`'s own doc says the identity fields are
+    /// checked "BEFORE its `agent`/`slug` are used to compute on-disk paths" —
+    /// true of `materialize_from_ref` and not of `load_manifest_at`. Everything
+    /// downstream calls `m.dir(h5i_root)`, which joins those two fields
+    /// unchecked, and one of the things downstream is `rm`'s `remove_dir_all`.
+    #[test]
+    fn a_manifest_is_validated_where_it_is_read_not_only_where_it_is_imported() {
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let home = h5i_root.join(ENV_DIR).join("claude").join("fix");
+        std::fs::create_dir_all(&home).unwrap();
+
+        // The canonical case still reads.
+        let good = canonical_manifest("claude", "fix");
+        std::fs::write(
+            home.join(MANIFEST_FILE),
+            serde_json::to_vec(&good).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load_manifest_at(&home).unwrap().id, "env/claude/fix");
+        assert_eq!(list(h5i_root).len(), 1);
+
+        // A traversing identity is refused rather than turned into a path.
+        let mut escape = good.clone();
+        escape.agent = "../../../../tmp/evil".into();
+        escape.id = format!("env/{}/fix", escape.agent);
+        escape.branch = format!("refs/heads/h5i/env/{}/fix", escape.agent);
+        std::fs::write(
+            home.join(MANIFEST_FILE),
+            serde_json::to_vec(&escape).unwrap(),
+        )
+        .unwrap();
+        assert!(load_manifest_at(&home).is_err(), "traversal must not load");
+        assert!(list(h5i_root).is_empty(), "and `list` skips it");
+
+        // So is a manifest that is canonical but describes a different env —
+        // copied here, restored from a backup, or hand-edited. A manifest is
+        // identified by where it lives.
+        let elsewhere = canonical_manifest("codex", "other");
+        std::fs::write(
+            home.join(MANIFEST_FILE),
+            serde_json::to_vec(&elsewhere).unwrap(),
+        )
+        .unwrap();
+        let err = load_manifest_at(&home).unwrap_err().to_string();
+        assert!(err.contains("describes a different environment"), "{err}");
+    }
+
+    /// One property over every renderer at once: nothing a box, a repo or a
+    /// peer supplies reaches a terminal carrying a control character.
+    ///
+    /// Written as a sweep rather than one test per function because that is how
+    /// this kept going wrong — `receipt::render`, then `status_report`, then
+    /// `render_compare`, then the service lane, each found separately after the
+    /// last was fixed. A renderer added later fails this without anybody having
+    /// to remember the rule.
+    #[test]
+    fn no_renderer_puts_a_control_character_on_the_terminal() {
+        // In every string field, including the ones that "cannot" hold it.
+        const HOSTILE: &str = "x\u{1b}[2J\u{1b}[1;1Hforged\u{202e}\u{7}";
+        let clean = |rendered: &str, what: &str| {
+            assert!(
+                !rendered.chars().any(|c| c.is_control() && c != '\n'),
+                "{what} put a control character on the terminal: {rendered:?}"
+            );
+            assert!(!rendered.contains('\u{202e}'), "{what} kept a bidi override");
+        };
+
+        clean(
+            &render_secrets(
+                HOSTILE,
+                &[SecretStatus {
+                    name: HOSTILE.into(),
+                    source: HOSTILE.into(),
+                    inject: HOSTILE.into(),
+                    ttl: Some(HOSTILE.into()),
+                    status: HOSTILE.into(),
+                    fingerprint: Some(HOSTILE.into()),
+                }],
+            ),
+            "render_secrets",
+        );
+
+        let svc = ServiceStatus {
+            record: ServiceRecord {
+                name: HOSTILE.into(),
+                pid: 1,
+                command: HOSTILE.into(),
+                started_at: HOSTILE.into(),
+                port: Some(3000),
+                dynamic_port: Some(3001),
+                log: HOSTILE.into(),
+                runtime: ServiceRuntime::Host,
+            },
+            alive: true,
+        };
+        clean(&render_services(HOSTILE, std::slice::from_ref(&svc)), "render_services");
+        clean(&render_ports(HOSTILE, std::slice::from_ref(&svc)), "render_ports");
+
+        clean(
+            &render_doctor(&DoctorReport {
+                env_id: HOSTILE.into(),
+                isolation_claim: HOSTILE.into(),
+                checks: vec![DoctorCheck {
+                    name: HOSTILE.into(),
+                    ok: false,
+                    warn: false,
+                    detail: HOSTILE.into(),
+                }],
+                healthy: false,
+            }),
+            "render_doctor",
+        );
+
+        clean(
+            &render_compare(&[CompareRow {
+                id: HOSTILE.into(),
+                status: HOSTILE.into(),
+                base_commit: HOSTILE.into(),
+                files_changed: 1,
+                insertions: 2,
+                deletions: 3,
+                last_exit: Some(0),
+                last_cmd: Some(HOSTILE.into()),
+                last_source: Some(HOSTILE.into()),
+                last_egress_denied: Some(1),
+            }]),
+            "render_compare",
+        );
+    }
+
+    /// A service is `sh -c '<command>'` running inside the box and appending to
+    /// this file, so both its size and its bytes are the box's. `service logs`
+    /// read the whole thing to show the last few lines, and printed them to the
+    /// operator's terminal with the escapes still in.
+    #[test]
+    fn a_service_log_is_read_by_the_tail_and_cleaned_before_it_is_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("web.log");
+
+        // Far past the cap, so the read has to start part way in.
+        let line = "the dev server said something\n";
+        let repeats = (SERVICE_LOG_TAIL_BYTES as usize / line.len()) + 5_000;
+        let mut body = line.repeat(repeats);
+        body.push_str("first-visible\n");
+        body.push_str("boot\u{1b}[2Jok\n");
+        body.push_str("last-line\n");
+        std::fs::write(&path, &body).unwrap();
+
+        let tail = read_tail(&path, SERVICE_LOG_TAIL_BYTES);
+        assert!(
+            tail.len() as u64 <= SERVICE_LOG_TAIL_BYTES,
+            "read {} bytes",
+            tail.len()
+        );
+        assert!(tail.ends_with("last-line\n"), "the tail is the end of the file");
+        // Whole lines only: the seek lands mid-line and the fragment is dropped.
+        assert!(
+            tail.lines().next().unwrap() == line.trim_end(),
+            "first line was a fragment: {:?}",
+            tail.lines().next()
+        );
+
+        // And what a reader is shown has no escapes but keeps its lines.
+        let shown = crate::redact::sanitize_block(&tail);
+        assert!(!shown.contains('\u{1b}'), "an escape reached the terminal");
+        assert!(shown.contains("boot[2Jok"), "{:?}", shown.lines().rev().take(3).collect::<Vec<_>>());
+        assert!(shown.lines().count() > 3);
+    }
+
+    /// `<env>/spool` is one of the two paths a box can write, and what it stages
+    /// there is read back by `h5i box status` and printed to the operator's
+    /// terminal. Flattening the two line breaks was not the same thing as
+    /// dropping the escape that rewrites the lines above.
+    #[test]
+    fn a_box_cannot_stage_an_escape_sequence_into_box_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let m = canonical_manifest("claude", "fix");
+        let spool = m.dir(h5i_root).join("spool");
+        std::fs::create_dir_all(&spool).unwrap();
+
+        write_inbox_capture_spool(
+            &spool,
+            &InboxCaptureMeta {
+                cmd: "ls\u{1b}[2J\u{1b}[H  status   : idle".into(),
+                cwd: None,
+                exit_code: Some(0),
+                files: Vec::new(),
+                cmd_argv: Vec::new(),
+            },
+            b"",
+        )
+        .unwrap();
+
+        let pending = scan_spool_pending(h5i_root, &m);
+        assert_eq!(pending.captures.len(), 1);
+        let staged = &pending.captures[0];
+        assert!(!staged.contains('\u{1b}'), "{staged:?}");
+        assert!(staged.starts_with("ls"), "{staged:?}");
+    }
+
+    /// `&id[..12]` panics two ways on a manifest this machine did not write:
+    /// when the field is shorter than the slice, and when byte 12 lands inside a
+    /// multi-byte character. `h5i box list` abbreviates every manifest it can
+    /// see, so one crafted line in a peer's `refs/h5i/env` aborted the listing —
+    /// the "one poisoned line suppresses every legitimate env" outcome
+    /// `materialize_from_ref` skips bad manifests specifically to avoid.
+    #[test]
+    fn abbreviating_an_id_never_panics_however_odd_it_is() {
+        assert_eq!(short("0123456789abcdef", 12), "0123456789ab");
+        assert_eq!(short("abc", 12), "abc");
+        assert_eq!(short("", 12), "");
+        // Byte 12 is mid-character here: 1 + 3 + 3 + 3 + 3.
+        assert_eq!(short("a日日日日", 12), "a日日日日");
+        assert_eq!(short("a日日日日", 3), "a日日");
+        // And the renderers that call it survive a manifest carrying them.
+        let mut m = canonical_manifest("claude", "fix");
+        m.base_commit = "a日日日日".into();
+        m.policy_digest = String::new();
+        let _ = short(&m.base_commit, 12);
+        let _ = short(&m.policy_digest, 12);
     }
 
     // In-box git grants: the exact plumbing surface a boxed agent needs to use
@@ -11381,7 +12194,7 @@ mod tests {
             agent: "claude".into(),
             slug: "fix".into(),
             base_commit: "c".repeat(40),
-            base_tree: "t".repeat(40),
+            base_tree: "e".repeat(40),
             parent_branch: "main".into(),
             branch: "refs/heads/h5i/env/claude/fix".into(),
             source: "repo".into(),
@@ -11494,7 +12307,7 @@ mod tests {
                 agent: agent.into(),
                 slug: slug.into(),
                 base_commit: "c".repeat(40),
-                base_tree: "t".repeat(40),
+                base_tree: "e".repeat(40),
                 parent_branch: "main".into(),
                 branch: format!("refs/heads/h5i/env/{agent}/{slug}"),
                 source: "repo".into(),
@@ -11958,13 +12771,15 @@ mod tests {
             id: format!("env/{agent}/{slug}"),
             agent: agent.into(),
             slug: slug.into(),
-            base_commit: String::new(),
-            base_tree: String::new(),
+            // Object ids, because `load_manifest_at` checks that they are —
+            // this fixture is written to disk and read back.
+            base_commit: "a".repeat(40),
+            base_tree: "b".repeat(40),
             parent_branch: "main".into(),
             branch: format!("refs/heads/{BRANCH_PREFIX}{agent}/{slug}"),
             source: "repo".into(),
             profile: "default".into(),
-            policy_digest: String::new(),
+            policy_digest: "c".repeat(64),
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),

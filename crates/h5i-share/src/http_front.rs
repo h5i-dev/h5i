@@ -830,9 +830,25 @@ where
     R: tokio::io::AsyncRead + Unpin + Send,
     W: tokio::io::AsyncWrite + Unpin + Send,
 {
+    forward_chunked_within(r, w, initial, to_box, BODY_LIFETIME).await
+}
+
+/// [`forward_chunked`] with the lifetime given, so a test can drive the bound
+/// without waiting an hour for it.
+async fn forward_chunked_within<R, W>(
+    r: &mut R,
+    w: &mut W,
+    initial: &[u8],
+    to_box: &std::sync::atomic::AtomicU64,
+    lifetime: Duration,
+) -> std::io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send,
+    W: tokio::io::AsyncWrite + Unpin + Send,
+{
     use std::sync::atomic::Ordering;
     let mut buf = initial.to_vec();
-    let deadline = tokio::time::Instant::now() + BODY_LIFETIME;
+    let deadline = tokio::time::Instant::now() + lifetime;
     let mut trailer_bytes = 0usize;
 
     loop {
@@ -885,10 +901,27 @@ where
         // peer stops rather than an overflow.
         let mut left = size;
         while left > 0 {
+            // Inside the loop, not only at the top of the outer one. The
+            // `Content-Length` path checks its deadline on every read for
+            // exactly this reason, and `BODY_LIFETIME`'s own doc names the
+            // attack: "a peer declaring a body of `u64::MAX` and dribbling a
+            // byte a minute holds a slot for the life of its ticket". A single
+            // chunk header declaring `u64::MAX` never returns to the outer loop,
+            // so the check up there could not fire and the bound was one the
+            // peer chose whether to be bound by.
+            if tokio::time::Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "chunked body took too long",
+                ));
+            }
             if buf.is_empty() {
                 fill(r, &mut buf).await?;
             }
-            let take = (left as usize).min(buf.len());
+            // `try_from`, not `as`: narrowing first and comparing after makes
+            // `take` zero for a `left` past `usize` on a 32-bit target, and the
+            // loop then spins forever making no progress.
+            let take = usize::try_from(left).unwrap_or(usize::MAX).min(buf.len());
             write_to_box(w, &buf[..take]).await?;
             to_box.fetch_add(take as u64, Ordering::Relaxed);
             buf.drain(..take);
@@ -2968,6 +3001,53 @@ mod response_tests {
         assert!(forward_chunked(&mut peer, &mut out, &[], &counted)
             .await
             .is_err());
+    }
+
+    /// `BODY_LIFETIME`'s own doc names the attack it exists to stop: "a peer
+    /// declaring a body of `u64::MAX` and dribbling a byte a minute holds a slot
+    /// for the life of its ticket". The chunked path checked it only at the top
+    /// of the per-chunk loop, and a single chunk header declaring `u64::MAX`
+    /// never returns there — so the bound was one the peer chose whether to be
+    /// bound by. The `Content-Length` path beside it has always checked on every
+    /// read.
+    #[tokio::test]
+    async fn one_enormous_chunk_cannot_outlive_the_body_deadline() {
+        // A reader that always has another byte, exactly like a peer dribbling.
+        struct Endless;
+        impl tokio::io::AsyncRead for Endless {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                b: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                b.put_slice(b"x");
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+        let counted = std::sync::atomic::AtomicU64::new(0);
+        let started = std::time::Instant::now();
+        // One chunk header for the largest body the type can hold, then bytes
+        // forever.
+        //
+        // No `tokio::time::timeout` wrapper, because it could not fire: this
+        // reader is always `Ready`, so the task never yields and the runtime
+        // never advances a timer. That is the point — the *only* thing that can
+        // end this loop is the synchronous deadline check inside it. Against a
+        // build without that check this test hangs rather than failing, which is
+        // the bug stated as plainly as a test can state it.
+        let err = forward_chunked_within(
+            &mut Endless,
+            &mut out,
+            b"ffffffffffffffff\r\n",
+            &counted,
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("a body past its lifetime is refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut, "{err}");
+        assert!(started.elapsed() < Duration::from_secs(10), "it took {:?}", started.elapsed());
     }
 
     #[test]
