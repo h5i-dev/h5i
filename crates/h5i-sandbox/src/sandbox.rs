@@ -770,6 +770,40 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
             p.isolation.as_str()
         )));
     }
+    // Nothing below can reason about a `~` it cannot resolve, and the lint that
+    // follows is the *only* thing standing between a grant and a denied child
+    // inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+    // refusal on Linux and nothing else.
+    //
+    // With `$HOME` unset, `expand_tilde` leaves `~/.ssh` as the literal string
+    // `~/.ssh`, `canonicalize` fails, and the prefix test compares that against
+    // `/Users/dev` and finds no overlap. A profile granting a home directory and
+    // denying the key material inside it therefore loaded clean and granted it.
+    //
+    // A `~` grant fares no better: it expands to nothing, Landlock skips it, and
+    // the policy silently confers none of the access it names. Both are refused,
+    // because a policy that cannot be read is not a policy that can be enforced.
+    // `$`-prefixed entries are excluded: `$WORK`/`$REPO` are h5i's own tokens,
+    // resolved elsewhere.
+    if std::env::var_os("HOME").is_none() {
+        let unresolvable: Vec<&String> = p
+            .fs_read
+            .iter()
+            .chain(p.fs_write.iter())
+            .chain(p.fs_deny.iter())
+            .filter(|s| *s == "~" || s.starts_with("~/"))
+            .collect();
+        if !unresolvable.is_empty() {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}' has '~'-relative filesystem entries {unresolvable:?} but $HOME is \
+                 unset, so there is nothing to resolve them against. A grant would confer \
+                 nothing and a deny would be silently dropped — refusing rather than enforcing \
+                 something other than what the profile says (fail-closed). Set HOME, or spell \
+                 the paths absolutely.",
+                p.name
+            )));
+        }
+    }
     // fs.deny preflight lint: Landlock has no deny rules, so a granted parent
     // must never contain a denied child.
     //
@@ -4330,6 +4364,40 @@ fs.deny = ["~/.ssh"]
         );
         let err = load_from_str(&toml_text, "default", None).unwrap_err();
         assert!(err.to_string().contains("granted path"), "{err}");
+    }
+
+    /// The lint above is the only thing standing between a grant and a denied
+    /// child inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+    /// refusal on Linux and nothing else. With `$HOME` unset it compared the
+    /// literal string `~/.ssh` against `/Users/dev`, found no overlap, and let
+    /// the policy load with the key material inside the grant.
+    ///
+    /// Serialised against the other env-mutating tests: cargo runs these as
+    /// threads in one process.
+    #[test]
+    fn a_tilde_path_with_no_home_to_resolve_it_is_refused() {
+        static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("HOME");
+        // Safety: the lock above serialises every test that touches HOME.
+        unsafe { std::env::remove_var("HOME") };
+
+        let toml_text = r#"
+[profile.default]
+isolation = "process"
+fs.read = ["/Users/dev"]
+fs.deny = ["~/.ssh"]
+"#;
+        let err = load_from_str(toml_text, "default", None).unwrap_err().to_string();
+
+        // Restore before asserting, so a failure does not leak the unset HOME
+        // into every test that runs after it.
+        if let Some(h) = saved {
+            // Safety: as above.
+            unsafe { std::env::set_var("HOME", h) };
+        }
+        assert!(err.contains("$HOME is unset"), "{err}");
+        assert!(err.contains("~/.ssh"), "{err}");
     }
 
     #[test]
