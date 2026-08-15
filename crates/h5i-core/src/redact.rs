@@ -30,6 +30,29 @@ pub fn sanitize_display(s: &str) -> String {
     out
 }
 
+/// [`sanitize_display`] for text that is *meant* to have lines.
+///
+/// The single-line form folds `\n` into a space, which is right for a slug or a
+/// status line and destroys a captured command's output — so a payload that
+/// needed sanitising was left unsanitised instead, because the only tool
+/// available would have run it all together. This sanitises each line and keeps
+/// the breaks, so a recorded log stays a log while the escape sequences that
+/// would rewrite the lines *around* it are gone.
+///
+/// A `\r` inside a line still becomes a space: carriage-return-to-column-zero is
+/// how a single line overwrites what was printed before it, which is the same
+/// spoof as an escape sequence with none of the escape.
+pub fn sanitize_block(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for (i, line) in s.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&sanitize_display(line));
+    }
+    out
+}
+
 /// Bidirectional formatting characters, which reorder the text *around* them.
 ///
 /// These are not control characters — `char::is_control` is false for every one
@@ -89,6 +112,24 @@ mod tests {
         for c in ['\u{200E}', '\u{200F}', '\u{202A}', '\u{202D}', '\u{2066}', '\u{2069}'] {
             assert!(!sanitize_display(&format!("a{c}b")).contains(c), "{c:?} survived");
         }
+    }
+
+    #[test]
+    fn a_block_keeps_its_lines_and_loses_its_escapes() {
+        // The single-line form folds `\n` into a space, which makes a captured
+        // log unreadable — so a payload that needed sanitising was printed raw
+        // instead. This keeps the shape and drops the sequences.
+        let log = "building\n\u{1b}[2Jerror: \u{1b}[31mfailed\u{1b}[0m\ndone";
+        let safe = sanitize_block(log);
+        assert_eq!(safe, "building\n[2Jerror: [31mfailed[0m\ndone");
+        assert!(!safe.contains('\u{1b}'));
+        assert_eq!(safe.lines().count(), 3);
+
+        // A bare CR is the same overwrite with no escape in it.
+        assert_eq!(sanitize_block("a\rspoof\nb"), "a spoof\nb");
+        // Framing is preserved exactly, trailing newline included.
+        assert_eq!(sanitize_block("a\n"), "a\n");
+        assert_eq!(sanitize_block(""), "");
     }
 
     #[test]

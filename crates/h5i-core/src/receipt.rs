@@ -567,11 +567,32 @@ fn blob_key(raw_oid: &str) -> Option<String> {
 }
 
 /// Human rendering of one record, for `h5i box inspect --capture <id>`.
+///
+/// Everything variable here is sanitised on the way out, because a receipt is
+/// read as evidence and half of what it carries was written by the thing being
+/// reviewed. `cmd` at the container tier comes from the box's own tee shim; the
+/// browser lines are strings a *web page* produced. An escape sequence in any
+/// of them rewrites the lines above it, so a box could show the reviewer
+/// `exit : 0` and `egress : 0 denied` over a run that was neither. `export`'s
+/// `report.md` has sanitised the same fields since it was written; this
+/// renderer, which prints to a terminal — the surface where the sequences
+/// actually execute — did not.
+///
+/// The payload goes through [`crate::redact::sanitize_block`] rather than the
+/// single-line form: it is meant to have lines, and folding them together would
+/// make the one command that shows a captured log useless. Colour sequences go
+/// with the rest, which is the trade a document that has to be trustworthy
+/// makes.
 pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
+    use crate::redact::sanitize_display as clean;
     let mut out = String::new();
-    out.push_str(&format!("── Receipt {} ({}) ──\n", rec.id, rec.env_id));
+    out.push_str(&format!(
+        "── Receipt {} ({}) ──\n",
+        clean(&rec.id),
+        clean(&rec.env_id)
+    ));
     if let Some(cmd) = &rec.cmd {
-        out.push_str(&format!("  cmd      : {cmd}\n"));
+        out.push_str(&format!("  cmd      : {}\n", clean(cmd)));
     }
     out.push_str(&format!(
         "  exit     : {}{}\n",
@@ -583,7 +604,7 @@ pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
     if let Some(d) = &rec.policy_digest {
         out.push_str(&format!("  policy   : {}\n", &d[..12.min(d.len())]));
     }
-    out.push_str(&format!("  source   : {}\n", rec.source));
+    out.push_str(&format!("  source   : {}\n", clean(&rec.source)));
     if let (Some(w), Some(c)) = (rec.wall_ms, rec.cpu_ms) {
         let rss = rec
             .max_rss_kb
@@ -598,7 +619,7 @@ pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
         ));
     }
     if let Some(b) = &rec.browser {
-        let verb = b.verb.as_deref().unwrap_or("browser");
+        let verb = clean(b.verb.as_deref().unwrap_or("browser"));
         if b.unavailable {
             out.push_str(&format!("  browser  : {verb} (no browser to observe)\n"));
         } else if b.is_clean() {
@@ -619,12 +640,12 @@ pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
                 .chain(b.console.iter())
                 .chain(b.failed_requests.iter())
             {
-                out.push_str(&format!("           · {line}\n"));
+                out.push_str(&format!("           · {}\n", clean(line)));
             }
         }
     }
     if !rec.redactions.is_empty() {
-        out.push_str(&format!("  redacted : {}\n", rec.redactions.join(", ")));
+        out.push_str(&format!("  redacted : {}\n", clean(&rec.redactions.join(", "))));
     }
     out.push_str(&format!(
         "  raw      : {} bytes, {} lines{}\n",
@@ -637,7 +658,7 @@ pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
         }
     ));
     out.push('\n');
-    out.push_str(&String::from_utf8_lossy(raw));
+    out.push_str(&crate::redact::sanitize_block(&String::from_utf8_lossy(raw)));
     if !out.ends_with('\n') {
         out.push('\n');
     }
@@ -772,6 +793,40 @@ mod tests {
             out.as_ref().is_err_and(|e| e.to_string().contains("no stored payload")),
             "{out:?}"
         );
+    }
+
+    /// A receipt is read as evidence, and half of what it carries was written
+    /// by the thing being reviewed. An escape sequence in the command — which
+    /// the container tier takes from the box's own tee shim — rewrites the lines
+    /// above it, so the box gets to choose what the reviewer's terminal says
+    /// about its exit code and its egress.
+    #[test]
+    fn a_box_cannot_rewrite_the_reviewers_screen_through_a_receipt() {
+        let td = TempDir::new().unwrap();
+        let rec = append(
+            td.path(),
+            RecordInput {
+                // Clear the screen, then print a reassuring line over the top.
+                cmd: Some("rm -rf /\u{1b}[2J\u{1b}[H  cmd      : ls".into()),
+                exit_code: Some(1),
+                browser: Some(BrowserEvidence {
+                    verb: Some("click\u{1b}[1A".into()),
+                    errors: vec!["boom\u{1b}[31m".into()],
+                    ..Default::default()
+                }),
+                ..input()
+            },
+            b"line one\n\x1b[2Jline two\n",
+        )
+        .unwrap();
+
+        let text = render(&rec, &raw_bytes(td.path(), &rec.id).unwrap());
+        assert!(!text.contains('\u{1b}'), "no escape may survive: {text:?}");
+        // The payload is still a payload: its lines are intact.
+        assert!(text.contains("line one\n"), "{text:?}");
+        assert!(text.contains("line two"), "{text:?}");
+        // And the record's own facts are still there to read.
+        assert!(text.contains("exit     : 1"), "{text}");
     }
 
     #[test]
