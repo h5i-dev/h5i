@@ -4936,13 +4936,7 @@ fn run_inner(
     // Scrub brokered secret values from the evidence by exact match, on top of
     // the pattern-based redaction the capture already applies — a token echoed
     // to stdout must never reach refs/h5i/objects even if it matches no pattern.
-    if !brokered.redactions.is_empty() {
-        let mut text = String::from_utf8_lossy(&raw).into_owned();
-        for v in &brokered.redactions {
-            text = text.replace(v, "[redacted secret]");
-        }
-        raw = text.into_bytes();
-    }
+    raw = scrub_exact(&raw, &brokered.redactions);
 
     // Browser evidence: when this run drove the browser, ask the page what
     // happened before recording the run. The drain executes in the same box
@@ -5024,7 +5018,7 @@ fn run_inner(
     let capture_id = captured.id.clone();
 
     m.captures.push(capture_id.clone());
-    let observed = match ingest_shell_spool(repo, h5i_root, m) {
+    let observed = match ingest_shell_spool(repo, h5i_root, m, &brokered.redactions) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("warning: env observation ingest failed: {e}");
@@ -5397,7 +5391,7 @@ pub fn shell(
     // tee-shim records) into tagged captures BEFORE the final status event, so
     // the manifest it persists already lists them. Best-effort: a failed
     // ingest warns and never breaks the session.
-    let observed = match ingest_shell_spool(repo, h5i_root, m) {
+    let observed = match ingest_shell_spool(repo, h5i_root, m, &brokered.redactions) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("warning: shell observation ingest failed: {e}");
@@ -5847,6 +5841,46 @@ fn write_plain_zshrc(
     })
 }
 
+/// Replace every occurrence of each `secrets` value in `raw`, on the **bytes**.
+///
+/// This used to go `String::from_utf8_lossy(&raw).into_owned()` → `str::replace`
+/// → `into_bytes()`, which is two mistakes at once:
+///
+/// * A binary payload came back **rewritten**. Every byte that is not valid
+///   UTF-8 became U+FFFD, and `receipt::append` then digested and sized *that*
+///   — so `raw_oid` and `raw_size` described bytes the run never produced,
+///   whenever any secret happened to be brokered. The redaction module's own
+///   rule is that storage keeps the exact bytes; only rendering is sanitised.
+/// * It was a round trip through a lossy decoder to do a search that never
+///   needed one. A credential is a byte string and matching it as one is both
+///   exact and cheaper.
+///
+/// The marker is the same text the string version used, so nothing downstream
+/// has to learn a new one.
+fn scrub_exact(raw: &[u8], secrets: &[String]) -> Vec<u8> {
+    const MARKER: &[u8] = b"[redacted secret]";
+    let mut out = raw.to_vec();
+    for secret in secrets {
+        let needle = secret.as_bytes();
+        if needle.is_empty() {
+            continue;
+        }
+        let mut next = Vec::with_capacity(out.len());
+        let mut i = 0;
+        while i < out.len() {
+            if out[i..].starts_with(needle) {
+                next.extend_from_slice(MARKER);
+                i += needle.len();
+            } else {
+                next.push(out[i]);
+                i += 1;
+            }
+        }
+        out = next;
+    }
+    out
+}
+
 // ─── shell-spool ingest (in-box observation evidence) ────────────────────────
 
 /// Ingest caps. Container-tier spool contents are written by the **box** (the
@@ -5894,10 +5928,17 @@ fn read_spool_capped(p: &Path, cap: u64) -> Option<Vec<u8>> {
 /// Each becomes a secret-redacted `objects` capture tagged with the env id +
 /// policy digest (same provenance stream as `env run` execs) plus an `exec`
 /// event, and the spool files are removed. Returns how many captures landed.
+///
+/// `secrets` is the run's brokered values, scrubbed by exact match on top of the
+/// pattern-based redaction `receipt::append` applies. `env run` has done this
+/// since the broker existed — "a token echoed to stdout must never reach
+/// refs/h5i/objects even if it matches no pattern" — and this lane, which is the
+/// one an interactive agent actually works in, was not given the same list.
 fn ingest_shell_spool(
     repo: &Repository,
     h5i_root: &Path,
     m: &mut EnvManifest,
+    secrets: &[String],
 ) -> Result<usize, H5iError> {
     let spool = m.dir(h5i_root).join("spool");
     if !spool.is_dir() {
@@ -5951,8 +5992,14 @@ fn ingest_shell_spool(
             raw.extend_from_slice(&stderr);
         }
 
+        let raw = scrub_exact(&raw, secrets);
+
         // The command string is box-controlled: redact secrets, flatten to one
-        // line, and cap it before it lands in a manifest or event detail.
+        // line, and cap it before it lands in a manifest or event detail. The
+        // brokered values go too — a credential passed on a command line is at
+        // least as likely as one echoed to stdout.
+        let cmd_text = String::from_utf8_lossy(&scrub_exact(cmd_text.as_bytes(), secrets))
+            .into_owned();
         let safe_cmd: String = crate::secrets::redact_text(&cmd_text)
             .replace(['\n', '\r'], " ")
             .chars()
@@ -10071,6 +10118,38 @@ mod tests {
                 "a field that is not an object id is rejected"
             );
         }
+    }
+
+    /// The exact-value scrub is the guaranteed half of the secret defence — the
+    /// pattern scan is best-effort by construction. It went through
+    /// `String::from_utf8_lossy` → `str::replace` → `into_bytes`, so a binary
+    /// payload came back rewritten: every invalid byte became U+FFFD, and
+    /// `receipt::append` digested *that*, whenever any secret was brokered.
+    #[test]
+    fn the_exact_scrub_removes_the_secret_and_leaves_the_bytes_alone() {
+        let secrets = vec!["sk-live-abcdef".to_string()];
+
+        // Binary in, byte-identical out.
+        let binary: Vec<u8> = vec![0x00, 0xff, 0xfe, 0x80, b'o', b'k', 0xc3];
+        assert_eq!(scrub_exact(&binary, &secrets), binary);
+
+        // ...and the secret goes even when it sits next to bytes that are not
+        // UTF-8 at all, which is where the lossy round trip did its damage.
+        let mut payload = vec![0xffu8, 0xfe];
+        payload.extend_from_slice(b"token=sk-live-abcdef\n");
+        payload.push(0x80);
+        let out = scrub_exact(&payload, &secrets);
+        assert!(!out.windows(14).any(|w| w == b"sk-live-abcdef"), "{out:?}");
+        assert_eq!(&out[..2], &[0xff, 0xfe], "the surrounding bytes are untouched");
+        assert_eq!(out.last(), Some(&0x80));
+        assert!(String::from_utf8_lossy(&out).contains("[redacted secret]"));
+
+        // Every occurrence, and an empty entry is a no-op rather than an
+        // infinite marker.
+        let out = scrub_exact(b"a sk-live-abcdef b sk-live-abcdef", &secrets);
+        assert_eq!(out, b"a [redacted secret] b [redacted secret]");
+        assert_eq!(scrub_exact(b"abc", &["".to_string()]), b"abc");
+        assert_eq!(scrub_exact(b"abc", &[]), b"abc");
     }
 
     /// `<env>/spool` is one of the two paths a box can write, and what it stages

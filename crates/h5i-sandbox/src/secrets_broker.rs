@@ -278,6 +278,35 @@ fn run_command_bounded(
         .to_string())
 }
 
+/// Read a `file:` secret source, bounded. See [`resolve_value`].
+fn read_file_capped(path: &str, name: &str, cap: usize) -> Result<String, H5iError> {
+    use std::io::Read;
+    let f = std::fs::File::open(path).map_err(|e| {
+        H5iError::Metadata(format!(
+            "secret grant '{name}': cannot read source file '{path}': {e} (fail-closed)"
+        ))
+    })?;
+    let mut buf = Vec::new();
+    // `cap + 1`, so "exactly at the cap" is readable and one byte past it is
+    // detectable rather than silently trimmed.
+    f.take(cap as u64 + 1).read_to_end(&mut buf).map_err(|e| {
+        H5iError::Metadata(format!(
+            "secret grant '{name}': cannot read source file '{path}': {e} (fail-closed)"
+        ))
+    })?;
+    if buf.len() > cap {
+        return Err(H5iError::Metadata(format!(
+            "secret grant '{name}': source file '{path}' is larger than {cap} bytes, which is \
+             not a credential (fail-closed)"
+        )));
+    }
+    String::from_utf8(buf).map_err(|_| {
+        H5iError::Metadata(format!(
+            "secret grant '{name}': source file '{path}' is not text (fail-closed)"
+        ))
+    })
+}
+
 /// Resolve a grant's value from its host-side source. Pure w.r.t. the filesystem
 /// and process env (both injectable in tests). Fail-closed on missing/empty.
 ///
@@ -296,13 +325,12 @@ pub fn resolve_value(grant: &SecretGrant, allow_command: bool) -> Result<String,
             ))
         })?
     } else if let Some(path) = source.strip_prefix("file:") {
-        std::fs::read_to_string(path)
-            .map_err(|e| {
-                H5iError::Metadata(format!(
-                    "secret grant '{}': cannot read source file '{path}': {e} (fail-closed)",
-                    grant.name
-                ))
-            })?
+        // Capped, like the `command:` extractor beside it and for the same
+        // reason: the source is repo-supplied policy, a credential is small, and
+        // `read_to_string` on `file:/dev/zero` is an unbounded allocation on the
+        // host at box-create time. Fail-closed past the cap rather than
+        // truncating — half a credential is not a credential.
+        read_file_capped(path, &grant.name, COMMAND_OUTPUT_CAP)?
             .trim_end_matches(['\n', '\r'])
             .to_string()
     } else if let Some(cmd) = source.strip_prefix("command:") {
@@ -404,11 +432,10 @@ fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathB
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // Propagated, not swallowed: a directory left at the umask default is
-        // a readable secret store, which is the thing this function exists to
-        // prevent.
-        std::fs::set_permissions(secret_dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| H5iError::with_path(e, secret_dir))?;
+        // The symlink check comes *first*. `set_permissions` follows links, so
+        // running it before the check chmods whatever the link points at — a
+        // write to an attacker-chosen path taken on the way to deciding we
+        // would not write to it.
         if std::fs::symlink_metadata(secret_dir)
             .map_err(|e| H5iError::with_path(e, secret_dir))?
             .file_type()
@@ -420,6 +447,11 @@ fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathB
                 secret_dir.display()
             )));
         }
+        // Propagated, not swallowed: a directory left at the umask default is
+        // a readable secret store, which is the thing this function exists to
+        // prevent.
+        std::fs::set_permissions(secret_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| H5iError::with_path(e, secret_dir))?;
     }
     let path = secret_dir.join(name);
     #[cfg(unix)]

@@ -647,6 +647,36 @@ pub fn validate_image(image: &str) -> Result<(), H5iError> {
     Ok(())
 }
 
+/// Filesystem entries that name `~` when there is no `$HOME` to resolve it
+/// against.
+///
+/// The lint below is the *only* thing standing between a grant and a denied
+/// child inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+/// refusal on Linux and nothing else. With `$HOME` unset, `expand_tilde` leaves
+/// `~/.ssh` as that literal string, `canonicalize` fails, and the prefix test
+/// compares it against `/Users/dev` and finds no overlap: a profile granting a
+/// home directory and denying the key material inside it loaded clean, and
+/// Landlock then granted the lot. macOS had the matching hole in the generated
+/// SBPL, where the deny was simply left out of the profile.
+///
+/// Grants are included for the mirror-image reason: one expands to nothing,
+/// Landlock skips it, and the policy silently confers none of the access it
+/// names. A policy that cannot be read is not a policy that can be enforced.
+///
+/// Takes `home_set` rather than reading the environment, so this is testable
+/// without a `remove_var` that every other test in the process would see.
+fn unresolvable_tilde_entries(p: &Profile, home_set: bool) -> Vec<&String> {
+    if home_set {
+        return Vec::new();
+    }
+    p.fs_read
+        .iter()
+        .chain(p.fs_write.iter())
+        .chain(p.fs_deny.iter())
+        .filter(|s| *s == "~" || s.starts_with("~/"))
+        .collect()
+}
+
 pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     if let Some(image) = &p.image {
         validate_image(image)?;
@@ -785,24 +815,16 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // because a policy that cannot be read is not a policy that can be enforced.
     // `$`-prefixed entries are excluded: `$WORK`/`$REPO` are h5i's own tokens,
     // resolved elsewhere.
-    if std::env::var_os("HOME").is_none() {
-        let unresolvable: Vec<&String> = p
-            .fs_read
-            .iter()
-            .chain(p.fs_write.iter())
-            .chain(p.fs_deny.iter())
-            .filter(|s| *s == "~" || s.starts_with("~/"))
-            .collect();
-        if !unresolvable.is_empty() {
-            return Err(H5iError::Metadata(format!(
-                "profile '{}' has '~'-relative filesystem entries {unresolvable:?} but $HOME is \
-                 unset, so there is nothing to resolve them against. A grant would confer \
-                 nothing and a deny would be silently dropped — refusing rather than enforcing \
-                 something other than what the profile says (fail-closed). Set HOME, or spell \
-                 the paths absolutely.",
-                p.name
-            )));
-        }
+    let unresolvable = unresolvable_tilde_entries(p, std::env::var_os("HOME").is_some());
+    if !unresolvable.is_empty() {
+        return Err(H5iError::Metadata(format!(
+            "profile '{}' has '~'-relative filesystem entries {unresolvable:?} but $HOME is \
+             unset, so there is nothing to resolve them against. A grant would confer nothing \
+             and a deny would be silently dropped — refusing rather than enforcing something \
+             other than what the profile says (fail-closed). Set HOME, or spell the paths \
+             absolutely.",
+            p.name
+        )));
     }
     // fs.deny preflight lint: Landlock has no deny rules, so a granted parent
     // must never contain a denied child.
@@ -4366,38 +4388,42 @@ fs.deny = ["~/.ssh"]
         assert!(err.to_string().contains("granted path"), "{err}");
     }
 
-    /// The lint above is the only thing standing between a grant and a denied
-    /// child inside it — Landlock has no deny rules, so `fs.deny` is a preflight
+    /// The lint is the only thing standing between a grant and a denied child
+    /// inside it — Landlock has no deny rules, so `fs.deny` is a preflight
     /// refusal on Linux and nothing else. With `$HOME` unset it compared the
     /// literal string `~/.ssh` against `/Users/dev`, found no overlap, and let
     /// the policy load with the key material inside the grant.
     ///
-    /// Serialised against the other env-mutating tests: cargo runs these as
-    /// threads in one process.
+    /// Driven through the helper rather than by unsetting `HOME`: cargo runs
+    /// tests as threads in one process, so a `remove_var` here is a `remove_var`
+    /// for every test that happens to be running beside it.
     #[test]
     fn a_tilde_path_with_no_home_to_resolve_it_is_refused() {
-        static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _g = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = std::env::var_os("HOME");
-        // Safety: the lock above serialises every test that touches HOME.
-        unsafe { std::env::remove_var("HOME") };
+        let mut p = Profile::builtin("default", IsolationClaim::Process);
+        p.fs_read = vec!["/Users/dev".to_string()];
+        p.fs_write = Vec::new();
+        p.fs_deny = vec!["~/.ssh".to_string()];
 
-        let toml_text = r#"
-[profile.default]
-isolation = "process"
-fs.read = ["/Users/dev"]
-fs.deny = ["~/.ssh"]
-"#;
-        let err = load_from_str(toml_text, "default", None).unwrap_err().to_string();
+        // With a home there is nothing to complain about.
+        assert!(unresolvable_tilde_entries(&p, true).is_empty());
+        // Without one, the deny cannot be resolved and must not be ignored.
+        assert_eq!(
+            unresolvable_tilde_entries(&p, false),
+            vec![&"~/.ssh".to_string()]
+        );
 
-        // Restore before asserting, so a failure does not leak the unset HOME
-        // into every test that runs after it.
-        if let Some(h) = saved {
-            // Safety: as above.
-            unsafe { std::env::set_var("HOME", h) };
-        }
-        assert!(err.contains("$HOME is unset"), "{err}");
-        assert!(err.contains("~/.ssh"), "{err}");
+        // A grant counts too: it would confer nothing while claiming to.
+        p.fs_deny = Vec::new();
+        p.fs_read = vec!["~/tools".to_string(), "/usr".to_string()];
+        assert_eq!(
+            unresolvable_tilde_entries(&p, false),
+            vec![&"~/tools".to_string()]
+        );
+
+        // `$WORK`/`$REPO` are h5i's own tokens, resolved elsewhere.
+        p.fs_read = vec!["$WORK".to_string()];
+        p.fs_deny = vec!["$REPO/.env".to_string()];
+        assert!(unresolvable_tilde_entries(&p, false).is_empty());
     }
 
     #[test]
