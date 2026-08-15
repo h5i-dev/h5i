@@ -868,6 +868,59 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
 #[cfg(target_os = "linux")]
 pub(crate) const EGRESS_READY_TIMEOUT_MS: libc::c_int = 15_000;
 
+/// Largest amount of one captured child stream h5i will hold in memory.
+///
+/// The box decides how much it writes, and every tier drained its stdout and
+/// stderr with a bare `read_to_end` — an unbounded host allocation driven by the
+/// confined process. `yes` inside a box with the default wall clock is tens of
+/// gigabytes of host RAM before anything stops it, and the receipt store's own
+/// 4 MiB cap is applied long after the bytes have already been buffered.
+///
+/// The credential proxy states the principle for its own request bodies:
+/// "allocating on trust lets a prompt-injected box exhaust *host* memory". It is
+/// the same principle and it belongs on the same side of the boundary.
+///
+/// Generous — sixteen times what a receipt will store — so nothing a real build
+/// or test suite prints comes near it.
+pub(crate) const MAX_CAPTURED_STREAM: usize = 64 * 1024 * 1024;
+
+/// Drain a child's pipe to EOF, retaining at most [`MAX_CAPTURED_STREAM`] bytes
+/// and saying so when there was more.
+///
+/// Keeps reading past the cap rather than stopping: a reader that walks away
+/// leaves the child blocked on a full pipe until the wall clock reaps it, which
+/// turns a program that legitimately prints a lot into a program that hangs.
+/// Discarding the overflow bounds the host without changing what the child sees.
+/// Same shape as the `command:` secret extractor's drain, which had to solve
+/// this first.
+pub(crate) fn drain_capped(mut pipe: impl std::io::Read) -> Vec<u8> {
+    const MARKER: &[u8] = b"\n----- h5i: output truncated at the capture cap -----\n";
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 64 * 1024];
+    let mut over = false;
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                if buf.len() < MAX_CAPTURED_STREAM {
+                    let room = MAX_CAPTURED_STREAM - buf.len();
+                    buf.extend_from_slice(&chunk[..n.min(room)]);
+                    if n > room {
+                        over = true;
+                    }
+                } else {
+                    over = true;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    if over {
+        buf.extend_from_slice(MARKER);
+    }
+    buf
+}
+
 /// 16 hex chars of OS entropy — enough that no other local user can guess or
 /// pre-plant a scratch path before we create it.
 fn random_suffix() -> Result<String, H5iError> {
@@ -3372,7 +3425,6 @@ pub(crate) fn wait_with_deadline(
     argv: &[String],
     cgroup_procs: Option<&Path>,
 ) -> Result<ExecOutcome, H5iError> {
-    use std::io::Read;
     use std::process::Stdio;
 
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -3391,16 +3443,8 @@ pub(crate) fn wait_with_deadline(
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = out_pipe.read_to_end(&mut buf);
-        buf
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = err_pipe.read_to_end(&mut buf);
-        buf
-    });
+    let out_h = std::thread::spawn(move || drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || drain_capped(&mut err_pipe));
 
     let (exit_code, timed_out, cpu_ms, max_rss_kb) = wait_loop(&mut child, Some(wall));
 
@@ -4397,6 +4441,39 @@ fs.deny = ["~/.ssh"]
     /// Driven through the helper rather than by unsetting `HOME`: cargo runs
     /// tests as threads in one process, so a `remove_var` here is a `remove_var`
     /// for every test that happens to be running beside it.
+    /// The box decides how much it writes, and every tier drained its output
+    /// with a bare `read_to_end` — an unbounded host allocation driven by the
+    /// confined process. `yes` inside a box is tens of gigabytes of host RAM
+    /// before the wall clock stops it, and the receipt store's own cap is
+    /// applied long after the bytes are already buffered.
+    #[test]
+    fn a_runaway_child_cannot_grow_the_hosts_memory_without_limit() {
+        // Under the cap: byte-identical, no marker.
+        let small = vec![b'x'; 1024];
+        assert_eq!(drain_capped(&small[..]), small);
+
+        // Over it: capped, and it says so rather than looking complete.
+        let big = vec![b'y'; MAX_CAPTURED_STREAM + 4096];
+        let out = drain_capped(&big[..]);
+        assert!(
+            out.len() < MAX_CAPTURED_STREAM + 1024,
+            "retained {} bytes for a {} byte stream",
+            out.len(),
+            big.len()
+        );
+        assert!(out.starts_with(&[b'y'; 16]));
+        assert!(
+            String::from_utf8_lossy(&out).contains("output truncated at the capture cap"),
+            "a silent truncation reads as a complete capture"
+        );
+
+        // Exactly at the cap is complete, not truncated.
+        let exact = vec![b'z'; MAX_CAPTURED_STREAM];
+        let out = drain_capped(&exact[..]);
+        assert_eq!(out.len(), MAX_CAPTURED_STREAM);
+        assert!(!String::from_utf8_lossy(&out).contains("truncated"));
+    }
+
     #[test]
     fn a_tilde_path_with_no_home_to_resolve_it_is_refused() {
         let mut p = Profile::builtin("default", IsolationClaim::Process);

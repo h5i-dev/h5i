@@ -2186,22 +2186,13 @@ fn run_bounded(
     mut cmd: std::process::Command,
     limit: Duration,
 ) -> Option<std::process::Output> {
-    use std::io::Read;
     use std::process::Stdio;
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().ok()?;
     let mut out_pipe = child.stdout.take()?;
     let mut err_pipe = child.stderr.take()?;
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
-    });
+    let out_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe));
     let deadline = std::time::Instant::now() + limit;
     let mut poll = Duration::from_millis(1);
     loop {
@@ -2464,7 +2455,6 @@ fn wait_exec(
     wall: Duration,
     full: &[String],
 ) -> Result<ExecOutcome, H5iError> {
-    use std::io::Read;
     use std::process::Stdio;
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd
@@ -2473,16 +2463,8 @@ fn wait_exec(
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
-    });
+    let out_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe));
 
     let deadline = std::time::Instant::now() + wall + Duration::from_secs(10);
     let mut timed_out = false;
@@ -2549,7 +2531,6 @@ fn wait_vm(
     wall: Duration,
     full: &[String],
 ) -> Result<ExecOutcome, H5iError> {
-    use std::io::Read;
     use std::process::Stdio;
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd
@@ -2558,16 +2539,8 @@ fn wait_vm(
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
-    });
+    let out_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe));
 
     // `--timeout` already caps the guest command; this is the host-side backstop
     // for an `msb` that hangs before or after the guest ever runs. The grace

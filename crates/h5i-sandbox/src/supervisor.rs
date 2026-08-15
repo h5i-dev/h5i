@@ -1012,18 +1012,10 @@ fn run_supervised(
     // interactive mode stdio was inherited (not piped), so there is nothing to
     // drain — the session writes straight to the terminal.
     let out_h = child.stdout.take().map(|mut out_pipe| {
-        std::thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = out_pipe.read_to_end(&mut b);
-            b
-        })
+        std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe))
     });
     let err_h = child.stderr.take().map(|mut err_pipe| {
-        std::thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = err_pipe.read_to_end(&mut b);
-            b
-        })
+        std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe))
     });
 
     // AF_UNIX is not granted by default (SCM_RIGHTS authority passing) — a

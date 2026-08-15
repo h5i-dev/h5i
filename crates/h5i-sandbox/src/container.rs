@@ -1850,16 +1850,8 @@ fn wait_container(
 
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out_pipe.read_to_end(&mut b);
-        b
-    });
-    let err_h = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err_pipe.read_to_end(&mut b);
-        b
-    });
+    let out_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut out_pipe));
+    let err_h = std::thread::spawn(move || crate::sandbox::drain_capped(&mut err_pipe));
 
     let deadline = std::time::Instant::now() + wall;
     let mut timed_out = false;
