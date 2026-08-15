@@ -1599,8 +1599,21 @@ pub fn limit_support(claim: IsolationClaim) -> LimitSupport {
         }
         // Kernel tiers: a per-run cgroup on Linux (and only when cgroup v2 is
         // actually delegated to this user), nothing usable on Darwin.
+        //
+        // Asked per limit, not once for both. cgroup delegation is per
+        // controller — `Delegate=memory` without `pids` is a real systemd
+        // configuration — and answering `procs` with the memory probe's result
+        // printed a process cap as enforced on a host that had silently not
+        // applied it.
         IsolationClaim::Process | IsolationClaim::Supervised => {
-            both(cfg!(target_os = "linux") && crate::cgroup::probe().usable)
+            if !cfg!(target_os = "linux") {
+                return both(false);
+            }
+            let caps = crate::cgroup::probe();
+            LimitSupport {
+                mem: caps.usable,
+                procs: caps.usable && caps.procs_enforceable,
+            }
         }
     }
 }

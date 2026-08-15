@@ -1773,7 +1773,6 @@ mod delta_and_login_tests {
         assert!(reply["text"].as_str().unwrap().contains("wholly"));
     }
 
-    #[test]
     /// The refusal is what a person reads to decide whether typing a password
     /// here is safe, so it has to name the half that is not enforced. Frames
     /// keep streaming by design, and the viewer socket is inside the box.

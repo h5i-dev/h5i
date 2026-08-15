@@ -47,7 +47,22 @@ pub struct CgroupCaps {
     pub controllers: Vec<String>,
     /// True iff we actually created+enabled+removed a probe cgroup — the only
     /// honest signal that limits will be enforced. `false` ⇒ fall back.
+    ///
+    /// Driven by `memory.max`, because that is the write [`try_make_usable`]
+    /// proves. See [`Self::procs_enforceable`] for why the other cap needs its
+    /// own answer.
     pub usable: bool,
+    /// Whether `pids.max` is genuinely writable in a run cgroup.
+    ///
+    /// Separate from [`Self::usable`] because delegation is **per controller**:
+    /// a systemd unit with `Delegate=memory` hands out one and not the other,
+    /// and `cgroup.subtree_control` accepts `+memory +pids` partially. The
+    /// probe used to prove `memory.max` alone and every caller then treated one
+    /// boolean as the answer for both caps — so on such a host a profile's
+    /// `procs` limit was silently not applied while `box status` printed it
+    /// unmarked. SECURITY.md: "Resource caps that a platform cannot hold must
+    /// be reported as unenforced rather than listed as applied."
+    pub procs_enforceable: bool,
     /// The delegated parent under which run cgroups are created (when usable).
     #[cfg(target_os = "linux")]
     pub parent: Option<PathBuf>,
@@ -176,13 +191,17 @@ fn probe_uncached() -> CgroupCaps {
     for base in &bases {
         let probe = base.join("h5i.probe");
         match try_make_usable(&probe) {
-            Ok(()) => {
+            Ok(proven) => {
                 let _ = std::fs::remove_dir(&probe);
                 // Controllers the *winning* base can delegate to children.
                 if let Ok(s) = std::fs::read_to_string(base.join("cgroup.controllers")) {
                     caps.controllers = s.split_whitespace().map(String::from).collect();
                 }
                 caps.usable = true;
+                // What the probe actually wrote, not what the base advertises:
+                // `cgroup.controllers` says what *could* be delegated, and the
+                // question here is what was.
+                caps.procs_enforceable = proven.pids;
                 // The real parent used at run time (created lazily).
                 caps.parent = Some(base.join("h5i"));
                 return caps;
@@ -197,10 +216,23 @@ fn probe_uncached() -> CgroupCaps {
     caps
 }
 
+/// Which run-cgroup limits this host actually lets us write.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+struct Proven {
+    mem: bool,
+    pids: bool,
+}
+
 /// Best-effort: create `parent`, enable `+memory +pids` in its subtree_control,
 /// create a leaf, and remove the leaf — proving we can manage run cgroups.
+///
+/// Both limits are written, not just one. Delegation is per controller, so
+/// `Delegate=memory` without `pids` leaves `memory.max` writable and `pids.max`
+/// absent — and proving only the first made `usable` the answer to a question it
+/// had not asked.
 #[cfg(target_os = "linux")]
-fn try_make_usable(parent: &Path) -> std::io::Result<()> {
+fn try_make_usable(parent: &Path) -> std::io::Result<Proven> {
     std::fs::create_dir_all(parent)?;
     // Enabling controllers in the parent's subtree_control is what actually
     // requires the base to delegate memory+pids to us; the leaf's memory.max is
@@ -208,12 +240,15 @@ fn try_make_usable(parent: &Path) -> std::io::Result<()> {
     let _ = std::fs::write(parent.join("cgroup.subtree_control"), "+memory +pids");
     let leaf = parent.join("probe-leaf");
     std::fs::create_dir_all(&leaf)?;
-    // memory.max must be genuinely writable for enforcement to mean anything —
-    // require the write itself to succeed, not merely that the file exists.
-    let writable = std::fs::write(leaf.join("memory.max"), "max").is_ok();
+    // Each must be genuinely writable for its cap to mean anything — require
+    // the write itself to succeed, not merely that the file exists.
+    let proven = Proven {
+        mem: std::fs::write(leaf.join("memory.max"), "max").is_ok(),
+        pids: std::fs::write(leaf.join("pids.max"), "max").is_ok(),
+    };
     let _ = std::fs::remove_dir(&leaf);
-    if writable {
-        Ok(())
+    if proven.mem {
+        Ok(proven)
     } else {
         Err(std::io::Error::other("controllers not delegated to child cgroup"))
     }
@@ -248,6 +283,12 @@ impl ScopedCgroup {
             let _ = std::fs::write(path.join("memory.swap.max"), "0");
         }
         if let Some(p) = max_procs {
+            // Best-effort, deliberately: a host that delegates `memory` and not
+            // `pids` still gets its memory cap, and `limit_support` reports the
+            // process cap as unenforced so `box status` marks it rather than
+            // claiming it. That is the same answer macOS already gets, and it
+            // is the documented one — refusing the run here would take a
+            // working memory limit away over a cap the platform cannot hold.
             let _ = std::fs::write(path.join("pids.max"), p.to_string());
         }
         Ok(ScopedCgroup { path })
@@ -286,6 +327,7 @@ pub fn probe() -> CgroupCaps {
         v2_mounted: false,
         controllers: Vec::new(),
         usable: false,
+        procs_enforceable: false,
         detail: Some("cgroup v2 is Linux-only".into()),
     }
 }
@@ -293,6 +335,36 @@ pub fn probe() -> CgroupCaps {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// cgroup delegation is **per controller**, so one probe result is not the
+    /// answer for both caps. `Delegate=memory` without `pids` is a real systemd
+    /// configuration: `memory.max` is writable, `pids.max` is not, and the
+    /// probe proved only the first — so `limit_support` reported the process
+    /// cap as enforced and `box status` printed it unmarked on a host that had
+    /// silently not applied it. SECURITY.md: a cap the platform cannot hold is
+    /// reported as unenforced rather than listed as applied.
+    #[test]
+    fn the_two_caps_are_reported_separately_because_delegation_is_separate() {
+        // On a host with no cgroup2 at all — every macOS one, and this is what
+        // the non-Linux stub answers — neither is claimed.
+        let caps = probe();
+        if !caps.usable {
+            assert!(
+                !caps.procs_enforceable,
+                "nothing is enforceable when the hierarchy is not usable"
+            );
+        }
+        // And the tier answer never claims a cap the probe did not prove.
+        let support = crate::sandbox::limit_support(crate::sandbox::IsolationClaim::Process);
+        assert!(
+            !support.procs || caps.procs_enforceable,
+            "procs was claimed without `pids.max` having been written"
+        );
+        assert!(
+            !support.mem || caps.usable,
+            "mem was claimed without `memory.max` having been written"
+        );
+    }
 
     #[test]
     fn format_limit_renders_max_or_number() {
