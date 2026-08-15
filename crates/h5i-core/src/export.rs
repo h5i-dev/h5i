@@ -287,6 +287,16 @@ fn copy_share_payloads(
         return copied;
     }
     for r in shares {
+        // The record's id becomes a filename here, and a record is a line of
+        // JSON read back off disk — `append` writes a hex digest, but this code
+        // is holding whatever the file says. An id of `../../../../../x` would
+        // put an attacker-chosen payload at an attacker-chosen path on the host,
+        // during the one command whose whole job is to produce a bundle a human
+        // will then trust. Anything that is not a record handle is skipped, and
+        // the report says the payload is missing (which it is).
+        if !crate::receipt::is_record_handle(&r.id) {
+            continue;
+        }
         let Ok(raw) = crate::receipt::raw_bytes(env_dir, &r.id) else {
             continue;
         };
@@ -546,6 +556,46 @@ fn report(
 mod tests {
     use super::*;
     use crate::receipt::{BrowserEvidence, ExecRecord};
+
+    /// The bundle names each share payload after the record's id, and a record
+    /// is a line of JSON read back off disk. An id that is not a record handle
+    /// must never reach `Path::join` — `../../../../../x` would put box-supplied
+    /// bytes at a host path of the writer's choosing, during the command whose
+    /// output a human is about to trust.
+    #[test]
+    fn a_record_id_that_is_not_a_handle_never_becomes_a_bundle_path() {
+        let env_dir = tempfile::TempDir::new().unwrap();
+        let out = tempfile::TempDir::new().unwrap();
+
+        let mut hostile = record(None);
+        hostile.source = "share".into();
+        hostile.id = "../../../../pwned".into();
+        let mut absolute = record(None);
+        absolute.source = "share".into();
+        absolute.id = "/tmp/h5i-export-escape".into();
+
+        let copied = copy_share_payloads(
+            env_dir.path(),
+            out.path(),
+            &[hostile.clone(), absolute.clone()],
+        );
+
+        assert!(copied.is_empty(), "a forged id must copy nothing: {copied:?}");
+        assert!(!out.path().join("../../../../pwned.raw").exists());
+        assert!(!Path::new("/tmp/h5i-export-escape.raw").exists());
+
+        // And the report says the payload is missing rather than naming a file
+        // that was never written.
+        let text = report(
+            &manifest(),
+            &summary(),
+            &[hostile],
+            "brief",
+            None,
+            &copied,
+        );
+        assert!(text.contains("**missing**"), "{text}");
+    }
 
     #[test]
     fn the_mid_share_section_is_reachable_only_in_the_gap_it_describes() {

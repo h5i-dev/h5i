@@ -273,7 +273,13 @@ fn redact_binary(raw: &[u8]) -> Vec<u8> {
 /// today — `env::inspect` is gated by `find` succeeding on the same handle —
 /// but `raw_bytes` is `pub`, and a console route added later would inherit the
 /// unvalidated join rather than this refusal.
-fn valid_handle(id: &str) -> bool {
+///
+/// Public because the id of a record read back off disk becomes a path in more
+/// than one crate module (`export::copy_share_payloads` names the bundle file
+/// after it), and every one of those joins needs the same gate. A record is
+/// deserialized JSON, so its `id` is whatever the file says — `append` writes a
+/// hex digest, but "what h5i wrote" is not what a reader is holding.
+pub fn is_record_handle(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
@@ -528,7 +534,7 @@ pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
             return Ok(std::fs::read(p)?);
         }
     }
-    if !valid_handle(id) {
+    if !is_record_handle(id) {
         return Err(H5iError::Metadata(format!(
             "receipt handle '{id}' is not a hex record id (fail-closed)"
         )));
@@ -543,9 +549,21 @@ pub fn raw_bytes(env_dir: &Path, id: &str) -> Result<Vec<u8>, H5iError> {
 }
 
 /// Blob filename for a `sha256:<hex>` object id.
+///
+/// The key becomes a path component, and `raw_oid` is a field of a record
+/// deserialized from `receipt.jsonl` — so it is whatever the file says, not
+/// necessarily the digest `append` wrote. Two things follow, and neither was
+/// being done:
+///
+/// * The prefix must be **validated as hex**, or `sha256:../../../../../x` is a
+///   16-character traversal out of `receipts/` and `raw_bytes` reads a file of
+///   the writer's choosing. `valid_handle` exists for exactly this and was
+///   applied only on the fallback branch below it.
+/// * The slice must be taken on a **character boundary**, or a multi-byte
+///   `raw_oid` (`sha256:` + ten `é`) panics the process inside a `[..16]`.
 fn blob_key(raw_oid: &str) -> Option<String> {
-    let hex = raw_oid.strip_prefix("sha256:")?;
-    (hex.len() >= ID_LEN).then(|| hex[..ID_LEN].to_string())
+    let key = raw_oid.strip_prefix("sha256:")?.get(..ID_LEN)?;
+    is_record_handle(key).then(|| key.to_string())
 }
 
 /// Human rendering of one record, for `h5i box inspect --capture <id>`.
@@ -719,6 +737,41 @@ mod tests {
         std::fs::write(log_path(td.path()), format!("{stored}\n")).unwrap();
 
         assert_eq!(raw_bytes(td.path(), &legacy_id).unwrap(), raw);
+    }
+
+    /// A record is a line of JSON read back off disk, so `raw_oid` is whatever
+    /// the file says. Turning its first 16 characters into a path component
+    /// without checking them made `sha256:../../../../../x` a traversal out of
+    /// `receipts/`, and a multi-byte one panicked on the slice.
+    #[test]
+    fn a_forged_raw_oid_cannot_become_a_path_or_a_panic() {
+        assert_eq!(blob_key(&format!("sha256:{}", "a".repeat(64))).as_deref(), Some("aaaaaaaaaaaaaaaa"));
+        // Traversal: refused, not resolved.
+        assert_eq!(blob_key("sha256:../../../../../x"), None);
+        assert_eq!(blob_key("sha256:/etc/passwd0000000"), None);
+        // Too short to be a key at all.
+        assert_eq!(blob_key("sha256:abc"), None);
+        // Not a digest.
+        assert_eq!(blob_key("../../etc/passwd"), None);
+        // A slice that would land mid-character: `None`, not an abort.
+        assert_eq!(blob_key(&format!("sha256:{}", "é".repeat(10))), None);
+
+        // End to end: a record whose oid was rewritten resolves nothing rather
+        // than reading a file outside the store.
+        let td = TempDir::new().unwrap();
+        let rec = append(td.path(), input(), b"payload\n").unwrap();
+        std::fs::write(td.path().join("secret.raw"), b"host secret\n").unwrap();
+        let mut stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(log_path(td.path())).unwrap()).unwrap();
+        stored["raw_oid"] = serde_json::Value::String("sha256:../../secret000000".into());
+        std::fs::write(log_path(td.path()), format!("{stored}\n")).unwrap();
+        // The id is still a valid handle, so the fallback branch runs and finds
+        // no blob under it — which is the honest answer, not the host file.
+        let out = raw_bytes(td.path(), &rec.id);
+        assert!(
+            out.as_ref().is_err_and(|e| e.to_string().contains("no stored payload")),
+            "{out:?}"
+        );
     }
 
     #[test]
