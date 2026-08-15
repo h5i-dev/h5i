@@ -6501,7 +6501,7 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
             .map(|(source, n)| format!("{source}={n}"))
             .collect::<Vec<_>>()
             .join(", ");
-        format!(": {} [{}]", m.captures.join(", "), sources)
+        format!(": {} [{}]", clean(&m.captures.join(", ")), clean(&sources))
     };
     out.push_str(&format!(
         "  evidence : {} capture(s){}\n",
@@ -6518,7 +6518,7 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
             pending.breakdown(),
         ));
         for cmd in pending.captures.iter().take(5) {
-            out.push_str(&format!("             ↳ capture `{cmd}`\n"));
+            out.push_str(&format!("             ↳ capture `{}`\n", clean(cmd)));
         }
     }
     let d = drift(repo, m);
@@ -7776,11 +7776,19 @@ fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
                     .and_then(|b| serde_json::from_slice::<InboxCaptureMeta>(&b).ok())
                     .map(|meta| meta.cmd)
                     .unwrap_or_default();
-                let safe: String = crate::secrets::redact_text(&cmd)
-                    .replace(['\n', '\r'], " ")
-                    .chars()
-                    .take(120)
-                    .collect();
+                // Secret-scrubbed *and* display-sanitised. The box writes this
+                // file, `status_report` prints the string to a terminal, and
+                // flattening the two line breaks was not the same thing as
+                // dropping the escape that moves the cursor over the lines
+                // above it — `h5i box status` is where a reviewer reads what a
+                // live box has staged, so it is precisely the screen worth
+                // rewriting.
+                let safe: String = crate::redact::sanitize_display(
+                    &crate::secrets::redact_text(&cmd),
+                )
+                .chars()
+                .take(120)
+                .collect();
                 p.captures.push(safe);
             }
         } else if name.starts_with("cmd-") && name.ends_with(".cmd") {
@@ -7974,7 +7982,7 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
             "  ⚠ environments do NOT share a base commit — diffs are not directly comparable\n",
         );
     } else if let Some(b) = distinct_bases.iter().next() {
-        out.push_str(&format!("  common base: {}\n", &b[..12.min(b.len())]));
+        out.push_str(&format!("  common base: {}\n", short(b, 12)));
     }
     out.push_str(&format!(
         "  {:<26} {:<9} {:>7} {:>7} {:>7}  {}\n",
@@ -7996,9 +8004,16 @@ pub fn render_compare(rows: &[CompareRow]) -> String {
             }
             _ => "— (no run yet)".to_string(),
         };
+        // `last_cmd` goes through `truncate_cmd`, which sanitises. Its
+        // neighbours come off the same manifest and did not.
         out.push_str(&format!(
             "  {:<26} {:<9} {:>7} {:>7} {:>7}  {}\n",
-            r.id, r.status, r.files_changed, r.insertions, r.deletions, run
+            crate::redact::sanitize_display(&r.id),
+            crate::redact::sanitize_display(&r.status),
+            r.files_changed,
+            r.insertions,
+            r.deletions,
+            run
         ));
     }
     out.push_str("\nPick a winner with `h5i box diff <name>` / `h5i box inspect <name> --capture <id>`, then `h5i box apply <name>`.\n");
@@ -10051,6 +10066,38 @@ mod tests {
                 "a field that is not an object id is rejected"
             );
         }
+    }
+
+    /// `<env>/spool` is one of the two paths a box can write, and what it stages
+    /// there is read back by `h5i box status` and printed to the operator's
+    /// terminal. Flattening the two line breaks was not the same thing as
+    /// dropping the escape that rewrites the lines above.
+    #[test]
+    fn a_box_cannot_stage_an_escape_sequence_into_box_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let h5i_root = dir.path();
+        let m = canonical_manifest("claude", "fix");
+        let spool = m.dir(h5i_root).join("spool");
+        std::fs::create_dir_all(&spool).unwrap();
+
+        write_inbox_capture_spool(
+            &spool,
+            &InboxCaptureMeta {
+                cmd: "ls\u{1b}[2J\u{1b}[H  status   : idle".into(),
+                cwd: None,
+                exit_code: Some(0),
+                files: Vec::new(),
+                cmd_argv: Vec::new(),
+            },
+            b"",
+        )
+        .unwrap();
+
+        let pending = scan_spool_pending(h5i_root, &m);
+        assert_eq!(pending.captures.len(), 1);
+        let staged = &pending.captures[0];
+        assert!(!staged.contains('\u{1b}'), "{staged:?}");
+        assert!(staged.starts_with("ls"), "{staged:?}");
     }
 
     /// `&id[..12]` panics two ways on a manifest this machine did not write:
