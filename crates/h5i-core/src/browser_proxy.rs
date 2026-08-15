@@ -268,7 +268,7 @@ pub fn mediate(
 /// run can use.
 #[allow(clippy::too_many_arguments)]
 pub fn mediate_observed(
-    client_in: impl BufRead,
+    mut client_in: impl BufRead,
     mut client_out: impl Write,
     mut daemon_in: impl BufRead,
     mut daemon_out: impl Write,
@@ -278,11 +278,12 @@ pub fn mediate_observed(
 ) -> Mediation {
     let mut mediation = Mediation::default();
 
-    for line in client_in.lines() {
-        let line = match line {
-            Ok(line) => line,
+    loop {
+        let line = match read_capped_line(&mut client_in, "client") {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
             Err(e) => {
-                mediation.error = Some(format!("reading from the client: {e}"));
+                mediation.error = Some(e);
                 break;
             }
         };
@@ -371,6 +372,46 @@ pub fn mediate_observed(
 }
 
 /// Send one request and relay exactly one response line back.
+/// The longest single protocol line either side may send.
+///
+/// The protocol is one line of JSON each way. `BufRead::lines` and `read_line`
+/// grow a `String` until they meet a newline, so without a ceiling a peer that
+/// sends a gigabyte and no `\n` makes *this host process* allocate a gigabyte —
+/// and both peers here are inside the box: the client is the agent's CLI on a
+/// socket in `<env>/tmp`, and the daemon is a process in the box too.
+///
+/// `refuse_no_daemon` has capped its one read since it was written, with a
+/// comment working out this exact hazard. It is the path taken when no daemon
+/// answered; the path taken the rest of the time had no cap at all.
+///
+/// 8 MiB, well past any real line — a `snapshot` of a large page is the biggest
+/// thing on this wire — and far below what a host notices.
+const MAX_LINE: u64 = 8 * 1024 * 1024;
+
+/// Read one `\n`-terminated line, refusing one that outruns [`MAX_LINE`].
+///
+/// `Ok(None)` is end of stream. An overlong line is an error rather than a
+/// truncation: half a JSON object forwarded onward is a line the other side
+/// would try to answer.
+fn read_capped_line(r: &mut impl BufRead, what: &str) -> Result<Option<String>, String> {
+    let mut buf: Vec<u8> = Vec::new();
+    // `Take` over a borrow, rebuilt per line, so the cap is per line and the
+    // reader's buffered bytes survive into the next one.
+    let read = std::io::Read::take(&mut *r, MAX_LINE)
+        .read_until(b'\n', &mut buf)
+        .map_err(|e| format!("reading from the {what}: {e}"))?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if !buf.ends_with(b"\n") && read as u64 == MAX_LINE {
+        return Err(format!(
+            "the {what} sent a line longer than {MAX_LINE} bytes with no newline in it — \
+             refusing it rather than growing to meet it"
+        ));
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+}
+
 fn forward(
     line: &str,
     daemon_out: &mut impl Write,
@@ -381,13 +422,9 @@ fn forward(
         .and_then(|_| daemon_out.flush())
         .map_err(|e| format!("writing to the daemon: {e}"))?;
 
-    let mut response = String::new();
-    let read = daemon_in
-        .read_line(&mut response)
-        .map_err(|e| format!("reading from the daemon: {e}"))?;
-    if read == 0 {
+    let Some(response) = read_capped_line(daemon_in, "daemon")? else {
         return Err("the daemon closed the connection".to_string());
-    }
+    };
 
     client_out
         .write_all(response.as_bytes())
@@ -535,12 +572,18 @@ pub fn spawn(
                         // holds a descriptor, and the actor filling these slots
                         // is a box in a loop. Not counted as an accept error —
                         // the listener is healthy, it is the load that is not.
-                        if in_flight.load(Ordering::SeqCst) >= MAX_IN_FLIGHT {
+                        // Claimed with one atomic and released by the guard,
+                        // the shape `container`'s proxy uses: a `load` followed
+                        // by a `fetch_add` is correct only because exactly one
+                        // thread accepts, and that is a property of this loop
+                        // rather than of the cap.
+                        let taken = in_flight.fetch_add(1, Ordering::SeqCst);
+                        let slot = InFlightSlot(in_flight.clone());
+                        if taken >= MAX_IN_FLIGHT {
+                            drop(slot);
                             drop(client);
                             continue;
                         }
-                        in_flight.fetch_add(1, Ordering::SeqCst);
-                        let slot = InFlightSlot(in_flight.clone());
                         let actions = actions.clone();
                         let upstream = upstream.clone();
                         let env_dir = env_dir.clone();
@@ -1206,6 +1249,61 @@ mod tests {
         let parsed: Value = serde_json::from_str(&reply).expect("a JSON reply");
         assert_eq!(parsed["id"], "42", "the reply must carry the request id");
         assert_eq!(parsed["success"], false);
+    }
+
+    /// `lines()` and `read_line` grow a `String` until they meet a newline, and
+    /// both peers on this socket are inside the box — the client is the agent's
+    /// CLI on a path in `<env>/tmp`, and the daemon is a process in the box too.
+    /// So a line with no newline in it is the box choosing how much memory this
+    /// *host* process allocates.
+    ///
+    /// Driven with a line four times the cap in each direction, which is enough
+    /// to prove the ceiling exists without allocating anything a test notices.
+    #[test]
+    fn a_line_with_no_newline_in_it_cannot_grow_without_end() {
+        let over = "x".repeat((MAX_LINE as usize) * 4);
+
+        // Client side: the agent's CLI sends the flood.
+        let mut out = Vec::new();
+        let m = mediate(
+            Cursor::new(over.clone().into_bytes()),
+            &mut out,
+            Cursor::new(Vec::new()),
+            Vec::new(),
+            Path::new("/nonexistent"),
+            &ActionPolicy::default(),
+        );
+        let said = m.error.expect("an overlong client line must be refused");
+        assert!(said.contains("no newline in it"), "{said}");
+        assert!(said.contains("client"), "{said}");
+
+        // Daemon side: a real request goes out and the answer is the flood.
+        let mut out = Vec::new();
+        let m = mediate(
+            Cursor::new(req("1", "read").into_bytes()),
+            &mut out,
+            Cursor::new(over.into_bytes()),
+            Vec::new(),
+            Path::new("/nonexistent"),
+            &ActionPolicy::default(),
+        );
+        let said = m.error.expect("an overlong daemon line must be refused");
+        assert!(said.contains("no newline in it"), "{said}");
+        assert!(said.contains("daemon"), "{said}");
+
+        // And an ordinary line still round-trips, or the cap has eaten the
+        // protocol rather than bounded it.
+        let mut out = Vec::new();
+        let m = mediate(
+            Cursor::new(req("1", "read").into_bytes()),
+            &mut out,
+            fake_daemon(1),
+            Vec::new(),
+            Path::new("/nonexistent"),
+            &ActionPolicy::default(),
+        );
+        assert_eq!(m.error, None, "a normal line must still pass");
+        assert_eq!(m.forwarded(), 1);
     }
 
     /// The dribble the byte cap and the per-read timeout both miss.
