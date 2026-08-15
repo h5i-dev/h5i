@@ -20,6 +20,16 @@ by differential testing.
   `lake build`. Notably `readonly_work_not_rw` is *conditional*, and its
   side condition is a real caller obligation the Rust comments only state in
   prose.
+- `H5iSpec/Landlock.lean`: L0, the Landlock fragment — rulesets as
+  allowlists over path-beneath scopes, domains as intersecting stacks,
+  `restrict_narrows` and `deny_persists`.
+- `H5iSpec/Phase.lean`: the phase machine (fds as capabilities with rights
+  fixed at open, `restrict_self` as the transition) and the conditional
+  phase theorem in both directions: `phase_confidentiality` (install-phase
+  denial confines forever) and `run_deny_insufficient` (run-phase denial
+  alone does not — the fd-smuggle trace is the machine-checked witness),
+  plus `shared_tmp_survives`, the agent profile's `/tmp` footgun as a
+  `decide`-closed fact.
 - `Main.lean`: the DRT executable — `DrtInput` array on stdin, the model's
   `EffectiveConfig` array on stdout.
 

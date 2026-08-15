@@ -2768,7 +2768,7 @@ slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
 small static binary staged into a mounted directory is the first thing that
 work has to decide.
 
-### M16. The Lean model beside the Rust: steps 1 and 2 built 2026-08-15
+### M16. The Lean model beside the Rust: steps 1 to 3 built 2026-08-15
 
 A Lean 4 model of the policy layer, developed beside the Rust and never linked
 into it, connected by differential testing over a machine-readable dump of the
@@ -2813,7 +2813,20 @@ Exit criteria for the first cut:
   sweep is not wired yet — both stay open under this criterion.
 - The Landlock fragment of the mechanism semantics is mechanized, and the
   conditional phase-transition theorem is machine-checked, including the
-  counterexample the agent profile's shared `/tmp` provides (V3).
+  counterexample the agent profile's shared `/tmp` provides (V3). **Step 3
+  built, 2026-08-15**: `lean/H5iSpec/Landlock.lean` is L0 — rulesets as
+  allowlists over path-beneath scopes, domains as intersecting stacks,
+  `restrict_narrows` and `deny_persists`. `lean/H5iSpec/Phase.lean` is the
+  machine: fds as capabilities with rights fixed at open, `restrict_self`
+  as the phase transition, and the conditional theorem in both directions —
+  `phase_confidentiality` proves install-phase denial confines through
+  every later phase (invariant induction over reachability), and
+  `run_deny_insufficient` exhibits the fd-smuggle trace: a reachable state
+  whose domain denies the secret and which reads it anyway. The shared
+  `/tmp` footgun is `shared_tmp_survives`, a `decide`-closed fact: a grant
+  present in every layer survives the intersection, so narrowing bounds the
+  boundary from above and never promises it moved. All checked on every
+  `lake build`, so the Lean CI lane carries them.
 
 ## 9. Limits we state up front
 
@@ -5641,7 +5654,8 @@ The trusted base, in the same spirit as section 9:
    interactive/tilde generator gaps stay open.**
 3. **The Landlock fragment.** L0 domains, intersection, fd rights, and the
    two phase theorems, including the shared-`/tmp` counterexample as a Lean
-   example, not prose. Exit: theorems check in CI.
+   example, not prose. Exit: theorems check in CI. **Built, 2026-08-15 —
+   see M16.**
 4. **Refinement.** L2 for the kernel tier over the v1 action alphabet.
 5. **Noninterference and probes.** L3 with unwinding conditions; probe
    generation running against real boxes on Linux in CI.
