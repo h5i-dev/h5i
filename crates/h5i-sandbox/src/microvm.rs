@@ -1258,6 +1258,11 @@ fn ensure_private_dir(dir: &Path) -> bool {
 /// Say so once. A marker directory we cannot use means this box's VM will
 /// outlive its policy — the one consequence of the sweep not running that an
 /// operator would want to know about — and saying it per run would be noise.
+///
+/// Unix only: the only ownership/permission check that can reject a directory
+/// lives in [`ensure_private_dir`]'s `cfg(unix)` arm, so on Windows this has no
+/// caller and `-D dead-code` fails the build.
+#[cfg(unix)]
 fn warn_unusable_marker_dir(dir: &Path) {
     static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     WARNED.get_or_init(|| {
