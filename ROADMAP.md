@@ -6503,6 +6503,16 @@ surveyed here" hedge stands until it is done.
    sharing the H5iFs semantics; abort-and-record on mismatch. Exit: a planted
    mount mismatch is detected and fails the launch on a real process-tier box
    (the probe harness, generalized).
+   **Audit core built, 2026-08-16** (`mount_audit`): the pure parse +
+   diff — `audit_mounts(expected, mountinfo)` returns `Missing` and
+   `WritableButExpectedRo` mismatches, last-mount-wins per target (the §VF.2
+   rule), with `expected_mounts(cfg)` deriving the plan from the bind manifest
+   and `audit_pid(pid, ...)` reading a stopped child's `/proc/<pid>/mountinfo`.
+   Five unit tests over synthetic `mountinfo` (consistent, ro-realized-rw,
+   missing, stacked-topmost, narrower-ro-ok). **Remaining, and flagged as
+   risky:** the stop/audit/go handshake in the live `pre_exec` path (`SIGSTOP`
+   the child after setup, audit, send *go* or kill) — delicate exec-path
+   surgery that needs a real process-tier box to validate, not landed here.
 5. **`verified-cow` spike (optional), two stages.**
    *Stage 1:* read-only FUSE prototype over base+delta, executable core
    reusing `handle`; the agent can build and test but not write. Exit: source

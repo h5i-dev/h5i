@@ -26,6 +26,9 @@ pub mod effective;
 /// (ROADMAP.md §VF.4). Pure and cross-platform; differential-tested against
 /// `h5i-spec --validate` by `tests/validate_drt.rs`.
 pub mod fs_authority;
+/// The mount-realization audit (ROADMAP.md §VF.5): diff realized
+/// `/proc/<pid>/mountinfo` against the planned binds before exec.
+pub mod mount_audit;
 pub mod microvm;
 pub mod sandbox;
 /// macOS Seatbelt backend. Compiled on every Unix target (so its profile
