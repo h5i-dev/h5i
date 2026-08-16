@@ -6430,17 +6430,22 @@ surveyed here" hedge stands until it is done.
    counterexample against a weak setup, and `every_effect_authorized` holds
    over an adversarial initial state and attacker interleaving once the
    defenses are in. Theorems check in CI.
-   **Partly built, 2026-08-16.** `Core` (object graph + symlink-aware,
-   fuel-bounded resolution + well-formedness), `Mount` (ordered mounts,
-   `effectivePermission`, top-mount lemma), and `Fd` (descriptors as
-   capabilities, `closeForbidden` invariant with two proved lemmas) are in and
-   checked by `lake build` (H5iFs is a default target). `Attacks` machine-
-   checks five amplifiers by `decide`: #1 prevented by the component-path
-   representation, #2 symlink escape, #3 fd smuggling, #5 mount-order
-   shadowing, #6 hardlink amplification. **Still open:** `Setup.lean` (the
-   interleaved `SetupEvent` schedule and #7 TOCTOU) and `Theorems.lean`
-   (`every_effect_authorized`, `setup_rejects_or_confines`, the
-   `ProtectedProjection` corollary); #4 belongs to the validator (step 2).
+   **Built, 2026-08-16** (26 theorems, no `sorry`/`admit`, checked by
+   `lake build` — H5iFs is a default target). `Core` (object graph +
+   symlink-aware, fuel-bounded resolution + well-formedness), `Mount` (ordered
+   mounts, `effectivePermission`, top-mount lemma), `Fd` (descriptors as
+   capabilities, `closeForbidden` invariant, two proved lemmas). `Attacks`
+   machine-checks six amplifiers by `decide`: #1 prevented by the component-
+   path representation, #2 symlink escape, #3 fd smuggling, #5 mount-order
+   shadowing, #6 hardlink amplification, #7 setup TOCTOU. `Setup` models the
+   interleaved `SetupEvent` schedule and proves `runFrozen_sound` — the
+   `setup_rejects_or_confines` result — over *any* attacker interleaving, with
+   the check-then-use counterexample beside it. `Theorems` proves the central
+   trace-level `every_effect_authorized` and the `integrity_outside_writable`
+   corollary (the content half of the `ProtectedProjection`). Still deferred,
+   and correctly so: #4 (parent-allow/child-deny) is a validator
+   representability check (step 2), and the full `ProtectedProjection` beyond
+   content lands with the validator's metadata handling.
 2. **The mount manifest + validator.** Extend `EffectiveConfig` with ordered
    mounts and classes; write `validate` + `validate_sound`; run the real Lean
    checker over CI cases; the first two claims (`writes_confined`,
