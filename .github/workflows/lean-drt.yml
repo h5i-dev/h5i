@@ -1,12 +1,13 @@
 name: Lean DRT
 
-# The formal-verification lane (ROADMAP.md §V4): build the Lean model of the
-# effective-config computation and differentially test it against the Rust
-# implementation over generated policies. A separate, deliberately non-gating
-# workflow while it earns trust; it gates once it has been quiet for a while
-# (§V4). Rust contributors without a Lean toolchain are unaffected — the
-# harness skips locally when the model binary is absent, and only this job
-# sets H5I_DRT_REQUIRE.
+# The formal-verification lane (ROADMAP.md §V4). Builds the Lean package
+# (which checks every theorem) and holds the two implementation-facing
+# specs to the Rust: the interference checker (differential test) and the
+# mechanism predictions (conformance probes against a real box). A separate,
+# deliberately non-gating workflow while it earns trust; it gates once it has
+# been quiet for a while (§V4). Rust contributors without a Lean toolchain
+# are unaffected — the harnesses skip locally when the model binary is
+# absent, and only this job sets H5I_DRT_REQUIRE.
 
 on:
   push:
@@ -48,12 +49,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run the DRT harness
+      - name: Run the DRT harnesses (interferes checker, Seatbelt rules)
         env:
           H5I_DRT_REQUIRE: "1"
           H5I_SKIP_WEB_BUILD: "1"
-          H5I_DRT_CASES: "5000"
-        run: cargo test --test effective_drt --test seatbelt_drt -- --nocapture
+        run: cargo test --test interferes_drt --test seatbelt_drt -- --nocapture
 
       # Model-versus-kernel: the Lean model predicts what a real box must
       # allow and deny, and the probes hold the kernel to it. Skips loudly

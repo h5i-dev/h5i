@@ -70,7 +70,7 @@ tokio = { version = "1.0", features = ["rt-multi-thread"], optional = true }
 [dev-dependencies]
 tempfile = "3.8"
 serde_json = { workspace = true }
-# Seeded generator for the effective-config DRT harness (tests/effective_drt.rs).
+# Seeded generator for the interferes DRT harness (tests/interferes_drt.rs).
 fastrand = "2.3.0"
 
 [profile.dev]

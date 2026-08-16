@@ -1,11 +1,8 @@
 import H5iSpec
 
 /-!
-The model's executable face, two modes:
+The model's executable face, three modes:
 
-- **DRT** (no arguments): an array of `DrtInput` cases as JSON on stdin, the
-  model's `EffectiveConfig` for each as a JSON array on stdout. One process
-  per harness run, not per case.
 - **Predict** (`--predict`): an `EffectiveConfig` plus a probe list on
   stdin, the full verdict per probe on stdout — `{allow, real, check}`:
   whether the mechanisms permit the access (Landlock plus nested-bind
@@ -60,16 +57,6 @@ structure PredictInput where
   probes : Array ProbeReq
   symlinks : Option (Array SymlinkFact)
 deriving FromJson
-
-def runDrt (text : String) : IO UInt32 := do
-  match Json.parse text >>= fromJson? (α := Array DrtInput) with
-  | .error e =>
-    IO.eprintln s!"h5i-spec: bad input: {e}"
-    return 1
-  | .ok cases =>
-    let out := Json.arr (cases.map (toJson ∘ computeEffective))
-    IO.println out.compress
-    return 0
 
 def runPredict (text : String) : IO UInt32 := do
   match Json.parse text >>= fromJson? (α := PredictInput) with
@@ -132,11 +119,10 @@ def main (args : List String) : IO UInt32 := do
   let stdin ← IO.getStdin
   let text ← stdin.readToEnd
   match args with
-  | [] => runDrt text
   | ["--predict"] => runPredict text
   | ["--interferes"] => runInterferes text
   | ["--seatbelt"] => runSeatbelt text
   | _ =>
     IO.eprintln
-      "usage: h5i-spec [--predict|--interferes|--seatbelt]  (input on stdin)"
+      "usage: h5i-spec --predict|--interferes|--seatbelt  (input on stdin)"
     return 2

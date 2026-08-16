@@ -390,12 +390,12 @@ fn scopes_overlap(a: &str, b: &str) -> bool {
 /// (`lean/H5iSpec/Noninterference.lean`): a path `writer` may write and
 /// `reader` may read. Returns the first witnessing (write grant, read
 /// grant) pair, or `None` — and `None` is the strong answer: by
-/// `interferesCheck_sound` + `noninterference`, a clean check in BOTH
-/// directions means the two boxes cannot influence each other through
-/// their Landlock-granted filesystems. The claim's scope is exactly the
-/// grant lists: binds, the network, and anything outside the dumps are not
-/// covered. Kept semantically identical to the Lean `interferesCheck`;
-/// `tests/effective_drt.rs` diffs the two on random pairs.
+/// `interferesCheck_sound`, a clean check in BOTH directions means neither
+/// box can write a path the other reads through their Landlock-granted
+/// filesystems. The claim's scope is exactly the grant lists: binds, the
+/// network, and anything outside the dumps are not covered. Kept
+/// semantically identical to the Lean `interferesCheck`;
+/// `tests/interferes_drt.rs` diffs the two on random pairs.
 pub fn interferes(
     writer: &EffectiveConfig,
     reader: &EffectiveConfig,
