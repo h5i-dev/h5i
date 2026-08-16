@@ -12,11 +12,11 @@ documented contract, not kernel C:
   must be allowed by *every* layer, so a new layer can restrict and can
   never widen. The empty stack is the unsandboxed process.
 - **File-descriptor rights are fixed at `open`** and travel with the fd;
-  later domain changes do not revisit them. This is the rule every phase
-  theorem in `H5iSpec.Phase` turns on.
+  later domain changes do not revisit them. The H5iFs authority machine
+  (ROADMAP §V3) builds on this rule.
 
 Everything is `Bool`-valued and computable, so concrete counterexamples close
-by `decide` and the DRT world (`H5iSpec.Input`) can meet this layer later.
+by `decide`.
 
 v1 scope, stated: two access rights (read/write) of Landlock's ~15, exact
 component paths with prefix scoping, no symlinks — the same exclusions §V5
@@ -77,5 +77,18 @@ theorem Domain.deny_persists (rs : Ruleset) (d : Domain) (p : FsPath)
   | false => rfl
   | true =>
     exact absurd (Domain.restrict_narrows rs d p a hall) (by simp [h])
+
+/-- Parse an absolute path string into components: `"/home/u"` becomes
+`["home","u"]`. Repeated separators collapse; the kernel's inode-level view
+is the fidelity assumption the conformance probes sample. -/
+def parsePath (s : String) : FsPath :=
+  (s.splitOn "/").filter (· != "")
+
+/-- What `build_confined_command` builds from the dump's grant lists:
+read rules for `ro`, read+write rules for `rw` — `path_beneath_rules(ro,
+from_read)` and `path_beneath_rules(rw, from_all)`, in Lean. -/
+def compileLandlock (ll : LandlockEffective) : Ruleset :=
+  ll.ro.map (fun g => ⟨parsePath g, [.read]⟩)
+    ++ ll.rw.map (fun g => ⟨parsePath g, [.read, .write]⟩)
 
 end H5iSpec

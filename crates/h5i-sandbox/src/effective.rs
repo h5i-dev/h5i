@@ -367,6 +367,76 @@ pub fn compute_effective(
     }
 }
 
+/// Re-derive the declared read/write grant paths from the policy the same way
+/// [`compute_effective`] does, **minus the exists-filter** (which only removes).
+/// The validator checks the effective grants are a subset of these — so a
+/// legitimate box always passes, and only a divergence between the resolver's
+/// output and the declared intent (a bug) is caught. ROADMAP §VF.4.
+pub fn declared_grants(policy: &ResolvedPolicy, work: &Path) -> (Vec<String>, Vec<String>) {
+    let p = &policy.profile;
+    let ro_work = policy.work_readonly;
+    let mut rw: Vec<String> = Vec::new();
+    if !ro_work {
+        rw.push(lossy(work));
+    }
+    for s in p.fs_write.iter().filter(|s| s.as_str() != "$WORK") {
+        rw.push(crate::sandbox::expand_tilde(s));
+    }
+    let mut ro: Vec<String> = p.fs_read.iter().map(|s| crate::sandbox::expand_tilde(s)).collect();
+    if ro_work {
+        ro.push(lossy(work));
+    }
+    (ro, rw)
+}
+
+/// Validate a shipped effective config against the declared policy (§VF.4):
+/// the effective grants are a subset of the declared intent, every write grant
+/// was declared writable, and no read-only overlay bind is writable. On Unix it
+/// also measures the host for symlink escapes of a grant beneath the worktree
+/// (§VF.5). This is the per-run translation validator on real output — the
+/// path-level companion to the proved object-level `H5iFs.validate`.
+pub fn validate_effective(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    cfg: &EffectiveConfig,
+) -> crate::fs_authority::AuthorityVerdict {
+    let (declared_ro, declared_rw) = declared_grants(policy, work);
+    // Only the read-only *overlays* must stay read-only: the config-lock pin and
+    // the warm cache. Private and home-state binds and the one cache-rw refresh
+    // bind are writable by design (`compute_effective` sets them so).
+    let overlays_ro = cfg.binds.iter().all(|b| match b.kind {
+        BindKind::ConfigLock | BindKind::CacheRo => !b.writable,
+        BindKind::Private | BindKind::HomeState | BindKind::CacheRw => true,
+    });
+    let mut verdict = crate::fs_authority::validate_grants(
+        &declared_ro,
+        &declared_rw,
+        &cfg.landlock.ro,
+        &cfg.landlock.rw,
+        overlays_ro,
+    );
+    #[cfg(unix)]
+    {
+        // Check the landlock grants AND every bind's source and target. A grant
+        // is the user's own declaration, but a bind whose mountpoint or source
+        // lies beneath the worktree and resolves out through a planted symlink
+        // is the runc-class escape (§VF.5) — the config-lock and private binds
+        // sit under $WORK, so their paths are exactly where a previous run's
+        // agent could redirect. `symlink_escapes` ignores paths outside the
+        // worktree, so h5i's managed dirs (cache, home-state) are not
+        // second-guessed.
+        let mut paths: Vec<String> =
+            cfg.landlock.ro.iter().chain(cfg.landlock.rw.iter()).cloned().collect();
+        for b in &cfg.binds {
+            paths.push(b.source.clone());
+            paths.push(b.target.clone());
+        }
+        verdict.symlink_clean =
+            Some(crate::fs_authority::symlink_escapes(work, &paths).is_empty());
+    }
+    verdict
+}
+
 /// Component view of an absolute path, mirroring the Lean model's
 /// `parsePath`: split on `/`, empty components dropped.
 fn components(s: &str) -> Vec<&str> {
@@ -390,12 +460,12 @@ fn scopes_overlap(a: &str, b: &str) -> bool {
 /// (`lean/H5iSpec/Noninterference.lean`): a path `writer` may write and
 /// `reader` may read. Returns the first witnessing (write grant, read
 /// grant) pair, or `None` — and `None` is the strong answer: by
-/// `interferesCheck_sound` + `noninterference`, a clean check in BOTH
-/// directions means the two boxes cannot influence each other through
-/// their Landlock-granted filesystems. The claim's scope is exactly the
-/// grant lists: binds, the network, and anything outside the dumps are not
-/// covered. Kept semantically identical to the Lean `interferesCheck`;
-/// `tests/effective_drt.rs` diffs the two on random pairs.
+/// `interferesCheck_sound`, a clean check in BOTH directions means neither
+/// box can write a path the other reads through their Landlock-granted
+/// filesystems. The claim's scope is exactly the grant lists: binds, the
+/// network, and anything outside the dumps are not covered. Kept
+/// semantically identical to the Lean `interferesCheck`;
+/// `tests/interferes_drt.rs` diffs the two on random pairs.
 pub fn interferes(
     writer: &EffectiveConfig,
     reader: &EffectiveConfig,
@@ -497,6 +567,49 @@ mod tests {
         let json = cfg.to_json().unwrap();
         let back: EffectiveConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(cfg, back);
+    }
+
+    /// Drift guard (§VF.4, review #2): `compute_effective`'s output must satisfy
+    /// `validate_effective`, so `declared_grants` and `compute_effective` stay
+    /// in sync — if one grows a grant source the other forgets, this fails.
+    /// Exercises the production validator entry point in CI, where the opt-in
+    /// gate never runs it.
+    #[test]
+    fn compute_effective_output_passes_the_validator() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let work = work.canonicalize().unwrap();
+        // A declared read grant that exists (so it is not exists-filtered away).
+        let shared = tmp.path().join("shared");
+        std::fs::create_dir_all(&shared).unwrap();
+
+        let mut p = policy(false);
+        p.profile.fs_read = vec![shared.to_string_lossy().into_owned()];
+        p.profile.fs_write = vec!["$WORK".into()];
+
+        let cfg = compute_effective(&p, &work, 3, &shape());
+        let v = validate_effective(&p, &work, &cfg);
+        assert!(v.confined(), "compute_effective output must clear the validator: {v:?}");
+        assert_eq!(v.symlink_clean, Some(true));
+    }
+
+    /// The production validator (not just `validate_grants`) rejects an
+    /// effective config that grants a write the policy never declared.
+    #[test]
+    fn validate_effective_rejects_undeclared_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let work = work.canonicalize().unwrap();
+
+        let p = policy(false); // grants only $WORK writable
+        let mut cfg = compute_effective(&p, &work, 3, &shape());
+        cfg.landlock.rw.push("/etc".into()); // an undeclared write grant
+
+        let v = validate_effective(&p, &work, &cfg);
+        assert!(!v.writes_confined);
+        assert!(!v.confined());
     }
 
     #[test]

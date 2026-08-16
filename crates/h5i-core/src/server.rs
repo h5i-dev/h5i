@@ -372,6 +372,12 @@ pub struct Signals {
     pub weak_isolation: bool,
     /// Runs exist and none of them was host-observed.
     pub box_claimed_only: bool,
+    /// The create-time filesystem-authority validator (§VF.4) found the
+    /// effective config not confined to the declared policy — a grant outside
+    /// the declared subset, a write not declared writable, a read-only overlay
+    /// left writable, or a grant escaping the worktree by symlink. A boundary
+    /// trip, so it colors the verdict.
+    pub authority_unconfined: bool,
     /// Share sessions on this log: times somebody outside was let in to a port
     /// inside the box.
     ///
@@ -454,7 +460,9 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
     // Receipts are appended in order and their timestamps sort lexically.
     s.last_run_ts = receipts.last().map(|r| r.timestamp.clone());
     s.box_claimed_only = s.runs > 0 && s.host_observed == 0;
-    s.verdict = if s.egress_denied > 0 {
+    s.authority_unconfined =
+        m.fs_authority.is_some_and(|a| !a.confined() || a.symlink_clean == Some(false));
+    s.verdict = if s.egress_denied > 0 || s.authority_unconfined {
         "denial"
     } else if s.failed > 0 || s.timed_out > 0 || s.browser_issues > 0 {
         "attention"
@@ -1050,6 +1058,7 @@ mod tests {
             profile: "default".into(),
             policy_digest: "c".repeat(64),
             effective_digest: None,
+            fs_authority: None,
             isolation_claim: isolation.into(),
             backend: "worktree".into(),
             created_at: "2026-08-05T00:00:00Z".into(),

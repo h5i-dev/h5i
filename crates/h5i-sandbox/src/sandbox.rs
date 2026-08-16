@@ -2596,6 +2596,30 @@ pub(crate) fn build_confined_command(
         interactive,
     };
     let eff = crate::effective::compute_effective(policy, &work, abi_int, &shape);
+    // The filesystem-authority gate (ROADMAP §VF.4), fully opt-in: it does not
+    // run — no host measurement, no cost, no behavior change — unless
+    // `H5I_FS_AUTHORITY_ENFORCE=1`. When on, re-check the effective config
+    // against the declared policy at this single spawn chokepoint (so a run
+    // cannot bypass it) and fail closed on a violation; `confined()` is an
+    // invariant a legitimate config always passes.
+    if crate::fs_authority::enforce_enabled() {
+        let verdict = crate::effective::validate_effective(policy, &work, &eff);
+        if !verdict.confined() {
+            return Err(H5iError::Metadata(format!(
+                "filesystem-authority validator refused the effective config \
+                 (ROADMAP §VF.4): fs_subset={} writes_confined={} cache_readonly={} — the \
+                 resolved grants are not a subset of the declared policy; refusing the run \
+                 (fail-closed)",
+                verdict.fs_subset, verdict.writes_confined, verdict.cache_readonly
+            )));
+        }
+        if verdict.symlink_clean == Some(false) {
+            eprintln!(
+                "h5i: warning: a granted path resolves outside the worktree through a \
+                 symlink (ROADMAP §VF.5) — the run continues, but this is a boundary signal"
+            );
+        }
+    }
     // Persist at the apply seam, before anything is spawned: the file records
     // what this invocation is about to enforce. Fail-closed — an env that
     // asked for the record does not run without it.

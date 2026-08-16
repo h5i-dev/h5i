@@ -676,6 +676,7 @@ mod tests {
             profile: "browser".into(),
             policy_digest: "d".repeat(64),
             effective_digest: None,
+            fs_authority: None,
             isolation_claim: "supervised".into(),
             backend: "worktree".into(),
             created_at: "2026-08-05T00:00:00.000000Z".into(),

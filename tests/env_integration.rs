@@ -215,6 +215,7 @@ fn synthetic_env_manifest(
         profile: "default".into(),
         policy_digest: "d".repeat(64),
         effective_digest: None,
+        fs_authority: None,
         isolation_claim: "workspace".into(),
         backend: "worktree".into(),
         created_at: "2026-06-11T00:00:00.000000Z".into(),
