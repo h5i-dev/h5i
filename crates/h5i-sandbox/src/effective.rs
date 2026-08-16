@@ -417,10 +417,22 @@ pub fn validate_effective(
     );
     #[cfg(unix)]
     {
-        let grants: Vec<String> =
+        // Check the landlock grants AND every bind's source and target. A grant
+        // is the user's own declaration, but a bind whose mountpoint or source
+        // lies beneath the worktree and resolves out through a planted symlink
+        // is the runc-class escape (§VF.5) — the config-lock and private binds
+        // sit under $WORK, so their paths are exactly where a previous run's
+        // agent could redirect. `symlink_escapes` ignores paths outside the
+        // worktree, so h5i's managed dirs (cache, home-state) are not
+        // second-guessed.
+        let mut paths: Vec<String> =
             cfg.landlock.ro.iter().chain(cfg.landlock.rw.iter()).cloned().collect();
+        for b in &cfg.binds {
+            paths.push(b.source.clone());
+            paths.push(b.target.clone());
+        }
         verdict.symlink_clean =
-            Some(crate::fs_authority::symlink_escapes(work, &grants).is_empty());
+            Some(crate::fs_authority::symlink_escapes(work, &paths).is_empty());
     }
     verdict
 }
@@ -555,6 +567,49 @@ mod tests {
         let json = cfg.to_json().unwrap();
         let back: EffectiveConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(cfg, back);
+    }
+
+    /// Drift guard (§VF.4, review #2): `compute_effective`'s output must satisfy
+    /// `validate_effective`, so `declared_grants` and `compute_effective` stay
+    /// in sync — if one grows a grant source the other forgets, this fails.
+    /// Exercises the production validator entry point in CI, where the opt-in
+    /// gate never runs it.
+    #[test]
+    fn compute_effective_output_passes_the_validator() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let work = work.canonicalize().unwrap();
+        // A declared read grant that exists (so it is not exists-filtered away).
+        let shared = tmp.path().join("shared");
+        std::fs::create_dir_all(&shared).unwrap();
+
+        let mut p = policy(false);
+        p.profile.fs_read = vec![shared.to_string_lossy().into_owned()];
+        p.profile.fs_write = vec!["$WORK".into()];
+
+        let cfg = compute_effective(&p, &work, 3, &shape());
+        let v = validate_effective(&p, &work, &cfg);
+        assert!(v.confined(), "compute_effective output must clear the validator: {v:?}");
+        assert_eq!(v.symlink_clean, Some(true));
+    }
+
+    /// The production validator (not just `validate_grants`) rejects an
+    /// effective config that grants a write the policy never declared.
+    #[test]
+    fn validate_effective_rejects_undeclared_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let work = work.canonicalize().unwrap();
+
+        let p = policy(false); // grants only $WORK writable
+        let mut cfg = compute_effective(&p, &work, 3, &shape());
+        cfg.landlock.rw.push("/etc".into()); // an undeclared write grant
+
+        let v = validate_effective(&p, &work, &cfg);
+        assert!(!v.writes_confined);
+        assert!(!v.confined());
     }
 
     #[test]

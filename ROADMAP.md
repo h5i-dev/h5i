@@ -6483,8 +6483,13 @@ surveyed here" hedge stands until it is done.
    the declared grants minus the exists-filter — a translation-validation that
    catches a `compute_effective` divergence), `cache_readonly` (the config-lock
    and cache-ro *overlays* stay read-only; private/home-state/cache-rw are
-   writable by design), and `symlink_clean` (host measurement: no grant beneath
-   the worktree canonicalizes out through a planted symlink — §VF.5). The
+   writable by design), and `symlink_clean` (host measurement: no landlock
+   grant and no bind source or mountpoint beneath the worktree canonicalizes
+   out through a planted symlink — §VF.5; the bind mountpoints, where the
+   config-lock and private binds sit, are the runc-class surface). A drift
+   guard (`compute_effective_output_passes_the_validator`) runs
+   `validate_effective` over `compute_effective`'s output in CI, so
+   `declared_grants` cannot silently diverge. The
    verdict is recorded in the `EnvManifest` (`fs_authority`), rendered in
    `box status` (the `authorit:` line) and the console badge
    (`authority_unconfined` colors the verdict). The gate lives at the single

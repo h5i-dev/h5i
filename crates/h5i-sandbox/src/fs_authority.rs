@@ -156,9 +156,9 @@ pub struct AuthorityVerdict {
     /// cache stay read-only. (Private, home-state, and the one cache-rw refresh
     /// bind are writable by design and not constrained here.)
     pub cache_readonly: bool,
-    /// No effective grant's path, resolved on the host, escapes the managed
-    /// worktree through a symlink it should not cross. `None` when the host was
-    /// not measured (non-Linux, or measurement skipped).
+    /// No effective grant, and no bind source or mountpoint beneath the
+    /// worktree, resolves out through a planted symlink on the host. `None` when
+    /// the host was not measured (non-Linux, or measurement skipped).
     pub symlink_clean: Option<bool>,
 }
 
@@ -211,33 +211,38 @@ pub fn validate_grants(
     }
 }
 
-/// Does any grant path, resolved on the host, escape the managed worktree
-/// through a symlink? Grants at or above `work` are the user's declared choice
-/// and are not second-guessed; a grant **beneath** `work` whose canonical path
-/// leaves `work` is the planted-symlink escape (§VF.5) — the previous run's
-/// agent redirected a worktree path out. Returns the offending grants.
+/// Which of `paths`, resolved on the host, escape the managed worktree through
+/// a symlink? A path at or above `work` is the user's declared choice and is
+/// not second-guessed; a path **beneath** `work` whose canonical form leaves
+/// `work` is the planted-symlink escape (§VF.5) — the previous run's agent
+/// redirected a worktree path out. Callers pass the landlock grants and the
+/// bind sources/mountpoints; paths outside the worktree (h5i's managed cache
+/// and home-state dirs) are ignored by construction. Returns the offenders.
 ///
 /// Linux/Unix only (it canonicalizes on the host); the caller records `Some`
 /// only where it ran.
 #[cfg(unix)]
-pub fn symlink_escapes(work: &std::path::Path, grants: &[String]) -> Vec<String> {
+pub fn symlink_escapes(work: &std::path::Path, paths: &[String]) -> Vec<String> {
     let work_canon = std::fs::canonicalize(work).unwrap_or_else(|_| work.to_path_buf());
-    grants
+    let mut escapes: Vec<String> = paths
         .iter()
-        .filter(|g| {
-            let g = std::path::Path::new(g.as_str());
-            // Only grants lexically beneath the worktree are constrained to it.
-            if !g.starts_with(work) || g == work {
+        .filter(|p| {
+            let path = std::path::Path::new(p.as_str());
+            // Only paths lexically beneath the worktree are constrained to it.
+            if !path.starts_with(work) || path == work {
                 return false;
             }
-            match std::fs::canonicalize(g) {
+            match std::fs::canonicalize(path) {
                 Ok(canon) => !canon.starts_with(&work_canon),
                 // Unresolvable (missing/broken link) is fail-closed: flag it.
                 Err(_) => true,
             }
         })
         .cloned()
-        .collect()
+        .collect();
+    escapes.sort();
+    escapes.dedup();
+    escapes
 }
 
 #[cfg(test)]
@@ -327,6 +332,29 @@ mod tests {
         let v = validate_grants(&[], &["/work".to_string()], &[], &["/work".to_string()], false);
         assert!(!v.cache_readonly);
         assert!(!v.confined());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escape_beneath_worktree_is_flagged() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let outside = tmp.path().join("secret");
+        std::fs::create_dir_all(&outside).unwrap();
+        // A real subdir under the worktree, and a symlink under it escaping out
+        // (the shape of a config-lock mountpoint the agent redirected).
+        let good = work.join("src");
+        std::fs::create_dir_all(&good).unwrap();
+        let evil = work.join("evil");
+        symlink(&outside, &evil).unwrap();
+
+        let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        // The worktree itself and a real subdir do not escape.
+        assert!(symlink_escapes(&work, &[s(&work), s(&good)]).is_empty());
+        // The escaping symlink is flagged; a path outside the worktree is ignored.
+        assert_eq!(symlink_escapes(&work, &[s(&evil), s(&outside)]), vec![s(&evil)]);
     }
 
     #[test]
