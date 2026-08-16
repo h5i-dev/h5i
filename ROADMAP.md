@@ -5855,25 +5855,41 @@ writing up. Everything after that earns its own status line here when it
 exists, in this document's usual voice: built when driven, proposed until
 then.
 
-# VF. Verified filesystem: the H5iFs authority machine
+# VF. Verified workspace authority: the H5iFs machine
 
 Status: proposed, 2026-08-16. This chapter is the post-pivot direction (see
 the banner at the top of the verification chapter). It replaces "model the
 resolver, differential-test the twin" with "model the thing that actually
 mediates host filesystem authority, prove it confines an adversary, and make
 that model the semantics a per-run validator checks the real output against."
+The title says *authority*, not *filesystem*: until the optional backend of
+VF.6 exists, what is verified is an authority model and a validator, not a
+filesystem implementation.
 
-The one-sentence claim it builds toward:
+The claim it builds toward, stated at the strength the design actually
+supports — no stronger:
 
-> For every h5i run, a machine-checked validator confirms that the concrete
-> filesystem authority the selected backend grants — under an adversary who
-> prepared the worktree and drives the box — is no greater than the declared
-> source policy, and no host object outside the box's writable grants can
-> change.
+> For every Linux **process/supervised-tier** run the validator covers, a
+> checked validator confirms that the filesystem authority the box's
+> **effective plan** would grant — under an adversary who prepared the
+> worktree and drives the box — is no greater than the declared source
+> policy, and that a mount-realization audit found the **observed** mount
+> state consistent with that plan before exec.
 
-Everything below is scoped to the kernel tier's filesystem authority and to
-the disposable-workspace model. Network, seccomp, and the microVM/container
-transports are named where they touch this and otherwise out of scope.
+Three levels are kept distinct throughout, because collapsing them is the
+overstatement the pivot exists to avoid:
+
+- **SourcePolicy** — what the user declared.
+- **EffectivePlan / MountPlan** — what h5i intends to hand the backend
+  (`policy.effective.json` plus the ordered mount manifest). The validator
+  (VF.4) reasons about *this*.
+- **ObservedMountState** — what the kernel actually realized, read back
+  before exec. The auditor (VF.5) checks *this* against the plan.
+
+The validator proves a property of the plan; it does not by itself prove the
+kernel granted exactly the plan. That gap is what VF.5 narrows and VF.8
+states. Seatbelt, container, and microVM tiers are **not** covered at this
+strength — they are named where they touch this and otherwise out of scope.
 
 ## VF.0. What was kept, retired, and why
 
@@ -5911,19 +5927,35 @@ the *product* runs against today:
 - `H5iSpec/Seatbelt.lean` + `seatbelt_drt.rs` — `fs_deny_wins`, a live
   property of the macOS backend.
 
-Known cost, stated: with `Model.lean` gone, there is no Lean↔Rust link on the
-resolver until the validator (§VF.4) lands. That link was the maintenance
-burden the pivot is shedding; the gap is deliberate and the history is in git.
+Known cost, stated precisely. The retired `effective_drt` diffed the whole
+`compute_effective` output against the twin; deleting the twin ends that
+differential check. Note two things so the gap is neither hidden nor
+overstated:
+
+- **What still covers `compute_effective`.** Its filesystem-relevant output
+  is still held to the *kernel* by `effective_probes` (via `Predict`), and
+  `effective::interferes` over its output is still diffed against Lean by
+  `interferes_drt`. The fs surface is not uncovered.
+- **What lost coverage.** The non-fs fields — net mode, seccomp template,
+  rlimits, `env_pass`, tools — no longer have a differential check against
+  any spec. These were exactly the DRT-only, no-refinement-theorem fields.
+
+Un-deleting `effective_drt` is not the fix: the harness diffs against
+`Model.lean`, so keeping it means keeping the twin — reverting the pivot.
+The fix is VF.4, whose validator restores a spec check on the *shipped*
+plan, fields included. Until then this gap is deliberate and named here.
 
 ## VF.1. Why a filesystem, and why "authority", not "storage"
 
-The survey (§VF.9) is blunt about where verified-filesystem effort has gone
-and where it has not. A decade of work — FSCQ, DFSCQ, Yggdrasil, Perennial,
-DaisyNFS — verifies *functional correctness and crash safety* for a filesystem
-whose caller is a **benign** POSIX client; the adversary is power loss and
-concurrency. Exactly one system (SFSCQ/DiskSec) proves a security property
-(confidentiality), and none proves **authority confinement against a hostile
-caller**. h5i's problem is the dual of the classic one:
+The survey (§VF.9) points at where verified-filesystem effort has gone.
+Among the systems surveyed here — FSCQ, DFSCQ, Yggdrasil, Perennial,
+DaisyNFS — the target is *functional correctness and crash safety* for a
+filesystem whose caller is a **benign** POSIX client; the adversary is power
+loss and concurrency. One of them (SFSCQ/DiskSec) proves a security property,
+confidentiality, and among those surveyed none formulates **authority
+confinement against a hostile caller** (not a claim about the whole
+literature — VF.9 flags the systematic review owed before any external
+claim). h5i's problem is the dual of the classic one:
 
 - storage semantics can be *simple* — the box is disposable, so crash
   consistency is out of scope entirely (if the daemon dies, throw the box
@@ -5954,83 +5986,125 @@ invariant), no function-typed state fields, and the house no-mathlib rule.**
 Core state, sketched (final shapes land with the code):
 
 ```
-abbrev NodeId := Nat                    -- object identity; the inode
+abbrev NodeId := Nat            -- opaque model-internal identity, NOT an inode
 inductive NodeKind | file | dir | symlink (target : Path)
+structure Meta where            -- integrity is more than content (VF.3)
+  mode, uid, gid : Nat
+  suid, sgid, exec : Bool
+  nlink : Nat
+  xattrs : List (String × Nat)
 structure FsState where
-  nodes   : List (NodeId × NodeKind)    -- finite, sorted; NOT NodeId → _
-  entries : List ((NodeId × String) × NodeId)   -- dir/name ↦ child
+  nodes   : List (NodeId × NodeKind)          -- finite, sorted; NOT NodeId → _
+  entries : List ((NodeId × String) × NodeId) -- dir/name ↦ child; hardlink = two entries, one child
   content : List (NodeId × Nat)
-  base    : List NodeId                 -- the read-only snapshot (VF.6)
+  meta    : List (NodeId × Meta)
 ```
 
-Five things it must model, each because an attack needs it:
+`NodeId` is a model-internal identity, **not** a Linux inode number: inode
+numbers are unique only within a device and are reused, so when the model
+touches the host it does so through an `ObjectKey := MountId × DeviceId ×
+Inode × Generation?`, and equality of host objects is equality of keys, never
+of inode alone. The base snapshot is a `BaseProjection` — the nodes,
+directory entries, **and** metadata that must be invariant — not a bare
+`List NodeId`: an immutable base whose *contents* are pinned is still broken
+if a `base` directory entry can be renamed or unlinked.
 
-1. **Symlinks.** `/work/evil → /home/user/.ssh`. A naive string-prefix check
-   passes it; resolution lands outside the grant. Both facts are theorems,
-   so the counterexample is machine-checked, not asserted.
-2. **Hardlinks and rename.** The graph lets several paths name one `NodeId`,
-   so `/work/allowed` and `/secret/alias` can be the same object. This is why
-   rights must be reasoned about on **object identity**, not path — the
-   single most important structural difference from every kept file, which is
-   path-based.
+Five amplifiers it must model, each because an attack needs it:
+
+1. **Symlinks**, with every case that has bitten a real system spelled out,
+   not "symlinks": relative vs absolute targets, a symlinked *ancestor* (not
+   just final component), `.`/`..`, loops (fuel-bounded), the `/proc/self/fd`
+   magic-link family, and target resolution that crosses a mount. A naive
+   string-prefix check passes `/work/evil → /home/user/.ssh`; resolution
+   lands outside the grant. Both are machine-checked.
+2. **Hardlinks and rename.** Several entries name one `NodeId`, so
+   `/work/allowed` and `/secret/alias` are one object. Rights are reasoned
+   about on **object identity**, not path — the single most important
+   structural break from every kept file, which is path-based.
 3. **Ordered mounts and shadowing.** `/work` rw, then `/work/.claude/…` ro:
    reverse the mount order and the ro overlay becomes writable again. Not
    hypothetical — `home_binds_in_mount_order` in `sandbox.rs` sorts binds by
    hand to avoid exactly this, and the config-lock is a real ro-over-rw
    overmount. The verdict is `effectivePermission mounts path`, over the mount
    *order*, and the theorem is `protected → effectivePermission ≤ ReadOnly`.
-4. **Open file descriptors.** Open `~/.ssh/id_rsa`, then `restrict_self`, then
-   read from the saved fd. Landlock fixes rights at `open`; the restriction
-   does not revisit them. The model carries an fd table with rights, and the
-   setup invariant this forces is `NoForbiddenFd before exec`.
-5. **The setup state machine.** `Phase`, but the *real* setup order, not a
-   hypothetical install/run: `mount → close inherited fds → no_new_privs →
-   Landlock → seccomp → exec`. The transition to `exec` is permitted only when
-   every prior step's obligation holds. (This is where the retired
-   `Phase.lean` fd lesson comes back, attached to the actual pipeline.)
+4. **File descriptors as capabilities.** Open `~/.ssh/id_rsa`, then
+   `restrict_self`, then read from the saved fd. Landlock fixes rights at
+   `open`; the restriction does not revisit them. The model carries an fd
+   table with rights; the invariant is `NoForbiddenFd` on the **ready** state
+   (after setup closes fds), not on the initial one — a forbidden fd in the
+   *initial* state is fine if setup closes it, and only `FD_CLOEXEC` fds close
+   at exec on their own, so setup must either close explicitly or carry a
+   CLOEXEC invariant. Naming this as an initial-state condition would be
+   wrong.
 
-**Adversarial initial state is a quantifier, not a fixture.** The theorems
-range over an arbitrary `Adversarial initial : FsState` — the worktree the
-previous run left — not a fixed benign start. This is the half of the threat
-model the classic verified filesystems omit, and it is what makes the setup
-state machine's steps (symlinked-ancestor refusal, fd closing) do real work in
-the proof instead of unfolding to `True`.
+The **operation alphabet is fixed up front**, so nothing security-relevant
+hides in an unmodeled op: `lookup/open/read/write/truncate`,
+`create/mkdir/unlink/rmdir`, `rename/link/symlink`, `execute`,
+`chmod/chown/setxattr`, `dup` and fd-relative operations (`ftruncate`,
+`*at`), and `mmap` only if the daemon of VF.6 needs it. And Landlock is
+modeled with its **real** right set — `execute`, `read-file`/`read-dir`,
+`remove-file`/`remove-dir`, `make-*`, `refer`, `truncate`, ioctl-dev — not a
+two-symbol read/write, and the rights bound to an fd at open are distinguished
+from the rights checked per path.
+
+**The adversary acts during setup, not only before it.** The threat is TOCTOU:
+a symlink swapped between the check and the mount. So the model is not a fixed
+`initial` state plus attacker ops afterward, but an interleaved schedule —
+
+```
+inductive SetupEvent
+  | h5i      (op : SetupOp)          -- mount, close-fd, no_new_privs, restrict, …
+  | attacker (op : AllowedMutation)  -- what a worktree writer can do, between h5i's steps
+```
+
+— and the theorems quantify over an arbitrary well-formed adversarial
+`initial` **and** an arbitrary attacker interleaving. A model that only
+quantified over the starting state cannot even express the check-vs-mount race
+that is the entire runc-CVE class; this is the half of the threat model the
+classic verified filesystems omit, and it is what makes the setup steps
+(symlinked-ancestor refusal, fd closing, race-free mount construction — VF.5b)
+do real work instead of unfolding to `True`.
+
+The **setup state machine models the real order and names what it abstracts.**
+The actual `build_confined_command` path also sets up namespaces, an egress
+helper, a PID-namespace supervisor, private procfs, rlimits, and a
+notification listener, and `close_inherited_fds()` runs on a specific
+supervisor path. The v1 machine covers `mount → close inherited fds →
+no_new_privs → Landlock → seccomp → exec` and lists the steps it omits, rather
+than implying the abstraction is the whole pipeline.
 
 ## VF.3. The theorems, integrity before confidentiality
 
-Integrity first: it is a comparison of final states (easy to falsify, easy to
-state) where confidentiality first drags in an observation model. The central
-theorem:
+Integrity before confidentiality, because integrity needs no observation
+model. But the central theorem is **not** final-state equality — that misses
+the write-then-restore attack, where a forbidden object is changed and put
+back. It is **trace-level authority safety**: every effect a trace produces is
+one the policy permits.
 
 ```
-theorem sandbox_integrity
-    (hadv   : Adversarial initial)
-    (hsetup : ValidSetup config initial)
-    (hrun   : Runs config initial attackerActions final)
-    (houtside : obj ∉ writableObjects config) :
-    final.content obj = initial.content obj
+theorem every_effect_authorized
+    (hadv   : Adversarial initial)                 -- any hostile worktree
+    (hsetup : setup config initial sched = .ready ready)  -- setup accepted
+    (hrun   : Runs ready attackerTrace final) :
+    ∀ e ∈ effectsOf attackerTrace, PolicyAllows policy e
 ```
 
-"Under any adversarial start and any trace of attacker operations, no object
-outside the writable grants changes." Then, using DiskSec's sealed-content
-trick (treat secret contents as opaque so confidentiality factors out of the
-functional reasoning):
+`ProtectedProjection` equality — that no object outside the writable grants
+changes — is then a **corollary**, and it must project more than content:
+integrity is broken content-unchanged by a `rename`, an `unlink`, a `chmod`,
+or an xattr edit. The projection pins content **and** directory entries,
+ownership/mode/executable bit, link count, symlink target, and the relevant
+xattrs.
 
-```
-theorem sandbox_confidentiality
-    (hrun : Runs config initial actions final) :
-    observedObjects actions ⊆ readableObjects config
-```
+Two framings that keep the theorem from being vacuous:
 
-And the setup-level composition the validator cites:
-
-```
-theorem successful_exec_is_confined :
-  ReachesExec config initial trace →
-      NoForbiddenFd initial
-    ∧ EffectiveWrites config ⊆ DeclaredWrites config
-    ∧ EffectiveReads  config ⊆ DeclaredReads  config
-```
+- **Setup is executable and total: reject-or-confine.** Not a `ValidSetup`
+  hypothesis (which lets the theorem hold whenever setup is impossible), but a
+  function that returns `.rejected` or a `.ready` state, with
+  `setup_rejects_or_confines : setup config initial sched = .ready r →
+  ReadyStateSafe policy r`. An adversary that can force setup to a state the
+  theorem does not cover forces a *rejection*, not a silent pass.
+- **The fd condition is on `ready`/`ExecState`, never `initial`** (VF.2).
 
 **The attack menu is the specification.** Each item is entered first as a
 counterexample against a deliberately-weak setup, then defeated by adding the
@@ -6040,78 +6114,160 @@ unfolding definitions:
 | # | Attack | Defense the theorem forces |
 |---|--------|----------------------------|
 | 1 | string-prefix path escape | resolve, then judge the resolved object |
-| 2 | symlink escape | resolution follows links, verdict at the target |
-| 3 | pre-opened fd past a restriction | `NoForbiddenFd` before exec |
-| 4 | parent-allow / child-deny unrepresentable | per-object rights, not per-prefix |
+| 2 | symlink / symlinked-ancestor escape | resolution follows links, verdict at the target |
+| 3 | pre-opened fd past a restriction | `NoForbiddenFd` on `ready`, explicit close or CLOEXEC |
+| 4 | parent-allow / child-deny | per-object rights in the ideal model; validator **rejects as unrepresentable** on a backend that can't express it (below) |
 | 5 | rw mount shadows a ro overlay | `effectivePermission` over mount order |
-| 6 | rename/hardlink authority amplification | rights on `NodeId`, not path |
-| 7 | exec with a security step missing | setup machine gates the exec edge |
+| 6 | rename/hardlink authority amplification | rights on `ObjectKey`, not path |
+| 7 | check-vs-mount TOCTOU during setup | race-free mount construction (VF.5b), interleaving-quantified |
+
+**Ideal semantics and backend expressiveness are separate layers.** Attack #4
+is where this bites: per-object rights in the H5iFs *ideal* model do not make
+a "parent readable, one child denied" policy *implementable* on the Landlock
+backend, which grants over path-beneath scopes and has no deny rule. So the
+validator carries a representability check: a source policy the selected
+backend cannot express is **rejected as unrepresentable**, never compiled to
+something weaker and reported as enforced. This is the filesystem instance of
+the project-wide rule that nothing unenforceable is rendered as enforced.
+
+**Confidentiality is later, and stated as noninterference, not object
+inclusion.** "The trace only touched readable objects" is too weak: what
+leaks is not the object set but the *observations* — read results, error
+codes (ENOENT vs EACCES distinguishes existence), and metadata. The honest
+form is two-run: `LowEquivalent policy init₁ init₂ → observations trace₁ =
+observations trace₂`, over an observation function that includes responses,
+content, errors, and metadata. DiskSec's sealed-content factoring is a
+**candidate** technique to keep this tractable, not a given — H5iFs has path,
+error, and metadata channels DiskSec's block model did not, so its
+applicability is something VF's confidentiality step must establish, not
+assume.
 
 ## VF.4. The payoff: a per-run translation validator
 
 The H5iFs model is not a separate toy; it is the **semantics of a validator on
-the real dump.** The existing `policy.effective.json` (V2) plus a *mount
-manifest* (the ordered mounts + classes the backend was actually handed) feed a
-decidable checker:
+the real plan.** The existing `policy.effective.json` (V2) plus a *mount
+manifest* (the ordered mounts + classes the backend was handed) feed a
+decidable checker. Its effects are **filesystem** effects only — `Read p`,
+`Write p`, `Execute p`, `Remove p`, `Create p` — so `≤ ReadOnly`,
+deny-not-circumvented, and writable-set-limited are expressible;
+`Connect`/`ReceiveSecret` are **out of scope here** and belong to a future
+`AuthorityEffect` layer that composes an fs checker with network/secret
+checkers. And its world input is not the whole host filesystem (unenumerable)
+but a finite `WorldEvidence`:
 
 ```
-def validate (policy : SourcePolicy) (cfg : EffectiveConfig)
-             (mounts : MountManifest) (world : World) : Bool
+structure WorldEvidence where            -- what the harness measured, not the whole FS
+  paths     : List (Path × ObjectKey)    -- relevant paths and their measured identity
+  symlinks  : List (Path × Path)         -- link → target facts
+  mounts    : List MountFact
+  complete  : CompletenessWitness        -- the closure condition making the finite set sufficient
+
+def validate (policy : SourcePolicy) (plan : EffectivePlan)
+             (ev : WorldEvidence) : ValidateResult    -- .ok | .rejected reason
 
 theorem validate_sound :
-  validate policy cfg mounts world = true →
-  ∀ act, ConfigAllows cfg mounts world act → PolicyAllows policy world act
+  validate policy plan ev = .ok →
+  ∀ e, PlanAdmits plan ev e → PolicyAllows policy e
 ```
 
-Effects are real actions — `Read p`, `Write p`, `Execute p`, `Connect (h,port)`,
-`ReceiveSecret n` — not bare path sets, so `≤ ReadOnly`, deny-not-circumvented,
-and writable-set-limited are all expressible.
+Deployment (settled points from the design discussion, carried here so they
+are not relitigated):
 
-Deployment (settled points from the design discussion, carried here so they are
-not relitigated):
-
-- **Execution shape.** CI runs the *real Lean checker* over every generated
-  case; the product binary carries a **Rust port** of the same checker and
-  writes its verdict to the receipt; the two are held together by a
-  **checker-level** DRT (`interferes_drt` is the template — small surface,
-  strong sampling). This avoids putting the Lean toolchain on the release
-  path while keeping the proof connected to shipped output.
+- **Execution shape, stated without contradiction.** What runs *per run* is
+  the **unproven Rust port** of the checker; it writes its verdict to the
+  receipt. The proof lives in CI: the **real Lean checker** runs over every
+  generated case, and a **checker-level DRT** (`interferes_drt` is the
+  template — small surface, strong sampling) holds the port to it. So the
+  honest phrasing is "the shipped plan conforms, per run, to a Lean-proved
+  specification, checked by a Rust port that CI differential-tests against the
+  proof" — **not** "a machine-checked proof runs on every run." The residual
+  trust is the port; the DRT is its control, not its proof. (The stronger
+  option — compile the Lean checker and run *it* pre-exec — stays open in
+  VF.7 if the port's residual trust proves unacceptable.)
 - **Fail-closed by type.** The plan is a `ValidatedPlan` typestate: `spawn`
   accepts only a validated plan, so "the run went through the validator" is a
   Rust type obligation, and `validate_sound` is what the type is worth. This
-  is the cheap, correct half of complete mediation; the other half (that the
-  kernel actually realized the plan) is §VF.5.
+  is the cheap half of mediation; that the kernel *realized* the plan is VF.5.
 - **Parse the real output.** The checker reads the *emitted* argv/rule text
   where it can (the msb/Seatbelt argument strings), not just the in-memory
   struct, so a serializer bug can't slip past — the Kata `source=/` injection
   is the cautionary case.
-- **Receipt.** `validated=true`, the policy and effective digests, the
-  checker version, the backend, and the per-claim booleans
-  (`fs_subset`, `writes_confined`, `cache_readonly`, `no_shared_writable`),
-  rendered in `box status` the way the console already counts receipts.
-- **Network, honestly.** The check is not just "egress subset"; it is "this
-  backend can *represent* this constraint at all." The enforcement point
-  differs per tier (kernel: nft + egress proxy; microvm: msb's coarser
-  on/off; macOS: SBPL carries no network proof), so an unrepresentable
-  constraint is refused or marked unenforced in the receipt — never rendered
-  as enforced. No silent tier downgrade.
+- **Receipt.** `validated=ok`, the policy and plan digests, the checker
+  version, the backend, and the per-claim booleans (`fs_subset`,
+  `writes_confined`, `cache_readonly`), rendered in `box status` the way the
+  console already counts receipts.
+- **`no_shared_writable` is not a single-run property.** Whether a box shares
+  a writable-readable path with *another* live box can only be decided against
+  all live boxes, under a global lock or an atomic registry snapshot at box
+  create/exit — otherwise two boxes race into a shared `/tmp` between their
+  checks. It is a cross-box obligation on the registry, reported separately,
+  not a field the per-run validator can set alone.
+- **Backend representability, honestly.** The check is not "egress subset" but
+  "can this backend *represent* this constraint at all." Enforcement points
+  differ per tier (kernel: nft + egress proxy; microvm: msb's coarser on/off;
+  macOS: SBPL carries no network proof), so an unrepresentable constraint is
+  rejected or marked unenforced — never rendered as enforced. No silent tier
+  downgrade.
 
-## VF.5. Complete mediation: plan-check plus final-state audit
+## VF.5. Mount realization audit: plan-check plus a read-back
 
 `validate_sound` says "the plan is safe"; it does not say "the kernel realized
-the plan." For mechanisms whose output is a syscall stream (Landlock rulesets,
-mounts) there is no argv to re-parse, so the plan-checker leaves a gap — the
-same serializer-bug class, one layer down. Close it with a **final-state
-auditor**: after setup, before `exec`, the supervisor reads the child's
-`/proc/<pid>/mountinfo`, reconstructs the realized mount set, and diffs it
-against the `ValidatedPlan`; a mismatch aborts the launch and lands in the
-receipt. The auditor and the validator share the H5iFs semantics — one checks
-the plan, the other checks reality — and together they turn the whole TOCTOU
-class (runc's 2025 CVEs) from "prevent perfectly" into "detect and fail
-closed." Symlink races proper are still not *prevented* by any theorem; the
-setup code prevents them by construction (openat2 `RESOLVE_NO_SYMLINKS`/
-`RESOLVE_BENEATH`, fd-relative operations — §VF.7), and the auditor is the net
-under that discipline.
+the plan." For mechanisms whose output is a syscall stream (mounts, Landlock
+rulesets) there is no argv to re-parse, so the plan-checker leaves a gap — the
+serializer-bug class, one layer down. Narrow it with a **mount realization
+audit**: after setup, before `exec`, the supervisor reads back the child's
+realized state and diffs it against the `ValidatedPlan`; a mismatch aborts the
+launch and lands in the receipt.
+
+Two honest bounds on what this buys, because "complete mediation" would
+overstate it:
+
+- **It is a mount-topology/identity audit, not a full mediation.**
+  `/proc/<pid>/mountinfo` exposes mount ID, parent, major/minor, mount root,
+  mount point, and ro/nosuid/nodev/noexec/propagation flags — it does **not**
+  expose the installed Landlock ruleset or seccomp filter. So the audit
+  catches mount-topology, flag, and source-identity mismatches; it does not
+  read back the fs-grant enforcement itself.
+- **It detects a large slice of the TOCTOU class, not all of it.** It turns
+  mount-swap and masked-path realizations (the shape of runc's 2025 CVEs)
+  from "prevent perfectly" into "detect and fail closed," but a symlink race
+  that leaves mount topology unchanged, or a shared source mutated after the
+  read-back, is not caught here — those are prevented by construction in
+  VF.5b, and the audit is the net under that discipline, not a substitute.
+
+To make it worth its name the audit reads more than `mountinfo`: mount ID and
+parent, major/minor, mount root, ro/rw and nosuid/nodev/noexec, propagation
+flags, per-target object identity via `statx`/`fdinfo`, the inherited-fd
+inventory, `NoNewPrivs`, and the seccomp mode. It shares the H5iFs semantics
+with the validator — one checks the plan, the other checks what was realized.
+
+**The audit needs an explicit exec barrier.** Today `Command::pre_exec` runs
+setup and then execs in the same breath, with no point for a second party to
+look. So the design adds a handshake: the child completes setup and **stops**
+(a `SIGSTOP` or a blocking wait on a pipe), the supervisor performs the audit,
+and only on success sends *go*; on mismatch it kills the child. Without this
+barrier "audit before exec" has nowhere to stand.
+
+## VF.5b. Race-free mount construction
+
+The audit is a net; prevention is the floor under it, and it belongs in the
+setup code, not in a theorem. Two disciplines:
+
+- **Resolution.** Every path the privileged setup opens on the adversarial
+  worktree goes through `openat2` with `RESOLVE_NO_SYMLINKS` and
+  `RESOLVE_BENEATH`, then fd-relative operations only — no second lookup of a
+  path already checked. This is what closes the check-vs-mount window at the
+  resolution layer.
+- **Mount by handle.** `openat2` alone does not remove races in path-based
+  `mount(2)`, whose source and destination are re-resolved by string. Where
+  the kernel allows, setup uses the fd-based mount API — `open_tree` to hold a
+  mount subtree as an fd, `mount_setattr`, `move_mount` — so the object
+  mounted is the object checked, by descriptor identity, not by re-walked
+  path.
+
+The setup state machine (VF.2) treats these as obligations on its mount steps;
+VF.5's interleaving quantifier is what turns "we call `openat2`" into a
+property that survives an attacker acting between the steps.
 
 ## VF.6. Optional product: `verified-cow` workspace backend
 
@@ -6130,17 +6286,39 @@ Constrained from the start, which is what makes it tractable: base read-only,
 writes only to the delta, nothing outside `/work` representable, no device
 nodes, no setuid/setgid, no dangerous xattrs, symlinks confined to the
 workspace, host paths never re-resolved per request, output is a git patch.
-Disposability again pays: a crashed daemon means a discarded box, so the
-field's dominant cost (crash recovery) is simply absent.
+
+Crash safety, stated precisely, because "no crash safety, ever" is too broad:
+the disposable **delta** carries no durability or recovery guarantee (a
+crashed daemon means a discarded box), but "a daemon crash cannot corrupt the
+immutable base or touch the host" is a **safety requirement that holds across
+crashes**, not something disposability waives.
+
+**Concurrency is not merely deferred — it is designed out of v1.** A FUSE
+backend cannot ship as "sequential model, concurrency out of scope": the
+daemon serves concurrent requests. The v1 daemon serializes every request
+through a single queue and makes that serialization point the model boundary
+(the DaisyNFS move — concentrate concurrency in one place), and the FUSE
+cache, writeback, and mmap paths are disabled or restricted so there is no
+second, unmodeled ordering.
 
 The executable core is `handle : FsState → Request → Except Err (FsState ×
 Response × List StorageEffect)`, with `handle_preserves_wellformed`,
-`effects_are_authorized`, and `immutable_base_unchanged`. The honest label is
-**"Lean-verified filesystem authorization and state-transition core,"** not
-"fully verified filesystem": a small unverified Rust adapter still translates
-FUSE requests to `Request`s, and that adapter must be starved of ambient
-authority (only the base/delta fds, `Landlock`ed to nothing else, no
-path-opening API) and fuzzed at the protocol layer.
+`effects_are_authorized`, and `immutable_base_unchanged` (over the
+`BaseProjection`, not content alone). The honest label is **"Lean-verified
+filesystem authorization and state-transition core,"** not "fully verified
+filesystem", and not "verified backend" at all until it is settled *how* the
+core executes — Lean-generated core, Rust port under DRT, or Verus (VF.7) —
+each of which licenses a different claim. The unverified Rust adapter that
+translates FUSE requests to `Request`s must hold no ambient authority beyond
+the base/delta fds and whatever pre-opened control fds it needs (`Landlock`ed
+to exactly those, no path-opening API), and is fuzzed at the protocol layer.
+
+**Patch export is its own security boundary.** The output is a git patch
+applied on the host, and `git apply` has traversed outside the working tree
+via a patch that creates a symlink then writes through it (CVE-2023-23946). So
+export is not an afterthought: a safe exporter/validator, with
+`exported_effects_confined` — every effect an applied patch produces stays
+within `/work` and follows no symlink out of it — before any host apply.
 
 **This backend does not change the current UX or default.** Live host sharing
 of the disposable worktree stays the default; `verified-cow` is the
@@ -6166,12 +6344,16 @@ deliberate when it arrives.
   read today: Lean for semantics/validator; revisit Verus at the daemon stage
   so the executable core has no extraction gap. Not decided now.
 
-Also settled, so it is not reopened: **no crash safety, ever** (disposable
-boxes); **no in-process phase system** (Landlock only narrows, the wanted
-direction is widening, which belongs to a broker or a second box, and an exec
-boundary closes fds for free); **no verified microVM/VMM** (SeKVM/VeriSMo
-scale for the wrong surface — the real microVM CVEs are virtiofsd and config
-injection, which the validator's mount-manifest check covers instead).
+Also settled, so it is not reopened: **no delta crash-recovery** (disposable
+boxes; base+host confinement still holds across crashes — VF.6); **no
+in-process phase system** (Landlock only narrows, the wanted direction is
+widening, which belongs to a broker or a second box; an exec boundary closes
+only `FD_CLOEXEC` fds, so the transition still needs an explicit close
+discipline — VF.2); **no verified microVM/VMM** (SeKVM/VeriSMo scale for the
+wrong surface — the microVM/container escape vulnerabilities *relevant here*
+are filesystem-sharing and configuration bugs, virtiofsd and `source=/`
+injection among them, which the validator's mount-manifest check addresses;
+this is not a claim that VMM-side vulnerabilities do not exist).
 
 ## VF.8. What is not modeled, stated up front
 
@@ -6195,38 +6377,49 @@ The trusted base, same spirit as V5 and section 9:
 
 ## VF.9. Related work this rests on
 
-The survey that reset the direction (2026-08-16), grouped by what it teaches
-here:
+The survey that reset the direction (2026-08-16). Each entry states what the
+work *proves* and how H5iFs differs, so it is not read as "we do what they do,
+harder":
 
-- **Crash safety is the cost this design refuses to pay.** FSCQ (SOSP'15,
-  Crash Hoare Logic), DFSCQ (SOSP'17), Yggdrasil (OSDI'16, push-button).
-  BilbyFs's 13:1 proof-to-code ratio is the number that justifies dropping it.
-- **Concurrency is deferrable, and how.** Perennial/GoJournal and DaisyNFS
-  (OSDI'22): confine concurrency and crash to one verified transaction layer,
-  reason sequentially above it. Also the boundary-choice lesson (VF.7).
-- **Confidentiality has a factoring trick.** SFSCQ/DiskSec (OSDI'18): the only
-  prior machine-checked FS security proof; sealed blocks let confidentiality
-  be proved without threading through the functional proof — imported for
-  `sandbox_confidentiality`.
-- **Executable spec as a test oracle.** SibylFS (SOSP'15) and Metis/RefFS
-  (FAST'24): a reference model differential-tested against real filesystems.
-  H5iFs executable ⇒ it is the oracle for the attack suite against live
-  backends, before any daemon exists.
-- **The extraction-gap escape.** Verus (SOSP'24; OSDI'24 best papers;
-  Atmosphere SOSP'25): verify shipping Rust directly. The VF.7 decision point.
-- **The threat this targets is real and recent.** runc 2025 breakouts
+- **FSCQ (SOSP'15), DFSCQ (SOSP'17), Yggdrasil (OSDI'16).** Prove functional
+  correctness and crash consistency of a real FS against a benign caller.
+  H5iFs proves neither — it drops crash safety entirely and targets authority
+  under a hostile caller. Their cost is the point: BilbyFs's 13:1
+  proof-to-code ratio, almost all crash/refinement, is what dropping it buys.
+- **Perennial/GoJournal, DaisyNFS (OSDI'22).** Prove a concurrent, crash-safe
+  FS by confining concurrency and crash to one verified transaction layer and
+  reasoning sequentially above it. H5iFs borrows the *technique* (serialize at
+  one boundary, VF.6) and the boundary-choice lesson (VF.7), not the crash or
+  concurrency proofs.
+- **SFSCQ/DiskSec (OSDI'18).** Proves confidentiality (data noninterference)
+  for a FS via sealed blocks. Closest in spirit; differs in caller model
+  (benign) and in channels (block contents, where H5iFs also has path, error,
+  and metadata channels — VF.3). Its factoring is a *candidate*, not imported.
+- **SibylFS (SOSP'15), Metis/RefFS (FAST'24).** Executable reference model
+  differential-tested against real filesystems (no theorem about a caller).
+  H5iFs being executable ⇒ it is the oracle for the attack suite against live
+  backends before any daemon exists — the same use, an adversarial corpus.
+- **Verus (SOSP'24; two OSDI'24 best papers; Atmosphere SOSP'25).** Verifies
+  shipping Rust directly, closing the extraction gap. The VF.7 decision point
+  for the daemon; not adopted for the semantics/validator layers.
+- **WaVe (S&P'23).** Verifies a sandbox runtime's syscall boundary
+  (memory/fs/network isolation) with an explicit OS spec, but no
+  filesystem-*state* semantics. H5iFs is the missing fs-state model under a
+  claim like WaVe's.
+- **The threat, real and recent.** runc 2025 breakouts
   (CVE-2025-31133/52565/52881, masked-path and mount races), CVE-2021-30465
   (symlink-exchange mount swap), virtiofsd (CVE-2020-35517 device nodes,
   CVE-2022-0358 SGID, Kata CVE-2026-44210 `source=/` injection), git
-  CVE-2023-23946 (`git apply` symlink traversal — the export-side boundary in
-  VF.6). None is a policy-compilation bug; all live in exactly the
-  filesystem-authority surface H5iFs models.
+  CVE-2023-23946 (`git apply` symlink traversal — the export boundary, VF.6).
+  None is a policy-compilation bug; all live in the filesystem-authority
+  surface H5iFs models.
 
-The novel claim, positioned: verified filesystems assume a benign caller;
-sandbox-runtime verification (WaVe, S&P'23) checks a syscall boundary with no
-filesystem-state semantics. **Authority confinement for a disposable
-workspace filesystem under an adversarial caller, with the model doubling as a
-per-run validator on shipped output, is open ground.**
+The positioning, stated as a search result rather than a proof of absence:
+**we have not found prior work combining authority confinement for a
+disposable workspace filesystem under an adversarial caller with a model that
+doubles as a per-run validator on shipped output.** A systematic literature
+review is owed before that is claimed externally; VF.1's "among systems
+surveyed here" hedge stands until it is done.
 
 ## VF.10. The order
 
@@ -6234,8 +6427,9 @@ per-run validator on shipped output, is open ground.**
    mounts, fd table, setup state machine — built as the validator's semantics
    module from line one, not a standalone toy. Absorb `Predict.lean`'s
    resolver. Exit: the 7 attacks (VF.3) are each expressible as a
-   counterexample against a weak setup, and `sandbox_integrity` holds over an
-   adversarial initial state once the defenses are in. Theorems check in CI.
+   counterexample against a weak setup, and `every_effect_authorized` holds
+   over an adversarial initial state and attacker interleaving once the
+   defenses are in. Theorems check in CI.
 2. **The mount manifest + validator.** Extend `EffectiveConfig` with ordered
    mounts and classes; write `validate` + `validate_sound`; run the real Lean
    checker over CI cases; the first two claims (`writes_confined`,
@@ -6246,15 +6440,21 @@ per-run validator on shipped output, is open ground.**
    receipt; differential-test it against the Lean checker (`interferes_drt`
    pattern). Exit: zero mismatches over the sweep; receipt renders in
    `box status`.
-4. **The final-state auditor.** `mountinfo` diff against the `ValidatedPlan`
-   before exec, sharing the H5iFs semantics; abort-and-record on mismatch.
-   Exit: a planted mount/symlink mismatch is detected and fails the launch on
-   a real process-tier box (the probe harness, generalized).
-5. **`verified-cow` spike (optional).** Stage-1 read-only FUSE prototype over
-   base+delta, executable core reusing the H5iFs `handle`. Exit: `box diff`
-   shows agent edits through the overlay; a hold/go decision on the
-   Lean-vs-Verus boundary (VF.7) with the daemon's real shape in hand. No
-   commitment past this without it.
+4. **The mount realization audit + exec barrier.** Read-back diff against the
+   `ValidatedPlan` before exec (VF.5), behind the stop/audit/go handshake,
+   sharing the H5iFs semantics; abort-and-record on mismatch. Exit: a planted
+   mount mismatch is detected and fails the launch on a real process-tier box
+   (the probe harness, generalized).
+5. **`verified-cow` spike (optional), two stages.**
+   *Stage 1:* read-only FUSE prototype over base+delta, executable core
+   reusing `handle`; the agent can build and test but not write. Exit: source
+   reads and a build run through the overlay.
+   *Stage 2:* writable copy-on-write, single-queue serialized; agent edits
+   land in the delta and surface in `box diff`; patch export behind
+   `exported_effects_confined`. Exit: `box diff`/`box export` round-trips a
+   real edit safely, and a hold/go decision on the Lean-vs-Verus boundary
+   (VF.7) with the daemon's real shape in hand. No commitment past this
+   without it.
 
 Step 1 is the first thing worth writing up on its own, and the first that is
 honest about being attack-driven rather than definition-driven. Everything
