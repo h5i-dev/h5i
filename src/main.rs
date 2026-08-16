@@ -101,6 +101,17 @@ enum Commands {
         /// box set itself are ever sent back to it.
         #[arg(long)]
         shared_jar: bool,
+        /// Serve on this loopback address instead of a random `127.x.y.z`.
+        ///
+        /// The address is bound exactly — no fallback — and only loopback
+        /// (`127.0.0.0/8`) is accepted. This is the WSL answer: Windows
+        /// forwards only `127.0.0.1` into the VM, so the private address a
+        /// join normally picks binds fine and is then unreachable from a
+        /// Windows browser. `--bind 127.0.0.1` counts as shared-jar consent
+        /// by itself and carries the same cookie caveats as --shared-jar;
+        /// any other loopback address keeps a cookie jar of its own.
+        #[arg(long, value_name = "ADDR")]
+        bind: Option<std::net::Ipv4Addr>,
     },
 
     /// Write or print the agent skill this binary carries.
@@ -270,7 +281,8 @@ fn main() -> anyhow::Result<()> {
             ticket,
             port,
             shared_jar,
-        } => cli::share::join(&ticket, port, shared_jar)?,
+            bind,
+        } => cli::share::join(&ticket, port, bind, shared_jar)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
         Commands::Man => cli::man::run()?,

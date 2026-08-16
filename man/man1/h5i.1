@@ -930,7 +930,7 @@ Open a box someone else is sharing, from a ticket they sent you
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBjoin\fR [\fB\-\-port\fR] [\fB\-\-shared\-jar\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITICKET\fR> 
+\fBjoin\fR [\fB\-\-port\fR] [\fB\-\-shared\-jar\fR] [\fB\-\-bind\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITICKET\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -944,6 +944,11 @@ Join even when the only address left is `127.0.0.1`.
 Each join normally gets a loopback address of its own, because a browser\*(Aqs cookie jar is scoped by host and ignores the port. On `127.0.0.1` the jar is shared with every local service you run, so the token this proxy sets is sent to any of them you visit while joined \(em and that token reaches the box. macOS configures only `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
 
 Your own cookies are not the other half of this: they are filtered on a shared jar whether or not you pass this, and only cookies the box set itself are ever sent back to it.
+.TP
+\fB\-\-bind\fR \fI<ADDR>\fR
+Serve on this loopback address instead of a random `127.x.y.z`.
+
+The address is bound exactly \(em no fallback \(em and only loopback (`127.0.0.0/8`) is accepted. This is the WSL answer: Windows forwards only `127.0.0.1` into the VM, so the private address a join normally picks binds fine and is then unreachable from a Windows browser. `\-\-bind 127.0.0.1` counts as shared\-jar consent by itself and carries the same cookie caveats as \-\-shared\-jar; any other loopback address keeps a cookie jar of its own.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)

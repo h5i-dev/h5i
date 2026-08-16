@@ -408,6 +408,7 @@ The other side runs:
 h5i join h5i1_eyJ2IjoxLCJib3hf…
 h5i join -                            # the same, with the ticket on stdin
 h5i join - --shared-jar               # on a machine with only 127.0.0.1 to offer
+h5i join - --bind 127.0.0.1           # WSL: the only loopback Windows can reach
 ```
 
 The share needs a live session of the box to dial into, not a live dev server.
@@ -457,6 +458,17 @@ join` refuses that jar unless you pass `--shared-jar`. If you would rather not,
 `sudo ifconfig lo0 alias 127.0.0.2` gives h5i an address to take instead, which
 lasts until you reboot. Keep that one for h5i: an address you also run your own
 services on is a jar shared with them, and h5i cannot tell why it is there.
+
+WSL is the case where the private address works against you. Windows forwards
+only `127.0.0.1` into the VM, so the address a join picks binds fine, the P2P
+path comes up, and the URL is still dead in every Windows browser: nothing on
+the Linux side fails. `h5i join` prints a warning when it sees this. The answer
+is `--bind 127.0.0.1`, which binds that address exactly and counts as
+shared-jar consent on its own, with the same cookie filter and the same
+caveats as `--shared-jar`. Any other loopback address given to `--bind` keeps
+a jar of its own. An address outside `127.0.0.0/8` is refused outright: the
+proxy is a door for one browser on this machine, never a way to republish the
+box to the network.
 
 Two things the joining proxy refuses outright. A service worker registration,
 because one would keep control of that address after the share ended. And a
