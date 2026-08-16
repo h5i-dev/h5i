@@ -40,7 +40,7 @@ pub enum BrowserCommands {
 }
 
 pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
-    let repo = git2::Repository::discover(".")?;
+    let repo = super::discover_repo("h5i browser")?;
     let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
 
     let dir_of = |name: &str| -> anyhow::Result<std::path::PathBuf> {

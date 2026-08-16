@@ -9,7 +9,7 @@ use console::style;
 pub fn run(port: u16, open: bool) -> anyhow::Result<()> {
     // Discover from the cwd so the console shows the fleet of the repository
     // the human is standing in, exactly like every other verb.
-    let repo = git2::Repository::discover(".")?;
+    let repo = super::discover_repo("h5i ui")?;
     let repo_path = repo
         .workdir()
         .ok_or_else(|| anyhow::anyhow!("h5i ui requires a non-bare repository"))?

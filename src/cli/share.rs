@@ -138,7 +138,7 @@ fn parse_expire(s: &str) -> anyhow::Result<Duration> {
 }
 
 fn root() -> anyhow::Result<(git2::Repository, std::path::PathBuf)> {
-    let repo = git2::Repository::discover(".")?;
+    let repo = super::discover_repo("h5i box share")?;
     let root = h5i_core::storage::h5i_root_for_repo(&repo)?;
     Ok((repo, root))
 }
