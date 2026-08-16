@@ -131,6 +131,17 @@ pub fn validate(pol: &Policy, fs: &FsState, plan: &EffectivePlan) -> bool {
         && writable.iter().all(|o| pol.may_write.contains(o))
 }
 
+/// Whether the filesystem-authority validator runs at all. **Fully opt-in**:
+/// unset means the validator never executes — no computation, no host
+/// measurement, no manifest field, no gate — so default behavior is exactly as
+/// before this code existed. Set `H5I_FS_AUTHORITY_ENFORCE=1` to compute the
+/// verdict at box create and run, record it, and fail closed on a violation
+/// (ROADMAP.md §VF.4, the §V4 gating discipline: earn trust before it gates by
+/// default).
+pub fn enforce_enabled() -> bool {
+    std::env::var_os("H5I_FS_AUTHORITY_ENFORCE").is_some_and(|v| v == "1")
+}
+
 /// The per-run verdict on a shipped effective config, one boolean per claim
 /// (ROADMAP.md §VF.4). Recorded in the box manifest and rendered in
 /// `box status`.

@@ -6488,11 +6488,15 @@ surveyed here" hedge stands until it is done.
    verdict is recorded in the `EnvManifest` (`fs_authority`), rendered in
    `box status` (the `authorit:` line) and the console badge
    (`authority_unconfined` colors the verdict). The gate lives at the single
-   spawn chokepoint (`build_confined_command`, after `compute_effective`): it
-   **fails closed** on `!confined()` — an invariant a legit config always
-   passes, verified by the real `home_bind_shadows` confined-run test — so a
-   run cannot bypass validation; a symlink escape is warned and recorded while
-   the host-measurement check earns trust (the §V4 gating discipline).
+   spawn chokepoint (`build_confined_command`, after `compute_effective`) and,
+   when active, **fails closed** on `!confined()` — an invariant a legit config
+   always passes, verified by the real `home_bind_shadows` confined-run test —
+   so a run cannot bypass validation. **Fully opt-in for now** (`enforce_enabled`,
+   env `H5I_FS_AUTHORITY_ENFORCE=1`): with it unset — the default — the
+   validator never runs (no host measurement, no manifest field, no gate, zero
+   overhead), so default behavior is byte-for-byte as before this work. This is
+   the §V4 gating discipline made explicit: the new gate earns trust opt-in
+   before it ever becomes the default.
    **Honest gap:** the production check resolves via OS `canonicalize`, not the
    proved `FsState.resolve`; feeding a measured `FsState` through the proved
    `validate` (fully closing model↔production, and the finite-evidence

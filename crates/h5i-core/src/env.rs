@@ -2048,7 +2048,7 @@ pub fn create(
     crate::view::ensure_token(&dir)?;
 
     let (effective_digest, fs_authority) = match write_effective_baseline(&policy, &dir, &work_path)? {
-        Some((digest, verdict)) => (Some(digest), Some(verdict)),
+        Some((digest, verdict)) => (Some(digest), verdict),
         None => (None, None),
     };
 
@@ -2119,7 +2119,7 @@ fn write_effective_baseline(
     policy: &ResolvedPolicy,
     env_dir: &Path,
     work: &Path,
-) -> Result<Option<(String, crate::fs_authority::AuthorityVerdict)>, H5iError> {
+) -> Result<Option<(String, Option<crate::fs_authority::AuthorityVerdict>)>, H5iError> {
     let Some(shape) = crate::effective::captured_run_shape(policy.claim, &policy.profile) else {
         return Ok(None);
     };
@@ -2132,7 +2132,10 @@ fn write_effective_baseline(
         &shape,
     );
     let digest = cfg.write_to(&env_dir.join(crate::effective::EFFECTIVE_CONFIG_FILE))?;
-    let verdict = crate::effective::validate_effective(policy, &work, &cfg);
+    // Opt-in only (§VF.4): with `H5I_FS_AUTHORITY_ENFORCE` unset, no verdict is
+    // computed or recorded, so the manifest is byte-for-byte as before.
+    let verdict = crate::fs_authority::enforce_enabled()
+        .then(|| crate::effective::validate_effective(policy, &work, &cfg));
     Ok(Some((digest, verdict)))
 }
 
@@ -2141,7 +2144,7 @@ fn write_effective_baseline(
     _policy: &ResolvedPolicy,
     _env_dir: &Path,
     _work: &Path,
-) -> Result<Option<(String, crate::fs_authority::AuthorityVerdict)>, H5iError> {
+) -> Result<Option<(String, Option<crate::fs_authority::AuthorityVerdict>)>, H5iError> {
     Ok(None)
 }
 
