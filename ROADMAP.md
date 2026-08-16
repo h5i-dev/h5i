@@ -6430,6 +6430,17 @@ surveyed here" hedge stands until it is done.
    counterexample against a weak setup, and `every_effect_authorized` holds
    over an adversarial initial state and attacker interleaving once the
    defenses are in. Theorems check in CI.
+   **Partly built, 2026-08-16.** `Core` (object graph + symlink-aware,
+   fuel-bounded resolution + well-formedness), `Mount` (ordered mounts,
+   `effectivePermission`, top-mount lemma), and `Fd` (descriptors as
+   capabilities, `closeForbidden` invariant with two proved lemmas) are in and
+   checked by `lake build` (H5iFs is a default target). `Attacks` machine-
+   checks five amplifiers by `decide`: #1 prevented by the component-path
+   representation, #2 symlink escape, #3 fd smuggling, #5 mount-order
+   shadowing, #6 hardlink amplification. **Still open:** `Setup.lean` (the
+   interleaved `SetupEvent` schedule and #7 TOCTOU) and `Theorems.lean`
+   (`every_effect_authorized`, `setup_rejects_or_confines`, the
+   `ProtectedProjection` corollary); #4 belongs to the validator (step 2).
 2. **The mount manifest + validator.** Extend `EffectiveConfig` with ordered
    mounts and classes; write `validate` + `validate_sound`; run the real Lean
    checker over CI cases; the first two claims (`writes_confined`,
