@@ -363,6 +363,14 @@ pub struct EnvManifest {
     /// not tampering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_digest: Option<String>,
+    /// The filesystem-authority validator's verdict on the create-time
+    /// effective config (ROADMAP.md §VF.4): the effective grants are a subset
+    /// of the declared policy, writes were declared writable, no read-only
+    /// overlay is writable, and (Unix) no grant escapes the worktree by a
+    /// symlink. `None` for tiers with no kernel-mechanism dump and for envs
+    /// from before it existed. Rendered in `box status`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fs_authority: Option<crate::fs_authority::AuthorityVerdict>,
     /// Resolved claim (workspace|process|…) — what the host could actually satisfy.
     pub isolation_claim: String,
     /// Workspace backend (`worktree` today; pluggable later).
@@ -2039,6 +2047,11 @@ pub fn create(
     // env directory, outside every path the box can write or read.
     crate::view::ensure_token(&dir)?;
 
+    let (effective_digest, fs_authority) = match write_effective_baseline(&policy, &dir, &work_path)? {
+        Some((digest, verdict)) => (Some(digest), Some(verdict)),
+        None => (None, None),
+    };
+
     let manifest = EnvManifest {
         id: id.clone(),
         agent: agent.to_string(),
@@ -2050,7 +2063,8 @@ pub fn create(
         source: opts.source.as_manifest_str(),
         profile: profile.name.clone(),
         policy_digest: policy_digest.clone(),
-        effective_digest: write_effective_baseline(&policy, &dir, &work_path)?,
+        effective_digest,
+        fs_authority,
         isolation_claim: policy.claim.as_str().to_string(),
         backend: backend.to_string(),
         created_at: now_ts(),
@@ -2105,7 +2119,7 @@ fn write_effective_baseline(
     policy: &ResolvedPolicy,
     env_dir: &Path,
     work: &Path,
-) -> Result<Option<String>, H5iError> {
+) -> Result<Option<(String, crate::fs_authority::AuthorityVerdict)>, H5iError> {
     let Some(shape) = crate::effective::captured_run_shape(policy.claim, &policy.profile) else {
         return Ok(None);
     };
@@ -2118,7 +2132,8 @@ fn write_effective_baseline(
         &shape,
     );
     let digest = cfg.write_to(&env_dir.join(crate::effective::EFFECTIVE_CONFIG_FILE))?;
-    Ok(Some(digest))
+    let verdict = crate::effective::validate_effective(policy, &work, &cfg);
+    Ok(Some((digest, verdict)))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -2126,7 +2141,7 @@ fn write_effective_baseline(
     _policy: &ResolvedPolicy,
     _env_dir: &Path,
     _work: &Path,
-) -> Result<Option<String>, H5iError> {
+) -> Result<Option<(String, crate::fs_authority::AuthorityVerdict)>, H5iError> {
     Ok(None)
 }
 
@@ -9100,6 +9115,21 @@ pub fn propose(
         m.isolation_claim,
         short(&m.policy_digest, 12)
     ));
+    if let Some(a) = &m.fs_authority {
+        let mark = |b: bool| if b { "ok" } else { "FAIL" };
+        let sym = match a.symlink_clean {
+            Some(true) => "ok",
+            Some(false) => "FAIL",
+            None => "n/a",
+        };
+        brief.push_str(&format!(
+            "  authorit: fs-subset={} writes-confined={} cache-ro={} symlink-clean={}\n",
+            mark(a.fs_subset),
+            mark(a.writes_confined),
+            mark(a.cache_readonly),
+            sym
+        ));
+    }
     brief.push_str(&format!(
         "  evidence: {} capture(s): {}\n",
         m.captures.len(),
@@ -10410,6 +10440,7 @@ mod tests {
             profile: "default".into(),
             policy_digest: "d".repeat(64),
             effective_digest: None,
+            fs_authority: None,
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),
@@ -12476,6 +12507,7 @@ mod tests {
             profile: "default".into(),
             policy_digest: "d".repeat(64),
             effective_digest: None,
+            fs_authority: None,
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),
@@ -12590,6 +12622,7 @@ mod tests {
                 profile: "default".into(),
                 policy_digest: "d".repeat(64),
                 effective_digest: None,
+                fs_authority: None,
                 isolation_claim: "workspace".into(),
                 backend: "worktree".into(),
                 created_at: now_ts(),
@@ -13058,6 +13091,7 @@ mod tests {
             profile: "default".into(),
             policy_digest: "c".repeat(64),
             effective_digest: None,
+            fs_authority: None,
             isolation_claim: "workspace".into(),
             backend: "worktree".into(),
             created_at: now_ts(),

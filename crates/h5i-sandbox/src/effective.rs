@@ -367,6 +367,64 @@ pub fn compute_effective(
     }
 }
 
+/// Re-derive the declared read/write grant paths from the policy the same way
+/// [`compute_effective`] does, **minus the exists-filter** (which only removes).
+/// The validator checks the effective grants are a subset of these — so a
+/// legitimate box always passes, and only a divergence between the resolver's
+/// output and the declared intent (a bug) is caught. ROADMAP §VF.4.
+pub fn declared_grants(policy: &ResolvedPolicy, work: &Path) -> (Vec<String>, Vec<String>) {
+    let p = &policy.profile;
+    let ro_work = policy.work_readonly;
+    let mut rw: Vec<String> = Vec::new();
+    if !ro_work {
+        rw.push(lossy(work));
+    }
+    for s in p.fs_write.iter().filter(|s| s.as_str() != "$WORK") {
+        rw.push(crate::sandbox::expand_tilde(s));
+    }
+    let mut ro: Vec<String> = p.fs_read.iter().map(|s| crate::sandbox::expand_tilde(s)).collect();
+    if ro_work {
+        ro.push(lossy(work));
+    }
+    (ro, rw)
+}
+
+/// Validate a shipped effective config against the declared policy (§VF.4):
+/// the effective grants are a subset of the declared intent, every write grant
+/// was declared writable, and no read-only overlay bind is writable. On Unix it
+/// also measures the host for symlink escapes of a grant beneath the worktree
+/// (§VF.5). This is the per-run translation validator on real output — the
+/// path-level companion to the proved object-level `H5iFs.validate`.
+pub fn validate_effective(
+    policy: &ResolvedPolicy,
+    work: &Path,
+    cfg: &EffectiveConfig,
+) -> crate::fs_authority::AuthorityVerdict {
+    let (declared_ro, declared_rw) = declared_grants(policy, work);
+    // Only the read-only *overlays* must stay read-only: the config-lock pin and
+    // the warm cache. Private and home-state binds and the one cache-rw refresh
+    // bind are writable by design (`compute_effective` sets them so).
+    let overlays_ro = cfg.binds.iter().all(|b| match b.kind {
+        BindKind::ConfigLock | BindKind::CacheRo => !b.writable,
+        BindKind::Private | BindKind::HomeState | BindKind::CacheRw => true,
+    });
+    let mut verdict = crate::fs_authority::validate_grants(
+        &declared_ro,
+        &declared_rw,
+        &cfg.landlock.ro,
+        &cfg.landlock.rw,
+        overlays_ro,
+    );
+    #[cfg(unix)]
+    {
+        let grants: Vec<String> =
+            cfg.landlock.ro.iter().chain(cfg.landlock.rw.iter()).cloned().collect();
+        verdict.symlink_clean =
+            Some(crate::fs_authority::symlink_escapes(work, &grants).is_empty());
+    }
+    verdict
+}
+
 /// Component view of an absolute path, mirroring the Lean model's
 /// `parsePath`: split on `/`, empty components dropped.
 fn components(s: &str) -> Vec<&str> {

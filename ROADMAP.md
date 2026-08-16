@@ -6475,10 +6475,29 @@ surveyed here" hedge stands until it is done.
    line — with unit tests for the accept/reject/loop cases.
    `tests/validate_drt.rs` diffs the port against the Lean checker over 200
    generated worlds (symlinks, aliases, loops) per run, green across seeds and
-   wired into the Lean CI lane. **Remaining:** construct the `WorldEvidence`
-   by measuring the host at box setup, extend `EffectiveConfig` with the mount
-   manifest, feed the real shipped plan through the port, the `ValidatedPlan`
-   typestate on the spawn path, and the receipt fields in `box status`.
+   wired into the Lean CI lane.
+   **Production wire built, 2026-08-16.** The manifest already existed
+   (`EffectiveConfig.binds` carry `BindKind` classes and order; `landlock.ro`/
+   `rw`). `effective::validate_effective` re-checks the shipped config against
+   the declared policy: `fs_subset`/`writes_confined` (the effective grants are
+   the declared grants minus the exists-filter — a translation-validation that
+   catches a `compute_effective` divergence), `cache_readonly` (the config-lock
+   and cache-ro *overlays* stay read-only; private/home-state/cache-rw are
+   writable by design), and `symlink_clean` (host measurement: no grant beneath
+   the worktree canonicalizes out through a planted symlink — §VF.5). The
+   verdict is recorded in the `EnvManifest` (`fs_authority`), rendered in
+   `box status` (the `authorit:` line) and the console badge
+   (`authority_unconfined` colors the verdict). The gate lives at the single
+   spawn chokepoint (`build_confined_command`, after `compute_effective`): it
+   **fails closed** on `!confined()` — an invariant a legit config always
+   passes, verified by the real `home_bind_shadows` confined-run test — so a
+   run cannot bypass validation; a symlink escape is warned and recorded while
+   the host-measurement check earns trust (the §V4 gating discipline).
+   **Honest gap:** the production check resolves via OS `canonicalize`, not the
+   proved `FsState.resolve`; feeding a measured `FsState` through the proved
+   `validate` (fully closing model↔production, and the finite-evidence
+   completeness witness) remains future work, sampled meanwhile by the
+   conformance probes (§VF.8).
 4. **The mount realization audit + exec barrier.** Read-back diff against the
    `ValidatedPlan` before exec (VF.5), behind the stop/audit/go handshake,
    sharing the H5iFs semantics; abort-and-record on mismatch. Exit: a planted

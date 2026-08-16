@@ -131,6 +131,104 @@ pub fn validate(pol: &Policy, fs: &FsState, plan: &EffectivePlan) -> bool {
         && writable.iter().all(|o| pol.may_write.contains(o))
 }
 
+/// The per-run verdict on a shipped effective config, one boolean per claim
+/// (ROADMAP.md §VF.4). Recorded in the box manifest and rendered in
+/// `box status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AuthorityVerdict {
+    /// Every effective grant is one the declared policy authorized: the
+    /// translation-validation of `compute_effective`'s output against intent.
+    pub fs_subset: bool,
+    /// Every read-write grant was declared writable ($WORK or `fs_write`).
+    pub writes_confined: bool,
+    /// No read-only overlay was left writable: the config-lock pin and the warm
+    /// cache stay read-only. (Private, home-state, and the one cache-rw refresh
+    /// bind are writable by design and not constrained here.)
+    pub cache_readonly: bool,
+    /// No effective grant's path, resolved on the host, escapes the managed
+    /// worktree through a symlink it should not cross. `None` when the host was
+    /// not measured (non-Linux, or measurement skipped).
+    pub symlink_clean: Option<bool>,
+}
+
+impl AuthorityVerdict {
+    /// The gating verdict: the statically-decidable claims all hold. A false
+    /// here is a real config/logic bug and is safe to fail a launch on;
+    /// `symlink_clean` is evidence, surfaced but reported separately.
+    pub fn confined(&self) -> bool {
+        self.fs_subset && self.writes_confined && self.cache_readonly
+    }
+}
+
+/// `sub` is a subset of `sup`, as sets of path strings.
+fn subset(sub: &[String], sup: &[String]) -> bool {
+    sub.iter().all(|s| sup.contains(s))
+}
+
+/// **The per-run translation validator** (ROADMAP.md §VF.4): re-check the
+/// shipped effective grants against the declared policy, independently of the
+/// resolver that produced them. This is the path-level companion to the proved
+/// object-level [`validate`]: that one formalizes resolve-then-subset on an
+/// abstract world; this one applies the subset claims to real output, catching
+/// a `compute_effective` bug the way translation validation catches a compiler
+/// bug.
+///
+/// - `declared_ro` / `declared_rw`: the source policy's read / read-write grant
+///   paths, expanded exactly as `compute_effective` expands them ($WORK and
+///   tilde), so a like-for-like subset check is meaningful.
+/// - `eff_ro` / `eff_rw`: the effective config's `landlock.ro` / `landlock.rw`.
+/// - `overlays_read_only`: the read-only overlay binds (config-lock, cache-ro)
+///   are all non-writable (the caller computes this from the bind manifest;
+///   private/home-state/cache-rw binds are writable by design).
+pub fn validate_grants(
+    declared_ro: &[String],
+    declared_rw: &[String],
+    eff_ro: &[String],
+    eff_rw: &[String],
+    overlays_read_only: bool,
+) -> AuthorityVerdict {
+    // Read authority the policy declares = read grants plus everything writable
+    // (a write grant carries read), matching the abstract `readGrantPaths`.
+    let declared_read: Vec<String> =
+        declared_ro.iter().chain(declared_rw.iter()).cloned().collect();
+    let eff_read: Vec<String> = eff_ro.iter().chain(eff_rw.iter()).cloned().collect();
+    AuthorityVerdict {
+        fs_subset: subset(&eff_read, &declared_read),
+        writes_confined: subset(eff_rw, declared_rw),
+        cache_readonly: overlays_read_only,
+        symlink_clean: None,
+    }
+}
+
+/// Does any grant path, resolved on the host, escape the managed worktree
+/// through a symlink? Grants at or above `work` are the user's declared choice
+/// and are not second-guessed; a grant **beneath** `work` whose canonical path
+/// leaves `work` is the planted-symlink escape (§VF.5) — the previous run's
+/// agent redirected a worktree path out. Returns the offending grants.
+///
+/// Linux/Unix only (it canonicalizes on the host); the caller records `Some`
+/// only where it ran.
+#[cfg(unix)]
+pub fn symlink_escapes(work: &std::path::Path, grants: &[String]) -> Vec<String> {
+    let work_canon = std::fs::canonicalize(work).unwrap_or_else(|_| work.to_path_buf());
+    grants
+        .iter()
+        .filter(|g| {
+            let g = std::path::Path::new(g.as_str());
+            // Only grants lexically beneath the worktree are constrained to it.
+            if !g.starts_with(work) || g == work {
+                return false;
+            }
+            match std::fs::canonicalize(g) {
+                Ok(canon) => !canon.starts_with(&work_canon),
+                // Unresolvable (missing/broken link) is fail-closed: flag it.
+                Err(_) => true,
+            }
+        })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +283,39 @@ mod tests {
         let plan =
             EffectivePlan { ro: vec![], rw: vec![vec!["work".into(), "alias".into()]] };
         assert!(!validate(&pol(), &attacks_world(), &plan));
+    }
+
+    #[test]
+    fn validate_grants_accepts_effective_subset() {
+        // Effective grants derived from declared (exists-filter only removes),
+        // so the translation-validation subset holds.
+        let declared_ro = vec!["/etc/hosts".to_string(), "/opt/tools".to_string()];
+        let declared_rw = vec!["/work".to_string(), "/work/out".to_string()];
+        let eff_ro = vec!["/etc/hosts".to_string()]; // /opt/tools missing → skipped
+        let eff_rw = vec!["/work".to_string(), "/work/out".to_string()];
+        let v = validate_grants(&declared_ro, &declared_rw, &eff_ro, &eff_rw, true);
+        assert!(v.confined(), "{v:?}");
+    }
+
+    #[test]
+    fn validate_grants_rejects_undeclared_write() {
+        // A write grant the policy never declared writable — a compute bug.
+        let v = validate_grants(
+            &[],
+            &["/work".to_string()],
+            &[],
+            &["/work".to_string(), "/etc".to_string()],
+            true,
+        );
+        assert!(!v.writes_confined);
+        assert!(!v.fs_subset);
+    }
+
+    #[test]
+    fn validate_grants_rejects_writable_overlay() {
+        let v = validate_grants(&[], &["/work".to_string()], &[], &["/work".to_string()], false);
+        assert!(!v.cache_readonly);
+        assert!(!v.confined());
     }
 
     #[test]
