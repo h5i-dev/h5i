@@ -6452,6 +6452,18 @@ surveyed here" hedge stands until it is done.
    `cache_readonly`) into the receipt. Exit: validator green on the corpus and
    on this repo's own profiles, `ValidatedPlan` typestate in place so `spawn`
    cannot bypass it.
+   **Lean spec built, 2026-08-16** (`H5iFs/Validate.lean`): `EffectivePlan`
+   (ro/rw grant paths + ordered mounts), `EffectivePlan.authority` (resolve
+   each grant through the measured world into the induced object authority),
+   `validate` (that authority is a policy subset), and `validate_sound`
+   straight from `every_effect_authorized`. The `cache_readonly` core is two
+   lemmas — `writable_only_from_rw` and `write_effect_needs_rw` (no write under
+   a non-rw mount). Accept/reject are `decide`-checked on the `Attacks` world:
+   a benign `/work` plan is accepted; a plan whose grant resolves through the
+   planted symlink or hard link to the secret is rejected. **Remaining:** the
+   Rust half — extend `EffectiveConfig`/mount manifest, `WorldEvidence` with
+   its completeness witness, the `--validate` mode + Rust port, checker-level
+   DRT, `ValidatedPlan` typestate, and the receipt fields (step 3).
 3. **The Rust port + checker-level DRT.** Port `validate` to Rust behind the
    receipt; differential-test it against the Lean checker (`interferes_drt`
    pattern). Exit: zero mismatches over the sweep; receipt renders in
