@@ -49,11 +49,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run the DRT harnesses (interferes checker, Seatbelt rules)
+      - name: Run the DRT harnesses (interferes + validate checkers, Seatbelt rules)
         env:
           H5I_DRT_REQUIRE: "1"
           H5I_SKIP_WEB_BUILD: "1"
-        run: cargo test --test interferes_drt --test seatbelt_drt -- --nocapture
+        run: cargo test --test interferes_drt --test validate_drt --test seatbelt_drt -- --nocapture
 
       # Model-versus-kernel: the Lean model predicts what a real box must
       # allow and deny, and the probes hold the kernel to it. Skips loudly

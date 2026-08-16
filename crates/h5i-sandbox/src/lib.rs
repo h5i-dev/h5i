@@ -22,6 +22,10 @@ pub mod container;
 /// (ROADMAP.md §V2) — Linux only, like the mechanisms it describes.
 #[cfg(target_os = "linux")]
 pub mod effective;
+/// The filesystem-authority validator ported from the Lean `H5iFs`
+/// (ROADMAP.md §VF.4). Pure and cross-platform; differential-tested against
+/// `h5i-spec --validate` by `tests/validate_drt.rs`.
+pub mod fs_authority;
 pub mod microvm;
 pub mod sandbox;
 /// macOS Seatbelt backend. Compiled on every Unix target (so its profile

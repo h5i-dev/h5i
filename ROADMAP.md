@@ -6468,6 +6468,17 @@ surveyed here" hedge stands until it is done.
    receipt; differential-test it against the Lean checker (`interferes_drt`
    pattern). Exit: zero mismatches over the sweep; receipt renders in
    `box status`.
+   **Port + DRT built, 2026-08-16.** `h5i-spec --validate` exposes the Lean
+   checker (JSON: `{policy, world, plan}` → verdict array).
+   `h5i_sandbox::fs_authority` is the Rust port — `FsState`, symlink-aware
+   fuel-bounded `resolve`, and `validate`, mirroring `Core`/`Validate` line for
+   line — with unit tests for the accept/reject/loop cases.
+   `tests/validate_drt.rs` diffs the port against the Lean checker over 200
+   generated worlds (symlinks, aliases, loops) per run, green across seeds and
+   wired into the Lean CI lane. **Remaining:** construct the `WorldEvidence`
+   by measuring the host at box setup, extend `EffectiveConfig` with the mount
+   manifest, feed the real shipped plan through the port, the `ValidatedPlan`
+   typestate on the spawn path, and the receipt fields in `box status`.
 4. **The mount realization audit + exec barrier.** Read-back diff against the
    `ValidatedPlan` before exec (VF.5), behind the stop/audit/go handshake,
    sharing the H5iFs semantics; abort-and-record on mismatch. Exit: a planted
