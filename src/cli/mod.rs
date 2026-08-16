@@ -21,3 +21,20 @@ pub mod skill;
 // `--no-default-features` binary has no `ui` verb rather than a broken one.
 #[cfg(feature = "web")]
 pub mod ui;
+
+/// `Repository::discover(".")` with an actionable failure. Every verb here
+/// stores its state relative to the enclosing repository, so outside one there
+/// is nothing to act on — and libgit2's raw `class=…; code=…` error names
+/// neither that precondition nor what to do about it.
+pub fn discover_repo(verb: &str) -> anyhow::Result<git2::Repository> {
+    git2::Repository::discover(".").map_err(|e| {
+        if e.code() == git2::ErrorCode::NotFound {
+            anyhow::anyhow!(
+                "`{verb}` needs to run inside a git repository — cd into your project, \
+                 or create one with `git init`"
+            )
+        } else {
+            e.into()
+        }
+    })
+}

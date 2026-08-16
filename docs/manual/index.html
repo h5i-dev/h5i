@@ -609,6 +609,7 @@ h5i box share stop &lt;name&gt; --force            # delete the record, whatever
 <pre><code class="language-bash">h5i join h5i1_eyJ2IjoxLCJib3hf…
 h5i join -                            # the same, with the ticket on stdin
 h5i join - --shared-jar               # on a machine with only 127.0.0.1 to offer
+h5i join - --bind 127.0.0.1           # WSL: the only loopback Windows can reach
 </code></pre>
 <p>The share needs a live session of the box to dial into, not a live dev server.
 Starting one before the server is up warns and carries on. Visitors get a <code>502</code>
@@ -650,6 +651,16 @@ join</code> refuses that jar unless you pass <code>--shared-jar</code>. If you w
 <code>sudo ifconfig lo0 alias 127.0.0.2</code> gives h5i an address to take instead, which
 lasts until you reboot. Keep that one for h5i: an address you also run your own
 services on is a jar shared with them, and h5i cannot tell why it is there.</p>
+<p>WSL is the case where the private address works against you. Windows forwards
+only <code>127.0.0.1</code> into the VM, so the address a join picks binds fine, the P2P
+path comes up, and the URL is still dead in every Windows browser: nothing on
+the Linux side fails. <code>h5i join</code> prints a warning when it sees this. The answer
+is <code>--bind 127.0.0.1</code>, which binds that address exactly and counts as
+shared-jar consent on its own, with the same cookie filter and the same
+caveats as <code>--shared-jar</code>. Any other loopback address given to <code>--bind</code> keeps
+a jar of its own. An address outside <code>127.0.0.0/8</code> is refused outright: the
+proxy is a door for one browser on this machine, never a way to republish the
+box to the network.</p>
 <p>Two things the joining proxy refuses outright. A service worker registration,
 because one would keep control of that address after the share ended. And a
 request that fetch metadata says came from another page, including one from

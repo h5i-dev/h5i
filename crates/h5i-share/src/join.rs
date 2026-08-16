@@ -44,10 +44,11 @@ pub struct Joined {
     /// The ticket worked, but the share said something worth repeating: it is
     /// full, or the box has nothing listening on the shared port yet.
     pub warning: Option<String>,
-    /// This join had to fall back to `127.0.0.1`, so it shares a cookie jar
-    /// with every other local service. See [`bind_loopback`] for what that
-    /// costs. Reaching here at all means the joiner asked for it: `run` refuses
-    /// this case unless they said so on the command line.
+    /// This join is on `127.0.0.1`, so it shares a cookie jar with every
+    /// other local service. See [`bind_loopback`] for what that costs.
+    /// Reaching here at all means the joiner asked for it on the command
+    /// line: `--shared-jar` accepting the fallback, or `--bind 127.0.0.1`
+    /// naming the address outright.
     pub shared_jar: bool,
 }
 
@@ -140,6 +141,50 @@ async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5i
     Ok((l, true))
 }
 
+/// Bind the address the joiner *chose*, or fall back to [`bind_loopback`].
+///
+/// An explicit address is bound exactly — no retries, no fallback: somebody
+/// who asked for `127.0.0.1` on purpose is not served better by silently
+/// getting a random private address, and the other way around. Loopback only,
+/// on this path as on every other: this proxy exists to give one browser on
+/// this machine a door, not to republish somebody else's box to the network.
+///
+/// Naming `127.0.0.1` by hand *is* the shared-jar consent. The flag exists so
+/// the person carrying the risk says so on the command line, and an explicit
+/// `--bind 127.0.0.1` says it at least as clearly as `--shared-jar` does —
+/// what it must not do is skip the machinery that consent buys: the
+/// [`crate::gate::AppCookies`] filter and the warning both key off the
+/// returned flag, so they engage here exactly as they do on the fallback.
+///
+/// WSL is where the explicit choice is real rather than a preference: Windows
+/// forwards only `127.0.0.1` into the VM, so the private address this proxy
+/// prefers binds fine — the fallback never fires, and `--shared-jar` alone
+/// changes nothing — and is then unreachable from every Windows browser.
+async fn bind_for(
+    bind: Option<std::net::Ipv4Addr>,
+    port: u16,
+    allow_shared_jar: bool,
+) -> Result<(tokio::net::TcpListener, bool), H5iError> {
+    let Some(addr) = bind else {
+        let (l, shared) = bind_loopback(port).await?;
+        if shared && !allow_shared_jar {
+            return Err(H5iError::Metadata(shared_jar_refusal()));
+        }
+        return Ok((l, shared));
+    };
+    if !addr.is_loopback() {
+        return Err(H5iError::Metadata(format!(
+            "{BIND_FLAG} {addr} is not a loopback address. This proxy gives one browser on \
+             this machine a door; binding beyond loopback would republish somebody else's \
+             box to the network. Pick an address in 127.0.0.0/8."
+        )));
+    }
+    let l = tokio::net::TcpListener::bind((addr, port))
+        .await
+        .map_err(|e| H5iError::Metadata(format!("could not bind {addr}:{port}: {e}")))?;
+    Ok((l, addr == std::net::Ipv4Addr::LOCALHOST))
+}
+
 /// Connect, bind, and serve until interrupted.
 ///
 /// `port` of 0 asks the operating system for a free one, which is the default:
@@ -148,6 +193,7 @@ async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5i
 pub async fn run(
     ticket: Ticket,
     port: u16,
+    bind: Option<std::net::Ipv4Addr>,
     allow_shared_jar: bool,
     announce: impl FnOnce(&Joined),
 ) -> Result<String, H5iError> {
@@ -166,10 +212,7 @@ pub async fn run(
     // made in their name. Reaching the sharer first would spend one of their
     // share's slots and put a visitor on their receipt for a join that never
     // happened.
-    let (listener, shared_jar) = bind_loopback(port).await?;
-    if shared_jar && !allow_shared_jar {
-        return Err(H5iError::Metadata(shared_jar_refusal()));
-    }
+    let (listener, shared_jar) = bind_for(bind, port, allow_shared_jar).await?;
     let local = listener.local_addr()?;
 
     let endpoint = crate::p2p::bind_joiner().await?;
@@ -413,6 +456,10 @@ fn shared_jar_refusal() -> String {
 /// The flag that answers [`shared_jar_refusal`], named in one place so the
 /// message and the command line cannot drift apart.
 pub const SHARED_JAR_FLAG: &str = "--shared-jar";
+
+/// The flag that picks the proxy's address outright, same rule as
+/// [`SHARED_JAR_FLAG`]: named once so messages and the command line agree.
+pub const BIND_FLAG: &str = "--bind";
 
 /// What to say about a ticket that looks expired *on this machine*.
 ///
@@ -724,7 +771,7 @@ mod tests {
         // Checked here as well as by the sharer. The joiner should be told
         // plainly rather than watching a connection fail for reasons that look
         // like a network problem.
-        let err = run(ticket(1), 0, true, |_| {
+        let err = run(ticket(1), 0, None, true, |_| {
             panic!("must not get as far as announcing")
         })
         .await
@@ -756,7 +803,7 @@ mod tests {
         // about the ticket, and one that had expired would pass for the wrong
         // reason — the expiry check runs first.
         let good = ticket(chrono::Utc::now().timestamp() + 3600);
-        let err = run(good, 0, false, |_| {
+        let err = run(good, 0, None, false, |_| {
             panic!("a shared jar was announced instead of refused")
         })
         .await
@@ -764,6 +811,50 @@ mod tests {
         let said = format!("{err}");
         assert!(said.contains(SHARED_JAR_FLAG), "{said}");
         assert!(said.contains("127.0.0.1"), "{said}");
+    }
+
+    /// An explicit `--bind` is bound exactly, and choosing `127.0.0.1` by
+    /// name is itself the shared-jar consent — with the machinery consent
+    /// buys, not around it: the returned flag is what turns on the cookie
+    /// filter and the warning, so it must say `true` for `127.0.0.1` and
+    /// `false` for an address of the join's own.
+    #[tokio::test]
+    async fn an_explicit_bind_is_exact_and_names_its_own_consent() {
+        let localhost = std::net::Ipv4Addr::LOCALHOST;
+        let (l, shared) = bind_for(Some(localhost), 0, false)
+            .await
+            .expect("127.0.0.1 must bind everywhere");
+        assert_eq!(l.local_addr().unwrap().ip().to_string(), "127.0.0.1");
+        assert!(shared, "an explicit 127.0.0.1 must still engage the shared-jar machinery");
+
+        // A named address of the join's own keeps a private jar. Only where
+        // the host routes it — macOS without an lo0 alias cannot bind this,
+        // and that failure must be an error, not a silent fallback.
+        let own = std::net::Ipv4Addr::new(127, 0, 0, 7);
+        match bind_for(Some(own), 0, false).await {
+            Ok((l, shared)) => {
+                assert_eq!(l.local_addr().unwrap().ip().to_string(), "127.0.0.7");
+                assert!(!shared, "an address of the join's own is not a shared jar");
+            }
+            Err(e) => assert!(
+                format!("{e}").contains("127.0.0.7"),
+                "a failed explicit bind must name the address it could not bind: {e}"
+            ),
+        }
+    }
+
+    /// Beyond loopback is refused before anything is bound or dialled: this
+    /// proxy is a door for one browser on this machine, and no flag turns it
+    /// into a republisher.
+    #[tokio::test]
+    async fn a_bind_beyond_loopback_is_refused() {
+        let err = bind_for(Some(std::net::Ipv4Addr::new(192, 168, 1, 10)), 0, true)
+            .await
+            .expect_err("a non-loopback bind must refuse");
+        let said = format!("{err}");
+        assert!(said.contains(BIND_FLAG), "{said}");
+        assert!(said.contains("loopback"), "{said}");
+        assert!(said.contains("127.0.0.0/8"), "{said}");
     }
 
     /// What the refusal has to say, in the words of the person reading it.

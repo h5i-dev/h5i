@@ -1956,7 +1956,26 @@ pub fn create(
             .revparse_single(rev)
             .and_then(|o| o.peel_to_commit())
             .map_err(|e| {
-                H5iError::Metadata(format!("cannot resolve base revision '{rev}': {e}"))
+                // A fresh `git init` has a HEAD that names a branch with no
+                // commit behind it. "revspec 'HEAD' not found" is technically
+                // that, but only to a reader who already knows it — name the
+                // real precondition and the command that satisfies it. An
+                // explicit `--from` that fails keeps the literal diagnosis:
+                // there, "revision not found" is the right one.
+                let head_unborn = matches!(
+                    repo.head(),
+                    Err(ref he) if he.code() == git2::ErrorCode::UnbornBranch
+                );
+                if opts.from.is_none() && head_unborn {
+                    H5iError::Metadata(
+                        "this repository has no commits yet — the box branches from HEAD, \
+                         so make an initial commit first, e.g. \
+                         `git commit --allow-empty -m \"initial commit\"`"
+                            .into(),
+                    )
+                } else {
+                    H5iError::Metadata(format!("cannot resolve base revision '{rev}': {e}"))
+                }
             })?;
         let base_tree = base_commit.tree()?.id();
         let parent_branch = opts.parent_branch.clone().unwrap_or_else(|| {

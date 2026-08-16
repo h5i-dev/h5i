@@ -138,7 +138,7 @@ fn parse_expire(s: &str) -> anyhow::Result<Duration> {
 }
 
 fn root() -> anyhow::Result<(git2::Repository, std::path::PathBuf)> {
-    let repo = git2::Repository::discover(".")?;
+    let repo = super::discover_repo("h5i box share")?;
     let root = h5i_core::storage::h5i_root_for_repo(&repo)?;
     Ok((repo, root))
 }
@@ -632,12 +632,29 @@ fn ticket_text(arg: &str) -> anyhow::Result<String> {
 /// --tunnel` and no `join`, which is the correct shape — the person on the
 /// other end of a tunnel opens a link in a browser and needs no h5i at all.
 #[cfg(feature = "share")]
-pub fn join(ticket: &str, port: u16, shared_jar: bool) -> anyhow::Result<()> {
+/// Whether this process runs inside WSL, where Windows forwards only
+/// `127.0.0.1` into the VM: any other loopback address binds fine here and is
+/// then unreachable from a Windows browser — with nothing failing on this
+/// side to say so.
+fn under_wsl() -> bool {
+    std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || std::env::var_os("WSL_INTEROP").is_some()
+        || std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .map(|s| s.to_ascii_lowercase().contains("microsoft"))
+            .unwrap_or(false)
+}
+
+pub fn join(
+    ticket: &str,
+    port: u16,
+    bind: Option<std::net::Ipv4Addr>,
+    shared_jar: bool,
+) -> anyhow::Result<()> {
     let ticket = h5i_share::ticket::Ticket::decode(&ticket_text(ticket)?)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let ending = runtime.block_on(h5i_share::join::run(ticket, port, shared_jar, |joined| {
+    let ending = runtime.block_on(h5i_share::join::run(ticket, port, bind, shared_jar, |joined| {
         // Sanitised, because this string came out of a ticket somebody pasted.
         // `ticket::decode` validates the version, the base64, the JSON shape
         // and the secret's width, and nothing about `box_id` — so a `\r` or an
@@ -666,6 +683,20 @@ pub fn join(ticket: &str, port: u16, shared_jar: bool) -> anyhow::Result<()> {
             ),
             Some(h5i_share::bridge::Path::Tunnel) => println!("   path      through a tunnel"),
             None => println!("   path      settling — end-to-end encrypted either way"),
+        }
+        // Said here, at the moment it bites, because nothing on this side
+        // fails: the bind succeeds, the P2P path comes up, and the URL is
+        // simply dead in a Windows browser. `path: direct` above makes it look
+        // healthy, which is exactly why the person staring at a blank tab
+        // needs the one fact this machine has and their browser does not.
+        if !joined.shared_jar && under_wsl() {
+            println!(
+                "   {} this is WSL: Windows forwards only 127.0.0.1 into it, so a Windows \
+                 browser cannot reach this address. If the page will not load there, stop \
+                 this join (Ctrl-C) and rerun with `{} 127.0.0.1`.",
+                WARN,
+                h5i_share::join::BIND_FLAG
+            );
         }
         // Said plainly, because the person joining is the one taking this risk
         // and they are not the one who chose to.

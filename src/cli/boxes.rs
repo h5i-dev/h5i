@@ -511,7 +511,7 @@ pub fn name_from_url(url: &str) -> anyhow::Result<String> {
 /// slugified, with a numeric suffix when that name is taken. Deterministic
 /// enough to predict, unique enough to keep two boxes off one name.
 pub fn default_box_name() -> anyhow::Result<String> {
-    let repo = git2::Repository::discover(".")?;
+    let repo = super::discover_repo("h5i box")?;
     let branch = repo
         .head()
         .ok()
@@ -536,7 +536,7 @@ fn slugify(s: &str) -> String {
 
 /// `base`, or `base-2`, `base-3`, … — the first name no box has taken.
 pub fn free_box_name(base: &str) -> anyhow::Result<String> {
-    let repo = git2::Repository::discover(".")?;
+    let repo = super::discover_repo("h5i box")?;
     let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
     let base = if base.is_empty() { "box" } else { base };
     let taken: std::collections::HashSet<String> = h5i_core::env::list(&h5i_root)
@@ -682,7 +682,7 @@ fn run_cache(
 
 pub fn run(action: BoxCommands) -> anyhow::Result<()> {
     {
-            let git_repo = git2::Repository::discover(".")?;
+            let git_repo = super::discover_repo("h5i box")?;
             let h5i_root = h5i_core::storage::h5i_root_for_repo(&git_repo)?;
             h5i_core::storage::ensure_layout(&h5i_root)?;
             let git = &git_repo;

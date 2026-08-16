@@ -453,6 +453,67 @@ fn create_refuses_duplicates_and_bad_names() {
     }
 }
 
+/// The two states a brand-new user meets before git is ready — no repository
+/// at all, and a `git init` with no commit behind HEAD — must answer with the
+/// command that fixes them. Both used to leak libgit2's diagnosis
+/// (`could not find repository at '.'; class=Repository (6)` and
+/// `revspec 'HEAD' not found`), which names neither the precondition nor
+/// what to do about it.
+#[test]
+fn create_names_the_fix_when_there_is_no_repo_or_no_commit() {
+    let h5i_in = |dir: &Path, args: &[&str]| -> Output {
+        Command::new(H5I)
+            .args(args)
+            .env("H5I_AGENT", "tester")
+            .env("H5I_DEFAULT_ISOLATION", "workspace")
+            .current_dir(dir)
+            .output()
+            .expect("failed to run h5i")
+    };
+
+    // Outside any repository: name the requirement and the way in.
+    let no_repo = TempDir::new().expect("tempdir");
+    let out = h5i_in(no_repo.path(), &["env", "create", "test"]);
+    assert!(!out.status.success(), "create outside a repo must refuse");
+    let said = out_str(&out);
+    assert!(
+        said.contains("needs to run inside a git repository") && said.contains("git init"),
+        "no-repo refusal must name the fix, said: {said}"
+    );
+    assert!(
+        !said.contains("class="),
+        "libgit2 internals must not leak: {said}"
+    );
+
+    // A fresh `git init` with an unborn HEAD: say what is missing — a commit —
+    // and how to make one, rather than "revspec 'HEAD' not found".
+    let unborn = TempDir::new().expect("tempdir");
+    run_ok(Command::new("git").args(["init", "-b", "main"]).arg(unborn.path()));
+    let out = h5i_in(unborn.path(), &["env", "create", "test"]);
+    assert!(!out.status.success(), "create on an unborn HEAD must refuse");
+    let said = out_str(&out);
+    assert!(
+        said.contains("no commits yet") && said.contains("--allow-empty"),
+        "unborn-HEAD refusal must name the fix, said: {said}"
+    );
+
+    // An explicit `--from` that does not resolve keeps the literal diagnosis:
+    // there, "revision not found" is the correct one, and rewording it as
+    // "make a commit" would point at the wrong problem.
+    let r = Repo::new();
+    let out = r.h5i(&["env", "create", "test", "--from", "deadbeef"]);
+    assert!(!out.status.success(), "an unknown --from must refuse");
+    let said = out_str(&out);
+    assert!(
+        said.contains("cannot resolve base revision 'deadbeef'"),
+        "an explicit --from keeps the literal diagnosis, said: {said}"
+    );
+    assert!(
+        !said.contains("no commits yet"),
+        "a repo with commits must not be told it has none: {said}"
+    );
+}
+
 /// A directory under `.git/worktrees/` that is not a worktree registration
 /// must not be able to stop `create` — for this env or any other.
 ///
