@@ -77,11 +77,19 @@ on Linux, Apple Silicon on macOS).
 
 ## Use it
 
-#### Create a sandboxed
+#### Create a sandbox
 
 ```bash
 h5i box create <name> --profile agent-claude            # a sandboxed Git worktree from this repository
 h5i box create <name> --profile agent-claude --pr 1234  # a sandbox from pull request #1234
+```
+
+Or place the sandbox on a self-hosted Linux runner you own
+
+```bash
+h5i runner pair worker h5i@runner.local # one-time SSH pairing; pins the runner's host key
+h5i runner probe worker                 # show the capabilities it can actually enforce
+h5i box create <name> --runner worker   # copy this repository into a box on the runner
 ```
 
 #### Run a single command
