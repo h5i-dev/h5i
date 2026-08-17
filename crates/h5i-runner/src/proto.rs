@@ -839,12 +839,34 @@ impl ExecRequest {
                 )));
             }
         }
-        for (k, _) in &self.env {
-            if k.is_empty() || k.contains('=') || k.contains('\0') {
+        if self.env.len() > 4096 {
+            return Err(ProtoError::Invalid(format!(
+                "an exec with {} environment entries is not a command",
+                self.env.len()
+            )));
+        }
+        for (k, v) in &self.env {
+            // A NUL in either half is refused, not only in the name: both
+            // become bytes in an `execve` array, and a validator that checks
+            // one and not the other is a validator someone will trust for both.
+            if k.is_empty() || k.len() > MAX_STRING || k.contains('=') || k.contains('\0') {
                 return Err(ProtoError::Invalid(format!(
                     "`{}` is not an environment variable name",
-                    sanitize_display(k)
+                    truncate(&sanitize_display(k), 64)
                 )));
+            }
+            if v.contains('\0') {
+                return Err(ProtoError::Invalid(format!(
+                    "the value of `{}` contains a NUL byte",
+                    truncate(&sanitize_display(k), 64)
+                )));
+            }
+        }
+        for a in &self.argv {
+            if a.contains('\0') {
+                return Err(ProtoError::Invalid(
+                    "an argument contains a NUL byte, which no argv can carry".into(),
+                ));
             }
         }
         Ok(())
@@ -1091,7 +1113,10 @@ pub fn check_id(what: &'static str, value: &str) -> Result<(), ProtoError> {
         Err(ProtoError::Invalid(format!(
             "{what} `{}` is not usable as a name on the runner — it becomes a directory, \
              so it takes letters, digits, `-`, `_` and `.`, starting with a letter or digit",
-            sanitize_display(value)
+            // Truncated first. Echoing the whole value turns a one-megabyte
+            // identifier into a one-megabyte refusal, which is a peer choosing
+            // how much we allocate to complain about it.
+            truncate(&sanitize_display(value), 64)
         )))
     }
 }

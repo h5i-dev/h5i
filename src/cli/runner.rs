@@ -422,8 +422,24 @@ fn resolve_worker_path(record: &RunnerRecord) -> anyhow::Result<String> {
         .map_err(|e| anyhow::anyhow!("could not run ssh: {e}"))?;
 
     let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if out.status.success() && path.starts_with('/') {
+    // The leading `/` is load-bearing, not tidiness. This string comes from the
+    // far side, and it becomes the last positional argument to `ssh` — which
+    // keeps parsing options after the destination, so a value beginning with
+    // `-` would be an option rather than a command, and `-oProxyCommand=…` is
+    // an option that runs a command *here*. A single line, absolute, is the
+    // shape that cannot be one.
+    let usable = path.starts_with('/')
+        && !path.contains(['\n', '\r', '"', '\\', '\0'])
+        && path.len() <= 4096;
+    if out.status.success() && usable {
         return Ok(path);
+    }
+    if out.status.success() && path.starts_with('/') {
+        anyhow::bail!(
+            "the runner reported an h5i path this side will not put in an \
+             `authorized_keys` line — it contains a quote, a backslash or a line break. \
+             Pass `--worker-path` explicitly."
+        );
     }
 
     let stderr = String::from_utf8_lossy(&out.stderr);

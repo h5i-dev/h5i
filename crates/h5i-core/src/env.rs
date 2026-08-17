@@ -9229,7 +9229,11 @@ fn record_commit_violation(
     H5iError::Metadata(format!(
         "mediated commit refused (fail-closed) — {} path violation(s):\n  - {}",
         violations.len(),
-        violations.join("\n  - ")
+        violations
+            .iter()
+            .map(|v| crate::redact::sanitize_display(v))
+            .collect::<Vec<_>>()
+            .join("\n  - ")
     ))
 }
 

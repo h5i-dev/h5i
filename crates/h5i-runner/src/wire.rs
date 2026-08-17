@@ -109,9 +109,13 @@ pub struct Limits {
     /// the format's own ceiling by constructing the struct literally.
     max_frame: usize,
     /// Cap on the sum of every body in this exchange.
-    pub max_total_bytes: u64,
+    ///
+    /// Private for the same reason `max_frame` is: on a `Copy` struct with
+    /// public fields, `l.max_total_bytes = u64::MAX` compiles anywhere and
+    /// "narrowing can only tighten" becomes a comment rather than a property.
+    max_total_bytes: u64,
     /// Cap on the number of frames in this exchange.
-    pub max_frames: u64,
+    max_frames: u64,
 }
 
 impl Limits {
@@ -169,6 +173,14 @@ impl Limits {
 
     pub fn max_frame(&self) -> usize {
         self.max_frame.min(MAX_FRAME)
+    }
+
+    pub fn max_total_bytes(&self) -> u64 {
+        self.max_total_bytes
+    }
+
+    pub fn max_frames(&self) -> u64 {
+        self.max_frames
     }
 }
 
@@ -256,20 +268,31 @@ impl<R: Read> FrameReader<R> {
             });
         }
 
+        // The type byte is read on its own, and the payload lands in a buffer
+        // that is already the right shape. Reading the body whole and then
+        // removing its first element would memmove up to a megabyte per frame,
+        // a million times over inside a bulk transfer, to save one small read.
         let body_len = declared as usize;
-        let mut body = vec![0u8; body_len];
-        let got = fill(&mut self.inner, &mut body)?;
-        if got < body_len {
+        let mut kind = [0u8; 1];
+        if fill(&mut self.inner, &mut kind)? < 1 {
             return Err(WireError::Truncated {
                 part: "frame body",
                 expected: body_len,
-                got,
+                got: 0,
             });
         }
 
-        let kind = body[0];
-        body.remove(0);
-        Ok(Some(Frame::new(kind, body)))
+        let payload_len = body_len - 1;
+        let mut payload = vec![0u8; payload_len];
+        let got = fill(&mut self.inner, &mut payload)?;
+        if got < payload_len {
+            return Err(WireError::Truncated {
+                part: "frame body",
+                expected: body_len,
+                got: got + 1,
+            });
+        }
+        Ok(Some(Frame::new(kind[0], payload)))
     }
 
     /// Start a new RPC on this stream, under its own budget.
@@ -439,7 +462,7 @@ mod tests {
         assert_eq!(widened.max_frame(), Limits::control().max_frame());
         assert_eq!(
             widened.max_total_bytes,
-            Limits::control().max_total_bytes,
+            Limits::control().max_total_bytes(),
             "narrowing must not widen the total budget either"
         );
     }

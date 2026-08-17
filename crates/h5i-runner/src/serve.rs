@@ -385,7 +385,83 @@ pub fn serve<R: Read, W: Write>(
 pub fn serve_stdio(worker: &mut Worker) -> Result<(), ServeError> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    serve(stdin.lock(), stdout.lock(), worker)
+    // The unbuffered handle, deliberately: see `IdleTimeout`.
+    let timed = IdleTimeout::new(&stdin, IDLE_SECS);
+    serve(timed, stdout.lock(), worker)
+}
+
+/// A reader that gives up when the peer goes quiet.
+///
+/// A pipe has no read timeout, so the wait has to be made explicit. `poll` on
+/// the descriptor before each read is the whole mechanism: it turns a peer that
+/// stops talking into an ordinary end of stream, which every reader above
+/// already handles.
+///
+/// **It reads the descriptor directly, with no buffering layer underneath.**
+/// Not a performance choice: `FrameReader` does its own buffering, and wrapping
+/// a `BufReader` here is a deadlock. `poll` asks the *kernel* whether bytes are
+/// available, so a reader holding the next frame in a userspace buffer reports
+/// nothing readable and the worker waits out its own timeout on data it already
+/// has. That is exactly what happened the first time this was written around
+/// `stdin().lock()`.
+pub struct IdleTimeout<'fd> {
+    fd: std::os::unix::io::RawFd,
+    secs: u64,
+    /// Borrowed, never owned: this must not close stdin.
+    _borrow: std::marker::PhantomData<&'fd ()>,
+}
+
+impl<'fd> IdleTimeout<'fd> {
+    pub fn new<F: std::os::unix::io::AsRawFd + ?Sized>(fd: &'fd F, secs: u64) -> Self {
+        Self {
+            fd: fd.as_raw_fd(),
+            secs,
+            _borrow: std::marker::PhantomData,
+        }
+    }
+}
+
+impl Read for IdleTimeout<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let ms = i32::try_from(self.secs.saturating_mul(1000)).unwrap_or(i32::MAX);
+        loop {
+            let mut pfd = libc::pollfd {
+                fd: self.fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: one initialised `pollfd` naming a descriptor the caller
+            // holds open for this borrow's lifetime.
+            let rc = unsafe { libc::poll(&mut pfd, 1, ms) };
+            if rc == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("no frame for {}s — the peer went quiet", self.secs),
+                ));
+            }
+            if rc < 0 {
+                let e = std::io::Error::last_os_error();
+                // Interrupted: poll again. `Ok(0)` would be read as a clean end
+                // of stream by every caller above and would silently truncate
+                // the session — a signal is not a hangup.
+                if e.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(e);
+            }
+            // SAFETY: `buf` is a valid writable slice of the length passed.
+            let n =
+                unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            if n < 0 {
+                let e = std::io::Error::last_os_error();
+                if e.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(e);
+            }
+            return Ok(n as usize);
+        }
+    }
 }
 
 
@@ -394,6 +470,32 @@ pub fn serve_stdio(worker: &mut Worker) -> Result<(), ServeError> {
 /// The client's number is a request and these are the budget (ROADMAP.md R5):
 /// never trust a peer to bound a run on someone else's machine.
 const EXEC_DEFAULT_SECS: u64 = 300;
+
+/// Free space a create insists on beyond the source itself: room for the
+/// checkout and the object store.
+///
+/// Deliberately modest. The job is to refuse a create onto a disk that is
+/// already nearly full, not to decide how much room a build deserves — a
+/// runner with a gigabyte free is a small runner, not a broken one.
+const HEADROOM_MB: u64 = 256;
+
+/// How many boxes one runner will hold at once. Not a quota system: one number
+/// that stops a loop, a script or a mistake from filling a machine whose whole
+/// job is to still be there tomorrow.
+const MAX_BOXES: usize = 64;
+
+/// How long the worker will wait for a frame that never comes.
+///
+/// The worker had no clock at all, and the client's watchdog is not a
+/// substitute: a peer that opens a session, declares a frame and then trickles
+/// one byte an hour costs a worker process, an sshd session, the buffer for the
+/// declared frame, and — inside an exec or an export — a held box lock that
+/// blocks every export of that box until the process dies.
+///
+/// Generous, because it bounds *silence between frames* rather than a command's
+/// runtime: nothing is read while a build runs, so a slow build is never idle
+/// by this measure.
+const IDLE_SECS: u64 = 300;
 
 /// Run a command in a box.
 ///
@@ -426,6 +528,23 @@ fn handle_exec<W: Write>(
             format!("box `{}` does not exist on this runner", req.box_id),
         )));
     };
+
+    // An expired lease that the once-per-session sweep has not reached yet is
+    // still expired. Running in it would quietly extend a box the operator has
+    // been told is finished, and "the lease is a fact on disk" would only be
+    // true of the sweep.
+    if let Some(lease) = store.lease(&req.box_id).map_err(internal)?
+        && lease.expired_at(Utc::now())
+    {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Unsupported,
+            format!(
+                "box `{}` has outlived its lease and is waiting to be reaped — create it \
+                 again if the work is not finished",
+                req.box_id
+            ),
+        )));
+    }
 
     // Shared: many execs at once, never beside an export (R8).
     let _lock = store
@@ -682,7 +801,33 @@ fn handle_create<R: Read>(
         )));
     }
 
+    // Free space, before accepting a transfer of up to two gigabytes. The
+    // capability report advertises `workspace_mb` and nothing consulted it, so
+    // a runner would accept boxes until its disk was full.
+    let needed_mb = (req.source.bytes / (1024 * 1024)) + HEADROOM_MB;
+    if caps.workspace_mb > 0 && caps.workspace_mb < needed_mb {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Unsupported,
+            format!(
+                "this runner has {} MiB free where the box needs about {needed_mb} MiB — \
+                 `h5i runner gc <name> --all` frees what is finished with",
+                caps.workspace_mb
+            ),
+        )));
+    }
+
     let store = worker.store();
+
+    let held = store.list(Utc::now()).map_err(internal)?.len();
+    if held >= MAX_BOXES {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Unsupported,
+            format!(
+                "this runner already holds {held} boxes, which is its limit — destroy some, \
+                 or `h5i runner gc <name>` to reap what has expired"
+            ),
+        )));
+    }
 
     // The idempotent case, decided before anything is built.
     if let Some(existing) = store.find(&req.box_id).map_err(internal)? {
@@ -732,6 +877,28 @@ fn handle_create<R: Read>(
             format!(
                 "this create declares the `{}` tier and carries a `{}` policy — the tier that \
                  is checked must be the tier that runs",
+                req.isolation,
+                resolved.claim.as_str()
+            ),
+        )));
+    }
+
+    let resolved = decode_policy(&req.policy).map_err(|e| {
+        Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Malformed,
+            format!("the policy in this create is not one h5i can read: {e}"),
+        ))
+    })?;
+    // Nothing dispatches on `req.isolation` — `run_with_env` dispatches on
+    // `policy.claim` — so without this the capability gate above guards a field
+    // that decides nothing: a create could declare `container`, be recorded and
+    // displayed as `container`, and run every command through `run_unconfined`.
+    if resolved.claim.as_str() != req.isolation {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Malformed,
+            format!(
+                "this create declares the `{}` tier and carries a `{}` policy — the tier \
+                 that is checked must be the tier that runs",
                 req.isolation,
                 resolved.claim.as_str()
             ),
@@ -1212,7 +1379,7 @@ mod tests {
             let mut w = FrameWriter::new(&mut input, Limits::permissive());
             let (k, p) = hello();
             w.write(k.as_u8(), &p).unwrap();
-            for _ in 0..(Limits::control().max_frames + 10) {
+            for _ in 0..(Limits::control().max_frames() + 10) {
                 w.write(FrameKind::KeepAlive.as_u8(), b"").unwrap();
             }
         }
@@ -1274,7 +1441,7 @@ mod tests {
             arch: "x86_64".into(),
             os: "linux".into(),
             memory_mb: 1024,
-            workspace_mb: 1024,
+            workspace_mb: 32 * 1024,
             isolation: vec!["container".into()],
             container: true,
             kvm: false,

@@ -100,27 +100,22 @@ pub fn import_tree(
     // 2. The base, from the repository we own. Trusted, local, and what makes
     //    the thin bundle resolvable.
     let host_git = repo.path().to_string_lossy().to_string();
-    git(
-        &qdir,
-        &[
-            "fetch",
-            "--quiet",
-            "--end-of-options",
-            &host_git,
-            &format!("{base_commit}:refs/h5i/base"),
-        ],
-    )?;
+    fetch(&qdir, &host_git, &format!("{base_commit}:refs/h5i/base"))?;
 
-    // 3. The untrusted part, with git's own structural checking on.
-    git(
+    // 3. The untrusted part.
+    //
+    //    `transfer.fsckObjects` is set below and is **not** what makes this
+    //    safe: a bundle carrying a tree with a `..` entry, or a `.git`
+    //    directory entry, is accepted by that check on git 2.43 — `git fsck
+    //    --strict` afterwards reports exactly what the fetch let through. The
+    //    gate is `inspect`, which walks the tree itself. The flag stays on
+    //    because it costs nothing and catches malformed objects; the comment
+    //    says what it does rather than what it sounds like it does, so nobody
+    //    builds on a belt that is not fastened.
+    fetch(
         &qdir,
-        &[
-            "fetch",
-            "--quiet",
-            "--end-of-options",
-            &bundle.to_string_lossy(),
-            &format!("{EXPORT_REF}:refs/h5i/tip"),
-        ],
+        &bundle.to_string_lossy(),
+        &format!("{EXPORT_REF}:refs/h5i/tip"),
     )?;
 
     let qrepo = git2::Repository::open(&qdir)?;
@@ -157,11 +152,32 @@ pub fn import_tree(
     // 4. The structural checks, before anything is copied anywhere.
     let base_links = gitlinks_of(&base.tree()?)?;
     let tip_tree = tip.tree()?;
-    inspect(&qrepo, &tip_tree, &base_links, private_rels, &mut violations, &mut private_dropped)?;
+    let walked = inspect(
+        &qrepo,
+        &tip_tree,
+        &base_links,
+        private_rels,
+        &mut violations,
+        &mut private_dropped,
+    );
 
+    // Violations first, error second. `TreeWalkResult::Abort` surfaces as a
+    // libgit2 "callback returned -1", which would replace the reviewer's
+    // sentence with an opaque one *and* skip the violation event the caller
+    // files — so the three abort-shaped refusals (too many entries, an
+    // over-long path, a path that escapes) would leave no durable mark. A
+    // runner wanting to probe quietly would simply choose one of those.
     if !violations.is_empty() {
+        for v in &mut violations {
+            // A tree entry name may contain any byte but NUL and `/`, `ESC`
+            // included, and these strings are printed and stored. Every other
+            // peer-supplied string in this codebase is cleaned; this boundary
+            // was the one that was not.
+            *v = crate::redact::sanitize_display(v);
+        }
         return Ok(Inspected::Refused { violations });
     }
+    walked?;
 
     // 5. Only now does anything cross. A commit is made in the quarantine
     //    purely as a carrier — `git fetch` moves refs, not bare trees — and the
@@ -178,23 +194,22 @@ pub fn import_tree(
     };
     qrepo.reference("refs/h5i/carry", carrier, true, "carry")?;
 
-    git(
+    // A unique name, and forced. Carrier commits are parentless, so a second
+    // one is never a fast-forward: a fixed ref left behind by a crash — or by
+    // two proposes at once — would make every later remote propose in this
+    // repository fail with a non-fast-forward until someone deleted it by hand.
+    let landing = format!("refs/h5i/quarantine-carry/{carrier}");
+    fetch(
         &repo.path().to_path_buf(),
-        &[
-            "fetch",
-            "--quiet",
-            "--end-of-options",
-            &qdir.to_string_lossy(),
-            "refs/h5i/carry:refs/h5i/quarantine-carry",
-        ],
+        &qdir.to_string_lossy(),
+        &format!("+refs/h5i/carry:{landing}"),
     )?;
-    let carried = repo
-        .find_reference("refs/h5i/quarantine-carry")?
-        .peel_to_commit()?;
+    let carried = repo.find_reference(&landing)?.peel_to_commit()?;
     let tree = carried.tree_id();
     // The carrier's own commit object is now unreferenced and collectable; the
-    // tree and its blobs are what was wanted and what stays.
-    if let Ok(mut r) = repo.find_reference("refs/h5i/quarantine-carry") {
+    // tree and its blobs are what was wanted and what stays. Removed on every
+    // path out, including the ones that fail after this point.
+    if let Ok(mut r) = repo.find_reference(&landing) {
         r.delete()?;
     }
 
@@ -226,7 +241,16 @@ fn inspect(
             return git2::TreeWalkResult::Abort;
         }
 
-        let name = entry.name().unwrap_or("");
+        // An entry whose name is not UTF-8 is refused explicitly. It used to
+        // fail closed only by accident: `unwrap_or("")` made the path equal to
+        // its directory, which the empty-component check below happened to
+        // catch. An accident that holds is still an accident.
+        let Some(name) = entry.name() else {
+            violations.push(format!(
+                "a file name under {dir} that is not valid UTF-8"
+            ));
+            return git2::TreeWalkResult::Abort;
+        };
         let path = format!("{dir}{name}");
 
         if path.len() > MAX_PATH_LEN {
@@ -265,18 +289,34 @@ fn inspect(
                 }
             }
             Some(git2::ObjectType::Blob) => {
-                if let Ok(blob) = repo.find_blob(entry.id())
-                    && blob.size() as u64 > MAX_BLOB_BYTES
-                {
-                    violations.push(format!(
-                        "a file over {} MiB at {path}",
-                        MAX_BLOB_BYTES / (1024 * 1024)
-                    ));
+                // The header, not the object. `find_blob(...).size()` reads the
+                // *whole inflated blob* to tell you how big it is — so the
+                // check for an oversized file was itself the memory bomb, and a
+                // highly compressible multi-gigabyte blob fits easily inside
+                // the two-gigabyte bundle cap. Worse, the old form was
+                // `if let Ok(blob)` with no else: an allocation failure while
+                // reading it recorded no violation and let the tree through.
+                match repo.odb().and_then(|odb| odb.read_header(entry.id())) {
+                    Ok((size, _)) if size as u64 > MAX_BLOB_BYTES => {
+                        violations.push(format!(
+                            "a file over {} MiB at {path}",
+                            MAX_BLOB_BYTES / (1024 * 1024)
+                        ));
+                    }
+                    Ok(_) => {}
+                    // Fail closed. Every other ceiling in this file does, and
+                    // "we could not measure it" is not "it is small".
+                    Err(e) => violations.push(format!(
+                        "a file at {path} whose size could not be read ({e})"
+                    )),
                 }
                 // A symlink is a `120000` blob here rather than a filesystem
                 // object, so the escape it could perform on a real filesystem
-                // is not available to it in a tree. It is recorded for the
-                // reviewer and not refused.
+                // is not available to it in a tree — the host never checks
+                // this tree out, it commits it, and whoever later checks the
+                // branch out gets git's own `verify_path`. Not refused, and
+                // not separately recorded either: it is a file like any other
+                // at this layer.
                 if is_under_private(&path, private_rels) {
                     private_dropped.push(path.clone());
                 }
@@ -335,6 +375,36 @@ fn is_under_private(path: &str, private_rels: &[String]) -> bool {
     })
 }
 
+/// `git fetch`, with the options that make a refspec mean what it appears to.
+///
+/// A refspec is **not** a limit on what a fetch writes. git follows tags by
+/// default: any `refs/tags/*` on the source side whose target lands in the
+/// downloaded set arrives too, under its own name. A compromised runner
+/// crafting its own bundle therefore got an arbitrary `refs/tags/<name>` into
+/// the quarantine and, on the carrier fetch, into the host repository — with a
+/// runner-authored tag object carrying an attacker-chosen tagger and message.
+/// That is exactly what this module's header promises cannot happen, and it
+/// happened on the *success* path, silently. Demonstrated before these two
+/// options existed.
+///
+/// `--no-write-fetch-head` for the smaller half of the same point: the host's
+/// `FETCH_HEAD` is not a place for names a peer chose.
+fn fetch(dir: &PathBuf, from: &str, refspec: &str) -> Result<(), H5iError> {
+    git(
+        dir,
+        &[
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "--end-of-options",
+            from,
+            refspec,
+        ],
+    )
+    .map(|_| ())
+}
+
 /// Run git in `dir`, with the same three hardening rules the rest of this
 /// codebase's git shell-outs use.
 fn git(dir: &PathBuf, args: &[&str]) -> Result<String, H5iError> {
@@ -387,5 +457,160 @@ mod tests {
         let rels = vec![String::new(), "/".to_string()];
         assert!(!is_under_private("anything", &rels));
         assert!(!is_under_private("", &rels));
+    }
+}
+
+#[cfg(test)]
+mod hostile_bundle_tests {
+    use super::*;
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A refspec is not a limit on what a fetch writes.
+    ///
+    /// The threat model says the runner may be compromised, so it does not have
+    /// to use our bundle writer — it can craft any bundle bytes it likes. One
+    /// carrying a `refs/tags/*` used to land that tag, and a runner-authored
+    /// tag object with an attacker-chosen tagger and message, in the host
+    /// repository, on the success path, silently. That is the exact thing this
+    /// module's header says cannot happen.
+    #[test]
+    fn a_crafted_bundle_cannot_put_its_own_refs_or_objects_in_the_host() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let host = dir.path().join("host");
+        std::fs::create_dir_all(&host).unwrap();
+        git_in(&host, &["init", "--quiet", "."]);
+        git_in(&host, &["config", "user.email", "t@example.com"]);
+        git_in(&host, &["config", "user.name", "T"]);
+        std::fs::write(host.join("a.txt"), b"one").unwrap();
+        git_in(&host, &["add", "-A"]);
+        git_in(&host, &["commit", "--quiet", "-m", "one"]);
+        let base = git_in(&host, &["rev-parse", "HEAD"]);
+
+        // The runner's copy, doing legitimate work and one illegitimate thing.
+        let box_dir = dir.path().join("box");
+        git_in(dir.path(), &["clone", "--quiet", &host.to_string_lossy(), "box"]);
+        git_in(&box_dir, &["config", "user.email", "evil@runner"]);
+        git_in(&box_dir, &["config", "user.name", "evil"]);
+        std::fs::write(box_dir.join("b.txt"), b"work").unwrap();
+        git_in(&box_dir, &["add", "-A"]);
+        git_in(&box_dir, &["commit", "--quiet", "-m", "work"]);
+        let tip = git_in(&box_dir, &["rev-parse", "HEAD"]);
+        let tree = git_in(&box_dir, &["rev-parse", "HEAD^{tree}"]);
+        git_in(
+            &box_dir,
+            &["tag", "-a", "v2.0.0", "-m", "signed-off by the release bot", &tip],
+        );
+        git_in(&box_dir, &["update-ref", EXPORT_REF, &tip]);
+
+        // A bundle with a tag ref in it, which our own writer would never emit.
+        let bundle = dir.path().join("evil.bundle");
+        git_in(
+            &box_dir,
+            &[
+                "bundle",
+                "create",
+                &bundle.to_string_lossy(),
+                EXPORT_REF,
+                "refs/tags/v2.0.0",
+            ],
+        );
+
+        let repo = git2::Repository::open(&host).expect("open host");
+        let accepted = import_tree(&repo, &bundle, &base, &tree, &[]).expect("import");
+        assert!(
+            matches!(accepted, Inspected::Accepted { .. }),
+            "the work itself is legitimate and must still be accepted"
+        );
+
+        // And none of the runner's own naming survived into the host.
+        let refs = git_in(&host, &["for-each-ref", "--format=%(refname)"]);
+        assert!(
+            !refs.contains("refs/tags/"),
+            "a runner-chosen tag reached the host: {refs}"
+        );
+        assert!(
+            !refs.contains("quarantine-carry"),
+            "the carrier ref was left behind: {refs}"
+        );
+        assert!(
+            repo.find_reference("refs/tags/v2.0.0").is_err(),
+            "the runner-authored tag object is reachable in the host"
+        );
+    }
+
+    /// A tree entry name may contain an escape sequence, and these strings are
+    /// printed and stored.
+    #[test]
+    fn a_violation_carrying_terminal_escapes_is_cleaned_before_it_is_reported() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let host = dir.path().join("host");
+        std::fs::create_dir_all(&host).unwrap();
+        git_in(&host, &["init", "--quiet", "."]);
+        git_in(&host, &["config", "user.email", "t@example.com"]);
+        git_in(&host, &["config", "user.name", "T"]);
+        std::fs::write(host.join("a.txt"), b"one").unwrap();
+        git_in(&host, &["add", "-A"]);
+        git_in(&host, &["commit", "--quiet", "-m", "one"]);
+        let base = git_in(&host, &["rev-parse", "HEAD"]);
+
+        let box_dir = dir.path().join("box");
+        git_in(dir.path(), &["clone", "--quiet", &host.to_string_lossy(), "box"]);
+        git_in(&box_dir, &["config", "user.email", "e@e"]);
+        git_in(&box_dir, &["config", "user.name", "e"]);
+        // A gitlink the base did not have, under a name full of escapes.
+        let name = "sub\u{1b}[2K\r\u{1b}[32mok  0 violations\u{1b}[0m";
+        let fake = git_in(&box_dir, &["rev-parse", "HEAD"]);
+        let entry = format!("160000 commit {fake}\t{name}\n");
+        let mktree = std::process::Command::new("git")
+            .args(["mktree"])
+            .current_dir(&box_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut c| {
+                use std::io::Write;
+                c.stdin.as_mut().unwrap().write_all(entry.as_bytes())?;
+                c.wait_with_output()
+            })
+            .expect("mktree");
+        let tree = String::from_utf8_lossy(&mktree.stdout).trim().to_string();
+        let commit = git_in(
+            &box_dir,
+            &["commit-tree", &tree, "-p", &base, "-m", "hostile"],
+        );
+        git_in(&box_dir, &["update-ref", EXPORT_REF, &commit]);
+        let bundle = dir.path().join("e.bundle");
+        git_in(
+            &box_dir,
+            &["bundle", "create", &bundle.to_string_lossy(), EXPORT_REF],
+        );
+
+        let repo = git2::Repository::open(&host).expect("open");
+        match import_tree(&repo, &bundle, &base, &tree, &[]).expect("import") {
+            Inspected::Refused { violations } => {
+                assert!(!violations.is_empty());
+                for v in &violations {
+                    assert!(
+                        !v.contains('\u{1b}'),
+                        "an escape survived into a printed violation: {v:?}"
+                    );
+                }
+            }
+            Inspected::Accepted { .. } => panic!("a gitlink the base lacked must be refused"),
+        }
     }
 }
