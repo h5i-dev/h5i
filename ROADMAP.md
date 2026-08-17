@@ -7159,11 +7159,34 @@ that answered "changed nothing" for work that had not come home; and a
 `create` that failed deterministically for any repository declaring a
 persona.
 
-Two of the fixes were themselves wrong first and were caught by the tests
-they broke: an idle timeout polling under a buffered reader, and a budget
-restored on only the successful path. That is the argument for the fuzz
-harnesses this round added over the codec and the worker's state machine,
-and for the round that reviewed the fixes rather than the code.
+Several of the fixes were themselves wrong, which is the part of this worth
+generalising. Two were caught by the tests they broke: an idle timeout
+polling under a buffered reader, and a budget restored on only the
+successful path. Three more survived until a round was spent reviewing the
+*fixes* rather than the code, and one of those was the second-worst finding
+of the whole review:
+
+- **The move to libgit2 was half a fix.** It closed the half of the
+  hostile-config class that *executes* commands and left the half that
+  *redirects*. libgit2 honours `core.worktree`, so a box could point the
+  export's staging at any path the runner user can read and have another
+  box's workspace packed into its own bundle and shipped to the owner; and a
+  `.git` file carrying a `gitdir:` pointer makes the export commit into a
+  different repository. The lesson is narrow and worth keeping: "this library
+  does not run commands" answers a smaller question than "this library does
+  not act on hostile configuration".
+- **One fix's commit message described work its diff never did.** The
+  `authorized_keys` check was claimed to match whole lines and did not; the
+  branch that claimed to refuse was unreachable. A false claim in a commit
+  message is worse than the bug, because it is what the next reader trusts.
+- **One fix reverted an older one.** Setting `service_digest` to `None` for a
+  runner box re-armed the legacy-env sentinel a previous security fix had
+  closed, under a comment still asserting the invariant held.
+
+That is the argument for the fuzz harnesses this round added over the codec
+and the worker's state machine, and for spending a round on the fixes rather
+than only on the code. Reviewing a patch is not the same activity as
+reviewing a system, and the second one does not subsume the first.
 
 ## R13. The order
 
