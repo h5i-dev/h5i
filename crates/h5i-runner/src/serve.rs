@@ -382,12 +382,27 @@ pub fn serve<R: Read, W: Write>(
 }
 
 /// Serve on this process's own stdin and stdout: what the forced command runs.
+///
+/// Unix only, and that is the design rather than a portability gap: a runner
+/// requires Linux (ROADMAP.md R1), so the *worker* half of this crate has no
+/// meaning elsewhere. The *client* half is portable, which is why the gate is
+/// here and not on the crate.
+#[cfg(unix)]
 pub fn serve_stdio(worker: &mut Worker) -> Result<(), ServeError> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     // The unbuffered handle, deliberately: see `IdleTimeout`.
     let timed = IdleTimeout::new(&stdin, IDLE_SECS);
     serve(timed, stdout.lock(), worker)
+}
+
+/// A runner must be Linux, so serving from anywhere else is refused rather than
+/// served without the clock the Unix path has.
+#[cfg(not(unix))]
+pub fn serve_stdio(_worker: &mut Worker) -> Result<(), ServeError> {
+    Err(ServeError::Proto(ProtoError::Invalid(
+        "a runner must be a Linux machine, and this h5i is not running on one".into(),
+    )))
 }
 
 /// A reader that gives up when the peer goes quiet.
@@ -404,6 +419,7 @@ pub fn serve_stdio(worker: &mut Worker) -> Result<(), ServeError> {
 /// nothing readable and the worker waits out its own timeout on data it already
 /// has. That is exactly what happened the first time this was written around
 /// `stdin().lock()`.
+#[cfg(unix)]
 pub struct IdleTimeout<'fd> {
     fd: std::os::unix::io::RawFd,
     secs: u64,
@@ -411,6 +427,7 @@ pub struct IdleTimeout<'fd> {
     _borrow: std::marker::PhantomData<&'fd ()>,
 }
 
+#[cfg(unix)]
 impl<'fd> IdleTimeout<'fd> {
     pub fn new<F: std::os::unix::io::AsRawFd + ?Sized>(fd: &'fd F, secs: u64) -> Self {
         Self {
@@ -421,6 +438,7 @@ impl<'fd> IdleTimeout<'fd> {
     }
 }
 
+#[cfg(unix)]
 impl Read for IdleTimeout<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let ms = i32::try_from(self.secs.saturating_mul(1000)).unwrap_or(i32::MAX);

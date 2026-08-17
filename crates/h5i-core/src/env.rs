@@ -10926,6 +10926,11 @@ mod tests {
         assert!(text.contains("box propose"), "and says what to do: {text}");
     }
 
+    // The counter under test lives in the console module, which is behind the
+    // `web` feature; the lane string it keys on is not. Gated rather than
+    // duplicated, because asserting the string here and hoping the console
+    // agreed is exactly the drift this test exists to catch.
+    #[cfg(feature = "web")]
     #[test]
     fn a_runner_observed_run_is_not_counted_as_box_claimed() {
         // The console badge would otherwise say "the box told us this" about a

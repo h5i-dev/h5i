@@ -71,6 +71,10 @@ pub enum StoreError {
         wanted: &'static str,
     },
 
+    /// Something a runner needs that this platform does not have.
+    #[error("{0}")]
+    Unsupported(&'static str),
+
     #[error("runner state is not readable as a box record at {path}: {source}")]
     Corrupt {
         path: PathBuf,
@@ -430,6 +434,22 @@ impl BoxStore {
                 });
             }
         }
+
+        // A lock that silently does not lock is worse than no lock: every
+        // caller above believes exec and export are mutually exclusive. A
+        // runner must be Linux anyway (ROADMAP.md R1), so the honest answer off
+        // Unix is to refuse rather than to hand back a handle that guards
+        // nothing.
+        #[cfg(not(unix))]
+        {
+            let _ = (kind, file);
+            return Err(StoreError::Unsupported(
+                "box locking needs flock, which this platform does not have — a runner must \
+                 be a Linux machine",
+            ));
+        }
+
+        #[cfg(unix)]
         Ok(BoxLock { _file: file })
     }
 

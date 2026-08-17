@@ -1,3 +1,8 @@
+//! `h5i-runner` is an optional dependency behind the `runner` feature, so this
+//! whole file compiles only when that feature is on. Without the attribute a
+//! `--no-default-features` build fails here rather than in anything it ships.
+#![cfg(feature = "runner")]
+
 //! The runner protocol over a real process boundary.
 //!
 //! `h5i-runner`'s own tests drive the worker loop through two in-memory
