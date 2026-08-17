@@ -7294,6 +7294,17 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     // cleaned here for exactly that reason, and its neighbours were not.
     use crate::redact::sanitize_display as clean;
     let mut out = String::new();
+    // Said first, because everything below it is about a machine that is not
+    // this one. `box create` deliberately suppresses the work path for a runner
+    // box so nobody tries to `cd` into a directory that was never made; this is
+    // the command those users are pointed at, and it used to print local paths,
+    // local grants and local limits without ever mentioning the runner.
+    if let (Some(runner), Some(id)) = (&m.runner, &m.runner_id) {
+        out.push_str(&format!("  runs on  : {} ({})\n", clean(runner), short(id, 12)));
+        out.push_str(
+            "             the workspace and the confinement below are enforced there,              not here\n",
+        );
+    }
     out.push_str(&format!("── {} ──\n", clean(&m.id)));
     // Reconcile the durable status against the live registry: a `running`
     // manifest with no live writer is a crash leftover, and saying so beats

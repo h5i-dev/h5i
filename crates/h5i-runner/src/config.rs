@@ -246,8 +246,7 @@ pub fn save_new(record: &RunnerRecord) -> Result<PathBuf, ConfigError> {
     if dir.join("runner.toml").exists() {
         return Err(ConfigError::Exists(record.name.clone()));
     }
-    std::fs::create_dir_all(&dir).map_err(|e| ConfigError::io(&dir, e))?;
-    restrict_dir(&dir)?;
+    create_private_dir(&dir)?;
     save(record)?;
     Ok(dir)
 }
@@ -255,8 +254,7 @@ pub fn save_new(record: &RunnerRecord) -> Result<PathBuf, ConfigError> {
 /// Overwrite an existing record.
 pub fn save(record: &RunnerRecord) -> Result<(), ConfigError> {
     let dir = runner_dir(&record.name)?;
-    std::fs::create_dir_all(&dir).map_err(|e| ConfigError::io(&dir, e))?;
-    restrict_dir(&dir)?;
+    create_private_dir(&dir)?;
     let text = toml::to_string_pretty(record)?;
     write_private(&dir.join("runner.toml"), text.as_bytes())
 }
@@ -304,6 +302,33 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
 
     std::fs::rename(&tmp, path).map_err(|e| ConfigError::io(path, e))?;
     Ok(())
+}
+
+/// Create a directory that is owner-only from the moment it exists.
+///
+/// `create_dir_all` then `chmod` leaves a window at `0777 & ~umask`, and under
+/// a permissive umask that window is a place to pre-create a symlink where the
+/// pair key is about to be written. It is the same argument `write_private`
+/// already makes about files — "a key that is world-readable for a millisecond
+/// is a key that was world-readable" — applied to the directory holding it.
+///
+/// Every ancestor h5i creates gets the same mode, because the *names* of the
+/// paired runners are worth as little to leak as their keys.
+fn create_private_dir(dir: &Path) -> Result<(), ConfigError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|e| ConfigError::io(dir, e))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir).map_err(|e| ConfigError::io(dir, e))?;
+    // `recursive` does not re-apply the mode to directories that already
+    // existed, so an earlier run's wider directory is narrowed here.
+    restrict_dir(dir)
 }
 
 /// Make a runner's directory owner-only.

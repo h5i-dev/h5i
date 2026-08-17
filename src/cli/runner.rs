@@ -536,12 +536,26 @@ printf '%s\\n' \"$line\" >> ~/.ssh/authorized_keys
         stdin.write_all(line.as_bytes())?;
     }
     let out = child.wait_with_output()?;
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if out.status.code() == Some(3) {
+        anyhow::bail!(
+            "this key is already in ~/.ssh/authorized_keys on {} under different options.\n\
+             h5i will not silently leave it that way: the `restrict,command=` line is the \
+             whole reason the pair key is safe to install. Remove the existing entry and \
+             pair again.",
+            destination_of(record)
+        );
+    }
     if !out.status.success() {
         anyhow::bail!(
-            "could not install the forced command on {}:\n{}",
-            destination_of(record),
-            String::from_utf8_lossy(&out.stderr).trim()
+            "could not install the forced command on {}:\n{stderr}",
+            destination_of(record)
         );
+    }
+    // Said rather than swallowed: "already present" and "installed" are
+    // different facts, and pairing used to report the second for both.
+    if !stderr.is_empty() {
+        UI::info(&h5i_core::redact::sanitize_display(&stderr));
     }
     Ok(())
 }

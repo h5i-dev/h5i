@@ -132,9 +132,16 @@ impl HostKey {
     }
 }
 
-/// Is this one of the algorithms OpenSSH names a host key with? Deliberately a
-/// list rather than a shape test: a field that merely *looks* like an algorithm
-/// is how a comment or a stray token gets read as a key.
+/// Is this one of the algorithms OpenSSH names a host *key* with?
+///
+/// Deliberately a list rather than a shape test: a field that merely *looks*
+/// like an algorithm is how a comment or a stray token gets read as a key.
+///
+/// `rsa-sha2-256`/`rsa-sha2-512` are deliberately absent. They are *signature*
+/// algorithm names — a `known_hosts` line's key type is always `ssh-rsa` — so
+/// accepting them meant that if one ever appeared it would be written back into
+/// a `known_hosts` line OpenSSH does not recognise as a key type: a pin that
+/// silently never matches.
 fn is_key_algorithm(s: &str) -> bool {
     matches!(
         s,
@@ -146,8 +153,6 @@ fn is_key_algorithm(s: &str) -> bool {
             | "ecdsa-sha2-nistp521"
             | "sk-ssh-ed25519@openssh.com"
             | "sk-ecdsa-sha2-nistp256@openssh.com"
-            | "rsa-sha2-256"
-            | "rsa-sha2-512"
     )
 }
 
@@ -167,6 +172,23 @@ pub fn preferred_host_key(scan_output: &str) -> Result<HostKey, IdentityError> {
             scan_output.lines().next().unwrap_or("").to_string(),
         ));
     }
+    // Two keys of the *preferred* type that differ is one name pointing at two
+    // machines, which is exactly the condition pairing must not paper over. The
+    // type ranking below makes the choice deterministic across types; within a
+    // type there is no right answer to pick.
+    let mut preferred: Vec<&HostKey> = Vec::new();
+    for k in &keys {
+        if k.algorithm == "ssh-ed25519" {
+            preferred.push(k);
+        }
+    }
+    if preferred.len() > 1 && preferred.iter().any(|k| k.blob != preferred[0].blob) {
+        return Err(IdentityError::NotAHostKey(
+            "the scan returned two different ed25519 host keys — one name is answering as              two machines"
+                .into(),
+        ));
+    }
+
     let rank = |a: &str| match a {
         "ssh-ed25519" => 0,
         "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "ecdsa-sha2-nistp521" => 1,
@@ -302,6 +324,28 @@ mod tests {
             preferred_host_key(&reordered).unwrap().algorithm,
             "ssh-ed25519"
         );
+    }
+
+    #[test]
+    fn two_different_keys_of_the_preferred_type_are_refused() {
+        // One name answering as two machines. Deterministically picking the
+        // first would pin one of them and never say the other existed.
+        let other = "AAAAC3NzaC1lZDI1NTE5AAAAIH0nQmVSy0MoLnEHwRuLPXCUZAJXSVZ3ExAmpleKeyAA";
+        let scan = format!("h ssh-ed25519 {ED25519}\nh ssh-ed25519 {other}\n");
+        assert!(preferred_host_key(&scan).is_err());
+
+        // The same key twice is not a conflict — a scan may legitimately repeat.
+        let dup = format!("h ssh-ed25519 {ED25519}\nh ssh-ed25519 {ED25519}\n");
+        assert!(preferred_host_key(&dup).is_ok());
+    }
+
+    #[test]
+    fn a_signature_algorithm_is_not_a_host_key_type() {
+        // `rsa-sha2-512` names a signature, not a key. Accepting it would write
+        // a known_hosts line OpenSSH does not read as a key type: a pin that
+        // silently never matches.
+        assert!(HostKey::parse(&format!("rsa-sha2-512 {ED25519}")).is_err());
+        assert!(HostKey::parse(&format!("ssh-rsa {ED25519}")).is_ok());
     }
 
     #[test]
