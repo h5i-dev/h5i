@@ -40,17 +40,26 @@ const MAX_BLOB_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PATH_LEN: usize = 4096;
 const MAX_TREE_ENTRIES: usize = 500_000;
 
-/// A tree that passed inspection, and what was refused along the way.
+/// What an inspection concluded.
+///
+/// An enum rather than a struct with a sentinel tree. The first version
+/// returned `Oid::zero()` alongside a non-empty violation list and relied on
+/// every caller checking the list first — a convention that holds exactly
+/// until someone reorders two lines, and whose failure mode is writing a
+/// commit over an empty tree. This makes that unrepresentable.
 #[derive(Debug, Clone)]
-pub struct Accepted {
-    /// The tree, now present in the host repository's object database.
-    pub tree: git2::Oid,
-    /// Paths dropped because the policy calls them private. Not violations:
-    /// the box was told it could have them and the reviewer was never meant to
-    /// see them.
-    pub private_dropped: Vec<String>,
-    /// Everything that made this refusable, in the reviewer's words.
-    pub violations: Vec<String>,
+pub enum Inspected {
+    /// The tree is in the host repository's object database and may be
+    /// committed.
+    Accepted {
+        tree: git2::Oid,
+        /// Paths dropped because the policy calls them private. Not
+        /// violations: the box was told it could have them, and the reviewer
+        /// was never meant to see them.
+        private_dropped: Vec<String>,
+    },
+    /// Nothing crossed. These are the reviewer's words for why.
+    Refused { violations: Vec<String> },
 }
 
 /// Unpack, inspect, and bring across.
@@ -63,7 +72,22 @@ pub fn import_tree(
     base_commit: &str,
     expect_tree: &str,
     private_rels: &[String],
-) -> Result<Accepted, H5iError> {
+) -> Result<Inspected, H5iError> {
+    // Both of these are interpolated into refspecs below, and both arrive from
+    // somewhere else — `base_commit` from a manifest, `expect_tree` from the
+    // runner itself. The manifest's is validated on import and the runner's is
+    // validated on receipt, so this is the third check rather than the first.
+    // It is here anyway because this is the module whose entire job is to not
+    // rely on someone else having been careful: a `:` in either of them is a
+    // refspec, not an object id.
+    for (what, value) in [("base commit", base_commit), ("expected tree", expect_tree)] {
+        let ok = (7..=64).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_hexdigit());
+        if !ok {
+            return Err(H5iError::Metadata(format!(
+                "{what} is not an object id, so it will not be used to build a refspec"
+            )));
+        }
+    }
     let scratch = tempfile::tempdir()
         .map_err(|e| H5iError::Metadata(format!("could not make a quarantine: {e}")))?;
     let qdir = scratch.path().join("q");
@@ -114,6 +138,19 @@ pub fn import_tree(
     }
 
     let base = qrepo.find_commit(git2::Oid::from_str(base_commit)?)?;
+
+    // The tip has to be the base's descendant. Without this, a runner that
+    // answered with an unrelated tree — another box's, or an empty one — would
+    // have it written onto this box's branch as a mediated commit. The human
+    // reviewing the diff would still catch it, but a check that costs one graph
+    // walk should not be left to a human's attention.
+    if tip.id() != base.id() && !qrepo.graph_descendant_of(tip.id(), base.id())? {
+        return Err(H5iError::Metadata(format!(
+            "the runner returned work that does not descend from this box's base \
+             ({base_commit}) — it is not this box's history"
+        )));
+    }
+
     let mut violations = Vec::new();
     let mut private_dropped = Vec::new();
 
@@ -123,11 +160,7 @@ pub fn import_tree(
     inspect(&qrepo, &tip_tree, &base_links, private_rels, &mut violations, &mut private_dropped)?;
 
     if !violations.is_empty() {
-        return Ok(Accepted {
-            tree: git2::Oid::zero(),
-            private_dropped,
-            violations,
-        });
+        return Ok(Inspected::Refused { violations });
     }
 
     // 5. Only now does anything cross. A commit is made in the quarantine
@@ -165,10 +198,9 @@ pub fn import_tree(
         r.delete()?;
     }
 
-    Ok(Accepted {
+    Ok(Inspected::Accepted {
         tree,
         private_dropped,
-        violations,
     })
 }
 

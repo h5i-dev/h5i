@@ -11,6 +11,11 @@ h5i-error = { path = "../h5i-error" }
 # own: a capability report that named tiers h5i does not have would be a
 # protocol that can drift from the product.
 h5i-sandbox = { path = "../h5i-sandbox" }
+# The export stages the box's work into a tree. It must NOT be the git CLI:
+# the box owns its own `.git/config`, and git executes `core.fsmonitor` and
+# `filter.*.clean` from it — running the CLI in that tree is arbitrary command
+# execution as the runner user. libgit2 implements neither.
+git2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

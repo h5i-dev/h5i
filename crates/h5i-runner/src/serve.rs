@@ -394,7 +394,6 @@ pub fn serve_stdio(worker: &mut Worker) -> Result<(), ServeError> {
 /// The client's number is a request and these are the budget (ROADMAP.md R5):
 /// never trust a peer to bound a run on someone else's machine.
 const EXEC_DEFAULT_SECS: u64 = 300;
-const EXEC_MAX_SECS: u64 = 24 * 60 * 60;
 
 /// Run a command in a box.
 ///
@@ -441,20 +440,23 @@ fn handle_exec<W: Write>(
     };
     // Checked after joining as well as before: the request's shape check
     // refuses `..`, and this refuses a symlink that points out of the box.
-    let inside = cwd
-        .canonicalize()
-        .ok()
-        .zip(work.canonicalize().ok())
-        .is_some_and(|(c, w)| c.starts_with(&w));
-    if !inside {
-        return Err(Disposition::Answer(ErrorMsg::new(
-            ErrorCode::Unsupported,
-            format!(
-                "`{}` is not a directory inside the box",
-                req.cwd.as_deref().unwrap_or(".")
-            ),
-        )));
-    }
+    // Resolve once, and then *use what was resolved*. Checking the canonical
+    // path and running the un-canonical one is the classic shape of this bug:
+    // execs hold only a shared lock and run concurrently by design, so a
+    // sibling exec swapping `sub` for a symlink between the two would have the
+    // bind mount follow it. The window is small and the retries are free.
+    let cwd = match (cwd.canonicalize().ok(), work.canonicalize().ok()) {
+        (Some(c), Some(w)) if c.starts_with(&w) => c,
+        _ => {
+            return Err(Disposition::Answer(ErrorMsg::new(
+                ErrorCode::Unsupported,
+                format!(
+                    "`{}` is not a directory inside the box",
+                    req.cwd.as_deref().unwrap_or(".")
+                ),
+            )));
+        }
+    };
 
     // The policy as it was pinned at create, rebuilt into the same type the
     // local path uses. This is what makes the worker `h5i` rather than a shim:
@@ -476,7 +478,7 @@ fn handle_exec<W: Write>(
     let timeout = req
         .timeout_secs
         .unwrap_or(EXEC_DEFAULT_SECS)
-        .clamp(1, EXEC_MAX_SECS);
+        .clamp(1, crate::proto::EXEC_MAX_SECS);
 
     write_msg(
         out,
@@ -711,6 +713,31 @@ fn handle_create<R: Read>(
     // The policy, rebuilt here rather than trusted as sent. Only three fields
     // of a `ResolvedPolicy` serialise, and none of them is a host path, so a
     // digest computed on this side has to equal the one computed on that side.
+    let resolved = decode_policy(&req.policy).map_err(|e| {
+        Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Malformed,
+            format!("the policy in this create is not one h5i can read: {e}"),
+        ))
+    })?;
+
+    // The tier the request *declares* and the tier the policy *is* must be the
+    // same tier. Nothing dispatches on `req.isolation` — `run_with_env`
+    // dispatches on `policy.claim` — so without this the capability gate above
+    // guards a field that decides nothing: a create could declare `container`,
+    // be recorded and displayed as `container`, and run every command through
+    // `run_unconfined`.
+    if resolved.claim.as_str() != req.isolation {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Malformed,
+            format!(
+                "this create declares the `{}` tier and carries a `{}` policy — the tier that \
+                 is checked must be the tier that runs",
+                req.isolation,
+                resolved.claim.as_str()
+            ),
+        )));
+    }
+
     let policy_digest = policy_digest_of(&req.policy).map_err(|e| {
         Disposition::Answer(ErrorMsg::new(
             ErrorCode::Malformed,
@@ -807,10 +834,21 @@ fn receive_source<R: Read>(
     // Its own budget: a bundle is megabytes and the handshake that preceded it
     // was bytes.
     frames.begin_rpc(transfer_limits());
+    // Restored on **every** way out of this function, not only the successful
+    // one. A budget widened for a transfer and left behind by an early return
+    // governs the rest of the session, and a create that fails its digest check
+    // is the cheapest way for a peer to arrange that.
+    let restore = |frames: &mut FrameReader<R>| frames.begin_rpc(Limits::control());
 
-    let mut rx = source::Receiver::new(path, req.source.bytes, MAX_SOURCE_BYTES)
-        .map_err(source_failed)?;
+    let mut rx = match source::Receiver::new(path, req.source.bytes, MAX_SOURCE_BYTES) {
+        Ok(rx) => rx,
+        Err(e) => {
+            restore(frames);
+            return Err(source_failed(e));
+        }
+    };
 
+    let outcome = (|| -> Result<(), Disposition> {
     loop {
         let frame = match frames.read() {
             Ok(Some(f)) => f,
@@ -836,10 +874,10 @@ fn receive_source<R: Read>(
     }
 
     rx.finish(&req.source.sha256).map_err(source_failed)?;
-    // Back to the session's own budget. A widened one left in place would
-    // govern every later RPC on this channel, which is a budget in name only.
-    frames.begin_rpc(Limits::control());
     Ok(())
+    })();
+    restore(frames);
+    outcome
 }
 
 fn handle_destroy(payload: &[u8], worker: &mut Worker) -> Result<DestroyResult, Disposition> {
@@ -888,12 +926,17 @@ fn handle_gc(payload: &[u8], worker: &mut Worker) -> Result<GcResult, Dispositio
     Ok(GcResult { reaped, kept })
 }
 
+/// The policy a create carries, as the type the local path uses.
+fn decode_policy(
+    policy: &serde_json::Value,
+) -> Result<h5i_sandbox::sandbox_policy::ResolvedPolicy, h5i_error::H5iError> {
+    serde_json::from_value(policy.clone())
+        .map_err(|e| h5i_error::H5iError::Metadata(e.to_string()))
+}
+
 /// The digest a `ResolvedPolicy` would have, computed from what arrived.
 fn policy_digest_of(policy: &serde_json::Value) -> Result<String, h5i_error::H5iError> {
-    let resolved: h5i_sandbox::sandbox_policy::ResolvedPolicy =
-        serde_json::from_value(policy.clone())
-            .map_err(|e| h5i_error::H5iError::Metadata(e.to_string()))?;
-    resolved.digest()
+    decode_policy(policy)?.digest()
 }
 
 fn fatal(e: ProtoError) -> Disposition {
@@ -946,6 +989,7 @@ fn respond<W: Write>(out: &mut FrameWriter<W>, msg: &ErrorMsg) -> Result<(), Ser
 mod tests {
     use super::*;
     use crate::wire::Frame;
+    use h5i_sandbox::sandbox_policy::IsolationClaim;
 
     /// Drive a whole session from bytes to bytes. No process, no SSH: the
     /// worker's own loop, fed a script of frames.
@@ -1182,7 +1226,7 @@ mod tests {
     /// A real resolved policy and its real digest, so the digest check under
     /// test is the product's own rather than a stand-in.
     fn policy_and_digest() -> (serde_json::Value, String) {
-        use h5i_sandbox::sandbox_policy::{IsolationClaim, Profile, ResolvedPolicy};
+        use h5i_sandbox::sandbox_policy::{Profile, ResolvedPolicy};
         let profile = Profile::builtin("probe", IsolationClaim::Container);
         let resolved = ResolvedPolicy::new(IsolationClaim::Container, profile);
         let digest = resolved.digest().expect("digest");
@@ -1306,6 +1350,40 @@ mod tests {
         assert_eq!(err.code, ErrorCode::Unsupported);
         assert!(err.message.contains("supervised"), "{}", err.message);
         assert!(err.message.contains("container"), "and what it does offer");
+    }
+
+    #[test]
+    fn a_create_whose_declared_tier_is_not_its_policys_tier_is_refused() {
+        // The capability gate checks `req.isolation`; `run_with_env` dispatches
+        // on `policy.claim`. If those may differ, the gate guards a field that
+        // decides nothing — a box could be declared, recorded and displayed as
+        // `container` and run every command unconfined.
+        let dir = tempfile::tempdir().unwrap();
+        let mut req = create_request("liar", "op1", &"a".repeat(64));
+        // The advertised tier the gate will accept…
+        req.isolation = "container".into();
+        // …carrying a policy that is not it.
+        let profile =
+            h5i_sandbox::sandbox_policy::Profile::builtin("probe", IsolationClaim::Workspace);
+        let resolved = h5i_sandbox::sandbox_policy::ResolvedPolicy::new(
+            IsolationClaim::Workspace,
+            profile,
+        );
+        let (policy, policy_digest) = crate::proto::policy_fields(&resolved).unwrap();
+        req.policy = policy;
+        req.policy_digest = policy_digest;
+
+        let (frames, _) = session_in(dir.path(), &[hello(), msg(FrameKind::CreateBox, &req)]);
+        let err = error_of(&frames[1]);
+        assert_eq!(err.code, ErrorCode::Malformed);
+        assert!(
+            err.message.contains("the tier that is checked must be the tier that runs"),
+            "{}",
+            err.message
+        );
+
+        let store = crate::boxstore::BoxStore::new(dir.path().join("boxes"));
+        assert!(store.list(Utc::now()).unwrap().is_empty(), "and nothing was built");
     }
 
     #[test]

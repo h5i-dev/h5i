@@ -1948,6 +1948,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "chrono",
+ "git2",
  "h5i-error",
  "h5i-sandbox",
  "libc",

@@ -9392,18 +9392,24 @@ pub fn propose_remote(
         &private,
     )?;
 
-    if !accepted.violations.is_empty() {
-        // Recorded the way a local mediated commit records one, so a refusal
-        // on a runner reads like a refusal anywhere else.
-        return Err(record_commit_violation(repo, m, accepted.violations));
-    }
+    let (tree_oid, private_dropped) = match accepted {
+        crate::quarantine::Inspected::Refused { violations } => {
+            // Recorded the way a local mediated commit records one, so a
+            // refusal on a runner reads like a refusal anywhere else.
+            return Err(record_commit_violation(repo, m, violations));
+        }
+        crate::quarantine::Inspected::Accepted {
+            tree,
+            private_dropped,
+        } => (tree, private_dropped),
+    };
 
     // The commit this side authors, over a tree a scan reached.
     let parent = repo.find_reference(&m.branch)?.peel_to_commit()?;
-    let snapshot = if parent.tree_id() == accepted.tree {
+    let snapshot = if parent.tree_id() == tree_oid {
         None
     } else {
-        let tree = repo.find_tree(accepted.tree)?;
+        let tree = repo.find_tree(tree_oid)?;
         let sig = crate::refstore::signature(repo)?;
         Some(repo.commit(
             Some(&m.branch),
@@ -9430,10 +9436,10 @@ pub fn propose_remote(
     ));
     brief.push_str(&format!("  base     {}\n", short(&m.base_commit, 12)));
     brief.push_str(&format!("  branch   {}\n", m.branch));
-    if !accepted.private_dropped.is_empty() {
+    if !private_dropped.is_empty() {
         brief.push_str(&format!(
             "  private  {} path(s) held back by policy\n",
-            accepted.private_dropped.len()
+            private_dropped.len()
         ));
     }
     if !described.has_changes {

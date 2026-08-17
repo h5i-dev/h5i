@@ -627,8 +627,14 @@ impl ExecStarted {
     /// The `cwd` here is written into a receipt and rendered by `box status`,
     /// the console and `receipt render`. A runner that put escape sequences in
     /// it could forge lines around its own in every one of them.
+    ///
+    /// `timeout_secs` is clamped for a sharper reason: the client arms its own
+    /// watchdog from it, so an unclamped `u64::MAX` is a peer choosing how long
+    /// we wait — which is to say, forever. A number a peer supplies is never a
+    /// clock; it is a claim about a clock, and it is bounded by ours.
     pub fn sanitized(mut self) -> Result<Self, ProtoError> {
         self.cwd = clean_field("working directory", &self.cwd)?;
+        self.timeout_secs = self.timeout_secs.clamp(1, EXEC_MAX_SECS);
         Ok(self)
     }
 }
@@ -844,6 +850,14 @@ impl ExecRequest {
         Ok(())
     }
 }
+
+/// The worker's hard ceiling on one command, known to both sides.
+///
+/// Both sides, deliberately: the worker clamps a request to it, and the client
+/// clamps the worker's *answer* to it. Without the second half, `EXEC_STARTED`
+/// carrying `u64::MAX` becomes the client's own watchdog interval, and a
+/// hostile runner hangs the CLI forever with one frame.
+pub const EXEC_MAX_SECS: u64 = 24 * 60 * 60;
 
 /// The command exists and is running.
 ///

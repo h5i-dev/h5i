@@ -45,6 +45,11 @@ pub enum SourceError {
     #[error("git {argv} failed:\n{stderr}")]
     Git { argv: String, stderr: String },
 
+    /// libgit2, used wherever the repository's own configuration is hostile —
+    /// which is anywhere inside a box's workspace.
+    #[error("git object store: {0}")]
+    Git2(#[from] git2::Error),
+
     #[error("source I/O at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -248,80 +253,149 @@ pub fn materialize(bundle: &Path, work: &Path, base_commit: &str) -> Result<(), 
 
 /// Commit whatever the box has now, and bundle it for the trip home.
 ///
+/// **This must never invoke the git CLI inside the box's repository.** The
+/// box owns `work/.git/config`, and git executes `core.fsmonitor` and
+/// `filter.<name>.clean` out of it — so `git add` in that tree is arbitrary
+/// command execution as the runner user, which is a complete escape from the
+/// box this whole design exists to contain. `core.hooksPath=/dev/null` does
+/// not cover it; neither does anything else that can be passed on a command
+/// line, because the mechanism is configuration rather than a hook.
+///
+/// libgit2 implements neither of those, so the staging below goes through it.
+/// The bundle is then written from a packfile libgit2 builds, rather than by
+/// `git bundle create`, so the CLI never reads the hostile config at all. The
+/// v2 bundle format is a short text header and a pack, which is a small price
+/// for not having to ask what else git runs from a file the box can write.
+///
 /// The bundle is thin — `base..tip` — because the receiving side already has
-/// the base: it is the machine that sent it. An export therefore costs what was
-/// *done* in the box rather than what the repository's history weighs, which is
-/// the asymmetry that makes the return trip cheap even though the outbound one
-/// is not.
+/// the base: it is the machine that sent it.
 ///
 /// A box with nothing new in it still gets a bundle and an honest
 /// `has_changes: false`, because "the box did nothing" and "the export broke"
 /// must not look the same from the other end.
-pub fn export_bundle(
-    work: &Path,
-    base_commit: &str,
-    out: &Path,
-) -> Result<Exported, SourceError> {
+pub fn export_bundle(work: &Path, base_commit: &str, out: &Path) -> Result<Exported, SourceError> {
+    let repo = git2::Repository::open(work).map_err(SourceError::Git2)?;
+    let base_oid = git2::Oid::from_str(base_commit).map_err(SourceError::Git2)?;
+
+    let head = repo
+        .head()
+        .and_then(|h| h.peel_to_commit())
+        .map_err(SourceError::Git2)?;
+
     // Everything, including files the agent never told git about. An export
     // that silently dropped untracked work would be the worst kind of quiet.
-    git(work, &["add", "--all", "--"])?;
+    let mut index = repo.index().map_err(SourceError::Git2)?;
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .map_err(SourceError::Git2)?;
+    // `add_all` does not notice a tracked file that was deleted; without this,
+    // a box that removed a file exports a tree that still has it.
+    index
+        .update_all(["*"].iter(), None)
+        .map_err(SourceError::Git2)?;
+    let staged_tree = index.write_tree().map_err(SourceError::Git2)?;
 
-    let head = git(work, &["rev-parse", "HEAD"])?.trim().to_string();
-    let staged_tree = git(work, &["write-tree"])?.trim().to_string();
-    let head_tree = git(work, &["rev-parse", "HEAD^{tree}"])?.trim().to_string();
-
-    let tip = if staged_tree == head_tree {
-        head.clone()
+    let tip = if staged_tree == head.tree_id() {
+        head.id()
     } else {
-        // The worker's commit is a carrier, not a record: the receiving side
-        // takes the tree and authors its own (R9), so this message is never
-        // seen by anyone and the authorship never reaches the host repository.
-        git(
-            work,
-            &["commit", "--quiet", "--no-verify", "-m", "h5i: box state for export"],
-        )?;
-        git(work, &["rev-parse", "HEAD"])?.trim().to_string()
-    };
-
-    let tip_tree = git(work, &["rev-parse", &format!("{tip}^{{tree}}")])?
-        .trim()
-        .to_string();
-
-    git(work, &[
-        "update-ref",
-        crate::proto::EXPORT_REF,
-        &tip,
-    ])?;
-    let built = (|| -> Result<(), SourceError> {
-        if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| SourceError::io(parent, e))?;
-        }
-        git(
-            work,
-            &[
-                "bundle",
-                "create",
-                "--end-of-options",
-                &out.to_string_lossy(),
-                &format!("{base_commit}..{}", crate::proto::EXPORT_REF),
-            ],
+        let tree = repo.find_tree(staged_tree).map_err(SourceError::Git2)?;
+        // A carrier, not a record: the receiving side takes the tree and
+        // authors its own commit (R9), so this signature never reaches the
+        // host repository and this message is never read by anyone.
+        let sig = git2::Signature::now("h5i runner", "runner@h5i.invalid")
+            .map_err(SourceError::Git2)?;
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "h5i: box state for export",
+            &tree,
+            &[&head],
         )
-        .map(|_| ())
-    })();
-    let _ = git(work, &["update-ref", "-d", crate::proto::EXPORT_REF]);
-    built?;
+        .map_err(SourceError::Git2)?
+    };
+    let tip_tree = repo
+        .find_commit(tip)
+        .map_err(SourceError::Git2)?
+        .tree_id();
+
+    write_thin_bundle(&repo, base_oid, tip, out)?;
 
     let bytes = std::fs::metadata(out)
         .map_err(|e| SourceError::io(out, e))?
         .len();
     Ok(Exported {
-        tip_commit: tip,
-        tip_tree,
-        has_changes: staged_tree != head_tree || head != base_commit,
+        tip_commit: tip.to_string(),
+        tip_tree: tip_tree.to_string(),
+        has_changes: staged_tree != head.tree_id() || tip != base_oid,
         bytes,
         sha256: digest_file(out)?,
     })
 }
+
+/// Write a v2 git bundle of `base..tip` by hand.
+///
+/// `git bundle create` would be shorter and would mean running the CLI in a
+/// repository whose configuration the box controls — see [`export_bundle`].
+/// The format is small enough to write directly:
+///
+/// ```text
+/// # v2 git bundle
+/// -<prerequisite sha>
+/// <tip sha> <ref>
+/// <blank line>
+/// <packfile>
+/// ```
+///
+/// The prerequisite line is what makes it thin: the reader must already have
+/// that commit, which the receiving side does because it sent it.
+fn write_thin_bundle(
+    repo: &git2::Repository,
+    base: git2::Oid,
+    tip: git2::Oid,
+    out: &Path,
+) -> Result<(), SourceError> {
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| SourceError::io(parent, e))?;
+    }
+
+    // The objects reachable from the tip and not from the base — the same set
+    // `git bundle create base..tip` would pack.
+    let mut walk = repo.revwalk().map_err(SourceError::Git2)?;
+    walk.push(tip).map_err(SourceError::Git2)?;
+    if repo.find_commit(base).is_ok() {
+        walk.hide(base).map_err(SourceError::Git2)?;
+    }
+
+    let mut builder = repo.packbuilder().map_err(SourceError::Git2)?;
+    builder.insert_walk(&mut walk).map_err(SourceError::Git2)?;
+
+    let mut pack = Vec::new();
+    builder
+        .foreach(|chunk| {
+            pack.extend_from_slice(chunk);
+            true
+        })
+        .map_err(SourceError::Git2)?;
+
+    let mut file = std::fs::File::create(out).map_err(|e| SourceError::io(out, e))?;
+    let mut header = String::from("# v2 git bundle\n");
+    // A prerequisite the reader must already have. Omitted when the tip *is*
+    // the base, where there is nothing to require and nothing to send.
+    if base != tip {
+        header.push_str(&format!("-{base}\n"));
+    }
+    header.push_str(&format!("{tip} {BUNDLE_TIP_REF}\n\n"));
+    file.write_all(header.as_bytes())
+        .map_err(|e| SourceError::io(out, e))?;
+    file.write_all(&pack).map_err(|e| SourceError::io(out, e))?;
+    file.sync_all().map_err(|e| SourceError::io(out, e))?;
+    Ok(())
+}
+
+/// The ref an export bundle carries its tip under. Must match what the
+/// receiving side fetches.
+pub const BUNDLE_TIP_REF: &str = crate::proto::EXPORT_REF;
 
 /// What an export turned out to be.
 #[derive(Debug, Clone)]
@@ -588,5 +662,126 @@ mod tests {
         materialize_empty(&work).expect("init");
         assert!(work.join(".git").exists());
         assert!(git(&work, &["status", "--porcelain"]).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod config_execution_tests {
+    use super::*;
+
+    /// The box owns its own `.git/config`, so anything that reads it is a place
+    /// the box can run a command on the runner.
+    ///
+    /// This is not a hypothetical: the git CLI executes `core.fsmonitor` and
+    /// `filter.<name>.clean` from repository config, and the three hardening
+    /// flags this module used to rely on (`core.hooksPath`,
+    /// `protocol.ext.allow`, `transfer.fsckObjects`) cover none of them. Both
+    /// were demonstrated running as the runner user before this test existed.
+    #[test]
+    fn staging_a_hostile_repository_runs_none_of_its_configured_commands() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let marker_a = dir.path().join("FSMONITOR_RAN");
+        let marker_b = dir.path().join("FILTER_RAN");
+
+        // A repository shaped exactly as a box would leave it.
+        let cli = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&work)
+                .output()
+                .expect("git");
+            assert!(out.status.success(), "git {args:?}");
+        };
+        cli(&["init", "--quiet", "."]);
+        cli(&["config", "user.email", "t@example.com"]);
+        cli(&["config", "user.name", "T"]);
+        std::fs::write(work.join("a.txt"), b"one").unwrap();
+        cli(&["add", "-A"]);
+        cli(&["commit", "--quiet", "-m", "one"]);
+        let base = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&work)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        // The box now writes its escape into its own repository.
+        cli(&[
+            "config",
+            "core.fsmonitor",
+            &format!("touch {}; echo", marker_a.display()),
+        ]);
+        cli(&[
+            "config",
+            "filter.evil.clean",
+            &format!("touch {}; cat", marker_b.display()),
+        ]);
+        std::fs::write(work.join(".gitattributes"), b"* filter=evil\n").unwrap();
+        std::fs::write(work.join("b.txt"), b"work the agent did").unwrap();
+
+        // And the worker exports it.
+        let out = dir.path().join("export.bundle");
+        let exported = export_bundle(&work, &base, &out).expect("export");
+        assert!(exported.has_changes);
+
+        assert!(
+            !marker_a.exists(),
+            "core.fsmonitor from the box's config ran on the runner host"
+        );
+        assert!(
+            !marker_b.exists(),
+            "filter.evil.clean from the box's config ran on the runner host"
+        );
+
+        // And the work still made it out, which is the other half of correct.
+        // Read the way the receiving side reads it: a bare repository seeded
+        // with the base (the bundle is thin) and then the bundle itself.
+        let check = tempfile::tempdir().unwrap();
+        let q = check.path().join("q");
+        std::fs::create_dir_all(&q).unwrap();
+        let g = |dir: &std::path::Path, args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        g(&q, &["init", "--quiet", "--bare", "."]);
+        g(&q, &["fetch", "--end-of-options", &work.to_string_lossy(),
+                &format!("{base}:refs/h5i/base")]);
+        g(&q, &["fetch", "--end-of-options", &out.to_string_lossy(),
+                &format!("{}:refs/h5i/tip", crate::proto::EXPORT_REF)]);
+
+        let listed = std::process::Command::new("git")
+            .args(["ls-tree", "-r", "--name-only", "refs/h5i/tip"])
+            .current_dir(&q)
+            .output()
+            .expect("git");
+        let names = String::from_utf8_lossy(&listed.stdout);
+        assert!(names.contains("b.txt"), "the work is in the bundle: {names}");
+        assert!(names.contains("a.txt"), "and so is what was there before");
+
+        let tip = std::process::Command::new("git")
+            .args(["rev-parse", "refs/h5i/tip"])
+            .current_dir(&q)
+            .output()
+            .expect("git");
+        assert_eq!(
+            String::from_utf8_lossy(&tip.stdout).trim(),
+            exported.tip_commit,
+            "and the bundle's tip is the one the worker described"
+        );
     }
 }
