@@ -114,6 +114,23 @@ enum Commands {
         bind: Option<std::net::Ipv4Addr>,
     },
 
+    /// Run boxes on another Linux machine you own.
+    ///
+    /// A runner is a second machine — a spare laptop, a lab box, a VM, a small
+    /// board — that h5i reaches over SSH. The repository, the policy, the
+    /// credentials and the patch gate all stay on this machine; what moves is
+    /// the execution, onto hardware whose compromise you have priced in.
+    ///
+    /// Pairing needs Linux, sshd, and `h5i` installed over there. It does not
+    /// need a container runtime: what a runner can do is advertised, and a box
+    /// asking for something it lacks is refused rather than quietly given
+    /// something weaker.
+    #[cfg(feature = "runner")]
+    Runner {
+        #[command(subcommand)]
+        action: cli::runner::RunnerCommands,
+    },
+
     /// Write or print the agent skill this binary carries.
     Skill {
         #[command(subcommand)]
@@ -283,6 +300,8 @@ fn main() -> anyhow::Result<()> {
             shared_jar,
             bind,
         } => cli::share::join(&ticket, port, bind, shared_jar)?,
+        #[cfg(feature = "runner")]
+        Commands::Runner { action } => cli::runner::run(action)?,
         Commands::Skill { action } => cli::skill::run(action)?,
         Commands::Completion { shell } => cli::completion::run(shell)?,
         Commands::Man => cli::man::run()?,

@@ -28,6 +28,9 @@ The browser control lock: who is driving the browser in a box
 h5i\-join(1)
 Open a box someone else is sharing, from a ticket they sent you
 .TP
+h5i\-runner(1)
+Run boxes on another Linux machine you own
+.TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
 .TP
@@ -957,6 +960,100 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 The `h5i1_...` ticket you were sent, or `\-` to read it from stdin.
 
 `/proc/<pid>/cmdline` is world\-readable on an ordinary Linux box and this process runs for the whole session, so a ticket passed as an argument is legible to every other user on the machine for as long as you are joined \(em and a ticket is the whole authorization. `pbpaste | h5i join \-` keeps it out of the process table and out of your shell history.
+.SH "H5I RUNNER"
+Run boxes on another Linux machine you own
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrunner\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I RUNNER PAIR"
+Pair with a Linux machine so boxes can run on it
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpair\fR [\fB\-\-port\fR] [\fB\-\-fingerprint\fR] [\fB\-\-print\-only\fR] [\fB\-\-worker\-path\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> <\fI[USER@]HOST\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR
+SSH port, when it is not 22
+.TP
+\fB\-\-fingerprint\fR \fI<SHA256:...>\fR
+Refuse to pair unless the host key matches this fingerprint.
+
+Pairing otherwise trusts the key the machine presents the first time, exactly like your first `ssh` to a new host. Read the real one on the machine itself with `ssh\-keygen \-lf /etc/ssh/ssh_host_ed25519_key.pub` and pass it here to close that window.
+.TP
+\fB\-\-print\-only\fR
+Print the `authorized_keys` line instead of installing it.
+
+For a runner where you add keys by another route, or where you want to read the line before it goes in.
+.TP
+\fB\-\-worker\-path\fR \fI<PATH>\fR
+Path to `h5i` on the runner, when it is not on the PATH of the account you are pairing with
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+A short name for this machine, used in commands and output. It is a label: the runner\*(Aqs identity is its host key, so renaming or re\-pointing a name never moves a box to different hardware
+.TP
+<\fI[USER@]HOST\fR>
+Where it is: `user@host`, or just `host` to use your SSH default
+.SH "H5I RUNNER PROBE"
+Ask a runner what it can do right now
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprobe\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I RUNNER LIST"
+List the machines this account has paired
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I RUNNER UNPAIR"
+Forget a runner: its record, its key, and its pinned host key
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBunpair\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
 .SH "H5I SKILL"
 Write or print the agent skill this binary carries
 .ie \n(.g .ds Aq \(aq

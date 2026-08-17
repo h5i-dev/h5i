@@ -103,6 +103,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i box share`](#h5i-box-share) | Open one box's dev server to one other person. The only inbound path. |
 | [`h5i ui`](#h5i-ui) | The box console: one read-only screen over the whole fleet. |
 | [`h5i browser`](#h5i-browser) | The control lock: who is driving a box's browser. |
+| [`h5i runner`](#h5i-runner) | Pair a second Linux machine and run boxes there over SSH. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
 | [`h5i join`](#h5i-box-share) | Open a box someone else is sharing, from their ticket. |
 | `h5i completion` / `h5i man` | Shell completions and the man page. |
@@ -1004,6 +1005,115 @@ image, and nothing is copied from host to box.
 
 ---
 
+## h5i runner
+
+A **runner** is a second Linux machine you own that h5i reaches over SSH: a
+spare laptop, a lab box, a VM, a small board. Boxes run there; the repository,
+the policy, the credentials and the patch gate stay here.
+
+This is *placement*, a second axis beside the isolation tier a box already
+declares. It does not change what a box is allowed to do. What it changes is
+which machine an escape would reach.
+
+```bash
+h5i runner pair pi5 h5i@pi.local      # pair, pinning the machine's host key
+h5i runner probe pi5                  # what can it actually do, right now
+h5i runner list                       # what this account has paired
+h5i runner unpair pi5                 # forget it here
+```
+
+### What pairing does
+
+1. Reads the machine's SSH **host key** and pins it. That key is the runner's
+   identity: `runner_id` is its SHA-256, and a box records the id, never the
+   name. Renaming a runner, or pointing the name at other hardware, therefore
+   cannot move a box onto a machine it was not built for.
+2. Generates a keypair used for **this runner and nothing else**, owner-only,
+   under `~/.config/h5i/runners/<name>/`.
+3. Installs one line in the runner's `authorized_keys`:
+
+   ```
+   restrict,command="/usr/local/bin/h5i runner serve-stdio" ssh-ed25519 AAAA…
+   ```
+
+   `restrict` is the whole security argument in one word: with it that key
+   cannot open a shell, forward a port, forward your agent, or allocate a
+   terminal. It can run that one command and nothing else.
+4. Connects over the new key and probes, so that pairing either works
+   end to end or leaves nothing behind.
+
+Nothing listens on the runner. There is no daemon, no port, no token and no
+TLS: the worker is a process per request, started by sshd and gone when the
+request ends.
+
+Pairing trusts the host key it sees the first time, exactly like your first
+`ssh` to a new host. To close that window, read the real fingerprint on the
+machine itself and pass it:
+
+```bash
+# on the runner
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+# here
+h5i runner pair pi5 h5i@pi.local --fingerprint SHA256:…
+```
+
+`--print-only` prints the `authorized_keys` line instead of installing it, for
+a machine where keys are added another way.
+
+### Capabilities are advertised, never assumed
+
+A runner needs Linux, sshd and `h5i`. **It does not need a container runtime.**
+Everything past those three is *advertised* by `h5i runner probe`:
+
+```
+$ h5i runner probe pi5
+✔ `pi5` — h5i 0.3.4 on linux aarch64, protocol 1
+
+  isolation     process, supervised
+  container     no
+  memory        7.6 GiB
+  workspace     41.2 GiB free
+  boxes persist yes
+  own egress    yes
+  kvm           no
+  runner id     3f9a1c04b7e2
+```
+
+A box asking for something a runner does not advertise is **refused, with the
+missing capability named**. It is never quietly given something weaker — the
+same rule `--isolation` already follows here.
+
+The isolation list is what the runner's kernel demonstrably ran a moment ago,
+not which kernel features are present. The two are not the same thing, and only
+the first is worth advertising.
+
+Two entries change what you can do next, so they are called out rather than
+left as a `no` in a table:
+
+- **boxes persist: no** — box state does not survive a reboot (a read-only OS,
+  a tmpfs workspace). A reboot is an expired lease: anything not exported is
+  gone.
+- **own egress: no** — the runner has no default route, so a box on it cannot
+  pull images or install packages. Egress brokered through this machine is a
+  later milestone.
+
+### What is built so far
+
+Pairing and probing. Creating, running and exporting a box on a runner are the
+milestones after this one, and asking for one today is answered with a sentence
+naming the milestone rather than a closed connection.
+
+The design, including what is deliberately deferred and why, is ROADMAP.md
+sections R1 to R13.
+
+### Unpairing
+
+`h5i runner unpair <name>` removes the record, the key and the pin **from this
+machine**. It does not touch the runner: the `authorized_keys` line stays until
+you delete it, and the command says so, with the comment to search for.
+
+---
+
 ## Policy
 
 A box's policy is resolved at creation, serialized to `policy.resolved.toml`,
@@ -1365,6 +1475,7 @@ Being explicit about these is a feature, since the claim is a security claim.
 | `.git/.h5i/env/<agent>/<slug>/` | One box: its manifest, resolved policy, receipts, workspace. |
 | `.git/.h5i/cache/<eco>/<key>/` | Warm dependency caches. |
 | `~/.config/h5i/` | Host-side egress allowlist. Outside every box-granted path. |
+| `~/.config/h5i/runners/<name>/` | One paired runner: its record, its dedicated key, its pinned host key. Owner-only, and outside every box-granted path for the same reason the allowlist is. |
 
 ---
 
@@ -1401,6 +1512,7 @@ Read these to detect that you are in one; do not set them yourself.
 |---|---|
 | `H5I_TEST_CONTAINER` | Opt in to the real-container integration tests (pulls an image, makes a live call). |
 | `H5I_TEST_NET` | Opt in to the supervised egress allowlist end-to-end test (needs outbound network). |
+| `H5I_RUNNER_STATE_DIR` | Where a runner worker keeps box state. For driving a worker against a scratch directory; a real runner uses its default. |
 
 ---
 

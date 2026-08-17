@@ -16,6 +16,11 @@ pub mod man;
 // broken one.
 #[cfg(feature = "share-tunnel")]
 pub mod share;
+// `h5i runner`. Gated with the `runner` feature it drives, so a build without
+// it has no `runner` verb rather than a broken one — and, since the worker end
+// of the protocol is this same binary, no ability to *be* a runner either.
+#[cfg(feature = "runner")]
+pub mod runner;
 pub mod skill;
 // The box console. Gated with the `web` feature it drives, so a
 // `--no-default-features` binary has no `ui` verb rather than a broken one.
