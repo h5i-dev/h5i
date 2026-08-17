@@ -1,0 +1,210 @@
+//! Where a box runs, as far as the lifecycle engine needs to know.
+//!
+//! Placement is a second axis beside the isolation tier a box already declares
+//! (ROADMAP.md R1): the tier says how the box is confined, this says which
+//! machine confines it. The two are orthogonal, and nothing here changes what a
+//! box is *allowed* to do — only which machine an escape would reach.
+//!
+//! **This module deliberately knows nothing about SSH, frames, or the runner
+//! protocol.** It is a trait and two plain structs. The implementation lives
+//! above, in the binary, over `h5i-runner`. That is a layering decision with a
+//! reason: `h5i-runner` already depends on `h5i-sandbox`, and a later milestone
+//! may well want it to reach `h5i-core` for receipts or export — so a
+//! dependency in this direction would be a cycle waiting to happen. A trait
+//! costs one indirection and makes the remote path testable in this crate with
+//! a fake that opens no connection at all.
+
+use std::path::Path;
+
+use crate::error::H5iError;
+
+/// The source a remote box is built from.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteSource<'a> {
+    /// The repository to bundle. Opened read-only; building a bundle must not
+    /// leave a ref or a branch behind in it.
+    pub repo: &'a Path,
+    /// The commit the box is pinned to.
+    pub base_commit: &'a str,
+}
+
+/// What a runner needs in order to build a box.
+///
+/// The policy travels as its serialised value *and* its digest, together,
+/// because the digest is the check that the box was built under the policy this
+/// side resolved (R7). Splitting them across two calls would be an invitation
+/// to compute one from something other than the other.
+#[derive(Debug, Clone)]
+pub struct RemoteCreateSpec<'a> {
+    /// The box's name on the runner. Not the manifest id: that contains `/`,
+    /// and this becomes a directory on a machine we do not own.
+    pub box_id: &'a str,
+    pub isolation: &'a str,
+    pub image: Option<&'a str>,
+    pub policy_json: serde_json::Value,
+    pub policy_digest: &'a str,
+    /// `None` for a box with no source.
+    pub source: Option<RemoteSource<'a>>,
+}
+
+/// What the runner made.
+#[derive(Debug, Clone)]
+pub struct RemoteCreated {
+    /// The runner's cryptographic identity: the SHA-256 of its pinned SSH host
+    /// key. This is what the manifest records, because a name can be re-pointed
+    /// at other hardware and a host key cannot (R6).
+    pub runner_id: String,
+    /// The runner's display name, for humans and command lines.
+    pub runner: String,
+    /// Where the box's workspace is on the runner, for diagnosis.
+    pub workspace: String,
+    /// The digest of the policy the runner actually enforced. The caller
+    /// refuses the box unless this matches what it sent.
+    pub policy_digest: String,
+    /// True when the runner already had this box and returned it rather than
+    /// building a second one.
+    pub existing: bool,
+}
+
+/// A machine that can hold boxes for this one.
+pub trait RemoteRunner {
+    /// The runner's display name, for messages.
+    fn name(&self) -> &str;
+
+    /// Build a box there.
+    fn create(&self, spec: &RemoteCreateSpec<'_>) -> Result<RemoteCreated, H5iError>;
+
+    /// Remove one. Removing something already gone is success, not an error:
+    /// gone is the state the caller asked for, and a retry after a lost answer
+    /// must not fail.
+    fn destroy(&self, box_id: &str) -> Result<(), H5iError>;
+}
+
+/// The name a box goes by on the runner.
+///
+/// Derived rather than chosen, so the same box always lands on the same name
+/// and a retry is idempotent. The short digest suffix is doing real work: agent
+/// and slug both admit `-`, so `("a-b", "c")` and `("a", "b-c")` would
+/// otherwise produce one name for two different boxes. The runner would refuse
+/// the second as a conflict rather than corrupt anything, but a refusal for a
+/// box the user legitimately asked for is a bug from where they are standing.
+pub fn remote_box_id(manifest_id: &str) -> String {
+    let digest = crate::refstore::sha256_hex(manifest_id.as_bytes());
+    let readable: String = manifest_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // Bounded well under the protocol's limit, leaving room for the suffix.
+    let readable: String = readable.chars().take(96).collect();
+    format!("{readable}-{}", &digest[..8])
+}
+
+/// A runner that is not a machine, for tests.
+///
+/// The whole point of the trait is that the lifecycle engine can be exercised
+/// without a transport: this records what it was asked for, answers with the
+/// digest it was given, and opens nothing.
+#[cfg(test)]
+pub(crate) mod fake {
+    use super::*;
+    use std::sync::Mutex;
+
+    pub struct FakeRunner {
+        pub name: String,
+        pub runner_id: String,
+        /// Every spec this was asked to build, in order.
+        pub created: Mutex<Vec<(String, String)>>,
+        /// When set, the digest to answer with instead of the one sent — for
+        /// exercising the check that a runner enforced the policy it was given.
+        pub lie_with_digest: Option<String>,
+        pub fail_with: Option<String>,
+    }
+
+    impl FakeRunner {
+        pub fn new(name: &str) -> Self {
+            Self {
+                name: name.into(),
+                runner_id: "d".repeat(64),
+                created: Mutex::new(Vec::new()),
+                lie_with_digest: None,
+                fail_with: None,
+            }
+        }
+    }
+
+    impl RemoteRunner for FakeRunner {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn create(&self, spec: &RemoteCreateSpec<'_>) -> Result<RemoteCreated, H5iError> {
+            if let Some(msg) = &self.fail_with {
+                return Err(H5iError::Metadata(msg.clone()));
+            }
+            self.created
+                .lock()
+                .unwrap()
+                .push((spec.box_id.to_string(), spec.isolation.to_string()));
+            Ok(RemoteCreated {
+                runner_id: self.runner_id.clone(),
+                runner: self.name.clone(),
+                workspace: format!("/var/lib/h5i/runner/boxes/live/{}/work", spec.box_id),
+                policy_digest: self
+                    .lie_with_digest
+                    .clone()
+                    .unwrap_or_else(|| spec.policy_digest.to_string()),
+                existing: false,
+            })
+        }
+
+        fn destroy(&self, _box_id: &str) -> Result<(), H5iError> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_manifest_id_becomes_a_name_a_runner_can_hold() {
+        // The manifest id has slashes in it, and this becomes a directory on
+        // another machine.
+        let id = remote_box_id("env/claude/demo");
+        assert!(!id.contains('/'));
+        assert!(id.starts_with("env-claude-demo-"));
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        );
+    }
+
+    #[test]
+    fn the_same_box_always_gets_the_same_name() {
+        // Idempotency depends on it: a retry that picked a new name would build
+        // a second box rather than find the first.
+        assert_eq!(remote_box_id("env/claude/demo"), remote_box_id("env/claude/demo"));
+    }
+
+    #[test]
+    fn two_boxes_that_flatten_to_one_string_still_get_two_names() {
+        // Agent and slug both admit `-`, so this pair collides on the readable
+        // half and must not collide overall.
+        let a = remote_box_id("env/claude-demo/x");
+        let b = remote_box_id("env/claude/demo-x");
+        assert_ne!(a, b, "a collision here would refuse a legitimate box");
+    }
+
+    #[test]
+    fn a_long_id_stays_inside_the_protocols_limit() {
+        let id = remote_box_id(&format!("env/agent/{}", "s".repeat(500)));
+        assert!(id.len() <= 128, "got {} chars", id.len());
+    }
+}

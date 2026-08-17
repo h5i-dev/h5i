@@ -19,6 +19,11 @@ pub mod share;
 // `h5i runner`. Gated with the `runner` feature it drives, so a build without
 // it has no `runner` verb rather than a broken one — and, since the worker end
 // of the protocol is this same binary, no ability to *be* a runner either.
+// The bridge between h5i-core's placement trait and the runner protocol. Same
+// gate as `runner`, because it is the half of that feature the box lifecycle
+// reaches for.
+#[cfg(feature = "runner")]
+pub mod placement;
 #[cfg(feature = "runner")]
 pub mod runner;
 pub mod skill;

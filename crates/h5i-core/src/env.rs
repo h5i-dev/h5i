@@ -406,6 +406,21 @@ pub struct EnvManifest {
     /// the target of the push-back hint after apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_head_ref: Option<String>,
+    /// The machine this box runs on, when it is not this one: the SHA-256 of
+    /// that runner's pinned SSH host key (ROADMAP.md R6).
+    ///
+    /// Identity rather than a label. A name can be re-pointed at different
+    /// hardware tomorrow, and a box bound to one would silently follow; a host
+    /// key cannot be, so a reinstalled machine is honestly a different runner.
+    /// Validated as an object id on import, beside `base_commit` and
+    /// `policy_digest`, because it decides which machine a later operation
+    /// talks to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_id: Option<String>,
+    /// That runner's display name, for humans and command lines. Never
+    /// identity: see `runner_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
 }
 
 impl EnvManifest {
@@ -556,11 +571,18 @@ fn validate_imported_manifest(m: &EnvManifest) -> Result<(), H5iError> {
     // caller has already committed to *skipping* a bad manifest rather than
     // aborting the sync — so anything that is not an id is refused here rather
     // than left to panic in a renderer three commands later.
-    for (field, got) in [
+    let mut ids: Vec<(&str, &String)> = vec![
         ("base_commit", &m.base_commit),
         ("base_tree", &m.base_tree),
         ("policy_digest", &m.policy_digest),
-    ] {
+    ];
+    // Present only for a box that lives on another machine, and then it decides
+    // which machine every later operation talks to — so it is guarded here
+    // rather than left to `sanitize_display` on the way to a terminal.
+    if let Some(runner_id) = &m.runner_id {
+        ids.push(("runner_id", runner_id));
+    }
+    for (field, got) in ids {
         let ok = (7..=64).contains(&got.len()) && got.bytes().all(|b| b.is_ascii_hexdigit());
         if !ok {
             return Err(H5iError::Metadata(format!(
@@ -1505,6 +1527,10 @@ pub struct CreateOpts {
     pub pr_head_ref: Option<String>,
     /// Where the code comes from. Defaults to a worktree of this repository.
     pub source: BoxSource,
+    /// Run this box on a paired runner instead of this machine, by display
+    /// name. The identity that reaches the manifest comes from the runner
+    /// itself (`RemoteCreated::runner_id`), not from this string.
+    pub runner: Option<String>,
 }
 
 impl Default for CreateOpts {
@@ -1518,6 +1544,7 @@ impl Default for CreateOpts {
             backend: "auto".into(),
             audit_capture: sandbox::AuditCapture::Signal,
             parent_branch: None,
+            runner: None,
             pr: None,
             pr_head_ref: None,
             source: BoxSource::Repo,
@@ -1746,17 +1773,55 @@ pub fn create(
     slug: &str,
     opts: CreateOpts,
 ) -> Result<EnvManifest, H5iError> {
+    create_with_remote(repo, h5i_root, workdir, agent, slug, opts, None)
+}
+
+/// [`create`], optionally placing the box on another machine.
+///
+/// The remote path is the same function up to the point where a local box would
+/// grow a worktree (ROADMAP.md R7): the base commit is pinned, the branch is
+/// created, the profile is resolved and its digest taken, all here — and then,
+/// instead of a worktree, the source goes across as a bundle and the runner
+/// builds the box. Everything that decides *what* the box is stays on this
+/// machine; only the execution moves.
+///
+/// `remote` is a trait object rather than a runner name because this crate has
+/// no transport in it; see [`crate::placement`].
+pub fn create_with_remote(
+    repo: &Repository,
+    h5i_root: &Path,
+    workdir: &Path,
+    agent: &str,
+    slug: &str,
+    opts: CreateOpts,
+    remote: Option<&dyn crate::placement::RemoteRunner>,
+) -> Result<EnvManifest, H5iError> {
     validate_slug(slug)?;
     validate_agent(agent)?;
-    let backend = match opts.backend.as_str() {
-        "auto" | "worktree" => "worktree",
-        other => {
+    // A remote box has no worktree on this machine, so calling its backend
+    // `worktree` would be a statement about a directory that does not exist.
+    let backend = match (opts.backend.as_str(), remote.is_some()) {
+        (_, true) => "runner",
+        ("auto" | "worktree", false) => "worktree",
+        (other, false) => {
             return Err(H5iError::Metadata(format!(
                 "workspace backend '{other}' is not available in this build (worktree only; \
                  branchfs is a later, opt-in phase)"
             )))
         }
     };
+
+    // Refused here rather than part-way through: a detached source has its
+    // repository inside the box, and moving that across is the export
+    // milestone's problem, not this one's.
+    if remote.is_some() && opts.source.is_detached() {
+        return Err(H5iError::Metadata(format!(
+            "a `{}` source cannot be placed on a runner yet — clone and new boxes build their \
+             own repository inside the box, and sending one across is a later milestone. \
+             Create it here, or use this repository as the source.",
+            opts.source.as_manifest_str()
+        )));
+    }
 
     let id = format!("env/{agent}/{slug}");
     let dir = env_dir(h5i_root, agent, slug);
@@ -1996,7 +2061,12 @@ pub fn create(
         repo.branch(&branch_short, &base_commit, false)?;
         rollback.branch = Some(branch_short.clone());
         let wt_name = format!("h5i-env-{agent}-{slug}");
-        {
+        // A remote box has no worktree here: its source goes across as a bundle
+        // and is materialised on the runner. Which also dissolves the hardest
+        // part of the local path — the identical-path git plumbing binds exist
+        // only because a local box shares this repository's inodes, and a
+        // remote one shares nothing (ROADMAP.md R7).
+        if remote.is_none() {
             // One directory under `.git/worktrees/` that is not a worktree makes
             // libgit2 report *every* branch as already checked out, so the add
             // below would fail for this env and every future one. Clear those
@@ -2017,6 +2087,53 @@ pub fn create(
             let _ = wt.lock(Some(&format!("h5i env {id} live")));
         }
         (base_commit.id(), base_tree, parent_branch)
+    };
+
+    // The box itself, on the other machine. Everything that decides *what* it
+    // is has already happened here; this is where the execution moves.
+    let placed = match remote {
+        None => None,
+        Some(runner) => {
+            let repo_path = repo.workdir().ok_or_else(|| {
+                H5iError::Metadata(
+                    "a runner box needs a repository with a working directory to bundle from"
+                        .into(),
+                )
+            })?;
+            let base = base_commit_id.to_string();
+            let box_id = crate::placement::remote_box_id(&id);
+            let policy_json = serde_json::to_value(&policy).map_err(|e| {
+                H5iError::Metadata(format!("could not serialise the resolved policy: {e}"))
+            })?;
+            let spec = crate::placement::RemoteCreateSpec {
+                box_id: &box_id,
+                isolation: policy.claim.as_str(),
+                image: policy.profile.image.as_deref(),
+                policy_json,
+                policy_digest: &policy_digest,
+                source: Some(crate::placement::RemoteSource {
+                    repo: repo_path,
+                    base_commit: &base,
+                }),
+            };
+            let created = runner.create(&spec)?;
+
+            // The runner echoes the digest of the policy it actually enforced,
+            // and the box is not accepted unless it matches. That turns "the
+            // runner silently enforced an older policy" from a possibility into
+            // a detected fault (R7). The client checks this too; checking it
+            // here as well is what makes the *manifest* honest, since this is
+            // the value the manifest is about to pin.
+            if created.policy_digest != policy_digest {
+                return Err(H5iError::Metadata(format!(
+                    "runner `{}` built the box under a different policy than the one resolved \
+                     here — expected {policy_digest}, it enforced {}. The box was not recorded.",
+                    runner.name(),
+                    created.policy_digest
+                )));
+            }
+            Some(created)
+        }
     };
 
     // From here on the worktree, the branch and `<env>/` all exist, but the
@@ -2047,7 +2164,17 @@ pub fn create(
     // env directory, outside every path the box can write or read.
     crate::view::ensure_token(&dir)?;
 
-    let (effective_digest, fs_authority) = match write_effective_baseline(&policy, &dir, &work_path)? {
+    // The effective baseline describes what a *local* kernel-tier invocation
+    // would apply — Landlock grants and bind mounts against paths on this
+    // machine. A box on a runner has none of those here, and its work directory
+    // does not exist on this side at all, so computing one would be describing
+    // a confinement nobody is going to enforce.
+    let baseline = if remote.is_some() {
+        None
+    } else {
+        write_effective_baseline(&policy, &dir, &work_path)?
+    };
+    let (effective_digest, fs_authority) = match baseline {
         Some((digest, verdict)) => (Some(digest), verdict),
         None => (None, None),
     };
@@ -2075,6 +2202,8 @@ pub fn create(
         persona_digest,
         pr: opts.pr,
         pr_head_ref: opts.pr_head_ref.clone(),
+        runner_id: placed.as_ref().map(|p| p.runner_id.clone()),
+        runner: placed.as_ref().map(|p| p.runner.clone()),
     };
 
     let policy_toml = policy.to_toml()?;
@@ -2382,6 +2511,34 @@ fn detached_err(m: &EnvManifest, op: &str) -> H5iError {
 /// Is this box detached (its git repository lives inside the box)?
 pub fn is_detached(m: &EnvManifest) -> bool {
     m.source != "repo"
+}
+
+/// Does this box live on another machine?
+///
+/// Keyed on `runner_id` rather than on `backend`, because the identity is the
+/// thing every later operation actually needs: `backend` says what kind of
+/// workspace it has, and this says which machine to ask.
+pub fn is_remote(m: &EnvManifest) -> bool {
+    m.runner_id.is_some()
+}
+
+/// A uniform refusal for operations that would need a local workspace a runner
+/// box does not have here.
+///
+/// Distinct from [`no_workspace_err`], which is about a box whose clone is
+/// elsewhere: this box is fine, it is simply on a machine this milestone cannot
+/// yet run commands on, and saying so beats a message about a missing
+/// directory.
+pub fn remote_unsupported_err(m: &EnvManifest, op: &str) -> H5iError {
+    H5iError::Metadata(format!(
+        "{}: `{op}` does not work on a runner box yet — this box runs on `{}`, and running \
+         commands there is the next milestone. `h5i box status {}` and `h5i box ls` work now, \
+         and `h5i box rm {}` removes it from both sides.",
+        m.id,
+        m.runner.as_deref().unwrap_or("another machine"),
+        m.slug,
+        m.slug
+    ))
 }
 
 /// A uniform error for operations that need a local worktree the env lacks.
@@ -5199,7 +5356,15 @@ fn run_inner(
     }
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
-        return Err(no_workspace_err(m, "env run"));
+        return Err(if is_remote(m) {
+            // Truer than "no local workspace": the box exists and is healthy,
+            // it is simply on a machine this milestone cannot run commands on
+            // yet. A message about a missing directory would send someone
+            // looking for a bug that is not there.
+            remote_unsupported_err(m, "env run")
+        } else {
+            no_workspace_err(m, "env run")
+        });
     }
 
     // Serialize concurrent runs of THIS env (status + captures are mutated
@@ -5533,7 +5698,15 @@ pub fn shell(
     }
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
-        return Err(no_workspace_err(m, "env shell"));
+        return Err(if is_remote(m) {
+            // Truer than "no local workspace": the box exists and is healthy,
+            // it is simply on a machine this milestone cannot run commands on
+            // yet. A message about a missing directory would send someone
+            // looking for a bug that is not there.
+            remote_unsupported_err(m, "env shell")
+        } else {
+            no_workspace_err(m, "env shell")
+        });
     }
 
     // An observer takes the shared observer-presence lock (many coexist, and it
@@ -8697,7 +8870,15 @@ pub fn mediated_commit(
 ) -> Result<Option<git2::Oid>, H5iError> {
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
-        return Err(no_workspace_err(m, "propose/rebase"));
+        return Err(if is_remote(m) {
+            // Truer than "no local workspace": the box exists and is healthy,
+            // it is simply on a machine this milestone cannot run commands on
+            // yet. A message about a missing directory would send someone
+            // looking for a bug that is not there.
+            remote_unsupported_err(m, "propose/rebase")
+        } else {
+            no_workspace_err(m, "propose/rebase")
+        });
     }
     let wt_repo = open_env_worktree(h5i_root, m)?;
     let canon_work = work
@@ -9878,6 +10059,257 @@ pub fn rm(
 
 #[cfg(test)]
 mod tests {
+
+    // ─── placement (ROADMAP.md R7) ───────────────────────────────────────────
+
+    /// A repository with one commit, for the remote-create tests.
+    fn placement_repo() -> (tempfile::TempDir, git2::Repository) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = git2::Repository::init(dir.path()).expect("init");
+        {
+            let mut cfg = repo.config().expect("config");
+            cfg.set_str("user.name", "Test").unwrap();
+            cfg.set_str("user.email", "t@example.com").unwrap();
+        }
+        std::fs::write(dir.path().join("a.txt"), b"one").unwrap();
+        {
+            // Scoped so the tree and signature are dropped before `repo` moves.
+            let mut index = repo.index().unwrap();
+            index.add_path(std::path::Path::new("a.txt")).unwrap();
+            index.write().unwrap();
+            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+            let sig = repo.signature().unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "one", &tree, &[])
+                .unwrap();
+        }
+        (dir, repo)
+    }
+
+    #[test]
+    fn a_runner_box_records_the_machine_and_grows_no_worktree() {
+        // The remote path is the local one up to where a worktree would appear:
+        // the base is pinned, the branch exists, the policy is resolved and
+        // digested — and then the box is somewhere else.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+
+        let m = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "remote-demo",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect("create on a runner");
+
+        assert_eq!(m.runner.as_deref(), Some("pi5"));
+        assert_eq!(
+            m.runner_id.as_deref(),
+            Some(fake.runner_id.as_str()),
+            "the manifest pins the machine, not the label"
+        );
+        assert_eq!(m.backend, "runner", "its workspace is not a worktree here");
+        assert!(is_remote(&m));
+
+        // The branch exists on this side — the base is pinned here even though
+        // the execution is not.
+        assert!(repo.find_reference(&m.branch).is_ok());
+        assert!(!m.base_commit.is_empty());
+
+        // And no worktree was made.
+        assert!(
+            !m.work_dir(&h5i_root).exists(),
+            "a runner box has no worktree on this machine"
+        );
+        let asked = fake.created.lock().unwrap();
+        assert_eq!(asked.len(), 1);
+        assert!(asked[0].0.starts_with("env-human-remote-demo-"));
+    }
+
+    #[test]
+    fn a_local_box_still_records_no_runner() {
+        // The field is absent rather than empty for every box that was already
+        // possible, so existing manifests and existing JSON are unchanged.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let m = create(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "local-demo",
+            CreateOpts::default(),
+        )
+        .expect("create");
+
+        assert!(m.runner_id.is_none());
+        assert!(m.runner.is_none());
+        assert!(!is_remote(&m));
+        assert_eq!(m.backend, "worktree");
+
+        let json = serde_json::to_value(&m).unwrap();
+        assert!(
+            json.get("runner_id").is_none(),
+            "an absent placement must not appear in the JSON contract"
+        );
+    }
+
+    #[test]
+    fn a_runner_that_enforced_another_policy_is_refused_and_records_nothing() {
+        // The check that turns "the runner silently enforced an older policy"
+        // into a detected fault (R7 step 4).
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let mut fake = crate::placement::fake::FakeRunner::new("pi5");
+        fake.lie_with_digest = Some("f".repeat(64));
+
+        let err = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "liar",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect_err("a different policy must not be accepted");
+        assert!(
+            format!("{err}").contains("different policy"),
+            "the refusal says why: {err}"
+        );
+
+        // And the box is not recorded, so nothing points at a machine holding
+        // something we refused.
+        assert!(find(&h5i_root, "liar").is_err());
+    }
+
+    #[test]
+    fn a_runner_that_fails_leaves_no_branch_or_manifest_behind() {
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let mut fake = crate::placement::fake::FakeRunner::new("pi5");
+        fake.fail_with = Some("the runner is on fire".into());
+
+        let err = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "doomed",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect_err("the create failed");
+        assert!(format!("{err}").contains("on fire"));
+
+        assert!(find(&h5i_root, "doomed").is_err(), "no manifest");
+        assert!(
+            repo.find_branch("h5i/human/doomed", git2::BranchType::Local)
+                .is_err(),
+            "and the rollback took the branch with it"
+        );
+    }
+
+    #[test]
+    fn a_detached_source_cannot_be_placed_on_a_runner_yet() {
+        // Refused up front rather than part-way through: a clone or a new box
+        // builds its repository inside the box, and sending one across is the
+        // export milestone's problem.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+
+        let err = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "detached",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                source: BoxSource::New,
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect_err("detached sources are not placeable yet");
+        assert!(format!("{err}").contains("later milestone"), "{err}");
+        assert!(
+            fake.created.lock().unwrap().is_empty(),
+            "and the runner was never asked"
+        );
+    }
+
+    #[test]
+    fn operations_that_need_a_workspace_say_the_box_is_elsewhere() {
+        // A message about a missing directory would send someone looking for a
+        // bug that is not there.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+        let m = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "elsewhere",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect("create");
+
+        let err = remote_unsupported_err(&m, "box shell");
+        let text = format!("{err}");
+        assert!(text.contains("pi5"), "names the machine: {text}");
+        assert!(text.contains("next milestone"), "and what is missing");
+        assert!(!text.contains("no local workspace"), "not the other message");
+    }
+
+    #[test]
+    fn a_manifest_with_a_runner_id_that_is_not_an_id_is_refused_on_import() {
+        // It decides which machine every later operation talks to, so it is
+        // guarded beside base_commit rather than left to a renderer.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+        let mut m = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "checked",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect("create");
+
+        assert!(validate_imported_manifest(&m).is_ok());
+        m.runner_id = Some("not-an-object-id".into());
+        let err = validate_imported_manifest(&m).expect_err("refused");
+        assert!(format!("{err}").contains("runner_id"), "{err}");
+
+        // Absent is fine: every local box has none.
+        m.runner_id = None;
+        assert!(validate_imported_manifest(&m).is_ok());
+    }
     use super::*;
 
     /// A pid is only meaningful inside the namespace that issued it, so the
@@ -10454,6 +10886,8 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
+            runner_id: None,
+            runner: None,
         }
     }
 
@@ -12521,6 +12955,8 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
+            runner_id: None,
+            runner: None,
         };
         let text = serde_json::to_string_pretty(&m).unwrap();
         let back: EnvManifest = serde_json::from_str(&text).unwrap();
@@ -12636,6 +13072,8 @@ mod tests {
                 persona_digest: None,
                 pr: None,
                 pr_head_ref: None,
+                runner_id: None,
+                runner: None,
             };
             save_manifest(h5i_root, &m).unwrap();
         }
@@ -13105,6 +13543,8 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
+            runner_id: None,
+            runner: None,
         }
     }
 

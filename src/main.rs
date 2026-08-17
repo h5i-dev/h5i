@@ -277,6 +277,11 @@ impl BoxArgs {
             backend: "auto".into(),
             audit: "signal".into(),
             json: self.json,
+            // The short form has no `--runner`: placing a box on another
+            // machine is a deliberate choice, and `h5i box create --runner` is
+            // where a deliberate choice belongs.
+            #[cfg(feature = "runner")]
+            runner: None,
         })
     }
 }

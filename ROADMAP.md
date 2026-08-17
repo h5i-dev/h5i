@@ -7185,10 +7185,27 @@ demonstration, not a diff.
   `git bundle create` has no `--depth` (checked against git 2.43), and this
   is the first thing to revisit when the transfer becomes the slow part.
 
-  **Still to land for the exit criteria**: `box create --runner` and the
-  manifest's `runner_id`, which is the `h5i-core` half.
+  **Complete, 2026-08-17.** `h5i box create --runner <name>` places a box on
+  a paired runner: the base is pinned, the branch created and the policy
+  resolved and digested here, the source goes across as a bundle, and the
+  manifest records `runner_id` — the runner's host-key hash — beside a
+  display name that is never identity. `box ls` shows `on=<runner>`, and
+  `box rm` removes both sides. Verified against a real sshd end to end: the
+  box's source arrives at the identical commit, `h5i runner boxes` shows it
+  from the runner's own side, and removal clears both.
 
-  Three things building it found:
+  The seam is a trait, `h5i_core::placement::RemoteRunner`, implemented in
+  the binary over `h5i-runner`. `h5i-core` gets no dependency on the runner
+  protocol, which matters because a later milestone will want the *worker*
+  reaching for receipts and export — a dependency the other way would be a
+  cycle waiting to happen. It also makes the remote create path testable in
+  `h5i-core` against a fake that opens no connection.
+
+  Operations that need a local workspace refuse a runner box by name rather
+  than failing on a missing directory, because a message about a directory
+  sends someone looking for a bug that is not there.
+
+  Five things building it found:
 
   - **The container tier has no warm form**, which R7 assumed it did. See
     the correction there.
@@ -7202,6 +7219,17 @@ demonstration, not a diff.
     between a `read` and the buffer, so reading the buffer without joining
     returns an empty string exactly when the message matters most. It passed
     locally for a whole milestone before more work made the race visible.
+  - **`rm` has to remove this side first.** The tidier-looking order — clear
+    the runner, then the local record — is wrong, because `rm` refuses a live
+    box: the runner's copy was destroyed and the user was then told the
+    removal had failed, leaving a local record pointing at nothing. Local
+    first means the only remaining failure is an orphan on the runner, which
+    is exactly what a lease is for. Found by running it, not by reading it.
+  - **The effective baseline is about a local invocation.** It describes the
+    Landlock grants and binds a kernel-tier run would apply on *this*
+    machine, against a work directory a runner box does not have here.
+    Computing one would be describing a confinement nobody is going to
+    enforce.
 - **R13.3 Exec.** Captured and interactive, the three clocks, the per-box
   locks, receipts in the `runner-observed` lane with the worker's egress
   summary. Exit: a real project's build and test suite runs on the runner

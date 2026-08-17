@@ -1097,11 +1097,40 @@ left as a `no` in a table:
   pull images or install packages. Egress brokered through this machine is a
   later milestone.
 
+### Putting a box on one
+
+```bash
+h5i box create fix-auth --runner pi5
+```
+
+The base commit is pinned here, the branch is created here, and the policy is
+resolved and digested here. What crosses is the source, as a git bundle, and
+what comes back is the digest of the policy the runner actually enforced — the
+box is refused if that does not match what was sent.
+
+```
+$ h5i box ls
+env/human/fix-auth   created   isolation=container  base=fa31b1f97547 captures=0 on=pi5
+```
+
+The manifest records the runner's **host-key hash**, not its name. Renaming a
+runner, or pointing a name at different hardware, therefore cannot move a box
+onto a machine it was not built for — `h5i box rm` checks the identity before
+it removes anything there.
+
+`h5i box rm` clears both sides. It removes this side first: `rm` refuses a box
+that is still live, and clearing the runner before that check would destroy the
+box there while telling you the removal had failed. If the runner is
+unreachable when its turn comes, the box is left there and its lease reaps it.
+
 ### What is built so far
 
-Pairing and probing. Creating, running and exporting a box on a runner are the
-milestones after this one, and asking for one today is answered with a sentence
-naming the milestone rather than a closed connection.
+Pairing, probing, and creating. **Running commands in a runner box and
+exporting a patch from one are the next milestones**, and asking for either
+today is answered by a sentence naming the milestone rather than a confusing
+error about a missing directory. A `clone:` or `--new` box cannot be placed on
+a runner yet either: those build their repository inside the box, and sending
+one across belongs with export.
 
 The design, including what is deliberately deferred and why, is ROADMAP.md
 sections R1 to R13.

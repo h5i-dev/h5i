@@ -10,6 +10,9 @@ pub mod cache;
 pub mod control;
 pub mod env;
 pub mod export;
+/// Where a box runs: the trait the lifecycle engine uses to place one on
+/// another machine, with no transport in it (ROADMAP.md R1, R7).
+pub mod placement;
 pub mod receipt;
 pub mod redact;
 pub mod refstore;

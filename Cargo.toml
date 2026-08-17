@@ -35,7 +35,7 @@ web = ["h5i-core/web"]
 # boxes there over SSH (ROADMAP.md R1–R13). On by default because the worker
 # end of it is this same binary: a runner is an h5i install, so a build that
 # could not serve could not be a runner.
-runner = ["dep:h5i-runner"]
+runner = ["dep:h5i-runner", "dep:tempfile"]
 # `share` adds `h5i box share` / `h5i join` and, through h5i-share, the iroh
 # QUIC stack. Drop it for a build with no sharing in it at all;
 # `share-tunnel` is the narrower switch that keeps `--tunnel` and drops iroh.
@@ -60,6 +60,10 @@ h5i-core = { path = "crates/h5i-core", default-features = false }
 # on, `--features share-tunnel` would still pull iroh in.
 h5i-share = { path = "crates/h5i-share", default-features = false, optional = true }
 h5i-runner = { path = "crates/h5i-runner", optional = true }
+# A scratch directory for the source bundle a runner create builds and streams.
+# Optional with the feature that needs it; it is also a dev-dependency below,
+# which is fine — cargo unifies them.
+tempfile = { version = "3.8", optional = true }
 git2 = { workspace = true }
 serde_json = { workspace = true }
 anyhow = "1.0"

@@ -697,7 +697,7 @@ fn unpair(name: &str) -> anyhow::Result<()> {
 
 // ─── shared ──────────────────────────────────────────────────────────────────
 
-fn client_for(record: &RunnerRecord) -> anyhow::Result<Client> {
+pub(crate) fn client_for(record: &RunnerRecord) -> anyhow::Result<Client> {
     let transport = SshTransport {
         host: record.host.clone(),
         user: record.user.clone(),

@@ -96,7 +96,7 @@ Create a box explicitly. `h5i box [SOURCE]` is the short form and takes the same
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-clone\fR] [\fB\-\-new\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-engine\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-clone\fR] [\fB\-\-new\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-engine\fR] [\fB\-\-runner\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -127,6 +127,13 @@ Base image for isolation=container and isolation=microvm (pre\-pulled; runs neve
 .TP
 \fB\-\-engine\fR \fI<ENGINE>\fR
 Browser engine for the `browser` profile: chromium (default), lightpanda, or h5i\-light. Overrides the profile\*(Aqs `engine`. Pinned in the policy digest, and never falls back: a box whose engine cannot serve a page fails and names the recreate, because switching engine changes what a page is able to do
+.TP
+\fB\-\-runner\fR \fI<NAME>\fR
+Run this box on a paired runner instead of this machine.
+
+The source is copied across as a git bundle and the box is built there; the repository, the policy and the credentials stay here. The box is bound to that machine\*(Aqs host key, not to its name, so a name re\-pointed at other hardware never silently moves a box.
+
+`h5i runner pair` sets one up and `h5i runner probe` says what it can do. A tier the runner does not offer is refused with the capability named, never quietly swapped for a weaker one.
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
 Workspace backend (auto|worktree)

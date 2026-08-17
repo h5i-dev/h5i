@@ -1069,6 +1069,8 @@ mod tests {
             persona_digest: None,
             pr: None,
             pr_head_ref: None,
+            runner_id: None,
+            runner: None,
         }
     }
 

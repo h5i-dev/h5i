@@ -180,6 +180,7 @@
 <div class="t3group">
 <a class="t3" href="#what-pairing-does">What pairing does</a>
 <a class="t3" href="#capabilities-are-advertised-never-assumed">Capabilities are advertised, never assumed</a>
+<a class="t3" href="#putting-a-box-on-one">Putting a box on one</a>
 <a class="t3" href="#what-is-built-so-far">What is built so far</a>
 <a class="t3" href="#unpairing">Unpairing</a>
 </div>
@@ -1200,10 +1201,31 @@ left as a <code>no</code> in a table:</p>
   pull images or install packages. Egress brokered through this machine is a
   later milestone.</li>
 </ul>
+<h3 id="putting-a-box-on-one">Putting a box on one</h3>
+<pre><code class="language-bash">h5i box create fix-auth --runner pi5
+</code></pre>
+<p>The base commit is pinned here, the branch is created here, and the policy is
+resolved and digested here. What crosses is the source, as a git bundle, and
+what comes back is the digest of the policy the runner actually enforced — the
+box is refused if that does not match what was sent.</p>
+<pre><code>$ h5i box ls
+env/human/fix-auth   created   isolation=container  base=fa31b1f97547 captures=0 on=pi5
+</code></pre>
+<p>The manifest records the runner's <strong>host-key hash</strong>, not its name. Renaming a
+runner, or pointing a name at different hardware, therefore cannot move a box
+onto a machine it was not built for — <code>h5i box rm</code> checks the identity before
+it removes anything there.</p>
+<p><code>h5i box rm</code> clears both sides. It removes this side first: <code>rm</code> refuses a box
+that is still live, and clearing the runner before that check would destroy the
+box there while telling you the removal had failed. If the runner is
+unreachable when its turn comes, the box is left there and its lease reaps it.</p>
 <h3 id="what-is-built-so-far">What is built so far</h3>
-<p>Pairing and probing. Creating, running and exporting a box on a runner are the
-milestones after this one, and asking for one today is answered with a sentence
-naming the milestone rather than a closed connection.</p>
+<p>Pairing, probing, and creating. <strong>Running commands in a runner box and
+exporting a patch from one are the next milestones</strong>, and asking for either
+today is answered by a sentence naming the milestone rather than a confusing
+error about a missing directory. A <code>clone:</code> or <code>--new</code> box cannot be placed on
+a runner yet either: those build their repository inside the box, and sending
+one across belongs with export.</p>
 <p>The design, including what is deliberately deferred and why, is ROADMAP.md
 sections R1 to R13.</p>
 <h3 id="unpairing">Unpairing</h3>
