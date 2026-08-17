@@ -97,7 +97,7 @@ pub enum FrameKind {
     Exit = 0x3A,
 
     ExportBox = 0x40,
-    ExportResult = 0x41,
+    ExportDone = 0x41,
 
     DestroyBox = 0x50,
     ListBoxes = 0x51,
@@ -137,7 +137,7 @@ impl FrameKind {
             0x39 => CloseStdin,
             0x3A => Exit,
             0x40 => ExportBox,
-            0x41 => ExportResult,
+            0x41 => ExportDone,
             0x50 => DestroyBox,
             0x51 => ListBoxes,
             0x52 => Gc,
@@ -178,7 +178,7 @@ impl FrameKind {
             CloseStdin => "CLOSE_STDIN",
             Exit => "EXIT",
             ExportBox => "EXPORT_BOX",
-            ExportResult => "EXPORT_RESULT",
+            ExportDone => "EXPORT_RESULT",
             DestroyBox => "DESTROY_BOX",
             ListBoxes => "LIST_BOXES",
             Gc => "GC",
@@ -657,6 +657,148 @@ pub struct GcResult {
     /// an un-reaped live box beats an unrecoverable dead one, but not silently).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<String>,
+}
+
+// ─── R13.3: exec ─────────────────────────────────────────────────────────────
+
+/// How much captured output one exec may return.
+///
+/// A build's log, not an artifact: anything past this is truncated with a note
+/// rather than refused, because a run that produced too much output still
+/// produced an exit code worth having.
+pub const MAX_EXEC_OUTPUT: usize = 8 * 1024 * 1024;
+
+/// Run something in a box.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecRequest {
+    pub box_id: String,
+    /// The command, as an argv array. Never a shell string: a shell is
+    /// something a caller asks for by name, not something the protocol implies.
+    pub argv: Vec<String>,
+    /// Working directory, relative to the box's workspace. Absolute paths and
+    /// anything that climbs out are refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Extra environment, already filtered by the caller's policy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<(String, String)>,
+    /// Wall-clock bound. The worker clamps this to its own maximum: a client's
+    /// number is a request, and the receiver's is the budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
+impl ExecRequest {
+    pub fn validated(&self) -> Result<(), ProtoError> {
+        check_id("box id", &self.box_id)?;
+        if self.argv.is_empty() {
+            return Err(ProtoError::Invalid("an exec with no command".into()));
+        }
+        if self.argv.len() > 4096 {
+            return Err(ProtoError::Invalid(format!(
+                "an exec with {} arguments is not a command",
+                self.argv.len()
+            )));
+        }
+        // The cwd becomes a path under the box's workspace on a machine we do
+        // not own, so it is checked the way every other peer-supplied path
+        // component is: by shape, and totally.
+        if let Some(cwd) = &self.cwd {
+            let bad = cwd.starts_with('/')
+                || cwd.starts_with('~')
+                || cwd.split('/').any(|seg| seg == ".." || seg.contains('\0'))
+                || cwd.len() > 1024;
+            if bad {
+                return Err(ProtoError::Invalid(format!(
+                    "`{}` is not a working directory inside the box — it must be a relative \
+                     path that stays under the workspace",
+                    sanitize_display(cwd)
+                )));
+            }
+        }
+        for (k, _) in &self.env {
+            if k.is_empty() || k.contains('=') || k.contains('\0') {
+                return Err(ProtoError::Invalid(format!(
+                    "`{}` is not an environment variable name",
+                    sanitize_display(k)
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The command exists and is running.
+///
+/// Always the first frame of an exec stream (E2B's `StartEvent`). "It spawned"
+/// and "here is output" are different facts: the first gets a short handshake
+/// clock that is cleared when it lands, and the run then lives under the long
+/// one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecStarted {
+    /// What the worker will actually enforce, after clamping.
+    pub timeout_secs: u64,
+    /// Where it is running, for diagnosis.
+    pub cwd: String,
+}
+
+/// How it ended, with everything a receipt needs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExitMsg {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub wall_ms: u64,
+    pub cpu_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rss_kb: Option<i64>,
+    /// What the runner's egress proxy saw. Observed outside the box by an h5i
+    /// we authenticated — the `runner-observed` lane (ROADMAP.md R10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress: Option<serde_json::Value>,
+    /// True when output was cut at [`MAX_EXEC_OUTPUT`]. Said rather than
+    /// silent: a truncated log that looks complete is worse than a short one.
+    #[serde(default)]
+    pub output_truncated: bool,
+}
+
+// ─── R13.4: export ───────────────────────────────────────────────────────────
+
+/// The ref an export bundle carries its tip under.
+pub const EXPORT_REF: &str = "refs/h5i/export-src";
+
+/// Ask a box for what it has become.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportRequest {
+    pub box_id: String,
+}
+
+impl ExportRequest {
+    pub fn validated(&self) -> Result<(), ProtoError> {
+        check_id("box id", &self.box_id)
+    }
+}
+
+/// What the box has become, and how to get it.
+///
+/// The bundle is **thin**: it carries `base..tip` and needs the base, which
+/// this side already has because it sent it. That keeps an export proportional
+/// to the work done rather than to the repository's history — the create
+/// direction cannot do the same, because the far side starts with nothing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportResult {
+    pub box_id: String,
+    /// The commit the worker made of the box's current state.
+    pub tip_commit: String,
+    /// Its tree. Carried so the receiving side can check that what it fetched
+    /// is what was described before it trusts a byte of it.
+    pub tip_tree: String,
+    /// False when the box's tree is identical to its base: nothing was done in
+    /// it. Said explicitly, because "an empty patch" and "the export failed"
+    /// look the same from a distance.
+    pub has_changes: bool,
+    pub bytes: u64,
+    pub sha256: String,
 }
 
 /// A refusal, on the wire.

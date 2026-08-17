@@ -946,6 +946,18 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         anyhow::bail!("usage: h5i box run [--json] <name> -- <command> [args…]");
                     }
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    // A box on a runner runs there, which is the whole point of
+                    // having put it there.
+                    #[cfg(feature = "runner")]
+                    let outcome = match (&m.runner, h5i_core::env::is_remote(&m)) {
+                        (Some(runner_name), true) => {
+                            let paired = super::placement::PairedRunner::open(runner_name)?;
+                            paired.check_identity(&m)?;
+                            h5i_core::env::run_remote(git, &h5i_root, &mut m, &command, &paired)?
+                        }
+                        _ => h5i_core::env::run(git, &h5i_root, &mut m, &command)?,
+                    };
+                    #[cfg(not(feature = "runner"))]
                     let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
                     // The command's own output, as recorded (secret-redacted).
                     let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
@@ -1650,6 +1662,27 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     let out = out.unwrap_or_else(|| {
                         workdir.join("h5i-export").join(&m.slug)
                     });
+                    #[cfg(feature = "runner")]
+                    let paired = match (&m.runner, h5i_core::env::is_remote(&m)) {
+                        (Some(runner_name), true) => {
+                            let p = super::placement::PairedRunner::open(runner_name)?;
+                            p.check_identity(&m)?;
+                            Some(p)
+                        }
+                        _ => None,
+                    };
+                    #[cfg(feature = "runner")]
+                    let s = h5i_core::export::export_with_remote(
+                        git,
+                        &h5i_root,
+                        &mut m,
+                        &out,
+                        force,
+                        paired
+                            .as_ref()
+                            .map(|p| p as &dyn h5i_core::placement::RemoteRunner),
+                    )?;
+                    #[cfg(not(feature = "runner"))]
                     let s = h5i_core::export::export(git, &h5i_root, &mut m, &out, force)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&s)?);
@@ -1684,6 +1717,18 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
 
                 BoxCommands::Propose { name } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    // A runner box freezes on the machine it lives on, and the
+                    // work comes home through a quarantine.
+                    #[cfg(feature = "runner")]
+                    let brief = match (&m.runner, h5i_core::env::is_remote(&m)) {
+                        (Some(runner_name), true) => {
+                            let paired = super::placement::PairedRunner::open(runner_name)?;
+                            paired.check_identity(&m)?;
+                            h5i_core::env::propose_remote(git, &h5i_root, &mut m, &paired)?
+                        }
+                        _ => h5i_core::env::propose(git, &h5i_root, &mut m)?,
+                    };
+                    #[cfg(not(feature = "runner"))]
                     let brief = h5i_core::env::propose(git, &h5i_root, &mut m)?;
                     println!("{brief}");
                 }

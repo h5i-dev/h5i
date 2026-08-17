@@ -14,7 +14,8 @@ use thiserror::Error;
 
 use crate::proto::{
     self, Capabilities, CreateRequest, CreateResult, DestroyRequest, DestroyResult, ErrorMsg,
-    FrameKind, GcRequest, GcResult, Hello, HelloAck, ListResult, PROTOCOL_VERSION, ProtoError,
+    ExecRequest, ExecStarted, ExitMsg, ExportRequest, ExportResult, FrameKind, GcRequest, GcResult,
+    Hello, HelloAck, ListResult, PROTOCOL_VERSION, ProtoError,
 };
 use crate::source::Bundle;
 use crate::transport::{Channel, Deadlines, Transport, TransportError};
@@ -61,6 +62,23 @@ fn stderr_tail(stderr: &str) -> String {
         String::new()
     } else {
         format!(":\n{t}")
+    }
+}
+
+/// One command's worth of result.
+#[derive(Debug, Clone)]
+pub struct ExecOutput {
+    pub started: ExecStarted,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit: ExitMsg,
+}
+
+impl ExecOutput {
+    /// The conventional shell meaning: zero is success, and a command killed by
+    /// a timeout is not.
+    pub fn success(&self) -> bool {
+        !self.exit.timed_out && self.exit.exit_code == Some(0)
     }
 }
 
@@ -172,6 +190,71 @@ impl Client {
         let result = session.expect_message(FrameKind::BoxList, "BOX_LIST")?;
         session.close()?;
         Ok(result)
+    }
+
+    /// Run a command in a box on the runner.
+    ///
+    /// Returns once the command has finished. The `EXEC_STARTED` frame is
+    /// waited for first, which is what separates "it spawned" from "here is
+    /// what it printed" — a spawn failure is reported as one rather than as an
+    /// empty result.
+    pub fn exec(&self, request: &ExecRequest) -> Result<ExecOutput, ClientError> {
+        let mut session = Session::open(&*self.transport, self.deadlines)?;
+        session.send(FrameKind::Exec, request)?;
+
+        let started: ExecStarted = session.expect_message(FrameKind::ExecStarted, "EXEC_STARTED")?;
+
+        // The run's own clock, from the moment it really started, and generous
+        // enough to cover what the worker said it would allow. A client that
+        // gave up before the worker's own timeout would report a hang for a
+        // command that was going to finish.
+        session.rearm(std::time::Duration::from_secs(started.timeout_secs.saturating_add(60)));
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit: ExitMsg = session.collect_until_exit(&mut stdout, &mut stderr)?;
+        session.close()?;
+
+        Ok(ExecOutput {
+            started,
+            stdout,
+            stderr,
+            exit,
+        })
+    }
+
+    /// Fetch what a box has become, into `into`.
+    ///
+    /// The bundle is verified against the digest the worker described it with
+    /// before this returns, so a caller never receives a path to bytes that
+    /// were not checked.
+    pub fn export(
+        &self,
+        box_id: &str,
+        into: &std::path::Path,
+    ) -> Result<ExportResult, ClientError> {
+        let mut session = Session::open(&*self.transport, self.deadlines)?;
+        session.send(
+            FrameKind::ExportBox,
+            &ExportRequest {
+                box_id: box_id.to_string(),
+            },
+        )?;
+
+        let described: ExportResult =
+            session.expect_message(FrameKind::ExportDone, "EXPORT_RESULT")?;
+
+        // Its own budget, sized from what the worker just said it would send.
+        session.begin_transfer();
+        let mut rx = crate::source::Receiver::new(
+            into.to_path_buf(),
+            described.bytes,
+            crate::proto::MAX_SOURCE_BYTES,
+        )?;
+        session.drain_data(&mut rx)?;
+        rx.finish(&described.sha256)?;
+        session.close()?;
+        Ok(described)
     }
 
     pub fn gc(&self, all: bool) -> Result<GcResult, ClientError> {
@@ -315,6 +398,120 @@ impl Session {
     ) -> Result<T, ClientError> {
         let channel = self.channel.as_ref().expect("open session");
         read_message(&mut self.reader, kind, name, &self.what, channel)
+    }
+
+    /// Give this session's remaining work a new clock.
+    fn rearm(&mut self, after: std::time::Duration) {
+        if let Some(channel) = self.channel.as_mut() {
+            channel.rearm(after);
+        }
+    }
+
+    /// Read output frames until `EXIT`.
+    ///
+    /// Anything else in the stream is a protocol error rather than something to
+    /// skip: a frame we were not expecting means we no longer know what the
+    /// peer thinks it is doing.
+    fn collect_until_exit(
+        &mut self,
+        stdout: &mut Vec<u8>,
+        stderr: &mut Vec<u8>,
+    ) -> Result<ExitMsg, ClientError> {
+        loop {
+            let frame = match self.reader.read() {
+                Ok(Some(f)) => f,
+                Ok(None) | Err(crate::wire::WireError::Io(_)) => {
+                    let channel = self.channel.as_ref();
+                    if channel.is_some_and(|c| c.timed_out()) {
+                        return Err(ClientError::TimedOut {
+                            what: self.what.clone(),
+                        });
+                    }
+                    return Err(ClientError::Closed {
+                        what: self.what.clone(),
+                        stderr: channel.map(|c| c.stderr_tail()).unwrap_or_default(),
+                    });
+                }
+                Err(e) => return Err(e.into()),
+            };
+            match FrameKind::from_u8(frame.kind) {
+                Some(FrameKind::Stdout) => stdout.extend_from_slice(&frame.payload),
+                Some(FrameKind::Stderr) => stderr.extend_from_slice(&frame.payload),
+                Some(FrameKind::KeepAlive) => continue,
+                Some(FrameKind::Exit) => return proto::decode("EXIT", &frame.payload).map_err(Into::into),
+                Some(FrameKind::Error) => {
+                    let msg: ErrorMsg = proto::decode("ERROR", &frame.payload)?;
+                    let msg = msg.sanitized();
+                    return Err(ProtoError::Refused {
+                        code: msg.code,
+                        message: msg.message,
+                        log_tail: msg.log_tail,
+                    }
+                    .into());
+                }
+                Some(other) => {
+                    return Err(ProtoError::Unexpected {
+                        expected: "STDOUT, STDERR or EXIT",
+                        got: other.as_str(),
+                    }
+                    .into());
+                }
+                None => return Err(ProtoError::UnknownFrame(frame.kind).into()),
+            }
+        }
+    }
+
+    /// Start a fresh budget for a bulk transfer on this session.
+    fn begin_transfer(&mut self) {
+        self.reader.begin_rpc(
+            Limits::permissive()
+                .narrowed(crate::wire::MAX_FRAME, crate::proto::MAX_SOURCE_BYTES, 1_000_000),
+        );
+    }
+
+    /// Read `DATA` frames into a receiver until `DATA_DONE`.
+    fn drain_data(&mut self, rx: &mut crate::source::Receiver) -> Result<(), ClientError> {
+        loop {
+            let frame = match self.reader.read() {
+                Ok(Some(f)) => f,
+                Ok(None) | Err(WireError::Io(_)) => {
+                    let channel = self.channel.as_ref();
+                    if channel.is_some_and(|c| c.timed_out()) {
+                        return Err(ClientError::TimedOut {
+                            what: self.what.clone(),
+                        });
+                    }
+                    return Err(ClientError::Closed {
+                        what: self.what.clone(),
+                        stderr: channel.map(|c| c.stderr_tail()).unwrap_or_default(),
+                    });
+                }
+                Err(e) => return Err(e.into()),
+            };
+            match FrameKind::from_u8(frame.kind) {
+                Some(FrameKind::Data) => rx.chunk(&frame.payload)?,
+                Some(FrameKind::DataDone) => return Ok(()),
+                Some(FrameKind::KeepAlive) => continue,
+                Some(FrameKind::Error) => {
+                    let msg: ErrorMsg = proto::decode("ERROR", &frame.payload)?;
+                    let msg = msg.sanitized();
+                    return Err(ProtoError::Refused {
+                        code: msg.code,
+                        message: msg.message,
+                        log_tail: msg.log_tail,
+                    }
+                    .into());
+                }
+                Some(other) => {
+                    return Err(ProtoError::Unexpected {
+                        expected: "DATA or DATA_DONE",
+                        got: other.as_str(),
+                    }
+                    .into());
+                }
+                None => return Err(ProtoError::UnknownFrame(frame.kind).into()),
+            }
+        }
     }
 
     /// Close the write half so the worker sees end of input, then collect its

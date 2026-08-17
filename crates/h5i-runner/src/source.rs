@@ -246,6 +246,93 @@ pub fn materialize(bundle: &Path, work: &Path, base_commit: &str) -> Result<(), 
     Ok(())
 }
 
+/// Commit whatever the box has now, and bundle it for the trip home.
+///
+/// The bundle is thin — `base..tip` — because the receiving side already has
+/// the base: it is the machine that sent it. An export therefore costs what was
+/// *done* in the box rather than what the repository's history weighs, which is
+/// the asymmetry that makes the return trip cheap even though the outbound one
+/// is not.
+///
+/// A box with nothing new in it still gets a bundle and an honest
+/// `has_changes: false`, because "the box did nothing" and "the export broke"
+/// must not look the same from the other end.
+pub fn export_bundle(
+    work: &Path,
+    base_commit: &str,
+    out: &Path,
+) -> Result<Exported, SourceError> {
+    // Everything, including files the agent never told git about. An export
+    // that silently dropped untracked work would be the worst kind of quiet.
+    git(work, &["add", "--all", "--"])?;
+
+    let head = git(work, &["rev-parse", "HEAD"])?.trim().to_string();
+    let staged_tree = git(work, &["write-tree"])?.trim().to_string();
+    let head_tree = git(work, &["rev-parse", "HEAD^{tree}"])?.trim().to_string();
+
+    let tip = if staged_tree == head_tree {
+        head.clone()
+    } else {
+        // The worker's commit is a carrier, not a record: the receiving side
+        // takes the tree and authors its own (R9), so this message is never
+        // seen by anyone and the authorship never reaches the host repository.
+        git(
+            work,
+            &["commit", "--quiet", "--no-verify", "-m", "h5i: box state for export"],
+        )?;
+        git(work, &["rev-parse", "HEAD"])?.trim().to_string()
+    };
+
+    let tip_tree = git(work, &["rev-parse", &format!("{tip}^{{tree}}")])?
+        .trim()
+        .to_string();
+
+    git(work, &[
+        "update-ref",
+        crate::proto::EXPORT_REF,
+        &tip,
+    ])?;
+    let built = (|| -> Result<(), SourceError> {
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| SourceError::io(parent, e))?;
+        }
+        git(
+            work,
+            &[
+                "bundle",
+                "create",
+                "--end-of-options",
+                &out.to_string_lossy(),
+                &format!("{base_commit}..{}", crate::proto::EXPORT_REF),
+            ],
+        )
+        .map(|_| ())
+    })();
+    let _ = git(work, &["update-ref", "-d", crate::proto::EXPORT_REF]);
+    built?;
+
+    let bytes = std::fs::metadata(out)
+        .map_err(|e| SourceError::io(out, e))?
+        .len();
+    Ok(Exported {
+        tip_commit: tip,
+        tip_tree,
+        has_changes: staged_tree != head_tree || head != base_commit,
+        bytes,
+        sha256: digest_file(out)?,
+    })
+}
+
+/// What an export turned out to be.
+#[derive(Debug, Clone)]
+pub struct Exported {
+    pub tip_commit: String,
+    pub tip_tree: String,
+    pub has_changes: bool,
+    pub bytes: u64,
+    pub sha256: String,
+}
+
 /// An empty box: a repository with no history, so that everything later in the
 /// pipeline (a diff, an export) has a repository to work against.
 pub fn materialize_empty(work: &Path) -> Result<(), SourceError> {

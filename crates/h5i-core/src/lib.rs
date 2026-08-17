@@ -13,6 +13,8 @@ pub mod export;
 /// Where a box runs: the trait the lifecycle engine uses to place one on
 /// another machine, with no transport in it (ROADMAP.md R1, R7).
 pub mod placement;
+/// Taking a tree from a machine we agreed might be compromised (ROADMAP.md R9).
+pub mod quarantine;
 pub mod receipt;
 pub mod redact;
 pub mod refstore;

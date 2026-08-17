@@ -278,12 +278,13 @@ fn a_malformed_handshake_payload_is_refused_not_guessed_at() {
 fn an_unbuilt_rpc_is_answered_and_the_channel_survives_it() {
     // "Not yet built" is a fact about this milestone, and a client meeting it
     // should get a sentence rather than a closed pipe.
-    // Deliberately a verb from a later milestone: CREATE_BOX is built as of
-    // R13.2, so using it here would test the wrong thing the day it landed.
+    // A verb from a later milestone, re-picked each time one lands: CREATE_BOX
+    // was the example until R13.2 and EXEC until R13.3. RESIZE is a pty control
+    // message, and interactive exec is the piece still outstanding.
     let mut input = hello_bytes(PROTOCOL_VERSION);
     {
         let mut w = FrameWriter::new(&mut input, Limits::permissive());
-        w.write(FrameKind::Exec.as_u8(), b"{}").unwrap();
+        w.write(FrameKind::Resize.as_u8(), b"{}").unwrap();
         w.write(FrameKind::Probe.as_u8(), b"").unwrap();
     }
 
@@ -293,7 +294,7 @@ fn an_unbuilt_rpc_is_answered_and_the_channel_survives_it() {
     let err = error_in(&frames, 1);
     assert_eq!(err.code, ErrorCode::Unimplemented);
     assert!(
-        err.message.contains("EXEC"),
+        err.message.contains("RESIZE"),
         "the refusal names the verb: {}",
         err.message
     );

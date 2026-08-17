@@ -1123,14 +1123,57 @@ that is still live, and clearing the runner before that check would destroy the
 box there while telling you the removal had failed. If the runner is
 unreachable when its turn comes, the box is left there and its lease reaps it.
 
-### What is built so far
+### Working in one
 
-Pairing, probing, and creating. **Running commands in a runner box and
-exporting a patch from one are the next milestones**, and asking for either
-today is answered by a sentence naming the milestone rather than a confusing
-error about a missing directory. A `clone:` or `--new` box cannot be placed on
-a runner yet either: those build their repository inside the box, and sending
-one across belongs with export.
+```bash
+h5i box run fix-auth -- cargo test      # runs on the runner
+h5i box propose fix-auth                # bring the work home
+h5i box diff fix-auth                   # review it here
+h5i box apply fix-auth                  # land it
+h5i box export fix-auth                 # or take the patch and receipts
+```
+
+`box run` executes on the runner under the policy pinned at create, and the
+receipt comes home with the exit code, the timings and the runner's own egress
+summary. It is filed under a lane of its own, **`runner-observed`**: h5i saw it
+from outside the box, so the box could not have forged it, but *this* machine
+did not watch it either. It is not counted as host-observed and not counted as
+box-claimed, because it is neither.
+
+`box propose` is where the work returns, and it is the careful part. The runner
+commits what the box has and sends a bundle of just the new work. That bundle
+is unpacked into a **throwaway repository with its own object database** — not
+a branch, not a ref namespace, a separate repository — and inspected there:
+size and count ceilings, path traversal, nested git repositories, submodule
+pointers the base did not have. Only a tree that passes crosses into your
+repository, and **h5i writes the commit itself**. The runner's history and
+authorship never enter your history at all.
+
+If something is refused, nothing lands:
+
+```
+$ h5i box propose fix-auth
+Error: mediated commit refused (fail-closed) — 1 path violation(s):
+  - a submodule pointer the base did not have, at vendor/thing
+```
+
+After a successful propose, `diff`, `apply` and `export` behave exactly as they
+do for a local box. There is nothing special about applying work that came from
+a runner, which is the point.
+
+### What is not built yet
+
+- **`box shell` on a runner.** Interactive means a pty, which means
+  bidirectional streaming and resize; that is the next piece of work.
+- **Streaming output.** `box run` returns everything when the command
+  finishes, so a long build is silent until it ends. The exit code, timings
+  and evidence are all correct — you just do not see the log as it happens.
+- **Agents on a runner.** An agent profile needs model credentials, and h5i
+  will not send those to another machine. A credential channel that keeps them
+  here is a later milestone, and until then a runner box runs builds, tests and
+  commands rather than Claude or Codex.
+- **`clone:` and `--new` sources.** Those build their repository inside the
+  box; sending one across belongs with a later milestone.
 
 The design, including what is deliberately deferred and why, is ROADMAP.md
 sections R1 to R13.

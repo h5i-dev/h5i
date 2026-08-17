@@ -362,6 +362,19 @@ pub struct Signals {
     pub host_observed: usize,
     /// Runs recorded by the in-box tee shim — the box's own account.
     pub box_claimed: usize,
+    /// Runs observed from **outside the box, on a machine we do not own**: a
+    /// runner (ROADMAP.md R10).
+    ///
+    /// Its own count rather than folded into either neighbour, because it is
+    /// genuinely neither. The box could not forge these — the worker saw them
+    /// from outside it, and the channel they arrived on is authenticated with a
+    /// pinned host key. But this machine did not watch them either, so a
+    /// compromised runner could. Counting them as host-observed would overclaim
+    /// and counting them as box-claimed would underclaim; the honest reading is
+    /// that they collapse to box-claimed exactly when the runner host is
+    /// compromised, and the runner host is the machine chosen to be losable.
+    #[serde(default)]
+    pub runner_observed: usize,
     /// Timestamp of the newest receipt.
     pub last_run_ts: Option<String>,
     /// `denial` | `attention` | `clean`.
@@ -404,6 +417,16 @@ pub struct Signals {
     pub fs_overlap: Vec<String>,
 }
 
+/// [`signals`], for a test in another module of this crate.
+///
+/// The lane split is a property the whole product rests on, and the code that
+/// creates a runner-observed receipt lives in `env`. Testing it there against
+/// the real counter beats asserting a string and hoping this agreed.
+#[cfg(test)]
+pub(crate) fn signals_for_test(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
+    signals(m, receipts)
+}
+
 fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
     let mut s = Signals {
         runs: receipts.len(),
@@ -425,6 +448,10 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         // is precisely the distinction this screen exists to keep.
         if HOST_OBSERVED_LANES.contains(&r.source.as_str()) {
             s.host_observed += 1;
+        } else if r.source == crate::placement::RUNNER_OBSERVED_LANE {
+            // Deliberately a third arm rather than a sixth entry in the
+            // allowlist above. See `Signals::runner_observed`.
+            s.runner_observed += 1;
         } else {
             s.box_claimed += 1;
         }
@@ -459,7 +486,12 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
     s.fs_overlap.truncate(DENIED_HOSTS_CAP);
     // Receipts are appended in order and their timestamps sort lexically.
     s.last_run_ts = receipts.last().map(|r| r.timestamp.clone());
-    s.box_claimed_only = s.runs > 0 && s.host_observed == 0;
+    // "Nothing was watched from outside the box" — which a runner-observed run
+    // *was*, by an h5i we authenticated. Counting only `host_observed` here
+    // would put the grey box-claimed badge on a runner box whose every run was
+    // seen from outside it, which is the opposite of what the badge means. The
+    // weaker evidence is still visible: `runner_observed` is its own count.
+    s.box_claimed_only = s.runs > 0 && s.host_observed == 0 && s.runner_observed == 0;
     s.authority_unconfined =
         m.fs_authority.is_some_and(|a| !a.confined() || a.symlink_clean == Some(false));
     s.verdict = if s.egress_denied > 0 || s.authority_unconfined {

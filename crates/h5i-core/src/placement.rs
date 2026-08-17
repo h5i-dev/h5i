@@ -66,6 +66,52 @@ pub struct RemoteCreated {
     pub existing: bool,
 }
 
+/// One command to run in a remote box.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteExec<'a> {
+    pub box_id: &'a str,
+    pub argv: &'a [String],
+    /// Relative to the box's workspace on the runner.
+    pub cwd: Option<&'a str>,
+    pub env: &'a [(String, String)],
+    pub timeout_secs: Option<u64>,
+}
+
+/// What a remote command did.
+///
+/// The same facts a local run produces, so the receipt written from it is the
+/// same shape — the difference is the lane it is filed under, not the evidence
+/// itself (ROADMAP.md R10).
+#[derive(Debug, Clone)]
+pub struct RemoteExecResult {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub wall_ms: u64,
+    pub cpu_ms: u64,
+    pub max_rss_kb: Option<i64>,
+    /// What the runner's own egress proxy saw. Observed outside the box, by an
+    /// h5i we authenticated, on hardware we do not control.
+    pub egress: Option<h5i_sandbox::sandbox_policy::EgressSummary>,
+    /// Where it ran, on the runner.
+    pub cwd: String,
+    /// True when the runner cut the captured output.
+    pub output_truncated: bool,
+}
+
+/// What a box has become, as the runner described it.
+#[derive(Debug, Clone)]
+pub struct RemoteExported {
+    pub tip_commit: String,
+    /// The tree the bundle claims to carry. Checked against what was actually
+    /// fetched before anything is trusted.
+    pub tip_tree: String,
+    /// False when nothing was done in the box. Distinguished from a failure,
+    /// because from a distance an empty patch and a broken export look alike.
+    pub has_changes: bool,
+}
+
 /// A machine that can hold boxes for this one.
 pub trait RemoteRunner {
     /// The runner's display name, for messages.
@@ -74,11 +120,33 @@ pub trait RemoteRunner {
     /// Build a box there.
     fn create(&self, spec: &RemoteCreateSpec<'_>) -> Result<RemoteCreated, H5iError>;
 
+    /// Run something in one.
+    fn exec(&self, exec: &RemoteExec<'_>) -> Result<RemoteExecResult, H5iError>;
+
+    /// Fetch what a box has become: a thin bundle of `base..tip`, written into
+    /// `into`, verified against the digest the runner described it with.
+    fn export(&self, box_id: &str, into: &Path) -> Result<RemoteExported, H5iError>;
+
     /// Remove one. Removing something already gone is success, not an error:
     /// gone is the state the caller asked for, and a retry after a lost answer
     /// must not fail.
     fn destroy(&self, box_id: &str) -> Result<(), H5iError>;
 }
+
+/// The receipt lane a remote execution is filed under.
+///
+/// **Not** one of `server::HOST_OBSERVED_LANES`, and that is the whole point
+/// (ROADMAP.md R10). This was observed from outside the box, by an h5i we
+/// authenticated over a channel with a pinned host key — which is strictly
+/// more than the box could forge, and strictly less than something this machine
+/// watched itself. Folding it into host-observed would overclaim; calling it
+/// box-claimed would underclaim.
+///
+/// The honest degradation, and the security claim of this whole part in one
+/// sentence: runner-observed collapses to box-claimed exactly when the runner
+/// host is compromised, and the runner host is the machine you chose to be able
+/// to lose.
+pub const RUNNER_OBSERVED_LANE: &str = "runner-observed";
 
 /// The name a box goes by on the runner.
 ///
@@ -120,6 +188,8 @@ pub(crate) mod fake {
         pub runner_id: String,
         /// Every spec this was asked to build, in order.
         pub created: Mutex<Vec<(String, String)>>,
+        /// Every command it was asked to run.
+        pub execed: Mutex<Vec<Vec<String>>>,
         /// When set, the digest to answer with instead of the one sent — for
         /// exercising the check that a runner enforced the policy it was given.
         pub lie_with_digest: Option<String>,
@@ -132,6 +202,7 @@ pub(crate) mod fake {
                 name: name.into(),
                 runner_id: "d".repeat(64),
                 created: Mutex::new(Vec::new()),
+                execed: Mutex::new(Vec::new()),
                 lie_with_digest: None,
                 fail_with: None,
             }
@@ -161,6 +232,33 @@ pub(crate) mod fake {
                     .unwrap_or_else(|| spec.policy_digest.to_string()),
                 existing: false,
             })
+        }
+
+        fn exec(&self, exec: &RemoteExec<'_>) -> Result<RemoteExecResult, H5iError> {
+            self.execed
+                .lock()
+                .unwrap()
+                .push(exec.argv.to_vec());
+            Ok(RemoteExecResult {
+                stdout: b"from the runner\n".to_vec(),
+                stderr: Vec::new(),
+                exit_code: Some(0),
+                timed_out: false,
+                wall_ms: 12,
+                cpu_ms: 7,
+                max_rss_kb: Some(2048),
+                egress: None,
+                cwd: "/var/lib/h5i/runner/work".into(),
+                output_truncated: false,
+            })
+        }
+
+        fn export(&self, _box_id: &str, _into: &Path) -> Result<RemoteExported, H5iError> {
+            Err(H5iError::Metadata(
+                "this fake runner exports nothing; the export path is tested against a real \
+                 worker"
+                    .into(),
+            ))
         }
 
         fn destroy(&self, _box_id: &str) -> Result<(), H5iError> {

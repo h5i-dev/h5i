@@ -7240,11 +7240,72 @@ demonstration, not a diff.
   contradicts R12 is how the credential channel would end up rushed. The
   agent-on-a-runner demonstration belongs to the credential channel's own
   milestone.
-- **R13.4 Export.** The tree-source `mediated_commit` refactor, quarantined
-  fetch, propose, apply. Exit: a change made through `box shell` or `env
-  run` on the runner (not an agent; R12, and R13.3's reasoning applies
-  here too) round-trips to a host-authored mediated commit, survives the
-  violation
+
+  **Captured exec built, 2026-08-17.** `h5i box run <box> -- <cmd>` runs on
+  the runner and comes home with an exit code, timings and the runner's own
+  egress summary, filed under `runner-observed` — its own lane in `Signals`,
+  neither host-observed nor box-claimed, for the reason R10 gives. The
+  worker calls `sandbox::run_with_env` directly, which is the R3 cut paying
+  off: the confinement that runs there is the product's own, not a
+  reimplementation. Per-box locks are `flock` (create/destroy/export
+  exclusive, exec shared), so an export beside a running build is refused
+  rather than reading a torn tree — and the kernel releases the lock with
+  the process, which is what stops a worker killed mid-exec from wedging a
+  box forever. Verified over real SSH: output returns, exit codes
+  propagate, receipts land.
+
+  **Two pieces of this milestone are NOT built, and neither is disguised.**
+
+  - *Output is captured, not streamed.* `run_with_env` is the function the
+    local path calls and it captures; a long build says nothing until it
+    finishes. The frames are already the right shape — `EXEC_STARTED` goes
+    out before the run, and output arrives as `STDOUT`/`STDERR` chunks — so
+    a streaming runner inside `h5i-sandbox` would send the same frames
+    earlier. That is surgery on the local path's most load-bearing
+    function and was deliberately not bundled in here.
+  - *`box shell` on a runner does not work.* Interactive means a pty, and a
+    pty means bidirectional streaming, resize and signals — the
+    `PTY_IN`/`PTY_OUT`/`RESIZE`/`SIGNAL` frames are declared and refused.
+    The "usable over a laggy link" half of the exit criterion is therefore
+    **not met**, and stays open rather than being quietly reworded.
+- **R13.4 Export. Built, 2026-08-17.** Exit met: a change made through
+  `box run` on the runner round-trips to a host-authored mediated commit,
+  survives the violation scans, and applies through the unchanged gates —
+  demonstrated end to end against a real sshd, including a planted nested
+  repository that is refused fail-closed with the branch left untouched.
+
+  Two things turned out to be much smaller than the plan assumed, and one
+  larger:
+
+  - **`diff` and `apply` needed no changes at all.** `diff` already picks
+    an object-store branch when there is no worktree, and every gate in
+    `apply` is object-store work. Once the fetched tree lands on the env
+    branch, the whole downstream is the local path unchanged.
+  - **The `mediated_commit` refactor was not needed either.** The tree
+    arrives already committed by the worker, so what this side needs is not
+    a tree-source variant of a function that stages a worktree — it is the
+    scans, run against a tree, and a commit. Those live in
+    `h5i_core::quarantine`, and the local `mediated_commit` is untouched.
+    R13's scope valve therefore never had to be pulled.
+  - **The quarantine was the real work**, and it is the part R9 cares
+    about. The bundle is unpacked into a throwaway *bare* repository with
+    its own object database — a ref namespace withholds reachability, not
+    presence, so it is not a quarantine — and the structural checks run
+    there: object and entry counts, a blob ceiling, path length, traversal,
+    nested `.git`, and gitlinks the base did not have. Only then does the
+    surviving tree cross, carried by a commit that is discarded on arrival
+    so that **this side authors the commit**. Verified: the runner's own
+    carrier commit appears nowhere in the host repository's history.
+
+  The bundle home is **thin** (`base..tip`), which is why the quarantine is
+  seeded with the base from the repository we own before the untrusted
+  bundle is fetched. An export therefore costs what was *done* in the box
+  rather than what the history weighs — the asymmetry the outbound
+  direction cannot have, because the far side starts with nothing.
+
+  (Superseded exit text, kept for the record: a change made through `box
+  shell` or `env run` on the runner round-trips to a host-authored mediated
+  commit, survives the violation
   scans (a planted nested-git and a private-path write are both filtered and
   named), and applies through the unchanged gates.
 
@@ -7268,3 +7329,10 @@ Decision points, named not resolved, in the VF.7 discipline:
    change; if it fights back, the MVP ships export-only (the detached-box
    posture) and apply lands behind the refactor later. Nothing upstream of
    R13.4 depends on which way this goes.
+
+   **Answered, 2026-08-17: never needed.** The refactor was predicated on
+   this side having to build a tree from a worktree it does not have. It
+   does not have to: the worker commits, and what arrives is a tree. So the
+   work was the quarantine and the scans, `mediated_commit` was left alone,
+   and apply landed with the rest. The valve was never pulled because there
+   was nothing to valve.

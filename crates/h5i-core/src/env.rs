@@ -5320,6 +5320,99 @@ pub fn run(
     run_inner(repo, h5i_root, m, argv, None)
 }
 
+/// Run a command in a box that lives on a runner.
+///
+/// Deliberately a separate function rather than a branch inside [`run_inner`]:
+/// almost nothing they share is real. A local run resolves binds, opens the
+/// env worktree, computes the effective configuration and reads a tree from
+/// disk; a remote one does none of those, because none of them describes
+/// anything on this machine. Threading a placement through the local path
+/// would have meant an `if` at every one of those steps, each of which is a
+/// place for the two to drift.
+///
+/// What they *do* share is the part that matters: the receipt. The same
+/// evidence, in the same store, under a lane that says where it was observed
+/// (ROADMAP.md R10).
+pub fn run_remote(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+    argv: &[String],
+    runner: &dyn crate::placement::RemoteRunner,
+) -> Result<RunOutcome, H5iError> {
+    if argv.is_empty() {
+        return Err(H5iError::Metadata("empty command".into()));
+    }
+    let env_dir_path = env_dir(h5i_root, &m.agent, &m.slug);
+    let _lock = RunLock::acquire(&m.dir(h5i_root))?;
+
+    let box_id = crate::placement::remote_box_id(&m.id);
+    let result = runner.exec(&crate::placement::RemoteExec {
+        box_id: &box_id,
+        argv,
+        cwd: None,
+        env: &[],
+        timeout_secs: None,
+    })?;
+
+    let mut raw = result.stdout.clone();
+    raw.extend_from_slice(&result.stderr);
+
+    let input = crate::receipt::RecordInput {
+        env_id: m.id.clone(),
+        policy_digest: Some(m.policy_digest.clone()),
+        // Absent by construction, not by omission: the effective configuration
+        // describes a kernel-tier invocation on *this* host, and there was not
+        // one. A value here would be a measurement of the wrong machine.
+        effective_digest: None,
+        // Likewise empty rather than computed. `fs_overlap` answers "which
+        // other boxes on this host share a writable path with this one", and a
+        // box on another machine shares none of them.
+        fs_overlap: Vec::new(),
+        source: crate::placement::RUNNER_OBSERVED_LANE.to_string(),
+        cmd: Some(argv.join(" ")),
+        // The runner's path, said as such. A local-looking path here would be
+        // a directory somebody could try to `cd` into.
+        cwd: Some(format!("{} (on {})", result.cwd, m.runner.as_deref().unwrap_or("runner"))),
+        exit_code: result.exit_code,
+        timed_out: result.timed_out,
+        wall_ms: Some(result.wall_ms),
+        cpu_ms: Some(result.cpu_ms),
+        max_rss_kb: result.max_rss_kb.and_then(|kb| u64::try_from(kb).ok()),
+        // The tree the box was built from. The tree it has *now* is not
+        // knowable from here until an export brings it back, and claiming the
+        // base as the current state would be a lie in the field most likely to
+        // be trusted.
+        git_tree: Some(m.base_tree.clone()),
+        files: Vec::new(),
+        egress: result.egress.clone(),
+        browser: None,
+        share: None,
+    };
+    let captured = crate::receipt::append(&env_dir_path, input, &raw)?;
+    m.captures.push(captured.id.clone());
+
+    set_status(
+        repo,
+        h5i_root,
+        m,
+        ST_IDLE,
+        "run",
+        Some(crate::redact::sanitize_display(&argv.join(" "))),
+        Some(captured.id.clone()),
+    )?;
+
+    Ok(RunOutcome {
+        capture_id: captured.id.clone(),
+        exit_code: result.exit_code,
+        timed_out: result.timed_out,
+        wall_ms: result.wall_ms as u128,
+        cpu_ms: result.cpu_ms as u128,
+        max_rss_kb: result.max_rss_kb,
+        receipt: captured,
+    })
+}
+
 /// [`run`], plus one **writable** cache bind.
 ///
 /// The only caller is `h5i box cache refresh`, which runs an ecosystem's fetch
@@ -5356,12 +5449,16 @@ fn run_inner(
     }
     let work = m.work_dir(h5i_root);
     if !work.is_dir() {
+        // A runner box reaching this function means the caller did not route it
+        // to `run_remote`, which is a bug here rather than a limitation to
+        // explain away — so it says so, instead of blaming the box.
         return Err(if is_remote(m) {
-            // Truer than "no local workspace": the box exists and is healthy,
-            // it is simply on a machine this milestone cannot run commands on
-            // yet. A message about a missing directory would send someone
-            // looking for a bug that is not there.
-            remote_unsupported_err(m, "env run")
+            H5iError::Metadata(format!(
+                "{}: this box runs on `{}` and was not routed to its runner — \
+                 use `h5i box run`, which does",
+                m.id,
+                m.runner.as_deref().unwrap_or("a runner")
+            ))
         } else {
             no_workspace_err(m, "env run")
         });
@@ -9248,6 +9345,106 @@ fn staged_path_violation(canon_work: &Path, rel: &Path) -> Option<String> {
 
 /// Mediated-commit the worktree, mark the env `proposed`, and return a review
 /// brief. Never touches the parent branch.
+/// Freeze a runner box's work into a host-authored commit on its branch.
+///
+/// The remote counterpart of [`propose`], and the shape of R9 in one function:
+///
+/// 1. The runner commits what the box has and hands back a thin bundle.
+/// 2. It is unpacked into a **throwaway repository with its own object
+///    database** and inspected there — a ref namespace withholds reachability,
+///    not presence, so it is not a quarantine.
+/// 3. Only the surviving tree crosses, and **this side writes the commit**.
+///    The runner's history and authorship are discarded by construction: the
+///    host repository only ever contains commits the host itself authored.
+///
+/// After it, everything downstream is the local path unchanged — [`diff`]
+/// already reads the branch through the object store when there is no
+/// worktree, and every gate in [`apply`] is object-store work.
+pub fn propose_remote(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+    runner: &dyn crate::placement::RemoteRunner,
+) -> Result<String, H5iError> {
+    let _lock = RunLock::acquire(&m.dir(h5i_root))?;
+    if !matches!(
+        m.status.as_str(),
+        ST_CREATED | ST_RUNNING | ST_IDLE | ST_PROPOSED
+    ) {
+        return Err(H5iError::Metadata(format!(
+            "{}: cannot propose from status '{}'",
+            m.id, m.status
+        )));
+    }
+
+    let scratch = tempfile::tempdir()
+        .map_err(|e| H5iError::Metadata(format!("could not stage the export: {e}")))?;
+    let bundle = scratch.path().join("export.bundle");
+    let box_id = crate::placement::remote_box_id(&m.id);
+    let described = runner.export(&box_id, &bundle)?;
+
+    let private = private_path_rels(h5i_root, m);
+    let accepted = crate::quarantine::import_tree(
+        repo,
+        &bundle,
+        &m.base_commit,
+        &described.tip_tree,
+        &private,
+    )?;
+
+    if !accepted.violations.is_empty() {
+        // Recorded the way a local mediated commit records one, so a refusal
+        // on a runner reads like a refusal anywhere else.
+        return Err(record_commit_violation(repo, m, accepted.violations));
+    }
+
+    // The commit this side authors, over a tree a scan reached.
+    let parent = repo.find_reference(&m.branch)?.peel_to_commit()?;
+    let snapshot = if parent.tree_id() == accepted.tree {
+        None
+    } else {
+        let tree = repo.find_tree(accepted.tree)?;
+        let sig = crate::refstore::signature(repo)?;
+        Some(repo.commit(
+            Some(&m.branch),
+            &sig,
+            &sig,
+            &format!("h5i env: mediated commit ({})", m.id),
+            &tree,
+            &[&parent],
+        )?)
+    };
+
+    let stat = diff(repo, h5i_root, m, true).unwrap_or_default();
+    let detail = match &snapshot {
+        Some(oid) => format!("snapshot={oid} runner={}", m.runner.as_deref().unwrap_or("?")),
+        None => "no new changes (the box's tree matches the branch tip)".to_string(),
+    };
+    set_status(repo, h5i_root, m, ST_PROPOSED, "proposed", Some(detail), None)?;
+
+    let mut brief = String::new();
+    brief.push_str(&format!("{}: proposed\n", m.id));
+    brief.push_str(&format!(
+        "  runner   {}\n",
+        m.runner.as_deref().unwrap_or("?")
+    ));
+    brief.push_str(&format!("  base     {}\n", short(&m.base_commit, 12)));
+    brief.push_str(&format!("  branch   {}\n", m.branch));
+    if !accepted.private_dropped.is_empty() {
+        brief.push_str(&format!(
+            "  private  {} path(s) held back by policy\n",
+            accepted.private_dropped.len()
+        ));
+    }
+    if !described.has_changes {
+        brief.push_str("  note     the box's tree is identical to its base\n");
+    }
+    if !stat.trim().is_empty() {
+        brief.push_str(&stat);
+    }
+    Ok(brief)
+}
+
 pub fn propose(
     repo: &Repository,
     h5i_root: &Path,
@@ -10278,6 +10475,93 @@ mod tests {
         assert!(text.contains("pi5"), "names the machine: {text}");
         assert!(text.contains("next milestone"), "and what is missing");
         assert!(!text.contains("no local workspace"), "not the other message");
+    }
+
+    #[test]
+    fn a_remote_run_is_filed_under_the_runner_observed_lane() {
+        // The evidence is the same shape as a local run's; what differs is the
+        // lane, which is the whole of R10.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+        let mut m = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "runs",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect("create");
+
+        let out = run_remote(
+            &repo,
+            &h5i_root,
+            &mut m,
+            &["echo".to_string(), "hi".to_string()],
+            &fake,
+        )
+        .expect("run on the runner");
+
+        assert_eq!(out.exit_code, Some(0));
+        assert_eq!(
+            out.receipt.source,
+            crate::placement::RUNNER_OBSERVED_LANE,
+            "not host-observed, and not box-claimed"
+        );
+        assert_eq!(fake.execed.lock().unwrap().len(), 1);
+
+        // The three fields with host-local provenance are absent rather than
+        // computed against the wrong machine.
+        assert!(out.receipt.effective_digest.is_none());
+        assert!(out.receipt.fs_overlap.is_empty());
+        assert!(
+            out.receipt.cwd.as_deref().is_some_and(|c| c.contains("pi5")),
+            "the path is named as the runner's: {:?}",
+            out.receipt.cwd
+        );
+
+        // And it is on the box's own receipt log, like any other run.
+        let listed = crate::receipt::list(&env_dir(&h5i_root, &m.agent, &m.slug)).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, out.capture_id);
+    }
+
+    #[test]
+    fn a_runner_observed_run_is_not_counted_as_box_claimed() {
+        // The console badge would otherwise say "the box told us this" about a
+        // run the box could not have forged.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+        let mut m = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "signals",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect("create");
+        run_remote(&repo, &h5i_root, &mut m, &["true".to_string()], &fake).expect("run");
+
+        let receipts = crate::receipt::list(&env_dir(&h5i_root, &m.agent, &m.slug)).unwrap();
+        let signals = crate::server::signals_for_test(&m, &receipts);
+        assert_eq!(signals.runner_observed, 1);
+        assert_eq!(signals.box_claimed, 0, "it is not the box's own account");
+        assert_eq!(signals.host_observed, 0, "and this machine did not watch it");
+        assert!(
+            !signals.box_claimed_only,
+            "a run seen from outside the box must not read as box-claimed only"
+        );
     }
 
     #[test]

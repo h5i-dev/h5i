@@ -133,6 +133,22 @@ pub fn export(
     out: &Path,
     force: bool,
 ) -> Result<ExportSummary, H5iError> {
+    export_with_remote(repo, h5i_root, m, out, force, None)
+}
+
+/// [`export`], for a box that lives on a runner.
+///
+/// Only the freeze differs. Everything after it — the diff, the receipts, the
+/// report — is object-store and on-disk work that never cared where the box
+/// ran, which is why this takes a placement rather than forking the bundle.
+pub fn export_with_remote(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &mut EnvManifest,
+    out: &Path,
+    force: bool,
+    remote: Option<&dyn crate::placement::RemoteRunner>,
+) -> Result<ExportSummary, H5iError> {
     if out.exists() {
         let empty = std::fs::read_dir(out)
             .map(|mut d| d.next().is_none())
@@ -180,7 +196,10 @@ pub fn export(
 
     // Same freeze as `propose`: the mediated commit is what makes the diff
     // trustworthy, so export never reads a live worktree directly.
-    let brief = env::propose(repo, h5i_root, m)?;
+    let brief = match remote {
+        Some(runner) => env::propose_remote(repo, h5i_root, m, runner)?,
+        None => env::propose(repo, h5i_root, m)?,
+    };
 
     let patch = env::diff(repo, h5i_root, m, false)?;
     let (files_changed, insertions, deletions) =

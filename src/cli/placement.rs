@@ -8,9 +8,13 @@
 //! worker reaching for receipts and export.
 
 use h5i_core::error::H5iError;
-use h5i_core::placement::{RemoteCreateSpec, RemoteCreated, RemoteRunner};
+use h5i_core::placement::{
+    RemoteCreateSpec, RemoteCreated, RemoteExec, RemoteExecResult, RemoteExported, RemoteRunner,
+};
 use h5i_runner::config::RunnerRecord;
-use h5i_runner::proto::{CreateRequest, LeaseSpec, ResourceLimits, SourceKind, SourceSpec};
+use h5i_runner::proto::{
+    CreateRequest, ExecRequest, LeaseSpec, ResourceLimits, SourceKind, SourceSpec,
+};
 use h5i_runner::{Client, source};
 
 /// A paired runner, as the lifecycle engine sees it.
@@ -32,10 +36,6 @@ impl PairedRunner {
             client,
             scratch: tempfile::tempdir()?,
         })
-    }
-
-    pub fn record(&self) -> &RunnerRecord {
-        &self.record
     }
 
     /// Refuse early, with the capability named, when the runner does not offer
@@ -65,6 +65,32 @@ impl PairedRunner {
                 caps.isolation.join(", ")
             },
             self.record.name
+        )
+    }
+}
+
+impl PairedRunner {
+    /// Refuse to talk to a machine that is not the one the box was built on.
+    ///
+    /// The manifest pins a host-key hash, and this compares it against the
+    /// runner that answers to that *name* now. A name re-paired to different
+    /// hardware would otherwise send a box's commands to a machine that has
+    /// never seen it — which is exactly the failure that made identity
+    /// cryptographic in the first place (ROADMAP.md R6).
+    pub fn check_identity(&self, m: &h5i_core::env::EnvManifest) -> anyhow::Result<()> {
+        let Some(recorded) = &m.runner_id else {
+            return Ok(());
+        };
+        if &self.record.runner_id == recorded {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "runner `{}` is not the machine `{}` was created on.\n\
+             Its host key has changed, or the name now points at different hardware. \
+             A box is bound to a machine, not to a name, so this is refused rather than \
+             sent somewhere it does not belong.",
+            self.record.name,
+            m.id
         )
     }
 }
@@ -133,6 +159,52 @@ impl RemoteRunner for PairedRunner {
         })
     }
 
+    fn exec(&self, exec: &RemoteExec<'_>) -> Result<RemoteExecResult, H5iError> {
+        let request = ExecRequest {
+            box_id: exec.box_id.to_string(),
+            argv: exec.argv.to_vec(),
+            cwd: exec.cwd.map(str::to_string),
+            env: exec.env.to_vec(),
+            timeout_secs: exec.timeout_secs,
+        };
+        let out = self
+            .client
+            .exec(&request)
+            .map_err(|e| H5iError::Metadata(format!("runner `{}`: {e}", self.record.name)))?;
+
+        Ok(RemoteExecResult {
+            stdout: out.stdout,
+            stderr: out.stderr,
+            exit_code: out.exit.exit_code,
+            timed_out: out.exit.timed_out,
+            wall_ms: out.exit.wall_ms,
+            cpu_ms: out.exit.cpu_ms,
+            max_rss_kb: out.exit.max_rss_kb,
+            // The egress summary crosses as opaque JSON and is parsed back into
+            // the product's own type here. A summary that will not parse is
+            // dropped rather than guessed at: absent evidence is honest, and
+            // invented evidence is not.
+            egress: out
+                .exit
+                .egress
+                .and_then(|v| serde_json::from_value(v).ok()),
+            cwd: out.started.cwd,
+            output_truncated: out.exit.output_truncated,
+        })
+    }
+
+    fn export(&self, box_id: &str, into: &std::path::Path) -> Result<RemoteExported, H5iError> {
+        let described = self
+            .client
+            .export(box_id, into)
+            .map_err(|e| H5iError::Metadata(format!("runner `{}`: {e}", self.record.name)))?;
+        Ok(RemoteExported {
+            tip_commit: described.tip_commit,
+            tip_tree: described.tip_tree,
+            has_changes: described.has_changes,
+        })
+    }
+
     fn destroy(&self, box_id: &str) -> Result<(), H5iError> {
         self.client
             .destroy(box_id, false)
@@ -179,15 +251,9 @@ pub fn destroy_remote(manifest: &h5i_core::env::EnvManifest) -> Option<String> {
         }
     };
 
-    // The identity, not the name: a name re-paired to different hardware would
-    // otherwise send a destroy to a machine that never held this box.
-    if let Some(recorded) = &manifest.runner_id
-        && &runner.record().runner_id != recorded
-    {
-        return Some(format!(
-            "runner `{name}` is not the machine this box was created on (its host key has \
-             changed, or the name now points somewhere else) — `{box_id}` was left alone"
-        ));
+    // The identity, not the name.
+    if let Err(e) = runner.check_identity(manifest) {
+        return Some(format!("{e} — `{box_id}` was left alone"));
     }
 
     match runner.destroy(&box_id) {

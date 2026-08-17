@@ -60,6 +60,17 @@ pub enum StoreError {
     )]
     Conflict { box_id: String },
 
+    /// Someone else holds the box. Named rather than waited on: an RPC that
+    /// silently hangs for minutes is worse than one that refuses and says why.
+    #[error(
+        "box `{box_id}` is busy — something else is using it and this needed a {wanted} hold. \
+         Wait for it to finish, or check `h5i runner boxes` for what is running."
+    )]
+    Busy {
+        box_id: String,
+        wanted: &'static str,
+    },
+
     #[error("runner state is not readable as a box record at {path}: {source}")]
     Corrupt {
         path: PathBuf,
@@ -381,6 +392,47 @@ impl BoxStore {
         Ok(())
     }
 
+    /// Take the box's lock, or say who has it.
+    ///
+    /// Never waits. A caller blocked behind another request has no way to say
+    /// so over a protocol with one reply, and an RPC that silently hangs for
+    /// minutes is worse than one that refuses and names the reason.
+    pub fn lock(&self, box_id: &str, kind: LockKind) -> Result<BoxLock, StoreError> {
+        let path = self.box_dir(box_id).join("lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, e))?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| StoreError::io(&path, e))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let op = match kind {
+                LockKind::Exclusive => libc::LOCK_EX,
+                LockKind::Shared => libc::LOCK_SH,
+            } | libc::LOCK_NB;
+            // SAFETY: `file` is open for the length of this call and the fd is
+            // valid; `flock` only takes an advisory lock on it.
+            let rc = unsafe { libc::flock(file.as_raw_fd(), op) };
+            if rc != 0 {
+                return Err(StoreError::Busy {
+                    box_id: box_id.to_string(),
+                    wanted: match kind {
+                        LockKind::Exclusive => "exclusive",
+                        LockKind::Shared => "shared",
+                    },
+                });
+            }
+        }
+        Ok(BoxLock { _file: file })
+    }
+
     fn live_names(&self) -> Result<Vec<String>, StoreError> {
         dir_names(&self.live_root())
     }
@@ -388,6 +440,32 @@ impl BoxStore {
     fn creating_names(&self) -> Result<Vec<String>, StoreError> {
         dir_names(&self.creating_root())
     }
+}
+
+/// A held lock on one box.
+///
+/// Worker invocations are separate processes, so the lock has to be a fact the
+/// filesystem holds rather than something in memory: this is `flock` on a file
+/// beside the box, released when the handle drops (or when the process dies,
+/// which is the property that matters — a worker killed mid-exec must not leave
+/// a box locked forever).
+///
+/// The rule (ROADMAP.md R8): create, destroy and export take it **exclusive**;
+/// exec takes it **shared**. An export while execs are running would read a
+/// torn tree, and a torn tree that passes validation is worse than a refused
+/// request.
+#[derive(Debug)]
+pub struct BoxLock {
+    _file: std::fs::File,
+}
+
+/// What a caller wants from [`BoxStore::lock`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockKind {
+    /// One at a time, and nothing else alongside.
+    Exclusive,
+    /// Many at once, but never beside an exclusive holder.
+    Shared,
 }
 
 /// Something a sweep would remove.
@@ -701,6 +779,57 @@ mod tests {
             !second.work_dir().join("stale.txt").exists(),
             "the previous attempt's bytes must not survive into this one"
         );
+    }
+
+    #[test]
+    fn an_export_cannot_run_while_an_exec_holds_the_box() {
+        // The rule R8 states, and the reason: an export beside a running build
+        // reads a torn tree, and a torn tree that passes validation is worse
+        // than a refused request.
+        let (_d, store) = store();
+        commit(&store, "demo", "op1", &"a".repeat(64));
+
+        let exec = store.lock("demo", LockKind::Shared).expect("exec may run");
+        // A second exec is fine: many at once.
+        let exec2 = store.lock("demo", LockKind::Shared).expect("and another");
+        // An export is not.
+        match store.lock("demo", LockKind::Exclusive) {
+            Err(StoreError::Busy { box_id, wanted }) => {
+                assert_eq!(box_id, "demo");
+                assert_eq!(wanted, "exclusive");
+            }
+            other => panic!("expected Busy, got {other:?}"),
+        }
+
+        drop(exec);
+        drop(exec2);
+        // With the execs gone it is available again.
+        let _export = store.lock("demo", LockKind::Exclusive).expect("now free");
+    }
+
+    #[test]
+    fn an_exec_cannot_start_while_an_export_holds_the_box() {
+        let (_d, store) = store();
+        commit(&store, "demo", "op1", &"a".repeat(64));
+        let _export = store.lock("demo", LockKind::Exclusive).expect("export");
+        assert!(matches!(
+            store.lock("demo", LockKind::Shared),
+            Err(StoreError::Busy { .. })
+        ));
+    }
+
+    #[test]
+    fn a_lock_is_released_when_its_holder_drops() {
+        // The property that matters is really the one below it: a worker killed
+        // mid-exec must not leave a box locked forever, and `flock` gives that
+        // for free because the kernel releases it with the process.
+        let (_d, store) = store();
+        commit(&store, "demo", "op1", &"a".repeat(64));
+        {
+            let _held = store.lock("demo", LockKind::Exclusive).expect("held");
+            assert!(store.lock("demo", LockKind::Exclusive).is_err());
+        }
+        assert!(store.lock("demo", LockKind::Exclusive).is_ok());
     }
 
     #[test]

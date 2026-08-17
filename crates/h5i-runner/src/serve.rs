@@ -21,12 +21,13 @@ use thiserror::Error;
 
 use chrono::Utc;
 
-use crate::boxstore::{BoxRecord, BoxStore, StoreError};
+use crate::boxstore::{BoxRecord, BoxStore, LockKind, StoreError};
 use crate::host;
 use crate::proto::{
     self, Capabilities, CreateRequest, CreateResult, DestroyRequest, DestroyResult,
-    ErrorCode, ErrorMsg, FrameKind, GcRequest, GcResult, Hello, HelloAck, ListResult,
-    MAX_SOURCE_BYTES, PROTOCOL_VERSION, ProtoError, SourceKind,
+    ErrorCode, ErrorMsg, ExecRequest, ExecStarted, ExitMsg, ExportRequest, ExportResult, FrameKind,
+    GcRequest, GcResult, Hello, HelloAck, ListResult, MAX_EXEC_OUTPUT, MAX_SOURCE_BYTES,
+    PROTOCOL_VERSION, ProtoError, SourceKind,
 };
 use crate::source::{self, SourceError};
 use crate::wire::{FrameReader, FrameWriter, Limits, WireError};
@@ -303,6 +304,22 @@ pub fn serve<R: Read, W: Write>(
                 }
             }
 
+            (Some(_), FrameKind::Exec) => {
+                worker.sweep_once();
+                match handle_exec(&frame.payload, worker, &mut out) {
+                    Ok(()) => continue,
+                    Err(d) => Err(d),
+                }
+            }
+
+            (Some(_), FrameKind::ExportBox) => {
+                worker.sweep_once();
+                match handle_export(&frame.payload, worker, &mut out) {
+                    Ok(()) => continue,
+                    Err(d) => Err(d),
+                }
+            }
+
             (Some(_), FrameKind::DestroyBox) => {
                 worker.sweep_once();
                 match handle_destroy(&frame.payload, worker) {
@@ -378,6 +395,255 @@ pub fn serve_stdio(worker: &mut Worker) -> Result<(), ServeError> {
     serve(stdin.lock(), stdout.lock(), worker)
 }
 
+
+/// The worker's default and hard bounds on one command.
+///
+/// The client's number is a request and these are the budget (ROADMAP.md R5):
+/// never trust a peer to bound a run on someone else's machine.
+const EXEC_DEFAULT_SECS: u64 = 300;
+const EXEC_MAX_SECS: u64 = 24 * 60 * 60;
+
+/// Run a command in a box.
+///
+/// The shape is E2B's, and the reason is theirs too: `EXEC_STARTED` goes out
+/// *before* the run, so "it spawned" and "here is what it printed" are separate
+/// facts and the client can clear its handshake clock before starting the long
+/// one.
+///
+/// **Output arrives at the end, not progressively.** `sandbox::run_with_env` is
+/// the same function the local path calls and it captures rather than streams,
+/// so this milestone gets the exit code, the timings and the egress evidence
+/// across correctly, and a long build says nothing until it finishes. Making it
+/// progressive means a streaming variant inside `h5i-sandbox`, which is real
+/// work on the local path's most load-bearing function and is deliberately not
+/// bundled into this one. The frames are already the right shape for it: this
+/// sends `STDOUT`/`STDERR` in chunks, and a streaming runner would send the
+/// same frames earlier.
+fn handle_exec<W: Write>(
+    payload: &[u8],
+    worker: &mut Worker,
+    out: &mut FrameWriter<W>,
+) -> Result<(), Disposition> {
+    let req: ExecRequest = proto::decode("EXEC", payload).map_err(fatal)?;
+    req.validated().map_err(fatal)?;
+
+    let store = worker.store();
+    let Some(record) = store.find(&req.box_id).map_err(internal)? else {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Unsupported,
+            format!("box `{}` does not exist on this runner", req.box_id),
+        )));
+    };
+
+    // Shared: many execs at once, never beside an export (R8).
+    let _lock = store
+        .lock(&req.box_id, LockKind::Shared)
+        .map_err(|e| Disposition::Answer(ErrorMsg::new(ErrorCode::Unsupported, e.to_string())))?;
+
+    let box_dir = store.box_dir(&req.box_id);
+    let work = box_dir.join("work");
+    let cwd = match &req.cwd {
+        Some(rel) if !rel.is_empty() && rel != "." => work.join(rel),
+        _ => work.clone(),
+    };
+    // Checked after joining as well as before: the request's shape check
+    // refuses `..`, and this refuses a symlink that points out of the box.
+    let inside = cwd
+        .canonicalize()
+        .ok()
+        .zip(work.canonicalize().ok())
+        .is_some_and(|(c, w)| c.starts_with(&w));
+    if !inside {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Unsupported,
+            format!(
+                "`{}` is not a directory inside the box",
+                req.cwd.as_deref().unwrap_or(".")
+            ),
+        )));
+    }
+
+    // The policy as it was pinned at create, rebuilt into the same type the
+    // local path uses. This is what makes the worker `h5i` rather than a shim:
+    // the confinement that runs here is the product's own.
+    let policy = load_policy(&box_dir).map_err(|e| {
+        Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Internal,
+            format!("could not read the box's pinned policy: {e}"),
+        ))
+    })?;
+    if policy.digest().map(|d| d != record.policy_digest).unwrap_or(true) {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Internal,
+            "the box's stored policy no longer matches the digest it was created with — \
+             refusing to run under a policy nobody agreed to",
+        )));
+    }
+
+    let timeout = req
+        .timeout_secs
+        .unwrap_or(EXEC_DEFAULT_SECS)
+        .clamp(1, EXEC_MAX_SECS);
+
+    write_msg(
+        out,
+        FrameKind::ExecStarted,
+        &ExecStarted {
+            timeout_secs: timeout,
+            cwd: cwd.display().to_string(),
+        },
+    )
+    .map_err(|e| Disposition::Answer(ErrorMsg::new(ErrorCode::Internal, e.to_string())))?;
+
+    let outcome = h5i_sandbox::sandbox::run_with_env(&policy, &cwd, &req.argv, &req.env);
+
+    // The lease is refreshed by use, which is what "idle" in a lease means.
+    let _ = store.touch(&req.box_id, Utc::now());
+
+    let outcome = match outcome {
+        Ok(o) => o,
+        Err(e) => {
+            return Err(Disposition::Answer(
+                ErrorMsg::new(ErrorCode::Internal, format!("the command could not run: {e}"))
+                    .with_log_tail(e.to_string()),
+            ));
+        }
+    };
+
+    let mut truncated = false;
+    for (kind, bytes) in [
+        (FrameKind::Stdout, &outcome.stdout),
+        (FrameKind::Stderr, &outcome.stderr),
+    ] {
+        let (slice, cut) = if bytes.len() > MAX_EXEC_OUTPUT {
+            (&bytes[bytes.len() - MAX_EXEC_OUTPUT..], true)
+        } else {
+            (&bytes[..], false)
+        };
+        truncated |= cut;
+        // The tail, not the head: a failure is at the end of a log.
+        for chunk in slice.chunks(crate::wire::MAX_FRAME - 1024) {
+            out.write(kind.as_u8(), chunk)
+                .map_err(|e| Disposition::Answer(ErrorMsg::new(ErrorCode::Internal, e.to_string())))?;
+        }
+    }
+
+    write_msg(
+        out,
+        FrameKind::Exit,
+        &ExitMsg {
+            exit_code: outcome.exit_code,
+            timed_out: outcome.timed_out,
+            wall_ms: outcome.wall_ms as u64,
+            cpu_ms: outcome.cpu_ms as u64,
+            max_rss_kb: outcome.max_rss_kb,
+            egress: outcome
+                .egress
+                .as_ref()
+                .and_then(|e| serde_json::to_value(e).ok()),
+            output_truncated: truncated,
+        },
+    )
+    .map_err(|e| Disposition::Answer(ErrorMsg::new(ErrorCode::Internal, e.to_string())))?;
+    Ok(())
+}
+
+/// Hand back what the box has become.
+///
+/// Exclusive, because an export beside a running command reads a torn tree —
+/// and a torn tree that passes the receiving side's scans is worse than a
+/// refused request (ROADMAP.md R8).
+fn handle_export<W: Write>(
+    payload: &[u8],
+    worker: &mut Worker,
+    out: &mut FrameWriter<W>,
+) -> Result<(), Disposition> {
+    let req: ExportRequest = proto::decode("EXPORT_BOX", payload).map_err(fatal)?;
+    req.validated().map_err(fatal)?;
+
+    let store = worker.store();
+    let Some(record) = store.find(&req.box_id).map_err(internal)? else {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Unsupported,
+            format!("box `{}` does not exist on this runner", req.box_id),
+        )));
+    };
+    let Some(base) = record.base_commit.clone() else {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Unsupported,
+            format!(
+                "box `{}` was built from an empty source, so there is no base to export \
+                 against",
+                req.box_id
+            ),
+        )));
+    };
+
+    let _lock = store
+        .lock(&req.box_id, crate::boxstore::LockKind::Exclusive)
+        .map_err(|e| Disposition::Answer(ErrorMsg::new(ErrorCode::Unsupported, e.to_string())))?;
+
+    let box_dir = store.box_dir(&req.box_id);
+    let work = box_dir.join("work");
+    let bundle_path = box_dir.join("export.bundle");
+
+    let exported = source::export_bundle(&work, &base, &bundle_path).map_err(|e| {
+        Disposition::Answer(
+            ErrorMsg::new(ErrorCode::Internal, format!("could not export the box: {e}"))
+                .with_log_tail(e.to_string()),
+        )
+    })?;
+
+    write_msg(
+        out,
+        FrameKind::ExportDone,
+        &ExportResult {
+            box_id: req.box_id.clone(),
+            tip_commit: exported.tip_commit.clone(),
+            tip_tree: exported.tip_tree.clone(),
+            has_changes: exported.has_changes,
+            bytes: exported.bytes,
+            sha256: exported.sha256.clone(),
+        },
+    )
+    .map_err(|e| Disposition::Answer(ErrorMsg::new(ErrorCode::Internal, e.to_string())))?;
+
+    // The bundle follows the description, so the receiving side knows what it
+    // is about to check before it reads a byte of it.
+    let mut file = std::fs::File::open(&bundle_path).map_err(|e| {
+        Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Internal,
+            format!("could not read the bundle just written: {e}"),
+        ))
+    })?;
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = std::io::Read::read(&mut file, &mut buf).map_err(|e| {
+            Disposition::Answer(ErrorMsg::new(ErrorCode::Internal, e.to_string()))
+        })?;
+        if n == 0 {
+            break;
+        }
+        out.write(FrameKind::Data.as_u8(), &buf[..n])
+            .map_err(|e| Disposition::Answer(ErrorMsg::new(ErrorCode::Internal, e.to_string())))?;
+    }
+    out.write(FrameKind::DataDone.as_u8(), b"")
+        .map_err(|e| Disposition::Answer(ErrorMsg::new(ErrorCode::Internal, e.to_string())))?;
+
+    // It has been sent; keeping it doubles the box's disk for nothing.
+    let _ = std::fs::remove_file(&bundle_path);
+    let _ = store.touch(&req.box_id, Utc::now());
+    Ok(())
+}
+
+/// The resolved policy a box was created with, from its own directory.
+fn load_policy(
+    box_dir: &Path,
+) -> Result<h5i_sandbox::sandbox_policy::ResolvedPolicy, h5i_error::H5iError> {
+    let text = std::fs::read_to_string(box_dir.join("policy.json"))
+        .map_err(|e| h5i_error::H5iError::with_path(e, box_dir.join("policy.json")))?;
+    serde_json::from_str(&text).map_err(|e| h5i_error::H5iError::Metadata(e.to_string()))
+}
 
 /// Make a box, or hand back the one that is already there.
 ///
@@ -835,11 +1101,13 @@ mod tests {
     fn an_unbuilt_rpc_is_answered_and_the_channel_stays_open() {
         // The distinction that matters: "not yet built" is a fact about this
         // milestone, and the client may sensibly ask something else.
-        // Deliberately a verb from a later milestone: CREATE_BOX is built now,
-        // so using it here would test the wrong thing the day it landed.
+        // A verb from a later milestone, and it has to be re-picked each time
+        // one lands: CREATE_BOX was the example until R13.2 built it and EXEC
+        // until R13.3 did. RESIZE is a pty control message, and interactive
+        // exec is the piece still outstanding.
         let (frames, result) = session(&[
             hello(),
-            (FrameKind::Exec, b"{}".to_vec()),
+            (FrameKind::Resize, b"{}".to_vec()),
             (FrameKind::Probe, vec![]),
         ]);
         assert!(result.is_ok(), "{result:?}");
