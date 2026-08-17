@@ -1761,6 +1761,20 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         "{} {} aborted (manifest preserved for forensics)",
                         SUCCESS, m.id
                     );
+                    // "Aborted" is a stronger word than the state this produces
+                    // for a runner box: the box keeps existing over there until
+                    // its lease expires or it is removed. Saying so is the
+                    // difference between a status and a promise.
+                    #[cfg(feature = "runner")]
+                    if h5i_core::env::is_remote(&m) {
+                        println!(
+                            "   {}      the box itself is still on `{}` until its lease \
+                             expires — `h5i box rm {}` removes it now",
+                            style("note").yellow(),
+                            m.runner.as_deref().unwrap_or("the runner"),
+                            m.slug
+                        );
+                    }
                 }
 
                 BoxCommands::Rm { names, force } => {
@@ -1826,6 +1840,27 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 }
 
                 BoxCommands::Gc => {
+                    // Runner boxes are not reclaimable from here, and a `gc`
+                    // that silently omitted the one kind of box still consuming
+                    // something read as "nothing to do".
+                    #[cfg(feature = "runner")]
+                    {
+                        let mut names: Vec<String> = h5i_core::env::list(&h5i_root)
+                            .into_iter()
+                            .filter(h5i_core::env::is_remote)
+                            .filter_map(|m| m.runner)
+                            .collect();
+                        names.sort();
+                        names.dedup();
+                        if !names.is_empty() {
+                            println!(
+                                "{} box(es) live on runners and are not reclaimed from here — \
+                                 `h5i runner gc <name>` reaps what has expired on {}.",
+                                style("note:").yellow(),
+                                names.join(", ")
+                            );
+                        }
+                    }
                     let reclaimed = h5i_core::env::gc(git, &h5i_root)?;
                     if reclaimed.is_empty() {
                         println!("Nothing to reclaim (only applied/aborted envs are gc'd).");

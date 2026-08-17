@@ -908,3 +908,70 @@ fn an_export_of_real_size_comes_home() {
     );
     assert_eq!(std::fs::metadata(&out).unwrap().len(), described.bytes);
 }
+
+#[test]
+fn an_export_and_an_exec_cannot_overlap_on_one_box() {
+    // R8's rule, over a real process boundary and with real concurrency: an
+    // export beside a running command reads a torn tree, and a torn tree that
+    // passes the receiving side's scans is worse than a refused request.
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path().join("repo");
+    let head = repo_with_a_commit(&repo);
+    let bundle = h5i_runner::source::build_bundle(&repo, &head, &dir.path().join("s.bundle"))
+        .expect("bundle");
+
+    let state = dir.path().join("state");
+    let client = Arc::new(worker_in(&state));
+    client
+        .create(
+            &create_request(
+                "race",
+                "op1",
+                &"a".repeat(64),
+                h5i_runner::proto::SourceSpec {
+                    kind: h5i_runner::proto::SourceKind::GitBundle,
+                    bytes: bundle.bytes,
+                    sha256: bundle.sha256.clone(),
+                    base_commit: Some(head),
+                },
+            ),
+            Some(&bundle),
+        )
+        .expect("create");
+
+    // A command that holds the box's shared lock for a while.
+    let runner = Arc::clone(&client);
+    let slow = std::thread::spawn(move || {
+        runner.exec(&h5i_runner::proto::ExecRequest {
+            box_id: "race".into(),
+            argv: vec!["sh".into(), "-c".into(), "sleep 3".into()],
+            cwd: None,
+            env: vec![],
+            timeout_secs: Some(30),
+        })
+    });
+
+    // Give it time to take the lock, then try to export underneath it.
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    let out = dir.path().join("export.bundle");
+    let during = client.export("race", &out);
+
+    let finished = slow.join().expect("thread").expect("the exec itself succeeds");
+    assert!(finished.success());
+
+    match during {
+        Err(e) => {
+            let text = format!("{e}");
+            assert!(
+                text.contains("busy"),
+                "an export during an exec must be refused as busy: {text}"
+            );
+        }
+        Ok(_) => panic!("an export ran while a command held the box"),
+    }
+
+    // And once the command is done, the export works.
+    client.export("race", &out).expect("after the exec, the export runs");
+}

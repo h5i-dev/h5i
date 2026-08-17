@@ -785,3 +785,181 @@ mod config_execution_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod bundle_edge_cases {
+    use super::*;
+
+    fn repo_with(n: usize) -> (tempfile::TempDir, PathBuf, Vec<String>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("r");
+        std::fs::create_dir_all(&path).unwrap();
+        git(&path, &["init", "--quiet", "."]).unwrap();
+        git(&path, &["config", "user.email", "t@example.com"]).unwrap();
+        git(&path, &["config", "user.name", "T"]).unwrap();
+        let mut commits = Vec::new();
+        for i in 0..n {
+            std::fs::write(path.join(format!("f{i}.txt")), format!("v{i}")).unwrap();
+            git(&path, &["add", "-A"]).unwrap();
+            git(&path, &["commit", "--quiet", "-m", &format!("c{i}")]).unwrap();
+            commits.push(git(&path, &["rev-parse", "HEAD"]).unwrap().trim().to_string());
+        }
+        (dir, path, commits)
+    }
+
+    /// Read a bundle back the way the receiving side does.
+    fn readable(bundle: &Path, base: &Path, base_commit: &str) -> Result<String, String> {
+        let q = bundle.parent().unwrap().join(format!(
+            "q{}",
+            bundle.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::create_dir_all(&q).map_err(|e| e.to_string())?;
+        let run = |dir: &Path, args: &[&str]| -> Result<String, String> {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+            }
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
+        run(&q, &["init", "--quiet", "--bare", "."])?;
+        run(&q, &["fetch", "--end-of-options", &base.to_string_lossy(),
+                  &format!("{base_commit}:refs/h5i/base")])?;
+        run(&q, &["fetch", "--no-tags", "--end-of-options", &bundle.to_string_lossy(),
+                  &format!("{}:refs/h5i/tip", crate::proto::EXPORT_REF)])?;
+        run(&q, &["rev-parse", "refs/h5i/tip"])
+    }
+
+    /// A box that changed nothing still produces a bundle the other side reads.
+    ///
+    /// This is the `base == tip` case, where the prerequisite line is omitted
+    /// and the pack is empty. A bundle format that only worked when there was
+    /// something to send would fail exactly on the "the agent did nothing"
+    /// path, which is the one a user is least likely to expect an error on.
+    #[test]
+    fn a_box_that_changed_nothing_still_bundles_and_reads_back() {
+        let (dir, work, commits) = repo_with(1);
+        let base = commits[0].clone();
+        let out = dir.path().join("empty.bundle");
+
+        let exported = export_bundle(&work, &base, &out).expect("export");
+        assert!(!exported.has_changes, "nothing was done in this box");
+        assert_eq!(exported.tip_commit, base);
+
+        assert_eq!(
+            readable(&out, &work, &base).expect("the other side must read it"),
+            base
+        );
+    }
+
+    /// The ordinary case, and the one that proves the prerequisite line works.
+    #[test]
+    fn a_thin_bundle_needs_the_base_and_carries_only_the_new_work() {
+        let (dir, work, commits) = repo_with(3);
+        let base = commits[0].clone();
+        std::fs::write(work.join("new.txt"), b"agent work").unwrap();
+
+        let out = dir.path().join("thin.bundle");
+        let exported = export_bundle(&work, &base, &out).expect("export");
+        assert!(exported.has_changes);
+
+        assert_eq!(
+            readable(&out, &work, &base).expect("reads"),
+            exported.tip_commit
+        );
+
+        // And it really is thin: a repository without the base cannot read it.
+        let bare = dir.path().join("nobase");
+        std::fs::create_dir_all(&bare).unwrap();
+        let init = std::process::Command::new("git")
+            .args(["init", "--quiet", "--bare", "."])
+            .current_dir(&bare)
+            .output()
+            .unwrap();
+        assert!(init.status.success());
+        let fetched = std::process::Command::new("git")
+            .args([
+                "fetch",
+                "--end-of-options",
+                &out.to_string_lossy(),
+                &format!("{}:refs/h5i/tip", crate::proto::EXPORT_REF),
+            ])
+            .current_dir(&bare)
+            .output()
+            .unwrap();
+        assert!(
+            !fetched.status.success(),
+            "a thin bundle must not resolve without its prerequisite"
+        );
+    }
+
+    /// A merge commit has two parents, and the pack has to carry both sides.
+    #[test]
+    fn a_tip_with_two_parents_bundles_completely() {
+        let (dir, work, commits) = repo_with(1);
+        let base = commits[0].clone();
+        git(&work, &["checkout", "--quiet", "-b", "side"]).unwrap();
+        std::fs::write(work.join("side.txt"), b"side").unwrap();
+        git(&work, &["add", "-A"]).unwrap();
+        git(&work, &["commit", "--quiet", "-m", "side"]).unwrap();
+        git(&work, &["checkout", "--quiet", "-"]).unwrap();
+        std::fs::write(work.join("main.txt"), b"main").unwrap();
+        git(&work, &["add", "-A"]).unwrap();
+        git(&work, &["commit", "--quiet", "-m", "main"]).unwrap();
+        git(&work, &["merge", "--quiet", "--no-ff", "-m", "merge", "side"]).unwrap();
+
+        let out = dir.path().join("merge.bundle");
+        let exported = export_bundle(&work, &base, &out).expect("export");
+        let tip = readable(&out, &work, &base).expect("reads");
+        assert_eq!(tip, exported.tip_commit);
+    }
+
+    /// Deleting a tracked file is work, and an export that dropped it would be
+    /// a silently wrong patch rather than a failure.
+    #[test]
+    fn a_deletion_survives_the_export() {
+        let (dir, work, commits) = repo_with(2);
+        let base = commits[1].clone();
+        std::fs::remove_file(work.join("f0.txt")).unwrap();
+
+        let out = dir.path().join("del.bundle");
+        let exported = export_bundle(&work, &base, &out).expect("export");
+        assert!(exported.has_changes);
+
+        let q = dir.path().join("qdel");
+        std::fs::create_dir_all(&q).unwrap();
+        let run = |args: &[&str]| {
+            let o = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&q)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        };
+        run(&["init", "--quiet", "--bare", "."]);
+        run(&[
+            "fetch",
+            "--end-of-options",
+            &work.to_string_lossy(),
+            &format!("{base}:refs/h5i/base"),
+        ]);
+        run(&[
+            "fetch",
+            "--no-tags",
+            "--end-of-options",
+            &out.to_string_lossy(),
+            &format!("{}:refs/h5i/tip", crate::proto::EXPORT_REF),
+        ]);
+        let listed = std::process::Command::new("git")
+            .args(["ls-tree", "-r", "--name-only", "refs/h5i/tip"])
+            .current_dir(&q)
+            .output()
+            .unwrap();
+        let names = String::from_utf8_lossy(&listed.stdout);
+        assert!(!names.contains("f0.txt"), "the deletion was lost: {names}");
+        assert!(names.contains("f1.txt"));
+    }
+}

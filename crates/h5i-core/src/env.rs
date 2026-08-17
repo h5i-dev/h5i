@@ -10263,6 +10263,13 @@ pub fn gc(repo: &Repository, h5i_root: &Path) -> Result<Vec<String>, H5iError> {
         if m.status != ST_APPLIED && m.status != ST_ABORTED {
             continue;
         }
+        // A runner box has no work dir here and is not therefore reclaimable
+        // *locally*; skipping it silently meant `box gc` never mentioned the
+        // one kind of box that is still consuming something. The remote half is
+        // `h5i runner gc`, and saying so beats saying nothing.
+        if is_remote(&m) {
+            continue;
+        }
         if !m.work_dir(h5i_root).exists() {
             continue;
         }
