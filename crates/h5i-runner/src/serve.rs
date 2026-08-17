@@ -513,6 +513,11 @@ const MAX_BOXES: usize = 64;
 /// Generous, because it bounds *silence between frames* rather than a command's
 /// runtime: nothing is read while a build runs, so a slow build is never idle
 /// by this measure.
+///
+/// Gated with the reader it configures. `-D warnings` counts an unused constant
+/// as an error, and on a platform where the only thing that reads this is
+/// compiled out, it is unused.
+#[cfg(unix)]
 const IDLE_SECS: u64 = 300;
 
 /// Run a command in a box.
