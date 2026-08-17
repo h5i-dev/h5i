@@ -6567,7 +6567,11 @@ sandbox service). R2 records what was taken and what was refused. The
 same-day revision moved the design from "a runner is a machine with rootless
 podman" to the capability model R1 now states, made the export quarantine a
 real one (R9), replaced the runner's name with a cryptographic identity
-(R6), and fixed an exit criterion that contradicted R12.
+(R6), and fixed an exit criterion that contradicted R12. A second pass the
+same day separated `HELLO` from `PROBE` (static against dynamic, identity
+riding in neither), made create crash-safe and idempotent (R7), gave R13.1
+its failure-mode exits, and chased the last of the pre-identity wording out
+of R6 and R13.4.
 
 > **The box's boundary becomes a machine you own and can afford to lose. The
 > product does not move: the repo, the policy, the credentials, and the patch
@@ -6763,9 +6767,19 @@ The semantics worth writing down, each with its source:
   same struct the local path produces, so the receipt writer does not fork.
 - **`ERROR` on create carries the tail of the worker-side log** (bhatti's
   lesson, bought with bug reports).
-- **`HELLO` carries protocol version, h5i version, arch, and capabilities**;
-  the client gates features by named version constants, E2B-style. A worker
-  too old fails at probe time with the version in the message, not mid-create.
+- **`HELLO` is static, `PROBE` is dynamic, and neither does the other's
+  job.** `HELLO`/`HELLO_ACK` exchange what never changes within an install:
+  protocol version, h5i version, arch. There is no negotiation; the lower
+  protocol version governs and both sides gate features by named version
+  constants, E2B-style, so a worker too old fails at probe time with the
+  version in the message, not mid-create. Everything that drifts (memory,
+  disk headroom, whether podman is present, the verified tiers, egress)
+  belongs to `PROBE`'s `CAPABILITIES` reply and nowhere else.
+- **Identity never rides in a frame.** `runner_id` is computed on this side
+  from the host key the SSH handshake verified against the pinned
+  known_hosts. The worker may echo it in `HELLO_ACK` as a sanity check, and
+  the echo is never identity-bearing: a value the peer asserts about itself
+  is exactly the thing pinning exists to make irrelevant.
 - **File and bundle transfer reuse `DATA`/`DATA_DONE`** behind a JSON header
   frame, and `DATA_DONE` carries the SHA-256 the receiver must verify before
   acting on anything it received. No second transfer mechanism.
@@ -6793,7 +6807,8 @@ runner's state dir at mode 0600; installs the forced-command line, over
 existing SSH access when the user has it, otherwise by printing the exact
 line to paste; records the host key into the per-runner known_hosts file
 (trust on first use at pair, strict forever after); and runs the `HELLO`
-handshake, storing the worker's version and capabilities. Pairing succeeds
+handshake and a first `PROBE`, storing the worker's version and its
+capability report. Pairing succeeds
 against **any Linux machine that speaks the protocol**: the only hard
 failure is no `h5i` on the far side (with the install command in the error).
 Everything else lands in the capability report:
@@ -6839,9 +6854,11 @@ conflate the two.
 Runner config is **host-scoped, never in the repo**. `.h5i/env.toml` is
 checked in; which machines *this* developer can reach is a fact about this
 machine, exactly like the user egress allowlist, and lives beside it. A
-profile may later *name* a required runner, and that name would be digested
-with the profile; the resolved endpoint never is, in the same way
-`ResolvedPolicy` keeps runtime state out of the pinned digest today.
+profile may later carry a human-facing runner *label*; the label resolves
+to `runner_id` before the manifest is authored, and only `runner_id` is
+identity-bearing and digested. The label and the resolved endpoint stay out
+of every digest, in the same way `ResolvedPolicy` keeps runtime state out
+of the pinned digest today.
 
 `probe` is `box probe` one machine over: the worker runs the existing local
 probes (`container::probe`, kernel capabilities, disk headroom on the state
@@ -6864,7 +6881,9 @@ A remote box shares nothing, so they simply do not apply.
 1. Create first checks the request against the runner's capability report:
    a tier the runner does not advertise, a workspace larger than
    `workspace_mb`, a resource floor above `memory_mb`, each is a refusal
-   with the capability named. Then the front half of `env::create` runs
+   with the capability named. The stored report is a cache of the last
+   `PROBE`; the client-side check exists for good error messages, and the
+   worker refusing at create time is the enforcement. Then the front half of `env::create` runs
    unchanged: pin `base_commit` and `base_tree`, create the env branch,
    write the manifest. No worktree. The manifest grows `runner_id` (R6)
    beside `backend`, inside the digested and validated field set, with the
@@ -6886,6 +6905,17 @@ A remote box shares nothing, so they simply do not apply.
    enforced**, and this side refuses to mark the box live unless it matches
    `policy_digest`. Cheap, and it converts "the worker silently ran an older
    policy" from a possibility into a detected fault.
+
+Create is crash-safe by state, not by hope. The worker builds under
+`creating/<operation_id>` and an atomic rename to `live/<box_id>` is the
+one moment a box exists; there is no state in between for a crash to
+invent. A re-sent `CREATE_BOX` whose request digest matches an existing box
+returns the existing result (bhatti's idempotent create, with the marker),
+so "the worker finished but the response never arrived" costs a retry, not
+a duplicate; a matching id with a different digest is refused. Orphaned
+`creating/` entries carry a short fixed TTL of their own and fall to the
+normal sweep, because a lease nobody ever refreshed is exactly what an
+interrupted create leaves behind.
 
 Secrets keep the microvm tier's argv discipline: nothing secret in remote
 argv or environment visible in the runner's process table. In the MVP that is
@@ -7071,11 +7101,21 @@ demonstration, not a diff.
   binary. Exit: `pair` then `probe` against a real second machine returns a
   capabilities report with a functional `verify_exec`, and the whole
   handshake also runs in CI with no sshd via the child-process transport.
+  The exit is as much the failure modes as the happy path, tested where
+  the child-process transport makes them cheap: an oversized frame, a
+  truncated frame, an unknown frame type, a message out of order, an RPC
+  total-byte limit exceeded, a `HELLO` that never arrives, a version
+  mismatch, capability values that are hostile or absurd (clamped or
+  refused, never stored), and a disconnect mid-transfer that leaves
+  nothing behind. A codec born with its failure modes tested does not
+  acquire them later as bug reports.
 - **R13.2 Create and destroy.** Bundle transfer, digest verification, the
-  warm container on the runner, leases and `gc`. Exit: `box create
+  warm container on the runner, leases and `gc`, the `creating/` to
+  `live/` state machine and idempotent re-send (R7). Exit: `box create
   --runner`, `box ls` showing placement, destroy and gc leave the runner
-  clean, and a kill -9 of the client mid-create leaves nothing the next
-  invocation does not reap.
+  clean, a kill -9 of the client mid-create leaves only a `creating/`
+  entry the next invocation reaps, and re-sending the same create after a
+  lost `CREATE_RESULT` returns the same box instead of a second one.
 - **R13.3 Exec.** Captured and interactive, the three clocks, the per-box
   locks, receipts in the `runner-observed` lane with the worker's egress
   summary. Exit: a real project's build and test suite runs on the runner
@@ -7087,8 +7127,10 @@ demonstration, not a diff.
   agent-on-a-runner demonstration belongs to the credential channel's own
   milestone.
 - **R13.4 Export.** The tree-source `mediated_commit` refactor, quarantined
-  fetch, propose, apply. Exit: a change made by an agent on the runner
-  round-trips to a host-authored mediated commit, survives the violation
+  fetch, propose, apply. Exit: a change made through `box shell` or `env
+  run` on the runner (not an agent; R12, and R13.3's reasoning applies
+  here too) round-trips to a host-authored mediated commit, survives the
+  violation
   scans (a planted nested-git and a private-path write are both filtered and
   named), and applies through the unchanged gates.
 
