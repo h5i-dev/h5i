@@ -161,6 +161,7 @@ impl Client {
         }
 
         let result: CreateResult = session.expect_message(FrameKind::CreateResult, "CREATE_RESULT")?;
+        let result = result.sanitized()?;
         session.close()?;
 
         if result.policy_digest != request.policy_digest {
@@ -179,7 +180,9 @@ impl Client {
         };
         let mut session = Session::open(&*self.transport, self.deadlines)?;
         session.send(FrameKind::DestroyBox, &req)?;
-        let result = session.expect_message(FrameKind::DestroyResult, "DESTROY_RESULT")?;
+        let result: DestroyResult =
+            session.expect_message(FrameKind::DestroyResult, "DESTROY_RESULT")?;
+        let result = result.sanitized()?;
         session.close()?;
         Ok(result)
     }
@@ -187,7 +190,8 @@ impl Client {
     pub fn list_boxes(&self) -> Result<ListResult, ClientError> {
         let mut session = Session::open(&*self.transport, self.deadlines)?;
         session.send(FrameKind::ListBoxes, &())?;
-        let result = session.expect_message(FrameKind::BoxList, "BOX_LIST")?;
+        let result: ListResult = session.expect_message(FrameKind::BoxList, "BOX_LIST")?;
+        let result = result.sanitized()?;
         session.close()?;
         Ok(result)
     }
@@ -202,7 +206,14 @@ impl Client {
         let mut session = Session::open(&*self.transport, self.deadlines)?;
         session.send(FrameKind::Exec, request)?;
 
-        let started: ExecStarted = session.expect_message(FrameKind::ExecStarted, "EXEC_STARTED")?;
+        let started: ExecStarted = session
+            .expect_message::<ExecStarted>(FrameKind::ExecStarted, "EXEC_STARTED")?
+            .sanitized()?;
+
+        // The output's own budget. Without it the handshake's budget would
+        // still be in force, and a command with a real amount of output would
+        // be refused by its own client.
+        session.reader.begin_rpc(crate::proto::exec_limits());
 
         // The run's own clock, from the moment it really started, and generous
         // enough to cover what the worker said it would allow. A client that
@@ -241,8 +252,9 @@ impl Client {
             },
         )?;
 
-        let described: ExportResult =
-            session.expect_message(FrameKind::ExportDone, "EXPORT_RESULT")?;
+        let described: ExportResult = session
+            .expect_message::<ExportResult>(FrameKind::ExportDone, "EXPORT_RESULT")?
+            .sanitized()?;
 
         // Its own budget, sized from what the worker just said it would send.
         session.begin_transfer();
@@ -260,7 +272,8 @@ impl Client {
     pub fn gc(&self, all: bool) -> Result<GcResult, ClientError> {
         let mut session = Session::open(&*self.transport, self.deadlines)?;
         session.send(FrameKind::Gc, &GcRequest { all })?;
-        let result = session.expect_message(FrameKind::GcResult, "GC_RESULT")?;
+        let result: GcResult = session.expect_message(FrameKind::GcResult, "GC_RESULT")?;
+        let result = result.sanitized()?;
         session.close()?;
         Ok(result)
     }
@@ -358,6 +371,9 @@ impl Session {
     /// this, and it is checked on every chunk rather than at the end.
     fn send_file(&mut self, path: &std::path::Path) -> Result<(), ClientError> {
         use std::io::Read as _;
+        // Comfortably under the frame cap, so a chunk plus its type byte is
+        // never a frame the other side refuses. Equal to the cap would be an
+        // off-by-one; a quarter of it leaves no room for one.
         const CHUNK: usize = 256 * 1024;
 
         let mut file = std::fs::File::open(path).map_err(|source| {
@@ -463,10 +479,8 @@ impl Session {
 
     /// Start a fresh budget for a bulk transfer on this session.
     fn begin_transfer(&mut self) {
-        self.reader.begin_rpc(
-            Limits::permissive()
-                .narrowed(crate::wire::MAX_FRAME, crate::proto::MAX_SOURCE_BYTES, 1_000_000),
-        );
+        self.reader
+            .begin_rpc(Limits::bulk(crate::proto::MAX_SOURCE_BYTES));
     }
 
     /// Read `DATA` frames into a receiver until `DATA_DONE`.

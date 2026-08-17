@@ -127,11 +127,32 @@ impl Limits {
 
     /// A small exchange: a handshake, a probe, a refusal. Sized so that a peer
     /// which decides to talk forever is cut off long before it costs anything.
+    ///
+    /// Note what is *not* narrowed here: the frame cap. One frame is already
+    /// bounded by the format at [`MAX_FRAME`], and that bound is what stops a
+    /// hostile length from costing anything. Narrowing it per exchange as well
+    /// looked like defence in depth and was a bug: it made the *session's*
+    /// first budget silently govern every later RPC on the same channel, so a
+    /// command with a real amount of output, or a repository of a real size,
+    /// was refused by its own client. Totals vary per RPC; the frame cap does
+    /// not.
     pub const fn control() -> Self {
         Self {
-            max_frame: 256 * 1024,
+            max_frame: MAX_FRAME,
             max_total_bytes: 4 * 1024 * 1024,
             max_frames: 256,
+        }
+    }
+
+    /// A bulk transfer: a source bundle out, or an export bundle home.
+    pub const fn bulk(max_total_bytes: u64) -> Self {
+        Self {
+            max_frame: MAX_FRAME,
+            max_total_bytes,
+            // A frame carries up to a megabyte, so this bounds a peer that
+            // sends the whole budget as empty frames — which the byte total
+            // alone would not.
+            max_frames: 1_000_000,
         }
     }
 

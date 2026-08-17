@@ -626,14 +626,18 @@ fn boxes(name: &str, json: bool) -> anyhow::Result<()> {
             h5i_runner::proto::BoxState::Expired => style("expired").yellow().to_string(),
             h5i_runner::proto::BoxState::Creating => style("creating").dim().to_string(),
         };
+        // Cleaned again at the point of printing. The client already refuses a
+        // hostile shape on receipt; this is the same belt the rest of the CLI
+        // wears for every box-supplied string, and it costs nothing.
+        let clean = h5i_core::redact::sanitize_display;
         println!(
             "  {:<24} {:<9} {}",
-            style(&b.box_id).bold(),
+            style(clean(&b.box_id)).bold(),
             state,
             style(if b.isolation.is_empty() {
                 "—".to_string()
             } else {
-                b.isolation.clone()
+                clean(&b.isolation)
             })
             .dim()
         );

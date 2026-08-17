@@ -54,14 +54,7 @@ pub enum ServeError {
 /// bytes, and one budget covering both would have to be as loose as the looser
 /// of the two. [`FrameReader::begin_rpc`] is what makes it per-RPC.
 fn transfer_limits() -> Limits {
-    Limits::permissive().narrowed(
-        crate::wire::MAX_FRAME,
-        MAX_SOURCE_BYTES,
-        // A frame carries up to a megabyte, so this bounds the count at roughly
-        // twice what the byte budget alone allows — a peer sending a million
-        // empty frames is stopped by this rather than by the byte total.
-        (MAX_SOURCE_BYTES / (64 * 1024)) + 1024,
-    )
+    Limits::bulk(MAX_SOURCE_BYTES)
 }
 
 /// What the worker knows about itself for the length of one session.
@@ -843,6 +836,9 @@ fn receive_source<R: Read>(
     }
 
     rx.finish(&req.source.sha256).map_err(source_failed)?;
+    // Back to the session's own budget. A widened one left in place would
+    // govern every later RPC on this channel, which is a budget in name only.
+    frames.begin_rpc(Limits::control());
     Ok(())
 }
 

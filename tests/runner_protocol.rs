@@ -214,15 +214,17 @@ fn a_zero_length_frame_carries_no_type_byte_and_is_refused() {
 }
 
 #[test]
-fn the_cap_that_applies_is_the_sessions_own_and_both_sides_of_it_behave() {
-    // A control session's budget is narrower than the format's ceiling, and it
-    // is the narrower one that governs — the receiver's number always does.
-    // The boundary is where a cap becomes an off-by-one, so both sides of it
-    // are worth pinning.
-    let cap = Limits::control().max_frame();
+fn the_frame_cap_is_the_formats_and_both_sides_of_it_behave() {
+    // The cap that governs one frame is the **format's**, not the exchange's.
+    // An earlier version narrowed it per exchange as well, which read like
+    // defence in depth and was a bug: the session's first budget then governed
+    // every later RPC on the same channel, so a command with a real amount of
+    // output was refused by its own client. Totals vary per RPC; this does not.
+    let cap = Limits::permissive().max_frame();
+    assert_eq!(cap, Limits::control().max_frame(), "one cap, every exchange");
 
-    // Exactly at the cap: legal framing, and a malformed HELLO. The refusal
-    // must therefore be about the payload, not about the size.
+    // Exactly at it: legal framing, and a malformed HELLO — so the refusal must
+    // be about the payload rather than about the size.
     let mut input = Vec::new();
     FrameWriter::new(&mut input, Limits::permissive())
         .write(FrameKind::Hello.as_u8(), &vec![b'x'; cap - 1])
@@ -235,12 +237,12 @@ fn the_cap_that_applies_is_the_sessions_own_and_both_sides_of_it_behave() {
     );
     assert!(!status.success());
 
-    // One byte over: refused at the framing layer, before the payload is read,
-    // so there is nothing to say back.
+    // One byte over is refused at the framing layer, before the payload is
+    // read, so there is nothing to say back. Written by hand because the
+    // writer refuses to emit it either — which is the point.
     let mut input = Vec::new();
-    FrameWriter::new(&mut input, Limits::permissive())
-        .write(FrameKind::Hello.as_u8(), &vec![b'x'; cap])
-        .unwrap();
+    input.extend_from_slice(&((cap as u32) + 1).to_be_bytes());
+    input.extend_from_slice(&vec![b'x'; cap + 1]);
     let (frames, status) = raw_exchange(&input);
     assert!(
         frames.is_empty(),
@@ -778,4 +780,131 @@ fn ssh_the_whole_create_cycle_against_a_paired_runner() {
         !listed.boxes.iter().any(|b| b.box_id == box_id),
         "and gone afterwards"
     );
+}
+
+#[test]
+fn a_command_with_real_output_survives_the_trip() {
+    // A build's log is not a few bytes. This is the size where a client-side
+    // budget mismatch would bite, and it is well under what a real `cargo
+    // build` produces.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let client = worker_in(dir.path());
+    client
+        .create(&create_request("out", "op1", &"a".repeat(64), empty_source()), None)
+        .expect("create");
+
+    let out = client
+        .exec(&h5i_runner::proto::ExecRequest {
+            box_id: "out".into(),
+            // 400 KiB, which a compiler warning stream reaches easily.
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "yes 'a line of build output that is not short' | head -n 8000".into(),
+            ],
+            cwd: None,
+            env: vec![],
+            timeout_secs: Some(60),
+        })
+        .expect("a command with real output must come back");
+    assert!(out.stdout.len() > 300_000, "got {} bytes", out.stdout.len());
+    assert_eq!(out.exit.exit_code, Some(0));
+}
+
+#[test]
+fn a_repository_big_enough_to_need_more_than_one_chunk_still_transfers() {
+    // The create tests until now used a repository of a few kilobytes, so the
+    // bundle fitted in a single frame. A real project does not.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path().join("repo");
+    let head = repo_with_a_commit(&repo);
+    // Incompressible, because git is very good at the other kind: 1.5 MiB of
+    // repeated text bundles down to four kilobytes and would prove nothing.
+    let mut blob = Vec::with_capacity(1_500_000);
+    let mut x: u64 = 0x243f_6a88_85a3_08d3;
+    while blob.len() < 1_500_000 {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        blob.extend_from_slice(&x.to_le_bytes());
+    }
+    std::fs::write(repo.join("big.bin"), &blob).unwrap();
+    let git = |args: &[&str]| {
+        Command::new("git").args(args).current_dir(&repo).output().expect("git");
+    };
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "big"]);
+    let head2 = String::from_utf8(
+        Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&repo).output().unwrap().stdout,
+    ).unwrap().trim().to_string();
+    assert_ne!(head, head2);
+
+    let bundle = h5i_runner::source::build_bundle(&repo, &head2, &dir.path().join("s.bundle"))
+        .expect("bundle");
+    assert!(bundle.bytes > 300_000, "bundle is {} bytes", bundle.bytes);
+
+    let client = worker_in(&dir.path().join("state"));
+    let req = create_request(
+        "big",
+        "op1",
+        &"a".repeat(64),
+        h5i_runner::proto::SourceSpec {
+            kind: h5i_runner::proto::SourceKind::GitBundle,
+            bytes: bundle.bytes,
+            sha256: bundle.sha256.clone(),
+            base_commit: Some(head2),
+        },
+    );
+    client.create(&req, Some(&bundle)).expect("a real-sized repository must transfer");
+}
+
+#[test]
+fn an_export_of_real_size_comes_home() {
+    // The mirror of the create-side size bug: an export bundle also crosses as
+    // DATA frames, under a budget that must be the transfer's and not the
+    // handshake's.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path().join("repo");
+    let head = repo_with_a_commit(&repo);
+    let bundle = h5i_runner::source::build_bundle(&repo, &head, &dir.path().join("s.bundle"))
+        .expect("bundle");
+
+    let client = worker_in(&dir.path().join("state"));
+    let req = create_request(
+        "exp",
+        "op1",
+        &"a".repeat(64),
+        h5i_runner::proto::SourceSpec {
+            kind: h5i_runner::proto::SourceKind::GitBundle,
+            bytes: bundle.bytes,
+            sha256: bundle.sha256.clone(),
+            base_commit: Some(head),
+        },
+    );
+    client.create(&req, Some(&bundle)).expect("create");
+
+    // Write something incompressible and large inside the box.
+    client
+        .exec(&h5i_runner::proto::ExecRequest {
+            box_id: "exp".into(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "head -c 1500000 /dev/urandom > big.bin".into(),
+            ],
+            cwd: None,
+            env: vec![],
+            timeout_secs: Some(60),
+        })
+        .expect("write");
+
+    let out = dir.path().join("export.bundle");
+    let described = client.export("exp", &out).expect("a real-sized export must come home");
+    assert!(described.has_changes);
+    assert!(
+        described.bytes > 300_000,
+        "export bundle is {} bytes",
+        described.bytes
+    );
+    assert_eq!(std::fs::metadata(&out).unwrap().len(), described.bytes);
 }

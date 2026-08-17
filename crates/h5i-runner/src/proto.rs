@@ -603,6 +603,112 @@ pub struct CreateResult {
     pub lease_expires_at: chrono::DateTime<chrono::Utc>,
 }
 
+impl CreateResult {
+    /// Make a worker's answer safe to store and print.
+    ///
+    /// The runner is the machine this design agreed might be compromised, so
+    /// everything it says about itself is peer data — the same category as a
+    /// manifest pulled from someone else's clone, and handled the same way.
+    /// Without this, a `workspace` path full of escape sequences reaches a
+    /// terminal and a `box_id` of unbounded length reaches a receipt.
+    pub fn sanitized(mut self) -> Result<Self, ProtoError> {
+        check_id("box id", &self.box_id)?;
+        check_digest("policy digest", &self.policy_digest)?;
+        self.workspace = clean_field("workspace", &self.workspace)?;
+        self.container = match self.container {
+            Some(c) => Some(clean_field("container", &c)?),
+            None => None,
+        };
+        Ok(self)
+    }
+}
+
+impl ExecStarted {
+    /// The `cwd` here is written into a receipt and rendered by `box status`,
+    /// the console and `receipt render`. A runner that put escape sequences in
+    /// it could forge lines around its own in every one of them.
+    pub fn sanitized(mut self) -> Result<Self, ProtoError> {
+        self.cwd = clean_field("working directory", &self.cwd)?;
+        Ok(self)
+    }
+}
+
+impl ExportResult {
+    pub fn sanitized(self) -> Result<Self, ProtoError> {
+        check_id("box id", &self.box_id)?;
+        // These two are compared against what actually arrives, so a bad value
+        // fails that comparison rather than being trusted — but they are also
+        // displayed, and an object id that is not one is worth refusing where
+        // it is cheap.
+        check_hex("tip commit", &self.tip_commit, 40, 64)?;
+        check_hex("tip tree", &self.tip_tree, 40, 64)?;
+        if self.bytes > MAX_SOURCE_BYTES {
+            return Err(ProtoError::Invalid(format!(
+                "the runner describes an export of {} bytes, over the {MAX_SOURCE_BYTES} limit",
+                self.bytes
+            )));
+        }
+        check_digest("export digest", &self.sha256)?;
+        Ok(self)
+    }
+}
+
+impl ListResult {
+    /// A hostile runner's box list is still a list this side prints.
+    pub fn sanitized(mut self) -> Result<Self, ProtoError> {
+        if self.boxes.len() > MAX_LISTED_BOXES {
+            return Err(ProtoError::Invalid(format!(
+                "the runner listed {} boxes, over the {MAX_LISTED_BOXES} this protocol accepts",
+                self.boxes.len()
+            )));
+        }
+        for b in &mut self.boxes {
+            check_id("box id", &b.box_id)?;
+            // Empty is legal here: a `creating/` entry has no tier yet.
+            if !b.isolation.is_empty() {
+                b.isolation = clean_field("isolation", &b.isolation)?;
+            }
+            if !b.policy_digest.is_empty() {
+                check_digest("policy digest", &b.policy_digest)?;
+            }
+            b.container = match b.container.take() {
+                Some(c) => Some(clean_field("container", &c)?),
+                None => None,
+            };
+        }
+        Ok(self)
+    }
+}
+
+impl DestroyResult {
+    pub fn sanitized(mut self) -> Result<Self, ProtoError> {
+        check_id("box id", &self.box_id)?;
+        self.warnings.truncate(MAX_ISOLATION_ENTRIES);
+        for w in &mut self.warnings {
+            *w = truncate(&sanitize_display(w), MAX_STRING);
+        }
+        Ok(self)
+    }
+}
+
+impl GcResult {
+    pub fn sanitized(mut self) -> Result<Self, ProtoError> {
+        self.reaped.truncate(MAX_LISTED_BOXES);
+        self.kept.truncate(MAX_LISTED_BOXES);
+        for r in &mut self.reaped {
+            check_id("box id", r)?;
+        }
+        // `kept` carries a reason, so it is text rather than an identifier.
+        for k in &mut self.kept {
+            *k = truncate(&sanitize_display(k), MAX_STRING);
+        }
+        Ok(self)
+    }
+}
+
+/// Most boxes a runner may claim to hold. A peer listing millions is fuzzing.
+pub const MAX_LISTED_BOXES: usize = 4096;
+
 /// Remove a box.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DestroyRequest {
@@ -667,6 +773,17 @@ pub struct GcResult {
 /// rather than refused, because a run that produced too much output still
 /// produced an exit code worth having.
 pub const MAX_EXEC_OUTPUT: usize = 8 * 1024 * 1024;
+
+/// What one exec exchange may consume.
+///
+/// Twice [`MAX_EXEC_OUTPUT`] because stdout and stderr are each capped at it,
+/// plus room for the framing and the two control messages around them. A
+/// client whose budget was smaller than what the worker is allowed to send
+/// would refuse its own legitimate results, which is exactly the bug this
+/// number exists to not have.
+pub fn exec_limits() -> crate::wire::Limits {
+    crate::wire::Limits::bulk((MAX_EXEC_OUTPUT as u64) * 2 + 4 * 1024 * 1024)
+}
 
 /// Run something in a box.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -825,7 +942,15 @@ impl ErrorMsg {
 
     pub fn with_log_tail(mut self, tail: impl Into<String>) -> Self {
         let tail = tail.into();
-        let start = tail.len().saturating_sub(MAX_LOG_TAIL);
+        let mut start = tail.len().saturating_sub(MAX_LOG_TAIL);
+        // Slicing a `String` at a byte offset panics unless it is a character
+        // boundary, and this offset is arithmetic on a length — a log whose
+        // 16 KiB mark lands mid-character would take the process down. Walk
+        // forward to the next boundary instead: losing up to three bytes off
+        // the front of a log tail costs nothing.
+        while start < tail.len() && !tail.is_char_boundary(start) {
+            start += 1;
+        }
         self.log_tail = Some(tail[start..].to_string());
         self
     }
@@ -1186,6 +1311,24 @@ mod tests {
     }
 
     #[test]
+    fn a_log_tail_cut_mid_character_does_not_panic() {
+        // The cut is arithmetic on a byte length, so a log whose boundary lands
+        // inside a multi-byte character would panic the process that built the
+        // message — on the worker, while reporting somebody else's error.
+        for pad in 0..8 {
+            let long = "x".repeat(MAX_LOG_TAIL + pad) + "日本語のエラー";
+            let e = ErrorMsg::new(ErrorCode::Internal, "boom").with_log_tail(long);
+            let tail = e.log_tail.expect("a tail");
+            assert!(tail.len() <= MAX_LOG_TAIL + 8);
+            assert!(tail.ends_with("エラー"), "the end survives: {tail:?}");
+        }
+        // And the same for a cut that lands inside a character at the front.
+        let long = "あ".repeat(MAX_LOG_TAIL);
+        let e = ErrorMsg::new(ErrorCode::Internal, "boom").with_log_tail(long);
+        assert!(e.log_tail.is_some());
+    }
+
+    #[test]
     fn a_log_tail_keeps_its_end_and_is_bounded() {
         // The tail is what matters — the failure is at the end of the log, not
         // the start — and it is the one peer-supplied string allowed to be big.
@@ -1396,6 +1539,72 @@ mod tests {
         assert!(d.validated().is_ok());
         d.box_id = "../etc".into();
         assert!(d.validated().is_err());
+    }
+
+    #[test]
+    fn a_hostile_runners_answers_are_refused_before_they_are_stored() {
+        // Everything a runner says about itself is peer data — the same
+        // category as a manifest pulled from someone else's clone. These are
+        // the fields that reach a receipt and a terminal.
+        let good = CreateResult {
+            box_id: "demo".into(),
+            existing: false,
+            policy_digest: "a".repeat(64),
+            workspace: "/var/lib/h5i/work".into(),
+            container: None,
+            lease_expires_at: chrono::Utc::now(),
+        };
+        assert!(good.clone().sanitized().is_ok());
+
+        let mut evil = good.clone();
+        evil.workspace = "/work\u{1b}[2J\u{1b}[H✔ applied".into();
+        let cleaned = evil.sanitized().expect("cleaned, not refused");
+        assert!(!cleaned.workspace.contains('\u{1b}'), "{:?}", cleaned.workspace);
+
+        let mut evil = good.clone();
+        evil.box_id = "../../etc/passwd".into();
+        assert!(evil.sanitized().is_err(), "a box id is a path segment");
+
+        let mut evil = good.clone();
+        evil.policy_digest = "not a digest".into();
+        assert!(evil.sanitized().is_err());
+
+        // The exec cwd lands in a receipt that `box status` renders.
+        let started = ExecStarted {
+            timeout_secs: 30,
+            cwd: "/work\u{1b}]0;title\u{7}".into(),
+        };
+        assert!(!started.sanitized().unwrap().cwd.contains('\u{1b}'));
+
+        // A list is still a list this side prints.
+        let mut list = ListResult {
+            boxes: vec![BoxSummary {
+                box_id: "ok".into(),
+                state: BoxState::Live,
+                isolation: "container\u{1b}[31m".into(),
+                created_at: chrono::Utc::now(),
+                lease_expires_at: chrono::Utc::now(),
+                container: None,
+                policy_digest: String::new(),
+            }],
+        };
+        let cleaned = list.clone().sanitized().expect("cleaned");
+        assert!(!cleaned.boxes[0].isolation.contains('\u{1b}'));
+
+        list.boxes = vec![cleaned.boxes[0].clone(); MAX_LISTED_BOXES + 1];
+        assert!(list.sanitized().is_err(), "a list of millions is fuzzing");
+
+        // An export's object ids are compared against what arrives, and are
+        // also printed; a value that is not an object id is refused cheaply.
+        let export = ExportResult {
+            box_id: "demo".into(),
+            tip_commit: "z".repeat(40),
+            tip_tree: "a".repeat(40),
+            has_changes: true,
+            bytes: 10,
+            sha256: "a".repeat(64),
+        };
+        assert!(export.sanitized().is_err());
     }
 
     #[test]
