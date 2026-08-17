@@ -204,14 +204,19 @@ pub fn import_tree(
         &qdir.to_string_lossy(),
         &format!("+refs/h5i/carry:{landing}"),
     )?;
-    let carried = repo.find_reference(&landing)?.peel_to_commit()?;
-    let tree = carried.tree_id();
-    // The carrier's own commit object is now unreferenced and collectable; the
-    // tree and its blobs are what was wanted and what stays. Removed on every
-    // path out, including the ones that fail after this point.
+    // Read the tree, then drop the ref — in that order, and with the drop on
+    // every path out including the failing one. Written the other way round the
+    // comment claiming "removed on every path" was false whenever `peel`
+    // failed, and a surviving landing ref keeps runner content reachable in the
+    // host repository.
+    let carried = repo
+        .find_reference(&landing)
+        .and_then(|r| r.peel_to_commit())
+        .map(|c| c.tree_id());
     if let Ok(mut r) = repo.find_reference(&landing) {
-        r.delete()?;
+        let _ = r.delete();
     }
+    let tree = carried?;
 
     Ok(Inspected::Accepted {
         tree,

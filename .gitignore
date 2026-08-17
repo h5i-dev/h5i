@@ -46,3 +46,8 @@ crates/h5i-browser-light/wpt/results-baseline/
 # Scratch output of wpt/gate.sh. The committed artefact is wpt/baseline.json,
 # which is small and is the thing CI compares against.
 crates/h5i-browser-light/wpt/gate-results/
+
+# Per-machine Claude Code tool permissions. `.local.` means what it says: this
+# is one developer's answer to "may this tool run here", not a project fact.
+# It was committed once by an over-broad `git add -A` during a review.
+.claude/settings.local.json

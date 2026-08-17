@@ -50,6 +50,13 @@ pub enum SourceError {
     #[error("git object store: {0}")]
     Git2(#[from] git2::Error),
 
+    /// The box's repository points somewhere outside the box. See
+    /// [`open_box_repo`] for the two ways it can and why neither is allowed.
+    #[error(
+        "this box's {what} is {to}, which is outside the box — refusing to export a          repository that has been pointed somewhere else"
+    )]
+    Redirected { what: String, to: String },
+
     #[error("source I/O at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -274,7 +281,7 @@ pub fn materialize(bundle: &Path, work: &Path, base_commit: &str) -> Result<(), 
 /// `has_changes: false`, because "the box did nothing" and "the export broke"
 /// must not look the same from the other end.
 pub fn export_bundle(work: &Path, base_commit: &str, out: &Path) -> Result<Exported, SourceError> {
-    let repo = git2::Repository::open(work).map_err(SourceError::Git2)?;
+    let repo = open_box_repo(work)?;
     let base_oid = git2::Oid::from_str(base_commit).map_err(SourceError::Git2)?;
 
     let head = repo
@@ -333,6 +340,56 @@ pub fn export_bundle(work: &Path, base_commit: &str, out: &Path) -> Result<Expor
     })
 }
 
+/// Open the box's repository, and refuse one that is not where it claims.
+///
+/// Moving off the git CLI closed the half of the hostile-config class that
+/// *executes* commands. It did not close the half that **redirects**, and
+/// libgit2 honours both mechanisms:
+///
+/// - `core.worktree` points the repository's working directory somewhere else,
+///   so `add_all` stages that path instead. A box setting it to another box's
+///   workspace gets that box's files packed into its own export bundle and
+///   shipped to the owner's machine — every file the runner user can read,
+///   with nothing downstream to catch it: the quarantine checks path shape and
+///   size, the descendant check passes because the parent really is this box's
+///   HEAD, and the tree digest matches because the runner announced its own
+///   tree. `core.worktree = /` is the same mechanism as a denial of service.
+/// - A `.git` **file** containing `gitdir: <elsewhere>` makes this repository
+///   be a different repository, so the export's carrier commit lands in it and
+///   moves *its* HEAD.
+///
+/// libgit2's owner check is no help: every box on a runner runs as the same
+/// unix user. So the invariant is asserted directly — this repository's git
+/// directory and working directory must both be inside the box.
+fn open_box_repo(work: &Path) -> Result<git2::Repository, SourceError> {
+    let repo = git2::Repository::open(work).map_err(SourceError::Git2)?;
+    let want = work
+        .canonicalize()
+        .map_err(|e| SourceError::io(work, e))?;
+
+    let inside = |p: Option<&Path>, what: &str| -> Result<(), SourceError> {
+        let Some(p) = p else {
+            return Err(SourceError::Redirected {
+                what: what.to_string(),
+                to: "nowhere".into(),
+            });
+        };
+        let got = p.canonicalize().map_err(|e| SourceError::io(p, e))?;
+        if got.starts_with(&want) {
+            Ok(())
+        } else {
+            Err(SourceError::Redirected {
+                what: what.to_string(),
+                to: got.display().to_string(),
+            })
+        }
+    };
+
+    inside(Some(repo.path()), "git directory")?;
+    inside(repo.workdir(), "working directory")?;
+    Ok(repo)
+}
+
 /// Write a v2 git bundle of `base..tip` by hand.
 ///
 /// `git bundle create` would be shorter and would mean running the CLI in a
@@ -370,14 +427,6 @@ fn write_thin_bundle(
     let mut builder = repo.packbuilder().map_err(SourceError::Git2)?;
     builder.insert_walk(&mut walk).map_err(SourceError::Git2)?;
 
-    let mut pack = Vec::new();
-    builder
-        .foreach(|chunk| {
-            pack.extend_from_slice(chunk);
-            true
-        })
-        .map_err(SourceError::Git2)?;
-
     let mut file = std::fs::File::create(out).map_err(|e| SourceError::io(out, e))?;
     let mut header = String::from("# v2 git bundle\n");
     // A prerequisite the reader must already have. Omitted when the tip *is*
@@ -388,7 +437,32 @@ fn write_thin_bundle(
     header.push_str(&format!("{tip} {BUNDLE_TIP_REF}\n\n"));
     file.write_all(header.as_bytes())
         .map_err(|e| SourceError::io(out, e))?;
-    file.write_all(&pack).map_err(|e| SourceError::io(out, e))?;
+
+    // Streamed, not buffered. Collecting the pack into a `Vec` first meant a
+    // box that filled its own disk OOM-killed the worker instead of being
+    // refused — the client's size check runs on the far side, after the
+    // allocation has already happened here.
+    let mut wrote = Err(None);
+    builder
+        .foreach(|chunk| {
+            if wrote.is_err() && wrote.as_ref().err().is_some_and(|e: &Option<_>| e.is_some()) {
+                return false;
+            }
+            match file.write_all(chunk) {
+                Ok(()) => {
+                    wrote = Ok(());
+                    true
+                }
+                Err(e) => {
+                    wrote = Err(Some(e));
+                    false
+                }
+            }
+        })
+        .map_err(SourceError::Git2)?;
+    if let Err(Some(e)) = wrote {
+        return Err(SourceError::io(out, e));
+    }
     file.sync_all().map_err(|e| SourceError::io(out, e))?;
     Ok(())
 }
@@ -961,5 +1035,81 @@ mod bundle_edge_cases {
         let names = String::from_utf8_lossy(&listed.stdout);
         assert!(!names.contains("f0.txt"), "the deletion was lost: {names}");
         assert!(names.contains("f1.txt"));
+    }
+}
+
+#[cfg(test)]
+mod redirection_tests {
+    use super::*;
+
+    fn a_repo(at: &Path) -> String {
+        std::fs::create_dir_all(at).unwrap();
+        git(at, &["init", "--quiet", "."]).unwrap();
+        git(at, &["config", "user.email", "t@example.com"]).unwrap();
+        git(at, &["config", "user.name", "T"]).unwrap();
+        std::fs::write(at.join("mine.txt"), b"mine").unwrap();
+        git(at, &["add", "-A"]).unwrap();
+        git(at, &["commit", "--quiet", "-m", "one"]).unwrap();
+        git(at, &["rev-parse", "HEAD"]).unwrap().trim().to_string()
+    }
+
+    /// Moving off the git CLI stopped the box *executing* commands through its
+    /// own config. It did not stop the box *redirecting* the export, and
+    /// libgit2 honours `core.worktree` too — so a box could stage another box's
+    /// workspace into its own bundle and have it shipped to the owner.
+    #[test]
+    fn a_box_cannot_point_its_export_at_another_boxs_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let victim = dir.path().join("victim/work");
+        a_repo(&victim);
+        std::fs::write(victim.join("SECRET.txt"), b"another box's secret").unwrap();
+
+        let work = dir.path().join("attacker/work");
+        let base = a_repo(&work);
+        git(&work, &["config", "core.worktree", &victim.to_string_lossy()]).unwrap();
+
+        let err = export_bundle(&work, &base, &dir.path().join("e.bundle"))
+            .expect_err("an export must not stage a path outside the box");
+        assert!(
+            matches!(err, SourceError::Redirected { .. }),
+            "got {err:?}"
+        );
+    }
+
+    /// A `.git` file pointing elsewhere makes this repository be a different
+    /// repository, so the export's carrier commit lands in it and moves its
+    /// HEAD.
+    #[test]
+    fn a_box_cannot_make_its_git_directory_be_someone_elses() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let other = dir.path().join("other");
+        a_repo(&other);
+
+        let work = dir.path().join("work");
+        let base = a_repo(&work);
+        std::fs::remove_dir_all(work.join(".git")).unwrap();
+        std::fs::write(
+            work.join(".git"),
+            format!("gitdir: {}\n", other.join(".git").display()),
+        )
+        .unwrap();
+
+        let err = export_bundle(&work, &base, &dir.path().join("e.bundle"))
+            .expect_err("an export must not run in another repository");
+        assert!(
+            matches!(err, SourceError::Redirected { .. }),
+            "got {err:?}"
+        );
+    }
+
+    /// And an ordinary box still exports.
+    #[test]
+    fn an_honest_box_is_unaffected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let work = dir.path().join("work");
+        let base = a_repo(&work);
+        std::fs::write(work.join("new.txt"), b"work").unwrap();
+        let e = export_bundle(&work, &base, &dir.path().join("ok.bundle")).expect("exports");
+        assert!(e.has_changes);
     }
 }

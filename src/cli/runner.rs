@@ -515,10 +515,19 @@ chmod 700 ~/.ssh
 touch ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
 line=$(cat)
+# The whole line, not just the key. Matching on the key alone meant an existing
+# entry carrying that key *without* `restrict,command=` counted as already
+# installed, and pairing then reported that it had installed the forced command.
+# The end-to-end probe is no backstop: the client sends the command explicitly,
+# so it succeeds identically against a full-shell key.
+if grep -qxF \"$line\" ~/.ssh/authorized_keys 2>/dev/null; then
+  echo 'h5i: this exact forced-command line is already present' >&2
+  exit 0
+fi
 key=$(printf '%s' \"$line\" | awk '{print $(NF-1)}')
 if grep -qF \"$key\" ~/.ssh/authorized_keys 2>/dev/null; then
-  echo 'h5i: this key is already authorised' >&2
-  exit 0
+  echo 'h5i: this key is already in authorized_keys under different options' >&2
+  exit 3
 fi
 printf '%s\\n' \"$line\" >> ~/.ssh/authorized_keys
 ";

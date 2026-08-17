@@ -2216,11 +2216,18 @@ pub fn create_with_remote(
     // honest answer rather than an omission: a persona and a pinned service set
     // are things the box's own tree carries, and carrying them across is the
     // milestone that runs services on a runner.
-    let service_digest = if remote.is_some() {
-        None
-    } else {
-        Some(pin_services_at_create(&work_path, &dir)?)
-    };
+    // Always `Some`, including for a runner box. `None` is the sentinel that
+    // means "an env from before pinning existed", and it re-arms a fallback
+    // that reads the repo-root `.h5i/env.toml` — so making it `None` here
+    // silently reverted the invariant an earlier fix established, for one class
+    // of box, while the comment above still claimed the invariant held.
+    //
+    // Pinned-empty is also the honest value rather than a convenient one: a
+    // service cannot run on a runner (`service start` refuses for lack of a
+    // workspace), so "no services will run in this box" is true. `parse_services_file`
+    // returns an empty set for a missing file, which is what a remote box's
+    // absent work directory produces.
+    let service_digest = Some(pin_services_at_create(&work_path, &dir)?);
 
     // Bake the profile's persona sources into a single PERSONA.md at the
     // worktree root (the agent loads it via `@PERSONA.md`). Git-excluded so it
