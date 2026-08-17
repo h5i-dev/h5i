@@ -6888,9 +6888,16 @@ A remote box shares nothing, so they simply do not apply.
    worker refusing at create time is the enforcement. Then the front half of `env::create` runs
    unchanged: pin `base_commit` and `base_tree`, create the env branch,
    write the manifest. No worktree. The manifest grows `runner_id` (R6)
-   beside `backend`, inside the digested and validated field set, with the
-   display name stored undigested for humans: the box is bound to the
-   machine, not to the label.
+   beside `backend`, with the display name stored beside it for humans: the
+   box is bound to the machine, not to the label.
+
+   **Corrected, 2026-08-16.** An earlier draft said "inside the digested and
+   validated field set". There is no digest *over* `EnvManifest` — its four
+   `*_digest` fields are digests of other artifacts that it pins. The set that
+   exists is the one `validate_imported_manifest` enumerates, and `runner_id`
+   belongs in its object-id loop beside `base_commit`, `base_tree` and
+   `policy_digest`: a 64-character hex check, fail-closed, rather than being
+   left to `sanitize_display` on the way to a terminal.
 2. This side builds a **git bundle**: `base_commit` (shallow allowed, as the
    `clone:` source already accepts) plus, when the box starts from dirty
    state, one synthetic commit of that state. A bundle rather than a tar
@@ -6898,11 +6905,20 @@ A remote box shares nothing, so they simply do not apply.
    incremental when a later phase re-syncs.
 3. `CREATE_BOX` carries the box id, image, limits, the serialized resolved
    policy, and the bundle digest; the bundle follows as `DATA` frames. The
-   worker verifies the digest, clones the bundle into a box-owned volume
-   (never a bind mount of anything on the runner), and runs the existing
-   warm-container create. The warm container is keyed by a digest of its
-   create argv, the same rule `microvm::guest_name` already enforces, so a
-   config change forces a fresh container by construction.
+   worker verifies the digest and materialises the bundle into a box-owned
+   directory, never a bind mount of anything on the runner.
+
+   **Corrected, 2026-08-16, by building it.** This step said the worker "runs
+   the existing warm-container create". There is no such thing: the container
+   tier is `podman run --rm` per command and has no warm form at all — the
+   create-once/exec-many design exists only on the microvm tier
+   (`build_create_argv`, `build_exec_argv`, `guest_name`). So a remote create
+   makes the box — the source, the policy, the lease — and the container is
+   made when there is something to run in it (R13.3). That is also the better
+   shape for the hardware this is aimed at: a warm container idling on a small
+   runner costs memory for nothing. When it lands, `microvm::guest_name`'s rule
+   is the one to copy — the container's name is a digest of its own create
+   argv, so a config change forces a fresh one by construction.
 4. `CREATE_RESULT` echoes **the digest of the policy the worker actually
    enforced**, and this side refuses to mark the box live unless it matches
    `policy_digest`. Cheap, and it converts "the worker silently ran an older
@@ -7148,13 +7164,44 @@ demonstration, not a diff.
     exceeds it, so multiplexing is declined rather than guessed at when
     it would not fit. Losing latency is better than an obscure OpenSSH
     error on someone else's machine.
-- **R13.2 Create and destroy.** Bundle transfer, digest verification, the
-  warm container on the runner, leases and `gc`, the `creating/` to
-  `live/` state machine and idempotent re-send (R7). Exit: `box create
-  --runner`, `box ls` showing placement, destroy and gc leave the runner
-  clean, a kill -9 of the client mid-create leaves only a `creating/`
-  entry the next invocation reaps, and re-sending the same create after a
-  lost `CREATE_RESULT` returns the same box instead of a second one.
+- **R13.2 Create and destroy.** Bundle transfer, digest verification,
+  leases and `gc`, the `creating/` to `live/` state machine and idempotent
+  re-send (R7). Exit: `box create --runner`, `box ls` showing placement,
+  destroy and gc leave the runner clean, a kill -9 of the client mid-create
+  leaves only a `creating/` entry the next invocation reaps, and re-sending
+  the same create after a lost `CREATE_RESULT` returns the same box instead
+  of a second one.
+
+  **Worker side built, 2026-08-16** (`boxstore`, `source`, the create,
+  destroy, list and gc handlers, `h5i runner boxes|destroy|gc`): 139 unit
+  tests and 24 integration tests against the real binary, plus an opt-in
+  `H5I_TEST_RUNNER_SSH` test that runs the whole cycle over real SSH — a
+  repository bundled here, streamed across an SSH session, checked out on
+  the far side at the pinned commit, re-sent idempotently, destroyed. The
+  source is a `git bundle` and neither side pollutes a branch namespace to
+  build or read one; `git clone` cannot be used because it only sees
+  `refs/heads/*`, so building a bundle would mean creating a branch in the
+  repository we are supposed to be only reading. Bundles carry full history:
+  `git bundle create` has no `--depth` (checked against git 2.43), and this
+  is the first thing to revisit when the transfer becomes the slow part.
+
+  **Still to land for the exit criteria**: `box create --runner` and the
+  manifest's `runner_id`, which is the `h5i-core` half.
+
+  Three things building it found:
+
+  - **The container tier has no warm form**, which R7 assumed it did. See
+    the correction there.
+  - **A budget has to be per RPC.** A handshake is bytes and a bundle is
+    megabytes, and one budget covering both has to be as loose as the looser
+    of the two. `FrameReader::begin_rpc` resets the limits and the counters
+    together; a reader whose bound silently changed with the traffic would
+    have no bound at all.
+  - **Reading a peer's stderr means waiting for the drain thread.** A child
+    can write its diagnosis and exit while the draining thread is still
+    between a `read` and the buffer, so reading the buffer without joining
+    returns an empty string exactly when the message matters most. It passed
+    locally for a whole milestone before more work made the race visible.
 - **R13.3 Exec.** Captured and interactive, the three clocks, the per-box
   locks, receipts in the `runner-observed` lane with the worker's egress
   summary. Exit: a real project's build and test suite runs on the runner

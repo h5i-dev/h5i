@@ -278,10 +278,12 @@ fn a_malformed_handshake_payload_is_refused_not_guessed_at() {
 fn an_unbuilt_rpc_is_answered_and_the_channel_survives_it() {
     // "Not yet built" is a fact about this milestone, and a client meeting it
     // should get a sentence rather than a closed pipe.
+    // Deliberately a verb from a later milestone: CREATE_BOX is built as of
+    // R13.2, so using it here would test the wrong thing the day it landed.
     let mut input = hello_bytes(PROTOCOL_VERSION);
     {
         let mut w = FrameWriter::new(&mut input, Limits::permissive());
-        w.write(FrameKind::CreateBox.as_u8(), b"{}").unwrap();
+        w.write(FrameKind::Exec.as_u8(), b"{}").unwrap();
         w.write(FrameKind::Probe.as_u8(), b"").unwrap();
     }
 
@@ -291,7 +293,7 @@ fn an_unbuilt_rpc_is_answered_and_the_channel_survives_it() {
     let err = error_in(&frames, 1);
     assert_eq!(err.code, ErrorCode::Unimplemented);
     assert!(
-        err.message.contains("CREATE_BOX"),
+        err.message.contains("EXEC"),
         "the refusal names the verb: {}",
         err.message
     );
@@ -435,5 +437,344 @@ fn the_authorized_keys_line_is_built_from_a_real_key() {
         fields[fields.len() - 2],
         public.split_whitespace().nth(1).unwrap(),
         "the blob is second from the end, which is what the installer greps for"
+    );
+}
+
+// ─── R13.2: create, destroy, list, gc, over a real process boundary ──────────
+
+/// A worker whose state lives in a scratch directory, so a test can create real
+/// boxes without touching the developer's own.
+fn worker_in(state: &std::path::Path) -> Client {
+    let t = ChildProcessTransport::serve_stdio(h5i())
+        .with_env(h5i_runner::serve::STATE_DIR_ENV, state.to_string_lossy());
+    Client::new(Box::new(t))
+}
+
+/// A small repository, and the commit to build a box from.
+fn repo_with_a_commit(at: &std::path::Path) -> String {
+    std::fs::create_dir_all(at).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(at)
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(&["init", "--quiet", "."]);
+    git(&["config", "user.email", "t@example.com"]);
+    git(&["config", "user.name", "Test"]);
+    std::fs::write(at.join("README.md"), b"a real file from the host").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "one"]);
+    git(&["rev-parse", "HEAD"])
+}
+
+/// A create request carrying a real policy and its real digest.
+fn create_request(
+    box_id: &str,
+    op: &str,
+    request_digest: &str,
+    source: h5i_runner::proto::SourceSpec,
+) -> h5i_runner::proto::CreateRequest {
+    use h5i_runner::h5i_sandbox::sandbox_policy::{IsolationClaim, Profile, ResolvedPolicy};
+    let profile = Profile::builtin("probe", IsolationClaim::Workspace);
+    let resolved = ResolvedPolicy::new(IsolationClaim::Workspace, profile);
+    // The one helper that keeps the value and its digest in step.
+    let (policy, policy_digest) = h5i_runner::proto::policy_fields(&resolved).expect("policy");
+    h5i_runner::proto::CreateRequest {
+        box_id: box_id.into(),
+        operation_id: op.into(),
+        request_digest: request_digest.into(),
+        isolation: "workspace".into(),
+        image: None,
+        limits: Default::default(),
+        lease: Default::default(),
+        policy_digest: policy_digest.clone(),
+        policy,
+        source,
+    }
+}
+
+fn empty_source() -> h5i_runner::proto::SourceSpec {
+    h5i_runner::proto::SourceSpec {
+        kind: h5i_runner::proto::SourceKind::Empty,
+        bytes: 0,
+        sha256: String::new(),
+        base_commit: None,
+    }
+}
+
+#[test]
+fn a_real_repository_round_trips_into_a_box_on_the_worker() {
+    // The R13.2 happy path, end to end through the binary: a bundle built from
+    // a real repository, streamed as DATA frames to a real worker process, and
+    // checked out on the far side at the commit the request named.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path().join("repo");
+    let head = repo_with_a_commit(&repo);
+
+    let bundle = h5i_runner::source::build_bundle(&repo, &head, &dir.path().join("s.bundle"))
+        .expect("bundle");
+
+    let client = worker_in(&dir.path().join("state"));
+    let req = create_request(
+        "demo",
+        "op1",
+        &"a".repeat(64),
+        h5i_runner::proto::SourceSpec {
+            kind: h5i_runner::proto::SourceKind::GitBundle,
+            bytes: bundle.bytes,
+            sha256: bundle.sha256.clone(),
+            base_commit: Some(head.clone()),
+        },
+    );
+
+    let created = client.create(&req, Some(&bundle)).expect("create");
+    assert!(!created.existing);
+    assert_eq!(created.box_id, "demo");
+    assert_eq!(
+        created.policy_digest, req.policy_digest,
+        "the worker enforced the policy this side resolved"
+    );
+
+    // The source really arrived, at the commit that was asked for.
+    let work = std::path::Path::new(&created.workspace);
+    assert_eq!(
+        std::fs::read_to_string(work.join("README.md")).unwrap(),
+        "a real file from the host"
+    );
+    let head_there = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(work)
+        .output()
+        .expect("git");
+    assert_eq!(
+        String::from_utf8_lossy(&head_there.stdout).trim(),
+        head,
+        "the box is on the commit the request pinned"
+    );
+
+    // And it is visible as a box.
+    let list = client.list_boxes().expect("list");
+    assert_eq!(list.boxes.len(), 1);
+    assert_eq!(list.boxes[0].box_id, "demo");
+    assert_eq!(list.boxes[0].state, h5i_runner::proto::BoxState::Live);
+}
+
+#[test]
+fn a_lost_answer_costs_a_retry_and_not_a_second_box() {
+    // R7's idempotency: the same request twice returns the same box, named as
+    // already existing rather than silently duplicated.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let client = worker_in(dir.path());
+    let req = create_request("demo", "op1", &"a".repeat(64), empty_source());
+
+    let first = client.create(&req, None).expect("first");
+    assert!(!first.existing);
+
+    let second = client.create(&req, None).expect("second");
+    assert!(second.existing, "the same request returns the same box");
+    assert_eq!(second.workspace, first.workspace);
+
+    assert_eq!(client.list_boxes().expect("list").boxes.len(), 1);
+}
+
+#[test]
+fn a_different_request_under_a_taken_name_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let client = worker_in(dir.path());
+
+    client
+        .create(&create_request("demo", "op1", &"a".repeat(64), empty_source()), None)
+        .expect("first");
+
+    let err = client
+        .create(&create_request("demo", "op2", &"b".repeat(64), empty_source()), None)
+        .expect_err("a different request under a taken name");
+    assert!(
+        format!("{err}").contains("different request"),
+        "the refusal says why: {err}"
+    );
+    assert_eq!(client.list_boxes().expect("list").boxes.len(), 1);
+}
+
+#[test]
+fn a_tier_the_runner_does_not_advertise_is_refused_with_the_capability_named() {
+    // R1's rule at the point it bites: a capability the runner lacks is a
+    // refusal, never a quieter box.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let client = worker_in(dir.path());
+    let advertised = client.probe().expect("probe").capabilities.isolation;
+
+    let mut req = create_request("demo", "op1", &"a".repeat(64), empty_source());
+    req.isolation = "microvm".into();
+
+    if advertised.iter().any(|t| t == "microvm") {
+        eprintln!("skipping: this host really does offer microvm");
+        return;
+    }
+    let err = client.create(&req, None).expect_err("microvm is not offered");
+    let text = format!("{err}");
+    assert!(text.contains("microvm"), "names what was asked for: {text}");
+    assert!(
+        text.contains("does not offer"),
+        "and says it is a refusal: {text}"
+    );
+}
+
+#[test]
+fn a_policy_that_does_not_match_its_digest_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let client = worker_in(dir.path());
+    let mut req = create_request("demo", "op1", &"a".repeat(64), empty_source());
+    req.policy_digest = "f".repeat(64);
+
+    let err = client.create(&req, None).expect_err("digest mismatch");
+    assert!(
+        format!("{err}").contains("policy digest"),
+        "the refusal names the check: {err}"
+    );
+    assert!(client.list_boxes().expect("list").boxes.is_empty());
+}
+
+#[test]
+fn a_source_whose_bytes_were_altered_is_refused_before_git_sees_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path().join("repo");
+    let head = repo_with_a_commit(&repo);
+    let bundle = h5i_runner::source::build_bundle(&repo, &head, &dir.path().join("s.bundle"))
+        .expect("bundle");
+
+    let client = worker_in(&dir.path().join("state"));
+    let mut req = create_request(
+        "demo",
+        "op1",
+        &"a".repeat(64),
+        h5i_runner::proto::SourceSpec {
+            kind: h5i_runner::proto::SourceKind::GitBundle,
+            bytes: bundle.bytes,
+            sha256: "f".repeat(64), // not what will arrive
+            base_commit: Some(head),
+        },
+    );
+    req.box_id = "tampered".into();
+
+    let err = client.create(&req, Some(&bundle)).expect_err("digest");
+    assert!(format!("{err}").contains("digest"), "{err}");
+    assert!(
+        client.list_boxes().expect("list").boxes.is_empty(),
+        "a failed create leaves nothing behind"
+    );
+}
+
+#[test]
+fn destroy_and_gc_leave_the_runner_clean() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let client = worker_in(dir.path());
+
+    client
+        .create(&create_request("one", "op1", &"1".repeat(64), empty_source()), None)
+        .expect("one");
+    client
+        .create(&create_request("two", "op2", &"2".repeat(64), empty_source()), None)
+        .expect("two");
+    assert_eq!(client.list_boxes().expect("list").boxes.len(), 2);
+
+    let destroyed = client.destroy("one", false).expect("destroy");
+    assert!(destroyed.existed);
+    assert_eq!(client.list_boxes().expect("list").boxes.len(), 1);
+
+    // Saying it twice is not an error: gone is the state asked for.
+    assert!(!client.destroy("one", false).expect("again").existed);
+
+    // A live lease is not swept, and `--all` empties the runner.
+    assert!(client.gc(false).expect("gc").reaped.is_empty());
+    let all = client.gc(true).expect("gc all");
+    assert_eq!(all.reaped, vec!["two"]);
+    assert!(client.list_boxes().expect("list").boxes.is_empty());
+}
+
+/// The whole R13.2 cycle over **real SSH**, against a runner you have paired.
+///
+/// Opt-in, like `H5I_TEST_CONTAINER` and `H5I_TEST_NET`: it needs a second
+/// machine (or a localhost sshd) and a pairing, so CI cannot run it and a
+/// developer with one should be able to. Everything above this line is the same
+/// protocol over a child process, which is what makes the child-process
+/// transport worth having; this is the part only a real runner can answer.
+///
+/// ```bash
+/// h5i runner pair selftest $USER@localhost --worker-path $PWD/target/debug/h5i
+/// H5I_TEST_RUNNER_SSH=selftest cargo test --test runner_protocol -- --ignored ssh
+/// ```
+#[test]
+#[ignore = "needs a paired runner; set H5I_TEST_RUNNER_SSH"]
+fn ssh_the_whole_create_cycle_against_a_paired_runner() {
+    let Ok(name) = std::env::var("H5I_TEST_RUNNER_SSH") else {
+        eprintln!("skipping: set H5I_TEST_RUNNER_SSH to a paired runner's name");
+        return;
+    };
+
+    let record = h5i_runner::config::load(&name).expect("that runner is paired");
+    let transport = h5i_runner::SshTransport {
+        host: record.host.clone(),
+        user: record.user.clone(),
+        port: record.port,
+        identity: record.identity_path().expect("key"),
+        known_hosts: record.known_hosts_path().expect("pin"),
+        control_path: record.control_path(),
+        remote_command: format!("{} runner serve-stdio", record.worker_path),
+        deadlines: Default::default(),
+    };
+    let client = Client::new(Box::new(transport));
+
+    // A real repository, bundled and sent across a real SSH session.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let repo = dir.path().join("repo");
+    let head = repo_with_a_commit(&repo);
+    let bundle = h5i_runner::source::build_bundle(&repo, &head, &dir.path().join("s.bundle"))
+        .expect("bundle");
+
+    let box_id = "h5i-selftest-r132";
+    // Leave nothing behind from an earlier run.
+    let _ = client.destroy(box_id, false);
+
+    let req = create_request(
+        box_id,
+        "op-ssh-1",
+        &"a".repeat(64),
+        h5i_runner::proto::SourceSpec {
+            kind: h5i_runner::proto::SourceKind::GitBundle,
+            bytes: bundle.bytes,
+            sha256: bundle.sha256.clone(),
+            base_commit: Some(head.clone()),
+        },
+    );
+
+    let created = client.create(&req, Some(&bundle)).expect("create over ssh");
+    assert!(!created.existing);
+    assert_eq!(created.policy_digest, req.policy_digest);
+
+    // Idempotent over SSH too: the same request returns the same box.
+    let again = client.create(&req, Some(&bundle)).expect("re-send");
+    assert!(again.existing, "a re-send must not build a second box");
+    assert_eq!(again.workspace, created.workspace);
+
+    let listed = client.list_boxes().expect("list");
+    assert!(
+        listed.boxes.iter().any(|b| b.box_id == box_id),
+        "the box is there"
+    );
+
+    assert!(client.destroy(box_id, false).expect("destroy").existed);
+    let listed = client.list_boxes().expect("list");
+    assert!(
+        !listed.boxes.iter().any(|b| b.box_id == box_id),
+        "and gone afterwards"
     );
 }

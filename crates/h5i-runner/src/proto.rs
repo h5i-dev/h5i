@@ -102,6 +102,9 @@ pub enum FrameKind {
     DestroyBox = 0x50,
     ListBoxes = 0x51,
     Gc = 0x52,
+    DestroyResult = 0x53,
+    BoxList = 0x54,
+    GcResult = 0x55,
 }
 
 impl FrameKind {
@@ -138,6 +141,9 @@ impl FrameKind {
             0x50 => DestroyBox,
             0x51 => ListBoxes,
             0x52 => Gc,
+            0x53 => DestroyResult,
+            0x54 => BoxList,
+            0x55 => GcResult,
             _ => return None,
         })
     }
@@ -176,6 +182,9 @@ impl FrameKind {
             DestroyBox => "DESTROY_BOX",
             ListBoxes => "LIST_BOXES",
             Gc => "GC",
+            DestroyResult => "DESTROY_RESULT",
+            BoxList => "BOX_LIST",
+            GcResult => "GC_RESULT",
         }
     }
 
@@ -434,6 +443,222 @@ impl Capabilities {
     }
 }
 
+// ─── R13.2: create, destroy, list, gc ────────────────────────────────────────
+
+/// How large a source transfer may be, in bytes.
+///
+/// A repository bundle, not a disk image: a bundle of a shallow base commit is
+/// tens of megabytes for most projects. The cap is here so that a receiver
+/// bounds the transfer by its own number rather than by whatever the sender
+/// declares, which is R5's rule applied to the one RPC that moves real data.
+pub const MAX_SOURCE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Identifiers that become directory names on the runner. Bounded so a peer
+/// cannot make a path we then have to reason about.
+pub const MAX_ID: usize = 128;
+
+/// A SHA-256, lowercase hex.
+pub const DIGEST_HEX: usize = 64;
+
+/// What a box may consume on the runner.
+///
+/// Enforceable at runtime rather than only at boot, which is the one place a
+/// container placement cannot copy a microVM's design: a microVM's limits are
+/// its virtual hardware, and a container's are cgroups that have to be asked
+/// for explicitly.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct ResourceLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mb: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub procs: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_secs: Option<u64>,
+}
+
+/// How long the box lives without being touched.
+///
+/// There is no daemon on the runner to watch a clock (ROADMAP.md R11), so a
+/// lease is a fact on disk that any later invocation can evaluate. `ttl_secs`
+/// is refreshed by any RPC that touches the box; `hard_ttl_secs` is measured
+/// from creation and is not.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LeaseSpec {
+    pub ttl_secs: u64,
+    pub hard_ttl_secs: u64,
+}
+
+impl Default for LeaseSpec {
+    fn default() -> Self {
+        Self {
+            ttl_secs: 2 * 60 * 60,
+            hard_ttl_secs: 12 * 60 * 60,
+        }
+    }
+}
+
+/// Where a box's source comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceKind {
+    /// A `git bundle` follows as `DATA` frames. The bundle *is* the base
+    /// identity — verifiable on receipt — which is why R7 chose it over a tar.
+    GitBundle,
+    /// Nothing follows. An empty box, for a `--new` source.
+    Empty,
+}
+
+/// The source transfer that follows a [`CreateRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceSpec {
+    pub kind: SourceKind,
+    /// Declared size. A claim, not a budget: the receiver stops at its own cap
+    /// and at this number, whichever is smaller.
+    pub bytes: u64,
+    /// SHA-256 of the bundle, lowercase hex. Verified before a single git
+    /// command is run against it.
+    pub sha256: String,
+    /// The commit the box is based on, checked out after the bundle is cloned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+}
+
+/// Make a box.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRequest {
+    /// The box's name on the runner. Becomes a directory, so it is path-checked.
+    pub box_id: String,
+    /// This attempt's id. The worker builds under `creating/<operation_id>` and
+    /// renames into `live/<box_id>`, so a crash leaves a directory that names
+    /// the attempt rather than a half-built box wearing the real name.
+    pub operation_id: String,
+    /// A digest over everything in this request that decides what gets built.
+    ///
+    /// The idempotency key (ROADMAP.md R7): re-sending a create whose digest
+    /// matches an existing box returns that box, so a lost `CREATE_RESULT`
+    /// costs a retry rather than a duplicate. A *different* digest under the
+    /// same `box_id` is refused, because it asks for a different box under a
+    /// name that is taken.
+    pub request_digest: String,
+    /// The tier this box wants. Refused when the runner does not advertise it
+    /// (R1), never quietly downgraded.
+    pub isolation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub limits: ResourceLimits,
+    #[serde(default)]
+    pub lease: LeaseSpec,
+    /// Digest of the resolved policy. The worker echoes it in
+    /// [`CreateResult::policy_digest`] and the host refuses to mark the box
+    /// live unless it matches — which turns "the worker silently enforced an
+    /// older policy" from a possibility into a detected fault.
+    pub policy_digest: String,
+    /// The resolved policy itself, opaque to this protocol.
+    ///
+    /// `h5i-sandbox` owns that schema and this layer deliberately does not
+    /// mirror it: a protocol that restated the policy's shape would be a second
+    /// definition to keep in step with the first.
+    pub policy: serde_json::Value,
+    pub source: SourceSpec,
+}
+
+/// What a box is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BoxState {
+    /// Being built. Only ever seen by a sweep: a create either renames into
+    /// `Live` or leaves this behind for the next invocation to reap.
+    Creating,
+    Live,
+    /// Its lease ran out and it has not been reaped yet.
+    Expired,
+}
+
+impl BoxState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Creating => "creating",
+            Self::Live => "live",
+            Self::Expired => "expired",
+        }
+    }
+}
+
+/// A box was made, or already existed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateResult {
+    pub box_id: String,
+    /// True when this was an idempotent re-send and the box was already there.
+    /// Named rather than silent, so a client can tell "I made this" from "this
+    /// was already made" without inferring it from timing.
+    pub existing: bool,
+    /// The digest of the policy the worker actually stored (R7 step 4).
+    pub policy_digest: String,
+    /// Where the box's workspace is on the runner, for diagnosis.
+    pub workspace: String,
+    /// The container backing it, when the tier has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    pub lease_expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Remove a box.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DestroyRequest {
+    pub box_id: String,
+    /// Remove the record even when the container could not be stopped.
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DestroyResult {
+    pub box_id: String,
+    /// False when there was nothing there. Not an error: destroying something
+    /// already gone is the state the caller asked for, and a retry after a lost
+    /// answer must not fail.
+    pub existed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+/// One box, as the runner sees it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoxSummary {
+    pub box_id: String,
+    pub state: BoxState,
+    pub isolation: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub lease_expires_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    pub policy_digest: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ListResult {
+    pub boxes: Vec<BoxSummary>,
+}
+
+/// Reap what the leases say is over.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct GcRequest {
+    /// Reap every box, not only the expired ones.
+    #[serde(default)]
+    pub all: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GcResult {
+    pub reaped: Vec<String>,
+    /// Boxes a sweep decided to keep despite an expired lease, with the reason.
+    /// A silent skip would read as "there was nothing to do" (ROADMAP.md R11:
+    /// an un-reaped live box beats an unrecoverable dead one, but not silently).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept: Vec<String>,
+}
+
 /// A refusal, on the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorMsg {
@@ -473,6 +698,139 @@ impl ErrorMsg {
             .map(|t| truncate(&h5i_error::redact::sanitize_block(t), MAX_LOG_TAIL));
         self
     }
+}
+
+/// The two policy fields of a [`CreateRequest`], from a resolved policy.
+///
+/// One function so the pair cannot drift: a digest computed over anything but
+/// the value actually sent is a check that passes while meaning nothing. The
+/// worker recomputes the same digest from what arrives, and only three fields
+/// of a `ResolvedPolicy` serialise — none of them a host path — so the two
+/// sides have to agree (ROADMAP.md R7).
+pub fn policy_fields(
+    policy: &h5i_sandbox::sandbox_policy::ResolvedPolicy,
+) -> Result<(serde_json::Value, String), ProtoError> {
+    let value = serde_json::to_value(policy).map_err(|source| ProtoError::Malformed {
+        kind: "resolved policy",
+        source,
+    })?;
+    let digest = policy
+        .digest()
+        .map_err(|e| ProtoError::Invalid(format!("could not digest the resolved policy: {e}")))?;
+    Ok((value, digest))
+}
+
+impl CreateRequest {
+    /// Refuse a request this worker must not act on.
+    ///
+    /// Every check here is about something that becomes a *path* or a
+    /// *decision* on the runner. A peer-supplied identifier that becomes a
+    /// directory name is the classic way a protocol grows a traversal bug, so
+    /// the check is shape-based and total rather than a blocklist of things
+    /// that looked dangerous when it was written.
+    pub fn validated(&self) -> Result<(), ProtoError> {
+        check_id("box id", &self.box_id)?;
+        check_id("operation id", &self.operation_id)?;
+        check_digest("request digest", &self.request_digest)?;
+        check_digest("policy digest", &self.policy_digest)?;
+
+        IsolationClaim::parse(&self.isolation).map_err(|e| {
+            ProtoError::Invalid(format!("create names a tier h5i does not have: {e}"))
+        })?;
+
+        if let Some(image) = &self.image {
+            // Not parsed as a reference here: what an image name means is the
+            // container runtime's business. What this layer owes is that it is
+            // a printable, bounded, single-line string.
+            clean_field("image", image)?;
+        }
+
+        match self.source.kind {
+            SourceKind::GitBundle => {
+                check_digest("source digest", &self.source.sha256)?;
+                if self.source.bytes == 0 {
+                    return Err(ProtoError::Invalid(
+                        "a git bundle source declares no bytes".into(),
+                    ));
+                }
+                if self.source.bytes > MAX_SOURCE_BYTES {
+                    return Err(ProtoError::Invalid(format!(
+                        "source declares {} bytes, over the {MAX_SOURCE_BYTES} byte limit",
+                        self.source.bytes
+                    )));
+                }
+                if let Some(c) = &self.source.base_commit {
+                    check_hex("base commit", c, 4, 64)?;
+                }
+            }
+            SourceKind::Empty => {
+                if self.source.bytes != 0 {
+                    return Err(ProtoError::Invalid(
+                        "an empty source declares bytes that will never be sent".into(),
+                    ));
+                }
+            }
+        }
+
+        if self.lease.ttl_secs == 0 || self.lease.hard_ttl_secs == 0 {
+            return Err(ProtoError::Invalid("a lease of zero never lives".into()));
+        }
+        if self.lease.ttl_secs > self.lease.hard_ttl_secs {
+            return Err(ProtoError::Invalid(format!(
+                "the idle lease ({}s) outlives the hard one ({}s), so the hard limit \
+                 would never be reached",
+                self.lease.ttl_secs, self.lease.hard_ttl_secs
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl DestroyRequest {
+    pub fn validated(&self) -> Result<(), ProtoError> {
+        check_id("box id", &self.box_id)
+    }
+}
+
+/// An identifier that becomes a path segment.
+///
+/// ASCII alphanumerics, `-`, `_` and `.`, never starting with `.` and never
+/// containing a separator. That excludes `..`, absolute paths, and anything
+/// with a `/` in it by construction rather than by a list of things to reject.
+pub fn check_id(what: &'static str, value: &str) -> Result<(), ProtoError> {
+    let ok = !value.is_empty()
+        && value.len() <= MAX_ID
+        && value.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    if ok {
+        Ok(())
+    } else {
+        Err(ProtoError::Invalid(format!(
+            "{what} `{}` is not usable as a name on the runner — it becomes a directory, \
+             so it takes letters, digits, `-`, `_` and `.`, starting with a letter or digit",
+            sanitize_display(value)
+        )))
+    }
+}
+
+fn check_digest(what: &'static str, value: &str) -> Result<(), ProtoError> {
+    check_hex(what, value, DIGEST_HEX, DIGEST_HEX)
+}
+
+fn check_hex(what: &'static str, value: &str, min: usize, max: usize) -> Result<(), ProtoError> {
+    if value.len() < min || value.len() > max || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ProtoError::Invalid(format!(
+            "{what} is not {} hex characters",
+            if min == max {
+                min.to_string()
+            } else {
+                format!("{min} to {max}")
+            }
+        )));
+    }
+    Ok(())
 }
 
 /// Reject a peer-supplied string that is empty, over-long, or carrying terminal
@@ -729,6 +1087,173 @@ mod tests {
         let bytes = encode(&caps()).unwrap();
         let back: Capabilities = decode("CAPABILITIES", &bytes).unwrap();
         assert_eq!(back.memory_mb, 512);
+    }
+
+    fn create() -> CreateRequest {
+        CreateRequest {
+            box_id: "demo".into(),
+            operation_id: "op1".into(),
+            request_digest: "a".repeat(64),
+            isolation: "container".into(),
+            image: Some("docker.io/library/debian:bookworm".into()),
+            limits: ResourceLimits::default(),
+            lease: LeaseSpec::default(),
+            policy_digest: "b".repeat(64),
+            policy: serde_json::json!({"profile": "agent"}),
+            source: SourceSpec {
+                kind: SourceKind::GitBundle,
+                bytes: 4096,
+                sha256: "c".repeat(64),
+                base_commit: Some("deadbeef".into()),
+            },
+        }
+    }
+
+    #[test]
+    fn a_well_formed_create_validates() {
+        create().validated().expect("valid");
+    }
+
+    #[test]
+    fn an_identifier_can_never_escape_the_runners_box_directory() {
+        // These become directory names on a machine we do not own. The check is
+        // shape-based rather than a blocklist, so this is a sample of a closed
+        // set rather than the set itself.
+        for bad in [
+            "", "..", "../../etc", "a/b", "a\\b", ".hidden", "-lead", "a b",
+            "a\u{0}b", "boxes/../..",
+        ] {
+            let mut c = create();
+            c.box_id = bad.to_string();
+            assert!(
+                c.validated().is_err(),
+                "`{bad}` must not be usable as a box id"
+            );
+        }
+        for good in ["demo", "pr-1234", "box_2", "a.b", "A1"] {
+            let mut c = create();
+            c.box_id = good.to_string();
+            assert!(c.validated().is_ok(), "`{good}` should be allowed");
+        }
+    }
+
+    #[test]
+    fn an_overlong_identifier_is_refused() {
+        let mut c = create();
+        c.box_id = "a".repeat(MAX_ID + 1);
+        assert!(c.validated().is_err());
+    }
+
+    #[test]
+    fn a_digest_that_is_not_a_digest_is_refused() {
+        // Every one of these would otherwise be compared against a real digest
+        // and silently never match, which is a check that cannot fail loudly.
+        for bad in ["", "abc", &"z".repeat(64), &"a".repeat(63), &"a".repeat(65)] {
+            let mut c = create();
+            c.request_digest = bad.to_string();
+            assert!(c.validated().is_err(), "`{bad}` is not a digest");
+        }
+    }
+
+    #[test]
+    fn a_tier_the_product_does_not_have_is_refused_at_create() {
+        let mut c = create();
+        c.isolation = "quantum".into();
+        assert!(matches!(c.validated(), Err(ProtoError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_source_declaring_more_than_the_cap_is_refused_before_a_byte_moves() {
+        let mut c = create();
+        c.source.bytes = MAX_SOURCE_BYTES + 1;
+        assert!(c.validated().is_err());
+    }
+
+    #[test]
+    fn the_two_source_kinds_must_agree_with_their_own_byte_counts() {
+        // A bundle with no bytes would wait forever for data; an empty source
+        // with bytes would leave a transfer nobody reads.
+        let mut c = create();
+        c.source.bytes = 0;
+        assert!(c.validated().is_err(), "a bundle must carry bytes");
+
+        let mut c = create();
+        c.source = SourceSpec {
+            kind: SourceKind::Empty,
+            bytes: 0,
+            sha256: String::new(),
+            base_commit: None,
+        };
+        assert!(c.validated().is_ok(), "an empty source needs no digest");
+
+        c.source.bytes = 10;
+        assert!(c.validated().is_err(), "an empty source that declares bytes");
+    }
+
+    #[test]
+    fn a_lease_that_could_never_expire_the_way_it_says_is_refused() {
+        let mut c = create();
+        c.lease = LeaseSpec {
+            ttl_secs: 0,
+            hard_ttl_secs: 10,
+        };
+        assert!(c.validated().is_err(), "a lease of zero never lives");
+
+        let mut c = create();
+        c.lease = LeaseSpec {
+            ttl_secs: 100,
+            hard_ttl_secs: 10,
+        };
+        assert!(
+            c.validated().is_err(),
+            "an idle lease outliving the hard one makes the hard limit unreachable"
+        );
+    }
+
+    #[test]
+    fn the_r13_2_messages_round_trip_as_json() {
+        let bytes = encode(&create()).unwrap();
+        let back: CreateRequest = decode("CREATE_BOX", &bytes).unwrap();
+        assert_eq!(back.box_id, "demo");
+        assert_eq!(back.source.kind, SourceKind::GitBundle);
+        assert_eq!(back.policy["profile"], "agent");
+
+        let result = CreateResult {
+            box_id: "demo".into(),
+            existing: true,
+            policy_digest: "b".repeat(64),
+            workspace: "/var/lib/h5i/runner/live/demo/work".into(),
+            container: Some("h5i-demo".into()),
+            lease_expires_at: chrono::Utc::now(),
+        };
+        let back: CreateResult = decode("CREATE_RESULT", &encode(&result).unwrap()).unwrap();
+        assert!(back.existing);
+
+        let list = ListResult {
+            boxes: vec![BoxSummary {
+                box_id: "demo".into(),
+                state: BoxState::Live,
+                isolation: "container".into(),
+                created_at: chrono::Utc::now(),
+                lease_expires_at: chrono::Utc::now(),
+                container: None,
+                policy_digest: "b".repeat(64),
+            }],
+        };
+        let back: ListResult = decode("LIST", &encode(&list).unwrap()).unwrap();
+        assert_eq!(back.boxes[0].state, BoxState::Live);
+        assert_eq!(back.boxes[0].state.as_str(), "live");
+    }
+
+    #[test]
+    fn a_destroy_names_a_box_that_could_exist() {
+        let mut d = DestroyRequest {
+            box_id: "demo".into(),
+            force: false,
+        };
+        assert!(d.validated().is_ok());
+        d.box_id = "../etc".into();
+        assert!(d.validated().is_err());
     }
 
     #[test]

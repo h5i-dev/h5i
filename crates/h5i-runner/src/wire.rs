@@ -251,6 +251,23 @@ impl<R: Read> FrameReader<R> {
         Ok(Some(Frame::new(kind, body)))
     }
 
+    /// Start a new RPC on this stream, under its own budget.
+    ///
+    /// Budgets are **per RPC**, not per connection: a handshake and a source
+    /// transfer have nothing in common except the socket they share, and one
+    /// budget covering both would have to be as loose as the looser of the two.
+    /// So the counters reset with the limits — a create that moves a hundred
+    /// megabytes does not leave a session too spent to answer a `PROBE`.
+    ///
+    /// This is deliberately explicit rather than implicit per frame kind: a
+    /// reader whose bound silently changes with the traffic is a reader with no
+    /// bound at all.
+    pub fn begin_rpc(&mut self, limits: Limits) {
+        self.limits = limits;
+        self.bytes = 0;
+        self.frames = 0;
+    }
+
     /// Give the underlying reader back, for a caller that owns what happens to
     /// the stream after the exchange.
     pub fn into_inner(self) -> R {
@@ -496,6 +513,39 @@ mod tests {
             Err(WireError::TotalFrames { limit, .. }) => assert_eq!(limit, 3),
             other => panic!("expected TotalFrames, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_new_rpc_gets_a_new_budget() {
+        // A create that moves real data must not leave the session too spent to
+        // answer the next request on the same channel.
+        //
+        // Demonstrated on a stream that is still in step: once a budget is
+        // *busted* the reader has already consumed a length prefix it then
+        // refused, so its position is unknown and every error this type returns
+        // is terminal. Resetting the counters would not put the stream back.
+        let mut buf = Vec::new();
+        {
+            let mut w = FrameWriter::new(&mut buf, Limits::permissive());
+            for _ in 0..4 {
+                w.write(1, &[0u8; 100]).unwrap();
+            }
+        }
+        // A body is its payload plus a type byte, so each of these is 101.
+        let tight = Limits::permissive().narrowed(MAX_FRAME, 250, 100);
+        let mut r = FrameReader::new(buf.as_slice(), tight);
+        assert!(r.read().unwrap().is_some());
+        assert!(r.read().unwrap().is_some());
+        assert_eq!(r.bytes_read(), 202);
+        assert_eq!(r.frames_read(), 2);
+
+        // A third would bust it. Start a new RPC instead, as a handler does
+        // when it moves from a request to the transfer that follows it.
+        r.begin_rpc(tight);
+        assert_eq!(r.bytes_read(), 0, "the counters reset with the limits");
+        assert_eq!(r.frames_read(), 0);
+        assert!(r.read().unwrap().is_some(), "the next RPC gets its own budget");
+        assert!(r.read().unwrap().is_some());
     }
 
     #[test]

@@ -93,6 +93,36 @@ pub enum RunnerCommands {
         json: bool,
     },
 
+    /// List the boxes a runner is holding.
+    ///
+    /// What the runner has, not what this repository thinks it asked for: a
+    /// box whose lease expired shows as `expired` until a sweep takes it, and
+    /// an attempt that died mid-create shows as `creating`.
+    #[command(visible_alias = "ps")]
+    Boxes {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Remove a box from a runner.
+    Destroy {
+        name: String,
+        box_id: String,
+    },
+
+    /// Reap what the leases say is over.
+    ///
+    /// Every worker invocation already sweeps before doing its own work, so
+    /// this is for reaping on demand — and, with `--all`, for emptying a runner
+    /// whatever its leases say.
+    Gc {
+        name: String,
+        /// Reap every box, not only the expired ones.
+        #[arg(long)]
+        all: bool,
+    },
+
     /// Forget a runner: its record, its key, and its pinned host key.
     ///
     /// Nothing is removed from the runner itself. The `authorized_keys` line
@@ -119,6 +149,9 @@ pub fn run(action: RunnerCommands) -> anyhow::Result<()> {
         } => pair(&name, &destination, port, fingerprint, print_only, worker_path),
         RunnerCommands::Probe { name, json } => probe(&name, json),
         RunnerCommands::List { json } => list(json),
+        RunnerCommands::Boxes { name, json } => boxes(&name, json),
+        RunnerCommands::Destroy { name, box_id } => destroy(&name, &box_id),
+        RunnerCommands::Gc { name, all } => gc(&name, all),
         RunnerCommands::Unpair { name } => unpair(&name),
         RunnerCommands::ServeStdio => serve_stdio(),
     }
@@ -570,6 +603,83 @@ fn list(json: bool) -> anyhow::Result<()> {
     }
     println!();
     UI::info("What each can do is from the last probe. `h5i runner probe <name>` asks again.");
+    Ok(())
+}
+
+fn boxes(name: &str, json: bool) -> anyhow::Result<()> {
+    let record = config::load(name)?;
+    let list = client_for(&record)?
+        .list_boxes()
+        .map_err(|e| anyhow::anyhow!("could not reach runner `{name}`: {e}"))?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&list.boxes)?);
+        return Ok(());
+    }
+    if list.boxes.is_empty() {
+        UI::info(&format!("`{name}` is holding no boxes."));
+        return Ok(());
+    }
+    for b in &list.boxes {
+        let state = match b.state {
+            h5i_runner::proto::BoxState::Live => style("live").green().to_string(),
+            h5i_runner::proto::BoxState::Expired => style("expired").yellow().to_string(),
+            h5i_runner::proto::BoxState::Creating => style("creating").dim().to_string(),
+        };
+        println!(
+            "  {:<24} {:<9} {}",
+            style(&b.box_id).bold(),
+            state,
+            style(if b.isolation.is_empty() {
+                "—".to_string()
+            } else {
+                b.isolation.clone()
+            })
+            .dim()
+        );
+    }
+    Ok(())
+}
+
+fn destroy(name: &str, box_id: &str) -> anyhow::Result<()> {
+    let record = config::load(name)?;
+    let result = client_for(&record)?
+        .destroy(box_id, false)
+        .map_err(|e| anyhow::anyhow!("could not reach runner `{name}`: {e}"))?;
+    if result.existed {
+        UI::success(&format!("Destroyed `{box_id}` on `{name}`"));
+    } else {
+        // Not an error: gone is the state that was asked for, and a retry after
+        // a lost answer must not fail.
+        UI::info(&format!("`{box_id}` was not on `{name}` — nothing to do"));
+    }
+    for w in &result.warnings {
+        UI::warning(w);
+    }
+    Ok(())
+}
+
+fn gc(name: &str, all: bool) -> anyhow::Result<()> {
+    let record = config::load(name)?;
+    let result = client_for(&record)?
+        .gc(all)
+        .map_err(|e| anyhow::anyhow!("could not reach runner `{name}`: {e}"))?;
+
+    if result.reaped.is_empty() && result.kept.is_empty() {
+        UI::info(&format!("Nothing to reap on `{name}`."));
+    }
+    if !result.reaped.is_empty() {
+        UI::success(&format!(
+            "Reaped {} on `{name}`: {}",
+            result.reaped.len(),
+            result.reaped.join(", ")
+        ));
+    }
+    // Said rather than skipped: an un-reaped box beats an unrecoverable one,
+    // but only if somebody is told about it.
+    for kept in &result.kept {
+        UI::warning(&format!("Kept: {kept}"));
+    }
     Ok(())
 }
 

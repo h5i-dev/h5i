@@ -13,8 +13,10 @@ use std::process::{ChildStdin, ChildStdout};
 use thiserror::Error;
 
 use crate::proto::{
-    self, Capabilities, ErrorMsg, FrameKind, Hello, HelloAck, PROTOCOL_VERSION, ProtoError,
+    self, Capabilities, CreateRequest, CreateResult, DestroyRequest, DestroyResult, ErrorMsg,
+    FrameKind, GcRequest, GcResult, Hello, HelloAck, ListResult, PROTOCOL_VERSION, ProtoError,
 };
+use crate::source::Bundle;
 use crate::transport::{Channel, Deadlines, Transport, TransportError};
 use crate::wire::{FrameReader, FrameWriter, Limits, WireError};
 
@@ -38,6 +40,19 @@ pub enum ClientError {
 
     #[error("{what} did not answer in time")]
     TimedOut { what: String },
+
+    /// The worker enforced a policy that is not the one this side resolved.
+    ///
+    /// Cheap to check and worth checking: it turns "the runner silently ran an
+    /// older policy" from a possibility into a detected fault (ROADMAP.md R7).
+    #[error(
+        "the runner built the box under a different policy than the one resolved here — \
+         expected {expected}, it enforced {enforced}. The box was not accepted."
+    )]
+    PolicyDigest { expected: String, enforced: String },
+
+    #[error("could not read the source to send: {0}")]
+    Source(#[from] crate::source::SourceError),
 }
 
 fn stderr_tail(stderr: &str) -> String {
@@ -103,6 +118,68 @@ impl Client {
         let ack = session.ack.clone();
         session.close()?;
         Ok(Probed { ack, capabilities })
+    }
+
+    /// Make a box on the runner.
+    ///
+    /// `bundle` is `None` for an empty source. When it is `Some`, its bytes go
+    /// out as `DATA` frames after the request and before `DATA_DONE`, on the
+    /// same channel — the transfer is part of this RPC rather than a second one
+    /// that could arrive without it.
+    ///
+    /// The policy digest the worker echoes is checked here, not merely logged:
+    /// it is the one thing that says the box was built under the policy this
+    /// side resolved (ROADMAP.md R7).
+    pub fn create(
+        &self,
+        request: &CreateRequest,
+        bundle: Option<&Bundle>,
+    ) -> Result<CreateResult, ClientError> {
+        let mut session = Session::open(&*self.transport, self.deadlines)?;
+        session.send(FrameKind::CreateBox, request)?;
+
+        if let Some(bundle) = bundle {
+            session.send_file(&bundle.path)?;
+        }
+
+        let result: CreateResult = session.expect_message(FrameKind::CreateResult, "CREATE_RESULT")?;
+        session.close()?;
+
+        if result.policy_digest != request.policy_digest {
+            return Err(ClientError::PolicyDigest {
+                expected: request.policy_digest.clone(),
+                enforced: result.policy_digest,
+            });
+        }
+        Ok(result)
+    }
+
+    pub fn destroy(&self, box_id: &str, force: bool) -> Result<DestroyResult, ClientError> {
+        let req = DestroyRequest {
+            box_id: box_id.to_string(),
+            force,
+        };
+        let mut session = Session::open(&*self.transport, self.deadlines)?;
+        session.send(FrameKind::DestroyBox, &req)?;
+        let result = session.expect_message(FrameKind::DestroyResult, "DESTROY_RESULT")?;
+        session.close()?;
+        Ok(result)
+    }
+
+    pub fn list_boxes(&self) -> Result<ListResult, ClientError> {
+        let mut session = Session::open(&*self.transport, self.deadlines)?;
+        session.send(FrameKind::ListBoxes, &())?;
+        let result = session.expect_message(FrameKind::BoxList, "BOX_LIST")?;
+        session.close()?;
+        Ok(result)
+    }
+
+    pub fn gc(&self, all: bool) -> Result<GcResult, ClientError> {
+        let mut session = Session::open(&*self.transport, self.deadlines)?;
+        session.send(FrameKind::Gc, &GcRequest { all })?;
+        let result = session.expect_message(FrameKind::GcResult, "GC_RESULT")?;
+        session.close()?;
+        Ok(result)
     }
 }
 
@@ -188,6 +265,46 @@ impl Session {
             stderr: String::new(),
         })?;
         writer.write(kind.as_u8(), &payload)?;
+        Ok(())
+    }
+
+    /// Stream a file out as `DATA` frames, then `DATA_DONE`.
+    ///
+    /// Chunked well under the frame cap so that one read is one frame and no
+    /// buffer has to be resized; the receiver's budget is what actually bounds
+    /// this, and it is checked on every chunk rather than at the end.
+    fn send_file(&mut self, path: &std::path::Path) -> Result<(), ClientError> {
+        use std::io::Read as _;
+        const CHUNK: usize = 256 * 1024;
+
+        let mut file = std::fs::File::open(path).map_err(|source| {
+            ClientError::Source(crate::source::SourceError::Io {
+                path: path.to_path_buf(),
+                source,
+            })
+        })?;
+        let mut buf = vec![0u8; CHUNK];
+        loop {
+            let n = file.read(&mut buf).map_err(|source| {
+                ClientError::Source(crate::source::SourceError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })
+            })?;
+            if n == 0 {
+                break;
+            }
+            let writer = self.writer.as_mut().ok_or_else(|| ClientError::Closed {
+                what: self.what.clone(),
+                stderr: String::new(),
+            })?;
+            writer.write(FrameKind::Data.as_u8(), &buf[..n])?;
+        }
+        let writer = self.writer.as_mut().ok_or_else(|| ClientError::Closed {
+            what: self.what.clone(),
+            stderr: String::new(),
+        })?;
+        writer.write(FrameKind::DataDone.as_u8(), b"")?;
         Ok(())
     }
 

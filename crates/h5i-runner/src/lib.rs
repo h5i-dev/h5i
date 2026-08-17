@@ -27,6 +27,8 @@
 //! proto      meaning: frame kinds, messages, versioning, validation
 //! identity   runner_id and fingerprints from a pinned host key
 //! host       what a worker may truthfully say about its machine
+//! boxstore   what a box is on the runner's disk: creating/ then live/
+//! source     building a git bundle here, materialising it there
 //! transport  channels: SSH, or a child process for CI
 //! serve      the worker loop      client   the control-plane side
 //! config     where a paired runner is remembered, host-scoped
@@ -38,14 +40,24 @@
 //! [`proto::ErrorCode::Unimplemented`] until their milestones land, so a client
 //! meeting an older or newer runner gets a sentence rather than a closed pipe.
 
+pub mod boxstore;
 pub mod client;
 pub mod config;
 pub mod host;
 pub mod identity;
 pub mod proto;
 pub mod serve;
+pub mod source;
 pub mod transport;
 pub mod wire;
+
+/// The confinement crate this protocol carries policy for.
+///
+/// Re-exported so a caller can build a `CreateRequest` without declaring a
+/// second dependency on it: the policy types are part of this protocol's
+/// surface whether or not they are defined here, and one import path for them
+/// is one fewer way for two versions to end up in a build.
+pub use h5i_sandbox;
 
 pub use client::{Client, ClientError, Probed};
 pub use config::RunnerRecord;

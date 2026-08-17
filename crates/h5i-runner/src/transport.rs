@@ -83,6 +83,14 @@ pub struct Channel {
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr: Arc<Mutex<Vec<u8>>>,
+    /// The thread draining stderr, until someone waits for it.
+    ///
+    /// Load-bearing: a child can write its diagnosis and exit while this thread
+    /// is still between a `read` and the buffer, so reading the buffer without
+    /// waiting returns an empty string exactly when the message matters most.
+    /// That is a race that passes locally and fails under load, so
+    /// [`Channel::stderr_tail`] waits.
+    stderr_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// Set by the watchdog when it kills the child, so a read failure that is
     /// really a timeout is reported as one rather than as "the peer went away".
     timed_out: Arc<AtomicBool>,
@@ -120,8 +128,18 @@ impl Channel {
         }
     }
 
-    /// Whatever the child has written to stderr so far.
+    /// Everything the child wrote to stderr.
+    ///
+    /// Waits for the drain thread the first time it is called: the thread ends
+    /// when the write end of the pipe closes, so this blocks only until the
+    /// child is really finished with it, and returning early would mean
+    /// returning an empty diagnosis for a peer that had just explained itself.
     pub fn stderr_tail(&self) -> String {
+        if let Ok(mut slot) = self.stderr_thread.lock()
+            && let Some(handle) = slot.take()
+        {
+            let _ = handle.join();
+        }
         let buf = self.stderr.lock().unwrap_or_else(|e| e.into_inner());
         String::from_utf8_lossy(&buf).to_string()
     }
@@ -230,7 +248,7 @@ impl Channel {
         // stderr pipe while we are blocked reading stdout would otherwise wedge
         // both of us, and "it hangs only when the worker is chatty" is a bug
         // that surfaces in production and never in a test.
-        if let Some(mut pipe) = stderr_pipe {
+        let stderr_thread = stderr_pipe.map(|mut pipe| {
             let sink = Arc::clone(&stderr);
             std::thread::spawn(move || {
                 let mut chunk = [0u8; 8192];
@@ -247,8 +265,8 @@ impl Channel {
                         }
                     }
                 }
-            });
-        }
+            })
+        });
 
         let timed_out = Arc::new(AtomicBool::new(false));
         let watchdog = Watchdog::arm(
@@ -263,6 +281,7 @@ impl Channel {
             stdin,
             stdout,
             stderr,
+            stderr_thread: Mutex::new(stderr_thread),
             timed_out,
             watchdog: Some(watchdog),
             deadline,
