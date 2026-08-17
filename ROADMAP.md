@@ -2990,7 +2990,7 @@ Exit criteria for the first cut:
   boundary from above and never promises it moved. All checked on every
   `lake build`, so the Lean CI lane carries them.
 
-### M17. The remote runner: proposed, 2026-08-16
+### M17. The remote runner: R13.1 built, 2026-08-16
 
 A box placed on a second Linux machine, driven from the local h5i over SSH.
 Not a new isolation tier: a second axis, *placement*, beside the tier the box
@@ -3000,7 +3000,8 @@ binary as a per-connection worker under an SSH forced command, executes the
 container tier there, and hands back a quarantined git bundle the host turns
 into the same reviewable patch as today. The design authority is sections R1
 to R13, including the four sub-milestones (R13) and the decision points named
-there. Nothing in M17 is built.
+there. **R13.1 — the crate, the protocol, pairing and probing — is built and
+verified against a real sshd**; R13.2 to R13.4 are not.
 
 ## 9. Limits we state up front
 
@@ -6558,8 +6559,9 @@ voice.
 
 # The remote runner
 
-Status: proposed, 2026-08-16, and revised the same day after review. Nothing
-in this part is built. M17 is the milestone stub; these sections are the
+Status: R13.1 built, 2026-08-16, on a design proposed and twice revised the
+same day. R13.2 to R13.4 are not built; what R13.1 established, and the four
+things building it found that the design had not, are recorded there. M17 is the milestone stub; these sections are the
 authority on design and order. The design was drawn against two reference
 codebases read in full for this purpose: the E2B spec repo (the envd
 protobufs and OpenAPI, two client SDKs) and bhatti (a Go single-node microVM
@@ -7109,6 +7111,43 @@ demonstration, not a diff.
   refused, never stored), and a disconnect mid-transfer that leaves
   nothing behind. A codec born with its failure modes tested does not
   acquire them later as bug reports.
+
+  **Built, 2026-08-16** (`crates/h5i-runner`, `src/cli/runner.rs`,
+  `tests/runner_protocol.rs`): 92 unit tests and 17 integration tests, the
+  latter against the real binary over a real process boundary. Pairing,
+  probing, listing and unpairing all run end to end over real SSH against
+  a real sshd, and the security properties were measured rather than
+  assumed. With the pair key: a shell request returns nothing, and a
+  forwarded port carries no bytes while the same forward on an
+  unrestricted key returns the sshd banner — `restrict` is doing what the
+  section claims. The `SHA256:` fingerprint h5i prints is byte-identical
+  to `ssh-keygen -lf` on the machine, which is the only check pairing's
+  trust-on-first-use ever gets, and it is a test rather than a hope.
+  Session-per-RPC is cheap as R4 assumed: five multiplexed sessions in
+  39 ms, about 8 ms each, against 343 ms each without a master.
+
+  Four things the build found that the design had not:
+
+  - **The watchdog kills a child, not a process group.** A reader
+    unblocks when the last holder of the pipe's write end closes it, so a
+    child that leaves a grandchild holding it keeps blocking past the
+    kill. Both real transports are single-process by construction, so the
+    kill is sufficient — but it is a property of *those transports*, not
+    of the watchdog, and it is now written where the next transport will
+    read it.
+  - **The receiver's budget is the one that governs, and it is not the
+    format's.** A control session refuses at 256 KiB, well under the
+    1 MiB frame ceiling. Both sides of that boundary are pinned, because
+    a cap is where an off-by-one lives.
+  - **`CARGO_PKG_VERSION` in a library is the library's version.** The
+    worker reported `0.1.0` to an operator running h5i 0.3.4, in the one
+    field whose whole job is answering "which h5i is over there". The
+    binary now supplies its own.
+  - **A control socket path can be too long to be a socket.** Unix socket
+    paths cap around a hundred bytes and a deep `$XDG_CONFIG_HOME`
+    exceeds it, so multiplexing is declined rather than guessed at when
+    it would not fit. Losing latency is better than an obscure OpenSSH
+    error on someone else's machine.
 - **R13.2 Create and destroy.** Bundle transfer, digest verification, the
   warm container on the runner, leases and `gc`, the `creating/` to
   `live/` state machine and idempotent re-send (R7). Exit: `box create

@@ -127,7 +127,10 @@ pub fn run(action: RunnerCommands) -> anyhow::Result<()> {
 // ─── the worker end ──────────────────────────────────────────────────────────
 
 fn serve_stdio() -> anyhow::Result<()> {
-    let mut worker = Worker::new(Worker::default_state_dir());
+    // The binary's own version, not the runner crate's: an operator asking
+    // which h5i is on the far side means this one.
+    let mut worker =
+        Worker::new(Worker::default_state_dir()).with_version(env!("CARGO_PKG_VERSION"));
     // Nothing but frames may reach stdout, so a failure is reported on stderr
     // and by the exit status. The client captures both.
     match h5i_runner::serve::serve_stdio(&mut worker) {

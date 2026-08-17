@@ -41,6 +41,14 @@ pub enum ServeError {
 /// What the worker knows about itself for the length of one session.
 pub struct Worker {
     state_dir: PathBuf,
+    /// The version to report as h5i's.
+    ///
+    /// Supplied by the binary rather than taken from this crate, because
+    /// `CARGO_PKG_VERSION` here is *this crate's* version and the operator
+    /// asking "which h5i is over there" means the product's. Reporting `0.1.0`
+    /// to someone running h5i 0.3.4 is a small lie in the one field whose whole
+    /// job is answering that question.
+    version: String,
     /// Cached for the session: the capability probe shells out to `podman info`
     /// and runs a functional exec self-test, which is not something to repeat
     /// per frame. One session is short enough that nothing meaningful drifts
@@ -52,8 +60,21 @@ impl Worker {
     pub fn new(state_dir: impl Into<PathBuf>) -> Self {
         Self {
             state_dir: state_dir.into(),
+            // A default so the library is usable alone; the binary overrides it
+            // with its own version, which is the one that means anything.
+            version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: None,
         }
+    }
+
+    /// Report this version as h5i's. The binary calls this with its own.
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = version.into();
+        self
+    }
+
+    pub fn version(&self) -> &str {
+        &self.version
     }
 
     /// The worker's own state directory.
@@ -110,6 +131,7 @@ pub fn serve<R: Read, W: Write>(
     let mut out = FrameWriter::new(writer, limits);
 
     let mut agreed: Option<u16> = None;
+    let version = worker.version.clone();
 
     loop {
         let frame = match frames.read() {
@@ -157,7 +179,7 @@ pub fn serve<R: Read, W: Write>(
             // KEEPALIVE is legal at any point and means nothing on its own.
             (_, FrameKind::KeepAlive) => continue,
 
-            (None, FrameKind::Hello) => match handle_hello(&frame.payload) {
+            (None, FrameKind::Hello) => match handle_hello(&frame.payload, &version) {
                 Ok((ack, protocol)) => {
                     agreed = Some(protocol);
                     write_msg(&mut out, FrameKind::HelloAck, &ack)?;
@@ -226,13 +248,13 @@ pub fn serve_stdio(worker: &mut Worker) -> Result<(), ServeError> {
     serve(stdin.lock(), stdout.lock(), worker)
 }
 
-fn handle_hello(payload: &[u8]) -> Result<(HelloAck, u16), ProtoError> {
+fn handle_hello(payload: &[u8], version: &str) -> Result<(HelloAck, u16), ProtoError> {
     let hello: Hello = proto::decode("HELLO", payload)?;
     let protocol = proto::agreed_protocol(PROTOCOL_VERSION, hello.protocol)?;
     Ok((
         HelloAck {
             protocol: PROTOCOL_VERSION,
-            h5i_version: env!("CARGO_PKG_VERSION").to_string(),
+            h5i_version: version.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             os: std::env::consts::OS.to_string(),
             // Deliberately absent: identity is the client's to compute from the
@@ -489,6 +511,26 @@ mod tests {
             matches!(result, Err(ServeError::Wire(WireError::TotalFrames { .. }))),
             "expected the frame budget to end it, got {result:?}"
         );
+    }
+
+    #[test]
+    fn the_version_reported_is_the_one_the_binary_supplied() {
+        // `CARGO_PKG_VERSION` inside this crate is this crate's version, and
+        // the field's whole job is answering "which h5i is over there".
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut worker = Worker::new(dir.path()).with_version("9.9.9-from-the-binary");
+        let mut input = Vec::new();
+        {
+            let mut w = FrameWriter::new(&mut input, Limits::control());
+            let (k, p) = hello();
+            w.write(k.as_u8(), &p).unwrap();
+        }
+        let mut output = Vec::new();
+        serve(input.as_slice(), &mut output, &mut worker).expect("serve");
+        let mut r = FrameReader::new(output.as_slice(), Limits::permissive());
+        let frame = r.read().unwrap().unwrap();
+        let ack: HelloAck = proto::decode("HELLO_ACK", &frame.payload).unwrap();
+        assert_eq!(ack.h5i_version, "9.9.9-from-the-binary");
     }
 
     #[test]
