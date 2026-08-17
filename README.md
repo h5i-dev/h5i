@@ -37,6 +37,9 @@ h5i gives you:
   - **Lightweight OS-level isolation** that starts in under 200 ms, with filesystem, syscall, and network controls
   - **Rootless containers** for portable, image-based environments
   - **MicroVM isolation** with a separate kernel when stronger boundaries matter
+- **Self-hosted runners** for running sandboxes on Linux machines you own
+  - **Pair over SSH** with a spare laptop, server, VM, or compact Linux device
+  - **Keep control local**: the authoritative repository, credentials, and review/apply gate stay on your machine
 - **Isolated browsers** that agents can securely control from inside the sandbox
   - **Chromium** for broad compatibility with modern web applications
   - **h5i-browser-light**, a pure-Rust, single-process engine using 7.4× less peak memory than Chromium
@@ -74,11 +77,19 @@ on Linux, Apple Silicon on macOS).
 
 ## Use it
 
-#### Create a sandboxed
+#### Create a sandbox
 
 ```bash
 h5i box create <name> --profile agent-claude            # a sandboxed Git worktree from this repository
 h5i box create <name> --profile agent-claude --pr 1234  # a sandbox from pull request #1234
+```
+
+Or place the sandbox on a self-hosted Linux runner you own
+
+```bash
+h5i runner pair worker h5i@runner.local # one-time SSH pairing; pins the runner's host key
+h5i runner probe worker                 # show the capabilities it can actually enforce
+h5i box create <name> --runner worker   # copy this repository into a box on the runner
 ```
 
 #### Run a single command
