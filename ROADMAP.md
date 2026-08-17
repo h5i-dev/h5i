@@ -7107,6 +7107,64 @@ Deferred with their shape already known:
   pools**, and **re-sync of a live box's source** (the bundle transfer is
   already incremental-capable).
 
+## R12b. What an adversarial review of the built code found
+
+Eighteen rounds against the branch, 2026-08-17, with the threat model the
+rest of this part states: **the runner may be compromised**, so the
+interesting direction is runner to host. Thirty-seven findings, all fixed.
+The two that mattered most were both things the design had reasoned about
+correctly and the code had not implemented that way.
+
+**A box could execute on the runner host.** The export staged a box's work
+by running `git add` inside the box's own repository. git executes
+`core.fsmonitor` and `filter.<name>.clean` out of repository config; the box
+owns that config because its workspace is bind-mounted rw; and
+`core.hooksPath=/dev/null`, which this module did set, covers neither. Any
+box with a shell could run a command as the runner user — a complete escape
+from the thing this part exists to contain. The fix is not another flag but
+not invoking the CLI in a tree whose configuration is hostile: libgit2
+implements neither mechanism, and the thin bundle is written from a packfile
+rather than by `git bundle create`.
+
+**A refspec is not a limit on what a fetch writes.** git follows tags by
+default, so a bundle crafted by a compromised runner put an attacker-named
+`refs/tags/*` and a runner-authored tag object — chosen tagger, chosen
+message — into the host repository, on the success path, past every check
+the quarantine performs. R9's sentence about the host only ever containing
+commits it authored was false for tags. `--no-tags` and
+`--no-write-fetch-head` close it.
+
+Three more were gaps between what a section said and what the code did:
+
+- **The capability gate checked a field that decided nothing.** `create`
+  validated the tier a request *declared* while `run_with_env` dispatches on
+  the tier its *policy* carries, so a box could be declared, recorded and
+  displayed as `container` and run every command unconfined.
+- **R12's refusal of credential-bearing profiles was written down and never
+  implemented.** Values never crossed — a grant carries a name and a source
+  descriptor — but the runner resolves those descriptors against its own
+  environment, so a box could be handed the runner's credential in place of
+  the user's.
+- **The SSH argv's claim not to depend on `~/.ssh/config` was false.** No
+  `-F`, and `GlobalKnownHostsFile` unpinned while ssh consults both host-key
+  files. A hostile config redirected every RPC to another machine with the
+  pin apparently intact — which breaks the attestation, since `runner_id` is
+  what a manifest and a receipt record.
+
+The rest were smaller and are in the log: a frame cap that governed whole
+sessions (so any command with real output failed), a blob ceiling that
+inflated the object it was measuring and failed open, a worker with no clock,
+a `doctor` that probed this machine about a box confined elsewhere, a `diff`
+that answered "changed nothing" for work that had not come home, and a
+`create` that failed deterministically for any repository declaring a
+persona.
+
+Two of the fixes were themselves wrong first and were caught by the tests
+they broke — an idle timeout polling under a buffered reader, and a budget
+restored on only the successful path. That is the argument for the fuzz
+harnesses this round added over the codec and the worker's state machine,
+and for the round that reviewed the fixes rather than the code.
+
 ## R13. The order
 
 Each step is small enough to land alone and each has an exit that is a
