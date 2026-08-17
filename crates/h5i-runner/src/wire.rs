@@ -637,3 +637,86 @@ mod tests {
         assert_eq!(f.payload, nasty);
     }
 }
+
+#[cfg(test)]
+mod fuzz {
+    use super::*;
+
+    /// A deterministic byte source. Not cryptographic and not meant to be: the
+    /// point is that a failure is reproducible from its seed.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn byte(&mut self) -> u8 {
+            (self.next() >> 24) as u8
+        }
+        fn upto(&mut self, n: usize) -> usize {
+            if n == 0 { 0 } else { (self.next() % n as u64) as usize }
+        }
+    }
+
+    /// Whatever a peer sends, the reader ends in a state it has a name for.
+    ///
+    /// The framing layer is the first thing an unauthenticated peer reaches,
+    /// and everything above it assumes a well-formed `Result`. A panic here is
+    /// a peer choosing when this process dies.
+    #[test]
+    fn no_sequence_of_bytes_makes_the_reader_panic() {
+        for seed in 1..2_000u64 {
+            let mut rng = Rng(seed);
+            let len = rng.upto(512);
+            let mut bytes: Vec<u8> = (0..len).map(|_| rng.byte()).collect();
+
+            // Half the cases start with a plausible length prefix, so the
+            // reader gets past its first branch instead of bouncing off it.
+            if seed % 2 == 0 && bytes.len() >= 4 {
+                let declared = rng.upto(2048) as u32;
+                bytes[..4].copy_from_slice(&declared.to_be_bytes());
+            }
+
+            let mut r = FrameReader::new(bytes.as_slice(), Limits::control());
+            // Bounded: a reader that returns frames forever from finite input
+            // would itself be the bug.
+            for _ in 0..64 {
+                match r.read() {
+                    Ok(Some(_)) => continue,
+                    Ok(None) | Err(_) => break,
+                }
+            }
+        }
+    }
+
+    /// A frame the writer produced is a frame the reader accepts, for every
+    /// shape either of them can express.
+    #[test]
+    fn anything_written_can_be_read_back() {
+        for seed in 1..500u64 {
+            let mut rng = Rng(seed);
+            let count = 1 + rng.upto(8);
+            let mut expected = Vec::new();
+            let mut buf = Vec::new();
+            {
+                let mut w = FrameWriter::new(&mut buf, Limits::permissive());
+                for _ in 0..count {
+                    let kind = rng.byte();
+                    let n = rng.upto(3000);
+                    let payload: Vec<u8> = (0..n).map(|_| rng.byte()).collect();
+                    w.write(kind, &payload).expect("write");
+                    expected.push(Frame::new(kind, payload));
+                }
+            }
+            let mut r = FrameReader::new(buf.as_slice(), Limits::permissive());
+            for want in expected {
+                let got = r.read().expect("read").expect("a frame");
+                assert_eq!(got, want, "seed {seed}");
+            }
+            assert!(r.read().expect("end").is_none());
+        }
+    }
+}

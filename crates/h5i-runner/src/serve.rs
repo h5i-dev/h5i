@@ -1778,3 +1778,116 @@ mod tests {
         assert!(d.ends_with("h5i/runner"), "{}", d.display());
     }
 }
+
+#[cfg(test)]
+mod worker_fuzz {
+    use super::*;
+    use crate::wire::Frame;
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn byte(&mut self) -> u8 {
+            (self.next() >> 24) as u8
+        }
+        fn upto(&mut self, n: usize) -> usize {
+            if n == 0 { 0 } else { (self.next() % n as u64) as usize }
+        }
+    }
+
+    /// The worker's whole loop, fed nonsense, must always end in an answer or
+    /// an error — never a panic and never a hang.
+    ///
+    /// This is the loop an SSH forced command hands untrusted bytes to. Every
+    /// individual guard is unit-tested above; this asks whether the *state
+    /// machine* has a corner where a sequence nobody thought of ends badly.
+    #[test]
+    fn no_sequence_of_frames_makes_the_worker_panic() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        for seed in 1..800u64 {
+            let mut rng = Rng(seed);
+            let mut input = Vec::new();
+            {
+                let mut w = FrameWriter::new(&mut input, Limits::permissive());
+                // Usually start with a valid handshake, so the fuzzer spends
+                // most of its time past the first gate rather than bouncing
+                // off it.
+                if seed % 4 != 0 {
+                    let h = Hello {
+                        protocol: PROTOCOL_VERSION,
+                        h5i_version: "fuzz".into(),
+                    };
+                    w.write(FrameKind::Hello.as_u8(), &proto::encode(&h).unwrap())
+                        .unwrap();
+                }
+                for _ in 0..(1 + rng.upto(6)) {
+                    // A real type code most of the time, junk otherwise.
+                    let kind = if rng.upto(4) == 0 {
+                        rng.byte()
+                    } else {
+                        const KINDS: [FrameKind; 10] = [
+                            FrameKind::Hello,
+                            FrameKind::Probe,
+                            FrameKind::CreateBox,
+                            FrameKind::Data,
+                            FrameKind::DataDone,
+                            FrameKind::Exec,
+                            FrameKind::ExportBox,
+                            FrameKind::DestroyBox,
+                            FrameKind::ListBoxes,
+                            FrameKind::Gc,
+                        ];
+                        KINDS[rng.upto(KINDS.len())].as_u8()
+                    };
+                    // Sometimes plausible JSON, sometimes not.
+                    let payload: Vec<u8> = match rng.upto(3) {
+                        0 => b"{}".to_vec(),
+                        1 => br#"{"box_id":"a","operation_id":"b"}"#.to_vec(),
+                        _ => (0..rng.upto(64)).map(|_| rng.byte()).collect(),
+                    };
+                    w.write(kind, &payload).unwrap();
+                }
+            }
+
+            let state = dir.path().join(format!("s{seed}"));
+            let mut worker = Worker::new(&state);
+            // Pre-filled, so the loop under test is the loop under test: the
+            // real probe shells out to `podman info` and runs a functional exec
+            // self-test, which would make this a benchmark of podman.
+            worker.capabilities = Some(Capabilities {
+                arch: "x86_64".into(),
+                os: "linux".into(),
+                memory_mb: 1024,
+                workspace_mb: 32 * 1024,
+                isolation: vec!["container".into()],
+                container: true,
+                kvm: false,
+                persistent_boxes: true,
+                own_egress: true,
+                notes: vec![],
+            });
+            let mut output = Vec::new();
+            // The contract: it returns. Ok or Err, but it returns, and nothing
+            // it wrote is unreadable.
+            let _ = serve(input.as_slice(), &mut output, &mut worker);
+
+            let mut r = FrameReader::new(output.as_slice(), Limits::permissive());
+            let mut frames: Vec<Frame> = Vec::new();
+            while let Ok(Some(f)) = r.read() {
+                frames.push(f);
+            }
+            for f in &frames {
+                assert!(
+                    FrameKind::from_u8(f.kind).is_some(),
+                    "seed {seed}: the worker emitted a type code it does not define"
+                );
+            }
+        }
+    }
+}
