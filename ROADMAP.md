@@ -6558,12 +6558,16 @@ voice.
 
 # The remote runner
 
-Status: proposed, 2026-08-16. Nothing in this part is built. M17 is the
-milestone stub; these sections are the authority on design and order. The
-design was drawn against two reference codebases read in full for this
-purpose: the E2B spec repo (the envd protobufs and OpenAPI, two client SDKs)
-and bhatti (a Go single-node microVM sandbox service). R2 records what was
-taken and what was refused.
+Status: proposed, 2026-08-16, and revised the same day after review. Nothing
+in this part is built. M17 is the milestone stub; these sections are the
+authority on design and order. The design was drawn against two reference
+codebases read in full for this purpose: the E2B spec repo (the envd
+protobufs and OpenAPI, two client SDKs) and bhatti (a Go single-node microVM
+sandbox service). R2 records what was taken and what was refused. The
+same-day revision moved the design from "a runner is a machine with rootless
+podman" to the capability model R1 now states, made the export quarantine a
+real one (R9), replaced the runner's name with a cryptographic identity
+(R6), and fixed an exit criterion that contradicted R12.
 
 > **The box's boundary becomes a machine you own and can afford to lose. The
 > product does not move: the repo, the policy, the credentials, and the patch
@@ -6581,11 +6585,33 @@ placement:  local | runner:<name>
 isolation:  workspace | process | supervised | container | microvm
 ```
 
-The MVP is one cell: `runner × container`. The kernel tiers stay local (they
-are grants over *this* host's filesystem; on another machine they are a
-different product), and `runner × microvm` waits until the container cell has
-earned it. A Pi is then nothing but a cheap instance of "any Linux machine
-with sshd and rootless podman", and belongs in a demo, not in the design.
+The rule that holds the axis together: **a runner requires Linux and the h5i
+protocol, nothing else. Everything past that (isolation tiers, container
+runtime, KVM, memory, storage, persistence, its own internet route) is an
+advertised capability, and a capability the runner lacks is a refusal, never
+a silent weakening.** A box that asks for `container` on a runner that
+advertises only the kernel tiers fails with the capability named, exactly as
+`IsolationRequest::Claim` refuses rather than downgrades today. There is no
+fallback ladder across machines.
+
+The MVP *builds* one cell: `runner × container`. The kernel tiers on a
+runner are coherent, not a different product: the worker runs the same
+`h5i-sandbox`, so Landlock, seccomp, and namespaces apply to a copied-in
+workspace on the runner as well as they apply to a worktree here. What
+defers them is real work, not principle: the kernel tiers assume the
+worktree backend even locally (5.1 says so), so `runner × process` and
+`runner × supervised` wait on a copy-in workspace path those tiers do not
+have yet anywhere. `runner × microvm` waits until the container cell has
+earned it. One honesty note for when they land: on a sacrificial runner the
+tier protects the runner's *other* boxes and its own state machinery. The
+machine boundary is what protects you, and a weak tier on a strong boundary
+is a legitimate configuration for weak hardware, not a security downgrade of
+the product.
+
+A Pi is then nothing but a cheap instance of "a Linux machine with sshd",
+and belongs in a demo, not in the design. No device class is named anywhere
+in this part on purpose: the capability report, not the hardware, is the
+vocabulary.
 
 What this buys, stated as the security claim it is: the agent's execution
 moves to hardware whose compromise you have priced in, while everything the
@@ -6650,12 +6676,16 @@ logic stays here. That cut is wrong three times over:
 - **The binary is already the distribution.** Boxes exec
   `/usr/local/bin/h5i` today; "install h5i on the runner" is the same
   operational posture, and it removes a second cross-compiled artifact.
+  This is an MVP decision, not a permanent constraint: the workspace is
+  already feature-layered, so a slim worker build (the sandbox, the codec,
+  and nothing web- or browser-shaped) is a cargo feature set away when a
+  small-memory runner wants it. The protocol never learns the difference.
 
 So the split is:
 
 ```
 this machine (control plane)          runner (worker)
-  repo, worktrees, env branches         rootless podman + images
+  repo, worktrees, env branches         the isolation backend it advertises
   manifests, policy resolution          the box volume (the only copy
   receipts store, the console             of the source over there)
   credentials, secrets broker           the egress CONNECT proxy
@@ -6739,6 +6769,14 @@ The semantics worth writing down, each with its source:
 - **File and bundle transfer reuse `DATA`/`DATA_DONE`** behind a JSON header
   frame, and `DATA_DONE` carries the SHA-256 the receiver must verify before
   acting on anything it received. No second transfer mechanism.
+- **Limits are per RPC, not just per frame.** The 1 MiB frame cap bounds one
+  message; nothing stops a peer streaming frames forever. Every RPC class
+  carries a receiver-enforced total: bytes and wall time for a bundle or
+  artifact transfer, bytes for an exec's captured output, object count where
+  objects are what is being counted (R9). Like the exec timeout, the
+  receiving side clamps to its own defaults and hard maxima; the sender's
+  declared size is a claim, and the receiver aborts the RPC the moment the
+  claim is exceeded.
 - Commands are argv arrays end to end. A shell is something a caller asks
   for by name, never something the protocol implies.
 
@@ -6755,9 +6793,48 @@ runner's state dir at mode 0600; installs the forced-command line, over
 existing SSH access when the user has it, otherwise by printing the exact
 line to paste; records the host key into the per-runner known_hosts file
 (trust on first use at pair, strict forever after); and runs the `HELLO`
-handshake, storing the worker's version and capabilities. It fails loudly if
-the far side has no `h5i` or no rootless podman, with the install command in
-the error.
+handshake, storing the worker's version and capabilities. Pairing succeeds
+against **any Linux machine that speaks the protocol**: the only hard
+failure is no `h5i` on the far side (with the install command in the error).
+Everything else lands in the capability report:
+
+```json
+{
+  "arch": "aarch64",
+  "memory_mb": 512,
+  "workspace_mb": 4096,
+  "isolation": ["process", "supervised"],
+  "container": false,
+  "kvm": false,
+  "persistent_boxes": true,
+  "own_egress": true
+}
+```
+
+Whether podman is present is this report's business, and `box create`'s to
+enforce: a create naming a tier the runner does not advertise is refused
+with the capability named, per R1. Pair records the report; it does not
+judge it.
+
+**Identity is the key, not the name.** `pi5` is a label, and a label can be
+re-paired to a different machine tomorrow; digesting it into a manifest
+binds the box to nothing. The runner's identity is
+`runner_id = SHA-256(host public key)`, computed from the key pinned at
+pair time. The manifest and every receipt record `runner_id`; the display
+name exists for humans and command lines only. A reinstalled machine with a
+fresh host key is a fresh identity, and that is correct: it *is* a
+different trust anchor, whatever its label says.
+
+**The account is part of the boundary.** The forced command's `restrict`
+binds *our key*, not the machine: every other key, account, and sshd
+setting is whatever the runner's admin left there. So pairing documentation
+specifies a dedicated OS user, and `pair` offers to create it: no password
+login, no sudo, no supplementary groups, no access to anything secret on
+the runner, a clean environment, and the forced command by absolute path.
+`probe` warns on the violations it can see from the far side. None of this
+is enforcement h5i can promise; all of it is the difference between "the
+pair key is constrained" and "the account is", and the docs must not
+conflate the two.
 
 Runner config is **host-scoped, never in the repo**. `.h5i/env.toml` is
 checked in; which machines *this* developer can reach is a fact about this
@@ -6768,9 +6845,13 @@ with the profile; the resolved endpoint never is, in the same way
 
 `probe` is `box probe` one machine over: the worker runs the existing local
 probes (`container::probe`, kernel capabilities, disk headroom on the state
-partition) and returns the same `capabilities_report` shape under the runner's
-identity. It must end by running `verify_exec` functionally in a throwaway
-container. Present bits are not a working confined exec; this codebase has
+partition) and returns the same `capabilities_report` shape under the
+runner's identity. For **every isolation tier the runner advertises**, probe
+must end by running `verify_exec` functionally: a throwaway container where
+`container` is claimed, a confined exec where the kernel tiers are. A
+runner that advertises less probes clean with less; a runner whose
+advertisement its own kernel cannot back gets the advertisement corrected,
+loudly. Present bits are not a working confined exec; this codebase has
 paid for that lesson once already and the probe is where it stays paid.
 
 ## R7. Create: copy in, one machine over
@@ -6780,11 +6861,15 @@ hardest local problem instead of carrying it: the identical-path git-plumbing
 binds exist only because a local box shares the host repo's worktree inodes.
 A remote box shares nothing, so they simply do not apply.
 
-1. The front half of `env::create` runs unchanged: pin `base_commit` and
-   `base_tree`, create the env branch, write the manifest. No worktree. The
-   manifest grows `runner: Option<String>` beside `backend`, inside the
-   digested and validated field set: the runner is part of the box's
-   identity, not a detail of where it happens to be today.
+1. Create first checks the request against the runner's capability report:
+   a tier the runner does not advertise, a workspace larger than
+   `workspace_mb`, a resource floor above `memory_mb`, each is a refusal
+   with the capability named. Then the front half of `env::create` runs
+   unchanged: pin `base_commit` and `base_tree`, create the env branch,
+   write the manifest. No worktree. The manifest grows `runner_id` (R6)
+   beside `backend`, inside the digested and validated field set, with the
+   display name stored undigested for humans: the box is bound to the
+   machine, not to the label.
 2. This side builds a **git bundle**: `base_commit` (shallow allowed, as the
    `clone:` source already accepts) plus, when the box starts from dirty
    state, one synthetic commit of that state. A bundle rather than a tar
@@ -6824,6 +6909,15 @@ dies with its session, which is what happens locally when h5i is killed
 mid-run. Reattachable execs are a later capability the frame layout already
 leaves room for, and R12 keeps them there.
 
+Concurrency rules, stated for the same reason. Worker invocations are
+separate processes, so the lock is a file lock in the box's state dir, in
+the spirit of the share gate `export::export` already holds: `CREATE_BOX`,
+`DESTROY_BOX`, and `EXPORT_BOX` take it **exclusive**; `EXEC` takes it
+**shared**. An export attempted while execs hold the lock is refused with
+the live execs named, because an export racing a build reads a torn tree
+and a torn tree that passes validation is worse than a refused RPC. Nothing
+waits silently; every refusal says who holds the lock.
+
 ## R9. Export: quarantine the objects, author the commit here
 
 Export is the trust boundary, so this section is the careful one. The good
@@ -6834,20 +6928,30 @@ for boxes whose worktree is elsewhere, which is now literally the case.
 1. `EXPORT_BOX`: the worker commits the box's current tree in the runner-side
    clone and returns a bundle of `base_commit..tip`, an archive of the
    exportable untracked artifacts, and its receipt spool.
-2. This side fetches the bundle into a **quarantine ref namespace**
-   (`refs/h5i/runner/<box>/head`) with `git bundle verify` and
-   `transfer.fsckObjects` on. Untrusted objects from a machine we have
-   agreed may be compromised never touch a branch before validation. This is
-   the same posture the `clone:` source already takes toward a PR.
+2. This side unpacks the bundle into a **throwaway bare repository with its
+   own object database**, never directly into the host repo. A ref
+   namespace is not a quarantine: fetching writes the untrusted objects
+   into the shared object store, and a ref only quarantines reachability.
+   The throwaway repo gets `git bundle verify`, `transfer.fsckObjects`, and
+   the structural checks that only make sense before anything is trusted:
+   total bundle size and object count against the R5 RPC limits, a blob
+   size ceiling, path length, symlink and hardlink entries flagged for the
+   scans below, and no tree entry that traverses (`..`, absolute, or
+   `.git`, on top of what fsck already refuses). Objects from a machine we
+   have agreed may be compromised never enter the host repo's object
+   database before validation; the same posture the `clone:` source takes
+   toward a PR, made literal.
 3. The host takes the **tip tree, not the commits**. The mediated-commit
    scans (`scan_nested_git`, the staged-path allowlist, the private-path
-   skips) run against the `base_tree` to fetched-tree diff, violations are
-   filtered, and the surviving tree is written as **one host-authored
-   mediated commit** on the env branch. The runner's history and authorship
-   are discarded by construction: the host repo only ever contains commits
-   the host itself wrote. This needs `mediated_commit` refactored to accept
-   a tree source instead of a worktree, and that refactor is the single
-   invasive change to existing code in this whole part.
+   skips) run against the `base_tree` to fetched-tree diff inside the
+   throwaway repo, violations are filtered, and only then are the surviving
+   tree's objects materialized into the host repo and written as **one
+   host-authored mediated commit** on the env branch. The runner's history
+   and authorship are discarded by construction: the host repo only ever
+   contains commits the host itself wrote, and only objects a passed scan
+   reached. This needs `mediated_commit` refactored to accept a tree source
+   instead of a worktree, and that refactor is the single invasive change
+   to existing code in this whole part.
 4. Downstream is untouched: `PROPOSED`, `export::export`'s bundle, the apply
    gates, patch-mode squash. A remote box that cannot complete the fetch
    degrades to exactly the detached-box posture that already exists:
@@ -6895,9 +6999,16 @@ so the reaper is opportunistic:
   "Disconnect grace" is trivially infinite for the container and zero for
   the exec, and both of those are the behaviors R8 already chose.
 
-The runner keeps its OS and its box storage on separate filesystems, so a
-box that fills its disk takes the state partition and not the machine. That
-is a pairing-time check with a warning, not something h5i can enforce.
+Persistence is a capability, not a requirement. A `persistent_boxes: true`
+runner keeps containers and state across disconnects and reboots; a
+`persistent_boxes: false` runner (read-only OS, tmpfs workspace, one
+microSD) loses every box at reboot, and the protocol treats that as a lease
+that expired early: the next contact reaps the record, and anything not yet
+exported is honestly gone. Same protocol, same lifecycle, different
+advertised storage. Separate filesystems for OS and box storage, so a box
+that fills its disk takes the state partition and not the machine, is the
+recommended shape on persistent runners: a pairing-time check with a
+warning, not something h5i can enforce.
 
 ## R12. What the MVP refuses, and what comes later
 
@@ -6909,8 +7020,22 @@ Refused, fail-closed, with the reason in the error:
   credential channel: a dedicated long-lived session carrying muxed
   connections from the runner-side proxy back to the auth proxy here, so
   real credentials still never leave. That channel is the one place a mux
-  enters the protocol, which is exactly why it is not in the MVP.
-- **Kernel tiers and microvm on a runner**, per R1.
+  enters the protocol, which is exactly why it is not in the MVP. Until it
+  exists, **no agent that needs model credentials runs on a runner**, and
+  R13's exit criteria are written accordingly.
+- **Any request past the runner's advertised capabilities**, per R1: a tier
+  it does not advertise, a workspace it cannot hold, a persistence it does
+  not have. The MVP worker advertises `container` only; the kernel tiers
+  and microvm join the advertisement when their milestones land, and until
+  then asking for them is this same refusal.
+
+Assumed, and stated so it is priced: **the MVP runner has its own outbound
+internet**. Image pulls and package installs leave through the runner's own
+CONNECT proxy under the box's allowlist (`own_egress: true` in the
+capability report). A runner with no default route, the cable-only
+appliance configuration, is not a supported MVP topology; it becomes one
+when brokered egress lands below, and pretending otherwise earlier would
+just move the failure somewhere quieter.
 
 Deferred with their shape already known:
 
@@ -6925,6 +7050,11 @@ Deferred with their shape already known:
   beside the share ALPN, with the pair keys doing authentication above it,
   reuses the existing QUIC stack without touching the ticket model. The
   runner dials out, so no router configuration.
+- **The kernel tiers on a runner.** The blocker is the copy-in workspace
+  path those tiers lack even locally (R1); when 5.1's copy-in lands for
+  them, `runner × process` and `runner × supervised` are an advertisement
+  change plus their probe, and they open the door to runners too small for
+  a container runtime.
 - **Reattachable execs** (bhatti's sessions, E2B's `Connect`), **runner
   pools**, and **re-sync of a live box's source** (the bundle transfer is
   already incremental-capable).
@@ -6946,11 +7076,16 @@ demonstration, not a diff.
   --runner`, `box ls` showing placement, destroy and gc leave the runner
   clean, and a kill -9 of the client mid-create leaves nothing the next
   invocation does not reap.
-- **R13.3 Exec.** Captured and interactive, the three clocks, receipts in
-  the `runner-observed` lane with the worker's egress summary. Exit: an
-  agent profile runs a real build on the runner from `env run`, `box shell`
-  is usable over a deliberately laggy link, and the receipt log shows the
-  lane and the egress evidence.
+- **R13.3 Exec.** Captured and interactive, the three clocks, the per-box
+  locks, receipts in the `runner-observed` lane with the worker's egress
+  summary. Exit: a real project's build and test suite runs on the runner
+  from `env run` under its egress allowlist, `box shell` is usable over a
+  deliberately laggy link, and the receipt log shows the lane and the
+  egress evidence. Deliberately **not** an agent: an agent profile needs
+  model credentials, R12 refuses to ship them, and an exit criterion that
+  contradicts R12 is how the credential channel would end up rushed. The
+  agent-on-a-runner demonstration belongs to the credential channel's own
+  milestone.
 - **R13.4 Export.** The tree-source `mediated_commit` refactor, quarantined
   fetch, propose, apply. Exit: a change made by an agent on the runner
   round-trips to a host-authored mediated commit, survives the violation
@@ -6966,6 +7101,13 @@ Decision points, named not resolved, in the VF.7 discipline:
    to its runner name and forecloses migrating a box between runners without
    export and re-create. Recommended anyway: identity over convenience, and
    export/re-create *is* the migration story this product believes in.
+
+   **Answered, 2026-08-16, by dissolving the premise.** The digest never
+   holds the name; it holds `runner_id`, the hash of the pinned host key
+   (R6). That keeps the binding (to the machine, which is what the digest
+   was reaching for) and drops the false one (to a label anyone can
+   re-point at different hardware). The migration answer is unchanged:
+   export and re-create.
 3. **R13.4's scope valve.** The tree-source refactor is the only invasive
    change; if it fights back, the MVP ships export-only (the detached-box
    posture) and apply lands behind the refactor later. Nothing upstream of
