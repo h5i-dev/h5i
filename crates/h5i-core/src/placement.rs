@@ -169,8 +169,13 @@ pub fn remote_box_id(manifest_id: &str) -> String {
         })
         .collect();
     // Bounded well under the protocol's limit, leaving room for the suffix.
-    let readable: String = readable.chars().take(96).collect();
-    format!("{readable}-{}", &digest[..8])
+    let readable: String = readable.chars().take(80).collect();
+    // Sixteen hex, not eight. A collision cannot corrupt anything — the runner
+    // refuses a second box under a taken name whose request digest differs —
+    // but it *can* deny service to a box whose slug someone else chose, and a
+    // 32-bit suffix is within reach of someone who can pick slugs. The extra
+    // eight characters cost nothing anyone reads.
+    format!("{readable}-{}", &digest[..16])
 }
 
 /// A runner that is not a machine, for tests.
@@ -298,6 +303,17 @@ mod tests {
         let a = remote_box_id("env/claude-demo/x");
         let b = remote_box_id("env/claude/demo-x");
         assert_ne!(a, b, "a collision here would refuse a legitimate box");
+    }
+
+    #[test]
+    fn the_suffix_is_wide_enough_that_a_collision_is_not_arranged() {
+        // A collision denies service to whoever asks second; it cannot corrupt
+        // anything, because the runner refuses a taken name whose request
+        // digest differs. Still worth being out of reach.
+        let id = remote_box_id("env/claude/demo");
+        let suffix = id.rsplit('-').next().unwrap();
+        assert_eq!(suffix.len(), 16, "64 bits, not 32");
+        assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

@@ -582,6 +582,27 @@ fn validate_imported_manifest(m: &EnvManifest) -> Result<(), H5iError> {
     if let Some(runner_id) = &m.runner_id {
         ids.push(("runner_id", runner_id));
     }
+    // The display name is peer data too. It is resolved against this machine's
+    // paired runners — which name-checks it again — but it also reaches a
+    // receipt and a terminal, so it is pinned to the same shape here rather
+    // than trusted to be pinned somewhere downstream.
+    if let Some(runner) = &m.runner {
+        let ok = !runner.is_empty()
+            && runner.len() <= 64
+            && runner
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphanumeric())
+            && runner
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !ok {
+            return Err(H5iError::Metadata(format!(
+                "manifest runner name is not one this machine could have paired (got '{}')",
+                crate::redact::sanitize_display(runner)
+            )));
+        }
+    }
     for (field, got) in ids {
         let ok = (7..=64).contains(&got.len()) && got.bytes().all(|b| b.is_ascii_hexdigit());
         if !ok {
@@ -2125,9 +2146,16 @@ pub fn create_with_remote(
             // here as well is what makes the *manifest* honest, since this is
             // the value the manifest is about to pin.
             if created.policy_digest != policy_digest {
+                // The box is on the runner and this side is refusing it, so it
+                // goes away again. Best effort — the lease would reap it in a
+                // couple of hours regardless — but leaving a box holding a copy
+                // of somebody's source on a machine with no record of it is not
+                // a thing to shrug at when one more RPC closes it.
+                let _ = runner.destroy(&box_id);
                 return Err(H5iError::Metadata(format!(
                     "runner `{}` built the box under a different policy than the one resolved \
-                     here — expected {policy_digest}, it enforced {}. The box was not recorded.",
+                     here — expected {policy_digest}, it enforced {}. The box was not recorded, \
+                     and was removed from the runner.",
                     runner.name(),
                     created.policy_digest
                 )));
@@ -2206,12 +2234,34 @@ pub fn create_with_remote(
         runner: placed.as_ref().map(|p| p.runner.clone()),
     };
 
-    let policy_toml = policy.to_toml()?;
-    let policy_path = dir.join(POLICY_RESOLVED_FILE);
-    std::fs::write(&policy_path, &policy_toml).map_err(|e| H5iError::with_path(e, &policy_path))?;
-    save_manifest(h5i_root, &manifest)?;
+    // Grouped so a runner box's remote half can be cleaned up if this side
+    // cannot record it. Locally these are the same `?`s they always were.
+    let mut policy_toml = String::new();
+    let save_result = (|| -> Result<(), H5iError> {
+        policy_toml = policy.to_toml()?;
+        let policy_path = dir.join(POLICY_RESOLVED_FILE);
+        std::fs::write(&policy_path, &policy_toml)
+            .map_err(|e| H5iError::with_path(e, &policy_path))?;
+        save_manifest(h5i_root, &manifest)?;
+        Ok(())
+    })();
     // The env is resolvable now: `rm` and `gc` can clean up anything that fails
     // after this point, so stop unwinding on drop.
+    // Everything above this point can still fail, and for a runner box a
+    // failure here means the box exists over there with nothing here to
+    // remember it. The lease reaps it eventually and a retry is idempotent, so
+    // this is tidiness rather than correctness — but an orphan holding a copy
+    // of someone's source is worth one more RPC.
+    if let (Some(runner), Some(_)) = (remote, placed.as_ref())
+        && let Err(e) = save_result.as_ref()
+    {
+        let _ = runner.destroy(&crate::placement::remote_box_id(&id));
+        return Err(H5iError::Metadata(format!(
+            "{id} could not be recorded on this machine ({e}), so it was removed from the \
+             runner as well"
+        )));
+    }
+    save_result?;
     rollback.armed = false;
     // Mirror the manifest AND the resolved policy into refs/h5i/env so the
     // whole environment is shareable from creation.
@@ -5373,7 +5423,11 @@ pub fn run_remote(
         cmd: Some(argv.join(" ")),
         // The runner's path, said as such. A local-looking path here would be
         // a directory somebody could try to `cd` into.
-        cwd: Some(format!("{} (on {})", result.cwd, m.runner.as_deref().unwrap_or("runner"))),
+        cwd: Some(crate::redact::sanitize_display(&format!(
+            "{} (on {})",
+            result.cwd,
+            m.runner.as_deref().unwrap_or("runner")
+        ))),
         exit_code: result.exit_code,
         timed_out: result.timed_out,
         wall_ms: Some(result.wall_ms),
@@ -10485,6 +10539,48 @@ mod tests {
         assert!(text.contains("pi5"), "names the machine: {text}");
         assert!(text.contains("next milestone"), "and what is missing");
         assert!(!text.contains("no local workspace"), "not the other message");
+    }
+
+    #[test]
+    fn a_pulled_manifest_naming_an_impossible_runner_is_refused() {
+        // A manifest can arrive from another clone through `refs/h5i/env`, so
+        // every field of it is peer data. The runner name is resolved against
+        // this machine's paired runners *and* lands in a receipt, so it is
+        // pinned to the shape a paired name can have rather than trusted to be
+        // checked wherever it is next used.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+        let mut m = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "checked",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect("create");
+        assert!(validate_imported_manifest(&m).is_ok());
+
+        for bad in [
+            "../../etc",
+            "a/b",
+            ".hidden",
+            "-lead",
+            "name\u{1b}[2Jforged",
+            "",
+            &"x".repeat(65),
+        ] {
+            m.runner = Some(bad.to_string());
+            assert!(
+                validate_imported_manifest(&m).is_err(),
+                "`{bad}` must not survive as a runner name"
+            );
+        }
     }
 
     #[test]
