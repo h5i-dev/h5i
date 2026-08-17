@@ -37,6 +37,9 @@ h5i gives you:
   - **Lightweight OS-level isolation** that starts in under 200 ms, with filesystem, syscall, and network controls
   - **Rootless containers** for portable, image-based environments
   - **MicroVM isolation** with a separate kernel when stronger boundaries matter
+- **Self-hosted runners** for running sandboxes on Linux machines you own
+  - **Pair over SSH** with a spare laptop, server, VM, or compact Linux device
+  - **Keep control local**: the authoritative repository, credentials, and review/apply gate stay on your machine
 - **Isolated browsers** that agents can securely control from inside the sandbox
   - **Chromium** for broad compatibility with modern web applications
   - **h5i-browser-light**, a pure-Rust, single-process engine using 7.4× less peak memory than Chromium
