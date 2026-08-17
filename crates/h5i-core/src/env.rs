@@ -2006,6 +2006,35 @@ pub fn create_with_remote(
     // bits can be present while a hardened kernel still denies exec under the
     // full stack. Refuse here with a clear message rather than letting every
     // later `env run` fail on EACCES.
+    // ROADMAP.md R12's refusal, which was documented and not implemented.
+    //
+    // Secret *values* never cross — a `SecretGrant` carries a name and a source
+    // descriptor, never a value — so nothing of this machine's leaks. What
+    // happens instead is worse than a leak in one way: the runner resolves
+    // those descriptors against *its own* environment, so a box could be handed
+    // the runner's credential in place of the user's, or silently handed none
+    // at all while its policy says it has one. Both are the silent weakening
+    // R1 says must never happen, so the profile is refused with the milestone
+    // named.
+    if remote.is_some() {
+        let wants_secrets = !policy.profile.secrets.is_empty() || !policy.profile.secret_grants.is_empty();
+        let wants_auth = !policy.profile.auth.is_empty();
+        if wants_secrets || wants_auth {
+            return Err(H5iError::Metadata(format!(
+                "profile `{}` needs {} on a runner, and h5i will not send credentials to \
+                 another machine. A broker that keeps them here is a later milestone; until \
+                 then a runner box runs builds, tests and commands rather than anything that \
+                 authenticates. Use a profile without them, or create this box locally.",
+                policy.profile.name,
+                match (wants_secrets, wants_auth) {
+                    (true, true) => "secrets and an authenticated API",
+                    (true, false) => "secrets",
+                    _ => "an authenticated API",
+                }
+            )));
+        }
+    }
+
     sandbox::verify_exec(&policy)?;
     let policy_digest = policy.digest()?;
 
@@ -2177,13 +2206,31 @@ pub fn create_with_remote(
     // Pin service declarations from the base worktree into an env-local,
     // box-immutable manifest, recording its digest (review #1). Always Some for
     // new envs (even pinned-empty), so the legacy fallback below never applies.
-    let service_digest = Some(pin_services_at_create(&work_path, &dir)?);
+    // Both of the next two read and write the *worktree*, which a runner box
+    // does not have on this machine.
+    //
+    // `materialize_persona` was not merely wrong here, it was fatal: it writes
+    // `PERSONA.md` into the work directory, so any repository whose profile
+    // declares a persona failed every `--runner` create — after paying for the
+    // whole source transfer, and leaving the box on the runner. Skipping is the
+    // honest answer rather than an omission: a persona and a pinned service set
+    // are things the box's own tree carries, and carrying them across is the
+    // milestone that runs services on a runner.
+    let service_digest = if remote.is_some() {
+        None
+    } else {
+        Some(pin_services_at_create(&work_path, &dir)?)
+    };
 
     // Bake the profile's persona sources into a single PERSONA.md at the
     // worktree root (the agent loads it via `@PERSONA.md`). Git-excluded so it
     // never enters the agent's diff/commit. Fail-closed: a missing source aborts
     // create rather than launching an agent with a silently-empty persona.
-    let persona_digest = materialize_persona(&work_path, &profile.persona)?;
+    let persona_digest = if remote.is_some() {
+        None
+    } else {
+        materialize_persona(&work_path, &profile.persona)?
+    };
 
     // The viewer token, minted before anything inside the box has run. Minting
     // it lazily on the first `h5i box view` would mean minting it after an agent
@@ -2238,6 +2285,7 @@ pub fn create_with_remote(
     // cannot record it. Locally these are the same `?`s they always were.
     let mut policy_toml = String::new();
     let save_result = (|| -> Result<(), H5iError> {
+
         policy_toml = policy.to_toml()?;
         let policy_path = dir.join(POLICY_RESOLVED_FILE);
         std::fs::write(&policy_path, &policy_toml)
@@ -5393,6 +5441,21 @@ pub fn run_remote(
     if argv.is_empty() {
         return Err(H5iError::Metadata("empty command".into()));
     }
+    // The same lifecycle gate `run_inner` applies. Without it a box that had
+    // been applied or aborted could be run again — the box lives on the runner
+    // until its lease or a `box rm` — and the run would rewrite a terminal
+    // status back to `idle`, in the manifest and in `refs/h5i/env`, where it
+    // travels to other clones as an ordinary run event.
+    match m.status.as_str() {
+        ST_CREATED | ST_RUNNING | ST_IDLE => {}
+        other => {
+            return Err(H5iError::Metadata(format!(
+                "{}: status is '{other}' — `box run` is only valid before propose/apply/abort",
+                m.id
+            )));
+        }
+    }
+
     let env_dir_path = env_dir(h5i_root, &m.agent, &m.slug);
     let _lock = RunLock::acquire(&m.dir(h5i_root))?;
 
@@ -5407,6 +5470,15 @@ pub fn run_remote(
 
     let mut raw = result.stdout.clone();
     raw.extend_from_slice(&result.stderr);
+    if result.output_truncated {
+        // Said, because the runner said it. The receipt's own `raw_truncated`
+        // is computed from this machine's cap and would record `false` for a
+        // log the runner had already cut — a truncated log stored as a complete
+        // one is the thing the flag exists to prevent.
+        raw.extend_from_slice(
+            b"\n[h5i: the runner truncated this output before sending it]\n",
+        );
+    }
 
     let input = crate::receipt::RecordInput {
         env_id: m.id.clone(),
@@ -5433,11 +5505,15 @@ pub fn run_remote(
         wall_ms: Some(result.wall_ms),
         cpu_ms: Some(result.cpu_ms),
         max_rss_kb: result.max_rss_kb.and_then(|kb| u64::try_from(kb).ok()),
-        // The tree the box was built from. The tree it has *now* is not
-        // knowable from here until an export brings it back, and claiming the
-        // base as the current state would be a lie in the field most likely to
-        // be trusted.
-        git_tree: Some(m.base_tree.clone()),
+        // Absent, not the base tree. This field means "the HEAD tree the run
+        // was taken against", and every local producer supplies the live one.
+        // Supplying the tree the box was *built* from would make every receipt
+        // from a runner box carry one identical value — indistinguishable, to a
+        // reader or a later tool, from a box where nothing ever changed. The
+        // real answer is not knowable from here until an export brings it back,
+        // and `None` is what the other producers that cannot know it already
+        // use.
+        git_tree: None,
         files: Vec::new(),
         egress: result.egress.clone(),
         browser: None,
@@ -6969,7 +7045,28 @@ pub fn diff(
     } else {
         // Remote/no-worktree: diff base_tree → env branch tip (the committed,
         // proposed state) using the shared object store.
-        let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        // A remote box's branch exists from creation and points at the base until a
+    // propose advances it. Diffing base against base renders an empty patch and
+    // exits zero — "this box changed nothing" for a box that may have rewritten
+    // its whole tree on the runner. An empty answer that looks like a fact is
+    // worse than a refusal.
+    if is_remote(m) {
+        let tip = repo
+            .find_reference(&m.branch)
+            .and_then(|r| r.peel_to_commit())
+            .map(|c| c.tree_id().to_string())
+            .unwrap_or_default();
+        if tip == m.base_tree {
+            return Err(H5iError::Metadata(format!(
+                "{}: this box runs on `{}` and its work has not been brought home yet, so \
+                 there is nothing here to diff. `h5i box propose {}` fetches it.",
+                m.id,
+                m.runner.as_deref().unwrap_or("a runner"),
+                m.slug
+            )));
+        }
+    }
+    let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let tip_tree = repo
             .find_reference(&m.branch)
             .map_err(|_| {
@@ -7056,7 +7153,28 @@ pub fn diffstat_report(
         let diff = wt_repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
         render(diff)
     } else {
-        let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
+        // A remote box's branch exists from creation and points at the base until a
+    // propose advances it. Diffing base against base renders an empty patch and
+    // exits zero — "this box changed nothing" for a box that may have rewritten
+    // its whole tree on the runner. An empty answer that looks like a fact is
+    // worse than a refusal.
+    if is_remote(m) {
+        let tip = repo
+            .find_reference(&m.branch)
+            .and_then(|r| r.peel_to_commit())
+            .map(|c| c.tree_id().to_string())
+            .unwrap_or_default();
+        if tip == m.base_tree {
+            return Err(H5iError::Metadata(format!(
+                "{}: this box runs on `{}` and its work has not been brought home yet, so \
+                 there is nothing here to diff. `h5i box propose {}` fetches it.",
+                m.id,
+                m.runner.as_deref().unwrap_or("a runner"),
+                m.slug
+            )));
+        }
+    }
+    let base_tree = repo.find_tree(git2::Oid::from_str(&m.base_tree)?)?;
         let tip_tree = repo
             .find_reference(&m.branch)
             .map_err(|_| {
@@ -7404,6 +7522,27 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
     }
 
     // 2. Enforcement readiness — can the host actually run this claim?
+    //
+    // For a runner box the honest answer is that this machine is not the one
+    // confining it, and probing here would answer about the wrong kernel. The
+    // dangerous direction is the green one: a remote `supervised` box inspected
+    // from a host that also does `supervised` would report "functionally
+    // runnable here" and `healthy: true` — a false assurance produced by
+    // measuring somebody else's machine. `h5i runner probe` is the question
+    // that has an answer.
+    if is_remote(m) {
+        chk!(
+            "enforcement",
+            true,
+            true,
+            format!(
+                "this box is confined on `{}`, not here — `h5i runner probe {}` asks the \
+                 machine that is doing it",
+                m.runner.as_deref().unwrap_or("a runner"),
+                m.runner.as_deref().unwrap_or("<name>")
+            )
+        );
+    } else {
     match IsolationClaim::parse(&m.isolation_claim) {
         Ok(claim) => {
             let caps = sandbox::probe_host();
@@ -7476,10 +7615,24 @@ pub fn doctor(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> DoctorRepo
             format!("unknown isolation claim: {e}")
         ),
     }
+    }
 
     // 3. Workspace — present for live envs, advisory-absent for pulled/gc'd ones.
     if has_workspace(m, h5i_root) {
         chk!("workspace", true, false, "git worktree present".into());
+    } else if is_remote(m) {
+        // Neither pulled nor gc'd: this box's workspace is on another machine
+        // and was never meant to be here.
+        chk!(
+            "workspace",
+            true,
+            true,
+            format!(
+                "the workspace is on `{}` — `h5i box propose {}` brings the work home",
+                m.runner.as_deref().unwrap_or("a runner"),
+                m.slug
+            )
+        );
     } else {
         chk!(
             "workspace",
@@ -10484,6 +10637,53 @@ mod tests {
     }
 
     #[test]
+    fn a_profile_needing_credentials_cannot_be_placed_on_a_runner() {
+        // R12's refusal, which was written down and not implemented. Secret
+        // values never cross — a grant carries a name and a source descriptor —
+        // but the runner would resolve those descriptors against *its* own
+        // environment, handing the box the runner's credential or none at all
+        // while its policy says otherwise. Both are the silent weakening R1
+        // forbids.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+
+        // A repo policy that asks for a secret.
+        let policy_dir = dir.path().join(".h5i");
+        std::fs::create_dir_all(&policy_dir).unwrap();
+        std::fs::write(
+            policy_dir.join("env.toml"),
+            "[profile.needy]\nisolation = \"workspace\"\nsecrets = [\"API_KEY\"]\n",
+        )
+        .unwrap();
+
+        let err = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "needy-box",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                profile: Some("needy".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect_err("a profile needing credentials must not be placed on a runner");
+        let text = format!("{err}");
+        assert!(text.contains("secrets"), "names what it needs: {text}");
+        assert!(
+            text.contains("will not send credentials to another machine"),
+            "and why: {text}"
+        );
+        assert!(
+            fake.created.lock().unwrap().is_empty(),
+            "and the runner was never asked"
+        );
+    }
+
+    #[test]
     fn a_detached_source_cannot_be_placed_on_a_runner_yet() {
         // Refused up front rather than part-way through: a clone or a new box
         // builds its repository inside the box, and sending one across is the
@@ -10635,6 +10835,70 @@ mod tests {
         let listed = crate::receipt::list(&env_dir(&h5i_root, &m.agent, &m.slug)).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, out.capture_id);
+    }
+
+    #[test]
+    fn a_terminal_status_cannot_be_reset_by_running_on_the_runner() {
+        // The box lives on the runner until its lease or a `box rm`, so without
+        // a gate an applied box could be run again — rewriting a terminal
+        // status back to `idle` in the manifest and in `refs/h5i/env`, where it
+        // travels to other clones as an ordinary run.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+        let mut m = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "gated",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect("create");
+
+        // Before a terminal state it runs.
+        assert!(run_remote(&repo, &h5i_root, &mut m, &["true".to_string()], &fake).is_ok());
+
+        m.status = ST_APPLIED.to_string();
+        let err = match run_remote(&repo, &h5i_root, &mut m, &["true".to_string()], &fake) {
+            Err(e) => e,
+            Ok(_) => panic!("an applied box must not be runnable"),
+        };
+        assert!(format!("{err}").contains("only valid before"), "{err}");
+        assert_eq!(m.status, ST_APPLIED, "and the status is untouched");
+    }
+
+    #[test]
+    fn a_remote_box_that_has_not_proposed_refuses_to_diff_rather_than_answering_empty() {
+        // The branch exists from creation and points at the base, so diffing
+        // base against base renders an empty patch and exits zero — "this box
+        // changed nothing" for a box that may have rewritten its whole tree.
+        let (dir, repo) = placement_repo();
+        let h5i_root = dir.path().join(".h5i");
+        let fake = crate::placement::fake::FakeRunner::new("pi5");
+        let m = create_with_remote(
+            &repo,
+            &h5i_root,
+            dir.path(),
+            "human",
+            "undiffed",
+            CreateOpts {
+                runner: Some("pi5".into()),
+                ..Default::default()
+            },
+            Some(&fake),
+        )
+        .expect("create");
+
+        let err = diff(&repo, &h5i_root, &m, false)
+            .expect_err("an empty answer that looks like a fact is worse than a refusal");
+        let text = format!("{err}");
+        assert!(text.contains("has not been brought home"), "{text}");
+        assert!(text.contains("box propose"), "and says what to do: {text}");
     }
 
     #[test]

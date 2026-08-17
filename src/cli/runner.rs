@@ -256,7 +256,10 @@ fn pair(
         // 4. Where `h5i` is over there. The forced command needs an absolute
         //    path, because a PATH on the far side is not something we control.
         let resolved_worker = match &worker_path {
-            Some(p) => p.clone(),
+            // The same shape check the discovered path gets. It was validated
+            // carefully in one arm and not at all in the other, and both reach
+            // the `command="…"` interpolation and every later `ssh` argv.
+            Some(p) => validated_worker_path(p)?,
             None => resolve_worker_path(&record)?,
         };
 
@@ -403,8 +406,18 @@ fn setup_ssh(record: &RunnerRecord, remote_command: &str) -> anyhow::Result<Comm
             "UserKnownHostsFile={}",
             record.known_hosts_path()?.display()
         ))
+        // Both files ssh consults, not one of them.
+        .arg("-o")
+        .arg("GlobalKnownHostsFile=/dev/null")
         .arg("-o")
         .arg("StrictHostKeyChecking=yes")
+        // The one thing that must not be defaulted from a config file here.
+        // This path deliberately keeps `~/.ssh/config` — it uses the user's own
+        // credentials and may need their ProxyJump — but forwarding an agent to
+        // a machine whose key was scanned seconds ago hands it to whatever
+        // answered.
+        .arg("-o")
+        .arg("ForwardAgent=no")
         .arg("-o")
         .arg("RequestTTY=no");
     if let Some(p) = record.port {
@@ -413,6 +426,29 @@ fn setup_ssh(record: &RunnerRecord, remote_command: &str) -> anyhow::Result<Comm
     cmd.arg(destination_of(record));
     cmd.arg(remote_command);
     Ok(cmd)
+}
+
+/// A worker path this side is willing to put in an `authorized_keys` line and
+/// in an `ssh` argv.
+///
+/// Absolute, single line, no quote or backslash. Each of those is a real sink:
+/// ssh keeps parsing options after the destination, so a leading `-` is an
+/// option rather than a command and `-oProxyCommand=…` is an option that runs
+/// one *here*; and a `"` or a newline inside `command="…"` injects
+/// `authorized_keys` options or a whole second, unrestricted key line.
+fn validated_worker_path(path: &str) -> anyhow::Result<String> {
+    let ok = path.starts_with('/')
+        && !path.contains(['\n', '\r', '"', '\\', '\0'])
+        && path.len() <= 4096;
+    if ok {
+        Ok(path.to_string())
+    } else {
+        anyhow::bail!(
+            "`{}` is not a usable path to h5i on the runner — it must be absolute, one line, \
+             and free of quotes and backslashes",
+            h5i_core::redact::sanitize_display(path)
+        )
+    }
 }
 
 /// Where `h5i` is on the runner.
@@ -428,11 +464,10 @@ fn resolve_worker_path(record: &RunnerRecord) -> anyhow::Result<String> {
     // `-` would be an option rather than a command, and `-oProxyCommand=…` is
     // an option that runs a command *here*. A single line, absolute, is the
     // shape that cannot be one.
-    let usable = path.starts_with('/')
-        && !path.contains(['\n', '\r', '"', '\\', '\0'])
-        && path.len() <= 4096;
-    if out.status.success() && usable {
-        return Ok(path);
+    if out.status.success()
+        && let Ok(p) = validated_worker_path(&path)
+    {
+        return Ok(p);
     }
     if out.status.success() && path.starts_with('/') {
         anyhow::bail!(

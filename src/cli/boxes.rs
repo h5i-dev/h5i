@@ -924,12 +924,13 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     // than as a milestone that has not landed.
                     if h5i_core::env::is_remote(&m) {
                         println!(
-                            "   next     h5i box status {}   ·   h5i box rm {}",
-                            m.slug, m.slug
+                            "   next     h5i box run {} -- <cmd>   ·   h5i box propose {}   ·   \
+                             h5i box apply {}",
+                            m.slug, m.slug, m.slug
                         );
                         println!(
-                            "   {}      running commands and exporting a patch on a runner are \
-                             the next milestones; the box and its source are in place now",
+                            "   {}      `box shell` needs a terminal on the runner, which is \
+                             the next milestone; everything else works",
                             style("note").yellow()
                         );
                     } else {

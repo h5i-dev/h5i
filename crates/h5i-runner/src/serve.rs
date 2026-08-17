@@ -905,6 +905,23 @@ fn handle_create<R: Read>(
         )));
     }
 
+    // The other half of R12's refusal. The client refuses first and this is
+    // the enforcement: a worker asked to run a policy that declares secrets or
+    // an authenticated API would resolve those against *its own* environment,
+    // which is the runner's credential in the user's box. A worker must not
+    // honour a policy it cannot honour honestly.
+    if !resolved.profile.secrets.is_empty()
+        || !resolved.profile.secret_grants.is_empty()
+        || !resolved.profile.auth.is_empty()
+    {
+        return Err(Disposition::Answer(ErrorMsg::new(
+            ErrorCode::Unsupported,
+            "this policy declares credentials, and a runner has none of yours — it would \
+             resolve them against its own environment. Credentials that stay on the control \
+             plane are a later milestone.",
+        )));
+    }
+
     let policy_digest = policy_digest_of(&req.policy).map_err(|e| {
         Disposition::Answer(ErrorMsg::new(
             ErrorCode::Malformed,

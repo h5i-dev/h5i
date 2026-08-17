@@ -954,6 +954,37 @@ pub struct ExportResult {
     pub sha256: String,
 }
 
+impl ExitMsg {
+    /// The one reply that had no cleaning, and it carries the egress summary
+    /// straight into a receipt.
+    ///
+    /// `EgressSummary.hosts[].host` is an arbitrary string from a machine the
+    /// threat model says may be compromised, and the producer-side cap on how
+    /// many there are is a producer-side cap — it binds the honest worker and
+    /// not the other kind. Nothing renders those strings today, which is why
+    /// this is consistency rather than a hole; a receipt is a durable record,
+    /// and what goes into one should be bounded when it is written rather than
+    /// when somebody later decides to print it.
+    pub fn sanitized(mut self) -> Result<Self, ProtoError> {
+        if let Some(egress) = self.egress.take() {
+            let text = serde_json::to_string(&egress).unwrap_or_default();
+            if text.len() > MAX_EGRESS_JSON {
+                return Err(ProtoError::Invalid(format!(
+                    "the runner's egress summary is {} bytes, over the {MAX_EGRESS_JSON} \
+                     this protocol accepts",
+                    text.len()
+                )));
+            }
+            self.egress = Some(egress);
+        }
+        Ok(self)
+    }
+}
+
+/// How much egress evidence one exec may report. Generous for a real run,
+/// bounded for one that is not.
+pub const MAX_EGRESS_JSON: usize = 256 * 1024;
+
 /// A refusal, on the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorMsg {

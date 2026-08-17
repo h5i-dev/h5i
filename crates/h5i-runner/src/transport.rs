@@ -392,9 +392,25 @@ impl SshTransport {
 
     /// The whole argv, as a pure function of the configuration.
     ///
-    /// Every option here is load-bearing and none of it is defaulted from the
-    /// user's `~/.ssh/config`, because a runner's security properties must not
-    /// depend on a file this code did not write:
+    /// Every option here is load-bearing, and none of it comes from the user's
+    /// `~/.ssh/config`, because a runner's security property must not depend on
+    /// a file this code did not write.
+    ///
+    /// That last sentence used to be false, which is why it is now enforced by
+    /// `-F /dev/null` rather than asserted by a comment. Passing `-o` does not
+    /// stop ssh reading the config: it stops the config winning *for the
+    /// options named*. `GlobalKnownHostsFile` was not named, ssh consults both
+    /// host-key files, and a `~/.ssh/config` setting it alongside a
+    /// `ProxyCommand` sent every RPC to another machine with
+    /// `StrictHostKeyChecking=yes` and the pinned `UserKnownHostsFile` both
+    /// still in force — while `runner list` went on showing the honestly paired
+    /// fingerprint. That breaks the attestation, not merely the transport:
+    /// `runner_id` is what a manifest and a receipt record. `Match exec` and
+    /// `LocalCommand` in the same file are local execution at parse time.
+    ///
+    /// The cost is real and worth naming: a user's `ProxyJump` for this host is
+    /// not picked up either. A runner that needs one should carry it in its own
+    /// record rather than in a file anything else can edit.
     ///
     /// - `BatchMode=yes` — never prompt. A prompt on a non-interactive channel
     ///   is a hang, and a password prompt would mean the pair key is not being
@@ -410,11 +426,17 @@ impl SshTransport {
     ///   that never ends.
     pub fn argv(&self) -> Vec<String> {
         let mut a: Vec<String> = vec!["ssh".into()];
+        // No configuration file, at all. See the note above.
+        a.push("-F".into());
+        a.push("/dev/null".into());
         let mut opt = |k: &str, v: &str| {
             a.push("-o".into());
             a.push(format!("{k}={v}"));
         };
         opt("BatchMode", "yes");
+        // Both host-key files, not just the user one: ssh consults each, and
+        // pinning one of two is pinning neither.
+        opt("GlobalKnownHostsFile", "/dev/null");
         opt("IdentitiesOnly", "yes");
         opt("IdentityFile", &self.identity.display().to_string());
         opt("UserKnownHostsFile", &self.known_hosts.display().to_string());
@@ -574,6 +596,13 @@ mod tests {
             Some("/home/dev/.config/h5i/runners/pi/id_ed25519")
         );
         assert_eq!(opt_value(&argv, "RequestTTY"), Some("no"));
+
+        // The two that make the rest of them mean anything. Without `-F` the
+        // user's config is still read, and without the global file the pin
+        // covers one of the two places ssh looks.
+        let i = argv.iter().position(|a| a == "-F").expect("-F");
+        assert_eq!(argv[i + 1], "/dev/null");
+        assert_eq!(opt_value(&argv, "GlobalKnownHostsFile"), Some("/dev/null"));
     }
 
     #[test]

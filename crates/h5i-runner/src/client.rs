@@ -454,7 +454,10 @@ impl Session {
                 Some(FrameKind::Stdout) => stdout.extend_from_slice(&frame.payload),
                 Some(FrameKind::Stderr) => stderr.extend_from_slice(&frame.payload),
                 Some(FrameKind::KeepAlive) => continue,
-                Some(FrameKind::Exit) => return proto::decode("EXIT", &frame.payload).map_err(Into::into),
+                Some(FrameKind::Exit) => {
+                    let exit: ExitMsg = proto::decode("EXIT", &frame.payload)?;
+                    return exit.sanitized().map_err(Into::into);
+                }
                 Some(FrameKind::Error) => {
                     let msg: ErrorMsg = proto::decode("ERROR", &frame.payload)?;
                     let msg = msg.sanitized();
