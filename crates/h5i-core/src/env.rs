@@ -5464,6 +5464,11 @@ pub fn run_remote(
     }
 
     let env_dir_path = env_dir(h5i_root, &m.agent, &m.slug);
+    // `RunLock` is flock, so it exists on Unix only — the same guard every other
+    // writer in this file carries. Elsewhere the serialization is absent rather
+    // than faked, which is the pre-existing property of this lock and not
+    // something the remote path gets to decide differently.
+    #[cfg(unix)]
     let _lock = RunLock::acquire(&m.dir(h5i_root))?;
 
     let box_id = crate::placement::remote_box_id(&m.id);
@@ -9595,6 +9600,8 @@ pub fn propose_remote(
     m: &mut EnvManifest,
     runner: &dyn crate::placement::RemoteRunner,
 ) -> Result<String, H5iError> {
+    // Unix only, like every other writer's hold in this file.
+    #[cfg(unix)]
     let _lock = RunLock::acquire(&m.dir(h5i_root))?;
     if !matches!(
         m.status.as_str(),
