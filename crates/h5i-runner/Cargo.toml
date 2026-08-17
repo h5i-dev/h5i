@@ -1,0 +1,36 @@
+[package]
+name = "h5i-runner"
+version = "0.1.0"
+edition = "2024"
+description = "h5i remote runner: place a box on a second Linux machine over SSH, with the repo, the policy and the credentials staying home (ROADMAP.md R1–R13)."
+
+[dependencies]
+h5i-error = { path = "../h5i-error" }
+# The worker executes the same confinement machinery the local path does, and
+# the protocol borrows this crate's tier vocabulary rather than spelling its
+# own: a capability report that named tiers h5i does not have would be a
+# protocol that can drift from the product.
+h5i-sandbox = { path = "../h5i-sandbox" }
+# The export stages the box's work into a tree. It must NOT be the git CLI:
+# the box owns its own `.git/config`, and git executes `core.fsmonitor` and
+# `filter.*.clean` from it — running the CLI in that tree is arbitrary command
+# execution as the runner user. libgit2 implements neither.
+git2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+# `runner_id` is a SHA-256 of the pinned host key. Same version as every other
+# crate in the workspace that hashes something.
+sha2 = "0.10"
+# Host keys arrive base64 from `ssh-keyscan`, and the fingerprint we print back
+# is base64 too, because that is the spelling `ssh-keygen -lf` uses and the
+# whole point is that a user can compare the two.
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+# Free space on the runner's box-storage filesystem. There is no std API for
+# it, and the alternative is parsing `df`.
+libc = "0.2.186"
+
+[dev-dependencies]
+tempfile = "3.8"

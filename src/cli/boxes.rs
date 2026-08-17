@@ -77,6 +77,19 @@ pub enum BoxCommands {
         /// engine changes what a page is able to do.
         #[arg(long)]
         engine: Option<String>,
+        /// Run this box on a paired runner instead of this machine.
+        ///
+        /// The source is copied across as a git bundle and the box is built
+        /// there; the repository, the policy and the credentials stay here.
+        /// The box is bound to that machine's host key, not to its name, so a
+        /// name re-pointed at other hardware never silently moves a box.
+        ///
+        /// `h5i runner pair` sets one up and `h5i runner probe` says what it
+        /// can do. A tier the runner does not offer is refused with the
+        /// capability named, never quietly swapped for a weaker one.
+        #[cfg(feature = "runner")]
+        #[arg(long, value_name = "NAME")]
+        runner: Option<String>,
         /// Workspace backend (auto|worktree)
         #[arg(long, default_value = "auto")]
         backend: String,
@@ -730,6 +743,8 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     backend,
                     audit,
                     json,
+                    #[cfg(feature = "runner")]
+                    runner,
                 } => {
                     let agent = agent_identity();
                     use h5i_core::sandbox::{IsolationClaim, IsolationRequest};
@@ -773,7 +788,44 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         parent_branch: pr_base.as_ref().map(|b| b.local_branch.clone()),
                         pr: pr_base.as_ref().map(|b| b.number),
                         pr_head_ref: pr_base.as_ref().and_then(|b| b.head_ref.clone()),
+                        #[cfg(feature = "runner")]
+                        runner: runner.clone(),
+                        #[cfg(not(feature = "runner"))]
+                        runner: None,
                     };
+
+                    // Opened before the create so a bad runner name fails
+                    // before a branch exists, and held for the call so the
+                    // bundle it builds outlives the request that streams it.
+                    #[cfg(feature = "runner")]
+                    let placement = match &runner {
+                        Some(name) => {
+                            let paired = super::placement::PairedRunner::open(name)?;
+                            // Only an explicit tier can be checked ahead of
+                            // time: `auto` is resolved against the runner's own
+                            // host, so what it picks is the runner's to say.
+                            if let Some(h5i_core::sandbox::IsolationRequest::Claim(c)) =
+                                &opts.isolation
+                            {
+                                paired.check_supports(c.as_str())?;
+                            }
+                            Some(paired)
+                        }
+                        None => None,
+                    };
+                    #[cfg(feature = "runner")]
+                    let m = h5i_core::env::create_with_remote(
+                        git,
+                        &h5i_root,
+                        &workdir,
+                        &agent,
+                        &name,
+                        opts,
+                        placement
+                            .as_ref()
+                            .map(|p| p as &dyn h5i_core::placement::RemoteRunner),
+                    )?;
+                    #[cfg(not(feature = "runner"))]
                     let m = h5i_core::env::create(git, &h5i_root, &workdir, &agent, &name, opts)?;
                     if json {
                         // The manifest is the contract (same shape as
@@ -832,7 +884,23 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         m.parent_branch
                     );
                     println!("   branch   {}", m.branch);
-                    println!("   work     {}", m.work_dir(&h5i_root).display());
+                    // A runner box has no workspace on this machine, and
+                    // printing the path one *would* have had is how somebody
+                    // ends up `cd`-ing into a directory that was never created.
+                    match (&m.runner, &m.runner_id) {
+                        (Some(runner), Some(id)) => {
+                            println!(
+                                "   on       {} ({})",
+                                style(runner).cyan(),
+                                h5i_core::env::short(id, 12)
+                            );
+                            println!(
+                                "   work     on {runner} — this machine keeps the repository, \
+                                 the policy and the credentials"
+                            );
+                        }
+                        _ => println!("   work     {}", m.work_dir(&h5i_root).display()),
+                    }
                     // Discoverability: when we auto-picked a kernel tier and the host
                     // has no rootless Podman, tell the user the `container` tier
                     // (the one with a network egress allowlist) exists and what it
@@ -851,10 +919,27 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             style("tip").yellow()
                         );
                     }
-                    println!(
-                        "   next     h5i box run {} -- <cmd>   ·   h5i box shell {}   ·   h5i box export {}",
-                        m.slug, m.slug, m.slug
-                    );
+                    // Suggesting verbs that cannot work yet is worse than
+                    // suggesting nothing: it reads as a bug in the box rather
+                    // than as a milestone that has not landed.
+                    if h5i_core::env::is_remote(&m) {
+                        println!(
+                            "   next     h5i box run {} -- <cmd>   ·   h5i box propose {}   ·   \
+                             h5i box apply {}",
+                            m.slug, m.slug, m.slug
+                        );
+                        println!(
+                            "   {}      `box shell` needs a terminal on the runner, which is \
+                             the next milestone; everything else works",
+                            style("note").yellow()
+                        );
+                    } else {
+                        println!(
+                            "   next     h5i box run {} -- <cmd>   ·   h5i box shell {}   ·   \
+                             h5i box export {}",
+                            m.slug, m.slug, m.slug
+                        );
+                    }
                 }
 
                 BoxCommands::Run { name, json, command } => {
@@ -862,6 +947,18 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         anyhow::bail!("usage: h5i box run [--json] <name> -- <command> [args…]");
                     }
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    // A box on a runner runs there, which is the whole point of
+                    // having put it there.
+                    #[cfg(feature = "runner")]
+                    let outcome = match (&m.runner, h5i_core::env::is_remote(&m)) {
+                        (Some(runner_name), true) => {
+                            let paired = super::placement::PairedRunner::open(runner_name)?;
+                            paired.check_identity(&m)?;
+                            h5i_core::env::run_remote(git, &h5i_root, &mut m, &command, &paired)?
+                        }
+                        _ => h5i_core::env::run(git, &h5i_root, &mut m, &command)?,
+                    };
+                    #[cfg(not(feature = "runner"))]
                     let outcome = h5i_core::env::run(git, &h5i_root, &mut m, &command)?;
                     // The command's own output, as recorded (secret-redacted).
                     let dir = h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug);
@@ -1315,13 +1412,21 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             // These land in a terminal, so they are cleaned
                             // the way every other box-supplied string is.
                             let clean = h5i_core::redact::sanitize_display;
+                            // Where it runs, when that is not here. Rendered
+                            // rather than stored as a column so a local box's
+                            // line is byte-for-byte what it always was.
+                            let placement = match &m.runner {
+                                Some(name) => format!(" on={}", clean(name)),
+                                None => String::new(),
+                            };
                             println!(
-                                "{:<28} {:<9} isolation={:<10} base={} captures={}{}{}",
+                                "{:<28} {:<9} isolation={:<10} base={} captures={}{}{}{}",
                                 style(clean(&m.id)).magenta(),
                                 clean(&m.status),
                                 clean(&m.isolation_claim),
                                 h5i_core::env::short(&m.base_commit, 12),
                                 m.captures.len(),
+                                style(&placement).cyan(),
                                 style(drift_mark).yellow(),
                                 style(&live_mark).green()
                             );
@@ -1558,6 +1663,27 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     let out = out.unwrap_or_else(|| {
                         workdir.join("h5i-export").join(&m.slug)
                     });
+                    #[cfg(feature = "runner")]
+                    let paired = match (&m.runner, h5i_core::env::is_remote(&m)) {
+                        (Some(runner_name), true) => {
+                            let p = super::placement::PairedRunner::open(runner_name)?;
+                            p.check_identity(&m)?;
+                            Some(p)
+                        }
+                        _ => None,
+                    };
+                    #[cfg(feature = "runner")]
+                    let s = h5i_core::export::export_with_remote(
+                        git,
+                        &h5i_root,
+                        &mut m,
+                        &out,
+                        force,
+                        paired
+                            .as_ref()
+                            .map(|p| p as &dyn h5i_core::placement::RemoteRunner),
+                    )?;
+                    #[cfg(not(feature = "runner"))]
                     let s = h5i_core::export::export(git, &h5i_root, &mut m, &out, force)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&s)?);
@@ -1592,6 +1718,18 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
 
                 BoxCommands::Propose { name } => {
                     let mut m = h5i_core::env::find(&h5i_root, &name)?;
+                    // A runner box freezes on the machine it lives on, and the
+                    // work comes home through a quarantine.
+                    #[cfg(feature = "runner")]
+                    let brief = match (&m.runner, h5i_core::env::is_remote(&m)) {
+                        (Some(runner_name), true) => {
+                            let paired = super::placement::PairedRunner::open(runner_name)?;
+                            paired.check_identity(&m)?;
+                            h5i_core::env::propose_remote(git, &h5i_root, &mut m, &paired)?
+                        }
+                        _ => h5i_core::env::propose(git, &h5i_root, &mut m)?,
+                    };
+                    #[cfg(not(feature = "runner"))]
                     let brief = h5i_core::env::propose(git, &h5i_root, &mut m)?;
                     println!("{brief}");
                 }
@@ -1623,17 +1761,59 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         "{} {} aborted (manifest preserved for forensics)",
                         SUCCESS, m.id
                     );
+                    // "Aborted" is a stronger word than the state this produces
+                    // for a runner box: the box keeps existing over there until
+                    // its lease expires or it is removed. Saying so is the
+                    // difference between a status and a promise.
+                    #[cfg(feature = "runner")]
+                    if h5i_core::env::is_remote(&m) {
+                        println!(
+                            "   {}      the box itself is still on `{}` until its lease \
+                             expires — `h5i box rm {}` removes it now",
+                            style("note").yellow(),
+                            m.runner.as_deref().unwrap_or("the runner"),
+                            m.slug
+                        );
+                    }
                 }
 
                 BoxCommands::Rm { names, force } => {
                     let mut any_failed = false;
                     for name in &names {
                         match h5i_core::env::find(&h5i_root, name) {
-                            Ok(m) => match h5i_core::env::rm(git, &h5i_root, &m, force) {
-                                Ok(()) => println!(
-                                    "{} {} removed (workspace, branches, and manifest erased)",
-                                    SUCCESS, m.id
-                                ),
+                            Ok(m) => {
+                            match h5i_core::env::rm(git, &h5i_root, &m, force) {
+                                Ok(()) => {
+                                    // The far side only after this side agreed
+                                    // to let the box go. The other order looks
+                                    // tidier and is wrong: `rm` refuses a live
+                                    // box, and destroying the runner's copy
+                                    // first would leave a local record pointing
+                                    // at nothing while the user was told the
+                                    // removal had failed.
+                                    //
+                                    // The remaining failure — this side gone,
+                                    // the runner unreachable — leaves an orphan
+                                    // there, which is exactly what the lease is
+                                    // for: it expires and the next sweep takes
+                                    // it. Best effort, and said out loud.
+                                    #[cfg(feature = "runner")]
+                                    if h5i_core::env::is_remote(&m)
+                                        && let Some(problem) =
+                                            super::placement::destroy_remote(&m)
+                                    {
+                                        eprintln!(
+                                            "{} {} — it will be reaped there when its lease \
+                                             expires",
+                                            style("warning:").yellow().bold(),
+                                            problem
+                                        );
+                                    }
+                                    println!(
+                                        "{} {} removed (workspace, branches, and manifest erased)",
+                                        SUCCESS, m.id
+                                    )
+                                }
                                 Err(e) => {
                                     eprintln!(
                                         "{} failed to remove {}: {e}",
@@ -1642,7 +1822,8 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                                     );
                                     any_failed = true;
                                 }
-                            },
+                            }
+                            }
                             Err(e) => {
                                 eprintln!(
                                     "{} env '{}' not found: {e}",
@@ -1659,6 +1840,27 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                 }
 
                 BoxCommands::Gc => {
+                    // Runner boxes are not reclaimable from here, and a `gc`
+                    // that silently omitted the one kind of box still consuming
+                    // something read as "nothing to do".
+                    #[cfg(feature = "runner")]
+                    {
+                        let mut names: Vec<String> = h5i_core::env::list(&h5i_root)
+                            .into_iter()
+                            .filter(h5i_core::env::is_remote)
+                            .filter_map(|m| m.runner)
+                            .collect();
+                        names.sort();
+                        names.dedup();
+                        if !names.is_empty() {
+                            println!(
+                                "{} box(es) live on runners and are not reclaimed from here — \
+                                 `h5i runner gc <name>` reaps what has expired on {}.",
+                                style("note:").yellow(),
+                                names.join(", ")
+                            );
+                        }
+                    }
                     let reclaimed = h5i_core::env::gc(git, &h5i_root)?;
                     if reclaimed.is_empty() {
                         println!("Nothing to reclaim (only applied/aborted envs are gc'd).");

@@ -373,6 +373,17 @@ fn box_process(
     m: &h5i_core::env::EnvManifest,
     port: u16,
 ) -> anyhow::Result<u32> {
+    // A runner box has no process on this machine at all, so the generic
+    // message below would tell the operator to start a session with a command
+    // that refuses for the same reason — a circle rather than an answer.
+    if h5i_core::env::is_remote(m) {
+        anyhow::bail!(
+            "`{name}` runs on `{}`, so there is no process here whose network h5i could \
+             share. Sharing a port out of a runner box needs the WAN transport, which is a \
+             later milestone; a box created on this machine can be shared today.",
+            m.runner.as_deref().unwrap_or("a runner")
+        );
+    }
     let Some(pid) = h5i_core::view::box_pid(dir) else {
         // A *writer*, which is the same filter `box_pid` applies. Asking
         // whether the registry is non-empty counts `box shell --readonly`

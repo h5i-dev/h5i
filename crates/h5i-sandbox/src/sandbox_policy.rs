@@ -801,7 +801,13 @@ fn default_fs_read() -> Vec<String> {
 }
 
 fn default_fs_deny() -> Vec<String> {
-    ["~/.ssh", "~/.aws", "~/.config/gh", "$REPO/.git/hooks"]
+    // `~/.config/h5i` holds the runner directory: a per-runner private key and
+    // the pinned host key that is the whole basis of `runner_id`. That is the
+    // `~/.ssh` threat model exactly, and it belongs on the same list. It held
+    // by omission before — nothing in the defaults grants anything under
+    // `$HOME` — but the deny list is what survives a user-authored profile
+    // granting `~/.config`, which is precisely when it matters.
+    ["~/.ssh", "~/.aws", "~/.config/gh", "~/.config/h5i", "$REPO/.git/hooks"]
         .iter()
         .map(|s| s.to_string())
         .collect()
