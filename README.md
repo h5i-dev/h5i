@@ -11,7 +11,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Integrated Sandbox for AI Coding Agents</h1>
+<h1 align="center">Auditable Sandbox for AI Coding Agents</h1>
 
 **h5i** (pronounced *high-five*) gives coding agents a complete, disposable
 development environment inside a single security boundary. The agent,
