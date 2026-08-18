@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i: Integrated Sandbox for AI Coding Agents (Claude Code &amp; Codex)</title>
+  <title>h5i: Auditable Sandbox for AI Coding Agents (Claude Code &amp; Codex)</title>
   <meta name="description" content="h5i gives coding agents a complete, disposable development environment inside a single security boundary: agent, shell, dependencies, dev server and an isolated browser. Lightweight sandboxes start in under 200 ms, microVM isolation adds a separate kernel, and your host files and credentials stay outside. Local-first, no SaaS.">
-  <meta name="keywords" content="ai agent sandbox, integrated sandbox for ai coding agents, disposable development environment, microvm isolation, lightweight sandbox, isolated browser for agents, agent browser automation, landlock seccomp sandbox, network egress allowlist, reviewable patch, execution logs, local-first, claude code, codex, h5i">
+  <meta name="keywords" content="ai agent sandbox, auditable sandbox for ai coding agents, disposable development environment, microvm isolation, lightweight sandbox, isolated browser for agents, agent browser automation, landlock seccomp sandbox, network egress allowlist, reviewable patch, execution logs, local-first, claude code, codex, h5i">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -21,7 +21,7 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i: Integrated Sandbox for AI Coding Agents (Claude Code &amp; Codex)">
+  <meta property="og:title" content="h5i: Auditable Sandbox for AI Coding Agents (Claude Code &amp; Codex)">
   <meta property="og:description" content="A complete, disposable development environment for coding agents inside one security boundary. Lightweight sandboxes start in under 200 ms, microVM isolation adds a separate kernel, and agents drive an isolated browser from inside. Your host files and credentials stay outside; a reviewable patch and execution logs come out. Local-first, no SaaS.">
   <meta property="og:url" content="https://h5i.dev/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
@@ -31,8 +31,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i: Integrated Sandbox for AI Coding Agents (Claude Code &amp; Codex)">
-  <meta name="twitter:description" content="An integrated sandbox for AI coding agents. Agent, workspace, shell, dependencies, dev server and an isolated browser run together inside one disposable boundary. Sandboxes start in under 200 ms; microVM isolation when you need a separate kernel. A reviewable patch and execution logs come out. Local-first, no SaaS.">
+  <meta name="twitter:title" content="h5i: Auditable Sandbox for AI Coding Agents (Claude Code &amp; Codex)">
+  <meta name="twitter:description" content="An auditable sandbox for AI coding agents. Agent, workspace, shell, dependencies, dev server and an isolated browser run together inside one disposable boundary. Sandboxes start in under 200 ms; microVM isolation when you need a separate kernel. A reviewable patch and execution logs come out. Local-first, no SaaS.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
   <meta name="twitter:image:alt" content="h5i: a coding agent working inside a disposable, confined box, with a reviewed patch and an execution receipt as the only way out">
 
@@ -55,7 +55,7 @@
         "name": "h5i",
         "alternateName": "high-five",
         "url": "https://h5i.dev/",
-        "description": "An integrated sandbox for AI coding agents: a complete, disposable development environment holding the agent, workspace, shell, dependencies, dev server and an isolated browser inside one security boundary, with a reviewable patch and execution logs as the only way out.",
+        "description": "An auditable sandbox for AI coding agents: a complete, disposable development environment holding the agent, workspace, shell, dependencies, dev server and an isolated browser inside one security boundary, with a reviewable patch and execution logs as the only way out.",
         "publisher": {"@id": "https://h5i.dev/#org"},
         "inLanguage": "en"
       },
@@ -67,7 +67,7 @@
         "applicationCategory": "DeveloperApplication",
         "applicationSubCategory": "AI agent sandbox",
         "operatingSystem": "Linux, macOS, Windows (WSL2)",
-        "description": "An integrated sandbox for AI coding agents. h5i gives Claude Code, Codex and other coding agents a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run inside, enforced by Landlock, seccomp, namespaces and a network egress allowlist. Lightweight sandboxes start in under 200 ms and microVM isolation adds a separate kernel. Host files and credentials stay outside, and the only way out is a reviewable patch with execution logs.",
+        "description": "An auditable sandbox for AI coding agents. h5i gives Claude Code, Codex and other coding agents a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run inside, enforced by Landlock, seccomp, namespaces and a network egress allowlist. Lightweight sandboxes start in under 200 ms and microVM isolation adds a separate kernel. Host files and credentials stay outside, and the only way out is a reviewable patch with execution logs.",
         "featureList": [
           "Lightweight sandboxes that start in under 200 ms for everyday agent tasks",
           "MicroVM isolation with a separate kernel when stronger boundaries matter",
@@ -110,7 +110,7 @@
             "name": "What is h5i?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "h5i (pronounced high-five) is an integrated sandbox for AI coding agents. It gives a coding agent a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run together inside it, while your host files and credentials stay outside. When the work is done h5i exports a reviewable patch and execution logs. One Rust binary, Apache 2.0, local-first, with no hosted sandbox and no SaaS account."
+              "text": "h5i (pronounced high-five) is an auditable sandbox for AI coding agents. It gives a coding agent a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run together inside it, while your host files and credentials stay outside. When the work is done h5i exports a reviewable patch and execution logs. One Rust binary, Apache 2.0, local-first, with no hosted sandbox and no SaaS account."
             }
           },
           {
@@ -254,7 +254,7 @@
 <section id="hero" tabindex="-1">
   <div class="hero-inner">
     <div class="hero-badge">Confined agents · Isolated browsers · Secure demos · Reviewed changes</div>
-    <h1 class="hero-title"><em>Integrated Sandbox</em> for AI Coding Agents</h1>
+    <h1 class="hero-title"><em>Auditable Sandbox</em> for AI Coding Agents</h1>
     <p class="hero-sub">
       Give a coding agent <strong>full autonomy</strong> inside a secure, disposable environment. The agent,
       shell, dependencies, and browser all run together within one isolated boundary without credential leak.
@@ -713,7 +713,7 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an <strong>integrated sandbox for AI coding agents</strong>. It gives a coding agent a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run together inside it, while your host files and credentials stay outside. When the work is done h5i exports a reviewable patch and execution logs. One Rust binary, Apache 2.0, local-first, with no hosted sandbox and no SaaS account.</div>
+        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is an <strong>auditable sandbox for AI coding agents</strong>. It gives a coding agent a complete, disposable development environment inside a single security boundary: the agent, workspace, shell, dependencies, dev server and an isolated browser all run together inside it, while your host files and credentials stay outside. When the work is done h5i exports a reviewable patch and execution logs. One Rust binary, Apache 2.0, local-first, with no hosted sandbox and no SaaS account.</div>
       </details>
       <details class="faq-item">
         <summary>How fast does an h5i sandbox start?</summary>
@@ -770,7 +770,7 @@
 <!-- ── Close ──────────────────────────────────────────────────── -->
 <section id="cta">
   <div class="container">
-    <h2 class="cta-title">Local-first. An integrated sandbox for agents.</h2>
+    <h2 class="cta-title">Local-first. An auditable sandbox for agents.</h2>
     <p class="cta-sub">Full autonomy inside a box that holds nothing of yours, and a reviewed patch on the way
       out. Apache 2.0. No SaaS, no lock-in.</p>
     <div class="hero-install">
