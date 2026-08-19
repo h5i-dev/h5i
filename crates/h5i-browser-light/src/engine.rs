@@ -468,6 +468,20 @@ impl Page {
     /// Separate from loading because it is a policy decision, not a parsing
     /// step: a caller that has not opted into script gets a page whose
     /// `<script>` elements are inert, which is exactly what tiers 1 and 2 were.
+    /// Build a realm for this page and run its script.
+    ///
+    /// **A realm is built per navigation, deliberately, and is not reused.**
+    /// ROADMAP §B11.5.13 lists reuse as a performance item worth ~20ms a page
+    /// (§B8.9), and it should stay unbuilt. A realm carries everything the
+    /// previous document's script put in it: globals, patched prototypes,
+    /// retained closures. Carrying that into the next document means a page can
+    /// set attacker-controlled state, cause a navigation, and have that state
+    /// visible to the page it navigated to — which is a same-origin-ish
+    /// boundary this engine would be removing to save twenty milliseconds.
+    ///
+    /// Obscura, a much larger engine in the same space, drops and recreates its
+    /// whole JS runtime on every navigation for exactly this reason. The cost
+    /// is real and it is the right one to pay.
     pub fn run_scripts(&mut self, broker: Arc<Broker>) -> Result<(), H5iError> {
         // In document order, inline and external together, because execution
         // order is semantics: a bundle that defines a global in one script and

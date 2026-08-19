@@ -6120,6 +6120,52 @@ restart, while `docs/Persist-cookies-and-storage.md` promises a file. §B6 alrea
 commits us to in-memory storage; the lesson is that the *documentation* has to
 say so.
 
+### B15.12a The performance items, measured: all three answers are no
+
+§B11.5.13 and §B11.5.14 list two performance items — reuse the realm across
+navigations (~20ms a page, §B8.9), and cache the prelude's bytecode (three
+thousand lines of JavaScript parsed per realm). Both were attempted. Neither
+should be built, and a third optimisation that looked obvious was measured and
+reverted. Recorded together because the pattern is the point.
+
+**Realm reuse: refused, on grounds §B11.5 did not weigh.** A realm carries
+everything the previous document's script put in it — globals, patched
+prototypes, retained closures. Reusing one across a navigation means a page can
+set attacker-controlled state, cause a navigation, and have that state visible
+to the document it navigated to. That is a boundary this engine would be
+removing to save twenty milliseconds. Obscura, a far larger engine in the same
+space, drops and recreates its entire JS runtime on every navigation for exactly
+this reason, and says so in the code. The note now lives on `Page::run_scripts`
+so the item is refused in review rather than re-attempted.
+
+**Prelude bytecode caching: not buildable with this Boa**, for a checkable
+reason rather than a hard one. `boa_engine::Script::parse` interns identifiers
+into *the context's own* interner (`context.interner_mut()`) and binds the
+result to that context's realm; every page builds a fresh `Context`. A parsed
+script is not a portable artifact, so there is nothing to cache across pages.
+Revisit if Boa grows a shared interner or a serialisable code block. The note
+lives at the prelude's eval site.
+
+**And the one that looked free was measured and was not there.** The settle loop
+made *five* separate `context.eval` calls per round, three of them on the hot
+path and one building its source with `format!`. Combining the three into a
+single prelude hook is obviously less work, so it was built — and then measured
+against the corpus, three runs each way:
+
+    before   9.87s  9.62s  9.66s
+    after    9.86s  9.82s  9.93s
+
+No gain, inside noise, possibly worse. Parsing a twenty-character string is not
+what a page load costs, and the change added a packed-integer protocol between
+Rust and JS for nothing. Reverted.
+
+The lesson is §B8's own, arriving from the other direction: **the rule against
+building what no page asked for applies to performance too.** All three of these
+were reasoned from the shape of the code rather than from a measurement, and all
+three were wrong — two dangerous, one merely useless. The ceiling on this whole
+area is small anyway: the corpus runs 35 pages in 9.7s, so a realm at 20ms is
+about 7% of the total even if it were free.
+
 ### B15.13 The queue
 
 Ordered by leverage, not size. Items 1 and 2 make everything after them cheaper.
@@ -6142,7 +6188,8 @@ Ordered by leverage, not size. Items 1 and 2 make everything after them cheaper.
 9. **Replay**: the action log becomes a script, and a replay is diffed against
    the request log it reproduces. §B15.10. Depends on 5.
 
-Items 10 and beyond are §B11.5's existing queue, unchanged. Nothing here
+Items 10 and beyond are §B11.5's existing queue, minus its two performance
+entries, which §B15.12a closes as refused and unbuildable respectively. Nothing here
 displaces §B11.5.1 (a corpus that needs a login), which remains the
 least-verified thing this file claims — and §B15.9 changes what that corpus is
 testing, so it should be built after item 8 rather than before it.

@@ -372,6 +372,20 @@ impl Script {
                 boa_engine::property::Attribute::empty(),
             )
             .map_err(|e| e.to_string())?;
+        // Parsed on every realm, and it cannot be otherwise with this Boa.
+        //
+        // ROADMAP §B11.5.14 wanted this cached: three thousand lines of
+        // JavaScript re-parsed per page is a real cost, and §B8.9 measured the
+        // realm at ~20ms. It is not buildable here, for a checkable reason
+        // rather than a hard one. `boa_engine::Script::parse` interns its
+        // identifiers into *this context's* interner (`context.interner_mut()`)
+        // and binds the result to this context's realm, and every page builds a
+        // fresh `Context`. A parsed script is therefore not a portable
+        // artifact; there is nothing to cache across pages. Revisit if Boa
+        // grows a shared interner or a serialisable code block.
+        //
+        // The sibling item, reusing the realm itself across navigations, is
+        // refused on other grounds — see `Page::run_scripts`.
         context
             .eval(Source::from_reader(
                 PRELUDE.as_bytes(),
