@@ -1396,10 +1396,42 @@ mandatory detector on a laptop kernel is a tool that does not start.</p>
 </table>
 <p><code>h5i box detect rules</code> prints the whole signature catalogue with what each rule
 is for. <code>h5i box detect show &lt;box&gt;</code> prints what fired, worst first.</p>
-<p>Requirements: Linux 5.8 or newer (<code>BPF_MAP_TYPE_RINGBUF</code>), <code>CAP_BPF</code> and
-<code>CAP_PERFMON</code>, and an h5i built with <code>--features bpf</code> by a <code>clang</code> that can
-target BPF. No BTF, no <code>vmlinux.h</code>, and no kernel headers: the probe reads no
-kernel structure, only syscall tracepoint arguments, which are stable ABI.</p>
+<p>This is opt-in at three separate layers, and all three have to say yes:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Switch</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>build</td>
+<td><code>cargo install --path . --features bpf</code></td>
+<td>off — a stock build and the released binaries carry no probe</td>
+</tr>
+<tr>
+<td>host</td>
+<td><code>CAP_BPF</code> and <code>CAP_PERFMON</code> on the h5i binary</td>
+<td>not granted</td>
+</tr>
+<tr>
+<td>policy</td>
+<td><code>[profile.X.detect] enabled = true</code></td>
+<td>false</td>
+</tr>
+</tbody>
+</table>
+<p><code>h5i box detect probe</code> reports all three and prints the command for whichever
+one is missing.</p>
+<p>Other requirements: Linux 5.8 or newer (<code>BPF_MAP_TYPE_RINGBUF</code>), and a <code>clang</code>
+that can target BPF at build time. No BTF, no <code>vmlinux.h</code>, and no kernel
+headers: the probe reads no kernel structure, only syscall tracepoint
+arguments, which are stable ABI.</p>
+<p>Reading a receipt needs none of it. The evidence types ship in every build, so
+a colleague with a stock h5i can read an export from a machine that had the
+collector.</p>
 <p><code>wall</code> is enforced everywhere. <strong><code>mem</code> and <code>procs</code> are not enforced at the
 <code>process</code> and <code>supervised</code> tiers on macOS</strong>: Darwin has no cgroups, does not
 enforce <code>RLIMIT_AS</code> against the mmap'd heap every modern runtime uses, and

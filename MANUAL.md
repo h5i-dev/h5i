@@ -1291,10 +1291,25 @@ Coverage differs by tier, and every receipt says which it got:
 `h5i box detect rules` prints the whole signature catalogue with what each rule
 is for. `h5i box detect show <box>` prints what fired, worst first.
 
-Requirements: Linux 5.8 or newer (`BPF_MAP_TYPE_RINGBUF`), `CAP_BPF` and
-`CAP_PERFMON`, and an h5i built with `--features bpf` by a `clang` that can
-target BPF. No BTF, no `vmlinux.h`, and no kernel headers: the probe reads no
-kernel structure, only syscall tracepoint arguments, which are stable ABI.
+This is opt-in at three separate layers, and all three have to say yes:
+
+| Layer | Switch | Default |
+|---|---|---|
+| build | `cargo install --path . --features bpf` | off — a stock build and the released binaries carry no probe |
+| host | `CAP_BPF` and `CAP_PERFMON` on the h5i binary | not granted |
+| policy | `[profile.X.detect] enabled = true` | false |
+
+`h5i box detect probe` reports all three and prints the command for whichever
+one is missing.
+
+Other requirements: Linux 5.8 or newer (`BPF_MAP_TYPE_RINGBUF`), and a `clang`
+that can target BPF at build time. No BTF, no `vmlinux.h`, and no kernel
+headers: the probe reads no kernel structure, only syscall tracepoint
+arguments, which are stable ABI.
+
+Reading a receipt needs none of it. The evidence types ship in every build, so
+a colleague with a stock h5i can read an export from a machine that had the
+collector.
 
 `wall` is enforced everywhere. **`mem` and `procs` are not enforced at the
 `process` and `supervised` tiers on macOS**: Darwin has no cgroups, does not

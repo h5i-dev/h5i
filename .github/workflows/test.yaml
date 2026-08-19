@@ -155,8 +155,11 @@ jobs:
       # The collector's own suite: the wire contract against the C header, the
       # attach table against the probe source, and every signature against a
       # synthetic event stream.
+      # `--features load`: the crate's collector is opt-in like everything else
+      # in this lane, so a bare `-p h5i-bpf` would test the model and skip the
+      # loader — which is the half this job exists for.
       - name: cargo test -p h5i-bpf
-        run: cargo test --locked -p h5i-bpf
+        run: cargo test --locked -p h5i-bpf --features load
 
       # The run seam end to end, on a host with no CAP_BPF: a profile that asked
       # to be watched gets a block with the reason, `require = true` refuses,
@@ -168,7 +171,7 @@ jobs:
       # so the log records *why* it skipped — a suite that silently reports "ok"
       # for a path nobody ran is the thing this whole lane exists to stop.
       - name: live attach (skips without CAP_BPF; prints why)
-        run: cargo test --locked -p h5i-bpf --test live_attach -- --nocapture
+        run: cargo test --locked -p h5i-bpf --features load --test live_attach -- --nocapture
 
   # macOS confines with Seatbelt, not Landlock/seccomp, so the kernel tiers there
   # are a genuinely different code path (crates/h5i-sandbox/src/seatbelt.rs). The

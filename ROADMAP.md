@@ -7911,6 +7911,32 @@ the setting for the "I am running somebody else's dependency tree" case, and
 it is off by default because the failure mode of a mandatory detector on a
 laptop kernel is a tool that does not start.
 
+### D11.1. Opt-in, at three layers, and the one that is easy to get wrong
+
+"Is this optional?" has to have exactly one answer, and it takes three
+defaults to give it one:
+
+| Layer | Switch | Default | What it decides |
+|---|---|---|---|
+| build | `h5i/bpf` → `h5i-core/bpf` → `h5i-bpf/load` | **off** | whether the binary carries aya and a compiled probe at all |
+| host | `CAP_BPF` + `CAP_PERFMON` | not granted | whether it can attach |
+| policy | `[profile.X.detect] enabled` | **false** | whether a given box is watched |
+
+What is *not* optional is the evidence types: `h5i-core` depends on `h5i-bpf`
+unconditionally with `default-features = false`, so a build with no collector
+can still read and render a receipt written by one that had it. A feature flag
+that changed a serialized record's shape would make yesterday's evidence
+unreadable after an upgrade, which is a worse failure than the one it saves.
+
+The subtle layer is the **crate's own default**. `h5i-bpf` was written with
+`default = ["load"]`, so that the main `clippy --workspace --all-targets` job
+would lint the loader. Cargo unifies features across a workspace build, so the
+consequence was that `cargo build --workspace` pulled aya and ran a clang
+invocation for every contributor, while `cargo install --path .` did not —
+"optional" had two answers depending on how you built. The default is now `[]`,
+and the dedicated CI job passes `--features bpf` explicitly, which lints and
+tests the same code without making it arrive uninvited.
+
 ## D12. What it refuses to do
 
 - **No enforcement, in any form.** No `bpf_send_signal`, no
@@ -7988,10 +8014,13 @@ laptop kernel is a tool that does not start.
    `bpftool`-less verification that its sections and maps are what the loader
    expects.*
 3. **D14.3 — The loader.** aya session: load, verify tracepoint formats, program
-   the scope, attach, read the ring buffer, stop and account. Linux only, behind
-   the crate's own default feature so CI lints it. *Exit: `detect probe` reports
-   the host truthfully — including "missing CAP_BPF" on an unprivileged one —
-   and the live attach test passes as root.*
+   the scope, attach, read the ring buffer, stop and account. Linux only, and
+   behind `h5i-bpf/load`, which is **off by default like every other switch in
+   this lane** — see D11 on why the crate default is the one that is easiest to
+   get wrong. The dedicated CI job is what asks for it, and therefore what lints
+   and tests it. *Exit: `detect probe` reports the host truthfully — including
+   "missing CAP_BPF" on an unprivileged one — and the live attach test passes as
+   root.*
 4. **D14.4 — The run seam.** Wire the session around `sandbox::run_with_env`
    in `env run` and `env shell`, resolve the scope per tier, and put the block
    in the receipt. *Exit: a run under a `detect`-enabled profile carries a
