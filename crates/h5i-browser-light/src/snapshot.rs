@@ -872,7 +872,7 @@ const FENCE_DEFANGED: &str = "[fence marker removed]";
 /// reason to be there. It is the only content this function removes, and it
 /// removes exactly the impersonation — the words around it survive, because an
 /// outline that censored what a page said would be lying about the page.
-fn one_line(input: &str) -> String {
+pub(crate) fn one_line(input: &str) -> String {
     let collapsed = collapse(input);
     if !collapsed.contains(CONTENT_BEGIN) && !collapsed.contains(CONTENT_END) {
         return collapsed;

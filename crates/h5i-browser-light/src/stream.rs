@@ -52,6 +52,7 @@ use url::Url;
 
 use crate::engine::{Page, PageFactory};
 use crate::receipt::ActionLog;
+use crate::verbs::{Verb, VerbError};
 use crate::ws::{self, Incoming};
 
 /// How far a key scrolls, as a fraction of the viewport.
@@ -160,6 +161,14 @@ struct Session {
     /// answers about one thing.
     last_snapshot: Option<crate::snapshot::Snapshot>,
 
+    /// The refs this session last handed to a control client.
+    ///
+    /// The other half of `last_snapshot`, kept separately because it answers a
+    /// different question. `last_snapshot` is the baseline a delta is computed
+    /// against; this is the evidence that an agent's `@e5` still means what the
+    /// agent read. See [`resolve_ref`].
+    served_refs: Option<Vec<crate::snapshot::RefEntry>>,
+
     /// Whether a human is typing a credential right now.
     ///
     /// While this is set every control verb that reads the page is refused —
@@ -186,16 +195,19 @@ impl Session {
     /// It is not: frames still go to the live view, by design, and the viewer
     /// socket is in the box. Claiming otherwise here would be the one thing
     /// this project says it does not do.
-    fn login_refusal(verb: &str) -> Value {
+    fn login_refusal(verb: crate::verbs::Verb) -> Value {
         json!({
             "ok": false,
+            "code": crate::verbs::Code::LoginMode.as_str(),
+            "retryable": false,
             "error": format!(
-                "`{verb}` is refused while this session is in login mode: a credential typed \
+                "`{}` is refused while this session is in login mode: a credential typed \
                  into a page the agent can read has been given to the agent. The live view \
                  still streams — the person typing has to see the page — so this refuses the \
                  control path and not an agent that attaches to the viewer socket itself. End \
                  login mode with `session login --off` and reads resume, with whatever session \
-                 the login established still in the jar."
+                 the login established still in the jar.",
+                verb.name()
             ),
             "login": true,
             "frames_withheld": false,
@@ -301,6 +313,7 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         seq: 0,
         actions,
         last_snapshot: None,
+        served_refs: None,
         login: false,
     };
     run_session(session, rx, options.once);
@@ -569,9 +582,18 @@ fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError
                 }
                 reply_rx
                     .recv()
-                    .unwrap_or_else(|_| error_reply("the session ended before it answered"))
+                    .unwrap_or_else(|_| {
+                        VerbError::new(
+                            crate::verbs::Code::Internal,
+                            "the session ended before it answered",
+                        )
+                        .reply()
+                    })
             }
-            Err(error) => error_reply(&format!("not JSON: {error}")),
+            Err(error) => VerbError::bad_request(format!(
+                "the control channel takes one JSON object per line; this was not JSON: {error}"
+            ))
+            .reply(),
         };
         writeln!(writer, "{answer}").map_err(H5iError::Io)?;
         writer.flush().map_err(H5iError::Io)?;
@@ -579,9 +601,6 @@ fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError
     Ok(())
 }
 
-fn error_reply(message: &str) -> Value {
-    json!({"ok": false, "error": message})
-}
 
 /// Read a port advertised in a file by [`write_port_file`].
 pub fn read_port_file(path: &Path) -> Result<u16, H5iError> {
@@ -657,9 +676,10 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         // other refusal, so this does not read as the verb having half-happened.
         Err(error) => {
             return (
-                error_reply(&format!(
+                VerbError::refused(format!(
                     "refusing to act: the action could not be recorded: {error}"
-                )),
+                ))
+                .reply(),
                 false,
             )
         }
@@ -703,18 +723,22 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 /// Returns the reply and whether the page moved, because the caller is the only
 /// thing that knows who else is watching.
 fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
-    let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    let name = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    let Some(verb) = crate::verbs::Verb::from_name(name) else {
+        return (VerbError::unknown_verb(name).reply(), false);
+    };
 
-    // Reads are refused while a human is typing a credential. `status` and
-    // `login` are not reads of the page: one reports the mode, the other is how
-    // it ends, and refusing either would make the mode impossible to leave.
-    if session.login && !matches!(verb, "status" | "login") {
+    // Reads are refused while a human is typing a credential, and which verbs
+    // those are is a property of the verb rather than a list kept here. See
+    // `Verb::readable_during_login`: the allowlist used to be two string
+    // literals, where a typo widened it silently.
+    if session.login && !verb.readable_during_login() {
         return (Session::login_refusal(verb), false);
     }
 
     match verb {
         // What the session is, for a client that just connected.
-        "status" => (
+        Verb::Status => (
             json!({
                 "ok": true,
                 "url": session.page.url().to_string(),
@@ -735,7 +759,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         // was supposed to arrive with the cookie jar, because a jar is what
         // makes logging in worth doing and a readable page is what makes it
         // unsafe.
-        "login" => {
+        Verb::Login => {
             let on = request.get("on").and_then(Value::as_bool).unwrap_or(true);
             session.login = on;
             // The baseline is dropped either way. A delta across a login would
@@ -760,7 +784,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             )
         }
 
-        "snapshot" => {
+        Verb::Snapshot => {
             let snapshot = session.page.snapshot();
             let wants_delta = request.get("delta").and_then(Value::as_bool).unwrap_or(false);
 
@@ -805,6 +829,10 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 }
             }
 
+            // What the agent is about to hold refs from. `resolve_ref` checks
+            // the next `@ref` against this, which is the whole staleness story:
+            // a ref is only honoured against the reading it was minted in.
+            session.served_refs = Some(snapshot.refs.clone());
             session.last_snapshot = Some(snapshot);
             (reply, false)
         }
@@ -814,7 +842,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         // make. `moved` is reported rather than assumed: a scroll at the bottom
         // of a document changes nothing, and an agent that cannot tell will
         // loop asking for more page that does not exist.
-        "scroll" => {
+        Verb::Scroll => {
             let by = request.get("by").and_then(Value::as_f64).unwrap_or(0.0);
             let moved = session.page.scroll_by(0.0, by);
             let (_, offset) = session.page.scroll_offset();
@@ -829,15 +857,20 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             )
         }
 
-        "navigate" => {
+        Verb::Navigate => {
             let Some(target) = request.get("url").and_then(Value::as_str) else {
-                return (error_reply("navigate needs a `url`"), false);
+                return (VerbError::bad_request("`navigate` needs a `url`.").reply(), false);
             };
             // Resolved against the current page, so an agent may say
             // `/docs` for the same reason a person may click one.
             let resolved = match session.page.url().join(target) {
                 Ok(url) => url,
-                Err(error) => return (error_reply(&format!("`{target}` is not a URL: {error}")), false),
+                Err(error) => {
+                    return (
+                        VerbError::bad_request(format!("`{target}` is not a URL: {error}")).reply(),
+                        false,
+                    );
+                }
             };
             match session.factory.open(&resolved) {
                 Ok(page) => {
@@ -846,53 +879,49 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 }
                 // A refusal is an answer, not a crash: the allowlist saying no
                 // is the engine working, and the agent needs to read it as one.
-                Err(error) => (error_reply(&format!("{error}")), false),
+                Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
             }
         }
 
         // Typing and submitting are the pair that make a login reachable: a
         // session an agent cannot type into stops at the first form, so these
         // ship together or neither is worth having.
-        "type" => {
+        Verb::Type => {
             let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (error_reply("type needs a `ref`"), false);
+                return (VerbError::bad_request("`type` needs a `ref` from a snapshot.").reply(), false);
             };
             let Some(text) = request.get("text").and_then(Value::as_str) else {
-                return (error_reply("type needs `text`"), false);
+                return (VerbError::bad_request("`type` needs `text`.").reply(), false);
             };
             let snapshot = session.page.snapshot();
-            let Some(entry) = snapshot.resolve(reference) else {
-                return (
-                    error_reply(&format!("no such ref `{reference}` on this page")),
-                    false,
-                );
+            let entry = match resolve_ref(session, &snapshot, reference) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
             };
             let node_id = entry.node_id;
             let role = entry.role.clone();
             if !session.page.type_into(node_id, text) {
                 return (
-                    error_reply(&format!("`{reference}` is a {role}, not a field to type into")),
+                    VerbError::wrong_role(reference, &role, "a field to type into").reply(),
                     false,
                 );
             }
             (json!({"ok": true, "ref": reference}), true)
         }
 
-        "submit" => {
+        Verb::Submit => {
             let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (error_reply("submit needs a `ref` inside the form"), false);
+                return (VerbError::bad_request("`submit` needs a `ref` inside the form.").reply(), false);
             };
             let snapshot = session.page.snapshot();
-            let Some(entry) = snapshot.resolve(reference) else {
-                return (
-                    error_reply(&format!("no such ref `{reference}` on this page")),
-                    false,
-                );
+            let entry = match resolve_ref(session, &snapshot, reference) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
             };
             let node_id = entry.node_id;
             let submission = match session.page.submit_form(node_id) {
                 Ok(submission) => submission,
-                Err(error) => return (error_reply(&format!("{error}")), false),
+                Err(error) => return (VerbError::refused(format!("{error}")).reply(), false),
             };
             match session.factory.open_submission(&submission) {
                 Ok(page) => {
@@ -906,20 +935,18 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                         true,
                     )
                 }
-                Err(error) => (error_reply(&format!("{error}")), false),
+                Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
             }
         }
 
-        "click" => {
+        Verb::Click => {
             let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (error_reply("click needs a `ref`"), false);
+                return (VerbError::bad_request("`click` needs a `ref` from a snapshot.").reply(), false);
             };
             let snapshot = session.page.snapshot();
-            let Some(entry) = snapshot.resolve(reference) else {
-                return (
-                    error_reply(&format!("no such ref `{reference}` on this page")),
-                    false,
-                );
+            let entry = match resolve_ref(session, &snapshot, reference) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
             };
             let node_id = entry.node_id;
             let role = entry.role.clone();
@@ -954,30 +981,92 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 
             let Some(href) = href else {
                 return (
-                    error_reply(&format!("`{reference}` is a {role} with nothing to follow")),
+                    VerbError::wrong_role(reference, &role, "something to follow").reply(),
                     false,
                 );
             };
             let resolved = match session.page.url().join(&href) {
                 Ok(url) => url,
-                Err(error) => return (error_reply(&format!("`{href}` is not a URL: {error}")), false),
+                Err(error) => {
+                    return (
+                        VerbError::bad_request(format!("`{href}` is not a URL: {error}")).reply(),
+                        false,
+                    );
+                }
             };
             match session.factory.open(&resolved) {
                 Ok(page) => {
                     session.page = page;
                     (json!({"ok": true, "url": session.page.url().to_string()}), true)
                 }
-                Err(error) => (error_reply(&format!("{error}")), false),
+                Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
             }
         }
 
-        other => (
-            error_reply(&format!(
-                "`{other}` is not a verb this engine has (status, snapshot, navigate, \
-                 scroll, type, submit, click)"
-            )),
-            false,
-        ),
+    }
+}
+
+/// Resolve a `@ref`, refusing one that no longer means what the agent read.
+///
+/// `click`, `type` and `submit` each need a *live* node id, so each takes a
+/// fresh snapshot at action time. That much is right, and on its own it was the
+/// bug: refs are minted by walk order (`snapshot.rs`, `e1` is "the first
+/// actionable thing in this walk"), so if the page moved between the snapshot
+/// the agent read and the one taken here, `@e5` resolves to a **different
+/// element**, the action succeeds, and the reply says `ok`.
+///
+/// Nothing detected that. There was no memory-safety problem — the node id is
+/// freshly minted, so the click landed on a real node — and that is exactly
+/// what made it bad: a plausible wrong answer that looks like a right one is
+/// the state this engine says it does not leave things in.
+///
+/// So the fresh capture is checked against the refs this session last *served*.
+/// An identical entry — same id, same node, same role, same name — means the
+/// reading the agent acted on still describes the page.
+///
+/// **What this proves, and what it does not.** It is an equality check on one
+/// ref, not a proof that the document is unchanged: a page that mutates
+/// something the walk does not record still passes, and two different elements
+/// that agree on all four fields would too. What it catches is every case where
+/// the *handle* has come to mean something else, which is the failure that was
+/// silent before. It is not a claim that the page is the same page.
+fn resolve_ref(
+    session: &Session,
+    snapshot: &crate::snapshot::Snapshot,
+    reference: &str,
+) -> Result<crate::snapshot::RefEntry, VerbError> {
+    let Some(entry) = snapshot.resolve(reference) else {
+        return Err(VerbError::no_such_ref(reference));
+    };
+    // No snapshot has been served, so the caller cannot have read this ref
+    // anywhere. Distinguished from a stale one because the fix differs: this is
+    // "take a snapshot", that is "take another".
+    let Some(served) = session.served_refs.as_ref() else {
+        return Err(VerbError::no_snapshot(reference));
+    };
+    let wanted = reference.trim_start_matches('@');
+    match served.iter().find(|e| e.id == wanted) {
+        Some(before) if before == entry => Ok(entry.clone()),
+        // Either it named something else in the served reading, or it was not
+        // in it at all. Both mean the same thing to the caller and get the same
+        // answer, which names what the ref points at *now* — the one piece of
+        // evidence the session has and the agent does not.
+        Some(_) | None => Err(VerbError::stale_ref(reference, &describe(entry))),
+    }
+}
+
+/// A ref entry as one line of prose, safe to put in an error message.
+///
+/// The name is page-derived, and an error message is read *outside* the
+/// snapshot's fence. `one_line` is the same collapse the fence relies on, so a
+/// page cannot smuggle a second line — or a forged fence marker — into a reply
+/// by naming a button after one.
+fn describe(entry: &crate::snapshot::RefEntry) -> String {
+    let name = crate::snapshot::one_line(&entry.name);
+    if name.is_empty() {
+        format!("a {}", entry.role)
+    } else {
+        format!("a {} \"{}\"", entry.role, name)
     }
 }
 
@@ -1093,6 +1182,7 @@ mod tests {
             seq: 0,
             actions: None,
             last_snapshot: None,
+            served_refs: None,
             login: false,
         }
     }
@@ -1119,8 +1209,23 @@ mod tests {
             seq: 0,
             actions: None,
             last_snapshot: None,
+            served_refs: None,
             login: false,
         }
+    }
+
+    /// Take a snapshot **through the verb**, and hand back the refs it served.
+    ///
+    /// Reaching into `session.page.snapshot()` gets a ref the agent was never
+    /// given, and the session now refuses to act on one of those — which is the
+    /// point of `resolve_ref`. Tests drive the same loop an agent does.
+    fn serve_refs(session: &mut Session) -> Vec<crate::snapshot::RefEntry> {
+        let (reply, _) = control_verb(session, &json!({"verb": "snapshot"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        session
+            .served_refs
+            .clone()
+            .expect("the snapshot verb records what it served")
     }
 
     fn tall_page() -> &'static str {
@@ -1506,7 +1611,10 @@ mod tests {
         assert!(!changed);
 
         // The link is @e1; typing into it must say *why* it cannot be typed
-        // into, not merely that it failed.
+        // into, not merely that it failed. Read the page first, the way an
+        // agent does — a ref the session never served is refused before the
+        // role is even looked at.
+        let _ = serve_refs(&mut session);
         let (reply, _) = control_verb(
             &mut session,
             &json!({"verb": "type", "ref": "e1", "text": "x"}),
@@ -1582,10 +1690,7 @@ mod tests {
              </script></body></html>",
         );
 
-        let reference = session
-            .page
-            .snapshot()
-            .refs
+        let reference = serve_refs(&mut session)
             .iter()
             .find(|r| r.name == "Add")
             .expect("the button has a ref")
@@ -1615,7 +1720,7 @@ mod tests {
              document.querySelector('#b').addEventListener('click', () => {});\
              </script></body></html>",
         );
-        let reference = session.page.snapshot().refs[0].id.clone();
+        let reference = serve_refs(&mut session)[0].id.clone();
         let (reply, _) = control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
 
         assert!(reply["requests"].is_array(), "{reply:?}");
@@ -1643,7 +1748,7 @@ mod tests {
         let mut session = scripted_session_with(
             "<html><body><a href='https://denied.test/'>go</a></body></html>",
         );
-        let reference = session.page.snapshot().refs[0].id.clone();
+        let reference = serve_refs(&mut session)[0].id.clone();
         let (reply, changed) =
             control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
 
@@ -1652,6 +1757,141 @@ mod tests {
         assert_eq!(reply["ok"], false, "{reply:?}");
         assert!(!changed);
         assert!(reply["error"].as_str().unwrap().contains("denied.test"), "{reply:?}");
+    }
+
+    #[test]
+    fn a_ref_from_a_reading_the_page_has_moved_on_from_is_refused() {
+        // The defect this check exists for, reproduced.
+        //
+        // Refs are minted by walk order, and the action verbs take a *fresh*
+        // snapshot to get a live node id. So when the page inserts an element
+        // earlier in document order, every later ref shifts by one: the agent's
+        // `@e2` now names what used to be `@e1`. Before this check the click
+        // landed on that other element and the reply said `ok`.
+        let mut session = scripted_session_with(
+            "<html><body><div id='top'></div>\
+             <button id='b'>Add</button>\
+             <a href='/second'>second</a>\
+             <script>document.querySelector('#b').addEventListener('click', () => {\
+               const a = document.createElement('a');\
+               a.setAttribute('href', '/first');\
+               a.textContent = 'first';\
+               document.querySelector('#top').appendChild(a);\
+             });</script></body></html>",
+        );
+
+        let refs = serve_refs(&mut session);
+        let button = refs
+            .iter()
+            .find(|r| r.name == "Add")
+            .expect("the button has a ref")
+            .clone();
+        let second = refs
+            .iter()
+            .find(|r| r.name == "second")
+            .expect("the link has a ref")
+            .clone();
+
+        // Click the button. Its handler inserts a link *above* it, so the walk
+        // renumbers and `second`'s id now belongs to something else.
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": button.id.clone()}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let after = session.page.snapshot();
+        let now = after.resolve(&second.id).expect("the id still resolves");
+        assert_ne!(
+            now.node_id, second.node_id,
+            "the fixture must actually renumber, or this test proves nothing"
+        );
+
+        // Acting on the ref the agent read is refused, by name, rather than
+        // acting on whatever that id happens to mean now.
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": second.id.clone()}),
+        );
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "stale-ref", "{reply:?}");
+        assert_eq!(reply["retryable"], true);
+        assert!(!changed, "a refused verb does not move the page");
+        let text = reply["error"].as_str().unwrap();
+        assert!(text.contains("snapshot"), "no recovery named: {text:?}");
+
+        // And the loop an agent is supposed to run works: read again, act on
+        // what that reading gave you.
+        let fresh = serve_refs(&mut session);
+        let second_again = fresh
+            .iter()
+            .find(|r| r.name == "second")
+            .expect("still on the page");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": second_again.id.clone()}),
+        );
+        assert_ne!(
+            reply["code"], "stale-ref",
+            "a ref from the current reading must be honoured: {reply:?}"
+        );
+    }
+
+    #[test]
+    fn a_ref_survives_everything_that_does_not_renumber_it() {
+        // The check has to be precise or it is a nuisance: typing into one
+        // field and then submitting is the login loop, and it must not require
+        // a re-read between every step.
+        let mut session = session_with(
+            "<html><body><form action='/in' method='post'>\
+             <input name='user'><input name='pass' type='password'>\
+             <button type='submit'>Sign in</button></form></body></html>",
+        );
+        let refs = serve_refs(&mut session);
+        assert_eq!(refs.len(), 3, "user, pass, submit");
+
+        for (index, text) in [(0usize, "alice"), (1, "hunter2")] {
+            let (reply, _) = control_verb(
+                &mut session,
+                &json!({"verb": "type", "ref": refs[index].id.clone(), "text": text}),
+            );
+            assert_eq!(reply["ok"], true, "step {index}: {reply:?}");
+        }
+
+        // Scrolling does not touch the DOM either.
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "scroll", "by": 50.0}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "submit", "ref": refs[2].id.clone()}),
+        );
+        assert_ne!(
+            reply["code"], "stale-ref",
+            "typing and scrolling do not renumber refs: {reply:?}"
+        );
+    }
+
+    #[test]
+    fn acting_on_a_ref_before_reading_one_is_refused_as_its_own_thing() {
+        // Distinguished from a stale ref because the fix differs: this is
+        // "take a snapshot", that is "take another one".
+        let mut session = session_with(tall_page());
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "click", "ref": "e1"}));
+        assert_eq!(reply["code"], "no-snapshot", "{reply:?}");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn an_unknown_verb_is_named_and_the_known_ones_are_listed() {
+        let mut session = session_with(tall_page());
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "typewrite"}));
+        assert_eq!(reply["code"], "unknown-verb", "{reply:?}");
+        assert!(!changed);
+        let text = reply["error"].as_str().unwrap();
+        for verb in crate::verbs::Verb::ALL {
+            assert!(text.contains(verb.name()), "{} not listed", verb.name());
+        }
     }
 
     #[test]
@@ -1695,6 +1935,7 @@ mod delta_and_login_tests {
             seq: 0,
             actions: None,
             last_snapshot: None,
+            served_refs: None,
             login: false,
         }
     }
@@ -1778,7 +2019,7 @@ mod delta_and_login_tests {
     /// keep streaming by design, and the viewer socket is inside the box.
     #[test]
     fn the_login_refusal_does_not_claim_the_frames_are_withheld() {
-        let refusal = Session::login_refusal("snapshot");
+        let refusal = Session::login_refusal(Verb::Snapshot);
         assert_eq!(refusal["login"], true);
         assert_eq!(
             refusal["frames_withheld"], false,

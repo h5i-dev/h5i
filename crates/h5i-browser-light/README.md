@@ -102,6 +102,56 @@ h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
 ```
 
+### Refs, and the reading they came from
+
+A `@ref` names *a position in the snapshot that minted it* — `e1` is the first
+actionable thing in that walk, not a durable handle on an element. The action
+verbs each take a fresh snapshot to get a live node id, which is right on its
+own and was, on its own, a bug: if the page moved in between, `@e5` resolved to
+a **different element**, the click landed on it, and the reply said `ok`.
+
+So a ref is now honoured only against the reading it was served in. The session
+keeps the refs it last handed out and checks the one you name against them:
+
+```
+$ h5i-browser-light session click @e2
+{"ok":false,"code":"stale-ref","retryable":true,
+ "error":"`@e2` came from a snapshot this page has moved on from: it now names
+          a button \"Add\". … Take a fresh `snapshot` and use its refs."}
+```
+
+This is an equality check on one ref, not a proof that the document is
+unchanged: a page that mutates something the walk does not record still passes.
+What it catches is every case where the handle you hold has come to mean
+something else, which is the failure that used to be silent. Typing and
+scrolling do not renumber anything, so the login loop still runs without a
+re-read between steps.
+
+### When a verb refuses
+
+Every failure carries a machine-readable `code`, prose that names the recovery,
+and `retryable` — whether this is the caller's to fix at all. A selector a model
+can correct and an allowlist it cannot are different answers, and reporting the
+first the way the second is reported ends a self-correction loop instead of
+prompting it.
+
+| code | means |
+| --- | --- |
+| `unknown-verb` | not a verb this session has; the message lists the ones it does |
+| `bad-request` | a missing or malformed argument |
+| `no-snapshot` | a `@ref` was named before any snapshot was served |
+| `no-such-ref` | the ref is not on this page at all |
+| `stale-ref` | the ref is on the page and means something else now |
+| `wrong-role` | the ref is the wrong kind of thing for this verb |
+| `refused` | the policy said no |
+| `login-mode` | LOGIN mode is on and this verb reads the page |
+| `timeout` / `no-match` / `internal` | as named |
+
+The verbs themselves live in one table (`src/verbs.rs`) and every per-verb
+property is an exhaustive match on it, so a new verb does not compile until it
+has answered each question — including which verbs LOGIN mode admits, which was
+a two-literal string allowlist that a typo would have widened silently.
+
 ### The resident session
 
 `open` renders its own page and exits, so two `open`s share nothing. `serve`

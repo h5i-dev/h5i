@@ -40,6 +40,7 @@ pub mod receipt;
 pub mod script;
 pub mod snapshot;
 pub mod stream;
+pub mod verbs;
 pub mod ws;
 
 pub use engine::{Page, PageFactory, PageOptions};

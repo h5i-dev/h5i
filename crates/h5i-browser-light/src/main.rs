@@ -461,28 +461,40 @@ fn serve(
 
 /// Drive the resident session.
 fn session(verb: SessionVerb) -> Result<(), H5iError> {
+    // Every name comes from `Verb`, so the CLI cannot ask for a verb the session
+    // does not have. This used to be eight string literals that happened to
+    // match eight others in `stream.rs`, with nothing enforcing the agreement.
+    use h5i_browser_light::verbs::Verb;
     let (at, request) = match &verb {
-        SessionVerb::Status { at } => (at, serde_json::json!({"verb": "status"})),
-        SessionVerb::Snapshot { delta, at } => {
-            (at, serde_json::json!({"verb": "snapshot", "delta": delta}))
-        }
-        SessionVerb::Login { off, on: _, at } => {
-            (at, serde_json::json!({"verb": "login", "on": !off}))
-        }
-        SessionVerb::Navigate { url, at } => {
-            (at, serde_json::json!({"verb": "navigate", "url": url}))
-        }
-        SessionVerb::Scroll { by, at } => (at, serde_json::json!({"verb": "scroll", "by": by})),
+        SessionVerb::Status { at } => (at, serde_json::json!({"verb": Verb::Status.name()})),
+        SessionVerb::Snapshot { delta, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Snapshot.name(), "delta": delta}),
+        ),
+        SessionVerb::Login { off, on: _, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Login.name(), "on": !off}),
+        ),
+        SessionVerb::Navigate { url, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Navigate.name(), "url": url}),
+        ),
+        SessionVerb::Scroll { by, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Scroll.name(), "by": by}),
+        ),
         SessionVerb::Type { reference, text, at } => (
             at,
-            serde_json::json!({"verb": "type", "ref": reference, "text": text}),
+            serde_json::json!({"verb": Verb::Type.name(), "ref": reference, "text": text}),
         ),
-        SessionVerb::Submit { reference, at } => {
-            (at, serde_json::json!({"verb": "submit", "ref": reference}))
-        }
-        SessionVerb::Click { reference, at } => {
-            (at, serde_json::json!({"verb": "click", "ref": reference}))
-        }
+        SessionVerb::Submit { reference, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Submit.name(), "ref": reference}),
+        ),
+        SessionVerb::Click { reference, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Click.name(), "ref": reference}),
+        ),
     };
 
     let port = session_port(at)?;
