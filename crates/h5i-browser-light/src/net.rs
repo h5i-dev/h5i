@@ -123,6 +123,13 @@ pub struct Broker {
     /// other thing it does with the wire. `reqwest`'s own cookie store would
     /// have done the matching for us and taken that with it.
     jar: crate::cookies::Jar,
+    /// Whether requests route through an egress proxy.
+    ///
+    /// Kept because the socket client has to know: it cannot use one — a raw
+    /// `TcpStream` does not go through what `reqwest` was configured with — so
+    /// it refuses any non-loopback address while one is set, rather than
+    /// stepping around the allowlist that proxy enforces.
+    proxied: bool,
 }
 
 impl Broker {
@@ -141,7 +148,9 @@ impl Broker {
             .timeout(Duration::from_secs(30))
             .user_agent(USER_AGENT);
 
+        let mut proxied = false;
         if let Some(proxy_url) = proxy.filter(|p| !p.trim().is_empty()) {
+            proxied = true;
             let no_proxy = reqwest::NoProxy::from_string("localhost,127.0.0.1,::1");
             let proxy = reqwest::Proxy::all(proxy_url)
                 .map_err(|e| {
@@ -161,6 +170,7 @@ impl Broker {
             client,
             seq: AtomicU64::new(0),
             jar: crate::cookies::Jar::new(),
+            proxied,
         })
     }
 
@@ -443,6 +453,143 @@ impl Broker {
             )));
         }
         Ok(buf)
+    }
+
+    /// Whether an egress proxy is in the path.
+    ///
+    /// Read by the socket client, which cannot go through one: a raw
+    /// `TcpStream` bypasses whatever `reqwest` was configured with, and inside
+    /// a box that proxy is how the sandbox's allowlist stays in the path.
+    pub fn has_proxy(&self) -> bool {
+        self.proxied
+    }
+
+    /// Authorise a long-lived connection and record the decision.
+    ///
+    /// The front half of [`Broker::send_from`] — policy, then the record,
+    /// *then* the caller may dial — for a connection that has no single body to
+    /// read and so cannot use the rest of that loop. Returns the sequence the
+    /// handshake was recorded under.
+    ///
+    /// Same rule, same order: no receipt, no connection.
+    pub fn authorise_socket(&self, url: &Url, document: Option<&Url>) -> Result<u64, String> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+
+        let verdict = self.policy.check_from(url, document);
+        if let Some(reason) = verdict.reason() {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str())
+                    .denied(reason);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(format!("denied by policy: {reason}"));
+        }
+
+        let record = RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str());
+        if let Err(e) = self.sink.append(&record) {
+            return Err(format!(
+                "refusing to connect: the receipt could not be written: {e}"
+            ));
+        }
+        Ok(seq)
+    }
+
+    /// Record one frame on an open connection.
+    ///
+    /// **Every frame, not just the handshake.** A socket open for ten minutes
+    /// carrying four hundred messages could be honoured by receipting the
+    /// handshake alone — and then this engine's central claim would quietly
+    /// stop covering the bytes that followed it, which is the CONNECT-gate
+    /// blindness it exists to remove.
+    ///
+    /// Written as an ordinary request/response pair with `WS-SEND`/`WS-RECV` as
+    /// the method. That is not an HTTP verb and is hyphenated so it cannot be
+    /// read as one, but "a thing that crossed the wire, this size, in this
+    /// direction" is exactly what a [`RequestRecord`] holds — and reusing it
+    /// means the console, `h5i box watch` and the export bundle all show socket
+    /// traffic without being taught a new phase to skip.
+    pub fn record_socket_frame(
+        &self,
+        url: &Url,
+        direction: crate::wsclient::Direction,
+        bytes: u64,
+    ) -> Result<(), H5iError> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        let record = RequestRecord::request(
+            seq,
+            Initiator::Subresource,
+            direction.as_method(),
+            url.as_str(),
+        );
+        self.sink.append(&record)?;
+        let mut outcome = record.response();
+        outcome.bytes = Some(bytes);
+        outcome.status = Some(101);
+        self.sink.append(&outcome)
+    }
+
+    /// Authorise and begin an event stream, handing back the open response.
+    ///
+    /// The second exit from the receipt path, and the reason it exists:
+    /// [`Broker::send_from`] reads a whole body before it returns and writes
+    /// one response record with a final byte count. An event stream never
+    /// completes, so it would hit the response cap or the client timeout and be
+    /// reported as an error.
+    ///
+    /// The front half is identical — policy, then the decision record, *then*
+    /// the wire — because that is the half the fail-closed rule lives in, and
+    /// two copies of it would be two rules.
+    pub fn open_event_stream(
+        &self,
+        url: &Url,
+        document: Option<&Url>,
+    ) -> Result<reqwest::blocking::Response, String> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+
+        let verdict = self.policy.check_from(url, document);
+        if let Some(reason) = verdict.reason() {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
+                    .denied(reason);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(format!("denied by policy: {reason}"));
+        }
+
+        let record = RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str());
+        if let Err(e) = self.sink.append(&record) {
+            return Err(format!(
+                "refusing to connect: the receipt could not be written: {e}"
+            ));
+        }
+
+        let mut request = self
+            .client
+            .request(reqwest::Method::GET, url.clone())
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
+            // The client carries a 30s timeout for ordinary requests, which is
+            // exactly wrong for a stream that is *supposed* to stay open and
+            // quiet. Cleared for this one request only.
+            .timeout(Duration::from_secs(60 * 60));
+        // `header_for` reports the value and how many cookies went with it;
+        // only the value goes on the wire, and the count is what a receipt is
+        // allowed to carry.
+        if let Some((cookies, _count)) = self.jar.header_for(url) {
+            request = request.header(reqwest::header::COOKIE, cookies);
+        }
+
+        match request.send() {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                let mut outcome = record.response();
+                outcome.error = Some(error.to_string());
+                let _ = self.sink.append(&outcome);
+                Err(format!("could not open the event stream: {error}"))
+            }
+        }
     }
 
     /// Write both phases for a request that never reaches the wire.

@@ -483,6 +483,50 @@ the page never named, inside a sandbox whose whole claim is that every request
 is policy-checked and receipted. Module fetches go through the same broker as
 everything else, carry the document origin, and appear in the request log.
 
+### Live connections, and the caveat that travels with them
+
+`WebSocket` and `EventSource` are real objects over real connections, not names
+that answer feature detection. The rule this engine already had — *absent, not
+stubbed* — cost three sites their bundle when it was broken, so these arrive
+working or not at all, with tests asserting the shape a page checks against.
+
+The argument for building them is narrower than "pages use them". This engine's
+stated advantage is **reach**: a cloud browser cannot open `localhost:3000`, and
+for a coding agent that is most of what it needs to look at. A dev server's
+hot-reload channel is a WebSocket. So the place this engine alone can reach was
+also the place it rendered a half-built page.
+
+**Every frame is receipted.** A socket open for ten minutes carrying four
+hundred messages could be honoured by receipting the handshake alone — and then
+the central claim would quietly stop covering the bytes after it, which is
+exactly the CONNECT-gate blindness this engine exists to remove. Frames are
+written as ordinary request/response pairs with `WS-SEND`/`WS-RECV` as the
+method, so the console, `h5i box watch` and the export bundle show socket
+traffic with no changes to any of them.
+
+Two refusals, by name:
+
+- **`wss://` is not built.** It needs a raw TLS stream the HTTP client here does
+  not expose. `ws://` covers the case above. `EventSource` is unaffected — it is
+  an HTTP response, so it uses the same client, proxy and TLS as everything else
+  and `https://` works.
+- **A remote `ws://` is refused whenever an egress proxy is configured.** A
+  WebSocket is a raw socket and would not go through it, and inside a box that
+  proxy is how the sandbox's allowlist stays in the path. Loopback is exempt
+  because the proxy already excludes loopback, so nothing in the path is being
+  stepped around.
+
+**And one honest caveat.** A page holding a live connection is the one thing
+here that is *not* deterministic: messages arrive on wall-clock time, so two
+reads of that page can differ without the agent having acted. `snapshot` and
+`status` report `open_sockets` and say so. Delivery happens when a verb runs
+rather than the instant a frame lands, because the session has no pump at rest —
+which is what makes it cost nothing when nobody is driving it.
+
+Not built, deliberately: **reconnection**. An engine that silently re-dialled
+would be making requests the agent never asked for, and the receipt would show
+them arriving from nowhere.
+
 **What is not there.** `IntersectionObserver` and `ResizeObserver` report
 themselves as missing. `fetch` is synchronous underneath, so two requests run in
 order rather than at once, and `AbortController` cannot cancel one in flight. No

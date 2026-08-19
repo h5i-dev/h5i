@@ -632,6 +632,16 @@ impl Script {
             let ran = self.run_due_timers(clock);
             timers_run += ran;
 
+            // Frames that arrived since the last round become events here.
+            //
+            // Counted as work, so a message that landed gets the page another
+            // round to react to it — and a socket that is merely *open* does
+            // not, which is what keeps a page holding one from being reported
+            // as permanently busy. The interval precedent applies: a perpetual
+            // thing that counts as pending makes every page that has one look
+            // like it never finished.
+            let delivered = self.drain_sockets();
+
             // After the round's work, before deciding whether to wait longer.
             if ready_now!() {
                 return (
@@ -645,7 +655,7 @@ impl Script {
                 );
             }
 
-            if ran == 0 {
+            if ran == 0 && delivered == 0 {
                 // A page waiting on the network is not idle, and this is checked
                 // before the clock moves rather than only when no timer is
                 // armed. Advancing virtual time while a request is in the air
@@ -658,6 +668,32 @@ impl Script {
                     if network_started.elapsed().as_millis() as u64 >= NETWORK_BUDGET_MS {
                         self.abandon_fetches();
                         self.run_queued_jobs();
+                        self.collect_module_failures();
+                        return (
+                            Settled {
+                                elapsed_ms: clock,
+                                timers_run,
+                                cut_off: true,
+                                pending_timers: self.pending_timers(),
+                            },
+                            false,
+                        );
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(NETWORK_POLL_MS));
+                    continue;
+                }
+
+                // A *wait* may be waiting on a socket, which is the one thing
+                // in this engine that arrives on real time rather than virtual.
+                //
+                // A plain settle must still terminate here — an open socket is
+                // not pending work, and treating it as such would make every
+                // page holding one report as permanently busy. But a wait on
+                // such a page should give the wire its chance, or `wait_for`
+                // could never see a message at all. So the real-time poll is
+                // conditional on there being a predicate to satisfy.
+                if ready.is_some() && self.open_sockets() > 0 && !ready_now!() {
+                    if network_started.elapsed().as_millis() as u64 >= NETWORK_BUDGET_MS {
                         self.collect_module_failures();
                         return (
                             Settled {
@@ -851,6 +887,48 @@ impl Script {
                 _ => None,
             },
             Err(_) => None,
+        }
+    }
+
+    /// Turn arrived socket frames into page events, and say how many.
+    ///
+    /// The Rust-side check first is not premature. This runs on **every settle
+    /// round of every page**, and almost no page opens a socket — so without it
+    /// the whole corpus pays an `eval` per round for a feature it never uses.
+    /// Measured: the library suite went 8.3s to 16.1s with the eval
+    /// unconditional, and back with this guard.
+    fn drain_sockets(&mut self) -> usize {
+        if self.host.sockets.borrow().is_empty() && self.host.streams.borrow().is_empty() {
+            return 0;
+        }
+        match self.context.eval(Source::from_bytes("__h5iDrainSockets()")) {
+            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            Err(_) => 0,
+        }
+    }
+
+    /// How many sockets this page holds open.
+    ///
+    /// Reported in the snapshot, because a page with a live socket is a page
+    /// whose content can change between two reads without the agent having done
+    /// anything — which is the one thing that makes a session here
+    /// non-deterministic, and it should not be silent.
+    pub fn open_sockets(&mut self) -> usize {
+        // Answered from the Rust side, which is where the sockets actually
+        // live; the prelude's map is a mirror for the page's benefit.
+        self.host.sockets.borrow().len() + self.host.streams.borrow().len()
+    }
+
+    /// The same count, asked of the prelude's own map.
+    ///
+    /// Exists so a test can assert the Rust side and the page side agree: they
+    /// are two records of one thing, and a page whose `WebSocket` map has
+    /// drifted from the engine's would misreport `readyState` forever.
+    #[cfg(test)]
+    pub(crate) fn open_sockets_via_prelude(&mut self) -> usize {
+        match self.context.eval(Source::from_bytes("__h5iOpenSockets()")) {
+            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            Err(_) => 0,
         }
     }
 

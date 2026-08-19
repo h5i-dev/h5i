@@ -205,9 +205,16 @@ impl Policy {
             // without protecting anything.
             "data" => return Verdict::Allow,
             "http" | "https" => {}
+            // A WebSocket address is checked by exactly the same rules as its
+            // http twin: same host, same allowlist, same loopback exemption.
+            // The scheme differs; what is being decided does not, and giving
+            // `ws://` its own path would be an allowlist a reader has to know
+            // about separately.
+            "ws" | "wss" => {}
             other => {
                 return Verdict::Deny(format!(
-                    "scheme `{other}` is not fetchable by this engine (only http, https, data)"
+                    "scheme `{other}` is not fetchable by this engine (only http, https, ws, \
+                     wss, data)"
                 ));
             }
         }

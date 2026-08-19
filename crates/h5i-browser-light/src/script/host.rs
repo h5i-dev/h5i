@@ -162,6 +162,19 @@ pub struct Host {
     /// them would have defined can be attributed to the refusal instead of
     /// being reported as an engine that lacks jQuery.
     pub refused_scripts: RefCell<Vec<String>>,
+
+    /// Sockets this page has open, by the id the prelude holds.
+    ///
+    /// `Arc` because the reader thread holds one too. The map is the only
+    /// owner the page can reach: closing a `WebSocket` removes it from here,
+    /// and dropping the last handle shuts the connection down.
+    pub sockets: RefCell<std::collections::BTreeMap<u64, std::sync::Arc<crate::wsclient::Socket>>>,
+    /// Event streams, in a second map for the same reason they are a second
+    /// type: one can be sent to and the other cannot, and merging them would
+    /// mean a `send` that is meaningful for half the values it accepts.
+    pub streams: RefCell<std::collections::BTreeMap<u64, std::sync::Arc<crate::sse::EventStream>>>,
+    /// Shared, so an id names exactly one connection of either kind.
+    pub next_socket: std::cell::Cell<u64>,
 }
 
 /// One request a page made, and the receipt it turned into.
@@ -235,6 +248,9 @@ impl Host {
             pending_fetches: RefCell::new(std::collections::BTreeMap::new()),
             next_fetch: std::cell::Cell::new(1),
             refused_scripts: RefCell::new(Vec::new()),
+            sockets: RefCell::new(std::collections::BTreeMap::new()),
+            streams: RefCell::new(std::collections::BTreeMap::new()),
+            next_socket: std::cell::Cell::new(1),
         }
     }
 

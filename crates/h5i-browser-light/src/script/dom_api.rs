@@ -102,6 +102,13 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("createComment", 1, create_comment),
         ("scrollMetrics", 1, scroll_metrics),
         ("setScrollTop", 2, set_scroll_top),
+        ("socketOpen", 1, socket_open),
+        ("socketSend", 2, socket_send),
+        ("socketClose", 1, socket_close),
+        ("socketDrain", 1, socket_drain),
+        ("sseOpen", 1, sse_open),
+        ("sseClose", 1, sse_close),
+        ("sseDrain", 1, sse_drain),
     ];
 
     let api = boa_engine::object::ObjectInitializer::new(context).build();
@@ -1828,4 +1835,181 @@ fn write_cookie(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     // `HttpOnly` cookie, nor set one.
     let stored = host.broker.jar().store_from_script(&host.base, &header);
     Ok(JsValue::from(stored as f64))
+}
+
+
+// ── websockets ───────────────────────────────────────────────────────────────
+//
+// The realm is single-threaded and `!Send`, so a socket cannot be read from it.
+// These follow the same shape the fetch path already uses: a worker thread does
+// the blocking read and hands frames back over a channel, and the page collects
+// them at a point the engine chooses — here, once per settle round.
+//
+// That choice has a consequence worth stating rather than leaving to be
+// discovered. **A message that arrives while nothing is running is delivered at
+// the next verb, not the moment it lands.** The session is idle by design —
+// there is no pump, which is what makes it cost nothing at rest — so there is
+// no thread of control to deliver into. For an agent driving a page this is
+// invisible; for anything expecting real-time delivery it is not.
+
+/// Open a socket. Returns its id, or throws with the reason.
+fn socket_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let raw = arg_string(args, 0, context)?;
+    let host = host(context)?;
+    let url = host.base.join(&raw).map_err(|e| {
+        boa_engine::JsNativeError::syntax().with_message(format!("`{raw}` is not a URL: {e}"))
+    })?;
+
+    match crate::wsclient::Socket::open(host.broker.clone(), &url, Some(&host.base)) {
+        Ok(socket) => {
+            let id = host.next_socket.get();
+            host.next_socket.set(id + 1);
+            host.sockets
+                .borrow_mut()
+                .insert(id, std::sync::Arc::new(socket));
+            Ok(JsValue::from(id as f64))
+        }
+        // A refusal is an answer the page can see, the same as a refused fetch.
+        Err(error) => Err(boa_engine::JsNativeError::error().with_message(error).into()),
+    }
+}
+
+fn socket_send(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)? as u64;
+    let text = arg_string(args, 1, context)?;
+    let host = host(context)?;
+    let socket = host.sockets.borrow().get(&id).cloned();
+    match socket {
+        None => Ok(JsValue::from(false)),
+        Some(socket) => match socket.send(&text) {
+            Ok(()) => Ok(JsValue::from(true)),
+            Err(error) => Err(boa_engine::JsNativeError::error().with_message(error).into()),
+        },
+    }
+}
+
+fn socket_close(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)? as u64;
+    let host = host(context)?;
+    if let Some(socket) = host.sockets.borrow_mut().remove(&id) {
+        socket.close();
+    }
+    Ok(JsValue::undefined())
+}
+
+/// Everything that has arrived on one socket since the last drain.
+///
+/// `[[kind, payload], ...]` — `kind` is `open`, `message`, `close` or `error`.
+/// Flat pairs rather than objects because the prelude turns them into real
+/// events anyway, and building objects here would mean building them twice.
+fn socket_drain(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)? as u64;
+    let host = host(context)?;
+    let socket = host.sockets.borrow().get(&id).cloned();
+    let out = boa_engine::object::builtins::JsArray::new(context)?;
+    let Some(socket) = socket else {
+        return Ok(out.into());
+    };
+
+    for event in socket.drain() {
+        let (kind, payload) = match event {
+            crate::wsclient::Event::Open => ("open", String::new()),
+            crate::wsclient::Event::Message(text) => ("message", text),
+            crate::wsclient::Event::Closed(why) => ("close", why),
+            crate::wsclient::Event::Failed(why) => ("error", why),
+        };
+        let pair = boa_engine::object::builtins::JsArray::new(context)?;
+        pair.push(js_string!(kind), context)?;
+        pair.push(js_string!(payload.as_str()), context)?;
+        out.push(pair, context)?;
+    }
+
+    // Dropped messages become an error event rather than being silently
+    // absorbed: a page that lost frames behaved differently from one that did
+    // not, and the difference should not be invisible.
+    let dropped = socket.dropped();
+    if dropped > 0 {
+        let pair = boa_engine::object::builtins::JsArray::new(context)?;
+        pair.push(js_string!("error"), context)?;
+        let text = format!(
+            "{dropped} message(s) were dropped: this socket queued more than the engine holds \
+             for one that is not being read"
+        );
+        pair.push(js_string!(text.as_str()), context)?;
+        out.push(pair, context)?;
+    }
+
+    Ok(out.into())
+}
+
+// ── server-sent events ───────────────────────────────────────────────────────
+//
+// The same shape as the socket primitives above, and deliberately so: two
+// long-lived connections with one delivery mechanism between them, rather than
+// two mechanisms that drift.
+
+fn sse_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let raw = arg_string(args, 0, context)?;
+    let host = host(context)?;
+    let url = host.base.join(&raw).map_err(|e| {
+        boa_engine::JsNativeError::syntax().with_message(format!("`{raw}` is not a URL: {e}"))
+    })?;
+
+    match crate::sse::EventStream::open(host.broker.clone(), &url, Some(&host.base)) {
+        Ok(stream) => {
+            let id = host.next_socket.get();
+            host.next_socket.set(id + 1);
+            host.streams
+                .borrow_mut()
+                .insert(id, std::sync::Arc::new(stream));
+            Ok(JsValue::from(id as f64))
+        }
+        Err(error) => Err(boa_engine::JsNativeError::error().with_message(error).into()),
+    }
+}
+
+fn sse_close(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)? as u64;
+    let host = host(context)?;
+    if let Some(stream) = host.streams.borrow_mut().remove(&id) {
+        stream.close();
+    }
+    Ok(JsValue::undefined())
+}
+
+fn sse_drain(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)? as u64;
+    let host = host(context)?;
+    let stream = host.streams.borrow().get(&id).cloned();
+    let out = boa_engine::object::builtins::JsArray::new(context)?;
+    let Some(stream) = stream else {
+        return Ok(out.into());
+    };
+
+    for event in stream.drain() {
+        let (kind, payload) = match event {
+            crate::wsclient::Event::Open => ("open", String::new()),
+            crate::wsclient::Event::Message(text) => ("message", text),
+            crate::wsclient::Event::Closed(why) => ("close", why),
+            crate::wsclient::Event::Failed(why) => ("error", why),
+        };
+        let pair = boa_engine::object::builtins::JsArray::new(context)?;
+        pair.push(js_string!(kind), context)?;
+        pair.push(js_string!(payload.as_str()), context)?;
+        out.push(pair, context)?;
+    }
+
+    let dropped = stream.dropped();
+    if dropped > 0 {
+        let pair = boa_engine::object::builtins::JsArray::new(context)?;
+        pair.push(js_string!("error"), context)?;
+        let text = format!(
+            "{dropped} event(s) were dropped: this stream queued more than the engine holds \
+             for one that is not being read"
+        );
+        pair.push(js_string!(text.as_str()), context)?;
+        out.push(pair, context)?;
+    }
+
+    Ok(out.into())
 }

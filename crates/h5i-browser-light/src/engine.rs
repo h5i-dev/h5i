@@ -874,6 +874,22 @@ impl Page {
         }
     }
 
+    /// How many sockets this page holds open.
+    ///
+    /// Surfaced because it is the one thing in this engine that makes a session
+    /// non-deterministic. Everything else runs on a virtual clock, so two reads
+    /// of one page agree; a live socket delivers on wall-clock time, so the
+    /// page can differ between two reads without the agent having done
+    /// anything. That is a real capability and a real caveat, and the caveat
+    /// should not be silent — the determinism claim is one this engine makes
+    /// loudly elsewhere.
+    pub fn open_sockets(&mut self) -> usize {
+        self.script
+            .as_mut()
+            .map(|script| script.open_sockets())
+            .unwrap_or(0)
+    }
+
     /// Record an engine-level fact for the next snapshot to carry.
     pub fn note(&mut self, text: &str) {
         self.notes.push(text.to_string());

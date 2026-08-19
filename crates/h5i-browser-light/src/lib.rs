@@ -43,9 +43,11 @@ pub mod script;
 pub mod selector;
 pub mod secrets;
 pub mod snapshot;
+pub mod sse;
 pub mod stream;
 pub mod verbs;
 pub mod ws;
+pub mod wsclient;
 
 pub use engine::{Page, PageFactory, PageOptions};
 pub use policy::{Policy, Verdict};

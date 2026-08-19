@@ -752,6 +752,284 @@ fn a_missing_web_api_is_recorded_rather_than_silently_stubbed() {
     assert_eq!(reported[0].1, 2);
 }
 
+/// A one-shot WebSocket server that greets and then closes.
+///
+/// Uses this crate's own server half (`ws::accept`, `ws::send_text`) so the
+/// test exercises the client against a real RFC 6455 peer rather than a mock,
+/// and so a framing mistake in either half shows up here.
+fn socket_server(greeting: &'static str) -> (u16, std::thread::JoinHandle<()>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        // Exactly one connection: one more and `accept` blocks forever, which
+        // turns a failing test into a hung one.
+        if let Ok((mut stream, _)) = listener.accept()
+            && crate::ws::accept(&mut stream).is_ok()
+        {
+            let _ = crate::ws::send_text(&mut stream, greeting);
+            // Held briefly so the client reads the frame before FIN.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    });
+    (port, handle)
+}
+
+#[test]
+fn a_page_can_open_a_socket_read_a_message_and_the_receipt_holds_every_frame() {
+    // The whole lane, end to end, and the reason it exists: a dev server's
+    // hot-reload channel is a WebSocket, and loopback is the one place this
+    // engine can reach that a cloud browser cannot.
+    let (port, server) = socket_server("hello from the server");
+
+    let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
+    let broker = std::sync::Arc::new(
+        crate::net::Broker::new(crate::policy::Policy::new(), sink.clone(), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = crate::engine::PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        crate::engine::PageOptions::default(),
+    );
+    let base = url::Url::parse("http://127.0.0.1/").unwrap();
+    let page = factory.from_html("<html><body><p id='out'>waiting</p></body></html>", &base);
+
+    let mut script = Script::new(page.dom(), broker.clone(), &base).expect("realm");
+    script
+        .eval(&format!(
+            "globalThis.sock = new WebSocket('ws://127.0.0.1:{port}/hmr');\
+             globalThis.got = null;\
+             sock.onmessage = (e) => {{ globalThis.got = e.data; \
+               document.querySelector('#out').textContent = e.data; }};"
+        ))
+        .expect("the socket opened");
+
+    // A wait, not a settle: a message arrives on real time, and this is the
+    // path that gives the wire its chance.
+    // Two records of one thing: the engine's map and the page's. A page whose
+    // map drifted from the engine's would report `readyState` wrongly forever.
+    assert_eq!(script.open_sockets(), 1, "the engine should know it holds one");
+    assert_eq!(
+        script.open_sockets_via_prelude(),
+        1,
+        "and the page should agree"
+    );
+    let waited = script.settle_until_expr("globalThis.got !== null");
+    assert!(waited.met, "the message never arrived: {}", waited.render());
+
+    assert_eq!(
+        script.eval_value("globalThis.got").unwrap(),
+        "hello from the server"
+    );
+    // And the page really changed, so a snapshot would show it.
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#out').textContent")
+            .unwrap(),
+        "hello from the server"
+    );
+
+    // Every frame is receipted, which is the claim this engine makes about all
+    // of its traffic and would have quietly stopped making at the handshake.
+    let records = sink.records();
+    let methods: Vec<&str> = records.iter().map(|r| r.method.as_str()).collect();
+    assert!(
+        methods.contains(&"WS-OPEN"),
+        "the handshake is not in the log: {methods:?}"
+    );
+    assert!(
+        methods.contains(&"WS-RECV"),
+        "the received frame is not in the log: {methods:?}"
+    );
+    // The received frame's size is recorded, not just its existence.
+    let bytes: Vec<Option<u64>> = records
+        .iter()
+        .filter(|r| r.method == "WS-RECV" && r.phase == crate::receipt::Phase::Response)
+        .map(|r| r.bytes)
+        .collect();
+    assert!(
+        bytes.iter().any(|b| *b == Some("hello from the server".len() as u64)),
+        "{bytes:?}"
+    );
+
+    let _ = server.join();
+}
+
+#[test]
+fn an_open_socket_does_not_make_a_page_look_permanently_busy() {
+    // The trap the interval precedent already records: a perpetual thing that
+    // counts as pending makes every page holding one report "still busy" on
+    // every read. A plain settle must terminate even with a socket open.
+    let (port, server) = socket_server("tick");
+
+    let (page, broker) = {
+        let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
+        let broker = std::sync::Arc::new(
+            crate::net::Broker::new(crate::policy::Policy::new(), sink, None).expect("broker"),
+        );
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+        let factory = crate::engine::PageFactory::new(
+            broker.clone(),
+            fonts.sources.clone(),
+            crate::engine::PageOptions::default(),
+        );
+        let base = url::Url::parse("http://127.0.0.1/").unwrap();
+        (factory.from_html("<html><body><p>x</p></body></html>", &base), broker)
+    };
+    let base = url::Url::parse("http://127.0.0.1/").unwrap();
+    let mut script = Script::new(page.dom(), broker, &base).expect("realm");
+    script
+        .eval(&format!(
+            "globalThis.sock = new WebSocket('ws://127.0.0.1:{port}/');"
+        ))
+        .expect("opened");
+
+    let started = std::time::Instant::now();
+    let settled = script.settle();
+    assert!(
+        !settled.cut_off,
+        "an open socket must not report the page as still working: {}",
+        settled.render()
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "it should not have waited out a budget: {:?}",
+        started.elapsed()
+    );
+
+    let _ = server.join();
+}
+
+#[test]
+fn a_page_can_read_an_event_stream_end_to_end() {
+    // The sibling of the socket test, and the reason both exist: a live
+    // application shows nothing without one of them.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            use std::io::{Read as _, Write as _};
+            let mut discard = [0u8; 1024];
+            let _ = stream.read(&mut discard);
+            let body = "data: tick one\n\n";
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                     Content-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+            let _ = stream.flush();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    });
+
+    let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
+    let broker = std::sync::Arc::new(
+        crate::net::Broker::new(crate::policy::Policy::new(), sink.clone(), None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = crate::engine::PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        crate::engine::PageOptions::default(),
+    );
+    let base = url::Url::parse("http://127.0.0.1/").unwrap();
+    let page = factory.from_html("<html><body><p id='out'>none</p></body></html>", &base);
+    let mut script = Script::new(page.dom(), broker, &base).expect("realm");
+
+    script
+        .eval(&format!(
+            "globalThis.es = new EventSource('http://127.0.0.1:{port}/events');\
+             globalThis.got = null;\
+             es.onmessage = (e) => {{ globalThis.got = e.data; \
+               document.querySelector('#out').textContent = e.data; }};"
+        ))
+        .expect("the stream opened");
+
+    let waited = script.settle_until_expr("globalThis.got !== null");
+    assert!(waited.met, "no event arrived: {}", waited.render());
+    assert_eq!(script.eval_value("globalThis.got").unwrap(), "tick one");
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('#out').textContent")
+            .unwrap(),
+        "tick one"
+    );
+
+    let methods: Vec<String> = sink.records().iter().map(|r| r.method.clone()).collect();
+    assert!(methods.iter().any(|m| m == "SSE-OPEN"), "{methods:?}");
+
+    let _ = server.join();
+}
+
+#[test]
+fn eventsource_is_real_rather_than_a_name_that_answers_feature_detection() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    assert_eq!(script.eval_value("typeof EventSource").unwrap(), "function");
+    assert_eq!(script.eval_value("EventSource.CONNECTING").unwrap(), "0");
+    assert_eq!(script.eval_value("EventSource.OPEN").unwrap(), "1");
+    assert_eq!(script.eval_value("EventSource.CLOSED").unwrap(), "2");
+    assert_eq!(
+        script
+            .eval_value("String(EventSource.prototype instanceof EventTarget)")
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        script.eval_value("typeof EventSource.prototype.close").unwrap(),
+        "function"
+    );
+}
+
+#[test]
+fn websocket_is_real_rather_than_a_name_that_answers_feature_detection() {
+    // The other half of the rule this file's neighbour pins. `WebSocket` used
+    // to be absent, which was correct while there was nothing behind it. It is
+    // now a working object over a real connection, so what has to be asserted
+    // is the *stronger* property: not merely that the name is defined, but that
+    // the shape a page feature-detects against is actually there.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(script.eval_value("typeof WebSocket").unwrap(), "function");
+    // The constants a page branches on.
+    assert_eq!(script.eval_value("WebSocket.CONNECTING").unwrap(), "0");
+    assert_eq!(script.eval_value("WebSocket.OPEN").unwrap(), "1");
+    assert_eq!(script.eval_value("WebSocket.CLOSING").unwrap(), "2");
+    assert_eq!(script.eval_value("WebSocket.CLOSED").unwrap(), "3");
+    // It is an EventTarget, which is how anything real listens to it.
+    assert_eq!(
+        script
+            .eval_value("String(WebSocket.prototype instanceof EventTarget)")
+            .unwrap(),
+        "true"
+    );
+    for method in ["send", "close", "addEventListener"] {
+        assert_eq!(
+            script
+                .eval_value(&format!("typeof WebSocket.prototype.{method}"))
+                .unwrap(),
+            "function",
+            "{method} is missing"
+        );
+    }
+}
+
+#[test]
+fn a_socket_the_policy_refuses_throws_where_the_page_can_see_it() {
+    // A refusal is an answer, the same as it is for a fetch. What must not
+    // happen is a constructor that succeeds and then never connects, which
+    // looks to a page like a server that is merely slow.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    let error = script
+        .eval_value("(() => { try { new WebSocket('wss://example.com/s'); return 'no throw'; } \
+                    catch (e) { return String(e.message); } })()")
+        .unwrap();
+    assert!(error.contains("wss://"), "{error}");
+    assert!(error.contains("not built"), "{error}");
+}
+
 #[test]
 fn an_api_this_engine_lacks_is_absent_rather_than_a_stub_that_lies() {
     let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
@@ -762,7 +1040,6 @@ fn an_api_this_engine_lacks_is_absent_rather_than_a_stub_that_lies() {
     // therefore took the branch for an API that then failed — the
     // plausible-wrong answer this engine exists to refuse, written by us. It
     // cost three real sites their entire bundle.
-    assert_eq!(script.eval_value("typeof WebSocket").unwrap(), "undefined");
     assert_eq!(script.eval_value("typeof BroadcastChannel").unwrap(), "undefined");
     assert_eq!(
         script.eval_value("String('serviceWorker' in navigator)").unwrap(),

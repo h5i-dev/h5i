@@ -3953,6 +3953,226 @@
   // as settled, and every snapshot of it would carry a "still busy" note that
   // told an agent nothing. Intervals still fire while the clock advances; they
   // just do not hold the page open.
+  // ── websockets ─────────────────────────────────────────────────────────
+  //
+  // Real, or absent. The rule at the top of the "absent, not stubbed" section
+  // applies here more than anywhere: `typeof WebSocket === "function"` answering
+  // true for a stub cost three sites their entire bundle. This is a working
+  // object over a real connection, or the identifier is not defined at all.
+  //
+  // Delivery is at settle-round boundaries rather than the instant a frame
+  // lands, because the session has no pump at rest. See `socket_drain` in
+  // dom_api.rs.
+  const openSockets = new Map(); // id -> WebSocket
+
+  class WebSocket extends EventTarget {
+    constructor(url, protocols) {
+      super();
+      if (arguments.length === 0) {
+        throw new TypeError("WebSocket requires a url");
+      }
+      this._url = String(url);
+      this._protocols = protocols;
+      this.readyState = WebSocket.CONNECTING;
+      this.bufferedAmount = 0;
+      this.extensions = "";
+      this.protocol = "";
+      this.binaryType = "blob";
+      this.onopen = null;
+      this.onmessage = null;
+      this.onclose = null;
+      this.onerror = null;
+      // Throws if the policy refused it, which is what a page sees for any
+      // other refused request too.
+      this._id = api.socketOpen(this._url);
+      openSockets.set(this._id, this);
+    }
+
+    get url() {
+      return this._url;
+    }
+
+    send(data) {
+      if (this.readyState === WebSocket.CONNECTING) {
+        throw new DOMException_("still connecting", "InvalidStateError");
+      }
+      if (this.readyState !== WebSocket.OPEN) return;
+      api.socketSend(this._id, typeof data === "string" ? data : String(data));
+    }
+
+    close(code, reason) {
+      if (this.readyState === WebSocket.CLOSED) return;
+      this.readyState = WebSocket.CLOSING;
+      api.socketClose(this._id);
+      openSockets.delete(this._id);
+      this.readyState = WebSocket.CLOSED;
+      const event = new Event("close");
+      event.code = code === undefined ? 1000 : code;
+      event.reason = reason === undefined ? "" : String(reason);
+      event.wasClean = true;
+      this._fire("close", event);
+    }
+
+    _fire(kind, event) {
+      const handler = this["on" + kind];
+      if (typeof handler === "function") {
+        try {
+          handler.call(this, event);
+        } catch (error) {
+          console.error("websocket " + kind + " handler threw: " + withStack(error));
+        }
+      }
+      this.dispatchEvent(event);
+    }
+  }
+  WebSocket.CONNECTING = 0;
+  WebSocket.OPEN = 1;
+  WebSocket.CLOSING = 2;
+  WebSocket.CLOSED = 3;
+
+  // A minimal DOMException stand-in, only where the spec names one.
+  function DOMException_(message, name) {
+    const error = new Error(message);
+    error.name = name;
+    return error;
+  }
+
+  // Collect what arrived and turn it into events. Returns how many were
+  // delivered, so the settle loop knows whether the round did any work: a
+  // socket that is merely *open* must not hold the page busy forever, and one
+  // that delivered a message should get another round.
+  // `EventSource`, over the same delivery mechanism. Real, or absent — the
+  // rule above applies here too.
+  const openStreams = new Map(); // id -> EventSource
+
+  class EventSource extends EventTarget {
+    constructor(url, init) {
+      super();
+      if (arguments.length === 0) {
+        throw new TypeError("EventSource requires a url");
+      }
+      this._url = String(url);
+      this.withCredentials = !!(init && init.withCredentials);
+      this.readyState = EventSource.CONNECTING;
+      this.onopen = null;
+      this.onmessage = null;
+      this.onerror = null;
+      this._id = api.sseOpen(this._url);
+      openStreams.set(this._id, this);
+    }
+
+    get url() {
+      return this._url;
+    }
+
+    close() {
+      if (this.readyState === EventSource.CLOSED) return;
+      api.sseClose(this._id);
+      openStreams.delete(this._id);
+      this.readyState = EventSource.CLOSED;
+    }
+
+    _fire(kind, event) {
+      const handler = this["on" + kind];
+      if (typeof handler === "function") {
+        try {
+          handler.call(this, event);
+        } catch (error) {
+          console.error("eventsource " + kind + " handler threw: " + withStack(error));
+        }
+      }
+      this.dispatchEvent(event);
+    }
+  }
+  EventSource.CONNECTING = 0;
+  EventSource.OPEN = 1;
+  EventSource.CLOSED = 2;
+
+  globalThis.WebSocket = WebSocket;
+  globalThis.EventSource = EventSource;
+
+  globalThis.__h5iDrainSockets = function () {
+    let delivered = 0;
+    for (const socket of Array.from(openSockets.values())) {
+      const events = api.socketDrain(socket._id);
+      for (const entry of events) {
+        const kind = entry[0];
+        const payload = entry[1];
+        delivered++;
+        if (kind === "open") {
+          socket.readyState = WebSocket.OPEN;
+          socket._fire("open", new Event("open"));
+        } else if (kind === "message") {
+          const event = new Event("message");
+          event.data = payload;
+          event.origin = socket._url;
+          socket._fire("message", event);
+        } else if (kind === "close") {
+          socket.readyState = WebSocket.CLOSED;
+          openSockets.delete(socket._id);
+          const event = new Event("close");
+          event.code = 1006;
+          event.reason = payload;
+          event.wasClean = false;
+          socket._fire("close", event);
+        } else if (kind === "error") {
+          const event = new Event("error");
+          event.message = payload;
+          socket._fire("error", event);
+        }
+      }
+    }
+
+    for (const stream of Array.from(openStreams.values())) {
+      const events = api.sseDrain(stream._id);
+      for (const entry of events) {
+        const kind = entry[0];
+        const payload = entry[1];
+        delivered++;
+        if (kind === "open") {
+          stream.readyState = EventSource.OPEN;
+          stream._fire("open", new Event("open"));
+        } else if (kind === "message") {
+          // The reader carries a named type in-band, because the drain
+          // protocol has one string per event. First line is the name when
+          // there is one; a plain `message` has no prefix.
+          let name = "message";
+          let data = payload;
+          const cut = payload.indexOf("\n");
+          if (cut > 0 && !payload.slice(0, cut).includes(" ")) {
+            const candidate = payload.slice(0, cut);
+            if (/^[A-Za-z_][A-Za-z0-9_-]*$/.test(candidate) && candidate !== "data") {
+              name = candidate;
+              data = payload.slice(cut + 1);
+            }
+          }
+          const event = new Event(name);
+          event.data = data;
+          event.origin = stream._url;
+          stream._fire(name === "message" ? "message" : name, event);
+        } else if (kind === "close") {
+          stream.readyState = EventSource.CLOSED;
+          openStreams.delete(stream._id);
+          const event = new Event("error");
+          event.message = payload;
+          stream._fire("error", event);
+        } else if (kind === "error") {
+          const event = new Event("error");
+          event.message = payload;
+          stream._fire("error", event);
+        }
+      }
+    }
+
+    return delivered;
+  };
+
+  /// How many long-lived connections this page has open, for the engine's own
+  /// reporting.
+  globalThis.__h5iOpenSockets = function () {
+    return openSockets.size + openStreams.size;
+  };
+
   globalThis.__h5iPendingTimers = function () {
     let pending = 0;
     for (const timer of timers.values()) if (timer.every === null) pending++;

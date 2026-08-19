@@ -775,6 +775,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 // stolen jar.
                 "cookies": session.factory.broker().jar().len(),
                 "login": session.login,
+                "open_sockets": session.page.open_sockets(),
             }),
             false,
         ),
@@ -821,6 +822,11 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 .then(|| session.last_snapshot.as_ref().map(|prev| snapshot.delta(prev)))
                 .flatten();
 
+            // A live socket is the one thing here that makes two reads of one
+            // page disagree without the agent having acted. Reported, because
+            // the determinism this engine claims elsewhere genuinely does not
+            // hold for a page holding one.
+            let sockets = session.page.open_sockets();
             let mut reply = json!({
                 "ok": true,
                 "url": session.page.url().to_string(),
@@ -883,6 +889,14 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                     .collect::<Vec<_>>()
             };
             reply["refs"] = json!(selectors);
+            if sockets > 0 {
+                reply["open_sockets"] = json!(sockets);
+                reply["note"] = json!(format!(
+                    "this page holds {sockets} open socket(s). Messages arrive on real time and \
+                     are delivered when a verb runs, so two reads of this page can differ \
+                     without you having done anything — unlike every other page here."
+                ));
+            }
 
             // What the agent is about to hold refs from. `resolve_ref` checks
             // the next `@ref` against this, which is the whole staleness story:
