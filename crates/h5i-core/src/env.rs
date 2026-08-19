@@ -5530,6 +5530,14 @@ pub fn run_remote(
         egress: result.egress.clone(),
         browser: None,
         share: None,
+        // Absent for the same reason `effective_digest` is: the
+        // runtime-detection lane watches processes on *this* kernel, and the
+        // run happened on another machine's. A block here would be a
+        // measurement of the wrong host, and an empty one would read as a
+        // quiet box. Extending the runner protocol to carry the far side's
+        // block is future work, and until it exists the honest answer is to
+        // say nothing rather than to say nothing happened.
+        runtime: None,
     };
     let captured = crate::receipt::append(&env_dir_path, input, &raw)?;
     m.captures.push(captured.id.clone());
@@ -5703,7 +5711,31 @@ fn run_inner(
         Some("running".into()),
         None,
     )?;
+    // The kernel-observed lane, started BEFORE the payload is spawned so the
+    // payload's own `execve` is the first thing it sees (ROADMAP.md D6). A
+    // refusal here is fatal only when the profile said `require = true`.
+    let watch = match start_watch(&policy, h5i_root, &work) {
+        Ok(w) => w,
+        Err(e) => {
+            let _ = protected_hook_configs.finish();
+            set_status(
+                repo,
+                h5i_root,
+                m,
+                ST_IDLE,
+                "status",
+                Some("idle (refused: unwatched)".into()),
+                None,
+            )?;
+            return Err(e);
+        }
+    };
     let result = sandbox::run_with_env(&policy, &work, argv, &injected_env);
+    // Stopped before anything else touches the box, so the block describes the
+    // command and not the bookkeeping that follows it — the browser drain
+    // below runs `sandbox::run_with_env` again, and its syscalls are h5i's
+    // work, not the box's.
+    let runtime_evidence = finish_watch(watch);
     // Whatever happened, leave the running state before propagating errors.
     let outcome = match result {
         Ok(o) => o,
@@ -5832,6 +5864,11 @@ fn run_inner(
         // Not a share. That lane is written by `h5i-share`, which sits above
         // this crate.
         share: None,
+        // Kernel observed. Absent when the profile did not ask to be watched;
+        // present with its reason when it asked and the probe could not
+        // attach, because a missing block and a quiet box must never look the
+        // same.
+        runtime: runtime_evidence,
     };
     let captured = crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, &raw)?;
     let capture_id = captured.id.clone();
@@ -6155,6 +6192,28 @@ pub fn shell(
     // No managed-settings injection: the in-box hook it carried rewrote agent
     // commands into `h5i capture run`, which no longer exists. The container
     // tee shim is the observation floor, and it needs no agent cooperation.
+    // Same lane, same ordering, for the interactive path. An interactive
+    // session is where an agent does the most unobserved work — the tee shim
+    // only sees commands a cooperating shell reported — so this is where a
+    // kernel-observed second opinion is worth the most.
+    let watch = match start_watch(&policy, h5i_root, &work) {
+        Ok(w) => w,
+        Err(e) => {
+            let _ = protected_hook_configs.finish();
+            if !readonly {
+                set_status(
+                    repo,
+                    h5i_root,
+                    m,
+                    ST_IDLE,
+                    "status",
+                    Some("idle (refused: unwatched)".into()),
+                    None,
+                )?;
+            }
+            return Err(e);
+        }
+    };
     let session = match sandbox::run_interactive(&policy, &work, &argv, &injected_env, None) {
         Ok(outcome) => outcome,
         Err(e) => {
@@ -6173,6 +6232,7 @@ pub fn shell(
             return Err(e);
         }
     };
+    let runtime_evidence = finish_watch(watch);
     let exit_code = session.exit_code;
     if let Err(e) = protected_hook_configs.finish() {
         if !readonly {
@@ -6259,6 +6319,23 @@ pub fn shell(
         .map(|eg| format!(" egress={}ok/{}denied", eg.allowed, eg.denied))
         .unwrap_or_default();
 
+    // What the kernel saw during the session, as its own record. A session is
+    // one shell and many commands, so the block is a summary of the whole
+    // session rather than of any one of them — which is exactly what makes it
+    // useful next to the tee shim's per-command records, and exactly why it is
+    // a separate record instead of being folded into one of theirs.
+    let runtime_note = match runtime_evidence {
+        Some(ev) => {
+            let note = format!(" runtime={}", ev.summary());
+            match capture_shell_runtime(h5i_root, m, &work, ev, exit_code) {
+                Ok(id) => m.captures.push(id),
+                Err(e) => eprintln!("warning: shell runtime capture failed: {e}"),
+            }
+            note
+        }
+        None => String::new(),
+    };
+
     let safe_cmd = crate::secrets::redact_text(&argv.join(" "));
     let observed_note = if observed > 0 {
         format!(" observed={observed}")
@@ -6272,7 +6349,7 @@ pub fn shell(
         ST_IDLE,
         "shell",
         Some(format!(
-            "interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}{egress_note}"
+            "interactive cmd=`{safe_cmd}` exit={exit_code}{observed_note}{egress_note}{runtime_note}"
         )),
         egress_capture,
     )?;
@@ -6304,6 +6381,168 @@ pub fn shell(
         )?;
     }
     Ok(exit_code)
+}
+
+// ─── runtime detection: the kernel-observed lane (ROADMAP.md D1–D14) ────────
+
+/// Build the collector's configuration from a resolved policy, or `None` when
+/// the profile did not ask to be watched.
+///
+/// Everything the rules need is derived from the policy that is actually in
+/// force, never from a global idea of what is suspicious: a box that was
+/// *granted* `unix_sockets` is not reported for using them, and a box with an
+/// unrestricted network is not reported for using it.
+fn detect_config(
+    policy: &crate::sandbox_policy::ResolvedPolicy,
+    h5i_root: &Path,
+    work: &Path,
+) -> Option<h5i_bpf::DetectConfig> {
+    let d = &policy.profile.detect;
+    if !d.enabled {
+        return None;
+    }
+    // `NetMode` is `deny|host`; the third state a rule cares about — "there is
+    // an allowlist" — is the profile declaring egress hosts, which is what
+    // puts a CONNECT proxy in front of the box.
+    let net_mode = if policy.profile.scopes_egress() {
+        "proxy"
+    } else {
+        match policy.profile.net_mode {
+            crate::sandbox_policy::NetMode::Deny => "deny",
+            crate::sandbox_policy::NetMode::Host => "allow",
+        }
+    };
+    // The box's home, which on every kernel tier is this user's: `HOME` is in
+    // the default `env.pass` and no tier below `container` gives the box one of
+    // its own. Empty when unset, and `kernel_prefixes` then contributes no
+    // home-relative prefixes rather than watching `/.ssh`, which is a real path
+    // and not the one anybody meant.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let control_dir = h5i_root.display().to_string();
+
+    let mut cfg = h5i_bpf::DetectConfig {
+        tier: h5i_bpf::Tier::parse(policy.claim.as_str()),
+        buffer_kb: d.buffer_kb,
+        rules: d.rules.clone(),
+        context: h5i_bpf::RuleContext {
+            net_mode: net_mode.to_string(),
+            unix_sockets: policy.profile.unix_sockets,
+            workspace: work.display().to_string(),
+            home: home.clone(),
+            control_dir: control_dir.clone(),
+            // The addresses a proxied box is *supposed* to dial. Loopback is
+            // already exempt in the rule itself, and every proxy h5i runs binds
+            // loopback, so this stays empty on the tiers this lane covers
+            // fully. It exists for the container tier, whose proxy is reached
+            // at a gateway address — and that tier is `partial` for other
+            // reasons anyway.
+            proxy_peers: Vec::new(),
+            enabled: Default::default(),
+        },
+        prefixes: h5i_bpf::kernel_prefixes(&home, &control_dir),
+        open_all: false,
+    };
+    // Resolve here as well as inside `Watch::start`, so `context.enabled` is
+    // populated for callers that inspect the config (and so `want_dotenv` is
+    // answered from the resolved set rather than the selector strings).
+    let _ = cfg.resolve();
+    Some(cfg)
+}
+
+/// Start watching a run.
+///
+/// `Ok(None)` means the profile did not ask. `Err` means it asked with
+/// `require = true` and the probe could not attach — the run is refused rather
+/// than performed unwatched, which is the whole point of that switch.
+fn start_watch(
+    policy: &crate::sandbox_policy::ResolvedPolicy,
+    h5i_root: &Path,
+    work: &Path,
+) -> Result<Option<h5i_bpf::Watch>, H5iError> {
+    let Some(cfg) = detect_config(policy, h5i_root, work) else {
+        return Ok(None);
+    };
+    let watch = h5i_bpf::Watch::start(cfg);
+    if !watch.is_live() {
+        let why = watch.refusal().unwrap_or("no reason given").to_string();
+        if policy.profile.detect.require {
+            return Err(H5iError::Metadata(format!(
+                "this box's profile sets `[detect] require = true`, and the runtime-detection \
+                 probe could not attach: {why}\n           \
+                 Fix the cause above, or set `require = false` in `[profile.{}.detect]` to run \
+                 unwatched (the receipt will say so).",
+                policy.profile.name
+            )));
+        }
+        // Not fatal, and not silent either: the block that reaches the receipt
+        // carries this same reason, so the run is recorded as unwatched rather
+        // than as quiet.
+        eprintln!("note: runtime detection unavailable — {why}");
+    }
+    Ok(Some(watch))
+}
+
+/// Stop watching. `None` when nothing was.
+fn finish_watch(watch: Option<h5i_bpf::Watch>) -> Option<h5i_bpf::RuntimeEvidence> {
+    watch.map(|w| w.finish())
+}
+
+/// Persist what the kernel-observed lane saw during an interactive session.
+///
+/// Its own record rather than a field on somebody else's, because the thing it
+/// describes is the *session*: a shell runs many commands, the tee shim writes
+/// one record per command it managed to see, and this is the one observer that
+/// covers the gaps between them. Written even when nothing fired — a watched
+/// session with no detections is a result, and it is a different result from a
+/// session nobody watched.
+fn capture_shell_runtime(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    work: &Path,
+    runtime: h5i_bpf::RuntimeEvidence,
+    exit_code: i32,
+) -> Result<String, H5iError> {
+    let mut raw = format!("runtime detection ({}): {}\n", runtime.lane, runtime.summary());
+    raw.push_str(&format!(
+        "scope={} coverage={} seen={} lost={} filtered={}\n",
+        runtime.scope,
+        runtime.coverage.as_str(),
+        runtime.events_seen,
+        runtime.events_lost,
+        runtime.events_filtered
+    ));
+    if let Some(why) = &runtime.coverage_reason {
+        raw.push_str(&format!("note: {why}\n"));
+    }
+    for d in &runtime.detections {
+        raw.push_str(&format!(
+            "\n[{}] {} — {} ({} match{})\n",
+            d.severity.as_str(),
+            d.rule,
+            d.title,
+            d.count,
+            if d.count == 1 { "" } else { "es" }
+        ));
+        for ex in &d.examples {
+            raw.push_str(&format!("    {ex}\n"));
+        }
+        if d.examples_truncated {
+            raw.push_str("    …\n");
+        }
+    }
+    let input = crate::receipt::RecordInput {
+        env_id: m.id.clone(),
+        policy_digest: Some(m.policy_digest.clone()),
+        effective_digest: effective_digest_of(&m.dir(h5i_root)),
+        fs_overlap: fs_overlap_with_boxes(h5i_root, m),
+        source: "host-env-shell".into(),
+        cmd: Some(format!("env shell {}", m.id)),
+        cwd: Some(work.display().to_string()),
+        exit_code: Some(exit_code),
+        runtime: Some(runtime),
+        ..Default::default()
+    };
+    Ok(crate::receipt::append(&env_dir(h5i_root, &m.agent, &m.slug), input, raw.as_bytes())?.id)
 }
 
 /// Persist an interactive session's egress tally as an env-tagged capture. The
@@ -7419,6 +7658,44 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         }
         if !p.tools.is_empty() {
             out.push_str(&format!("  tools    : {}\n", p.tools.join(", ")));
+        }
+        // The runtime-detection lane, and — the part that matters — whether
+        // this host can actually deliver it. A profile that says
+        // `enabled = true` on a machine with no `CAP_BPF` is watching nothing,
+        // and a status page that printed only the profile's intent would be
+        // the exact "reads like enforcement, enforces nothing" failure this
+        // product keeps finding in itself.
+        if p.detect.enabled {
+            let caps = crate::bpf::probe_host();
+            out.push_str(&format!(
+                "  detect   : rules={} buffer={}KiB{}\n",
+                p.detect.rules.join(","),
+                p.detect.buffer_kb,
+                if p.detect.require {
+                    " require=true"
+                } else {
+                    ""
+                }
+            ));
+            match caps.unavailable_reason() {
+                None => {
+                    let (cov, why) = crate::bpf::Tier::parse(policy.claim.as_str()).coverage();
+                    out.push_str(&format!(
+                        "             kernel-observed, coverage={} on the {} tier{}\n",
+                        cov.as_str(),
+                        policy.claim.as_str(),
+                        why.map(|w| format!(" — {w}")).unwrap_or_default()
+                    ));
+                }
+                Some(why) => out.push_str(&format!(
+                    "             NOT watching on this host — {}{}\n",
+                    clean(&why),
+                    caps.fix
+                        .as_deref()
+                        .map(|f| format!("\n             fix: {f}"))
+                        .unwrap_or_default()
+                )),
+            }
         }
         // Named, not implied: these are held out of `diff`, `propose` and the
         // exported patch, and a reviewer should see that from the status page

@@ -459,6 +459,86 @@ fn report(
         }
     }
 
+    // What the kernel saw. Placed above the agent's proposal for the same
+    // reason the browser section is: it is the part of the report the thing
+    // being reviewed could not write.
+    let watched: Vec<(&crate::receipt::ExecRecord, &h5i_bpf::RuntimeEvidence)> = records
+        .iter()
+        .filter_map(|r| r.runtime.as_ref().map(|rt| (r, rt)))
+        .collect();
+    if !watched.is_empty() {
+        out.push_str("\n## What the kernel saw\n\n");
+        let unobserved = watched.iter().filter(|(_, rt)| !rt.observed()).count();
+        let detections: Vec<_> = watched
+            .iter()
+            .filter(|(_, rt)| !rt.detections.is_empty())
+            .collect();
+
+        if detections.is_empty() && unobserved == 0 {
+            let seen: u64 = watched.iter().map(|(_, rt)| rt.events_seen).sum();
+            out.push_str(&format!(
+                "{} run(s) were watched from the kernel — {seen} syscall event(s) — and no \
+                 signature fired. This says nothing about behaviour no signature models; \
+                 `h5i box detect rules` lists what was looked for.\n",
+                watched.len()
+            ));
+        } else {
+            out.push_str(
+                "Observed by an eBPF collector in the kernel, not reported by the box. Each \
+                 line is a signature that fired, with an example of what tripped it.\n\n",
+            );
+            for (r, rt) in &detections {
+                out.push_str(&format!(
+                    "- {} ({}) — {}\n",
+                    md_code(&crate::redact::sanitize_display(
+                        r.cmd.as_deref().unwrap_or("run")
+                    )),
+                    r.timestamp,
+                    md_escape(&crate::redact::sanitize_display(&rt.summary()))
+                ));
+                for d in &rt.detections {
+                    out.push_str(&format!(
+                        "  - **{}** `{}` — {} (×{})\n",
+                        d.severity.as_str(),
+                        d.rule,
+                        md_escape(&crate::redact::sanitize_display(&d.title)),
+                        d.count
+                    ));
+                    for ex in &d.examples {
+                        out.push_str(&format!(
+                            "    - {}\n",
+                            md_escape(&crate::redact::sanitize_display(ex))
+                        ));
+                    }
+                }
+            }
+        }
+
+        // "Nothing was looked at" is a different claim from "nothing was
+        // wrong". Same rule as the browser section above, and it matters more
+        // here: this lane is the one a reader is most likely to take as
+        // complete.
+        if unobserved > 0 {
+            out.push_str(&format!(
+                "\n_{unobserved} run(s) carry a runtime block that observed nothing:_\n"
+            ));
+            for (r, rt) in watched.iter().filter(|(_, rt)| !rt.observed()) {
+                out.push_str(&format!(
+                    "- {} — {}\n",
+                    r.timestamp,
+                    md_escape(&crate::redact::sanitize_display(&rt.summary()))
+                ));
+            }
+        }
+        let lost: u64 = watched.iter().map(|(_, rt)| rt.events_lost).sum();
+        if lost > 0 {
+            out.push_str(&format!(
+                "\n_{lost} event(s) were dropped before they could be examined, so the list \
+                 above is a lower bound._\n"
+            ));
+        }
+    }
+
     // Who was at the controls. A patch produced with a human driving the
     // browser is a different artifact from one an agent produced alone, and a
     // reviewer should not have to infer which this was.
@@ -747,6 +827,7 @@ mod tests {
             egress: None,
             browser,
             share: None,
+            runtime: None,
             redactions: Vec::new(),
             raw_oid: "sha256:0".into(),
             raw_size: 0,

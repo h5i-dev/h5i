@@ -415,6 +415,39 @@ pub struct Signals {
     /// applies to such pairs — and also for envs whose receipts never carried
     /// the check; the pane only speaks when there is something recorded.
     pub fs_overlap: Vec<String>,
+    /// Receipts whose kernel-observed lane actually watched the run
+    /// (ROADMAP.md D10).
+    ///
+    /// Its own count, beside `host_observed` rather than inside it, for the
+    /// same reason `runner_observed` is its own: they are different claims. A
+    /// host-observed run is one h5i was the parent of; a kernel-watched run is
+    /// one an eBPF collector saw from underneath. The second is strictly
+    /// harder for a box to defeat and strictly narrower in what it covers, and
+    /// collapsing them would lose both facts.
+    #[serde(default)]
+    pub kernel_watched: usize,
+    /// Receipts that carry a runtime block which observed nothing — the probe
+    /// could not attach, or the tier is one a host probe cannot see into.
+    ///
+    /// Counted separately and shown, because the whole point of writing the
+    /// block anyway is that "not watched" must never render as "watched and
+    /// quiet".
+    #[serde(default)]
+    pub kernel_unwatched: usize,
+    /// Matches at `alert` severity, summed across watched runs.
+    #[serde(default)]
+    pub kernel_alerts: u64,
+    /// Matches at `notice` severity.
+    #[serde(default)]
+    pub kernel_notices: u64,
+    /// Events the kernel or the reader dropped. Nonzero means every count
+    /// above is a lower bound, and the pane says so rather than implying
+    /// completeness.
+    #[serde(default)]
+    pub kernel_events_lost: u64,
+    /// Distinct rule ids that fired, capped like `denied_hosts`.
+    #[serde(default)]
+    pub kernel_rules: Vec<String>,
 }
 
 /// [`signals`], for a test in another module of this crate.
@@ -434,6 +467,7 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         ..Default::default()
     };
     let mut denied_hosts: Vec<String> = Vec::new();
+    let mut kernel_rules: Vec<String> = Vec::new();
     for r in receipts {
         if r.exit_code.is_some_and(|c| c != 0) {
             s.failed += 1;
@@ -473,6 +507,24 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
         if matches!(r.source.as_str(), "host-env-run" | "host-env-shell") {
             s.fs_overlap = r.fs_overlap.clone();
         }
+        if let Some(rt) = &r.runtime {
+            if rt.observed() {
+                s.kernel_watched += 1;
+            } else {
+                s.kernel_unwatched += 1;
+            }
+            s.kernel_events_lost += rt.events_lost;
+            for d in &rt.detections {
+                match d.severity {
+                    h5i_bpf::Severity::Alert => s.kernel_alerts += d.count,
+                    h5i_bpf::Severity::Notice => s.kernel_notices += d.count,
+                    h5i_bpf::Severity::Info => {}
+                }
+                if !kernel_rules.contains(&d.rule) {
+                    kernel_rules.push(d.rule.clone());
+                }
+            }
+        }
         if let Some(sh) = &r.share {
             s.shares += 1;
             if sh.third_party_can_read() {
@@ -483,6 +535,9 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
     }
     denied_hosts.truncate(DENIED_HOSTS_CAP);
     s.denied_hosts = denied_hosts;
+    kernel_rules.sort();
+    kernel_rules.truncate(DENIED_HOSTS_CAP);
+    s.kernel_rules = kernel_rules;
     s.fs_overlap.truncate(DENIED_HOSTS_CAP);
     // Receipts are appended in order and their timestamps sort lexically.
     s.last_run_ts = receipts.last().map(|r| r.timestamp.clone());
@@ -494,9 +549,17 @@ fn signals(m: &EnvManifest, receipts: &[ExecRecord]) -> Signals {
     s.box_claimed_only = s.runs > 0 && s.host_observed == 0 && s.runner_observed == 0;
     s.authority_unconfined =
         m.fs_authority.is_some_and(|a| !a.confined() || a.symlink_clean == Some(false));
+    // A kernel-observed alert raises `attention`, never `denial`, and the
+    // difference is not pedantry. `denial` means *something was refused* — the
+    // egress proxy said no, the authority validator found a grant outside the
+    // declared set — and this lane refuses nothing: it reports that a box read
+    // a credential file, not that it was stopped. Folding it into `denial`
+    // would quietly redefine the one word on this screen that currently has a
+    // precise meaning (`box-console-honesty-model`). The count is shown on its
+    // own, which is the honest way to make it loud.
     s.verdict = if s.egress_denied > 0 || s.authority_unconfined {
         "denial"
-    } else if s.failed > 0 || s.timed_out > 0 || s.browser_issues > 0 {
+    } else if s.failed > 0 || s.timed_out > 0 || s.browser_issues > 0 || s.kernel_alerts > 0 {
         "attention"
     } else {
         "clean"
@@ -1127,6 +1190,7 @@ mod tests {
             egress: None,
             browser: None,
             share: None,
+            runtime: None,
             redactions: vec![],
             raw_oid: "d".repeat(64),
             raw_size: 0,

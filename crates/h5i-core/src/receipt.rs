@@ -198,6 +198,18 @@ pub struct ExecRecord {
     /// h5i owned both ends of the bridge and the box supplied none of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub share: Option<ShareEvidence>,
+    /// What the kernel saw, when the runtime-detection lane was watching
+    /// (ROADMAP.md D10).
+    ///
+    /// A second observer of the same command, in its own lane. `source` above
+    /// stays `host-env-run`, deliberately: the record is *about the command*,
+    /// and this is a different observer of that command rather than a
+    /// different record. Present even when the detector could not attach — the
+    /// block then carries the reason — because a missing block and a quiet box
+    /// would otherwise look identical, which is the confusion this lane exists
+    /// to remove.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<h5i_bpf::RuntimeEvidence>,
     /// Secret rules that fired while redacting, by rule id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub redactions: Vec<String>,
@@ -232,6 +244,7 @@ pub struct RecordInput {
     pub egress: Option<EgressSummary>,
     pub browser: Option<BrowserEvidence>,
     pub share: Option<ShareEvidence>,
+    pub runtime: Option<h5i_bpf::RuntimeEvidence>,
 }
 
 /// Scrub every string a page supplied. A console line is a place a token turns
@@ -248,6 +261,24 @@ fn redact_browser_evidence(mut b: BrowserEvidence) -> BrowserEvidence {
     scrub(&mut b.errors);
     scrub(&mut b.failed_requests);
     b
+}
+
+/// Scrub the exemplars a detection carries.
+///
+/// The rules engine has already sanitised these for *terminal control
+/// sequences* — that is about rendering. This is the other half: a secret that
+/// happened to be in a path or an `argv[1]` must not reach `refs/h5i/objects`,
+/// and the receipt's own pattern-based redaction is the thing that decides
+/// what a secret looks like.
+fn redact_runtime_evidence(
+    mut r: h5i_bpf::RuntimeEvidence,
+) -> h5i_bpf::RuntimeEvidence {
+    for d in &mut r.detections {
+        for e in &mut d.examples {
+            *e = crate::secrets::redact_text(e);
+        }
+    }
+    r
 }
 
 fn log_path(env_dir: &Path) -> PathBuf {
@@ -416,6 +447,11 @@ pub fn append(env_dir: &Path, input: RecordInput, raw: &[u8]) -> Result<ExecReco
         // Host observed, and every field is a number or one of two known
         // transport strings, so there is nothing here for the scrub to reach.
         share: input.share,
+        // Kernel observed, but the exemplars inside it are *paths and command
+        // lines a box chose*, so they get the same scrub as the command and
+        // the payload. A credential passed as an argument reaches this lane
+        // exactly as readily as it reaches the others.
+        runtime: input.runtime.map(redact_runtime_evidence),
         redactions,
         raw_oid: format!("sha256:{digest}"),
         raw_size: stored.len() as u64,
@@ -671,6 +707,28 @@ pub fn render(rec: &ExecRecord, raw: &[u8]) -> String {
                 .chain(b.failed_requests.iter())
             {
                 out.push_str(&format!("           · {}\n", clean(line)));
+            }
+        }
+    }
+    if let Some(rt) = &rec.runtime {
+        out.push_str(&format!("  runtime  : {}\n", clean(&rt.summary())));
+        // The detections, worst first, with their exemplars. Same argument as
+        // the browser lines above: a count says something happened, the line
+        // says what — and here the line is the difference between "a rule
+        // fired" and "it read ~/.aws/credentials".
+        for d in &rt.detections {
+            out.push_str(&format!(
+                "           [{}] {} — {} ×{}\n",
+                d.severity.as_str(),
+                clean(&d.rule),
+                clean(&d.title),
+                d.count
+            ));
+            for ex in &d.examples {
+                out.push_str(&format!("             · {}\n", clean(ex)));
+            }
+            if d.examples_truncated {
+                out.push_str("             · …\n");
             }
         }
     }
@@ -1007,4 +1065,97 @@ mod tests {
         let unknown = find(td.path(), "zzzzzzzz").unwrap_err().to_string();
         assert!(unknown.contains("no object matches"), "{unknown}");
     }
+    /// The block must survive a round trip through the log, and its exemplars
+    /// must be scrubbed on the way in: a path or an `argv[1]` a box chose can
+    /// carry a credential exactly as readily as a command line can.
+    #[test]
+    fn a_runtime_block_is_stored_redacted_and_read_back() {
+        let dir = TempDir::new().unwrap();
+        let mut input = input();
+        input.runtime = Some(h5i_bpf::RuntimeEvidence {
+            lane: h5i_bpf::evidence::LANE.into(),
+            scope: "pidtree".into(),
+            coverage: h5i_bpf::Coverage::Full,
+            coverage_reason: None,
+            events_seen: 12,
+            events_lost: 0,
+            events_filtered: 900,
+            detections: vec![h5i_bpf::Detection {
+                rule: "secret.read".into(),
+                family: "secret".into(),
+                severity: h5i_bpf::Severity::Alert,
+                title: "opened a credential file".into(),
+                count: 2,
+                first_ns: 1,
+                last_ns: 9,
+                examples: vec![format!(
+                    "open /h/.ssh/k --token=sk-ant-api03-{}",
+                    "S3CRETVALUE".repeat(9)
+                )],
+                examples_truncated: false,
+            }],
+            unavailable: None,
+        });
+        let rec = append(dir.path(), input, b"out").unwrap();
+        let stored = &rec.runtime.as_ref().unwrap().detections[0].examples[0];
+        assert!(!stored.contains("S3CRETVALUE"), "{stored}");
+
+        let back = find(dir.path(), &rec.id).unwrap();
+        let rt = back.runtime.expect("the block must survive the log");
+        assert_eq!(rt.events_seen, 12);
+        assert_eq!(rt.detections.len(), 1);
+        assert!(rt.observed());
+    }
+
+    /// A record written before this field existed must still read.
+    #[test]
+    fn a_record_without_a_runtime_block_still_reads() {
+        let dir = TempDir::new().unwrap();
+        let rec = append(dir.path(), input(), b"out").unwrap();
+        assert!(rec.runtime.is_none());
+        let text = std::fs::read_to_string(dir.path().join(LOG_FILE)).unwrap();
+        assert!(!text.contains("runtime"), "{text}");
+        assert!(find(dir.path(), &rec.id).unwrap().runtime.is_none());
+    }
+
+    /// Rendering must never let a box's exemplar rewrite the lines above it.
+    #[test]
+    fn rendering_a_runtime_block_neutralises_control_sequences() {
+        let mut rec = append(TempDir::new().unwrap().path(), input(), b"").unwrap();
+        rec.runtime = Some(h5i_bpf::RuntimeEvidence {
+            lane: h5i_bpf::evidence::LANE.into(),
+            scope: "pidtree".into(),
+            coverage: h5i_bpf::Coverage::Full,
+            coverage_reason: None,
+            events_seen: 1,
+            events_lost: 0,
+            events_filtered: 0,
+            detections: vec![h5i_bpf::Detection {
+                rule: "kernel.bpf".into(),
+                family: "kernel".into(),
+                severity: h5i_bpf::Severity::Alert,
+                title: "called bpf(2)".into(),
+                count: 1,
+                first_ns: 1,
+                last_ns: 1,
+                examples: vec!["bpf(cmd=5)\x1b[2J\x1b[Hexit     : 0".into()],
+                examples_truncated: false,
+            }],
+            unavailable: None,
+        });
+        let text = render(&rec, b"");
+        assert!(!text.contains('\x1b'), "{text}");
+        assert!(text.contains("kernel.bpf"), "{text}");
+    }
+
+    /// An unwatched run's block must read as unwatched, never as clean.
+    #[test]
+    fn an_unavailable_runtime_block_renders_its_reason() {
+        let mut rec = append(TempDir::new().unwrap().path(), input(), b"").unwrap();
+        rec.runtime = Some(h5i_bpf::RuntimeEvidence::unavailable("missing CAP_BPF"));
+        let text = render(&rec, b"");
+        assert!(text.contains("not observed"), "{text}");
+        assert!(text.contains("CAP_BPF"), "{text}");
+    }
+
 }

@@ -193,6 +193,24 @@ h5i box log <name>                    # the box's event log
 session spawns is contained by the box rather than by the agent choosing to wrap
 each call.
 
+### h5i box detect
+
+Runtime detection: what an eBPF collector in the kernel saw inside a box.
+Read-only, and available on every build — the verbs are how you find out why
+the collector is *not* working, so gating them behind it would hide the answer
+from the hosts that need it.
+
+```bash
+h5i box detect probe                  # can this machine watch a box, and if not, why
+h5i box detect rules                  # the whole signature catalogue
+h5i box detect rules --filter secret  # one family, or one rule id
+h5i box detect show <name>            # what fired in this box, worst first
+h5i box detect show <name> --min alert
+```
+
+Turn it on per profile with `[profile.<name>.detect] enabled = true`; see
+[Runtime detection](#runtime-detection) for the section and what it costs.
+
 ### Services and ports
 
 ```bash
@@ -228,7 +246,7 @@ Produces:
 | File | What it is |
 |---|---|
 | `patch.diff` | The tree diff against the pinned base, path-validated: no symlink escapes, no nested `.git`, no agent-introduced gitlinks. |
-| `report.md` | What ran, what the browser saw, who was at the controls, and the agent's own proposal. |
+| `report.md` | What ran, what the browser saw, what the kernel saw, who was at the controls, and the agent's own proposal. |
 | `receipt.json` | Every observed execution, with the policy digest that was enforced. |
 | `receipts/<id>.raw` | The full account of each ingress session: who connected, over what path, for how long, how much moved, what was refused. Present when the box was shared. |
 
@@ -241,6 +259,8 @@ Read `report.md` before applying. It surfaces, in this order:
 - **what ran**: every command, its lane, its exit code
 - **what the browser saw**: console errors, uncaught exceptions and failed
   requests, observed by h5i rather than reported by the agent
+- **what the kernel saw**: signatures that fired against the syscalls a box
+  actually made, when runtime detection was on for the run
 - **viewer sessions**: including whether a human took the controls
 - the agent's proposal
 
@@ -1229,6 +1249,68 @@ procs = 256
 wall  = "30m"
 ```
 
+### Runtime detection
+
+Everything above this line is about what a box is *allowed* to do. `[detect]`
+is about what it actually did, reported from a place the box cannot reach: an
+eBPF collector attached to syscall tracepoints for the length of the run.
+
+```toml
+[profile.review.detect]
+enabled   = true      # attach the probe for runs under this profile
+require   = false     # refuse to run when the probe cannot attach
+buffer_kb = 256       # ring buffer size
+rules     = ["*"]     # rule ids, family names, or "*"
+```
+
+It is **observation only**. Nothing in this lane can deny a syscall; denial is
+Landlock, seccomp, the network namespace and the egress proxy, and it stays
+there. What the collector adds is a second opinion on the same run from an
+observer that is neither at the boundary of the box nor inside it: the kernel
+reports `execve`, `connect` and `openat` whether or not anything in the box
+wanted them reported.
+
+`enabled` is `false` by default because the collector needs `CAP_BPF`, which an
+ordinary install does not have. `h5i box detect probe` says whether this
+machine can watch a box and prints the one command that would change that; h5i
+never runs it for you.
+
+`require = true` is the fail-closed switch: if the probe cannot attach, the run
+is refused rather than performed unwatched. That is the setting for "I am
+running somebody else's dependency tree". It is off by default because a
+mandatory detector on a laptop kernel is a tool that does not start.
+
+Coverage differs by tier, and every receipt says which it got:
+
+| Tier | Coverage | Why |
+|---|---|---|
+| `workspace`, `process`, `supervised` | full | the payload is a descendant of h5i, so the kernel-maintained process tree holds it and everything it spawns |
+| `container` | partial | the container runtime double-forks, so the workload leaves h5i's process tree; what stays visible is the runtime's own activity on the host |
+| `microvm` | none | the workload runs against a guest kernel, which a host probe cannot observe at all |
+
+`h5i box detect rules` prints the whole signature catalogue with what each rule
+is for. `h5i box detect show <box>` prints what fired, worst first.
+
+This is opt-in at three separate layers, and all three have to say yes:
+
+| Layer | Switch | Default |
+|---|---|---|
+| build | `cargo install --path . --features bpf` | off — a stock build and the released binaries carry no probe |
+| host | `CAP_BPF` and `CAP_PERFMON` on the h5i binary | not granted |
+| policy | `[profile.X.detect] enabled = true` | false |
+
+`h5i box detect probe` reports all three and prints the command for whichever
+one is missing.
+
+Other requirements: Linux 5.8 or newer (`BPF_MAP_TYPE_RINGBUF`), and a `clang`
+that can target BPF at build time. No BTF, no `vmlinux.h`, and no kernel
+headers: the probe reads no kernel structure, only syscall tracepoint
+arguments, which are stable ABI.
+
+Reading a receipt needs none of it. The evidence types ship in every build, so
+a colleague with a stock h5i can read an export from a machine that had the
+collector.
+
 `wall` is enforced everywhere. **`mem` and `procs` are not enforced at the
 `process` and `supervised` tiers on macOS**: Darwin has no cgroups, does not
 enforce `RLIMIT_AS` against the mmap'd heap every modern runtime uses, and
@@ -1386,6 +1468,9 @@ never blur:
 | `tee-shim` | The box's shell shim. Box-claimed. |
 | `inbox-capture` | Staged by the box. Box-claimed. |
 
+A record can also carry a `runtime` block, which is a *second observer of the
+same command* rather than a lane of its own — see below.
+
 ### What the browser saw
 
 A run that drove the browser also carries what the page said back: console
@@ -1397,11 +1482,44 @@ A browser command with **no browser to ask** is recorded as `unavailable`, not a
 a clean page. "Nothing was looked at" is a different claim from "nothing was
 wrong", and a reviewer has to be able to tell them apart.
 
+### What the kernel saw
+
+A run under a profile with `[detect] enabled = true` carries a `runtime` block:
+which scope selected the events, how completely it covered the tier, how many
+events were seen and how many were lost, and every signature that fired with a
+few examples of what tripped it.
+
+The block is written **even when the collector could not attach**, carrying the
+reason. That is deliberate and it is the point of the whole lane: a missing
+block and a quiet box would otherwise look identical. Read it this way:
+
+- No `runtime` block at all — the profile did not ask to be watched.
+- A block with `unavailable` — it asked, and the probe could not attach. The
+  reason is in the block; `h5i box detect probe` explains it in full.
+- A block with `coverage: none` or `partial` — some or all of the run happened
+  where this scope cannot reach it, with the reason attached.
+- A block with detections and `events_lost` above zero — the list is a **lower
+  bound**, because events were dropped before anything examined them.
+- A block with no detections, `coverage: full` and `events_lost: 0` — nothing
+  the catalogue models happened. That is not the same as nothing happening:
+  `h5i box detect rules` is a finite list, and behaviour no rule models
+  produces no line.
+
+Every path and command line in the block is a string the box passed to a
+syscall, captured on the way *in*. It is not the kernel's resolution of that
+string, and the probe sees the attempt rather than the outcome — a `connect`
+the network namespace refused looks exactly like one that succeeded.
+
 ### What we do not claim
 
 An agent can stage *extra* records, or stop writing. Both are visible: a gap
 between host-observed exits and box-reported commands is itself a finding. We do
 not claim more than that.
+
+The kernel lane narrows what "stop writing" buys, and does not close it: the
+collector cannot be defeated by a box declining to cooperate, but it only runs
+where the profile asked and the host could attach, and it only reports what a
+signature models.
 
 ---
 
@@ -1585,6 +1703,15 @@ Read these to detect that you are in one; do not set them yourself.
 | `H5I_TEST_CONTAINER` | Opt in to the real-container integration tests (pulls an image, makes a live call). |
 | `H5I_TEST_NET` | Opt in to the supervised egress allowlist end-to-end test (needs outbound network). |
 | `H5I_RUNNER_STATE_DIR` | Where a runner worker keeps box state. For driving a worker against a scratch directory; a real runner uses its default. |
+| `H5I_BPF_LIVE` | Opt in to the live eBPF attach suite. It loads programs into the running kernel, so it needs `CAP_BPF` and does not run by accident; without it the suite skips and prints why. |
+
+### Builds
+
+| Variable | Purpose |
+|---|---|
+| `H5I_BPF_REQUIRE` | Fail the build if the eBPF probe cannot be compiled, instead of shipping a binary whose detector reports `unavailable` forever. Set it in CI and for releases. |
+| `CLANG` | Which `clang` compiles the eBPF probe. Otherwise `clang`, then `clang-20` down to `clang-14`, each tested against the BPF target before it is trusted. |
+| `H5I_SKIP_WEB_BUILD` | Skip the console bundle and leave a stub, for a Rust-only build with no Node on the machine. |
 
 ---
 

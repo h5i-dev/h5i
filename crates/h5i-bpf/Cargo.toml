@@ -1,0 +1,45 @@
+[package]
+name = "h5i-bpf"
+version = "0.1.0"
+edition = "2024"
+description = "h5i runtime detection: a kernel-observed evidence lane built on eBPF syscall tracepoints (ROADMAP.md D1–D14)."
+
+[features]
+# `load` is what turns the crate from a model into a collector: aya, the
+# compiled probe object, and the attach/read path.
+#
+# **Off by default, and the default matters more than it looks.** Cargo unifies
+# features across a `--workspace` build, so a crate whose own default turned
+# `load` on would put aya and a clang invocation into every `cargo build
+# --workspace` — including builds by contributors who never asked for the
+# detector and never passed `--features bpf`. It was written that way first, to
+# get the loader linted by the main CI job, and the price was that "is this
+# optional?" had two different answers depending on how you built. It has one
+# now: the collector arrives only when something explicitly asks for it. The
+# dedicated `bpf` CI job asks, which is where the loader is linted and tested.
+#
+# Everything outside `session` compiles with the feature off, on every target
+# in the release matrix, which is what keeps the event model, the rules and the
+# receipt types testable on a Mac — and what lets a build with no collector
+# still *read* a receipt written by one that had it.
+default = []
+load = ["dep:aya", "dep:libc"]
+
+[dependencies]
+h5i-error = { path = "../h5i-error" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# The loader. Pure Rust: no libbpf, no libelf, no bindgen, and therefore no
+# new native link-time dependency for the musl targets the release matrix
+# cross-builds (ROADMAP.md D4). Linux-only by construction — the whole
+# `session` module is `cfg(target_os = "linux")`, so a Darwin or Windows build
+# never sees this dependency at all.
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { version = "0.14", optional = true }
+# `poll(2)` on the ring buffer fd, `capget(2)` for the CAP_BPF probe, and
+# `setrlimit(RLIMIT_MEMLOCK)` for kernels that still charge maps against it.
+libc = { version = "0.2.186", optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

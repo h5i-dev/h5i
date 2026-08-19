@@ -12,10 +12,20 @@ description = "h5i core domain library: disposable, confined development environ
 # tokio or the asset embedder — and never needs Node to compile.
 default = ["web"]
 web = ["dep:axum", "dep:tokio", "dep:rust-embed", "dep:mime_guess"]
+# `bpf` turns the runtime-detection lane from a set of types into a collector
+# (ROADMAP.md D1–D14). Off by default: `h5i-bpf` is a dependency either way, so
+# a receipt written by a build that had it on is always readable by one that
+# did not, but the eBPF loader and the compiled probe only come with this.
+bpf = ["h5i-bpf/load"]
 
 [dependencies]
 h5i-error = { path = "../h5i-error" }
 h5i-sandbox = { path = "../h5i-sandbox" }
+# The runtime-detection lane. `default-features = false` so the collector is
+# NOT pulled in unless this crate's own `bpf` feature asks for it: what is
+# unconditional here is the *evidence types*, which every build has to be able
+# to deserialize, because a receipt outlives the build that wrote it.
+h5i-bpf = { path = "../h5i-bpf", default-features = false }
 git2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

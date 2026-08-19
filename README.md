@@ -47,6 +47,7 @@ h5i gives you:
   - **End-to-end encrypted P2P sharing** when both sides use h5i
   - **Browser-ready demo links** for everyone else, with expiring grants, revocation, and ingress receipts
 - **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
+  - **Kernel-level runtime detection** (opt-in, Linux): an eBPF collector reports what a sandbox's processes actually did, from a place the sandbox cannot reach. Observation only, never enforcement
 
 **Local-first. No hosted sandbox. No SaaS account required.**
 
