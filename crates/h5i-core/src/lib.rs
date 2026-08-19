@@ -61,3 +61,8 @@ pub use h5i_sandbox::fs_authority;
 /// from the Linux job.
 #[cfg(unix)]
 pub use h5i_sandbox::seatbelt;
+/// The runtime-detection lane (ROADMAP.md D1–D14). Re-exported unconditionally
+/// — every build has to be able to read a receipt written by one that had the
+/// collector — while the collector itself is behind this crate's `bpf`
+/// feature.
+pub use h5i_bpf as bpf;

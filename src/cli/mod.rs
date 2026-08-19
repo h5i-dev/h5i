@@ -8,6 +8,11 @@
 pub mod boxes;
 pub mod browser;
 pub mod completion;
+// `h5i box detect`. Not feature-gated, deliberately: the verbs are how a user
+// finds out *why* a build cannot watch a box, and gating them behind the
+// feature that provides the collector would hide that answer from exactly the
+// builds that need it.
+pub mod detect;
 pub mod man;
 // `h5i box share` / `h5i join`. Gated with `share-tunnel`, the narrower of
 // the two switches, because the tunnel transport is what this module always

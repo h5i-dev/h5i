@@ -190,6 +190,24 @@ struct ProfileToml {
     /// `[profile.X.browser]` — what the box may do with the browser.
     #[serde(default)]
     browser: BrowserToml,
+    /// `[profile.X.detect]` — the runtime-detection lane (ROADMAP.md D11).
+    #[serde(default)]
+    detect: DetectToml,
+}
+
+/// `[profile.X.detect] enabled = true`.
+///
+/// Every field is `Option`, and omitting one inherits the base rather than
+/// resetting it — the same rule `net.egress` and `net.unix` follow, so a
+/// partial overlay can never quietly *widen* or *narrow* what it did not
+/// mention.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DetectToml {
+    enabled: Option<bool>,
+    require: Option<bool>,
+    buffer_kb: Option<u32>,
+    rules: Option<Vec<String>>,
 }
 
 /// `[profile.X.browser] deny = ["evaluate"]`.
@@ -495,6 +513,17 @@ pub fn load_profile(
                     ),
                     None => base.engine,
                 },
+                detect: crate::sandbox_policy::DetectPolicy {
+                    enabled: t.detect.enabled.unwrap_or(base.detect.enabled),
+                    require: t.detect.require.unwrap_or(base.detect.require),
+                    buffer_kb: t.detect.buffer_kb.unwrap_or(base.detect.buffer_kb),
+                    rules: t
+                        .detect
+                        .rules
+                        .clone()
+                        .map(|list| list.iter().map(|e| e.trim().to_string()).collect())
+                        .unwrap_or_else(|| base.detect.rules.clone()),
+                },
             }
         }
     };
@@ -687,6 +716,37 @@ pub fn validate_profile(p: &Profile) -> Result<(), H5iError> {
     // doing the thing.
     for entry in &p.browser_deny {
         crate::sandbox_policy::validate_browser_deny(entry).map_err(H5iError::Metadata)?;
+    }
+
+    // The same argument as the browser-deny lint above, for the same reason: a
+    // `detect` section that is on and selects nothing watches nothing while the
+    // policy reads as though it were watching. The rule *names* are the
+    // collector's vocabulary and are checked there (a policy crate that knew
+    // them would have to depend on the collector); what is checked here is
+    // everything that can be judged without it.
+    if p.detect.enabled {
+        if p.detect.rules.is_empty() {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}': [detect] is enabled with an empty `rules` list, which watches for \
+                 nothing while the policy reads as though it watched. Use `rules = [\"*\"]` for \
+                 everything, or drop `enabled` (fail-closed).",
+                p.name
+            )));
+        }
+        if p.detect.rules.iter().any(|r| r.is_empty()) {
+            return Err(H5iError::Metadata(format!(
+                "profile '{}': [detect] `rules` contains an empty entry, which selects no rule \
+                 (fail-closed).",
+                p.name
+            )));
+        }
+    } else if p.detect.require {
+        return Err(H5iError::Metadata(format!(
+            "profile '{}': [detect] sets `require = true` with `enabled = false`. That reads as \
+             \"refuse to run unwatched\" and would in fact never watch anything — set \
+             `enabled = true` as well, or drop `require` (fail-closed).",
+            p.name
+        )));
     }
 
     // A profile that opts into an egress allowlist may not also re-export the

@@ -153,6 +153,7 @@
 <a class="t3" href="#making-a-box">Making a box</a>
 <a class="t3" href="#h5i-box-create">h5i box create</a>
 <a class="t3" href="#working-in-a-box">Working in a box</a>
+<a class="t3" href="#h5i-box-detect">h5i box detect</a>
 <a class="t3" href="#services-and-ports">Services and ports</a>
 <a class="t3" href="#h5i-box-export">h5i box export</a>
 <a class="t3" href="#h5i-box-cache">h5i box cache</a>
@@ -188,6 +189,7 @@
 <a class="t2" href="#policy">Policy</a>
 <div class="t3group">
 <a class="t3" href="#profiles">Profiles</a>
+<a class="t3" href="#runtime-detection">Runtime detection</a>
 <a class="t3" href="#isolation-tiers">Isolation tiers</a>
 <a class="t3" href="#af_unix-sockets">AF_UNIX sockets</a>
 <a class="t3" href="#credentials">Credentials</a>
@@ -196,6 +198,7 @@
 <a class="t2" href="#receipts">Receipts</a>
 <div class="t3group">
 <a class="t3" href="#what-the-browser-saw">What the browser saw</a>
+<a class="t3" href="#what-the-kernel-saw">What the kernel saw</a>
 <a class="t3" href="#what-we-do-not-claim">What we do not claim</a>
 </div>
 <a class="t2" href="#limits">Limits</a>
@@ -205,6 +208,7 @@
 <a class="t3" href="#set-by-you">Set by you</a>
 <a class="t3" href="#set-by-h5i-inside-a-box">Set by h5i, inside a box</a>
 <a class="t3" href="#tests">Tests</a>
+<a class="t3" href="#builds">Builds</a>
 </div>
 <a class="t2" href="#see-also">See also</a>
     </nav>
@@ -423,6 +427,19 @@ h5i box log &lt;name&gt;                    # the box's event log
 <p><code>h5i box shell</code> is the agent-in-box: stdio is inherited, so every command the
 session spawns is contained by the box rather than by the agent choosing to wrap
 each call.</p>
+<h3 id="h5i-box-detect">h5i box detect</h3>
+<p>Runtime detection: what an eBPF collector in the kernel saw inside a box.
+Read-only, and available on every build — the verbs are how you find out why
+the collector is <em>not</em> working, so gating them behind it would hide the answer
+from the hosts that need it.</p>
+<pre><code class="language-bash">h5i box detect probe                  # can this machine watch a box, and if not, why
+h5i box detect rules                  # the whole signature catalogue
+h5i box detect rules --filter secret  # one family, or one rule id
+h5i box detect show &lt;name&gt;            # what fired in this box, worst first
+h5i box detect show &lt;name&gt; --min alert
+</code></pre>
+<p>Turn it on per profile with <code>[profile.&lt;name&gt;.detect] enabled = true</code>; see
+<a href="#runtime-detection">Runtime detection</a> for the section and what it costs.</p>
 <h3 id="services-and-ports">Services and ports</h3>
 <pre><code class="language-bash">h5i box service start &lt;name&gt; &lt;service&gt;   # a declared long-lived process
 h5i box service status &lt;name&gt;
@@ -457,7 +474,7 @@ the only way out, and it is deliberately a human step.</p>
 </tr>
 <tr>
 <td><code>report.md</code></td>
-<td>What ran, what the browser saw, who was at the controls, and the agent's own proposal.</td>
+<td>What ran, what the browser saw, what the kernel saw, who was at the controls, and the agent's own proposal.</td>
 </tr>
 <tr>
 <td><code>receipt.json</code></td>
@@ -477,6 +494,8 @@ replace). Secret redaction and size caps apply to all of it.</p>
 <li><strong>what ran</strong>: every command, its lane, its exit code</li>
 <li><strong>what the browser saw</strong>: console errors, uncaught exceptions and failed
   requests, observed by h5i rather than reported by the agent</li>
+<li><strong>what the kernel saw</strong>: signatures that fired against the syscalls a box
+  actually made, when runtime detection was on for the run</li>
 <li><strong>viewer sessions</strong>: including whether a human took the controls</li>
 <li>the agent's proposal</li>
 </ul>
@@ -1324,6 +1343,63 @@ mem   = &quot;4G&quot;
 procs = 256
 wall  = &quot;30m&quot;
 </code></pre>
+<h3 id="runtime-detection">Runtime detection</h3>
+<p>Everything above this line is about what a box is <em>allowed</em> to do. <code>[detect]</code>
+is about what it actually did, reported from a place the box cannot reach: an
+eBPF collector attached to syscall tracepoints for the length of the run.</p>
+<pre><code class="language-toml">[profile.review.detect]
+enabled   = true      # attach the probe for runs under this profile
+require   = false     # refuse to run when the probe cannot attach
+buffer_kb = 256       # ring buffer size
+rules     = [&quot;*&quot;]     # rule ids, family names, or &quot;*&quot;
+</code></pre>
+<p>It is <strong>observation only</strong>. Nothing in this lane can deny a syscall; denial is
+Landlock, seccomp, the network namespace and the egress proxy, and it stays
+there. What the collector adds is a second opinion on the same run from an
+observer that is neither at the boundary of the box nor inside it: the kernel
+reports <code>execve</code>, <code>connect</code> and <code>openat</code> whether or not anything in the box
+wanted them reported.</p>
+<p><code>enabled</code> is <code>false</code> by default because the collector needs <code>CAP_BPF</code>, which an
+ordinary install does not have. <code>h5i box detect probe</code> says whether this
+machine can watch a box and prints the one command that would change that; h5i
+never runs it for you.</p>
+<p><code>require = true</code> is the fail-closed switch: if the probe cannot attach, the run
+is refused rather than performed unwatched. That is the setting for "I am
+running somebody else's dependency tree". It is off by default because a
+mandatory detector on a laptop kernel is a tool that does not start.</p>
+<p>Coverage differs by tier, and every receipt says which it got:</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Coverage</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>workspace</code>, <code>process</code>, <code>supervised</code></td>
+<td>full</td>
+<td>the payload is a descendant of h5i, so the kernel-maintained process tree holds it and everything it spawns</td>
+</tr>
+<tr>
+<td><code>container</code></td>
+<td>partial</td>
+<td>the container runtime double-forks, so the workload leaves h5i's process tree; what stays visible is the runtime's own activity on the host</td>
+</tr>
+<tr>
+<td><code>microvm</code></td>
+<td>none</td>
+<td>the workload runs against a guest kernel, which a host probe cannot observe at all</td>
+</tr>
+</tbody>
+</table>
+<p><code>h5i box detect rules</code> prints the whole signature catalogue with what each rule
+is for. <code>h5i box detect show &lt;box&gt;</code> prints what fired, worst first.</p>
+<p>Requirements: Linux 5.8 or newer (<code>BPF_MAP_TYPE_RINGBUF</code>), <code>CAP_BPF</code> and
+<code>CAP_PERFMON</code>, and an h5i built with <code>--features bpf</code> by a <code>clang</code> that can
+target BPF. No BTF, no <code>vmlinux.h</code>, and no kernel headers: the probe reads no
+kernel structure, only syscall tracepoint arguments, which are stable ABI.</p>
 <p><code>wall</code> is enforced everywhere. <strong><code>mem</code> and <code>procs</code> are not enforced at the
 <code>process</code> and <code>supervised</code> tiers on macOS</strong>: Darwin has no cgroups, does not
 enforce <code>RLIMIT_AS</code> against the mmap'd heap every modern runtime uses, and
@@ -1507,6 +1583,8 @@ never blur:</p>
 </tr>
 </tbody>
 </table>
+<p>A record can also carry a <code>runtime</code> block, which is a <em>second observer of the
+same command</em> rather than a lane of its own — see below.</p>
 <h3 id="what-the-browser-saw">What the browser saw</h3>
 <p>A run that drove the browser also carries what the page said back: console
 errors, uncaught exceptions, and requests that failed. h5i collects these itself,
@@ -1515,10 +1593,39 @@ is not the agent's to choose. Only what is new since the last drain is recorded.
 <p>A browser command with <strong>no browser to ask</strong> is recorded as <code>unavailable</code>, not as
 a clean page. "Nothing was looked at" is a different claim from "nothing was
 wrong", and a reviewer has to be able to tell them apart.</p>
+<h3 id="what-the-kernel-saw">What the kernel saw</h3>
+<p>A run under a profile with <code>[detect] enabled = true</code> carries a <code>runtime</code> block:
+which scope selected the events, how completely it covered the tier, how many
+events were seen and how many were lost, and every signature that fired with a
+few examples of what tripped it.</p>
+<p>The block is written <strong>even when the collector could not attach</strong>, carrying the
+reason. That is deliberate and it is the point of the whole lane: a missing
+block and a quiet box would otherwise look identical. Read it this way:</p>
+<ul>
+<li>No <code>runtime</code> block at all — the profile did not ask to be watched.</li>
+<li>A block with <code>unavailable</code> — it asked, and the probe could not attach. The
+  reason is in the block; <code>h5i box detect probe</code> explains it in full.</li>
+<li>A block with <code>coverage: none</code> or <code>partial</code> — some or all of the run happened
+  where this scope cannot reach it, with the reason attached.</li>
+<li>A block with detections and <code>events_lost</code> above zero — the list is a <strong>lower
+  bound</strong>, because events were dropped before anything examined them.</li>
+<li>A block with no detections, <code>coverage: full</code> and <code>events_lost: 0</code> — nothing
+  the catalogue models happened. That is not the same as nothing happening:
+  <code>h5i box detect rules</code> is a finite list, and behaviour no rule models
+  produces no line.</li>
+</ul>
+<p>Every path and command line in the block is a string the box passed to a
+syscall, captured on the way <em>in</em>. It is not the kernel's resolution of that
+string, and the probe sees the attempt rather than the outcome — a <code>connect</code>
+the network namespace refused looks exactly like one that succeeded.</p>
 <h3 id="what-we-do-not-claim">What we do not claim</h3>
 <p>An agent can stage <em>extra</em> records, or stop writing. Both are visible: a gap
 between host-observed exits and box-reported commands is itself a finding. We do
 not claim more than that.</p>
+<p>The kernel lane narrows what "stop writing" buys, and does not close it: the
+collector cannot be defeated by a box declining to cooperate, but it only runs
+where the profile asked and the host could attach, and it only reports what a
+signature models.</p>
 <hr />
 <h2 id="limits">Limits</h2>
 <p>Being explicit about these is a feature, since the claim is a security claim.</p>
@@ -1775,6 +1882,33 @@ the box. <code>h5i box probe</code> names the mechanism and the gaps.</p>
 <tr>
 <td><code>H5I_RUNNER_STATE_DIR</code></td>
 <td>Where a runner worker keeps box state. For driving a worker against a scratch directory; a real runner uses its default.</td>
+</tr>
+<tr>
+<td><code>H5I_BPF_LIVE</code></td>
+<td>Opt in to the live eBPF attach suite. It loads programs into the running kernel, so it needs <code>CAP_BPF</code> and does not run by accident; without it the suite skips and prints why.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="builds">Builds</h3>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>H5I_BPF_REQUIRE</code></td>
+<td>Fail the build if the eBPF probe cannot be compiled, instead of shipping a binary whose detector reports <code>unavailable</code> forever. Set it in CI and for releases.</td>
+</tr>
+<tr>
+<td><code>CLANG</code></td>
+<td>Which <code>clang</code> compiles the eBPF probe. Otherwise <code>clang</code>, then <code>clang-20</code> down to <code>clang-14</code>, each tested against the BPF target before it is trusted.</td>
+</tr>
+<tr>
+<td><code>H5I_SKIP_WEB_BUILD</code></td>
+<td>Skip the console bundle and leave a stub, for a Rust-only build with no Node on the machine.</td>
 </tr>
 </tbody>
 </table>

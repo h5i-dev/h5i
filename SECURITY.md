@@ -106,8 +106,9 @@ The claims:
   digested at box creation, and every receipt names the digest in force, so
   "what the policy was" is not a matter of trust.
 - **Evidence is labeled by who observed it.** A denial recorded by the egress
-  proxy is host-observed; a command the box reported is box-claimed. h5i keeps
-  those apart wherever they are shown, and does not average them into a score.
+  proxy is host-observed; a command the box reported is box-claimed; a run an
+  eBPF collector watched from the kernel is kernel-observed. h5i keeps those
+  apart wherever they are shown, and does not average them into a score.
 - **Credentials stay out of the box** where the design allows it. The provider
   token lives in the host proxy's memory and the box sees a base URL and a
   dummy.
@@ -159,6 +160,33 @@ The non-goals, which matter just as much:
 - **Chrome inside a box runs with its own sandbox off**, because the seccomp
   deny-list blocks the namespace syscalls it needs. The box is the boundary;
   Chrome's own is one layer you do not have.
+- **Runtime detection observes; it never denies.** The eBPF collector
+  (`[profile.X.detect]`, ROADMAP.md D1–D14) reports what a box's processes did.
+  It contains nothing, and it is deliberately built so that it cannot: there is
+  no `bpf_send_signal`, no `bpf_override_return` and no LSM program anywhere in
+  it. Confinement stays with Landlock, seccomp, the network namespace and the
+  egress proxy. A `runtime` block in a receipt is never evidence that something
+  was stopped.
+- **A detection list is a lower bound, not a verdict.** A signature only fires
+  on what it models, and `h5i box detect rules` is a finite list. A run with no
+  detections means "nothing the catalogue models happened", never "nothing
+  happened". Where the record can be more precise it is: the block carries the
+  event count, the number of events dropped, how much of the tier the scope
+  covered, and — when the probe could not attach at all — the reason, so an
+  unwatched run can never be read as a quiet one.
+- **The collector's evidence is caller-supplied strings, seen going in.** Paths
+  and command lines come from syscall arguments captured at `sys_enter`: they
+  are not the kernel's resolution of those strings, and the probe sees the
+  attempt rather than the outcome. A `connect` a network namespace refused
+  looks exactly like one that succeeded.
+- **Running the collector needs capabilities h5i does not otherwise want.**
+  `CAP_BPF` and `CAP_PERFMON` are what loading a program and attaching it to a
+  tracepoint cost, and `setcap`-ing the h5i binary grants them to *all* of h5i,
+  not just to the collector. h5i never grants them to itself, never invokes
+  `sudo`, and prints the command rather than running it, so the decision stays
+  yours. A privilege-separated collector — a small setcap'd helper that owns
+  the probe and streams events over a socket — is the right long-term shape and
+  is not built (ROADMAP.md D13.1).
 - **h5i does not guarantee that all secrets are detected**, nor complete
   redaction of prompts, transcripts, or command output.
 - **h5i does not guarantee a malicious repository cannot exploit your editor,
@@ -323,6 +351,22 @@ cargo test   --locked --workspace
 
 If your change touches the console or the release build path, also verify the
 Node build path used by CI and release packaging.
+
+If your change touches the runtime-detection lane, also run it with the probe
+actually compiled, since the default build leaves it out:
+
+```bash
+H5I_BPF_REQUIRE=1 cargo clippy --locked --workspace --all-targets --features bpf -- -D warnings
+H5I_BPF_REQUIRE=1 cargo test   --locked --features bpf --test detect_integration
+```
+
+And, on a host where you have the capability, the live attach — the one path CI
+cannot exercise:
+
+```bash
+sudo -E env "PATH=$PATH" H5I_BPF_LIVE=1 \
+    cargo test -p h5i-bpf --test live_attach -- --nocapture
+```
 
 ## Disclosure Process
 

@@ -97,6 +97,79 @@ jobs:
           H5I_SKIP_WEB_BUILD: "1"
         run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
 
+  # The runtime-detection lane (ROADMAP.md D1–D14). Its own job because it needs
+  # a toolchain the other jobs do not — a clang that can target BPF — and
+  # because `bpf` is off by default, so nothing above would notice it rotting.
+  #
+  # What this job can and cannot prove is worth being explicit about, since the
+  # feature is a security one. It proves the probe *compiles* (H5I_BPF_REQUIRE=1
+  # turns a missing clang into a failure rather than a silently detector-less
+  # binary), that the loader compiles against the pinned aya, that the wire
+  # contract between the C and the Rust still agrees, and that the whole run
+  # seam behaves correctly on a host with no CAP_BPF — which is what a GitHub
+  # runner is, and what almost every user's machine is.
+  #
+  # It cannot prove the attach. Loading a program and binding it to a tracepoint
+  # needs CAP_BPF and CAP_PERFMON, which a runner does not grant. That path is
+  # `crates/h5i-bpf/tests/live_attach.rs`, gated on H5I_BPF_LIVE=1, and it skips
+  # loudly rather than passing quietly.
+  bpf:
+    name: runtime detection (eBPF probe + collector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Fail the build rather than ship a binary whose detector is permanently
+      # `unavailable`. The same shape as H5I_DRT_REQUIRE in the Lean lane.
+      H5I_BPF_REQUIRE: "1"
+      # This job is about the Rust and the C, not the console bundle.
+      H5I_SKIP_WEB_BUILD: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set Git user for tests
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bpf
+
+      # The runner image ships clang; assert it can actually emit BPF rather
+      # than discovering it three steps later inside a build script. A clang
+      # built without the BPF backend compiles the file and fails at codegen.
+      - name: clang can target BPF
+        run: |
+          clang --version
+          echo 'int probe(void) { return 0; }' > /tmp/probe.c
+          clang -target bpf -O2 -c /tmp/probe.c -o /tmp/probe.o
+          echo "clang can emit BPF"
+
+      - name: cargo clippy (deny warnings)
+        run: cargo clippy --locked --workspace --all-targets --features bpf -- -D warnings
+
+      # The collector's own suite: the wire contract against the C header, the
+      # attach table against the probe source, and every signature against a
+      # synthetic event stream.
+      - name: cargo test -p h5i-bpf
+        run: cargo test --locked -p h5i-bpf
+
+      # The run seam end to end, on a host with no CAP_BPF: a profile that asked
+      # to be watched gets a block with the reason, `require = true` refuses,
+      # and enabling detection moves the pinned policy digest.
+      - name: cargo test --test detect_integration
+        run: cargo test --locked --features bpf --test detect_integration
+
+      # The live attach, which will skip here. Run anyway, and with --nocapture,
+      # so the log records *why* it skipped — a suite that silently reports "ok"
+      # for a path nobody ran is the thing this whole lane exists to stop.
+      - name: live attach (skips without CAP_BPF; prints why)
+        run: cargo test --locked -p h5i-bpf --test live_attach -- --nocapture
+
   # macOS confines with Seatbelt, not Landlock/seccomp, so the kernel tiers there
   # are a genuinely different code path (crates/h5i-sandbox/src/seatbelt.rs). The
   # cross-check job below only proves it *compiles*; this one runs it, which is

@@ -31,6 +31,16 @@ path = "src/main.rs"
 # `--no-default-features` for a build that needs no Node toolchain.
 default = ["web", "share", "runner"]
 web = ["h5i-core/web"]
+# `bpf` adds the runtime-detection collector: an eBPF probe that watches a run
+# from the kernel and files what it saw as its own evidence lane (ROADMAP.md
+# D1–D14). **Off by default**, for two reasons that both have to be true before
+# it earns a place in a default build: it needs `CAP_BPF`, which an ordinary
+# install does not have, and it needs a `clang` that can target BPF at build
+# time. `h5i box detect probe` reports the state of both on any build.
+#
+# The *types* ship either way, through h5i-core, so a receipt written by a
+# `--features bpf` build is readable by one without it.
+bpf = ["h5i-core/bpf"]
 # `runner` adds `h5i runner` — pairing with a second Linux machine and running
 # boxes there over SSH (ROADMAP.md R1–R13). On by default because the worker
 # end of it is this same binary: a runner is an h5i install, so a build that

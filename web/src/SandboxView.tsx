@@ -28,6 +28,7 @@ import {
   type ShareEvidence,
   type SharedNow,
   type Signals,
+  runtimeObserved,
   thirdPartyCanRead,
 } from "./api";
 
@@ -49,9 +50,12 @@ const LANES: { key: LaneKey; label: string; hint: string }[] = [
   { key: "proc", label: "PROC", hint: "process / exit status" },
   { key: "res", label: "RES", hint: "resource limits" },
   { key: "browser", label: "PAGE", hint: "what the in-box browser saw" },
+  // The kernel lane sits last because it is the newest and the narrowest, not
+  // because it is the weakest — it is the only column here a box cannot write.
+  { key: "kernel", label: "KERN", hint: "what an eBPF collector saw from the kernel" },
 ];
 
-type LaneKey = "fs" | "net" | "proc" | "res" | "browser";
+type LaneKey = "fs" | "net" | "proc" | "res" | "browser" | "kernel";
 
 const POLL_MS = 8000;
 
@@ -632,6 +636,9 @@ function SignalBadge({ signals }: { signals: Signals }) {
       signals.failed ? `${signals.failed} failed` : null,
       signals.timed_out ? `${signals.timed_out} timed out` : null,
       signals.browser_issues ? `${signals.browser_issues} page issue(s)` : null,
+      signals.kernel_alerts
+        ? `${signals.kernel_alerts} kernel alert(s): ${(signals.kernel_rules ?? []).join(", ")}`
+        : null,
     ].filter(Boolean);
     return (
       <span className="sbx-pressure warning" title={parts.join(", ")}>
@@ -900,6 +907,41 @@ function SignalSummary({ box }: { box: BoxRow }) {
       <Callout key="claimed" icon="eye-off" className="sbx-callout">
         Every receipt here came from the in-box tee shim — the box's own
         account. Nothing on this screen was observed from the host.
+      </Callout>,
+    );
+  }
+  if (s.kernel_alerts) {
+    notes.push(
+      <Callout key="kernel" icon="pulse" className="sbx-callout">
+        An eBPF collector in the kernel recorded {s.kernel_alerts} alert-level
+        match{s.kernel_alerts === 1 ? "" : "es"}
+        {s.kernel_rules?.length ? (
+          <>
+            {" "}
+            (<Code>{s.kernel_rules.join(", ")}</Code>)
+          </>
+        ) : null}
+        . Nothing was blocked — this lane observes and never denies. The
+        receipts below carry what tripped each rule.
+      </Callout>,
+    );
+  }
+  if (s.kernel_unwatched) {
+    notes.push(
+      <Callout key="kernel-off" icon="eye-off" className="sbx-callout">
+        {s.kernel_unwatched} run
+        {s.kernel_unwatched === 1 ? "" : "s"} asked to be watched from the
+        kernel and {s.kernel_unwatched === 1 ? "was" : "were"} not. Open the run
+        below for the reason. An unwatched run is not a quiet one.
+      </Callout>,
+    );
+  }
+  if (s.kernel_events_lost) {
+    notes.push(
+      <Callout key="kernel-lost" icon="warning-sign" className="sbx-callout">
+        {s.kernel_events_lost} kernel event
+        {s.kernel_events_lost === 1 ? "" : "s"} were dropped before anything
+        examined them, so every count from that lane is a lower bound.
       </Callout>,
     );
   }
@@ -1269,6 +1311,54 @@ function LaneVerdict({ lane, receipt }: { lane: LaneKey; receipt: ExecRecord }) 
         </span>
       );
     }
+    case "kernel": {
+      const rt = receipt.runtime;
+      // No block at all: this run did not ask to be watched. A dot, not a
+      // tick — a tick would claim a result nobody produced.
+      if (!rt) return <span className="sbx-verdict none">·</span>;
+      if (!runtimeObserved(rt))
+        return (
+          <span
+            className="sbx-verdict weak"
+            title={
+              rt.unavailable ??
+              rt.coverage_reason ??
+              "the collector observed nothing for this run"
+            }
+          >
+            ◌ none
+          </span>
+        );
+      const dets = rt.detections ?? [];
+      const alerts = dets.filter((d) => d.severity === "alert");
+      const lost = rt.events_lost
+        ? `\n${rt.events_lost} event(s) lost — this is a lower bound`
+        : "";
+      const partial =
+        rt.coverage === "partial"
+          ? `\npartial coverage: ${rt.coverage_reason ?? "some of the run was out of scope"}`
+          : "";
+      if (dets.length === 0)
+        return (
+          <span
+            className="sbx-verdict ok"
+            title={`${rt.events_seen ?? 0} kernel event(s), no signature fired${partial}${lost}`}
+          >
+            ✓
+          </span>
+        );
+      const detail = dets
+        .map((d) => `[${d.severity}] ${d.rule} ×${d.count} — ${d.title}`)
+        .join("\n");
+      return (
+        <span
+          className={alerts.length ? "sbx-verdict critical" : "sbx-verdict warning"}
+          title={`${detail}${partial}${lost}`}
+        >
+          {alerts.length ? "⛔" : "⚠"} {dets.length}
+        </span>
+      );
+    }
   }
 }
 
@@ -1354,6 +1444,11 @@ function laneAllowance(lane: LaneKey, p: EnforcedPolicy | null): string {
       return `wall ${p.wall_secs}s`;
     case "browser":
       return "in box";
+    case "kernel":
+      // The lane header says what the *policy* allows in every other column.
+      // There is nothing to allow here: the collector grants nothing and
+      // denies nothing, so the honest header is what it does.
+      return "observe only";
   }
 }
 

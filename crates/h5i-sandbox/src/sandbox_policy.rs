@@ -383,6 +383,62 @@ pub struct HomeBind {
 
 // ─── policy profile (§7) ────────────────────────────────────────────────────
 
+/// `[profile.X.detect]` — the runtime-detection lane (ROADMAP.md D11).
+///
+/// Four fields, all optional, and `enabled` is `false` by default. That
+/// default is a decision, not caution: the collector needs `CAP_BPF`, which an
+/// ordinary install does not have, so turning it on for everybody would
+/// produce a fleet of `unavailable` blocks and teach every user to skip past
+/// the one part of the receipt that is hardest to forge.
+///
+/// This crate holds the *policy*, not the mechanism: `h5i-bpf` sits beside
+/// `h5i-sandbox`, not below it, and a policy type that depended on the
+/// collector would make the confinement layer unbuildable without an eBPF
+/// toolchain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectPolicy {
+    /// Attach the probe for runs under this profile.
+    pub enabled: bool,
+    /// Refuse to run at all when the probe cannot attach.
+    ///
+    /// The fail-closed switch, and off by default for the same reason
+    /// `enabled` is: a mandatory detector on a laptop kernel is a tool that
+    /// does not start. It is the right setting for "I am running somebody
+    /// else's dependency tree", and that is a decision an operator makes.
+    pub require: bool,
+    /// Ring-buffer size in KiB, clamped by the collector to its own bounds.
+    pub buffer_kb: u32,
+    /// Rule selectors: ids (`net.direct-egress`), families (`net`), or `*`.
+    ///
+    /// A selector that matches no rule is refused at run time rather than
+    /// ignored — a profile that believes it enabled a rule and silently
+    /// enabled nothing is the exact failure this lane exists to catch.
+    pub rules: Vec<String>,
+}
+
+impl Default for DetectPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            require: false,
+            // Mirrors `h5i_bpf::DEFAULT_BUFFER_KB`. Duplicated rather than
+            // imported, because importing it would put the collector below the
+            // sandbox in the dependency graph for the sake of one integer.
+            buffer_kb: 256,
+            rules: vec!["*".to_string()],
+        }
+    }
+}
+
+impl DetectPolicy {
+    /// Is this the default? Drives `skip_serializing_if`, so that every
+    /// profile written before this section existed serializes byte for byte as
+    /// it did — and its pinned policy digest is unchanged.
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 /// A fully-resolved policy profile — every field explicit, suitable for
 /// serializing as `policy.resolved.toml` and digesting. Field order is the
 /// canonical serialization order (digest stability depends on it).
@@ -572,6 +628,20 @@ pub struct Profile {
     /// profile's canonical serialization — and its pinned digest — is unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_deny: Vec<String>,
+
+    /// The runtime-detection lane (`[profile.X.detect]`, ROADMAP.md D11).
+    ///
+    /// Appended last and skipped when default, so every existing profile's
+    /// canonical serialization — and its pinned digest — is unchanged. It is
+    /// *in* the digest when it is set, deliberately: whether a box was watched
+    /// is part of what its policy claimed, and a reviewer comparing two
+    /// receipts must not find that the difference between them was invisible.
+    ///
+    /// Being a table, it must stay the final field: TOML puts tables after
+    /// scalars, and a scalar declared below this one would serialize into the
+    /// `[profile.detect]` table instead of the profile.
+    #[serde(default, skip_serializing_if = "DetectPolicy::is_default")]
+    pub detect: DetectPolicy,
 }
 
 /// The browser engines a `browser` box can be pinned to.
@@ -858,6 +928,7 @@ impl Profile {
             loopback_ports: Vec::new(),
             engine: None,
             browser_deny: Vec::new(),
+            detect: DetectPolicy::default(),
         }
     }
 
@@ -2327,6 +2398,43 @@ audit_capture = "verbose"
 "#,
         )
         .is_err());
+    }
+    /// A default `[detect]` must not appear in the serialization at all, or
+    /// every pinned policy digest in every existing box changes the day this
+    /// field ships.
+    #[test]
+    fn a_default_detect_section_leaves_the_digest_untouched() {
+        let plain = Profile::builtin("default", IsolationClaim::Process);
+        let toml = toml::to_string(&plain).unwrap();
+        assert!(!toml.contains("detect"), "{toml}");
+    }
+
+    #[test]
+    fn an_enabled_detect_section_is_serialized_and_round_trips() {
+        let mut p = Profile::builtin("default", IsolationClaim::Process);
+        p.detect = DetectPolicy {
+            enabled: true,
+            require: true,
+            buffer_kb: 512,
+            rules: vec!["net".into(), "secret.read".into()],
+        };
+        let toml = toml::to_string(&p).unwrap();
+        assert!(toml.contains("[detect]"), "{toml}");
+        let back: Profile = toml::from_str(&toml).unwrap();
+        assert_eq!(back.detect, p.detect);
+    }
+
+    /// The digest is what a reviewer compares two boxes by. Whether a box was
+    /// watched has to be inside it.
+    #[test]
+    fn enabling_detection_changes_the_policy_digest() {
+        let base = ResolvedPolicy::new(
+            IsolationClaim::Process,
+            Profile::builtin("default", IsolationClaim::Process),
+        );
+        let mut watched = base.clone();
+        watched.profile.detect.enabled = true;
+        assert_ne!(base.digest().unwrap(), watched.digest().unwrap());
     }
 }
 

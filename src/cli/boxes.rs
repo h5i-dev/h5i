@@ -161,6 +161,18 @@ pub enum BoxCommands {
     /// namespaces, seccomp) and which claims are satisfiable.
     Probe,
 
+    /// Runtime detection: what the kernel saw inside a box.
+    ///
+    /// A second observer of the same run, in a lane the box cannot reach: an
+    /// eBPF collector reports `execve`, `connect` and `openat` whether or not
+    /// anything in the box wanted them reported. Observation only — nothing
+    /// here denies anything — and off unless a profile's `[detect]` section
+    /// turns it on. `h5i box detect probe` says whether this machine can.
+    Detect {
+        #[command(subcommand)]
+        action: crate::cli::detect::DetectCommands,
+    },
+
     /// Machine-readable host enforcement report: isolation tier, egress-enforced
     /// yes/no, resource-limit support, and per-claim satisfiable/runnable — so a
     /// product can adapt to the real host without scraping `env probe` text.
@@ -1134,6 +1146,10 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     }
                 }
 
+                BoxCommands::Detect { action } => {
+                    return crate::cli::detect::run(action);
+                }
+
                 BoxCommands::Probe => {
                     // Diagnostics must report the live truth, not last run's
                     // verdict — bypass the per-boot podman probe cache.
@@ -1218,6 +1234,25 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         "  microvm      = {}",
                         caps.microvm_runtime.as_deref().unwrap_or("none")
                     );
+                    {
+                        // Deliberately last, and deliberately labelled. Every
+                        // line above is about what the host can *stop*; this
+                        // one is about what it can *see*, and mixing the two
+                        // readings is how an observability feature ends up
+                        // quoted as a containment claim.
+                        let d = h5i_core::bpf::probe_host();
+                        println!(
+                            "  detect       = {} {}",
+                            if d.usable { "yes" } else { "no" },
+                            style(
+                                "(observation only — `h5i box detect probe` for the detail)"
+                            )
+                            .dim()
+                        );
+                        if !d.usable && let Some(why) = &d.detail {
+                            println!("                 {}", style(why).dim());
+                        }
+                    }
                     println!();
                     for (claim, profile_net_deny) in [
                         (h5i_core::sandbox::IsolationClaim::Workspace, false),
@@ -1289,8 +1324,19 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                     // Same as Probe: a capability report is a diagnostic —
                     // never serve it from the probe cache.
                     let report = h5i_core::sandbox::capabilities_report_fresh();
+                    // The runtime-detection lane is grafted on here rather than
+                    // added to `CapabilitiesReport` itself: that type lives in
+                    // `h5i-sandbox`, which is the *confinement* layer, and the
+                    // detector sits beside it rather than under it. A field
+                    // there would put an observability crate below the thing it
+                    // observes, for the sake of one JSON key.
+                    let detect = h5i_core::bpf::probe_host();
                     if json {
-                        println!("{}", serde_json::to_string_pretty(&report)?);
+                        let mut v = serde_json::to_value(&report)?;
+                        if let serde_json::Value::Object(ref mut map) = v {
+                            map.insert("runtime_detection".into(), serde_json::to_value(&detect)?);
+                        }
+                        println!("{}", serde_json::to_string_pretty(&v)?);
                     } else {
                         let yn = |b: bool| {
                             if b {
@@ -1344,6 +1390,21 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         println!(
                             "  strongest_tier   = {}",
                             style(report.strongest_tier).cyan().bold()
+                        );
+                        // Observation, not confinement, and printed as such so
+                        // nobody reads a `yes` here as a boundary.
+                        println!(
+                            "  runtime_detect   = {} {}",
+                            yn(detect.usable),
+                            style(if detect.usable {
+                                "(observation only; `h5i box detect probe` for detail)".to_string()
+                            } else {
+                                format!(
+                                    "({})",
+                                    detect.detail.as_deref().unwrap_or("unavailable")
+                                )
+                            })
+                            .dim()
                         );
                         println!();
                         for c in &report.claims {

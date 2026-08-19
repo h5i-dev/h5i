@@ -4,7 +4,7 @@ Status: in progress, 2026-08-05. Supersedes the "auditable workspaces /
 provenance" positioning for the product surface. Design docs under `roadmap/`
 stay as history for the parts we keep.
 
-This document has four parts:
+This document has five parts:
 
 - **The environment**, sections 1 to 12. Scope, architecture, phases and the
   decisions behind them. Decisions already taken are in section 10; what is
@@ -21,6 +21,10 @@ This document has four parts:
   machine over SSH while the control plane, the repo, and the credentials stay
   local. M17 is its milestone stub; the R sections are the authority on design
   and order.
+- **Runtime detection**, sections D1 to D14. An eBPF collector that watches a
+  run from the kernel, so the receipt carries a lane that is neither at the
+  boundary of the box nor inside it. M18 is its milestone stub; the D sections
+  are the authority on design and order.
 
 **M0 through M5 are built. M6 is mostly built. M7 (the terminal viewer) is
 built but undriven.** What is not done, stated plainly so it is not read as
@@ -3002,6 +3006,23 @@ into the same reviewable patch as today. The design authority is sections R1
 to R13, including the four sub-milestones (R13) and the decision points named
 there. **R13.1 — the crate, the protocol, pairing and probing — is built and
 verified against a real sshd**; R13.2 to R13.4 are not.
+
+### M18. Runtime detection: a kernel-observed lane, 2026-08-19
+
+An eBPF collector that watches a run from the kernel and puts what it saw in
+the run's receipt. Every evidence lane h5i had until now sits either at the
+boundary of the box (h5i as the parent process, the CONNECT proxy) or inside
+it (the tee shim, the browser), so each is defeated by the box declining to
+cooperate or by work happening below the outermost command. This lane is
+neither: the kernel reports `execve`, `connect` and `openat` whether or not
+anything in the box wanted them reported. It is observation only — nothing
+here can deny anything, and denial stays with Landlock, seccomp, the netns
+and the egress proxy — and it is `enabled = false` by default because it
+needs `CAP_BPF`, which an ordinary install does not have. The design
+authority is sections D1 to D14. **All five sub-milestones (D14) are built.**
+What is not demonstrated: the live attach path has been exercised only where
+the capability exists, so on a stock unprivileged install the honest answer
+this ships with is the `unavailable` block naming the missing capability.
 
 ## 9. Limits we state up front
 
@@ -7417,3 +7438,616 @@ Decision points, named not resolved, in the VF.7 discipline:
    work was the quarantine and the scans, `mediated_commit` was left alone,
    and apply landed with the rest. The valve was never pulled because there
    was nothing to valve.
+
+---
+
+# Runtime detection: a kernel-observed lane
+
+Status: designed and built, 2026-08-19. Sections D1 to D14. M18 is its
+milestone stub; these sections are the authority on design and order.
+
+The confinement layer answers "what was the box *allowed* to do". This part
+answers a different question — "what did it actually *do*" — and answers it
+from a place the box cannot reach. Everything here is additive: no policy
+decision changes, no syscall is ever blocked by this code, and a host that
+cannot run it loses nothing it had.
+
+## D1. What is being claimed
+
+The claim is exactly one sentence, and it is deliberately narrow:
+
+> For a run whose receipt carries a `runtime` block with `coverage = "full"`,
+> the listed detections are the ones that fired on events the **kernel**
+> reported for that box's processes, and `events_lost = 0` means no event was
+> dropped between the kernel and the record.
+
+What is **not** claimed:
+
+- Not that the list is complete for the *behaviour*. A signature only fires on
+  what it models. A box that does something nobody wrote a rule for produces a
+  clean detection list and a nonzero event count, and the record says so by
+  carrying both numbers rather than a verdict.
+- Not that it is enforcement. Nothing here can deny anything. Denial is
+  Landlock, seccomp, the netns and the egress proxy, and it stays there (D12).
+- Not that it survives a kernel-level adversary. A box that already has
+  CAP_SYS_ADMIN on the host kernel can unload the programs. h5i's boxes do not
+  have it, and if one did, the eBPF lane is not the thing you lost.
+- Not that absence of the block means the run was clean. Absence means the
+  detector did not run, and the block is written even when it could not
+  attach, carrying the reason.
+
+## D2. The lane problem this fixes
+
+h5i already sorts its evidence into lanes, and the sorting is load-bearing:
+`host-env-run` is what h5i itself observed by being the parent process,
+`tee-shim` is what a shim *inside* the box wrote to a spool, `shell-egress` is
+what the CONNECT proxy refused, `runner-observed` is what a paired machine
+reported over an authenticated channel (R10). The receipt keeps them
+distinguishable forever because they are not equally trustworthy.
+
+Reading down that list, the honest summary of what h5i can see inside a box
+today is:
+
+| lane | who observed it | what it covers | what defeats it |
+|---|---|---|---|
+| `host-env-run` | h5i, as parent | argv, exit code, rusage, wall clock | nothing — but it sees only the *outermost* command |
+| `tee-shim` | a shim in the box | interactive shell commands | `exec` without the shim, a script, any child that does its own work |
+| `shell-egress` | the CONNECT proxy | HTTP(S) the box routed through the proxy | anything that dials a socket directly |
+| `browser` | the browser in the box | console, page errors, failed requests | closing the browser |
+| `runner-observed` | the paired worker | the same as the above, one machine over | the same as the above |
+
+The gap is a single shape repeated four times: **every lane above either sits
+at the boundary of the box or lives inside it.** The boundary lanes see the
+first process and the traffic that chose to go through h5i. The in-box lane
+sees what the box chose to report. Between them sits everything an agent's
+build actually does — the four hundred processes `npm ci` forks, the
+`postinstall` that reads `~/.aws/credentials` because the profile granted the
+directory, the test that dials a hardcoded IP because `net.mode` is `proxy`
+and the proxy only ever sees names.
+
+A kernel-observed lane closes that shape rather than one instance of it. The
+kernel sees every `execve` whether or not a shim wrapped it, every `connect`
+whether or not it spoke HTTP, and every `openat` whether or not the opener
+wanted to be seen. It is the first h5i lane that is neither at the boundary
+nor inside the box, and it is the only one that cannot be defeated by the
+box declining to cooperate.
+
+That is the auditability argument, and it is worth stating what it buys
+concretely, because "more visibility" is not a feature:
+
+1. **Grants that are wider than the behaviour.** `fs_read` on `$HOME` is a
+   grant; `openat("$HOME/.aws/credentials")` is a fact. A profile can now be
+   tightened against what the box *used*, not against what someone guessed.
+2. **The proxy's blind spot.** `net.mode = "proxy"` promises an allowlist; it
+   delivers an allowlist *for clients that use the proxy*. On the workspace
+   tier there is no netns, and a direct `connect(2)` to a literal address goes
+   nowhere near it. That is a limit SECURITY.md states and nothing observed.
+   Now something does.
+3. **The shim's blind spot.** `tee-shim` is box-claimed by construction and
+   the roadmap has always said so. Now there is a second opinion on the same
+   run from a lane that is not.
+
+## D3. Related work: Tracee and Tetragon, and what not to take
+
+Both references solve this problem at a scale h5i does not have, and both
+carry design decisions that are right for a cluster agent and wrong here.
+
+**Tracee** (`../../Ref/tracee`) is the closer relative: a syscall-centric
+collector with a signature engine on top, and its events-plus-signatures
+split is exactly the shape adopted here (D7, D9). What is taken:
+
+- The split between a **collector** that knows only about events and a
+  **signature layer** that knows only about semantics. Rules never touch a
+  ring buffer; the collector never knows what a credential file is.
+- The insistence that a dropped event is reported, not smoothed over. Tracee
+  counts losses per buffer and surfaces them; the receipt here carries
+  `events_lost` next to `events_seen` for the same reason a truncated raw
+  payload is marked truncated.
+- Argument capture at `sys_enter` with an explicit, bounded string budget,
+  rather than chasing pointers into user memory without a cap.
+
+What is refused:
+
+- **The event catalogue.** Tracee instruments hundreds of events, has a
+  policy language to select among them, and needs CO-RE plus a full BTF
+  toolchain to do it. h5i instruments twelve tracepoints and no more (D5, D7).
+  A detector that costs a second toolchain is a detector nobody builds.
+- **The daemon.** Tracee runs as a service and streams. h5i has no daemon by
+  design (R11 argued the same thing for the runner), and the unit of
+  observation here is a run, not a host.
+
+**Tetragon** (`../../Ref/tetragon`) contributes one idea and one warning. The
+idea is **process-lineage-as-first-class**: an event is not interesting on its
+own, it is interesting because of the process tree it sits in, so the tree is
+maintained in the kernel rather than reconstructed by racing `/proc` in
+userspace. That is exactly the scope mechanism in D6, and the reason it is a
+kernel-side map instead of a userspace `procfs` walk: by the time userspace
+reads `/proc/<pid>`, a short-lived `postinstall` script is already gone.
+
+The warning is enforcement. Tetragon can kill a process from a hook, and its
+documentation is careful about the race between observing and acting. h5i does
+not take that: enforcement stays in the mechanisms that fail closed by
+construction, and this lane is observation only (D12). A detector that
+sometimes blocks is a policy layer with unclear semantics, and h5i already has
+a policy layer with clear ones.
+
+## D4. Why aya, and why the probe is C
+
+**The loader is `aya`** (`../../Ref/aya`). It is pure Rust: no `libbpf`, no
+`libelf`, no `bindgen`, no C toolchain at *link* time, and no new
+cross-compilation story for the musl and Darwin targets the release matrix
+already builds. The alternatives were `libbpf-rs` (drags in libbpf, libelf and
+zlib as native link-time dependencies, which the aarch64-musl `cross` target
+would have to grow) and hand-rolling `bpf(2)` (about two thousand lines of
+ELF parsing and map plumbing that aya has already had reviewed).
+
+**The probe itself is C**, compiled by `clang -target bpf` in the crate's
+build script, and this is the decision most likely to be questioned, because
+aya has a perfectly good Rust eBPF frontend. It is C for three reasons:
+
+1. `aya-ebpf` requires a **nightly** toolchain and the `bpf-linker` binary.
+   h5i builds on stable, and `dtolnay/rust-toolchain@stable` is in every CI
+   job. Adding a nightly toolchain plus a cargo-installed linker to the build
+   of an *optional* observability feature is a poor trade.
+2. The probe is ~350 lines of straight-line code with no allocation, no
+   generics and no error handling — the part of the system where C's
+   disadvantages are smallest and its toolchain's ubiquity is largest.
+3. Every reference implementation writes its probes in C, so the code is
+   reviewable against them line for line.
+
+The build script is honest about the toolchain rather than demanding it. No
+`clang` that can target BPF means the object is not built, the crate still
+compiles, and the loader reports `unavailable` with the reason "built without
+the eBPF object". `H5I_BPF_REQUIRE=1` turns that into a build failure, which is
+what this lane's CI job sets, in the shape `H5I_DRT_REQUIRE` already
+established for the Lean lane.
+
+The released binaries do **not** carry the probe, and that is stated rather
+than left to be discovered. The release matrix cross-builds musl targets inside
+containers with no LLVM, and putting a BPF-capable clang into four images — to
+ship a feature that *also* needs `CAP_BPF` on the user's machine — is work that
+should follow somebody wanting it rather than precede them. `h5i box detect
+probe` reports the consequence in one line and prints the
+`cargo install --path . --features bpf` that fixes it.
+
+## D5. No CO-RE: the stable-ABI cut
+
+CO-RE (Compile Once, Run Everywhere) exists because reading kernel structures
+from a probe is not portable: `task_struct` changes shape between kernels, so
+libbpf rewrites field offsets at load time using the running kernel's BTF.
+Every reference implementation depends on it, and it costs a `vmlinux.h`
+generated by `bpftool` at build time (three megabytes of generated header),
+BTF at runtime, and a relocating loader.
+
+h5i does not pay any of that, because of a deliberate cut:
+
+> **The probe reads no kernel structure.** It reads only syscall tracepoint
+> arguments, which are a stable kernel ABI, and calls only helpers whose
+> signatures are stable.
+
+Concretely, everything the probe touches is on this list and nothing else:
+
+- The `syscalls/sys_enter_*` tracepoint context, whose layout is fixed
+  (`u64 pad; long id; unsigned long args[6];`) and is the documented,
+  ABI-stable format for every syscall entry tracepoint.
+- The `sched/sched_process_fork` and `sched/sched_process_exit` contexts,
+  read through their published field offsets, which the loader **verifies at
+  attach time** by parsing `/sys/kernel/tracing/events/.../format` rather
+  than assuming. A kernel that moved a field is refused, not misread.
+- `bpf_get_current_pid_tgid`, `bpf_get_current_uid_gid`,
+  `bpf_get_current_comm`, `bpf_ktime_get_ns`, `bpf_get_current_cgroup_id`,
+  `bpf_get_ns_current_pid_tgid`, `bpf_probe_read_user`,
+  `bpf_probe_read_user_str`, `bpf_ringbuf_reserve/submit/discard`,
+  and the map accessors. All stable since 5.8 at the latest, which is the
+  floor the loader checks for (ring buffer support) and the floor stated in
+  the limits.
+
+What the cut costs, stated up front: no `task_struct` walking, so no parent
+`comm` without keeping it ourselves, no cgroup *path* (only the id), no
+mount-namespace inode, no file inode on `openat` (only the path string the
+caller passed, which is a caller-controlled string and is labelled as such in
+the record). Those are real losses. They buy a probe that loads on any kernel
+from 5.8 to whatever ships next, with no build-time kernel headers and no
+runtime BTF, which is the difference between a feature that works on a user's
+WSL2 kernel and one that works on the maintainer's laptop.
+
+## D6. Scope: which events belong to which box
+
+The hard problem in a per-run detector is not collecting events; it is knowing
+which of the host's events are the box's. Getting this wrong in the permissive
+direction reports the user's own editor as box activity, and getting it wrong
+in the restrictive direction misses the interesting child.
+
+Three mechanisms were considered. **One is implemented**, and the reason the
+other two are not is a single constraint that is worth stating plainly, because
+it is not obvious until you try:
+
+> The scope has to be decided **before the payload exists**. A scope programmed
+> after the child is spawned has already missed the `execve` that named it,
+> which is the most valuable single event of the run.
+
+- **cgroup id** (`bpf_get_current_cgroup_id`) is exact, cheap and immune to pid
+  reuse, and it is unusable here: the run's cgroup is created *inside* the
+  spawn path (`sandbox::make_run_cgroup`), so it does not exist when the scope
+  must be programmed. On most hosts it does not exist at all — cgroup
+  delegation is unavailable without a systemd user manager that grants it, and
+  `cgroup.rs` says so at length.
+- **pid namespace** (`bpf_get_ns_current_pid_tgid`) has the same defect for the
+  same reason, one level up: the inode comes from `/proc/<pid>/ns/pid` of a
+  process that has not been forked yet.
+- **The process tree** is the one thing that *is* knowable in advance, because
+  h5i is already running. This is the Tetragon idea (D3): lineage maintained in
+  the kernel rather than reconstructed by racing `/proc`, because by the time
+  userspace reads `/proc/<pid>` the forty-millisecond `postinstall` is gone.
+
+So the scope is `pidtree`, seeded with **every task of the h5i process** (all of
+them, not just the main thread: `Command::spawn` can be called from any thread,
+and a tree seeded with one would miss a payload spawned from a worker). The
+kernel grows the set on `sched_process_fork` and prunes it on
+`sched_process_exit`.
+
+Seeding from h5i's own tree leaves two holes, and the probe's state machine
+closes both. They are worth describing because each was a wrong answer first:
+
+1. **h5i's own threads are not the box.** A new task forked from something in
+   the set is `PENDING` until its first event, and that event settles it: a
+   task whose tid equals its tgid leads its own thread group and is therefore a
+   *process* — the payload, or something the payload spawned — while anything
+   else is one of h5i's threads and is marked `SELF` and never reported again.
+   That test is exact, costs one comparison, and needs no kernel structure.
+2. **h5i's own bootstrap is not the box either.** Between the fork and the
+   exec, the child is still running h5i's `pre_exec` code: applying Landlock,
+   opening the ruleset paths, setting rlimits. Attributing those `openat`s to
+   the box would report h5i's confinement machinery as the box's behaviour. So
+   a task in the tree is `PRE` until its `execve`, and in that state only the
+   exec itself (and the tree bookkeeping) is emitted. A child *inherits* its
+   parent's post-exec state, so a fork-only worker — Python multiprocessing, a
+   shell subshell — is not silently muted for never having execed.
+
+The `mode` field in the config map is where a cgroup or namespace filter would
+go, and the probe is written so that adding one is additive. The natural
+consumer is the privilege-separated collector of D13.1, which attaches out of
+band and *can* therefore resolve either. Nothing in v1 uses it, so nothing in
+v1 ships it.
+
+**Coverage.** The tiers are not equally covered, and the record says so per run
+rather than in a footnote:
+
+| tier | coverage | why |
+|---|---|---|
+| workspace | `full` | the payload is a direct descendant of h5i |
+| process | `full` | same, plus everything it spawns |
+| supervised | `full` | same, and the supervisor is in the tree too |
+| container | `partial` | Podman's `conmon` double-forks and reparents, so the workload leaves h5i's tree; what stays visible is the runtime's own activity on the host |
+| microvm | `none` | the workload runs against a *guest* kernel; a host probe cannot see its syscalls at all, and pretending otherwise would be the worst available failure |
+| anything else | `none` | an unknown tier is uncovered, never assumed covered — guessing permissively is the one mistake that turns an absence of evidence into a clean bill of health |
+
+`partial` and `none` are written into the receipt as facts, each with its
+reason attached. A reviewer reading a container-tier record sees
+`coverage: partial` and the sentence explaining it, which is the difference
+between "we looked and found nothing" and "we could not look".
+
+One honest consequence of seeding from h5i's own tree: any process h5i spawns
+*during the run window* is inside the scope. On the kernel tiers that is the
+payload and nothing else, because the window opens immediately before
+`run_with_env` and closes immediately after it. On the container tier it is
+also the container runtime, which is exactly why that tier is `partial` rather
+than wrong.
+
+## D7. The event model and the wire format
+
+Twelve tracepoints, one fixed-size event struct, one ring buffer. The struct
+is `#[repr(C)]` on the Rust side and a plain `struct` in the probe, with a
+compile-time assertion on each side that they agree in size, plus a runtime
+magic-and-version word in every event so a mismatched pair is detected at the
+first record rather than silently misparsed.
+
+The events, and the syscalls behind them:
+
+| kind | source tracepoints | captured |
+|---|---|---|
+| `Exec` | `sys_enter_execve`, `sys_enter_execveat` | path, first argument, argc |
+| `Open` | `sys_enter_openat`, `sys_enter_openat2` | path, flags, write-intent bit |
+| `Connect` | `sys_enter_connect` | family, IPv4/IPv6 address, port |
+| `Socket` | `sys_enter_socket` | family, type, protocol |
+| `Ptrace` | `sys_enter_ptrace` | request, target pid |
+| `Bpf` | `sys_enter_bpf` | command |
+| `Nsop` | `sys_enter_unshare`, `sys_enter_setns` | flags |
+| `Module` | `sys_enter_init_module`, `sys_enter_finit_module` | — |
+| `Memfd` | `sys_enter_memfd_create` | name |
+| `Mount` | `sys_enter_mount`, `sys_enter_pivot_root` | target path |
+| `Fork` | `sched_process_fork` | child pid |
+| `Exit` | `sched_process_exit` | — |
+
+Every event carries `ts_ns`, `pid`, `tgid`, `ppid` where known, `uid`,
+`comm[16]`, and one 256-byte payload area interpreted per kind. Fixed size
+throughout: a variable-size ring buffer record would need a second length
+field the verifier has to be convinced about, for a saving that does not
+matter at these volumes.
+
+**Volume control lives in the kernel, not in userspace.** `openat` is the
+loudest syscall a build makes, and shipping every one of them to userspace to
+throw away 99% is how a detector becomes a performance problem people turn
+off. So the probe filters `Open` in-kernel to two cases: write intent
+(`O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND`), or a path whose first bytes
+match one of a small set of prefixes loaded into a map from userspace. The
+prefix set is the credential-path list the signatures care about (D9), pushed
+down so the rule's own vocabulary decides what the kernel sends.
+
+## D8. The ring buffer, loss, and back pressure
+
+`BPF_MAP_TYPE_RINGBUF`, 256 KiB by default, read by a dedicated thread that
+`poll(2)`s the map fd and hands decoded events to the session over a channel.
+The buffer size is a policy knob because a `cargo build` and a `sleep 1` do
+not need the same buffer.
+
+Loss is counted, never hidden. A `bpf_ringbuf_reserve` that fails increments a
+per-CPU counter in a second map; the session reads that counter at stop time
+and puts it in the record as `events_lost`. A run with a nonzero
+`events_lost` is not a failed run and not a clean one — it is a run whose
+detection list is a lower bound, and the console renders it that way.
+
+The reader thread is bounded by the run: it starts before the child spawns,
+stops when the run returns, and is joined with a timeout so a wedged reader
+can never outlive the command it was watching. Its channel is bounded too;
+when userspace cannot keep up, the *channel* drops and counts, so a slow
+consumer degrades the same way a full kernel buffer does, into a number in the
+record.
+
+## D9. The signatures
+
+A signature is a pure function from an event stream to zero or more
+detections. No I/O, no clock, no allocation per event beyond what it stores,
+and therefore unit-testable against synthetic streams — which is how all of
+them are tested, since attaching a probe needs privileges CI does not have.
+
+Seventeen rules ship, in five families (`net`, `secret`, `exec`, `priv`,
+`kernel`, `mount` — the last two are one family of concern split by what they
+name). Each has a stable id, a severity
+(`info`, `notice`, `alert`), a one-line human description, and a bounded
+exemplar list so a flood becomes a count rather than a megabyte.
+
+**Network** — the family that matters most, because it is the one the egress
+proxy structurally cannot see:
+
+- `net.direct-egress` (**alert**) — `connect(2)` to a routable address on a
+  box whose network policy is an allowlist or a denial. This is the allowlist
+  being routed around, and on the workspace tier (no netns) it is the *only*
+  thing that would notice. It reports the **attempt**: the probe sees the
+  syscall going in, not the answer coming back, so a connect a network
+  namespace refused looks exactly like one that succeeded. On a
+  `net.mode = deny` box that is the useful reading — the box tried.
+- `net.raw-socket` (**alert**) — `AF_PACKET`, or `SOCK_RAW` on any family.
+- `net.unix-socket` (**notice**) — `AF_UNIX` connect on a profile that did
+  not set `unix_sockets`. The supervised tier denies these already; on the
+  other tiers nothing did.
+- `net.dns-direct` (**notice**) — connect to port 53 or 853.
+
+**Credentials and secrets** — the family the filesystem grants cannot express,
+because a grant is a directory and a credential is a file inside it:
+
+- `secret.read` (**alert**) — an open of `.ssh/`, `.aws/credentials`,
+  `.config/gh/`, `.git-credentials`, `.netrc`, `.kube/config`,
+  `.docker/config.json`, `.npmrc`, `.pypirc`, `.gnupg/`.
+- `secret.dotenv` (**notice**) — an open of a `.env`-family file outside the
+  workspace.
+- `secret.proc-environ` (**alert**) — an open of `/proc/<pid>/environ` for a
+  pid outside the box, which is the classic read of the host's secrets.
+- `secret.h5i-state` (**alert**) — a write-intent open under the box's own
+  `.h5i/` control directory, which is the box editing its own evidence.
+
+**Execution** — the family that catches the shape of a supply-chain payload:
+
+- `exec.from-tmp` (**notice**) — exec of a path under `/tmp`, `/var/tmp` or
+  `/dev/shm`.
+- `exec.memfd` (**alert**) — `memfd_create` followed by an exec of
+  `/proc/self/fd/<n>` or `/proc/<pid>/fd/<n>` in the same process: fileless
+  execution, and the reason `Memfd` is collected at all.
+- `exec.interpreter-pipe` (**notice**) — a shell exec whose first argument is
+  `-c` and whose command line contains a download-and-pipe shape.
+- `exec.package-manager` (**info**) — npm/pip/cargo/gem/go invoked; not
+  suspicious, and present because "what installed things" is the first
+  question asked of any supply-chain incident.
+
+**Privilege and kernel** — the family that is uninteresting until it is not:
+
+- `priv.ptrace` (**alert**) — any `ptrace` attach to a process the box did
+  not spawn.
+- `priv.namespace` (**notice**) — `unshare`/`setns`. The supervised tier
+  denies `unshare` outright; this is what the other tiers get.
+- `kernel.bpf` (**alert**) — the box calling `bpf(2)`.
+- `kernel.module` (**alert**) — `init_module`/`finit_module`.
+- `mount.change` (**notice**) — `mount`/`pivot_root` inside the box.
+
+Rules are data, not code paths: the engine holds a table, and `h5i box detect
+rules` prints it, so what the detector looks for is inspectable without
+reading Rust.
+
+## D10. Where it lands
+
+**The receipt.** A new optional `runtime` block on `ExecRecord`, appended last
+and `skip_serializing_if` empty, so every existing record's shape and every
+pinned digest is unchanged — the discipline `unix_sockets`, `loopback_ports`
+and `engine` established on `Profile`. It carries the lane string
+(`kernel-bpf`), the scope kind, the coverage, `events_seen`, `events_lost`,
+the detections, and `unavailable` with a reason when the detector could not
+attach. `source` on the record itself does **not** change: the run is still
+`host-env-run`, and the kernel lane is a block inside it, because the record
+is about the command and the block is a second observer of the same command.
+
+**The console.** `h5i ui` gains a runtime row per record, badged by the
+highest severity present, grey when the detector did not run. This obeys the
+console's honesty model (`box-console-honesty-model`): it is counting over
+receipts, not scoring, and grey means "no evidence", never "clean".
+
+**The export.** The export report renders the detections for every record it
+carries, and an export whose records have `coverage: none` says that in the
+report rather than showing an empty list.
+
+**The CLI.** `h5i box detect probe` (what this host can do, and the exact
+command to fix what it cannot), `h5i box detect rules` (the table), and
+`h5i box detect show <name>` (the detections across a box's records, with
+`--json`).
+
+## D11. Policy surface
+
+```toml
+[profile.agent.detect]
+enabled = true      # attach the probe for runs under this profile
+require  = false    # refuse to run when the probe cannot attach
+buffer_kb = 256     # ring buffer size
+rules = ["*"]       # rule ids or families to enable; "*" is all
+```
+
+Four fields, all optional, all appended last on `Profile` so no existing
+profile's canonical serialization or pinned digest moves. `enabled` defaults
+to false: turning on a kernel facility for every user by default, when it
+needs privileges most users have not granted, would produce a fleet of
+`unavailable` blocks and teach everyone to ignore them.
+
+`require = true` is the fail-closed switch and it means what it says: if the
+probe cannot attach, `h5i box run` refuses, with the probe's reason. That is
+the setting for the "I am running somebody else's dependency tree" case, and
+it is off by default because the failure mode of a mandatory detector on a
+laptop kernel is a tool that does not start.
+
+## D12. What it refuses to do
+
+- **No enforcement, in any form.** No `bpf_send_signal`, no
+  `bpf_override_return`, no LSM programs. Not "not yet": a detector that can
+  block has to answer for the gap between observing an argument and the
+  kernel using it (the TOCTOU that makes syscall-argument enforcement unsound
+  in general), and h5i has a policy layer that does not have that gap. The
+  two must not be confused, and the way to keep them unconfused is that this
+  one has no verb.
+- **No BPF LSM.** `CONFIG_BPF_LSM=y` is common but `lsm=…,bpf` on the kernel
+  command line is not, so an LSM-based collector would be unavailable on most
+  hosts including this one. Syscall tracepoints work everywhere.
+- **No CO-RE, no `vmlinux.h`, no BTF requirement** (D5).
+- **No daemon, no persistent attachment.** The probe is loaded for a run and
+  unloaded when the run ends. Nothing survives the command.
+- **No privilege escalation of its own.** h5i does not `sudo`, does not
+  install a helper, and does not ask for setuid. It uses the capabilities the
+  process already has, and when it does not have them it says which ones and
+  how to grant them.
+
+## D13. Limits, stated up front
+
+1. **It needs `CAP_BPF` and `CAP_PERFMON`** (or root). h5i runs as an ordinary
+   user, so on a stock install the answer is `unavailable: missing CAP_BPF`
+   plus the one-line `setcap` command. A privilege-separated collector — a
+   tiny setcap'd helper that owns the probe and streams events over a socket,
+   so the rest of h5i keeps no capabilities — is the right long-term shape and
+   is **not built here**. The seam for it is real rather than aspirational:
+   `Watch` is one type for "watching" and "could not watch", every caller goes
+   through it, and the probe's config map already carries a `mode` field for
+   the cgroup and namespace scopes such a collector could resolve (D6). What
+   would change is `session.rs` and nothing above it.
+2. **Linux 5.8 or newer**, for `BPF_MAP_TYPE_RINGBUF`. Older kernels get
+   `unavailable`, never a silent fallback to perf buffers.
+3. **`sys_enter` arguments are the caller's, not the kernel's resolution.** A
+   path in an `Open` event is the string the process passed; symlinks,
+   relative paths against an `openat` dirfd, and races between the argument
+   read and the kernel's use of it are all unresolved. Every rule that matches
+   on a path is therefore a *heuristic over caller-supplied strings*, and the
+   record labels the path field as such. Argument capture at `sys_enter` is
+   what makes the probe CO-RE-free, and this is the price.
+4. **The container tier is `partial` and the microVM tier is `none`** (D6).
+5. **Pid reuse can, in principle, admit a foreign process** into a `pidtree`
+   scope, between an exit h5i has not yet seen and a fork the kernel reuses
+   the pid for. The window is a single scheduler quantum and the mitigation
+   (a per-pid generation counter) costs more than the exposure is worth for
+   an observation-only lane. Stated, not fixed.
+6. **A box with CAP_SYS_ADMIN on the host kernel defeats it.** No h5i box has
+   that; the sentence exists so nobody has to work out whether it does.
+7. **`sys_enter` sees attempts, not outcomes.** The probe is on the way *in* to
+   the syscall, so a `connect` the network namespace refused, an `openat` that
+   returned `EACCES` and a `ptrace` the kernel denied all look exactly like the
+   ones that succeeded. Attaching `sys_exit` as well would fix this and would
+   double the event volume for a distinction that, on a *confined* box, is
+   usually the less interesting half: "the box tried to reach 8.8.8.8" is the
+   finding, and whether Landlock or the netns stopped it is already answered by
+   the policy. The rules that could be misread because of this say so in their
+   own text.
+8. **The read-only `openat` feed is filtered in the kernel**, to write intent
+   plus a bounded set of path prefixes plus a `/.env` scan (D7). A read of a
+   credential path nobody listed is not collected and therefore cannot fire a
+   rule. `[detect] open_all = true` removes the filter and is honest about what
+   it costs: a `cargo build` produces six figures of `openat`.
+
+## D14. The order
+
+1. **D14.1 — The crate skeleton.** `crates/h5i-bpf`: probe, event model,
+   rules and evidence types, all pure Rust, compiling on every target in the
+   release matrix. No aya yet. *Exit: `cargo clippy --workspace --all-targets`
+   green on Linux and Darwin; the rules engine unit-tested against synthetic
+   event streams.*
+2. **D14.2 — The probe.** `bpf/h5i_detect.bpf.c` plus the build script that
+   compiles it when `clang` can target BPF, stubs it when it cannot, and hard
+   fails under `H5I_BPF_REQUIRE=1`. *Exit: the object builds on this host and
+   `bpftool`-less verification that its sections and maps are what the loader
+   expects.*
+3. **D14.3 — The loader.** aya session: load, verify tracepoint formats, program
+   the scope, attach, read the ring buffer, stop and account. Linux only, behind
+   the crate's own default feature so CI lints it. *Exit: `detect probe` reports
+   the host truthfully — including "missing CAP_BPF" on an unprivileged one —
+   and the live attach test passes as root.*
+4. **D14.4 — The run seam.** Wire the session around `sandbox::run_with_env`
+   in `env run` and `env shell`, resolve the scope per tier, and put the block
+   in the receipt. *Exit: a run under a `detect`-enabled profile carries a
+   `runtime` block; a run on a host without the capability carries the block
+   with its reason; `require = true` refuses.*
+5. **D14.5 — The surfaces.** Policy parsing, `h5i box detect` verbs, the
+   console row, the export report, `box status`, `box capabilities`, MANUAL,
+   SECURITY, and the generated manuals regenerated. *Exit: the docs job is
+   green, which is the only way the CLI and the manual can agree.*
+
+### D14.6. What was demonstrated, and what was not
+
+All five steps are built, 2026-08-19. Stated precisely, because "built" and
+"demonstrated" are not the same word:
+
+**Demonstrated.**
+
+- The probe compiles with `clang -target bpf -O2 -g -Wall -Werror` and produces
+  the seventeen tracepoint programs, the five maps, the `license` section and
+  `.BTF`. `tests/detect_integration.rs` builds it under `H5I_BPF_REQUIRE=1`,
+  which is the setting that turns "no clang" into a build failure.
+- The wire contract is held from both ends: a compile-time size assertion on
+  the Rust struct, a magic-and-version check on every record, and a test that
+  parses the C header and compares every constant and every event-kind number
+  against the Rust enum. A third test parses the probe source and fails if it
+  declares a tracepoint program the loader's attach table does not name.
+- The rules engine is tested against synthetic event streams — every rule
+  fires, and a table-driven test fails if a rule is listed in the catalogue and
+  unreachable from `observe`. Both directions of each judgement call are
+  covered: a LAN address *is* egress, loopback is not, the proxy's own endpoint
+  is not, a granted `unix_sockets` profile is not reported for using them, a
+  box reading *its own* `/proc/<pid>/environ` is not reported.
+- The end-to-end wiring is tested on a host with **no** `CAP_BPF`, which is the
+  common case and the one most likely to be got wrong: a profile that did not
+  ask carries no block, a profile that asked carries a block with the reason,
+  `require = true` refuses the run and names the setting, a misspelled rule id
+  surfaces in the receipt, and enabling detection changes the pinned policy
+  digest.
+
+**Not demonstrated.** The attach itself. Loading a program and binding it to a
+tracepoint needs `CAP_BPF` and `CAP_PERFMON`, which this machine's h5i does not
+have and which `cargo test` should not acquire. That path lives in
+`crates/h5i-bpf/tests/live_attach.rs`, behind `H5I_BPF_LIVE=1`, and it skips
+*loudly* — printing the reason — rather than passing quietly. Until somebody
+runs it on a host with the capability, the honest claim is: the probe compiles,
+the loader is written against a pinned aya, the verifier has not seen it.
+
+Two specific things that first run is checking, both stated so a failure is
+diagnosable rather than surprising:
+
+1. **The verifier's opinion of the `openat` program**, which is the big one at
+   roughly ten thousand instructions after the prefix loop and the `/.env` scan
+   are unrolled. Well inside the one-million limit, and the largest unverified
+   thing here.
+2. **The tracepoint field offsets**, which the loader checks against
+   `/sys/kernel/tracing/events/.../format` when that file is readable. It
+   usually is not (tracefs is root-only), in which case the documented layout
+   is used and the check is skipped — never silently, the probe report says
+   `tracefs = no` and what that costs.

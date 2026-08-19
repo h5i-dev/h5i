@@ -105,6 +105,47 @@ export function thirdPartyCanRead(share: ShareEvidence): boolean {
   return share.transport !== "p2p";
 }
 
+/**
+ * One rule that fired, folded across every event that matched it —
+ * `h5i_bpf::Detection`.
+ */
+export interface Detection {
+  rule: string;
+  family: string;
+  severity: "info" | "notice" | "alert";
+  title: string;
+  count: number;
+  first_ns: number;
+  last_ns: number;
+  examples?: string[];
+  examples_truncated?: boolean;
+}
+
+/**
+ * What the kernel-observed lane saw — `h5i_bpf::RuntimeEvidence`.
+ *
+ * The one thing a renderer must never do with this is treat an empty
+ * `detections` list as a clean run. It is only clean if the run was watched,
+ * which is `unavailable == null && coverage !== "none"`; anything else means
+ * nobody looked. {@link runtimeObserved} is that test, in one place.
+ */
+export interface RuntimeEvidence {
+  lane: string;
+  scope: string;
+  coverage: "full" | "partial" | "none";
+  coverage_reason?: string;
+  events_seen?: number;
+  events_lost?: number;
+  events_filtered?: number;
+  detections?: Detection[];
+  unavailable?: string;
+}
+
+/** Was this run actually watched? Mirrors `RuntimeEvidence::observed`. */
+export function runtimeObserved(rt: RuntimeEvidence): boolean {
+  return !rt.unavailable && rt.coverage !== "none";
+}
+
 /** One observed execution — `h5i_core::receipt::ExecRecord`. */
 export interface ExecRecord {
   id: string;
@@ -129,6 +170,8 @@ export interface ExecRecord {
   egress?: EgressSummary;
   browser?: BrowserEvidence;
   share?: ShareEvidence;
+  /** What an eBPF collector saw from the kernel, when one was watching. */
+  runtime?: RuntimeEvidence;
   redactions?: string[];
   raw_oid: string;
   raw_size: number;
@@ -153,6 +196,18 @@ export interface Signals {
   verdict: Verdict;
   weak_isolation: boolean;
   box_claimed_only: boolean;
+  /** Runs an eBPF collector actually watched. */
+  kernel_watched?: number;
+  /** Runs that carry a runtime block which observed nothing, and why. */
+  kernel_unwatched?: number;
+  /** `alert`-severity matches, summed over watched runs. */
+  kernel_alerts?: number;
+  /** `notice`-severity matches. */
+  kernel_notices?: number;
+  /** Events dropped before anything could examine them. */
+  kernel_events_lost?: number;
+  /** Distinct rule ids that fired, capped. */
+  kernel_rules?: string[];
   /** Ended share sessions on this log. Never folded into the verdict. */
   shares: number;
   /** Of those, the ones a third party could read. */

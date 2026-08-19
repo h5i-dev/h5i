@@ -1,0 +1,37 @@
+[package]
+name = "h5i-bpf"
+version = "0.1.0"
+edition = "2024"
+description = "h5i runtime detection: a kernel-observed evidence lane built on eBPF syscall tracepoints (ROADMAP.md D1–D14)."
+
+[features]
+# `load` is what turns the crate from a model into a collector: aya, the
+# compiled probe object, and the attach/read path. On by default so the
+# workspace's `clippy --workspace --all-targets` lints it on the Linux job —
+# the root binary's own `bpf` feature is what decides whether a *release*
+# carries any of this, and that one is off (ROADMAP.md D11).
+#
+# Everything outside `session` compiles with the feature off, on every target
+# in the release matrix, which is what keeps the event model, the rules and the
+# receipt types testable on a Mac.
+default = ["load"]
+load = ["dep:aya", "dep:libc"]
+
+[dependencies]
+h5i-error = { path = "../h5i-error" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# The loader. Pure Rust: no libbpf, no libelf, no bindgen, and therefore no
+# new native link-time dependency for the musl targets the release matrix
+# cross-builds (ROADMAP.md D4). Linux-only by construction — the whole
+# `session` module is `cfg(target_os = "linux")`, so a Darwin or Windows build
+# never sees this dependency at all.
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { version = "0.14", optional = true }
+# `poll(2)` on the ring buffer fd, `capget(2)` for the CAP_BPF probe, and
+# `setrlimit(RLIMIT_MEMLOCK)` for kernels that still charge maps against it.
+libc = { version = "0.2.186", optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

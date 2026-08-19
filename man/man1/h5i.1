@@ -224,6 +224,72 @@ Probe what isolation this host can actually provide (Landlock, user namespaces, 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I BOX DETECT"
+Runtime detection: what the kernel saw inside a box
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdetect\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BOX DETECT PROBE"
+What this host can do for runtime detection, and what to run if it cannot
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprobe\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX DETECT RULES"
+The signature catalogue: every rule, its severity, and what it is for
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrules\fR [\fB\-\-filter\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-filter\fR \fI<FAMILY|ID>\fR
+Only this family (`net`, `secret`, `exec`, `priv`, `kernel`, `mount`) or this exact rule id
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX DETECT SHOW"
+What the kernel observed in a box, across all of its receipts
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshow\fR [\fB\-\-min\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-min\fR \fI<MIN>\fR [default: info]
+Only detections at this severity or above (`info`, `notice`, `alert`)
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+Box name or id
 .SH "H5I BOX CAPABILITIES"
 Machine-readable host enforcement report: isolation tier, egress-enforced yes/no, resource-limit support, and per-claim satisfiable/runnable \(em so a product can adapt to the real host without scraping `env probe` text
 .ie \n(.g .ds Aq \(aq
