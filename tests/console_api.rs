@@ -514,3 +514,45 @@ fn the_binary_carries_a_real_console_and_not_the_build_scripts_stub() {
         "a missing asset is a 404, not a panic"
     );
 }
+
+#[test]
+fn the_console_ships_the_same_fence_the_engine_prints() {
+    // The engine wraps page content before it reaches a *model*, because that
+    // is the moment attacker-controlled text meets something deciding what to
+    // do next. The console showed the same text — page URLs, console output,
+    // policy subjects, the rendered frame — to a *person*, with no boundary at
+    // all, which left the human reader with less framing than the model got.
+    //
+    // Asserted against the served bundle rather than the source, because a
+    // component that exists and is never rendered would pass a source grep and
+    // fail the reader.
+    let repo = Repo::new();
+    let ui = Console::start(&repo);
+
+    let html = ui.get_authed("/").text();
+    let mut scripts: Vec<String> = Vec::new();
+    let mut rest = html.as_str();
+    while let Some((_, after)) = rest.split_once("/assets/") {
+        let name = after.split(['"', '\'']).next().unwrap_or("").to_string();
+        if name.ends_with(".js") {
+            scripts.push(name);
+        }
+        rest = after;
+    }
+    assert!(!scripts.is_empty(), "no script assets referenced:\n{html}");
+
+    // The markers are byte-identical to the engine's on purpose: a reader who
+    // has seen one should recognise the other.
+    let begin = "--- BEGIN UNTRUSTED PAGE CONTENT ---";
+    let end = "--- END UNTRUSTED PAGE CONTENT ---";
+    let found = scripts.iter().any(|name| {
+        let body = ui.get_authed(&format!("/assets/{name}")).body;
+        let text = String::from_utf8_lossy(&body);
+        text.contains(begin) && text.contains(end)
+    });
+    assert!(
+        found,
+        "the console bundle does not carry the fence markers, so the page-derived \
+         panes are rendered to a person with no boundary around them"
+    );
+}

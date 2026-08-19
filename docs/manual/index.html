@@ -1019,6 +1019,20 @@ you picked: the policy that was actually enforced, the services it declares,
 its diffstat against the pinned base, and a flight recorder with one row per
 receipt across five lanes (FS, NET, PROC, RES, PAGE). Click a row for the
 rendered receipt, the same text <code>h5i box inspect</code> prints.</p>
+<p><strong>The browser tab draws the page beside what it cost.</strong> For a box running h5i's
+own engine, the rendered page sits directly beside the request log that produced
+it, so "what did looking at this page cost, and what was refused while I looked"
+is one glance rather than two panes and a correlation done by eye. That picture
+is only honest because this engine <em>is</em> the HTTP client: the list is the decision
+record written before the bytes moved, not an observation made from beside the
+network.</p>
+<p><strong>And it draws the fence.</strong> Everything the page supplied — its URLs, its console
+output, the subjects of policy verdicts, the rendered frame — is wrapped in the
+same <code>--- BEGIN/END UNTRUSTED PAGE CONTENT ---</code> boundary the engine prints for a
+model, with the same note. The engine fences that text before it reaches
+something deciding what to do next; without this the console showed it to a
+person with no boundary at all, which left the human reader with less framing
+than the model got.</p>
 <p><strong>It cannot drive anything.</strong> Every route is a <code>GET</code>. <code>shell</code>, <code>run</code>, <code>export</code>,
 <code>propose</code>, <code>apply</code> and <code>rm</code> stay in the CLI, where a human types them, so there
 is no mutating surface to guard and no way to turn the console into a remote
