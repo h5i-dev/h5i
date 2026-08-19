@@ -379,7 +379,36 @@ h5i box doctor <name>               # can it still enforce its claim? are its re
 h5i box secrets <name>              # declared grants, dry-run resolution, never values
 h5i box inspect <name> --capture <id>
 h5i box compare <a> <b>             # boxes side by side
+h5i box watch <name>                # policy decisions, one line each, as they happen
+h5i box watch <name> --deny-only    # only what was refused
 ```
+
+`h5i box watch` is the tail of the receipt rather than a viewer: no viewport, no
+panes, no control lock, and nothing it prints can take the controls. It is meant
+to be piped, grepped, and left running in a second pane while an agent works.
+
+Every row names the lane that observed it and the grade of that evidence, as
+words:
+
+```
+09:14:02  box  fail-closed  request   allow  GET https://docs.rs/blitz/  #41 subresource
+09:14:02  box  fail-closed  response  200    #41 12.0 KB, 84ms
+09:14:03  box  fail-closed  request   DENY   GET https://telemetry.example.com/collect  #43
+09:14:03  box  fail-closed  policy           telemetry.example.com: not in net.egress   (<- #43)
+```
+
+Terse is not licence to drop the qualifier. A row that did not say whether the
+box or the host observed it would assert more than h5i knows, so the lane and
+the grade are on every line and colour never carries them alone.
+
+`--deny-only` keeps a refusal's **pair**: the request row carries the method and
+the URL, the verdict row carries the reason, and dropping either leaves half an
+answer. `--json` emits the same event envelope the console reads, one object per
+line, so the three readers of that stream agree on the wire shape.
+
+Only h5i's own browser engine writes a live request log, and an image-backed
+tier keeps it out of the host's reach. `watch` says so in its header rather than
+leaving an empty screen to be interpreted.
 
 ### Lifecycle
 

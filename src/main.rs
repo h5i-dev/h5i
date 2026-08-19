@@ -655,6 +655,36 @@ mod tests {
     }
 
     #[test]
+    fn watch_defaults_to_every_row_and_deny_only_narrows_it() {
+        // The default has to stay "everything": a watcher that silently showed
+        // only refusals would read as "nothing happened" on a box that was
+        // busy, which is the one thing this surface must never say.
+        match dispatch(&["h5i", "box", "watch", "mybox"]) {
+            Ok(cli::boxes::BoxCommands::Watch {
+                deny_only, json, ..
+            }) => {
+                assert!(!deny_only);
+                assert!(!json);
+            }
+            Ok(_) => panic!("expected Watch"),
+            Err(e) => panic!("dispatch failed: {e}"),
+        }
+        match dispatch(&["h5i", "box", "watch", "mybox", "--deny-only", "--json"]) {
+            Ok(cli::boxes::BoxCommands::Watch {
+                name,
+                deny_only,
+                json,
+            }) => {
+                assert_eq!(name, "mybox");
+                assert!(deny_only);
+                assert!(json);
+            }
+            Ok(_) => panic!("expected Watch"),
+            Err(e) => panic!("dispatch failed: {e}"),
+        }
+    }
+
+    #[test]
     fn the_status_lines_egress_summary_says_localhost_rather_than_none() {
         // An empty allowlist still leaves loopback open — that is how the dev
         // server is reachable — so "none" would overstate the confinement in

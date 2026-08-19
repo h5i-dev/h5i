@@ -668,6 +668,27 @@ Print help
 .TP
 <\fINAME\fR>
 
+.SH "H5I BOX WATCH"
+Stream this box's policy decisions, one line each, as they happen
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBwatch\fR [\fB\-\-deny\-only\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-deny\-only\fR
+Print only refusals: a denied request, the verdict that refused it, and any agent action the mediator turned away
+.TP
+\fB\-\-json\fR
+Emit one JSON object per line instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
 .SH "H5I BOX DIFF"
 Diff the environment's work against its pinned base
 .ie \n(.g .ds Aq \(aq

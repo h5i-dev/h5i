@@ -307,6 +307,23 @@ pub enum BoxCommands {
         json: bool,
     },
 
+    /// Stream this box's policy decisions, one line each, as they happen
+    ///
+    /// The tail of the receipt, not a viewer: no viewport, no panes, no
+    /// control lock. Every row names the lane that observed it and the grade
+    /// of that evidence, because a row that does not say who saw it asserts
+    /// more than h5i knows. Runs until Ctrl-C.
+    Watch {
+        name: String,
+        /// Print only refusals: a denied request, the verdict that refused it,
+        /// and any agent action the mediator turned away
+        #[arg(long)]
+        deny_only: bool,
+        /// Emit one JSON object per line instead of the human view
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Diff the environment's work against its pinned base
     Diff {
         name: String,
@@ -1667,6 +1684,15 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                             );
                         }
                     }
+                }
+
+                BoxCommands::Watch {
+                    name,
+                    deny_only,
+                    json,
+                } => {
+                    let m = h5i_core::env::find(&h5i_root, &name)?;
+                    super::watch::run(&h5i_root, &m, deny_only, json)?;
                 }
 
                 BoxCommands::Diff { name, stat, json } => {
