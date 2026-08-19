@@ -170,6 +170,13 @@ struct Session {
     /// answers about one thing.
     last_snapshot: Option<crate::snapshot::Snapshot>,
 
+    /// Credentials this session may substitute on the way to the page.
+    ///
+    /// Read once at startup so a later `setenv` cannot widen what the agent can
+    /// reach. See [`crate::secrets`] for why the namespace is narrower than
+    /// `H5I_*`.
+    secrets: crate::secrets::Secrets,
+
     /// The request log, live.
     ///
     /// See [`ServeOptions::requests`]. Held rather than reached through the
@@ -332,6 +339,7 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         last_snapshot: None,
         served_refs: None,
         requests: options.requests.clone(),
+        secrets: crate::secrets::Secrets::from_env(),
         login: false,
     };
     run_session(session, rx, options.once);
@@ -911,6 +919,18 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             let Some(text) = request.get("text").and_then(Value::as_str) else {
                 return (VerbError::bad_request("`type` needs `text`.").reply(), false);
             };
+            // The one place a credential is resolved, guarded by the predicate
+            // rather than by this call site remembering to ask.
+            let resolved = if Verb::Type.substitutes_secrets() {
+                session.secrets.substitute(text)
+            } else {
+                crate::secrets::Resolved {
+                    text: text.to_string(),
+                    used: Vec::new(),
+                    missing: Vec::new(),
+                }
+            };
+            let text = resolved.text.as_str();
             let snapshot = session.page.snapshot();
             let entry = match resolve_ref(session, &snapshot, reference) {
                 Ok(entry) => entry,
@@ -924,7 +944,24 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                     false,
                 );
             }
-            (json!({"ok": true, "ref": reference}), true)
+            // Names, never values. A receipt that carried the credential would
+            // be a credential in every export that receipt reaches, which is
+            // the same rule the cookie jar follows by reporting a count.
+            let mut reply = json!({"ok": true, "ref": reference});
+            if resolved.substituted() {
+                reply["used"] = json!(resolved.used);
+            }
+            if !resolved.missing.is_empty() {
+                // Said rather than left to be discovered as a failed login that
+                // looks like a wrong password.
+                reply["unresolved"] = json!(resolved.missing);
+                reply["note"] = json!(format!(
+                    "{} placeholder(s) named nothing set in this session and were typed \
+                     literally. `env` lists what is available.",
+                    resolved.missing.len()
+                ));
+            }
+            (reply, true)
         }
 
         Verb::Submit => {
@@ -1217,6 +1254,36 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 false,
             )
         }
+
+        // Discovery for the credential scheme, and the whole of it: an agent
+        // learns that a credential exists and what to call it, which is
+        // everything it needs to use one and nothing it needs to leak one.
+        Verb::Env => {
+            let names = session.secrets.names();
+            (
+                json!({
+                    "ok": true,
+                    "names": names,
+                    "prefix": crate::secrets::PREFIX,
+                    "message": if names.is_empty() {
+                        format!(
+                            "no credentials are available to this session. Set one in the \
+                             environment `serve` was started in, named `{}<SITE>_<FIELD>`, and \
+                             type it into a field as `${}<SITE>_<FIELD>`.",
+                            crate::secrets::PREFIX,
+                            crate::secrets::PREFIX
+                        )
+                    } else {
+                        format!(
+                            "{} credential(s). Names only — no verb in this engine returns a \
+                             value. Use one by typing its placeholder into a field.",
+                            names.len()
+                        )
+                    },
+                }),
+                false,
+            )
+        }
     }
 }
 
@@ -1398,6 +1465,7 @@ mod tests {
             last_snapshot: None,
             served_refs: None,
             requests,
+            secrets: crate::secrets::Secrets::default(),
             login: false,
         }
     }
@@ -1426,6 +1494,7 @@ mod tests {
             last_snapshot: None,
             served_refs: None,
             requests,
+            secrets: crate::secrets::Secrets::default(),
             login: false,
         }
     }
@@ -1976,6 +2045,103 @@ mod tests {
     }
 
     #[test]
+    fn a_credential_reaches_the_field_and_never_the_reply() {
+        // The whole claim, in one test. The agent names a credential, the value
+        // lands in the page, and nothing the agent can read ever holds it.
+        let mut session = session_with(
+            "<html><body><form action='/in' method='post'>\
+             <input name='pass' type='password'></form></body></html>",
+        );
+        session.secrets =
+            crate::secrets::Secrets::from_pairs(&[("H5I_SECRET_ACME_PASS", "hunter2")]);
+
+        let refs = serve_refs(&mut session);
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({
+                "verb": "type",
+                "ref": refs[0].id.clone(),
+                "text": "$H5I_SECRET_ACME_PASS",
+            }),
+        );
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(changed);
+        // The name, because a receipt has to be able to say a credential was
+        // used. Never the value.
+        assert_eq!(reply["used"], json!(["H5I_SECRET_ACME_PASS"]));
+        let rendered = reply.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "the value is in the reply: {rendered}"
+        );
+
+        // It really did reach the field.
+        assert_eq!(
+            session.page.field_value(refs[0].node_id).as_deref(),
+            Some("hunter2")
+        );
+
+        // And a snapshot does not read it back out. The engine renders a
+        // password field's value as its own placeholder, so this is the
+        // existing behaviour rather than a new promise — asserted so it stays.
+        let (snap, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert!(
+            !snap["text"].as_str().unwrap().contains("hunter2"),
+            "{snap:?}"
+        );
+    }
+
+    #[test]
+    fn env_lists_names_and_the_engine_has_no_verb_that_returns_a_value() {
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        session.secrets = crate::secrets::Secrets::from_pairs(&[
+            ("H5I_SECRET_A", "aaaa-secret"),
+            ("H5I_SECRET_B", "bbbb-secret"),
+        ]);
+
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "env"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(!changed);
+        assert_eq!(reply["names"], json!(["H5I_SECRET_A", "H5I_SECRET_B"]));
+        let rendered = reply.to_string();
+        assert!(!rendered.contains("aaaa-secret"), "{rendered}");
+        assert!(!rendered.contains("bbbb-secret"), "{rendered}");
+    }
+
+    #[test]
+    fn env_is_refused_while_a_human_is_logging_in() {
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        session.login = true;
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "env"}));
+        assert_eq!(reply["code"], "login-mode", "{reply:?}");
+    }
+
+    #[test]
+    fn a_placeholder_that_names_nothing_is_reported_rather_than_emptied() {
+        let mut session = session_with(
+            "<html><body><input name='u'></body></html>",
+        );
+        let refs = serve_refs(&mut session);
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({
+                "verb": "type",
+                "ref": refs[0].id.clone(),
+                "text": "$H5I_SECRET_TYPO",
+            }),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["unresolved"], json!(["H5I_SECRET_TYPO"]));
+        // Typed literally, so the mistake is visible in the field rather than
+        // arriving as a login failure that looks like a wrong password.
+        assert_eq!(
+            session.page.field_value(refs[0].node_id).as_deref(),
+            Some("$H5I_SECRET_TYPO")
+        );
+    }
+
+    #[test]
     fn waiting_for_something_already_there_costs_nothing() {
         let mut session = session_with("<html><body><p id='done'>ready</p></body></html>");
         let (reply, changed) = control_verb(
@@ -2384,6 +2550,7 @@ mod delta_and_login_tests {
             last_snapshot: None,
             served_refs: None,
             requests,
+            secrets: crate::secrets::Secrets::default(),
             login: false,
         }
     }

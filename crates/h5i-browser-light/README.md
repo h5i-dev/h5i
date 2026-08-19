@@ -99,6 +99,7 @@ h5i-browser-light session status | snapshot | navigate <url> | scroll <px>
                            | type <@ref> <text> | submit <@ref> | click <@ref>
                            | wait-for --selector <css> | wait-for-script <expr>
                            | requests [--since <seq>] | markdown | extract <schema>
+                           | env
 h5i-browser-light open|serve ... [--script]   # limited JavaScript preview
 h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
@@ -335,6 +336,42 @@ limits arrived with them rather than after:
 - **`Secure` enforced**, `__Secure-`/`__Host-` prefixes enforced at store time,
   and a redirected POST is downgraded to a bodyless GET on 301/302/303 so a
   password is not replayed to wherever a server points next.
+
+### Credentials the agent can use and cannot read
+
+```
+$ H5I_SECRET_ACME_PASS=hunter2 h5i-browser-light serve https://acme.test/ &
+$ h5i-browser-light session env
+H5I_SECRET_ACME_PASS          # the name. never the value
+$ h5i-browser-light session type @e2 '$H5I_SECRET_ACME_PASS'
+{"ok":true,"ref":"@e2","used":["H5I_SECRET_ACME_PASS"]}
+```
+
+The model names a credential, the engine resolves it on the way into the field,
+and the reply echoes the **placeholder**. The value never enters the model's
+context, so it cannot be repeated back, summarised, or carried into whatever the
+agent does next. `env` returns names and nothing else; no verb in this engine
+returns a credential's value. That is the same rule the cookie jar follows by
+reporting a count.
+
+Only the `H5I_SECRET_` namespace is reachable, which is narrower than the
+scheme this borrows from. h5i already uses `H5I_*` for engine configuration
+(`H5I_EGRESS_PROXY`, `H5I_BROWSER_RECEIPTS`), and making those substitutable
+would let a page-bound `type` put the receipts path into a form. A denylist
+would work until somebody added a variable; a prefix allowlist fails closed.
+
+Substitution happens for `type` and for nothing else — a predicate on the verb
+table rather than a decision at the call site. Resolving a placeholder into a
+selector, a URL or a wait condition would put the value somewhere it can be read
+back: out of the DOM, out of the request log, out of an error message.
+
+**This closed a hole that was not part of the feature.** A password field's
+value was read straight back out by `snapshot`, which meant a credential typed
+by a *human* during LOGIN mode was readable by the agent the moment that mode
+ended. `input[type=password]` now reports a fixed-width mask instead of what it
+holds — fixed width because the real length is weak evidence but it is still
+evidence. Whether the field is filled is still visible, which is what an agent
+legitimately needs.
 
 **LOGIN mode** (5.10) is half built, and the half matters. `session login`
 refuses every control verb that reads the page, so a credential typed during it

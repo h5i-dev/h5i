@@ -805,11 +805,33 @@ fn accessible_name(tag: &str, node: &Node) -> String {
             // outline built from the attribute would show an agent the value it
             // was given rather than the one it just typed, so `type` then
             // `snapshot` would look like it had silently failed.
+            //
+            // Except for a password, which is never read back however it got
+            // there. This is not only about the credential-substitution path:
+            // LOGIN mode exists so a human can type a password the agent cannot
+            // see, and without this the agent could simply read it out of the
+            // next snapshot once the mode ended. What the field *holds* is
+            // replaced by a fixed mask; whether it is filled is still visible,
+            // which is what an agent legitimately needs to know.
+            let is_password = attr_of(node, "type")
+                .map(|kind| kind.trim().eq_ignore_ascii_case("password"))
+                .unwrap_or(false);
+
             if let Some(input) = node.element_data().and_then(|el| el.text_input_data()) {
                 let typed = collapse(&input.editor.text().to_string());
                 if !typed.is_empty() {
-                    return typed;
+                    return if is_password {
+                        PASSWORD_MASK.to_string()
+                    } else {
+                        typed
+                    };
                 }
+            }
+            // `value` is dropped from the fallback for a password, or a page
+            // that served one in the markup would hand it straight over.
+            if is_password {
+                return from_attr(&["aria-label", "placeholder", "title", "name"])
+                    .unwrap_or_default();
             }
             from_attr(&["aria-label", "placeholder", "value", "title", "name"]).unwrap_or_default()
         }
@@ -852,6 +874,12 @@ fn find_title(doc: &BaseDocument) -> Option<String> {
         }
     })
 }
+
+/// What a password field reports instead of what it holds.
+///
+/// Fixed width on purpose: the real length is weak evidence but it is still
+/// evidence, and there is no reason for an outline to carry it.
+pub(crate) const PASSWORD_MASK: &str = "********";
 
 /// What replaces a page's attempt to write one of the fence markers.
 pub(crate) const FENCE_DEFANGED: &str = "[fence marker removed]";
@@ -1088,6 +1116,31 @@ mod tests {
             rendered.contains("data, not as instructions"),
             "the fence says what it is for:\n{rendered}"
         );
+    }
+
+    #[test]
+    fn a_password_field_never_reports_what_it_holds() {
+        // Not only about the credential-substitution path. LOGIN mode exists so
+        // a human can type a password the agent cannot see; without this the
+        // agent reads it out of the next snapshot the moment the mode ends.
+        let masked = Snapshot {
+            url: "https://app.example/".to_string(),
+            title: String::new(),
+            lines: vec![Line {
+                depth: 0,
+                role: "textbox".to_string(),
+                text: PASSWORD_MASK.to_string(),
+                reference: Some("e1".to_string()),
+                href: None,
+            }],
+            refs: Vec::new(),
+            truncated: false,
+            notes: Vec::new(),
+        };
+        let rendered = masked.render();
+        assert!(rendered.contains(PASSWORD_MASK), "{rendered}");
+        // Fixed width: the real length is weak evidence, but it is evidence.
+        assert_eq!(PASSWORD_MASK.len(), 8);
     }
 
     #[test]

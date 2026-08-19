@@ -61,6 +61,8 @@ pub enum Verb {
     Extract,
     /// The page as markdown.
     Markdown,
+    /// Which credentials this session could substitute, by name.
+    Env,
 }
 
 impl Verb {
@@ -79,6 +81,7 @@ impl Verb {
         Verb::WaitForScript,
         Verb::Extract,
         Verb::Markdown,
+        Verb::Env,
     ];
 
     /// The name on the wire.
@@ -97,6 +100,7 @@ impl Verb {
             Verb::WaitForScript => "wait_for_script",
             Verb::Extract => "extract",
             Verb::Markdown => "markdown",
+            Verb::Env => "env",
         }
     }
 
@@ -129,7 +133,10 @@ impl Verb {
             | Verb::WaitFor
             | Verb::WaitForScript
             | Verb::Extract
-            | Verb::Markdown => false,
+            | Verb::Markdown
+            // Asked during a human's login, this is a question about
+            // credentials at exactly the wrong moment.
+            | Verb::Env => false,
         }
     }
 
@@ -153,7 +160,36 @@ impl Verb {
             | Verb::WaitFor
             | Verb::WaitForScript
             | Verb::Extract
-            | Verb::Markdown => false,
+            | Verb::Markdown
+            | Verb::Env => false,
+        }
+    }
+
+    /// Whether a `$H5I_SECRET_*` placeholder in this verb's arguments is
+    /// resolved on the way to the page.
+    ///
+    /// Only where a value is being handed to the page as *content*. Resolving
+    /// one into a selector, a URL or a wait condition would put a credential
+    /// somewhere it can be read back — out of the DOM, out of the request log,
+    /// out of an error message — which is the whole thing the indirection
+    /// exists to prevent.
+    pub fn substitutes_secrets(self) -> bool {
+        match self {
+            Verb::Type => true,
+
+            Verb::Status
+            | Verb::Snapshot
+            | Verb::Login
+            | Verb::Navigate
+            | Verb::Scroll
+            | Verb::Submit
+            | Verb::Click
+            | Verb::WaitFor
+            | Verb::WaitForScript
+            | Verb::Requests
+            | Verb::Extract
+            | Verb::Markdown
+            | Verb::Env => false,
         }
     }
 
@@ -181,7 +217,8 @@ impl Verb {
             // nothing can change the answer.
             | Verb::WaitFor
             | Verb::Extract
-            | Verb::Markdown => false,
+            | Verb::Markdown
+            | Verb::Env => false,
         }
     }
 
@@ -431,6 +468,19 @@ mod tests {
             .map(|v| v.name())
             .collect();
         assert_eq!(refs, vec!["type", "submit", "click"]);
+    }
+
+    #[test]
+    fn a_secret_is_resolved_only_where_it_is_handed_to_the_page() {
+        // Anywhere else and the value can be read back: a selector lands in an
+        // error, a URL lands in the request log, a wait condition lands in a
+        // reply. `type` is the one place it goes into the page and stops.
+        let substituting: Vec<&str> = Verb::ALL
+            .iter()
+            .filter(|v| v.substitutes_secrets())
+            .map(|v| v.name())
+            .collect();
+        assert_eq!(substituting, vec!["type"]);
     }
 
     #[test]

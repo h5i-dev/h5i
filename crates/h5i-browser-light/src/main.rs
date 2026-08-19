@@ -283,6 +283,17 @@ enum SessionVerb {
         at: SessionArgs,
     },
 
+    /// Which credentials this session can use, by name.
+    ///
+    /// Names only. No verb in this engine returns a credential's value: the
+    /// model names one, the engine resolves it on the way into the field, and
+    /// the reply echoes the placeholder. Only the `H5I_SECRET_` namespace is
+    /// reachable, so h5i's own configuration is not.
+    Env {
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// The request log: what this session asked for, and what was refused.
     ///
     /// The engine *is* the HTTP client here, so this is the decision record the
@@ -602,6 +613,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             at,
             serde_json::json!({"verb": Verb::Markdown.name(), "max_bytes": max_bytes}),
         ),
+        SessionVerb::Env { at } => (at, serde_json::json!({"verb": Verb::Env.name()})),
     };
 
     let port = session_port(at)?;

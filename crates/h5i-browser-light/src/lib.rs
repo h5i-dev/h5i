@@ -40,6 +40,7 @@ pub mod net;
 pub mod policy;
 pub mod receipt;
 pub mod script;
+pub mod secrets;
 pub mod snapshot;
 pub mod stream;
 pub mod verbs;
