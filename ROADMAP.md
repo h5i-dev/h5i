@@ -6166,7 +6166,57 @@ three were wrong — two dangerous, one merely useless. The ceiling on this whol
 area is small anyway: the corpus runs 35 pages in 9.7s, so a realm at 20ms is
 about 7% of the total even if it were free.
 
-### B15.13 The queue
+### B15.13 The queue: built, 2026-08-19
+
+All nine landed, plus `h5i box watch` and the console work of M11c. What follows
+is the queue as written, with what each turned into. Three of them produced a
+different answer than the one they were specified with, and those are the
+entries worth reading.
+
+**Item 1 was a live defect, and the fix is narrower than it looks.** A ref is now
+honoured only against the reading it was served in. The check is an equality
+test on one ref, not a proof the document is unchanged, and the code says so:
+it catches every case where the *handle* has come to mean something else, which
+is the failure that was silent, and claims nothing more. Typing and scrolling
+renumber nothing, so the login loop still runs without a re-read between steps.
+
+**Item 3 turned out to be a different feature than specified.** Because the
+settle runs on a virtual clock *and* runs to quiescence, a page's own
+`setTimeout(1000)` has already fired by the time any verb is served. `wait_for`
+therefore does not usually wait — it **answers**, with three outcomes rather
+than two: found; not found and the page has nothing left to run, so waiting
+cannot change it; not found and the page was still working. The middle one is
+the one worth having, and collapsing it into "timed out" would be the same lie
+this file refuses elsewhere.
+
+**Item 8's cost was the receipt schema, not the transport.** A socket carrying
+four hundred messages could have been honoured by receipting the handshake
+alone, and this engine's central claim would then have quietly stopped covering
+the bytes after it. Every frame is receipted, written as an ordinary
+request/response pair with `WS-SEND`/`WS-RECV` as the method — so the console,
+`box watch` and the export bundle all show socket traffic with **no changes to
+any of them**. `wss://` and remote `ws://` behind a proxy are refused by name;
+SSE reconnection is refused because an engine that silently re-dialled would be
+making requests the agent never asked for.
+
+**Item 9 produced three negative results**, recorded in §B15.12a: realm reuse
+refused on security grounds the queue had not weighed, prelude caching not
+buildable with this Boa for a checkable reason, and an obvious-looking loop
+optimisation measured and reverted.
+
+Two things were found on the way that were nobody's item. A **password field's
+value was read straight back out by `snapshot`**, so a credential typed by a
+human during LOGIN mode was readable by the agent the moment that mode ended —
+the mode's whole purpose, defeated one verb later. And the console showed
+page-derived text to a person with no fence around it, while fencing the same
+text for the model.
+
+Still open, and unchanged: §B11.5.1 (a corpus that needs a login) is now the
+oldest thing on this list, and §B15.9's credential work changes what it would be
+testing. §B15.10's replay is the natural next build, and item 5's durable
+selector was the dependency it was waiting on.
+
+#### The queue as written
 
 Ordered by leverage, not size. Items 1 and 2 make everything after them cheaper.
 
