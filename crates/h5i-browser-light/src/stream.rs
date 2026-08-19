@@ -43,6 +43,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 use base64::Engine as _;
@@ -83,6 +84,13 @@ pub struct ServeOptions {
     /// Serve one viewer and exit, which is what the tests and a one-shot
     /// demo want.
     pub once: bool,
+    /// The in-memory half of the receipt sink, so the session can answer
+    /// `requests` without reading back the file it just wrote.
+    ///
+    /// This is the same sink the fail-closed rule runs through, not a copy kept
+    /// alongside it: what the verb reports is what the broker recorded, or the
+    /// fetch did not happen.
+    pub requests: Arc<crate::receipt::MemorySink>,
 }
 
 impl Default for ServeOptions {
@@ -94,6 +102,7 @@ impl Default for ServeOptions {
             control_file: None,
             action_log: None,
             once: false,
+            requests: Arc::new(crate::receipt::MemorySink::new()),
         }
     }
 }
@@ -160,6 +169,14 @@ struct Session {
     /// clients asking for deltas against different baselines would be two
     /// answers about one thing.
     last_snapshot: Option<crate::snapshot::Snapshot>,
+
+    /// The request log, live.
+    ///
+    /// See [`ServeOptions::requests`]. Held rather than reached through the
+    /// broker because `Sink` is deliberately a one-method trait — `append` and
+    /// nothing else — and widening it to be readable would weaken the thing
+    /// that makes the guarantee simple to state.
+    requests: Arc<crate::receipt::MemorySink>,
 
     /// The refs this session last handed to a control client.
     ///
@@ -314,6 +331,7 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         actions,
         last_snapshot: None,
         served_refs: None,
+        requests: options.requests.clone(),
         login: false,
     };
     run_session(session, rx, options.once);
@@ -1003,6 +1021,62 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             }
         }
 
+
+        // The verb no other engine can offer honestly.
+        //
+        // Chromium's request list is an *observation* of the network made from
+        // beside it, and it fails open: attach races, freshly created targets,
+        // workers, buffer limits. Obscura's CDP `Network.*` events are batched
+        // and emitted after navigation completes, reconstructed from a stored
+        // list, so anything reading them live sees a compressed, out-of-time
+        // picture. Lightpanda has no equivalent at all.
+        //
+        // Here the engine *is* the HTTP client, so this is not a report about
+        // the network — it is the decision record the broker wrote before the
+        // bytes moved. If it is not here, it did not happen.
+        Verb::Requests => {
+            let all = session.requests.records();
+
+            // `since` lets an agent ask what happened after its last look, the
+            // same shape `snapshot --delta` has and for the same reason: the
+            // whole log re-read after every click is the wrong size for a loop.
+            let since = request.get("since").and_then(Value::as_u64);
+            let rows: Vec<&crate::receipt::RequestRecord> = all
+                .iter()
+                .filter(|r| since.is_none_or(|floor| r.seq > floor))
+                .collect();
+
+            // Counted over the *whole* log rather than the window, because
+            // "nothing was refused" is a claim about the session and an agent
+            // that only ever asks for windows should still be able to make it.
+            let denied = all
+                .iter()
+                .filter(|r| r.phase == crate::receipt::Phase::Request && !r.allowed)
+                .count();
+
+            let text = rows
+                .iter()
+                .map(|r| r.render())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let highest = all.last().map(|r| r.seq);
+
+            (
+                json!({
+                    "ok": true,
+                    "requests": rows,
+                    // The cursor to pass back as `since`. Named rather than
+                    // left to be derived from the last row, which is absent
+                    // when the window is empty.
+                    "cursor": highest,
+                    "shown": rows.len(),
+                    "total": all.len(),
+                    "denied": denied,
+                    "text": text,
+                }),
+                false,
+            )
+        }
     }
 }
 
@@ -1163,9 +1237,9 @@ mod tests {
     use std::sync::Arc;
 
     fn session_with(html: &str) -> Session {
-        let broker = Arc::new(
-            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-        );
+        let requests = Arc::new(MemorySink::new());
+        let broker =
+            Arc::new(Broker::new(Policy::new(), requests.clone(), None).expect("broker"));
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
         let sources = fonts.sources.clone();
         let options = crate::engine::PageOptions {
@@ -1183,6 +1257,7 @@ mod tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            requests,
             login: false,
         }
     }
@@ -1190,9 +1265,9 @@ mod tests {
     /// A session whose page runs its own scripts, for the verbs that behave
     /// differently once script is present.
     fn scripted_session_with(html: &str) -> Session {
-        let broker = Arc::new(
-            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-        );
+        let requests = Arc::new(MemorySink::new());
+        let broker =
+            Arc::new(Broker::new(Policy::new(), requests.clone(), None).expect("broker"));
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let options = crate::engine::PageOptions {
             width: 400,
@@ -1210,6 +1285,7 @@ mod tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            requests,
             login: false,
         }
     }
@@ -1760,6 +1836,69 @@ mod tests {
     }
 
     #[test]
+    fn the_request_log_is_readable_through_the_session_and_counts_refusals() {
+        // The claim this verb rests on: what it reports is what the broker
+        // recorded before the wire, not a reconstruction afterwards. So the
+        // test drives a real refusal and reads it back through the verb.
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "requests"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(!changed, "reading the log does not move the page");
+        assert_eq!(reply["denied"], 0);
+        assert_eq!(reply["total"], 0, "nothing has been fetched yet");
+        assert!(reply["cursor"].is_null(), "no cursor before any request");
+
+        // A navigation the policy refuses. The allowlist is empty and this is
+        // not loopback, so the broker records the decision and no bytes move.
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "navigate", "url": "https://denied.test/"}),
+        );
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "refused");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "requests"}));
+        assert_eq!(reply["denied"], 1, "the refusal is in the log: {reply:?}");
+        let rows = reply["requests"].as_array().expect("an array");
+        assert!(!rows.is_empty());
+        assert!(
+            rows.iter().any(|r| r["url"]
+                .as_str()
+                .is_some_and(|u| u.contains("denied.test"))),
+            "the refused URL is named: {reply:?}"
+        );
+        assert!(
+            reply["text"].as_str().unwrap().contains("DENIED"),
+            "{reply:?}"
+        );
+
+        // The cursor is the shape an agent loop needs: ask again with it and
+        // get only what is new, which here is nothing.
+        let cursor = reply["cursor"].as_u64().expect("a cursor once there are rows");
+        let (again, _) = control_verb(
+            &mut session,
+            &json!({"verb": "requests", "since": cursor}),
+        );
+        assert_eq!(again["shown"], 0, "{again:?}");
+        assert_eq!(
+            again["denied"], 1,
+            "counts describe the session, not the window: {again:?}"
+        );
+    }
+
+    #[test]
+    fn the_request_log_is_refused_while_a_human_is_logging_in() {
+        // It names URLs a login flow visited. Engine-written, but still a
+        // reading of where the page went.
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        session.login = true;
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "requests"}));
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "login-mode", "{reply:?}");
+    }
+
+    #[test]
     fn a_ref_from_a_reading_the_page_has_moved_on_from_is_refused() {
         // The defect this check exists for, reproduced.
         //
@@ -1912,13 +2051,10 @@ mod delta_and_login_tests {
     use super::*;
 
     fn page_session(html: &str) -> Session {
+        let requests = std::sync::Arc::new(crate::receipt::MemorySink::new());
         let broker = std::sync::Arc::new(
-            crate::net::Broker::new(
-                crate::policy::Policy::new(),
-                std::sync::Arc::new(crate::receipt::MemorySink::new()),
-                None,
-            )
-            .expect("broker"),
+            crate::net::Broker::new(crate::policy::Policy::new(), requests.clone(), None)
+                .expect("broker"),
         );
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let factory = crate::engine::PageFactory::new(
@@ -1936,6 +2072,7 @@ mod delta_and_login_tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            requests,
             login: false,
         }
     }

@@ -229,6 +229,23 @@ enum SessionVerb {
         #[command(flatten)]
         at: SessionArgs,
     },
+    /// The request log: what this session asked for, and what was refused.
+    ///
+    /// The engine *is* the HTTP client here, so this is the decision record the
+    /// broker wrote before the bytes moved, not an observation of the network
+    /// made from beside it. If a request is not in this list, it did not
+    /// happen.
+    Requests {
+        /// Only what happened after this sequence number.
+        ///
+        /// Pass back the `cursor` from a previous answer to see just what is
+        /// new, the way `snapshot --delta` works and for the same reason.
+        #[arg(long, value_name = "SEQ")]
+        since: Option<u64>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// Follow a `@ref` from the last snapshot.
     Click {
         /// `e3` or `@e3`, from a `snapshot`.
@@ -439,7 +456,7 @@ fn serve(
     action_log: Option<PathBuf>,
     once: bool,
 ) -> Result<(), H5iError> {
-    let (_display, factory, page) = load(target, net, view)?;
+    let (requests, factory, page) = load(target, net, view)?;
     let stream_file = stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
     let control_file = control_file
         .or_else(|| std::env::var(CONTROL_FILE_VAR).ok().map(PathBuf::from))
@@ -455,6 +472,7 @@ fn serve(
             control_file,
             action_log,
             once,
+            requests,
         },
     )
 }
@@ -494,6 +512,10 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Click { reference, at } => (
             at,
             serde_json::json!({"verb": Verb::Click.name(), "ref": reference}),
+        ),
+        SessionVerb::Requests { since, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Requests.name(), "since": since}),
         ),
     };
 

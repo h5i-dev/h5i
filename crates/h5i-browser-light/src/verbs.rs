@@ -51,6 +51,8 @@ pub enum Verb {
     Submit,
     /// Follow or activate a ref.
     Click,
+    /// The request log, as the engine wrote it.
+    Requests,
 }
 
 impl Verb {
@@ -64,6 +66,7 @@ impl Verb {
         Verb::Type,
         Verb::Submit,
         Verb::Click,
+        Verb::Requests,
     ];
 
     /// The name on the wire.
@@ -77,6 +80,7 @@ impl Verb {
             Verb::Type => "type",
             Verb::Submit => "submit",
             Verb::Click => "click",
+            Verb::Requests => "requests",
         }
     }
 
@@ -101,7 +105,11 @@ impl Verb {
             | Verb::Scroll
             | Verb::Type
             | Verb::Submit
-            | Verb::Click => false,
+            | Verb::Click
+            // The request log names URLs a login flow visited. Engine-written,
+            // but still a reading of where the page went, and a human typing a
+            // password should not have that read out from under them.
+            | Verb::Requests => false,
         }
     }
 
@@ -120,7 +128,8 @@ impl Verb {
             | Verb::Snapshot
             | Verb::Login
             | Verb::Navigate
-            | Verb::Scroll => false,
+            | Verb::Scroll
+            | Verb::Requests => false,
         }
     }
 
