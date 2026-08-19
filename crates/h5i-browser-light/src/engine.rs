@@ -780,6 +780,86 @@ impl Page {
         Some(requests)
     }
 
+    /// Wait until something is on the page, or until nothing can put it there.
+    ///
+    /// Three answers, and the third is the one worth having. A page that runs
+    /// no script cannot grow the thing being waited for, so the honest reply is
+    /// *immediately* "not there, and nothing here will change that" rather than
+    /// a budget spent proving it. The same holds for a scripted page that has
+    /// gone quiet, which is where the settle loop's `Quiescent` end comes from.
+    pub fn wait_for(&mut self, target: &WaitTarget) -> crate::script::Waited {
+        let dom = self.doc.clone();
+        let max_lines = self.options.max_snapshot_lines;
+        let url = self.url.to_string();
+        let scripted = self.script.is_some();
+        let mut ready = move || {
+            let doc = dom.borrow();
+            match target {
+                WaitTarget::Selector(selector) => {
+                    matches!(doc.query_selector_all(selector), Ok(found) if !found.is_empty())
+                }
+                // Read through the snapshot walker rather than the raw tree, so
+                // "the text is on the page" means the same thing here as it
+                // does in the outline the agent is reading. A match in a
+                // `<script>` body is not a match a reader would see.
+                WaitTarget::Text(needle) => {
+                    crate::snapshot::Snapshot::capture(&doc, &url, max_lines, scripted)
+                        .lines
+                        .iter()
+                        .any(|line| line.text.contains(needle.as_str()))
+                }
+            }
+        };
+
+        let Some(script) = self.script.as_mut() else {
+            // No realm: it either matches now or it never will.
+            let met = ready();
+            return crate::script::Waited {
+                met,
+                settled: crate::script::Settled {
+                    elapsed_ms: 0,
+                    timers_run: 0,
+                    cut_off: false,
+                    pending_timers: 0,
+                },
+                end: if met {
+                    crate::script::WaitEnd::Met
+                } else {
+                    crate::script::WaitEnd::Quiescent
+                },
+            };
+        };
+
+        let waited = script.settle_until(&mut ready);
+        self.after_script(waited.settled.clone());
+        waited
+    }
+
+    /// Wait until a page expression is true.
+    ///
+    /// `None` when this session has no realm, which the caller reports as a
+    /// routing answer rather than as a condition that failed.
+    pub fn wait_for_script(&mut self, expr: &str) -> Option<crate::script::Waited> {
+        let script = self.script.as_mut()?;
+        let waited = script.settle_until_expr(expr);
+        self.after_script(waited.settled.clone());
+        Some(waited)
+    }
+
+    /// Settle bookkeeping shared by everything that re-enters the realm.
+    ///
+    /// Factored out of `dispatch_event`, which had it inline: a wait can run a
+    /// page's own code, so it owes the same layout re-resolve and the same
+    /// `settled` record, and forgetting either would leave the next snapshot
+    /// describing a document the engine had not laid out.
+    fn after_script(&mut self, settled: crate::script::Settled) {
+        let dirty = self.script.as_mut().map(|s| s.take_dirty()).unwrap_or(false);
+        self.settled = Some(settled);
+        if dirty {
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        }
+    }
+
     /// Record an engine-level fact for the next snapshot to carry.
     pub fn note(&mut self, text: &str) {
         self.notes.push(text.to_string());
@@ -1161,6 +1241,15 @@ impl Page {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+/// What a `wait_for` is waiting for.
+#[derive(Debug, Clone)]
+pub enum WaitTarget {
+    /// A CSS selector that must match at least one element.
+    Selector(String),
+    /// Text that must appear in the outline a reader would see.
+    Text(String),
 }
 
 /// Builds pages, so a session can navigate.

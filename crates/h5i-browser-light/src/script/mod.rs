@@ -194,6 +194,78 @@ impl boa_engine::context::HostHooks for Hooks {
     }
 }
 
+/// What the loop asks between rounds.
+///
+/// Two kinds because they cannot share a representation. A DOM condition is a
+/// Rust closure over the document; a page condition needs the realm, which the
+/// loop is already holding mutably, so it travels as source and is evaluated
+/// by the loop itself.
+enum Ready<'a> {
+    Rust(&'a mut dyn FnMut() -> bool),
+    Expr(String),
+}
+
+/// How a wait ended.
+///
+/// Three outcomes, kept apart because they ask the caller for different things.
+/// `Met` is the answer. `Quiescent` means the page has nothing left to run, so
+/// waiting longer cannot change anything — a different fact from `Budget`,
+/// which means time ran out with work still pending and the condition might
+/// yet have come true.
+///
+/// Collapsing the last two into "timed out" is the lie this engine keeps
+/// refusing elsewhere: it would report a page that had finished and a page that
+/// was cut off as the same thing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitEnd {
+    /// The condition came true.
+    Met,
+    /// The page went quiet without it. Nothing is left that could change it.
+    Quiescent,
+    /// The budget ran out with work still pending.
+    Budget,
+}
+
+impl WaitEnd {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WaitEnd::Met => "met",
+            WaitEnd::Quiescent => "quiescent",
+            WaitEnd::Budget => "budget",
+        }
+    }
+}
+
+/// What a wait did.
+#[derive(Debug, Clone)]
+pub struct Waited {
+    /// Whether the condition was true when the wait stopped.
+    pub met: bool,
+    /// The settle underneath it, so the caller sees the same accounting a
+    /// snapshot would have carried.
+    pub settled: Settled,
+    pub end: WaitEnd,
+}
+
+impl Waited {
+    /// The one-line form, addressed to a reader deciding what to do next.
+    pub fn render(&self) -> String {
+        match self.end {
+            WaitEnd::Met => format!("found after {}ms", self.settled.elapsed_ms),
+            WaitEnd::Quiescent => format!(
+                "not found, and the page has nothing left to run after {}ms — waiting longer \
+                 cannot change this",
+                self.settled.elapsed_ms
+            ),
+            WaitEnd::Budget => format!(
+                "not found after {}ms, and the page was still working ({} timers pending) — \
+                 it may yet appear",
+                self.settled.elapsed_ms, self.settled.pending_timers
+            ),
+        }
+    }
+}
+
 /// What a settle actually did, so a caller never has to guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settled {
@@ -426,7 +498,7 @@ impl Script {
     pub fn settle(&mut self) -> Settled {
         let budget = self.job_budget;
         let (mut settled, cut_short) =
-            self.with_job_deadline(budget, |script| script.settle_inner());
+            self.with_job_deadline(budget, |script| script.settle_inner(None).0);
         if cut_short {
             settled.cut_off = true;
             self.note_error(&format!(
@@ -438,10 +510,97 @@ impl Script {
         settled
     }
 
-    fn settle_inner(&mut self) -> Settled {
+    /// Run until `ready` answers true, or until nothing is left to wait on.
+    ///
+    /// The wait an agent needs, and the reason it is the *same* loop rather
+    /// than one beside it: the ordering rules in here were each paid for by a
+    /// bug (wait on the network in real time before advancing the virtual
+    /// clock; re-ask after the last `run_queued_jobs`; `max` then `min` rather
+    /// than `clamp`). A second copy would start correct and drift.
+    ///
+    /// The rule borrowed from Lightpanda's `Runner`: **resolve when there is
+    /// nothing left to wait on**, even when the condition never came true.
+    /// Spinning to a timeout on a page that has gone quiet tells the caller
+    /// nothing it did not already know, a whole budget later.
+    pub fn settle_until(&mut self, ready: &mut dyn FnMut() -> bool) -> Waited {
+        let mut ready = Ready::Rust(ready);
+        self.settle_with(&mut ready)
+    }
+
+    /// The same wait, with the condition written in the page's own language.
+    ///
+    /// The expression is evaluated in the realm between rounds. A throw counts
+    /// as *not yet*, not as an error: a condition that reads through a value
+    /// the page has not built yet throws on the way there, and treating that as
+    /// failure would make every useful condition unwritable.
+    pub fn settle_until_expr(&mut self, expr: &str) -> Waited {
+        let mut ready = Ready::Expr(expr.to_string());
+        self.settle_with(&mut ready)
+    }
+
+    fn settle_with(&mut self, ready: &mut Ready<'_>) -> Waited {
+        let budget = self.job_budget;
+        // `with_job_deadline` returns (closure result, deadline fired), and the
+        // closure itself returns (settled, met). Destructured in one pattern so
+        // the two bools cannot be read in the wrong order — which is exactly
+        // what a two-step destructure did on the first attempt, reporting every
+        // met condition as a blown budget.
+        let ((settled, met), cut_short) =
+            self.with_job_deadline(budget, |script| script.settle_inner(Some(ready)));
+        let end = if met {
+            WaitEnd::Met
+        } else if cut_short || settled.cut_off {
+            WaitEnd::Budget
+        } else {
+            WaitEnd::Quiescent
+        };
+        Waited { met, settled, end }
+    }
+
+    /// Ask the predicate, whichever kind it is.
+    ///
+    /// A page-side condition is wrapped so a throw is `false`. The page is
+    /// mid-build for most of a wait, so a condition that dereferences something
+    /// not there yet is the normal case rather than a mistake.
+    fn ask(&mut self, ready: &mut Ready<'_>) -> bool {
+        match ready {
+            Ready::Rust(f) => f(),
+            Ready::Expr(expr) => {
+                let wrapped = format!(
+                    "(() => {{ try {{ return !!({expr}); }} catch (e) {{ return false; }} }})()"
+                );
+                self.eval_value(&wrapped).map(|v| v == "true").unwrap_or(false)
+            }
+        }
+    }
+
+    fn settle_inner(&mut self, mut ready: Option<&mut Ready<'_>>) -> (Settled, bool) {
         let mut clock = 0u64;
         let mut timers_run = 0usize;
         let network_started = std::time::Instant::now();
+
+        // Asked before anything runs: a condition already true must not cost a
+        // settle, and `wait_for` on a page that already shows the thing is the
+        // common case in an agent loop.
+        macro_rules! ready_now {
+            () => {
+                match ready.as_deref_mut() {
+                    Some(r) => self.ask(r),
+                    None => false,
+                }
+            };
+        }
+        if ready_now!() {
+            return (
+                Settled {
+                    elapsed_ms: 0,
+                    timers_run: 0,
+                    cut_off: false,
+                    pending_timers: self.pending_timers(),
+                },
+                true,
+            );
+        }
 
         loop {
             self.run_queued_jobs();
@@ -459,6 +618,19 @@ impl Script {
             let ran = self.run_due_timers(clock);
             timers_run += ran;
 
+            // After the round's work, before deciding whether to wait longer.
+            if ready_now!() {
+                return (
+                    Settled {
+                        elapsed_ms: clock,
+                        timers_run,
+                        cut_off: false,
+                        pending_timers: self.pending_timers(),
+                    },
+                    true,
+                );
+            }
+
             if ran == 0 {
                 // A page waiting on the network is not idle, and this is checked
                 // before the clock moves rather than only when no timer is
@@ -473,12 +645,15 @@ impl Script {
                         self.abandon_fetches();
                         self.run_queued_jobs();
                         self.collect_module_failures();
-                        return Settled {
-                            elapsed_ms: clock,
-                            timers_run,
-                            cut_off: true,
-                            pending_timers: self.pending_timers(),
-                        };
+                        return (
+                            Settled {
+                                elapsed_ms: clock,
+                                timers_run,
+                                cut_off: true,
+                                pending_timers: self.pending_timers(),
+                            },
+                            false,
+                        );
                     }
                     std::thread::sleep(std::time::Duration::from_millis(NETWORK_POLL_MS));
                     continue;
@@ -497,13 +672,19 @@ impl Script {
                         continue;
                     }
 
+                    // Nothing left to wait on. For a plain settle that is the
+                    // page being done; for a wait it is the answer, because the
+                    // condition cannot become true without something running.
                     self.collect_module_failures();
-                    return Settled {
-                        elapsed_ms: clock,
-                        timers_run,
-                        cut_off: false,
-                        pending_timers: 0,
-                    };
+                    return (
+                        Settled {
+                            elapsed_ms: clock,
+                            timers_run,
+                            cut_off: false,
+                            pending_timers: 0,
+                        },
+                        ready_now!(),
+                    );
                 }
                 // Something is queued: jump the virtual clock to when it is
                 // actually due rather than stepping toward it.
@@ -534,12 +715,15 @@ impl Script {
                 self.abandon_fetches();
                 self.run_queued_jobs();
                 self.collect_module_failures();
-                return Settled {
-                    elapsed_ms: clock,
-                    timers_run,
-                    cut_off: true,
-                    pending_timers: self.pending_timers(),
-                };
+                return (
+                    Settled {
+                        elapsed_ms: clock,
+                        timers_run,
+                        cut_off: true,
+                        pending_timers: self.pending_timers(),
+                    },
+                    ready_now!(),
+                );
             }
         }
     }

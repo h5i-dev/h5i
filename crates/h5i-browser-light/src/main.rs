@@ -229,6 +229,35 @@ enum SessionVerb {
         #[command(flatten)]
         at: SessionArgs,
     },
+    /// Wait until something is on the page, or until nothing can put it there.
+    ///
+    /// Three answers, and the third is the point: a page that runs no script,
+    /// or a scripted page that has gone quiet, cannot grow the thing you are
+    /// waiting for — so that comes back immediately rather than after a budget
+    /// spent proving it.
+    WaitFor {
+        /// A CSS selector that must match at least one element.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        /// Text that must appear in the outline a reader would see.
+        #[arg(long, value_name = "TEXT", conflicts_with = "selector")]
+        text: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Wait until a page expression is true.
+    ///
+    /// Needs a session started with `--script`. A condition that throws counts
+    /// as *not yet* rather than as an error, because a page mid-build throws on
+    /// the way to values it has not made.
+    WaitForScript {
+        /// The expression, evaluated in the page's realm.
+        expr: String,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// The request log: what this session asked for, and what was refused.
     ///
     /// The engine *is* the HTTP client here, so this is the decision record the
@@ -516,6 +545,22 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Requests { since, at } => (
             at,
             serde_json::json!({"verb": Verb::Requests.name(), "since": since}),
+        ),
+        SessionVerb::WaitFor {
+            selector,
+            text,
+            at,
+        } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::WaitFor.name(),
+                "selector": selector,
+                "text": text,
+            }),
+        ),
+        SessionVerb::WaitForScript { expr, at } => (
+            at,
+            serde_json::json!({"verb": Verb::WaitForScript.name(), "expr": expr}),
         ),
     };
 

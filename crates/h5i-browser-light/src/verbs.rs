@@ -53,6 +53,10 @@ pub enum Verb {
     Click,
     /// The request log, as the engine wrote it.
     Requests,
+    /// Wait until something is on the page, or until nothing can put it there.
+    WaitFor,
+    /// Wait until a page expression is true.
+    WaitForScript,
 }
 
 impl Verb {
@@ -67,6 +71,8 @@ impl Verb {
         Verb::Submit,
         Verb::Click,
         Verb::Requests,
+        Verb::WaitFor,
+        Verb::WaitForScript,
     ];
 
     /// The name on the wire.
@@ -81,6 +87,8 @@ impl Verb {
             Verb::Submit => "submit",
             Verb::Click => "click",
             Verb::Requests => "requests",
+            Verb::WaitFor => "wait_for",
+            Verb::WaitForScript => "wait_for_script",
         }
     }
 
@@ -109,7 +117,9 @@ impl Verb {
             // The request log names URLs a login flow visited. Engine-written,
             // but still a reading of where the page went, and a human typing a
             // password should not have that read out from under them.
-            | Verb::Requests => false,
+            | Verb::Requests
+            | Verb::WaitFor
+            | Verb::WaitForScript => false,
         }
     }
 
@@ -129,7 +139,35 @@ impl Verb {
             | Verb::Login
             | Verb::Navigate
             | Verb::Scroll
-            | Verb::Requests => false,
+            | Verb::Requests
+            | Verb::WaitFor
+            | Verb::WaitForScript => false,
+        }
+    }
+
+    /// Whether this verb needs a script realm to mean anything.
+    ///
+    /// Reported rather than discovered. `wait_for_script` on a session started
+    /// without `--script` is a question with no engine to answer it, and
+    /// silence there reads as a condition that never came true — which is a
+    /// different fact and would send an agent down the wrong branch.
+    pub fn needs_script(self) -> bool {
+        match self {
+            Verb::WaitForScript => true,
+
+            Verb::Status
+            | Verb::Snapshot
+            | Verb::Login
+            | Verb::Navigate
+            | Verb::Scroll
+            | Verb::Type
+            | Verb::Submit
+            | Verb::Click
+            | Verb::Requests
+            // `wait_for` reads the DOM, which exists either way. On a page with
+            // no script it answers immediately rather than waiting, because
+            // nothing can change the answer.
+            | Verb::WaitFor => false,
         }
     }
 
@@ -181,6 +219,8 @@ pub enum Code {
     Refused,
     /// LOGIN mode is on and this verb reads the page.
     LoginMode,
+    /// The verb needs a script realm and this session has none.
+    NoScript,
     /// A wait ran out of budget.
     Timeout,
     /// A selector matched nothing.
@@ -200,6 +240,7 @@ impl Code {
             Code::WrongRole => "wrong-role",
             Code::Refused => "refused",
             Code::LoginMode => "login-mode",
+            Code::NoScript => "no-script",
             Code::Timeout => "timeout",
             Code::NoMatch => "no-match",
             Code::Internal => "internal",
@@ -224,7 +265,11 @@ impl Code {
             | Code::NoMatch
             | Code::UnknownVerb => true,
 
-            Code::Refused | Code::LoginMode | Code::Timeout | Code::Internal => false,
+            Code::Refused
+            | Code::LoginMode
+            | Code::NoScript
+            | Code::Timeout
+            | Code::Internal => false,
         }
     }
 }
@@ -306,6 +351,22 @@ impl VerbError {
         VerbError::new(
             Code::WrongRole,
             format!("`{reference}` is a {role}, not {wanted}."),
+        )
+    }
+
+    /// This verb needs a realm and there is none.
+    ///
+    /// Named as a routing answer, not as a failure: the caller's next move is
+    /// to ask `capabilities` or use the Chromium path, not to retry.
+    pub fn no_script(verb: Verb) -> Self {
+        VerbError::new(
+            Code::NoScript,
+            format!(
+                "`{}` needs a script realm and this session has none. Start `serve` with \
+                 `--script`, or route this page to the chromium engine — `capabilities` \
+                 reports which this invocation is.",
+                verb.name()
+            ),
         )
     }
 
@@ -391,6 +452,7 @@ mod tests {
             Code::WrongRole,
             Code::Refused,
             Code::LoginMode,
+            Code::NoScript,
             Code::Timeout,
             Code::NoMatch,
             Code::Internal,

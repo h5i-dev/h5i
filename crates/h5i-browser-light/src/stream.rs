@@ -1077,6 +1077,88 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 false,
             )
         }
+
+        // The wait an agent loop needs. Before this the only option on a
+        // scripted page was to snapshot and hope.
+        //
+        // Neither reference engine can do the interesting half of this. Both
+        // wait on a wall clock with hard-coded fudge — Lightpanda a 500ms
+        // network-idle debounce, Obscura a 150ms quiet window, a 1s grace, a
+        // 500ms tail and a 5s deadline that marks the page idle even when the
+        // deadline is what ended it. Here the settle runs on a virtual clock,
+        // so a page's `setTimeout(1000)` costs nothing and two runs of the same
+        // page answer the same way.
+        Verb::WaitFor => {
+            let selector = request.get("selector").and_then(Value::as_str);
+            let text = request.get("text").and_then(Value::as_str);
+            let target = match (selector, text) {
+                (Some(s), None) => crate::engine::WaitTarget::Selector(s.to_string()),
+                (None, Some(t)) => crate::engine::WaitTarget::Text(t.to_string()),
+                (Some(_), Some(_)) => {
+                    return (
+                        VerbError::bad_request(
+                            "`wait_for` takes a `selector` or a `text`, not both: two conditions \
+                             are two waits, and which one was met would not be reported.",
+                        )
+                        .reply(),
+                        false,
+                    );
+                }
+                (None, None) => {
+                    return (
+                        VerbError::bad_request("`wait_for` needs a `selector` or a `text`.")
+                            .reply(),
+                        false,
+                    );
+                }
+            };
+
+            let waited = session.page.wait_for(&target);
+            // `changed` only when the page actually ran something: a condition
+            // already true has moved nothing, and sending every attached viewer
+            // a frame for it would undo the zero-frames-at-rest property.
+            let moved = waited.settled.elapsed_ms > 0 || waited.settled.timers_run > 0;
+            (
+                json!({
+                    "ok": true,
+                    "met": waited.met,
+                    // Three outcomes, not two. "Not found and the page has
+                    // nothing left to run" is a different fact from "not found
+                    // and it was still working", and an agent branches
+                    // differently on them.
+                    "end": waited.end.as_str(),
+                    "waited_ms": waited.settled.elapsed_ms,
+                    "pending_timers": waited.settled.pending_timers,
+                    "message": waited.render(),
+                }),
+                moved,
+            )
+        }
+
+        Verb::WaitForScript => {
+            let Some(expr) = request.get("expr").and_then(Value::as_str) else {
+                return (
+                    VerbError::bad_request("`wait_for_script` needs an `expr` to evaluate.")
+                        .reply(),
+                    false,
+                );
+            };
+            let Some(waited) = session.page.wait_for_script(expr) else {
+                return (VerbError::no_script(Verb::WaitForScript).reply(), false);
+            };
+            let moved = waited.settled.elapsed_ms > 0 || waited.settled.timers_run > 0;
+            (
+                json!({
+                    "ok": true,
+                    "met": waited.met,
+                    "end": waited.end.as_str(),
+                    "waited_ms": waited.settled.elapsed_ms,
+                    "pending_timers": waited.settled.pending_timers,
+                    "message": waited.render(),
+                }),
+                moved,
+            )
+        }
     }
 }
 
@@ -1833,6 +1915,177 @@ mod tests {
         assert_eq!(reply["ok"], false, "{reply:?}");
         assert!(!changed);
         assert!(reply["error"].as_str().unwrap().contains("denied.test"), "{reply:?}");
+    }
+
+    #[test]
+    fn waiting_for_something_already_there_costs_nothing() {
+        let mut session = session_with("<html><body><p id='done'>ready</p></body></html>");
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for", "selector": "#done"}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["met"], true);
+        assert_eq!(reply["end"], "met");
+        assert_eq!(reply["waited_ms"], 0);
+        assert!(!changed, "nothing ran, so no viewer needs a frame");
+    }
+
+    #[test]
+    fn a_page_that_cannot_change_says_so_instead_of_waiting() {
+        // The answer worth having. This page runs no script, so the element is
+        // never going to appear — and reporting that immediately is a different
+        // and more useful fact than timing out.
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        let started = std::time::Instant::now();
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for", "selector": "#never"}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["met"], false);
+        assert_eq!(
+            reply["end"], "quiescent",
+            "not `budget`: nothing was still working, so this is settled, not cut off"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "it should not have spent a budget proving the obvious"
+        );
+        let message = reply["message"].as_str().unwrap();
+        assert!(message.contains("nothing left to run"), "{message:?}");
+    }
+
+    #[test]
+    fn waiting_for_text_reads_the_outline_a_reader_would_see() {
+        // Not the raw tree: a match inside a `<script>` body is not something
+        // the agent would ever have read.
+        let mut session = session_with(
+            "<html><body><script>var marker = 'appeared';</script><p>hi</p></body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for", "text": "appeared"}),
+        );
+        assert_eq!(reply["met"], false, "script text is not page text: {reply:?}");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "wait_for", "text": "hi"}));
+        assert_eq!(reply["met"], true, "{reply:?}");
+    }
+
+    #[test]
+    fn a_wait_on_a_virtual_clock_is_free_and_repeatable() {
+        // The property neither reference engine has, and it turns out to be
+        // stronger than "the wait is cheap".
+        //
+        // The page arms a one second timer. Because the settle runs on a
+        // *virtual* clock and runs to quiescence, that timer has already fired
+        // by the time the session exists — so the wait does not wait at all, it
+        // answers. Both reference engines would have spent a real second here,
+        // or given up early on a wall-clock heuristic and reported a page that
+        // had not finished.
+        let page = "<html><body><div id='host'></div><script>\
+                    setTimeout(() => { const p = document.createElement('p'); \
+                    p.textContent = 'late'; document.querySelector('#host').appendChild(p); \
+                    }, 1000);</script></body></html>";
+
+        let started = std::time::Instant::now();
+        let mut first = scripted_session_with(page);
+        let (a, _) = control_verb(&mut first, &json!({"verb": "wait_for", "text": "late"}));
+        let real = started.elapsed();
+
+        assert_eq!(a["ok"], true, "{a:?}");
+        assert_eq!(a["met"], true, "the timer fired and the node landed: {a:?}");
+        assert_eq!(a["end"], "met");
+        assert!(
+            real < std::time::Duration::from_millis(900),
+            "a page's own second of delay costs the agent nothing: {real:?}"
+        );
+
+        // And the answer does not depend on how the machine was feeling.
+        let mut second = scripted_session_with(page);
+        let (b, _) = control_verb(&mut second, &json!({"verb": "wait_for", "text": "late"}));
+        assert_eq!(a["met"], b["met"]);
+        assert_eq!(a["end"], b["end"]);
+        assert_eq!(
+            a["waited_ms"], b["waited_ms"],
+            "two runs of one page answer identically"
+        );
+    }
+
+    #[test]
+    fn a_wait_answers_rather_than_waits_because_the_page_already_ran() {
+        // Worth pinning as a property rather than leaving as an accident: the
+        // settle runs a page to quiescence, so by the time any verb is served
+        // there is nothing pending. `wait_for` is therefore a *definitive*
+        // answer — found, or cannot appear — and not a sleep. An agent that
+        // polls it in a loop is doing no good and this is why.
+        let mut session = scripted_session_with(
+            "<html><body><p>here</p><script>var n = 1;</script></body></html>",
+        );
+        for _ in 0..3 {
+            let (reply, changed) = control_verb(
+                &mut session,
+                &json!({"verb": "wait_for", "selector": "#absent"}),
+            );
+            assert_eq!(reply["end"], "quiescent", "{reply:?}");
+            assert_eq!(reply["waited_ms"], 0);
+            assert!(!changed, "a wait that ran nothing moves no viewer");
+        }
+    }
+    #[test]
+    fn wait_for_script_needs_a_realm_and_says_so_as_a_routing_answer() {
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for_script", "expr": "true"}),
+        );
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "no-script");
+        assert_eq!(
+            reply["retryable"], false,
+            "retrying will not grow a script engine"
+        );
+
+        let mut scripted = scripted_session_with(
+            "<html><body><p>hi</p><script>var ready = true;</script></body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut scripted,
+            &json!({"verb": "wait_for_script", "expr": "globalThis.ready === true"}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["met"], true, "{reply:?}");
+    }
+
+    #[test]
+    fn a_condition_that_throws_is_not_yet_rather_than_an_error() {
+        // A page mid-build throws on the way to values it has not made, so a
+        // throw has to count as "not satisfied" or no useful condition can be
+        // written at all.
+        let mut session = scripted_session_with(
+            "<html><body><p>hi</p><script>var ok = 1;</script></body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for_script", "expr": "window.nothing.here.at.all"}),
+        );
+        assert_eq!(reply["ok"], true, "a throw is an answer, not a failure: {reply:?}");
+        assert_eq!(reply["met"], false);
+        assert_eq!(reply["end"], "quiescent");
+    }
+
+    #[test]
+    fn wait_for_refuses_two_conditions_at_once() {
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for", "selector": "p", "text": "hi"}),
+        );
+        assert_eq!(reply["code"], "bad-request", "{reply:?}");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "wait_for"}));
+        assert_eq!(reply["code"], "bad-request", "{reply:?}");
     }
 
     #[test]

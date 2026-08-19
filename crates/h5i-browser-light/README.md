@@ -97,6 +97,8 @@ h5i-browser-light serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
                                    [--control-file PATH]
 h5i-browser-light session status | snapshot | navigate <url> | scroll <px>
                            | type <@ref> <text> | submit <@ref> | click <@ref>
+                           | wait-for --selector <css> | wait-for-script <expr>
+                           | requests [--since <seq>]
 h5i-browser-light open|serve ... [--script]   # limited JavaScript preview
 h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
@@ -226,6 +228,61 @@ the ability to read the box's filesystem.
 submit does not produce `alicealice`. The snapshot reads values back from the
 editor rather than the `value` attribute, or `type` then `snapshot` would look
 like it had silently failed.
+
+### Waiting, and the third answer
+
+```
+$ h5i-browser-light session wait-for --selector '#results'
+$ h5i-browser-light session wait-for --text 'Signed in'
+$ h5i-browser-light session wait-for-script 'document.querySelectorAll("li").length > 3'
+```
+
+Both reference engines wait on a wall clock with hard-coded fudge: a 500ms
+network-idle debounce in one; a 150ms quiet window, a 1s grace, a 500ms tail and
+a 5s deadline that marks the page idle even when the deadline is what ended it,
+in the other. The settle here runs on a **virtual** clock, which changes what
+this verb is.
+
+Because the settle runs a page to quiescence, a page's own `setTimeout(1000)`
+has already fired by the time any verb is served. So `wait_for` does not
+usually wait. It **answers**, with one of three outcomes:
+
+| `end` | means |
+| --- | --- |
+| `met` | it is there |
+| `quiescent` | it is not, and the page has nothing left to run — waiting longer cannot change this |
+| `budget` | it is not, and the page was still working — it may yet appear |
+
+The middle one is the one worth having, and collapsing it into "timed out" is
+the lie this engine refuses elsewhere: a page that has finished and a page that
+was cut off are not the same fact. On a page with no script at all the answer
+comes back immediately, because nothing can put the element there.
+
+`wait_for_script` needs `--script` and says so as a routing answer rather than
+as a condition that failed. A condition that throws counts as *not yet*: a page
+mid-build throws on the way to values it has not made, and treating that as an
+error would make most useful conditions unwritable.
+
+### The request log, from inside the session
+
+```
+$ h5i-browser-light session requests
+   200 GET https://docs.rs/blitz/ (12043 bytes, 84ms)
+DENIED GET https://telemetry.example.com/collect
+$ h5i-browser-light session requests --since 41   # only what is new
+```
+
+No other engine can answer this without qualifying it. Chromium's list is an
+observation of the network made from beside it and fails open. Obscura's CDP
+`Network.*` events are batched and emitted after navigation completes,
+reconstructed from a stored list, so anything watching live sees a compressed,
+out-of-time picture. Lightpanda has no equivalent. Here the engine *is* the HTTP
+client, so this is the decision record written before the bytes moved: if a
+request is not in the list, it did not happen.
+
+`denied` counts over the whole session rather than the `--since` window, because
+"nothing was refused" is a claim about the session and an agent that only ever
+asks for windows should still be able to make it.
 
 ### Cookies, and the four narrowings that make them safe
 
