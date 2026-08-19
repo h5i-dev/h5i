@@ -9,7 +9,7 @@ This document has five parts:
 - **The environment**, sections 1 to 12. Scope, architecture, phases and the
   decisions behind them. Decisions already taken are in section 10; what is
   still open is in section 11.
-- **The browser engine**, sections B1 to B14. The work on
+- **The browser engine**, sections B1 to B15. The work on
   `crates/h5i-browser-light`, formerly `ROADMAP_BROWSER.md`. Those sections
   carry a `B` prefix so the two numbering schemes never collide. Section 12
   stays the authority on the engine's *scope and why*; the B sections are the
@@ -1998,6 +1998,129 @@ demo surface ("or stay entirely inside the terminal"), and it does not
 chase pane parity with M11a: the investment moves to the web view, and the
 TUI's job is to watch, take the lock when a login wall demands it, and prove
 the event model has two independent readers. Nothing shipped is discarded.
+
+### M11c. Two audit surfaces: a decision stream, and the page beside its cost. Proposed, 2026-08-19
+
+M11a built the event model and the console's evidence panes; M11b keeps a
+smaller terminal viewer over the same stream. Both are surfaces for **watching a
+box**. This entry adds the two that are missing, and they are missing in
+different directions: one is for the person running the box, the other is for
+the person reading the page.
+
+The framing that produced both: **a log is not an answer.** `receipt.jsonl` with
+two thousand rows is evidence and nobody reads it. The questions a human
+actually arrives with are few — did anything leave, was anything refused, what
+did the agent read before it wrote this, is this record real — and an audit
+surface should be shaped like those questions rather than like the storage.
+Only the first two are in this milestone.
+
+#### 1. `h5i box watch`: one line per decision
+
+A non-interactive stream of policy decisions as they are made. Not a viewer:
+no viewport, no panes, no cycling, no lock. It is the `tail -f` of the receipt
+and it is meant to be piped, grepped and left running in a second pane.
+
+```
+$ h5i box watch mybox
+14:02:11  net      ALLOW  GET   https://docs.rs/blitz/0.3.0/  (12 KB, 84ms)
+14:02:11  net      DENY   GET   https://telemetry.example.com/collect
+                                 net.egress does not list this host; nothing left
+14:02:12  browser  click  @e3 "Sign in"
+14:02:12  net      ALLOW  POST  https://app.local/login  (cookies: 1)
+14:02:13  exec     cargo test
+```
+
+**This is distinct from M11b and does not replace it.** M11b is a pane-based
+TUI with a viewport, which is a thing you sit in front of. This is a line
+stream, which is a thing you leave running. The distinction is worth keeping
+because the reason to build it is behavioural rather than technical: trust in a
+sandbox is built by watching it once, seeing it behave, and then stopping. A
+surface that must be opened and attended to is a surface that is not used after
+the first week, and `--deny-only` is the form that can be left on forever.
+
+Requirements that follow from the rest of this file:
+
+* **Third reader of one stream.** M11a's whole point is that `browser_events`
+  is the single stream; M11b was gated on proving it had two independent
+  readers. This is the third, and it must consume the same model, including
+  `lane` and `grade` as words. A row whose grade is `box-claimed` says so here
+  too; the terse format is not licence to drop the qualifier that makes the row
+  honest.
+* **Sanitised once, at ingest.** Already true (M11a), and load-bearing here
+  because this writes box-supplied strings straight to a terminal, exactly as
+  M11b does.
+* **Refusals are the headline.** `--deny-only` is the flag; a run that refused
+  nothing should be able to say that in one line rather than in silence.
+* **`--json` is the record, the default is the answer.** The same split the
+  session verbs use.
+
+#### 2. The page beside what it cost
+
+The console draws a network pane and a viewport. It does not draw them
+*together*, and for this engine that is the picture no other browser can
+produce: the rendered page, and directly beneath it every request that was made
+to render it, each with its verdict. "What did looking at this page cost, and
+what was refused while I looked" is one glance rather than two panes and a
+correlation done by eye. `caused_by` (M11a) already carries the links needed to
+draw it.
+
+Second, and smaller to build than to decide: **draw the fence.** The snapshot
+wraps page content in `--- BEGIN/END UNTRUSTED PAGE CONTENT ---` (§12.1) because
+that is the moment attacker-controlled text reaches something deciding what to
+do next. The console currently renders page-derived text without that boundary
+being visible, so the human reader is given *less* framing than the model is.
+Rendering the same fence in the UI costs almost nothing and removes an
+asymmetry that is hard to defend once noticed.
+
+Neither of these is a new evidence source. Both are M11a's stream, arranged so
+the arrangement itself carries the argument.
+
+#### What was considered and rejected: putting receipts in git
+
+The tempting version of "make the evidence live where review already happens"
+is a receipt digest in a commit trailer, or the bundle summary in
+`git notes --ref=h5i`. It is cheap, it survives forever, and it appears in the
+pull request without anyone opening a tool.
+
+**Refuse it.** Two reasons, and the second is the one that settles it:
+
+1. It is a second export path that does not pass the export gate. §5.6's
+   redaction and size caps apply to `h5i box export`; a note written beside it
+   inherits none of that, and receipts carry URLs, hostnames and query strings
+   that are exactly where a token ends up.
+2. **It is unretractable.** A note or trailer that has been pushed is on every
+   clone and in every fork, and a force-push does not recall it. Every other
+   evidence path in this design is a local artifact that a person chooses to
+   hand over. This one publishes by default, and "the agent's record leaked the
+   credential the agent was careful with" is a failure this project should not
+   be able to have.
+
+Recorded here so it is refused in review rather than re-argued. If the pull
+request really is the right place for this, the thing to put there is a
+reference to a bundle, produced by the gate, that someone chose to share.
+
+#### Order, and what this does not include
+
+`h5i box watch` first: it is small, it consumes a stream that already exists,
+and it is the surface that makes the guarantee visible day to day. The paired
+view second. The fence line can land with either.
+
+Deliberately **not** in this milestone, and both larger than it:
+
+* **`h5i box why <name>`**, a provenance query rather than a log reader
+  (`--reached <host>`, `--wrote <path>`). The interesting one, and the one that
+  has to be honest about a hard limit: what the receipt holds is *temporal
+  co-occurrence*, not causation. "The agent read these pages before it wrote
+  this file" is true and useful; "these pages caused this file" is not
+  something the record supports. It is buildable only if it says which of the
+  two it is, in the output, every time. Left out until that wording is settled,
+  because the failure mode of getting it wrong is this project's worst one.
+* **`h5i verify <bundle>`**, the third-party check, which needs §B11.5.16's
+  signed receipt before it means anything. Its UX shape is a one-line verdict
+  followed by an explicit statement of what the record does **not** cover, which
+  is the same instinct as `capabilities` (§12) and `unsupported()` (§B8.4)
+  applied to the audit trail. That paragraph is the differentiating part of the
+  feature, not a caveat attached to it.
 
 ### M12. Share: built, 2026-08-10 (5.11, 5.11.1)
 
@@ -5609,6 +5732,420 @@ Reading code found some. Running a conformance suite found more, and found the
 per hour, and, the part worth internalising, **it found bugs in code whose own
 comments had reasoned carefully to the wrong conclusion.** A comment cannot
 falsify itself. Another implementation can.
+
+---
+
+## B15. Two more reference engines, and the bug reading them found, 2026-08-19
+
+§B11 read Kitesurf against a built engine and asked what the comparison changed
+about the *order* of work. This section does the same for two engines that are
+closer to us in purpose than Kitesurf is: **Lightpanda** (`~/Ref/browser`, Zig,
+V8 plus html5ever, CDP and MCP) and **Obscura** (`~/Ref/obscura`, Rust, V8 via
+deno_core, CDP and MCP, ~132k lines across nine crates). Both describe
+themselves as headless browsers *for AI agents*. Neither has receipts, a policy
+layer, or a box; both have an agent-driving surface several times the size of
+ours.
+
+The comparison is therefore lopsided in a useful way. It says almost nothing
+about the engine and a great deal about **the verbs on top of it**, which is
+where the honest reading is that we are behind.
+
+### B15.1 What the reading found first: a ref resolves against a page the agent never saw
+
+Before any of the design comparison, the read found a defect in our own control
+channel, and it is the kind §B8.3 singles out as the worst state for anything
+here to be in: a plausible wrong answer that looks like a right one.
+
+`type`, `submit` and `click` each take a **fresh** snapshot at action time and
+resolve the agent's `@ref` against that (`stream.rs:863`, `:885`, `:917`):
+
+```rust
+let snapshot = session.page.snapshot();
+let Some(entry) = snapshot.resolve(reference) else { ... };
+```
+
+References are minted by walk order (`snapshot.rs:590`):
+
+```rust
+let id = format!("e{}", self.next_ref);
+self.next_ref += 1;
+```
+
+So `e5` does not name an element. It names **the fifth actionable thing in this
+walk**. The agent read snapshot *N* and is acting against snapshot *N+1*, taken
+now. If anything moved in between — a settle that ran, a script mutation, an
+element inserted earlier in document order — `e5` resolves to a *different
+element*, `click` succeeds, and the reply says `{"ok": true, "ref": "e5"}`.
+Nothing anywhere detects it.
+
+There is no memory-safety problem: the node id is freshly minted, so the click
+lands on a real node. That is precisely what makes it bad. The failure is
+silent, it is indistinguishable from success, and the engine's whole claim is
+that it does not hand an agent a plausible lie.
+
+**The minimum fix** is a generation counter: stamp each snapshot, return it,
+require it back on any verb taking a `@ref`, and refuse a mismatch by name
+rather than acting on it. That converts a silent wrong action into a loud one
+and is a small change.
+
+**The right fix** is two handle types, which is §B15.4.
+
+This is also a comment on method. §B14.5 ranked three ways of looking and put
+"diff against another implementation" first, because a comment cannot falsify
+itself. Reading two *other* agent-facing APIs found this in an afternoon, and
+neither the corpus (§B8) nor WPT (§B12) would ever have found it: the page is
+conformant, the render is right, and the wrong element is clicked.
+
+### B15.2 The two engines, and what is not comparable
+
+Stated first, so nothing below is quoted against the wrong baseline.
+
+* **Neither is a fair speed or conformance comparison.** Both run V8. Obscura
+  ships a 14.5k-line `bootstrap.js` baked into a V8 startup snapshot; Lightpanda
+  hand-writes its DOM in Zig against V8 directly. We run Boa, an interpreter,
+  for the reason §B11.1 gives. None of the three numbers bounds another.
+* **Neither has our reach.** §B11.3 named this as an advantage never written
+  down; it survives contact with two more engines. Obscura's SSRF gate denies
+  loopback and RFC1918 *by default* (`client.rs:573`, installed as reqwest's own
+  DNS resolver), which is the correct default for a scraper and the exact
+  opposite of what a coding agent needs. Ours allows loopback by default because
+  loopback is the dev server (`--no-loopback` takes it away).
+* **Neither has receipts**, and the shape of what they do have is instructive.
+  Obscura's CDP `Network.*` events are **batched and emitted after navigation
+  completes**, reconstructed from a stored list; anything watching requests live
+  sees a compressed, out-of-time picture. That is the failure mode §7.1
+  predicted for any engine observing its own network from beside it rather than
+  being it.
+
+What *is* comparable is the verb surface: **8 session verbs here, 27 in
+Lightpanda, 36 in Obscura.** That gap is not padding. It is the difference
+between an agent that finishes a task and one that stalls and re-snapshots.
+
+### B15.3 One verb table, and why it is a security change
+
+Our verb set is written out three times and nothing makes the three agree: the
+clap `SessionVerb` enum (`main.rs:239`), a hand-built JSON payload in
+`session()` (`main.rs:~470`), and a string `match verb` (`stream.rs:715`).
+
+Lightpanda's answer is the single best structural idea in either codebase. One
+exhaustive `Tool` enum (`tools.zig:229`), and every per-tool property is an
+**exhaustive switch** on the tag: `isRecorded`, `isAsync`, `needsLocator`,
+`producesData`, `waitsForReadiness`, `navigatesToUrl` (`tools.zig:261-330`).
+Adding a tool is a compile error until every consumer has made an explicit
+choice. Four front-ends read that one table: MCP, LLM tool-calling, a slash
+command REPL, and script replay. In Rust this is free.
+
+Here it is not only tidiness. **LOGIN mode's refusal is a string allowlist**
+(`stream.rs:711`):
+
+```rust
+if session.login && !matches!(verb, "status" | "login") {
+```
+
+The default is refusal, so the failure direction is safe, and a *new* verb is
+refused until someone thinks about it. But the allowlist itself is two string
+literals: one typo opens a read path during credential entry, and no test that
+does not already know the typo will catch it. As a predicate on the enum
+(`fn readable_during_login(self) -> bool`) it cannot be typoed, and the
+exhaustive match forces every future verb to answer the question.
+
+Do this first. Everything after it is cheaper once it exists, and §B15.10's MCP
+decision stops being expensive to reverse.
+
+### B15.4 Two handle types, because one of them has to be recordable
+
+Both engines mint durable handles; ours are ordinals (§B15.1).
+
+**Lightpanda has both kinds, deliberately.** `backendNodeId` is a registry keyed
+on **DOM node pointer identity** (`cdp/Node.zig:38`), so an id survives arbitrary
+mutation and resolves to the same element or to nothing. On navigation the whole
+registry is reset, because every pointer in it dangles. That is the cheap
+intra-page handle.
+
+The durable one is `SelectorPath` (`browser/SelectorPath.zig:53`): the *simplest
+CSS selector whose first match is the target*, built greedily from the target
+outward, prepending an ancestor segment only when it shrinks the match count,
+preferring `#id` then `[data-testid]`/`[name]` then a `:has()` distinguisher
+found by BFS, and only then falling back to `:nth-of-type`. Each candidate is
+verified with **the same query function `click` and `fill` use**, so the
+selector is correct by the same resolution rule that will later resolve it.
+
+Obscura's approach is the one to refuse: it writes `data-obscura-ref="e3"` into
+the DOM (`obscura-mcp/src/lib.rs:1217`) and resolves via an attribute selector.
+Cheap, and wrong for us — a receipts engine that mutates the page has a snapshot
+that no longer describes the page as served.
+
+Why two kinds rather than the better one: **the durable handle is what makes a
+session replayable**, which is §B15.9. Lightpanda shapes its API around this and
+says so to the model, in the guidance it ships with the protocol: *"NEVER pass
+backendNodeId to click/fill/hover/selectOption/setChecked … backendNodeId calls
+cannot be recorded as reusable JavaScript, so any session that uses them is not
+replayable."* The recordability constraint is made visible in the API rather
+than discovered at save time.
+
+### B15.5 Waiting: the primitive we already have is the better one, and it is not exposed
+
+We have **no `wait_for` at all**. On a script page an agent's only option is
+snapshot-and-hope.
+
+Both engines converged on the same default from opposite directions, and it is
+worth recording because it is counter-intuitive: **do not wait for network idle
+by default.** Lightpanda waits for `load` and says why — *"on real sites
+trackers/timers keep the network from ever fully idling, so it just rides the
+timeout"* (`tools.zig:1972`). Obscura had to drop its CDP default all the way to
+`domcontentloaded` because full-load pushed github.com and reddit.com past the
+25s mark while clients timed out at 15s (`domains/page.rs:~1030`). Idle is an
+explicit escalation in both.
+
+Our `Settled { elapsed_ms, timers_run, cut_off, pending_timers }` on a **virtual
+clock** is a better primitive than either, and this file has never said so.
+Theirs are wall-clock heuristics with hardcoded fudge. Obscura's adaptive settle
+(`obscura-js/src/runtime.rs:1989`) is the most sophisticated version and carries
+a 150ms quiet window, a 1000ms external-work grace, a 500ms observable-activity
+tail, a 5000ms synchronous-task floor, and a hardcoded 5s idle deadline that
+**marks the page `NetworkIdle` even when the deadline is what ended the loop**
+(`page.rs:2691`). Ours is deterministic, reproducible across runs, and costs a
+page's `setTimeout(1000)` nothing.
+
+It is also *more complete than theirs on the axis their heuristics exist to
+approximate*: our fetch is synchronous underneath, so there is no in-flight
+request for a settle to miss. The thing they are estimating, we know.
+
+What to build: `wait_for {selector | text, timeout}` and `wait_for_script
+{expr}`, driven by the existing settle loop, plus one borrowed rule from
+Lightpanda's wait predicate (`Runner.zig:287`) — **resolve when there is nothing
+left to wait *on*, even if the requested milestone never arrived**, rather than
+spinning to the timeout. And keep reporting, never guessing: a wait that ended
+because the page went quiet without the condition holding is a different answer
+from one that timed out, and both are different from success.
+
+### B15.6 Errors that name the recovery
+
+A refusal here is `{"ok": false, "error": "<prose>"}`. Both engines converged on
+named codes plus a recovery sentence, addressed to the reader that is actually
+there. Lightpanda's (`tools.zig:762`):
+
+```
+NodeNotFound: the selector or backendNodeId matched nothing on the current page.
+Re-inspect the page (tree/interactiveElements) for fresh node ids, or omit
+backendNodeId to target the document root.
+FrameNotLoaded: no page is loaded — call goto (or pass a url) first.
+```
+
+Three things to take:
+
+1. **A `code` field** beside the prose, so a caller branches without parsing.
+   Obscura is the counter-example: every handler error becomes CDP `-32601`
+   regardless of meaning (`dispatch.rs:539`), and every page failure collapses
+   into `PageError::NetworkError(String)` — timeouts, DNS, SSRF blocks and
+   robots.txt denials are one variant. An agent cannot branch on that.
+2. **In-band versus protocol failures.** A selector that matched nothing in an
+   `extract` is content the model should read and fix; a policy refusal is a
+   protocol error. Lightpanda splits exactly there (`mcp/tools.zig`), and
+   returning the first as an error kills the self-correction loop.
+3. **Pre-parse diagnostics** that name the offending field and list the valid
+   values (`diagnoseArgs`, `tools.zig:2060`): `state: "fast"` should produce
+   *"invalid state 'fast'. Expected one of: load, domcontentloaded, …"* rather
+   than a raw parse failure.
+
+One small accommodation worth copying verbatim: Lightpanda treats
+`backendNodeId: 0` as omitted, because zero-filling models send `0` for unset
+(`tools.zig:2098`).
+
+### B15.7 The verbs that are missing, and the one nobody else can have
+
+Ranked by how often an agent loop stalls without them: `select_option`, `press`
+(a key), `set_checked`, `back` / `forward` / `reload`, `get_attribute`, `count`,
+`find_element {role, name}`, `links`, `console`.
+
+And then **`requests`**, which is ours alone. Exposing the request log through
+the control channel is a verb no other engine can offer honestly, because no
+other engine *is* the HTTP client. Lightpanda has no equivalent. Obscura's is
+the batched, after-the-fact reconstruction of §B15.2. Ours is the decision
+record that was written before the bytes moved, and the agent driving the page
+should be able to read it without leaving the session.
+
+This is the same argument §12 made for the engine existing at all, arriving at
+the verb layer. It also closes a gap in the agent's own loop: today an agent
+that wants to know whether its click caused a request has to be running with
+`--script` and read the `requests` field of the click reply, or go find the
+receipts file.
+
+### B15.8 Extraction, and a markdown view
+
+Both engines have a selector-to-JSON extraction DSL and both have markdown.
+Ours has neither, and the token economics of an agent loop say both matter.
+
+Lightpanda's `extract` is the better design (`tools.zig:917`): field name to
+selector, `[...]` for all matches, `{"selector":…, "attr":…}` for an attribute
+with `href`/`src` resolved absolute, `[{selector, fields:{…}}]` for one object
+per match with relative sub-selectors, and `limit`. One rule is worth copying
+exactly: an empty array is a valid result, but **if every top-level key comes
+back null it throws**, in-band, with
+
+```
+extract: no schema selector matched any element — inspect the page with
+tree/markdown and retry with corrected selectors
+```
+
+An unmatched schema is a mistake the model should be told about; an empty result
+set is not.
+
+Markdown is a denser read than the a11y outline for the "read the untrusted web"
+case that is this engine's stated purpose, and it is cheap over the Blitz DOM.
+Note the two gaps in Obscura's converter (`obscura-js/src/markdown.rs:7`) so we
+do not reproduce them: no GFM header separator row is ever emitted, so its
+tables are not valid markdown, and ordered-list items all render as literal
+`1. `. Whatever we emit, the fence of §12.1 applies to it unchanged.
+
+### B15.9 Credentials by indirection, which is the answer LOGIN mode is not
+
+Lightpanda's `$LP_*` scheme is the strongest single idea in either engine for
+our threat model, and it is better than what we have.
+
+End to end: only the `LP_` namespace is readable (`tools.zig:2166`); `getEnv`
+with no argument returns **the names, never the values**; substitution happens
+*inside the browser process* so the secret never enters model context; `fill`
+echoes the **placeholder** back in its result rather than the value
+(`tools.zig:626`); and the recorder reverse-substitutes on every append,
+iterating by value length descending (`tools.zig:2221`) so a short secret that
+is a substring of a longer one cannot leak a suffix. There is a test asserting
+a prompt-injected `fill('$SECRET')` cannot exfiltrate a non-`LP_` variable.
+
+This matters more here than there, because **it has no hole and LOGIN mode
+does.** §12's LOGIN mode is honest about being half built: it refuses the
+documented read path but does not withhold frames, and the README says plainly
+that an agent that goes looking can attach to the viewer socket and watch the
+same pixels. There is no moment in the indirection scheme when the secret is on
+screen, so there is nothing to watch.
+
+It also fits the rule the cookie jar already follows. `session status` reports a
+cookie *count* and never a value; the request log records how many cookies
+crossed and never which. A credential used by name and never by value is the
+same rule at the input side, and the receipt can say `used $H5I_ACME_PASSWORD`
+without that being a credential in every export the receipt reaches.
+
+The two compose rather than compete. LOGIN mode stays for interactive OAuth this
+engine cannot drive at all (and §B11.6's iframe/popup conflict is still
+unsettled and still has to be decided in writing). `$H5I_*` covers form posts,
+which is most of what an agent meets.
+
+### B15.10 The moat: a recording that replays deterministically
+
+Lightpanda records every state-mutating verb into replayable JavaScript
+(`script/Recorder.zig`), with three mechanisms worth taking: an emit-once
+preamble; a one-step rewrite window that downgrades a preceding `goto` to
+`domcontentloaded` when the next command supersedes the wait; and secret
+scrubbing on every append. Recording is *filtered* — a verb that used an
+ephemeral handle is dropped, so an unreplayable session simply produces a
+shorter script rather than a broken one.
+
+We already write `$H5I_BROWSER_ACTIONS`, and §12.1 already makes the guarantee
+that each verb is recorded before it runs and again after. Making that log
+**replayable** is a small step from where it stands, and it buys something
+neither engine can have:
+
+**Our settle runs on a virtual clock, so a replay is deterministic.** Both of
+theirs are wall-clock, so a replay is a re-run with different timing and a
+different answer. A recorded run, plus the request log it produced, plus a
+replay that lands identically, is a browser session that can be **re-executed
+and diffed**. That is the browser-side form of what §B11.5.16 wants from
+receipts — an artifact checkable by someone who does not trust the binary that
+wrote it — and it is a stronger position than any benchmark table, for the
+reason at the top of this file.
+
+It depends on §B15.4. A recording made of ordinals replays into a different
+page; a recording made of verified selectors replays into the same one.
+
+### B15.11 Two decisions to make deliberately, not discover
+
+**MCP.** §B11.4 decided against it: the agent runs in the same box, and
+`h5i-browser-light session snapshot` is already a tool it can call, so a
+protocol server would wrap the CLI in a socket for a caller that can already
+call the CLI. That argument is unchanged and still correct **for h5i's own
+boxed agent**. What the comparison adds is that both of these engines ship MCP
+as their *primary* agent surface, so it is also how anything outside h5i would
+ever drive this engine. The recommendation is to keep the decision and note
+that §B15.3 defuses it: with one verb table carrying schemas, an MCP server is
+a few hundred lines over it. The reopening condition at §B11.4 stands as
+written.
+
+**CDP.** §B11.5.4 ranks a subset third, and Obscura is a detailed and
+discouraging cost estimate. The protocol is the small part; the compatibility
+is the work. Distinct session ids per attach because a target can carry two
+client sessions (`dispatch.rs:239`); `canAccessOpener` in every `TargetInfo` or
+chromiumoxide panics; rewriting the main document's `requestId` to the
+`loaderId` because Puppeteer identifies the navigation response that way, *and*
+aliasing the stored body so `getResponseBody(loaderId)` resolves; a required
+event ordering with `requestWillBeSent` before `frameNavigated`; execution
+context ids cleared and reseeded per navigation, with an invented
+`__puppeteer_utility_world__` if the client registered none. Each of those is a
+client bug worked around, not a protocol feature.
+
+And the failure mode is exactly the one §B11.5.5 predicted, in the shipped code:
+`DOM.setAttributeValue` and `DOM.removeNode` are **silent no-ops**
+(`domains/dom.rs:222`), and `DOMSnapshot.captureSnapshot` returns **synthetic
+geometry** — every node a 1280x18 box stacked vertically (`domsnapshot.rs:232`)
+— in a build where real layout exists a call away. An agent framework that
+trusts those bounds gets garbage and is told nothing. That is the `missingApi`
+lie at protocol scale, and it is what a partial CDP costs when the conformance
+list is not published first.
+
+Recommendation: CDP moves *behind* the agent-loop work in §B15.12, and if it is
+built, the conformance list ships before the endpoint does.
+
+### B15.12 What not to copy
+
+**Obscura's stealth stack**, in full. Half of `bootstrap.js`'s fingerprint layer
+is a seeded PRNG producing plausible-but-false GPU strings, canvas noise,
+battery levels and heap sizes, plus a `Function.prototype.toString` patch that
+masks itself and a `getOwnPropertyNames` filter that hides its own globals. It
+is competent and it is the exact inverse of this engine's thesis: every one of
+those is a plausible lie a page cannot detect, engineered so it cannot be
+detected. We are not evading anyone, and a receipts engine that spoofs its own
+identity has given up the argument.
+
+The **catalogue** is worth keeping in one direction only. It is a list of what
+pages actually probe for, and a page reading `WEBGL_debug_renderer_info` or
+enumerating `navigator.plugins` is telling us something about itself. That
+belongs in `unsupported()` as a routing signal (§B8.4), which is machinery we
+already have.
+
+Also not to copy: **`DOM.setAttributeValue` as a no-op** and **synthetic
+DOMSnapshot geometry** (§B15.11); **writing refs into the DOM** (§B15.4);
+**batched network events** (§B15.2); and Obscura's documented-but-absent
+`localStorage` persistence, where dropping the JS isolate on every navigation
+means web storage does not survive a same-origin navigation, let alone a
+restart, while `docs/Persist-cookies-and-storage.md` promises a file. §B6 already
+commits us to in-memory storage; the lesson is that the *documentation* has to
+say so.
+
+### B15.13 The queue
+
+Ordered by leverage, not size. Items 1 and 2 make everything after them cheaper.
+
+1. **Snapshot generation counter, and refuse a stale `@ref`.** §B15.1. Small,
+   and it converts a silent wrong action into a named refusal.
+2. **One verb table with predicates**, replacing the three hand-kept copies, and
+   LOGIN mode's allowlist becomes one of the predicates. §B15.3.
+3. **`wait_for` / `wait_for_script`**, over the settle loop, with "resolve when
+   nothing is left to wait on" and a reported reason. §B15.5.
+4. **An error taxonomy**: a `code` field, a recovery sentence, in-band versus
+   protocol split, pre-parse diagnostics. §B15.6.
+5. **A durable handle** (`SelectorPath`-style, verified with the same query
+   function the actions use) reported beside the ordinal ref. §B15.4.
+6. **The missing verbs**, `requests` first because it is the one that is ours.
+   §B15.7.
+7. **`extract` and a markdown view.** §B15.8.
+8. **`$H5I_*` credential indirection**, and the receipt line that names a
+   credential without carrying it. §B15.9.
+9. **Replay**: the action log becomes a script, and a replay is diffed against
+   the request log it reproduces. §B15.10. Depends on 5.
+
+Items 10 and beyond are §B11.5's existing queue, unchanged. Nothing here
+displaces §B11.5.1 (a corpus that needs a login), which remains the
+least-verified thing this file claims — and §B15.9 changes what that corpus is
+testing, so it should be built after item 8 rather than before it.
 
 ---
 
