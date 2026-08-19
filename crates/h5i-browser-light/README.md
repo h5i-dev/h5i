@@ -98,7 +98,7 @@ h5i-browser-light serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
 h5i-browser-light session status | snapshot | navigate <url> | scroll <px>
                            | type <@ref> <text> | submit <@ref> | click <@ref>
                            | wait-for --selector <css> | wait-for-script <expr>
-                           | requests [--since <seq>]
+                           | requests [--since <seq>] | markdown | extract <schema>
 h5i-browser-light open|serve ... [--script]   # limited JavaScript preview
 h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
@@ -262,6 +262,37 @@ comes back immediately, because nothing can put the element there.
 as a condition that failed. A condition that throws counts as *not yet*: a page
 mid-build throws on the way to values it has not made, and treating that as an
 error would make most useful conditions unwritable.
+
+### Reading a page cheaply
+
+```
+$ h5i-browser-light session markdown
+$ h5i-browser-light session extract '{"rows": [{"selector": "tr.item", "limit": 5,
+    "fields": {"name": ".title", "url": {"selector": "a", "attr": "href"}}}]}'
+```
+
+`markdown` is the page as a reader reads it: prose, emphasis, lists, tables, no
+`@ref` handles. The outline exists to be *acted on*; this exists to be *read*.
+Three details the reference implementation of this gets wrong and this one does
+not, each with a test: tables carry the `|---|---|` separator that makes them
+GFM, ordered lists carry their real numbers rather than `1.` repeated, and
+nested lists carry their indent.
+
+`extract` answers a schema instead of making a model transcribe prose. Keys are
+output names, values are selector specs: `"h1"` for the first match's text,
+`["a"]` for every match, `{"selector":"a","attr":"href"}` for an attribute
+(`href` and `src` come back absolute), and `[{"selector":"li","fields":{…}}]`
+for one object per match with sub-selectors scoped to it.
+
+One rule matters more than the syntax. **An empty array is a result; a schema
+where nothing matched is an error.** "There were no rows" is something the page
+said; "none of your selectors match this page" is a mistake the caller should
+hear about, and answering it with a tidy object full of nulls would be a wrong
+answer that looks like a right one. The error names `snapshot` and `markdown` as
+the way to see what is actually there.
+
+Both are fenced, because both are page content reaching something that is about
+to decide what to do next.
 
 ### The request log, from inside the session
 

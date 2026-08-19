@@ -258,6 +258,31 @@ enum SessionVerb {
         at: SessionArgs,
     },
 
+    /// Pull structured data out of the page by selector.
+    ///
+    /// The schema is an object of field names to selector specs: `"h1"` for the
+    /// first match's text, `["a"]` for every match, `{"selector":"a",
+    /// "attr":"href"}` for an attribute, and `[{"selector":"li","fields":{…}}]`
+    /// for one object per match with sub-selectors scoped to it.
+    ///
+    /// An empty array is a result. A schema where nothing matched is an error,
+    /// because an object full of nulls looks like an answer.
+    Extract {
+        /// The schema, as JSON.
+        schema: String,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// The page as markdown: what a reader would read, without the handles.
+    Markdown {
+        /// Stop after this many bytes. Truncation is always announced.
+        #[arg(long, value_name = "BYTES")]
+        max_bytes: Option<usize>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// The request log: what this session asked for, and what was refused.
     ///
     /// The engine *is* the HTTP client here, so this is the decision record the
@@ -561,6 +586,21 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::WaitForScript { expr, at } => (
             at,
             serde_json::json!({"verb": Verb::WaitForScript.name(), "expr": expr}),
+        ),
+        SessionVerb::Extract { schema, at } => {
+            // Parsed here so a typo is a message from the CLI rather than a
+            // refusal from the far end of a socket.
+            let parsed: serde_json::Value = serde_json::from_str(schema).map_err(|e| {
+                H5iError::Metadata(format!("the schema is not valid JSON: {e}"))
+            })?;
+            (
+                at,
+                serde_json::json!({"verb": Verb::Extract.name(), "schema": parsed}),
+            )
+        }
+        SessionVerb::Markdown { max_bytes, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Markdown.name(), "max_bytes": max_bytes}),
         ),
     };
 

@@ -33,7 +33,9 @@
 pub mod encoding;
 pub mod cookies;
 pub mod engine;
+pub mod extract;
 pub mod fonts;
+pub mod markdown;
 pub mod net;
 pub mod policy;
 pub mod receipt;

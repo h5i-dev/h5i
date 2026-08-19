@@ -25,7 +25,7 @@
 //! snapshot, the paint, the events and the script state drift apart, and nothing
 //! downstream could tell which one was right.
 
-mod dom_api;
+pub(crate) mod dom_api;
 pub mod host;
 pub mod modules;
 

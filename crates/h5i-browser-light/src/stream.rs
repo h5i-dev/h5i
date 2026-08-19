@@ -1159,6 +1159,64 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 moved,
             )
         }
+
+        // Token economics. Three hundred lines of outline to find five titles
+        // is the wrong shape, and a model asked to transcribe them out of prose
+        // will occasionally invent one.
+        Verb::Extract => {
+            let Some(spec) = request.get("schema") else {
+                return (
+                    VerbError::bad_request(
+                        "`extract` needs a `schema`: an object of field names to selectors, \
+                         like {\"title\": \"h1\", \"links\": [\"a\"]}.",
+                    )
+                    .reply(),
+                    false,
+                );
+            };
+            let schema = match crate::extract::parse(spec) {
+                Ok(schema) => schema,
+                Err(e) => return (e.reply(), false),
+            };
+            let base = session.page.url().clone();
+            let dom = session.page.dom();
+            let result = {
+                let doc = dom.borrow();
+                crate::extract::run(&doc, &base, &schema)
+            };
+            match result {
+                // In-band, so a model reads it and corrects itself. A schema
+                // that matched nothing is the caller's to fix; answering it
+                // with an object full of nulls would look like a result.
+                Err(e) => (e.reply(), false),
+                Ok(data) => (json!({"ok": true, "data": data}), false),
+            }
+        }
+
+        Verb::Markdown => {
+            let max_bytes = request
+                .get("max_bytes")
+                .and_then(Value::as_u64)
+                .map(|n| n as usize)
+                .unwrap_or(crate::markdown::DEFAULT_MAX_BYTES);
+            let dom = session.page.dom();
+            let rendered = {
+                let doc = dom.borrow();
+                crate::markdown::capture(&doc, max_bytes)
+            };
+            let url = session.page.url().to_string();
+            (
+                json!({
+                    "ok": true,
+                    "url": url,
+                    "truncated": rendered.truncated,
+                    // Fenced, because this is page content reaching something
+                    // that is deciding what to do next.
+                    "text": rendered.render(&url),
+                }),
+                false,
+            )
+        }
     }
 }
 

@@ -163,7 +163,11 @@ fn query_all(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
 /// So: the whole document goes through stylo's fast path, and anything scoped to
 /// a node is walked here and matched one element at a time. The walk is bounded
 /// by the subtree, which is the part a scoped query was always going to touch.
-fn matches_within(doc: &blitz_dom::BaseDocument, scope: usize, selector: &str) -> Vec<usize> {
+pub(crate) fn matches_within(
+    doc: &blitz_dom::BaseDocument,
+    scope: usize,
+    selector: &str,
+) -> Vec<usize> {
     let Ok(list) = doc.try_parse_selector_list(selector) else {
         return Vec::new();
     };

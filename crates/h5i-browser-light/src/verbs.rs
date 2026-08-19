@@ -57,6 +57,10 @@ pub enum Verb {
     WaitFor,
     /// Wait until a page expression is true.
     WaitForScript,
+    /// Pull structured data out of the page by selector.
+    Extract,
+    /// The page as markdown.
+    Markdown,
 }
 
 impl Verb {
@@ -73,6 +77,8 @@ impl Verb {
         Verb::Requests,
         Verb::WaitFor,
         Verb::WaitForScript,
+        Verb::Extract,
+        Verb::Markdown,
     ];
 
     /// The name on the wire.
@@ -89,6 +95,8 @@ impl Verb {
             Verb::Requests => "requests",
             Verb::WaitFor => "wait_for",
             Verb::WaitForScript => "wait_for_script",
+            Verb::Extract => "extract",
+            Verb::Markdown => "markdown",
         }
     }
 
@@ -119,7 +127,9 @@ impl Verb {
             // password should not have that read out from under them.
             | Verb::Requests
             | Verb::WaitFor
-            | Verb::WaitForScript => false,
+            | Verb::WaitForScript
+            | Verb::Extract
+            | Verb::Markdown => false,
         }
     }
 
@@ -141,7 +151,9 @@ impl Verb {
             | Verb::Scroll
             | Verb::Requests
             | Verb::WaitFor
-            | Verb::WaitForScript => false,
+            | Verb::WaitForScript
+            | Verb::Extract
+            | Verb::Markdown => false,
         }
     }
 
@@ -167,7 +179,9 @@ impl Verb {
             // `wait_for` reads the DOM, which exists either way. On a page with
             // no script it answers immediately rather than waiting, because
             // nothing can change the answer.
-            | Verb::WaitFor => false,
+            | Verb::WaitFor
+            | Verb::Extract
+            | Verb::Markdown => false,
         }
     }
 
