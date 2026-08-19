@@ -130,6 +130,39 @@ something else, which is the failure that used to be silent. Typing and
 scrolling do not renumber anything, so the login loop still runs without a
 re-read between steps.
 
+### The durable handle
+
+`snapshot` now reports a `refs` array beside the outline:
+
+```json
+{"id": "e3", "role": "button", "name": "Sign in", "selector": "#go"}
+```
+
+`@e3` is a position in *this* reading. The selector is a handle that survives
+one, which is what a recorded session needs to replay into and what an agent
+needs to come back to an element after a navigation.
+
+It is built the way Lightpanda's is: the element's own segment, then ancestors
+prepended **only when they shrink the match count**, then a strict `a > b > c`
+chain as a fallback. An id is checked rather than trusted, because duplicate ids
+are legal in the wild and `#dup` names the first one.
+
+The part that makes it worth having is that **every candidate is verified with
+the same matcher the action verbs use** — `querySelector` semantics, first match
+must be the target. Where nothing verifies, the field is `null` rather than a
+guess: a selector that resolves elsewhere is worse than no selector, because it
+looks like a handle.
+
+Selectors are computed only by the `snapshot` verb. The action verbs take their
+own internal captures to get a live node id, and paying for a tree walk per ref
+on each of those would put the cost on every click.
+
+Not built: `:has()` disambiguation before falling back to `:nth-of-type`, which
+produces better selectors on generated markup. It needs `:has()` support in the
+borrowed selector parser, which is unverified here, and emitting selectors the
+matcher then rejects would produce exactly the plausible-looking handle this
+avoids.
+
 ### When a verb refuses
 
 Every failure carries a machine-readable `code`, prose that names the recovery,

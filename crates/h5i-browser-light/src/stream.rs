@@ -855,6 +855,35 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 }
             }
 
+            // The durable handle beside the ordinal one.
+            //
+            // Computed here and *only* here: the action verbs take their own
+            // internal captures to get a live node id, and paying for a
+            // selector on each of those would put a per-ref tree walk on every
+            // click. An agent reads a snapshot once per turn and acts several
+            // times, so this is the right side of that trade.
+            let selectors = {
+                let dom = session.page.dom();
+                let doc = dom.borrow();
+                snapshot
+                    .refs
+                    .iter()
+                    .map(|entry| {
+                        json!({
+                            "id": entry.id,
+                            "role": entry.role,
+                            "name": entry.name,
+                            // Absent rather than guessed when none could be
+                            // verified: a selector that resolves elsewhere is
+                            // worse than no selector, because it looks like a
+                            // handle.
+                            "selector": crate::selector::for_node(&doc, entry.node_id),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+            reply["refs"] = json!(selectors);
+
             // What the agent is about to hold refs from. `resolve_ref` checks
             // the next `@ref` against this, which is the whole staleness story:
             // a ref is only honoured against the reading it was minted in.
@@ -2042,6 +2071,39 @@ mod tests {
         assert_eq!(reply["ok"], false, "{reply:?}");
         assert!(!changed);
         assert!(reply["error"].as_str().unwrap().contains("denied.test"), "{reply:?}");
+    }
+
+    #[test]
+    fn a_snapshot_carries_a_durable_handle_beside_the_ordinal_one() {
+        // `@e1` is a position in this reading; the selector is a handle that
+        // survives one. Both are reported, because they answer different
+        // questions and neither replaces the other.
+        let mut session = session_with(
+            "<html><body><form><input name='user'>\
+             <button id='go'>Sign in</button></form></body></html>",
+        );
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let refs = reply["refs"].as_array().expect("refs in the reply");
+        assert_eq!(refs.len(), 2, "{refs:?}");
+
+        let button = refs
+            .iter()
+            .find(|r| r["name"] == "Sign in")
+            .expect("the button");
+        assert_eq!(button["selector"], "#go");
+        // The ordinal is still there.
+        assert!(button["id"].as_str().unwrap().starts_with('e'));
+
+        let field = refs.iter().find(|r| r["name"] == "user").expect("the field");
+        assert!(
+            field["selector"]
+                .as_str()
+                .unwrap()
+                .contains("[name=\"user\"]"),
+            "{field:?}"
+        );
     }
 
     #[test]
