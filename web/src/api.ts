@@ -487,6 +487,11 @@ export interface BoardPost {
   denied?: string;
   /** Secret-detector rules that fired; the credential itself never landed. */
   redactions?: string[];
+  /**
+   * Which host stamped this. Attribution, not authentication — nothing signs
+   * it. The only sound comparison is against the reading host's own origin.
+   */
+  origin?: string;
 }
 
 /** `h5i_core::board::ThreadSummary` — a thread without its posts. */
@@ -524,6 +529,8 @@ export interface BoardThread {
   status: BoardStatus;
   claimed_by?: string;
   posts: BoardPost[];
+  /** This host's own board identity. */
+  origin: string;
 }
 
 export const boardApi = {

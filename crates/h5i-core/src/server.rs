@@ -865,6 +865,9 @@ pub struct BoardThreadView {
     pub claimed_by: Option<String>,
     /// Every post, in order.
     pub posts: Vec<crate::board::Post>,
+    /// This host's board identity, so the page can tell which posts it actually
+    /// observed from the ones it only has another machine's account of.
+    pub origin: String,
 }
 
 /// `GET /api/board` — threads, roster, and who has read a peer.
@@ -908,7 +911,7 @@ async fn api_board_thread(
 ) -> Response {
     let path = state.repo_path.clone();
     let view = blocking(move || {
-        let (git, _h5i_root) = open(&path)?;
+        let (git, h5i_root) = open(&path)?;
         // `read_thread` validates the id before it reaches a ref name, so a
         // path-shaped id is refused here rather than joined onto `refs/`.
         let t = crate::board::read_thread(&git, &id).ok()?;
@@ -917,6 +920,7 @@ async fn api_board_thread(
             claimed_by: t.claimed_by().map(str::to_string),
             header: t.header.clone(),
             posts: t.posts,
+            origin: crate::board::host_origin(&h5i_root).unwrap_or_default(),
         })
     })
     .await;

@@ -255,6 +255,21 @@ pub struct Author {
     /// Digest of the resolved policy the box was confined by, so a reader can
     /// tell whether two posts came from the same confinement.
     pub policy_digest: Option<String>,
+    /// Which host stamped this. `None` writes an unattributed post, which only
+    /// a build from before origins existed should produce.
+    pub origin: Option<String>,
+}
+
+impl Author {
+    /// Record which host is doing the stamping.
+    ///
+    /// Chained rather than a constructor argument so every existing call site
+    /// keeps compiling and keeps meaning what it meant: an `Author` with no
+    /// origin is one nobody claimed, which is exactly how [`Vouch`] reads it.
+    pub fn from_host(mut self, origin: &str) -> Author {
+        self.origin = Some(origin.to_string());
+        self
+    }
 }
 
 impl Author {
@@ -266,6 +281,7 @@ impl Author {
             box_id: None,
             role: Role::Human,
             policy_digest: None,
+            origin: None,
         })
     }
 
@@ -282,6 +298,7 @@ impl Author {
             box_id: Some(box_id.to_string()),
             role,
             policy_digest,
+            origin: None,
         })
     }
 
@@ -384,6 +401,15 @@ pub struct Post {
     /// its readers that nothing was rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub denied: Option<String>,
+    /// Which host stamped this post.
+    ///
+    /// **This field is attribution, not authentication.** Nothing signs it, so
+    /// a hostile host can write any value here, including another host's. Its
+    /// job is to let a reader see that two posts claim different origins and to
+    /// let *this* host recognise its own work — which is the only part that is
+    /// actually verifiable. See [`Post::vouch`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
     /// Secret-detector rules that fired while this post was being written.
     ///
     /// The body and every attachment are scrubbed unconditionally before they
@@ -393,7 +419,71 @@ pub struct Post {
     pub redactions: Vec<String>,
 }
 
+/// How much this host actually knows about who wrote a post.
+///
+/// h5i already separates what a host *observed* from what a box *claimed*, and
+/// gives a remote machine's report its own third tier rather than folding it
+/// into either — `runner-observed` exists because "a signature from a machine
+/// the threat model already sacrificed is not evidence".
+///
+/// A board that crosses machines needs the same distinction, and needs it
+/// badly, because without it the board's central promise degrades in silence.
+/// On one machine the line above a post is the host's knowledge: it stamped the
+/// sender from the env directory it owns, and no agent could have written it.
+/// Fetch that same post from a peer and the host observed *nothing* — it has
+/// another machine's word for all of it — yet the line renders identically.
+/// The sender quietly becomes a claim while still looking like a fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Vouch {
+    /// This host stamped it. The sender, box, role and policy digest are things
+    /// it observed, not things it was told.
+    Observed,
+    /// It arrived over the remote. Everything about its author is the origin's
+    /// account, including the origin. Verified: that it is in the log.
+    PeerClaimed {
+        /// The origin the post names. Unsigned, so a reader may not treat it as
+        /// proof of anything — two posts naming different origins is the useful
+        /// signal, not the string itself.
+        origin: String,
+    },
+    /// It arrived over the remote naming no origin at all.
+    Unattributed,
+}
+
+impl Vouch {
+    /// Did this host see what it is reporting?
+    pub fn is_observed(&self) -> bool {
+        matches!(self, Vouch::Observed)
+    }
+
+    /// A short word for a dense surface. Never colour alone: a row that does not
+    /// say which lane it is in is a row asserting more than h5i knows.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Vouch::Observed => "host-observed",
+            Vouch::PeerClaimed { .. } => "peer-claimed",
+            Vouch::Unattributed => "unattributed",
+        }
+    }
+}
+
 impl Post {
+    /// What this host can say about who wrote this, given its own identity.
+    ///
+    /// The comparison is the whole mechanism, and its honesty comes from being
+    /// one-sided: a host can be certain it *did* stamp something, and can be
+    /// certain of nothing else. So `Observed` is a real guarantee and
+    /// `PeerClaimed` is an explicit absence of one.
+    pub fn vouch(&self, me: &str) -> Vouch {
+        match self.origin.as_deref() {
+            Some(o) if o == me => Vouch::Observed,
+            Some(o) => Vouch::PeerClaimed {
+                origin: o.to_string(),
+            },
+            None => Vouch::Unattributed,
+        }
+    }
+
     /// Total-order key.
     fn key(&self) -> (&str, &str) {
         (&self.ts, &self.id)
@@ -1111,6 +1201,7 @@ pub fn append_post(
         box_id: author.box_id.clone(),
         role: author.role.as_str().to_string(),
         policy_digest: author.policy_digest.clone(),
+        origin: author.origin.clone(),
         denied: new.denied,
         redactions: rules,
     };
@@ -1403,6 +1494,57 @@ fn validate_digest(digest: &str) -> Result<(), H5iError> {
         "invalid attachment digest {:?}",
         crate::redact::sanitize_display(digest)
     )))
+}
+
+/// This host's board identity, minted once and kept host-side.
+///
+/// A random 128-bit value with the machine's hostname appended for legibility,
+/// stored under the sidecar root where no box can reach it. Deliberately *not*
+/// presented as an authenticator: nothing signs it, so a hostile peer can put
+/// any string in a post's `origin`. What it buys is the one comparison that is
+/// sound — "did I stamp this?" — plus the ability to see that two posts claim
+/// different sources.
+///
+/// The upgrade that would make it evidence is signing the board commits, which
+/// costs key management; the deliberate trade here is the one the whole remote
+/// design makes, that a team should not have to operate anything.
+pub fn host_origin(h5i_root: &Path) -> Result<String, H5iError> {
+    let path = h5i_root.join("board").join("origin");
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        let id = raw.trim();
+        if !id.is_empty() && validate_name(id).is_ok() {
+            return Ok(id.to_string());
+        }
+    }
+    let label = hostname_label();
+    let id = format!("{label}-{}", crate::token::hex(8)?);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    std::fs::write(&path, &id).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(id)
+}
+
+/// A short, charset-safe machine label, or `host` when there is nothing usable.
+fn hostname_label() -> String {
+    let raw = std::env::var("HOSTNAME")
+        .ok()
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_default();
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(24)
+        .collect();
+    if cleaned.is_empty() {
+        "host".to_string()
+    } else {
+        cleaned.to_lowercase()
+    }
 }
 
 /// RFC3339 UTC with microseconds, fixed width so it sorts lexicographically.

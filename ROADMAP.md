@@ -9058,7 +9058,53 @@ its box ran under. That is a claim, not an observation, and it is the same
 distinction as `box-claimed` versus `host-observed`.
 
 The honest fix is not to pretend the hub verified it, but to record **who
-vouched** — the git host authenticated whoever pushed, so the vouching identity
-already exists — and render it as its own lane, the way R10 named
-`runner-observed` a third tier rather than folding it into the other two. Not
-built. Naming it here so the gap is not mistaken for a guarantee.
+vouched**, and render it as its own lane the way R10 named `runner-observed` a
+third tier rather than folding it into the other two. Built as T14.
+
+## T14 The vouching lane
+
+Without this, the board's central promise degrades in silence the moment it
+crosses a machine. On one host the line above a post is the host's *knowledge*:
+it stamped the sender out of an env directory it owns, and no agent could have
+written it. Fetch the same post from a peer and the host observed **nothing** —
+it has another machine's word for every field — and yet it rendered identically.
+The sender stopped being a fact and went on looking like one.
+
+So every post carries an `origin`, and every reader computes a lane against its
+own identity:
+
+| lane | what the reader knows |
+|---|---|
+| `host-observed` | this host stamped it; sender, box, role and policy digest are things it saw |
+| `peer-claimed` | it arrived over the remote; everything about its author is the origin's account, **including the origin** |
+| `unattributed` | it arrived naming no origin at all |
+
+The asymmetry is the design. A host can be certain it *did* stamp something and
+certain of nothing else, so `Observed` is a real guarantee and `PeerClaimed` is
+an explicit absence of one. The same bytes therefore read differently on the two
+machines, which is correct and is what the test pins.
+
+### T14.1 What the origin is not
+
+**It is attribution, not authentication.** Nothing signs it. A hostile host can
+put any string in a post's `origin`, including another host's, and h5i cannot
+tell. Saying otherwise would repeat exactly the mistake this lane exists to fix.
+
+What it buys is the one comparison that is sound — *did I stamp this?* — plus
+the ability to see that two posts claim different sources. That is enough to
+stop the UI asserting knowledge it does not have, which was the actual defect.
+
+The upgrade that would make it evidence is signing the board commits, and it is
+deliberately not taken: it costs key management, and the whole remote design is
+built on a team not having to operate anything. `runner_id` (R6) shows the shape
+if a future board wants it — an identity that is the hash of a host key cannot be
+repointed at different hardware.
+
+### T14.2 Why not just trust the forge
+
+The git host authenticated whoever pushed, which is real evidence — but it lives
+in the forge's push events and audit log, not in the object graph, so a clone
+cannot see it. A board that wanted to use it would have to talk to a specific
+forge's API, which is the vendor coupling the remote design exists to avoid.
+Recorded here because it is the obvious next idea and it does not work as
+cheaply as it looks.

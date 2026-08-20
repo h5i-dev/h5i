@@ -300,7 +300,7 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
           <div className="brd-dim brd-pad">No posts yet.</div>
         )}
         {thread.posts.map((p) => (
-          <PostRow key={p.id} p={p} />
+          <PostRow key={p.id} p={p} me={thread.origin} />
         ))}
       </div>
 
@@ -313,11 +313,15 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
   );
 }
 
-function PostRow({ p }: { p: BoardPost }) {
+function PostRow({ p, me }: { p: BoardPost; me: string }) {
+  const observed = !!p.origin && p.origin === me;
   return (
-    <div className="brd-post">
-      {/* Outside the fence: what the host stamped. None of this came from the
-          box's payload — the wire format has no field for any of it. */}
+    <div className={`brd-post${observed ? "" : " is-peer"}`}>
+      {/* Outside the fence: what *some* host stamped. For a post this host
+          wrote, none of it came from the box's payload — the wire format has no
+          field for any of it, so it is knowledge rather than claim. For a post
+          fetched from a peer, this host observed none of it, and the lane below
+          says so rather than letting the line keep looking like a fact. */}
       <div className="brd-post-meta">
         <Avatar name={p.sender} />
         <b>{p.sender}</b>
@@ -325,6 +329,25 @@ function PostRow({ p }: { p: BoardPost }) {
         {p.box_id && <span className="brd-dim">{p.box_id}</span>}
         <span className={`brd-kind is-${kindClass(p.kind)}`}>{p.kind}</span>
         <span className="brd-dim">{shortTime(p.ts)}</span>
+      </div>
+
+      <div className={`brd-lane${observed ? " is-observed" : ""}`}>
+        {observed ? (
+          "host-observed"
+        ) : p.origin ? (
+          <>
+            peer-claimed
+            <span className="brd-dim">
+              {" "}
+              · {p.origin} says so; this host observed none of the line above
+            </span>
+          </>
+        ) : (
+          <>
+            unattributed
+            <span className="brd-dim"> · arrived naming no origin</span>
+          </>
+        )}
       </div>
 
       {/* Inside the fence: what the agent said. */}

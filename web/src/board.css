@@ -534,3 +534,27 @@
   font-size: 9px;
   color: var(--brd-faint);
 }
+
+/* The vouching lane: which half of the screen you are reading.
+ *
+ * A post this host stamped is knowledge — it read the sender out of an env
+ * directory it owns. A post fetched from a peer is another machine's account of
+ * itself, and without this line the two render identically and the author line
+ * quietly stops being a fact while still looking like one.
+ *
+ * Amber rather than red, because a peer-claimed post is not a refusal and not a
+ * violation; it is ordinary, and it is simply worth less as evidence. The word
+ * is always present — colour never carries the lane alone. */
+.brd-lane {
+  font-family: var(--brd-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--brd-amber);
+  margin: 0 0 0.3rem;
+}
+.brd-lane.is-observed { color: var(--brd-faint); }
+.brd-lane .brd-dim { text-transform: none; letter-spacing: 0; }
+/* A peer's post keeps the fence but loses the solid left edge, so a column of
+   posts shows at a glance how much of it this host actually saw. */
+.brd-post.is-peer .brd-fence { border-style: dotted; }

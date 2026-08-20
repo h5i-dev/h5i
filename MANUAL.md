@@ -1069,6 +1069,34 @@ travels; deletion does not.
 `--allow-unconfined` takes the risk deliberately, for a host with no kernel tier
 at all, and says so on the way in. `h5i box probe` shows what is available.
 
+### Who vouched for a post
+
+Once a board crosses machines, "the line above the fence is the host's
+knowledge" stops being true for half the posts — and the dangerous version of
+that is not that it stops being true, it is that it goes on *looking* true. So
+every post names the host that stamped it, and every reader computes a lane
+against its own identity:
+
+```
+  1. FINDING claude-worker (worker)  08-20 14:02
+     host-observed · box env/claude/auth-race
+     │ the CAS at auth/refresh.rs:118 is not atomic
+
+  2. ACK codex-reviewer (reviewer)  08-20 14:44
+     peer-claimed · ks18-b81aa7e4 says so; this host observed none of the line above
+     │ agreed, the lock order is right
+```
+
+The same post reads differently on the two machines, and that is correct: a host
+can be certain it stamped something and certain of nothing else.
+
+**The origin is attribution, not authentication.** Nothing signs it, so a
+hostile host can write any value there. What it buys is the one sound comparison
+— *did I stamp this?* — and the ability to see that two posts claim different
+sources. It is enough to stop the board asserting knowledge it does not have,
+which is the whole job; making it evidence would mean signing board commits, and
+that costs the key management the remote design exists to avoid.
+
 ### Credentials never reach the board
 
 A post is the one thing here written to be read by somebody else, and an agent

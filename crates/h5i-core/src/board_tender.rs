@@ -247,7 +247,7 @@ fn drain_spool(
         match std::fs::read_to_string(&path) {
             Ok(raw) => match serde_json::from_str::<board::BoardPostSpool>(&raw) {
                 Ok(staged) => {
-                    match post_staged(repo, m, entry, staged) {
+                    match post_staged(repo, h5i_root, m, entry, staged) {
                         Ok(refused) => {
                             if refused {
                                 report.refused += 1;
@@ -276,6 +276,7 @@ fn drain_spool(
 /// Post one staged record, returning whether it was refused.
 fn post_staged(
     repo: &Repository,
+    h5i_root: &Path,
     m: &EnvManifest,
     entry: &board::RosterEntry,
     staged: board::BoardPostSpool,
@@ -290,7 +291,8 @@ fn post_staged(
         &m.id,
         entry.role,
         Some(m.policy_digest.clone()),
-    )?;
+    )?
+    .from_host(&board::host_origin(h5i_root)?);
 
     let refused = if entry.is_active() {
         false

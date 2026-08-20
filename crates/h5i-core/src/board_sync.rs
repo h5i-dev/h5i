@@ -576,6 +576,88 @@ mod tests {
         }
     }
 
+    /// The vouching lane, which is the whole reason a post carries an origin.
+    ///
+    /// The same post reads differently on the two machines, and that asymmetry
+    /// is the point: a host can be certain it stamped something and certain of
+    /// nothing else, so `Observed` is a real guarantee and `PeerClaimed` is an
+    /// explicit absence of one.
+    #[test]
+    fn a_post_is_host_observed_at_home_and_peer_claimed_everywhere_else() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+        };
+
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+
+        let h = board::create_thread(&a, &human(), "vouch", None, None).unwrap();
+        board::append_post(
+            &a,
+            &agent("alice").from_host("machine-a"),
+            &h.id,
+            post("FINDING", "from A"),
+        )
+        .unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+        board::append_post(
+            &b,
+            &agent("bob").from_host("machine-b"),
+            &h.id,
+            post("ACK", "from B"),
+        )
+        .unwrap();
+        sync_with(&b, &remote).unwrap();
+        sync_with(&a, &remote).unwrap();
+
+        let seen = board::read_thread(&a, &h.id).unwrap();
+        let by_body = |body: &str| {
+            seen.posts
+                .iter()
+                .find(|p| p.body == body)
+                .unwrap()
+                .vouch("machine-a")
+        };
+        assert_eq!(by_body("from A"), board::Vouch::Observed);
+        assert_eq!(
+            by_body("from B"),
+            board::Vouch::PeerClaimed {
+                origin: "machine-b".into()
+            }
+        );
+
+        // And the other way round on the other machine, from the same bytes.
+        let seen_b = board::read_thread(&b, &h.id).unwrap();
+        let a_post = seen_b.posts.iter().find(|p| p.body == "from A").unwrap();
+        assert!(!a_post.vouch("machine-b").is_observed());
+    }
+
+    /// A post with no origin is not quietly treated as ours.
+    #[test]
+    fn a_post_naming_no_origin_is_unattributed_rather_than_observed() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("w");
+        std::fs::create_dir_all(&dir).unwrap();
+        let repo = work_repo(&dir);
+        let h = board::create_thread(&repo, &human(), "t", None, None).unwrap();
+        // `agent()` builds an author with no origin, the way a build from before
+        // origins existed would.
+        board::append_post(&repo, &agent("old"), &h.id, post("FINDING", "x")).unwrap();
+        let t = board::read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.posts[0].vouch("machine-a"), board::Vouch::Unattributed);
+        assert!(!t.posts[0].vouch("").is_observed(), "an empty identity matches nothing");
+    }
+
     /// A board with no remote configured gets a local one, and it works — that
     /// is what makes solo use run the same code as a team.
     #[test]
