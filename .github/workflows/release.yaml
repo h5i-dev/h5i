@@ -28,10 +28,9 @@ concurrency:
 
 jobs:
   # The `h5i ui` console is a React bundle embedded into the binary at compile
-  # time. Built once here and fanned out to every target job, because two of
-  # them run under `cross` — a Docker image with no Node in it, where the build
-  # script could not produce the bundle even if it wanted to. Every build job
-  # therefore sets H5I_SKIP_WEB_BUILD=1 and consumes this artifact.
+  # time. Built once here and fanned out to every target job rather than built
+  # four times, which also keeps Node off three of the four runners. Every build
+  # job sets H5I_SKIP_WEB_BUILD=1 and consumes this artifact.
   bundle:
     name: Build the console bundle
     runs-on: ubuntu-latest
@@ -81,25 +80,21 @@ jobs:
           # Linux x86_64 — native
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            use_cross: false
             archive_ext: tar.gz
 
-          # Linux aarch64 — cross-compiled
+          # Linux aarch64 — native, on GitHub's arm64 runner
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            use_cross: true
+            os: ubuntu-24.04-arm
             archive_ext: tar.gz
 
           # macOS arm64 (Apple Silicon)
           - target: aarch64-apple-darwin
             os: macos-latest
-            use_cross: false
             archive_ext: tar.gz
 
           # Windows x86_64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            use_cross: false
             archive_ext: zip
 
     steps:
@@ -154,36 +149,29 @@ jobs:
 
       # musl linker/compiler; OpenSSL is vendored so no system libssl-dev needed
       - name: Install musl-tools (Linux)
-        if: runner.os == 'Linux' && !matrix.use_cross
+        if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y musl-tools
 
-      - name: Install cross
-        if: matrix.use_cross
-        uses: taiki-e/install-action@cross
-
+      # Every target builds natively, aarch64 Linux included: it used to go
+      # through `cross`, whose container is Ubuntu 18.04 with no python in it,
+      # and stylo generates its CSS property tables by running python at build
+      # time. Installing the container's python3 does not help — it is 3.6, and
+      # stylo's vendored mako needs 3.8. GitHub's arm64 runners are free for
+      # public repositories, so the target that needed the most machinery is
+      # now the same three steps as the other three.
+      #
       # Both binaries in one job, and failing together on purpose. The engine
       # is a shipped product now rather than an internal component, so a target
       # that cannot build it is a defect in the release — the same reading the
       # asset guard below already takes. Note its dependency set is not h5i's:
       # no git2, but blitz, vello_cpu and boa instead, so a target that builds
       # one does not automatically build the other.
-      - name: Build (native)
-        if: "!matrix.use_cross"
+      - name: Build
         env:
           H5I_SKIP_WEB_BUILD: "1"
         run: |
           cargo build --release --locked --target ${{ matrix.target }}
           cargo build --release --locked --target ${{ matrix.target }} -p ${{ env.ENGINE_NAME }}
-
-      - name: Build (cross)
-        if: matrix.use_cross
-        env:
-          H5I_SKIP_WEB_BUILD: "1"
-          # Forward it into cross's Docker container, which has no Node.
-          CROSS_CONTAINER_OPTS: "-e H5I_SKIP_WEB_BUILD"
-        run: |
-          cross build --release --locked --target ${{ matrix.target }}
-          cross build --release --locked --target ${{ matrix.target }} -p ${{ env.ENGINE_NAME }}
 
       # ── Package ───────────────────────────────────────────────────────────
 
