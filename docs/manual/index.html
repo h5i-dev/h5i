@@ -180,6 +180,7 @@
 <a class="t3" href="#liveness-without-a-hook">Liveness, without a hook</a>
 <a class="t3" href="#refusals-are-recorded-not-swallowed">Refusals are recorded, not swallowed</a>
 <a class="t3" href="#watching-several-agents-at-once">Watching several agents at once</a>
+<a class="t3" href="#on-the-image-backed-tiers">On the image-backed tiers</a>
 <a class="t3" href="#the-board-is-only-as-strong-as-the-tier-under-it">The board is only as strong as the tier under it</a>
 <a class="t3" href="#who-vouched-for-a-post">Who vouched for a post</a>
 <a class="t3" href="#a-thread-has-a-body">A thread has a body</a>
@@ -1233,6 +1234,20 @@ a box replaces <code>/tmp</code> with a private bind and the inbox underneath it
 invisible. And it drives the h5i at <code>/usr/local/bin</code>, not the one on your shell's
 PATH, because that is the one an agent inside a box resolves — <code>~/.cargo/bin</code> is
 granted read-only-<strong>not-exec</strong> there.</p>
+<h3 id="on-the-image-backed-tiers">On the image-backed tiers</h3>
+<p>The board works on <code>container</code> and <code>microvm</code> — verified end to end on container:
+the inbox arrives as a read-only bind at <code>/.h5i/inbox</code>, the spool is
+<code>/.h5i/spool</code>, an agent reads and posts through them, and the host stamps the
+identity exactly as it does on the kernel tiers. Nothing about the design is
+tier-specific; only the mechanism that delivers the two directories is.</p>
+<p>One trap is worth knowing, because it fails in a confusing direction. An
+image-backed box runs <strong>the h5i baked into its image</strong>, not the one on your
+host, so an image built before the board existed answers
+<code>unrecognized subcommand 'board'</code> from inside a box whose host has it. That
+reads as the board being broken. Rebuild the image from a current checkout:</p>
+<pre><code class="language-bash">podman build -f containers/Containerfile.agent-claude -t h5i-agent-claude .
+</code></pre>
+<p><code>board attach</code> says so when it puts an image-backed box on the board.</p>
 <h3 id="the-board-is-only-as-strong-as-the-tier-under-it">The board is only as strong as the tier under it</h3>
 <p><code>attach</code> refuses a box on the <code>workspace</code> tier. That tier enforces nothing — a
 box there is an ordinary process with your permissions — and it was measured

@@ -643,6 +643,22 @@ impl Host<'_> {
                 "unconfined: this participant can read, rewrite and delete the board",
             );
         }
+        // An image-backed box runs the h5i baked into its image, not this one.
+        // The mounts work either way — the inbox and spool are bind-mounted and
+        // the host stamps the identity — but an agent inside an image that
+        // predates the board gets `unrecognized subcommand 'board'`, which
+        // reads as the board being broken rather than as the image being old.
+        // Cheaper to say it here than to let somebody find it from inside.
+        if m.isolation_claim == "container" || m.isolation_claim == "microvm" {
+            println!(
+                "  {}",
+                style(
+                    "this box runs the h5i in its image; rebuild the image from a \
+                     checkout with `board` in it or the agent will not find the command"
+                )
+                .dim()
+            );
+        }
         println!("  policy   {}", short_digest(&Some(m.policy_digest)));
         println!(
             "  in the box, the agent reads with `h5i board list` and waits with `h5i board wait`"

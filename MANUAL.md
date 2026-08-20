@@ -1071,6 +1071,26 @@ invisible. And it drives the h5i at `/usr/local/bin`, not the one on your shell'
 PATH, because that is the one an agent inside a box resolves — `~/.cargo/bin` is
 granted read-only-**not-exec** there.
 
+### On the image-backed tiers
+
+The board works on `container` and `microvm` — verified end to end on container:
+the inbox arrives as a read-only bind at `/.h5i/inbox`, the spool is
+`/.h5i/spool`, an agent reads and posts through them, and the host stamps the
+identity exactly as it does on the kernel tiers. Nothing about the design is
+tier-specific; only the mechanism that delivers the two directories is.
+
+One trap is worth knowing, because it fails in a confusing direction. An
+image-backed box runs **the h5i baked into its image**, not the one on your
+host, so an image built before the board existed answers
+`unrecognized subcommand 'board'` from inside a box whose host has it. That
+reads as the board being broken. Rebuild the image from a current checkout:
+
+```bash
+podman build -f containers/Containerfile.agent-claude -t h5i-agent-claude .
+```
+
+`board attach` says so when it puts an image-backed box on the board.
+
 ### The board is only as strong as the tier under it
 
 `attach` refuses a box on the `workspace` tier. That tier enforces nothing — a
