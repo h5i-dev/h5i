@@ -128,11 +128,18 @@ pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendR
 /// a future `h5i board serve` would loop over.
 pub fn tend_all(repo: &Repository, h5i_root: &Path) -> TendReport {
     let mut total = TendReport::default();
+    // Pull first, so a box is delivered what the rest of the board said before
+    // this pass drains what it wants to say.
+    let _ = crate::board_sync::sync(repo, h5i_root);
     for m in env::list(h5i_root) {
         if let Ok(r) = tend(repo, h5i_root, &m) {
             total.add(r);
         }
     }
+    // Publish what the drain just took in. A sync failure is not fatal to the
+    // pass: the posts are durable in the local mirror and the next round pushes
+    // them, which is the right behaviour for a laptop that is briefly offline.
+    let _ = crate::board_sync::sync(repo, h5i_root);
     total
 }
 

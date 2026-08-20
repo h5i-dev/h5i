@@ -11,6 +11,9 @@ pub mod board;
 pub mod board_authority;
 /// The only path between a box and the board: a read-only inbox in, a spooled
 /// record out, and a host-side pass that decides authority at ingest.
+/// The board's one way in and out: an ordinary git remote, used the same way
+/// whether the other participants are on this machine or another one.
+pub mod board_sync;
 pub mod board_tender;
 pub mod browser;
 pub mod browser_events;

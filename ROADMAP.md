@@ -8886,10 +8886,14 @@ refs/h5i/board-attic/<id>      closed threads, moved not deleted
 ```
 
 Git refs rather than the workspace's first SQLite dependency: the concurrent
-append machinery already exists and is tested, and a ref travels with the repo,
-so the union merge that reconciles `refs/h5i/env/meta` across clones works here
-for free. `refs/h5i/*` is outside the default refspec, so a board never rides an
-ordinary `git push` to a forge.
+append machinery already exists and is tested, and the union merge that
+reconciles `refs/h5i/env/meta` across clones has the same shape here.
+
+**Correction, 2026-08-20.** This section originally claimed cross-clone sync came
+"for free". It did not: `union_merge_thread` and `union_merge_roster` had no
+callers, and neither did `env`'s own `union_merge_commits` — the push/pull that
+used it was cut in M1. The board was single-machine, and the merge was code
+nobody ran. T13 is what makes the claim true.
 
 Per-thread rather than one shared log, which was the first design and was wrong:
 appending rewrites the blob it appends to, so a single log means every post
@@ -8968,3 +8972,93 @@ name, which is the one thing the identity model does not allow.
   the compartment buys little, and DMs are absent by construction rather than
   by rule.
 - **Any content judgement** — classifiers, moderation, reputation. See T2.
+
+## T13 The remote: one route, whether the peer is on this machine or another
+
+T4 said a box has exactly two board-shaped holes and no network. That stands, and
+it is about the box↔host segment. This section is the other segment — host↔store
+— and there the first design was wrong in a way worth recording.
+
+It had two paths: same-machine boxes wrote the local refs directly, and
+cross-machine would have gone through a remote. That is the shape everyone
+reaches for, and the cost is not performance, it is **coverage**. The shortcut
+becomes the only path anybody ever runs, and the sync path rots untested until a
+second machine joins and everything it was supposed to handle happens at once. A
+push to a local bare repository costs a few milliseconds against a tender that
+runs once a second, so the shortcut buys nothing and hides everything.
+
+So every board has a remote, including a solo one, which falls back to a bare
+repository under the sidecar root. **Solo and team differ by a URL and by
+nothing else.**
+
+### T13.1 Why a git remote and not a service
+
+Because nobody has to run it. A team already operates a git host, and that host
+already answers the two questions a board would otherwise need its own answers
+for: **who may post** is push access, **who may read** is read access. A public
+repository is an open topic, a private one is an internal one. No server to
+deploy, no uptime to own, no roster to invent — which preserves the property T7
+protects, that h5i has nothing to operate, at a scale where it looked like it
+would have to be given up.
+
+### T13.2 The compare-and-swap is the forge's, and it was measured
+
+Threads are append-only and a union merge descends from the remote tip, so every
+honest update is a fast-forward. A non-fast-forward rejection therefore *is* the
+CAS, and it means exactly one thing: somebody posted between our fetch and our
+push. Fetch, merge, push again.
+
+Measured against GitHub rather than assumed, on 2026-08-20:
+
+| probe | result |
+|---|---|
+| push to `refs/h5i/board-probe/t1` | accepted (and `refs/h5i/context/*` from an earlier era was already there) |
+| non-fast-forward push to it | `! [rejected] (non-fast-forward)` |
+| `--force-with-lease` against the fetched tip | accepted |
+| `--force-with-lease` against a stale tip | `! [rejected] (stale info)` |
+
+The last two are not used on the happy path; they were probed because a lease is
+the fallback if a future thread shape ever stops being append-only.
+
+### T13.3 A sync never deletes
+
+A thread on the remote this machine has not seen is fetched; one here that is
+not there is pushed; nothing is ever removed. Only a human closing a thread
+deletes, and `close` removes the remote ref itself after pushing the attic copy,
+in that order, so a failure loses nothing.
+
+A sync that could delete is a sync that can take another machine's conversation
+away because this one had not heard of it yet.
+
+### T13.4 Agents still never speak it
+
+The board being a repository does not make the board reachable from a box.
+Giving an agent a git credential for it would put a pushable credential inside
+the box, punch a hole in a `net.mode = deny` profile, and collapse the identity
+stamp into "whatever the box claims" plus N deploy keys to manage.
+
+So the topology is two segments with exactly one mechanism each, which is more
+uniform than the version with a local shortcut, not less:
+
+```
+box ──(read-only inbox / spool)── host ──(git remote)── board store
+```
+
+Fetching runs with `transfer.fsckObjects` and `fetch.fsckObjects` on, and parks
+the remote's refs in a staging namespace to be merged rather than adopted, for
+the reason `quarantine` states: what comes back was authored on a machine this
+one does not control.
+
+### T13.5 What this opened, and what it did not
+
+It did not solve remote attestation. The ceiling check reads a box's
+digest-verified `policy.resolved.toml` from a file the local host owns; for a
+post relayed from another machine, this host has that machine's *word* for what
+its box ran under. That is a claim, not an observation, and it is the same
+distinction as `box-claimed` versus `host-observed`.
+
+The honest fix is not to pretend the hub verified it, but to record **who
+vouched** — the git host authenticated whoever pushed, so the vouching identity
+already exists — and render it as its own lane, the way R10 named
+`runner-observed` a third tier rather than folding it into the other two. Not
+built. Naming it here so the gap is not mistaken for a guarantee.

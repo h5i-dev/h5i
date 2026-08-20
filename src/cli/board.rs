@@ -36,6 +36,7 @@ use h5i_core::board::{
     ThreadStatus, ThreadSummary,
 };
 use h5i_core::board_authority;
+use h5i_core::board_sync;
 use h5i_core::board_tender;
 use h5i_core::env;
 
@@ -182,6 +183,24 @@ pub enum BoardCommands {
         #[arg(long, default_value_t = DEFAULT_WAIT_SECS)]
         timeout: u64,
     },
+
+    /// Where this board lives, and where its posts are published.
+    ///
+    /// Every board has a remote, including a solo one — an unconfigured board
+    /// gets a local bare repository, so a single machine runs exactly the code
+    /// a team does. Point it at a git URL and the same boards work across
+    /// machines: who may post is push access, who may read is read access, and
+    /// nobody has to operate a service.
+    Remote {
+        /// Git URL to publish to. Omit to show the current one.
+        url: Option<String>,
+        /// Go back to the local default.
+        #[arg(long, conflicts_with = "url")]
+        clear: bool,
+    },
+
+    /// Fetch and publish now, instead of waiting for the next pass.
+    Sync,
 
     /// Who this side of the board thinks you are.
     Whoami,
@@ -346,6 +365,10 @@ pub fn run(action: BoardCommands) -> anyhow::Result<()> {
                 attachments,
             )
         }
+        BoardCommands::Remote { url, clear } => {
+            host_only(&side, "change where the board publishes")?.remote(url, clear)
+        }
+        BoardCommands::Sync => host_only(&side, "sync the board")?.sync(),
         BoardCommands::Wait { timeout } => wait(&side, timeout),
         BoardCommands::Whoami => whoami(&side),
         BoardCommands::Status { json } => host_only(&side, "read the board's roster")?.status(json),
@@ -510,8 +533,54 @@ impl Host<'_> {
     fn close(&self, thread: &str) -> anyhow::Result<()> {
         let id = resolve_host_thread(self.repo, thread)?;
         board::close_thread(self.repo, &human_author()?, &id)?;
+        // Closing is the one operation that removes something from the remote.
+        // An ordinary sync never deletes, precisely so a machine that has not
+        // heard of a thread cannot take it away from everyone else.
+        board_sync::push_close(self.repo, self.h5i_root, &id)?;
         board_tender::tend_all(self.repo, self.h5i_root);
         h5i_core::ui::UI::success(&format!("thread {id} closed — read it with `--all`"));
+        Ok(())
+    }
+
+    fn remote(&self, url: Option<String>, clear: bool) -> anyhow::Result<()> {
+        if clear {
+            board_sync::clear_remote(self.h5i_root);
+        } else if let Some(url) = url {
+            board_sync::set_remote(self.h5i_root, &url)?;
+        }
+        let r = board_sync::remote(self.h5i_root)?;
+        if r.is_default {
+            println!("{}  {}", style("local").dim(), r.url);
+            println!(
+                "  {}",
+                style(
+                    "this board is only on this machine. Point it at a git URL to share it:\n                       h5i board remote git@github.com:you/agent-board.git"
+                )
+                .dim()
+            );
+        } else {
+            h5i_core::ui::UI::success(&format!("board publishes to {}", style(&r.url).bold()));
+            println!(
+                "  {}",
+                style("who may post is push access; who may read is read access").dim()
+            );
+        }
+        Ok(())
+    }
+
+    fn sync(&self) -> anyhow::Result<()> {
+        let r = board_sync::sync(self.repo, self.h5i_root)?;
+        board_tender::tend_all(self.repo, self.h5i_root);
+        h5i_core::ui::UI::success(&format!(
+            "synced — {} pulled, {} pushed{}",
+            r.pulled,
+            r.pushed,
+            if r.retries > 0 {
+                format!(" (after {} contended round(s))", r.retries)
+            } else {
+                String::new()
+            }
+        ));
         Ok(())
     }
 
