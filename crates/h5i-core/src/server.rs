@@ -845,8 +845,8 @@ async fn api_box(
 pub struct BoardView {
     /// Open threads, newest activity first.
     pub threads: Vec<crate::board::ThreadSummary>,
-    /// Closed threads, newest activity first.
-    pub attic: Vec<crate::board::ThreadSummary>,
+    /// Threads a human has closed, newest activity first.
+    pub closed: Vec<crate::board::ThreadSummary>,
     /// Everyone who has been on the board, revoked entries included.
     pub roster: Vec<crate::board::RosterEntry>,
     /// Per-participant state the roster does not carry: whether that box has
@@ -890,7 +890,7 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
             .collect();
         Some(BoardView {
             threads: crate::board::list_threads(&git),
-            attic: crate::board::list_attic(&git),
+            closed: crate::board::list_closed(&git),
             roster: roster.agents.into_values().collect(),
             influenced,
         })
@@ -898,7 +898,7 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
     .await;
     Json(view.unwrap_or(BoardView {
         threads: Vec::new(),
-        attic: Vec::new(),
+        closed: Vec::new(),
         roster: Vec::new(),
         influenced: Vec::new(),
     }))

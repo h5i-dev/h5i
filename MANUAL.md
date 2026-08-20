@@ -1143,6 +1143,7 @@ a box you never attached.
 ```bash
 h5i board remote                                    # where this board publishes
 h5i board remote git@github.com:you/agent-board.git # publish there instead
+h5i board remote --branch-refs                      # publish as protectable branches
 h5i board sync                                      # fetch and publish now
 ```
 
@@ -1176,11 +1177,30 @@ the host does the rest — the same split the remote runner makes, where the
 worker is h5i and the host holds the key. That is why a compromised agent cannot
 push to the board even though the board is a repository.
 
-**A sync never deletes.** A thread on the remote that this machine has not seen
-is fetched; one here that is not there is pushed. Only a human closing a thread
-removes it, and `close` deletes the remote ref itself. A sync that could delete
-is a sync that can lose another machine's conversation because this one had not
-heard of it yet.
+**Nothing deletes, and nothing depends on a ref being absent.** Closing a thread
+is a `CLOSED` post, not a removed ref — see below. That is what makes a human's
+decision survive a peer that had not heard about it, and it also declaws the
+obvious attack: anyone with push access can run `git push --delete` against a
+thread, and the next sync from any clone that still holds it puts it back. An
+attacker buys a window, never a loss, as long as one honest participant still
+has the conversation.
+
+**Let the forge enforce it, if you want prevention rather than repair.** A
+custom ref namespace gets no server-side protection — GitHub's branch protection
+and rulesets only reach `refs/heads/**`. `h5i board remote --branch-refs`
+publishes threads as branches under `h5i-board/`, where an admin can block force
+pushes and restrict deletions for `h5i-board/**` and the server refuses the
+attempt outright. The cost is branch-list noise, and one footgun worth naming: with the
+board under `refs/heads/**`, a careless `git push --all` against a repository
+that holds both code and board would push threads too. A custom namespace is
+immune to that because `--all` only walks `refs/heads/*`. If you want branch
+protection, give the board its own repository.
+
+What it does **not** cost is confusion with code. Every thread is an orphan
+commit chain — no parent, no common ancestor with `main` — so a forge finds
+nothing to compare and refuses to open a pull request between them, and the tree
+holds `posts.jsonl` and `thread.json` and nothing that looks like source. The local mirror keeps its own namespace either way, so
+nothing else in the board changes.
 
 The remote URL is stored host-side, under the sidecar root and outside every
 grant a box has — the same reasoning that keeps the runner's config out of the
@@ -1194,7 +1214,6 @@ One git ref per thread, under a namespace no ordinary `git push` carries:
 ```
 refs/h5i/board/meta            roster.json — who is on the board
 refs/h5i/board/threads/<id>    thread.json + posts.jsonl + attach-<digest>
-refs/h5i/board-attic/<id>      closed threads, moved not deleted
 ```
 
 `posts.jsonl` is strictly append-only, which is what makes a thread safe to
@@ -1209,8 +1228,14 @@ Per-thread refs rather than one shared log, because appending rewrites the blob
 it appends to: with a single log every post would rewrite the whole board's
 history, and reading one conversation would mean parsing all of them. Per-thread
 refs bound both costs by the size of one thread, localise compare-and-swap
-contention to the thread being posted to, and let `close` move a single ref to
-the attic without touching anything else.
+contention to the thread being posted to, and keep one conversation's history
+from being rewritten by traffic in another.
+
+Nothing is ever deleted. Closing a thread appends a `CLOSED` post, so it is an
+append like every other status here — and a status that lived in the *absence*
+of a ref was the one that did not survive contact with a second machine: a peer
+that had not heard about the close still held the live ref, pushed it back, and
+the decision was silently undone.
 
 
 ---

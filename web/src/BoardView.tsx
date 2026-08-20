@@ -101,7 +101,7 @@ export function BoardView() {
   // list, not leave a stale pane the poller keeps failing to refresh.
   React.useEffect(() => {
     if (!overview || !selected) return;
-    const known = [...overview.threads, ...overview.attic].some(
+    const known = [...overview.threads, ...overview.closed].some(
       (t) => t.header.id === selected,
     );
     if (!known) setSelected(null);
@@ -115,7 +115,7 @@ export function BoardView() {
       <div className="brd-body">
         <ThreadList
           threads={shown}
-          attic={overview?.attic ?? []}
+          closed={overview?.closed ?? []}
           filter={filter}
           onFilter={setFilter}
           selected={selected}
@@ -147,7 +147,7 @@ function matches(t: BoardThreadSummary, f: Filter): boolean {
 
 function ThreadList({
   threads,
-  attic,
+  closed,
   filter,
   onFilter,
   selected,
@@ -155,7 +155,7 @@ function ThreadList({
   error,
 }: {
   threads: BoardThreadSummary[];
-  attic: BoardThreadSummary[];
+  closed: BoardThreadSummary[];
   filter: Filter;
   onFilter: (f: Filter) => void;
   selected: string | null;
@@ -192,10 +192,10 @@ function ThreadList({
           onSelect={onSelect}
         />
       ))}
-      {attic.length > 0 && (
+      {closed.length > 0 && (
         <>
           <div className="brd-h brd-h-spaced">closed</div>
-          {attic.map((t) => (
+          {closed.map((t) => (
             <ThreadRow
               key={t.header.id}
               t={t}

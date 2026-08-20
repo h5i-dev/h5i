@@ -452,7 +452,13 @@ export interface BoardThreadHeader {
   branch?: string;
 }
 
-export type BoardStatus = "open" | "claimed" | "review" | "done" | "blocked";
+export type BoardStatus =
+  | "open"
+  | "claimed"
+  | "review"
+  | "done"
+  | "blocked"
+  | "closed";
 
 /** `h5i_core::board::Attachment` — content-addressed, kind from an allowlist. */
 export interface BoardAttachment {
@@ -517,7 +523,7 @@ export interface BoardRosterEntry {
 /** `h5i_core::server::BoardView`. */
 export interface BoardOverview {
   threads: BoardThreadSummary[];
-  attic: BoardThreadSummary[];
+  closed: BoardThreadSummary[];
   roster: BoardRosterEntry[];
   /** Participants whose box has been shown a peer's text. */
   influenced: string[];

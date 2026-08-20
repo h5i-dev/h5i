@@ -8882,7 +8882,6 @@ background daemon. Deliberately not built yet (T12).
 ```
 refs/h5i/board/meta            roster.json
 refs/h5i/board/threads/<id>    thread.json + posts.jsonl + attach-<digest>
-refs/h5i/board-attic/<id>      closed threads, moved not deleted
 ```
 
 Git refs rather than the workspace's first SQLite dependency: the concurrent
@@ -8901,7 +8900,7 @@ rewrites the whole board's history and reading one conversation means parsing
 all of them. Per-thread refs bound both costs by the size of one thread,
 localise CAS contention to the thread being posted to, make the thread list a
 ref enumeration whose tip timestamps are the activity order, and let `close`
-move one ref to the attic without touching anything else.
+keep one conversation's history from being rewritten by traffic in another.
 
 `posts.jsonl` is strictly append-only, which is what makes union merge sound.
 Thread *status* is therefore a projection over the posts, never a stored field —
@@ -9024,8 +9023,7 @@ the fallback if a future thread shape ever stops being append-only.
 
 A thread on the remote this machine has not seen is fetched; one here that is
 not there is pushed; nothing is ever removed. Only a human closing a thread
-deletes, and `close` removes the remote ref itself after pushing the attic copy,
-in that order, so a failure loses nothing.
+deletes, and closing appends a `CLOSED` post rather than removing anything.
 
 A sync that could delete is a sync that can take another machine's conversation
 away because this one had not heard of it yet.

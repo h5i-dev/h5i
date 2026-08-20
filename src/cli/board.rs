@@ -201,6 +201,19 @@ pub enum BoardCommands {
         /// Go back to the local default.
         #[arg(long, conflicts_with = "url")]
         clear: bool,
+        /// Publish threads as branches under `h5i-board/`, so a forge can
+        /// protect them.
+        ///
+        /// A custom ref namespace gets no server-side protection: anyone with
+        /// push access can delete or force-push a thread and nothing refuses.
+        /// Branch protection and rulesets only reach `refs/heads/**`, so
+        /// publishing there lets an admin block deletions and force pushes for
+        /// `h5i-board/**`. The cost is that threads appear in `git branch -a`.
+        #[arg(long)]
+        branch_refs: bool,
+        /// Go back to the custom ref namespace, out of the branch list.
+        #[arg(long, conflicts_with = "branch_refs")]
+        custom_refs: bool,
     },
 
     /// Fetch and publish now, instead of waiting for the next pass.
@@ -287,7 +300,7 @@ pub fn run(action: BoardCommands) -> anyhow::Result<()> {
                 board_tender::tend_all(repo, h5i_root);
                 let mut rows = board::list_threads(repo);
                 if all {
-                    rows.extend(board::list_attic(repo));
+                    rows.extend(board::list_closed(repo));
                 }
                 render_list(&rows, json, all)
             }
@@ -379,9 +392,17 @@ pub fn run(action: BoardCommands) -> anyhow::Result<()> {
                 attachments,
             )
         }
-        BoardCommands::Remote { url, clear } => {
-            host_only(&side, "change where the board publishes")?.remote(url, clear)
-        }
+        BoardCommands::Remote {
+            url,
+            clear,
+            branch_refs,
+            custom_refs,
+        } => host_only(&side, "change where the board publishes")?.remote(
+            url,
+            clear,
+            branch_refs,
+            custom_refs,
+        ),
         BoardCommands::Sync => host_only(&side, "sync the board")?.sync(),
         BoardCommands::Wait { timeout } => wait(&side, timeout),
         BoardCommands::Whoami => whoami(&side),
@@ -577,21 +598,29 @@ impl Host<'_> {
 
     fn close(&self, thread: &str) -> anyhow::Result<()> {
         let id = resolve_host_thread(self.repo, thread)?;
-        board::close_thread(self.repo, &human_author()?, &id)?;
-        // Closing is the one operation that removes something from the remote.
-        // An ordinary sync never deletes, precisely so a machine that has not
-        // heard of a thread cannot take it away from everyone else.
-        board_sync::push_close(self.repo, self.h5i_root, &id)?;
+        // An append, so it reaches every other machine the way any post does.
+        // The ref-moving version silently lost to any peer that had not heard
+        // about the close and still held the live ref.
+        board::close_thread(self.repo, &human_author_at(self.h5i_root)?, &id)?;
         board_tender::tend_all(self.repo, self.h5i_root);
         h5i_core::ui::UI::success(&format!("thread {id} closed — read it with `--all`"));
         Ok(())
     }
 
-    fn remote(&self, url: Option<String>, clear: bool) -> anyhow::Result<()> {
+    fn remote(
+        &self,
+        url: Option<String>,
+        clear: bool,
+        branch_refs: bool,
+        custom_refs: bool,
+    ) -> anyhow::Result<()> {
         if clear {
             board_sync::clear_remote(self.h5i_root);
         } else if let Some(url) = url {
             board_sync::set_remote(self.h5i_root, &url)?;
+        }
+        if branch_refs || custom_refs {
+            board_sync::set_namespace(self.h5i_root, branch_refs)?;
         }
         let r = board_sync::remote(self.h5i_root)?;
         if r.is_default {
@@ -609,6 +638,29 @@ impl Host<'_> {
                 "  {}",
                 style("who may post is push access; who may read is read access").dim()
             );
+            if r.is_branch_namespace() {
+                println!("  refs     {}/threads/<id>  (branches)", board_sync::NS_BRANCH);
+                println!(
+                    "  {}",
+                    style(
+                        "protect them on the forge: block force pushes and restrict \
+                         deletions for `h5i-board/**`"
+                    )
+                    .dim()
+                );
+            } else {
+                println!("  refs     {}/threads/<id>", board_sync::NS_CUSTOM);
+                println!(
+                    "  {}",
+                    style(
+                        "a custom namespace is invisible to `git branch`, and a forge \
+                         cannot protect it — anyone with push access can delete or \
+                         force-push a thread. `--branch-refs` moves it somewhere \
+                         rulesets reach."
+                    )
+                    .dim()
+                );
+            }
         }
         Ok(())
     }
@@ -642,7 +694,7 @@ impl Host<'_> {
             let out = serde_json::json!({
                 "roster": roster.agents.values().collect::<Vec<_>>(),
                 "threads": threads,
-                "attic": board::list_attic(self.repo),
+                "closed": board::list_closed(self.repo),
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
             return Ok(());
@@ -976,6 +1028,7 @@ fn status_style(s: ThreadStatus) -> console::StyledObject<&'static str> {
         ThreadStatus::Review => style(s.as_str()).magenta(),
         ThreadStatus::Done => style(s.as_str()).green(),
         ThreadStatus::Blocked => style(s.as_str()).yellow(),
+        ThreadStatus::Closed => style(s.as_str()).dim(),
     }
 }
 
@@ -1022,7 +1075,7 @@ fn resolve_host_thread(repo: &git2::Repository, spec: &str) -> anyhow::Result<St
     }
     let mut hits: Vec<String> = board::list_threads(repo)
         .into_iter()
-        .chain(board::list_attic(repo))
+        .chain(board::list_closed(repo))
         .map(|t| t.header.id)
         .filter(|id| id.starts_with(spec))
         .collect();

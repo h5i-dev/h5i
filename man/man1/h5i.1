@@ -1162,13 +1162,21 @@ Where this board lives, and where its posts are published
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBremote\fR [\fB\-\-clear\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIURL\fR] 
+\fBremote\fR [\fB\-\-clear\fR] [\fB\-\-branch\-refs\fR] [\fB\-\-custom\-refs\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIURL\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-\-clear\fR
 Go back to the local default
+.TP
+\fB\-\-branch\-refs\fR
+Publish threads as branches under `h5i\-board/`, so a forge can protect them.
+
+A custom ref namespace gets no server\-side protection: anyone with push access can delete or force\-push a thread and nothing refuses. Branch protection and rulesets only reach `refs/heads/**`, so publishing there lets an admin block deletions and force pushes for `h5i\-board/**`. The cost is that threads appear in `git branch \-a`.
+.TP
+\fB\-\-custom\-refs\fR
+Go back to the custom ref namespace, out of the branch list
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)

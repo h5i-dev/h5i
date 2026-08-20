@@ -33,11 +33,19 @@
 //!
 //! ## What this does not do
 //!
-//! **Sync never deletes.** A thread that exists on the remote and not here is
-//! fetched, never removed; a thread that exists here and not there is pushed.
-//! Deletion is a human closing a thread, and `close` deletes the remote ref
-//! itself. A sync that could delete is a sync that can lose another machine's
-//! conversation because this one had not heard of it yet.
+//! **Nothing here ever deletes, and nothing depends on a ref being absent.**
+//! A thread on the remote that this machine has not seen is fetched; one here
+//! that is not there is pushed. Closing a thread is a `CLOSED` post, not a
+//! removed ref, which is what makes a human's decision survive a peer that had
+//! not heard about it.
+//!
+//! That also declaws the obvious attack. Anyone with push access can run
+//! `git push --delete` against a thread ref, and it costs them nothing to try —
+//! but the next sync from any clone that still holds the thread puts it back,
+//! because the push is driven by what we have rather than by what the remote
+//! lacks. Measured: an honest clone restored a deleted thread on its first
+//! sync, and the deleting clone got it back too. Deletion buys a window, never
+//! a loss, as long as one honest participant still has the conversation.
 //!
 //! **Agents never speak this.** A box has no git credential, no route to the
 //! remote, and no code path that reaches this module: it writes a record into
@@ -53,9 +61,30 @@ use git2::Repository;
 use crate::board;
 use crate::error::H5iError;
 
-/// Refs the board owns, as a fetch/push refspec pair.
+/// Refs the board owns locally. The remote side is [`Remote::namespace`].
 const LIVE: &str = "refs/h5i/board/*";
-const ATTIC: &str = "refs/h5i/board-attic/*";
+
+/// Default remote namespace: the same custom one used locally.
+///
+/// Invisible to `git branch`, and adequate for a local bare repository or any
+/// remote where nobody hostile has push access.
+pub const NS_CUSTOM: &str = "refs/h5i/board";
+
+/// Remote namespace that a forge will protect.
+///
+/// The reason to want it: a custom ref namespace gets **no** server-side
+/// protection. GitHub's branch protection and rulesets only apply to
+/// `refs/heads/**`, so under `NS_CUSTOM` anyone with push access can
+/// `git push --delete` a thread or force-push over it, and nothing at the
+/// server refuses. Publishing under branches instead lets a repository admin
+/// switch on "restrict deletions" and "block force pushes" for the pattern
+/// `h5i-board/**`, which turns this design's *self-healing* into actual
+/// prevention.
+///
+/// The cost is that threads show up in `git branch -a` and in branch pickers.
+/// Namespacing contains that; it does not remove it. So it is a choice, and a
+/// solo board on a local bare repository has no reason to pay it.
+pub const NS_BRANCH: &str = "refs/heads/h5i-board";
 /// Where a fetch parks the remote's view before it is merged in.
 const INCOMING: &str = "refs/h5i/board-incoming";
 
@@ -72,6 +101,16 @@ pub struct Remote {
     /// True when this is the auto-created local bare repository rather than a
     /// URL somebody chose.
     pub is_default: bool,
+    /// Ref namespace on the remote: [`NS_CUSTOM`] or [`NS_BRANCH`]. The local
+    /// mirror is always [`LIVE`], so this changes only what is published.
+    pub namespace: String,
+}
+
+impl Remote {
+    /// Are the board's threads published as branches a forge can protect?
+    pub fn is_branch_namespace(&self) -> bool {
+        self.namespace == NS_BRANCH
+    }
 }
 
 /// Host-side location of the configured remote.
@@ -82,6 +121,18 @@ pub struct Remote {
 /// board is redirecting every post on it.
 fn remote_file(h5i_root: &Path) -> PathBuf {
     h5i_root.join("board").join("remote")
+}
+
+/// Host-side location of the chosen remote namespace.
+fn namespace_file(h5i_root: &Path) -> PathBuf {
+    h5i_root.join("board").join("namespace")
+}
+
+fn read_namespace(h5i_root: &Path) -> String {
+    match std::fs::read_to_string(namespace_file(h5i_root)) {
+        Ok(raw) if raw.trim() == NS_BRANCH => NS_BRANCH.to_string(),
+        _ => NS_CUSTOM.to_string(),
+    }
 }
 
 /// Path of the local bare repository a board falls back to.
@@ -97,6 +148,7 @@ pub fn remote(h5i_root: &Path) -> Result<Remote, H5iError> {
             return Ok(Remote {
                 url,
                 is_default: false,
+                namespace: read_namespace(h5i_root),
             });
         }
     }
@@ -108,6 +160,7 @@ pub fn remote(h5i_root: &Path) -> Result<Remote, H5iError> {
     Ok(Remote {
         url: path.display().to_string(),
         is_default: true,
+        namespace: read_namespace(h5i_root),
     })
 }
 
@@ -136,6 +189,17 @@ pub fn set_remote(h5i_root: &Path, url: &str) -> Result<(), H5iError> {
 /// Stop using a configured remote and fall back to the local default.
 pub fn clear_remote(h5i_root: &Path) {
     let _ = std::fs::remove_file(remote_file(h5i_root));
+}
+
+/// Choose whether threads are published as protectable branches.
+pub fn set_namespace(h5i_root: &Path, branch_refs: bool) -> Result<(), H5iError> {
+    let path = namespace_file(h5i_root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    let ns = if branch_refs { NS_BRANCH } else { NS_CUSTOM };
+    std::fs::write(&path, ns).map_err(|e| H5iError::with_path(e, &path))?;
+    Ok(())
 }
 
 /// What one sync moved.
@@ -173,8 +237,8 @@ pub fn sync_with(repo: &Repository, remote: &Remote) -> Result<SyncReport, H5iEr
     let mut report = SyncReport::default();
 
     for attempt in 0..MAX_ATTEMPTS {
-        report.pulled += pull(repo, &dir, &remote.url)?;
-        match push(&dir, &remote.url) {
+        report.pulled += pull(repo, &dir, remote)?;
+        match push(&dir, remote) {
             Ok(pushed) => {
                 report.pushed += pushed;
                 return Ok(report);
@@ -205,13 +269,12 @@ enum SyncError {
 
 /// Fetch the remote's board and fold it into ours. Returns how many local tips
 /// moved.
-fn pull(repo: &Repository, dir: &Path, url: &str) -> Result<usize, H5iError> {
+fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iError> {
     // Into a staging namespace, never straight onto the live refs: what comes
     // back was authored on a machine this one does not control, and it has to
     // be merged rather than adopted. `transfer.fsckObjects` is on for the same
     // reason the quarantine turns it on.
-    let live_spec = format!("+{LIVE}:{INCOMING}/live/*");
-    let attic_spec = format!("+{ATTIC}:{INCOMING}/attic/*");
+    let live_spec = format!("+{}/*:{INCOMING}/live/*", remote.namespace);
     let out = git(
         dir,
         &[
@@ -221,9 +284,8 @@ fn pull(repo: &Repository, dir: &Path, url: &str) -> Result<usize, H5iError> {
             "--no-write-fetch-head",
             "--prune",
             "--end-of-options",
-            url,
+            &remote.url,
             &live_spec,
-            &attic_spec,
         ],
     );
     match out {
@@ -270,10 +332,7 @@ fn pull(repo: &Repository, dir: &Path, url: &str) -> Result<usize, H5iError> {
 /// Map every staged incoming ref to the local ref it belongs to.
 fn incoming_pairs(repo: &Repository) -> Result<Vec<(String, String)>, H5iError> {
     let mut out = Vec::new();
-    for glob in [
-        format!("{INCOMING}/live/*"),
-        format!("{INCOMING}/attic/*"),
-    ] {
+    for glob in [format!("{INCOMING}/live/*")] {
         let Ok(refs) = repo.references_glob(&glob) else {
             continue;
         };
@@ -291,8 +350,6 @@ fn incoming_pairs(repo: &Repository) -> Result<Vec<(String, String)>, H5iError> 
             // so put it back.
             let local = if leaf == "meta" {
                 board::BOARD_META_REF.to_string()
-            } else if name.contains("/attic/") {
-                board::attic_ref(leaf)
             } else {
                 board::thread_ref(leaf)
             };
@@ -303,22 +360,14 @@ fn incoming_pairs(repo: &Repository) -> Result<Vec<(String, String)>, H5iError> 
 }
 
 /// Push the local board. `Contended` when the remote moved under us.
-fn push(dir: &Path, url: &str) -> Result<usize, SyncError> {
+fn push(dir: &Path, remote: &Remote) -> Result<usize, SyncError> {
     // No `--force`: an append-only thread that has been merged onto the remote
     // tip is a fast-forward, so a rejection means someone else got there first
     // and the right answer is to merge again, never to overwrite them.
-    let live_spec = format!("{LIVE}:{LIVE}");
-    let attic_spec = format!("{ATTIC}:{ATTIC}");
+    let live_spec = format!("{LIVE}:{}/*", remote.namespace);
     match git(
         dir,
-        &[
-            "push",
-            "--quiet",
-            "--end-of-options",
-            url,
-            &live_spec,
-            &attic_spec,
-        ],
+        &["push", "--quiet", "--end-of-options", &remote.url, &live_spec],
     ) {
         Ok(_) => Ok(1),
         Err(e) if is_rejected(&e) => Err(SyncError::Contended),
@@ -326,26 +375,6 @@ fn push(dir: &Path, url: &str) -> Result<usize, SyncError> {
         Err(e) if is_no_matching_ref(&e) => Ok(0),
         Err(e) => Err(SyncError::Fatal(e)),
     }
-}
-
-/// Remove a thread from the remote, which is what closing it means once the
-/// board is shared. Only a human reaches this.
-pub fn push_close(repo: &Repository, h5i_root: &Path, thread_id: &str) -> Result<(), H5iError> {
-    board::validate_thread_id(thread_id)?;
-    let remote = remote(h5i_root)?;
-    let dir = repo_dir(repo)?;
-    // Push the attic copy first, so the conversation is durable on the remote
-    // before the live ref goes. The other order loses it if the second call
-    // fails.
-    let attic = board::attic_ref(thread_id);
-    let spec = format!("{attic}:{attic}");
-    let _ = git(&dir, &["push", "--quiet", "--end-of-options", &remote.url, &spec]);
-    let delete = format!(":{}", board::thread_ref(thread_id));
-    let _ = git(
-        &dir,
-        &["push", "--quiet", "--end-of-options", &remote.url, &delete],
-    );
-    Ok(())
 }
 
 fn repo_dir(repo: &Repository) -> Result<PathBuf, H5iError> {
@@ -435,6 +464,7 @@ mod tests {
         let remote = Remote {
             url: hub.display().to_string(),
             is_default: false,
+            namespace: NS_CUSTOM.to_string(),
         };
 
         let a_dir = root.path().join("a");
@@ -476,6 +506,7 @@ mod tests {
         let remote = Remote {
             url: hub.display().to_string(),
             is_default: false,
+            namespace: NS_CUSTOM.to_string(),
         };
 
         let a_dir = root.path().join("a");
@@ -521,6 +552,7 @@ mod tests {
         let remote = Remote {
             url: hub.display().to_string(),
             is_default: false,
+            namespace: NS_CUSTOM.to_string(),
         };
 
         let a_dir = root.path().join("a");
@@ -591,6 +623,7 @@ mod tests {
         let remote = Remote {
             url: hub.display().to_string(),
             is_default: false,
+            namespace: NS_CUSTOM.to_string(),
         };
 
         let a_dir = root.path().join("a");
@@ -658,6 +691,92 @@ mod tests {
         assert!(!t.posts[0].vouch("").is_observed(), "an empty identity matches nothing");
     }
 
+    /// A human's close reaches the other machine.
+    ///
+    /// The version that moved a ref did not: the peer still held the live ref,
+    /// pushed it back on its next sync, and the decision was silently undone.
+    /// Closing is an append now, so it travels the way every other post does.
+    #[test]
+    fn a_close_survives_a_peer_that_had_not_heard_about_it() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_CUSTOM.to_string(),
+        };
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+
+        let h = board::create_thread(&a, &human(), "closing", None, None).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+
+        board::close_thread(&a, &human(), &h.id).unwrap();
+        sync_with(&a, &remote).unwrap();
+        // B pushes its own (still open) view first, exactly as it would have
+        // done before hearing about the close.
+        sync_with(&b, &remote).unwrap();
+        sync_with(&a, &remote).unwrap();
+
+        for (name, repo) in [("A", &a), ("B", &b)] {
+            assert!(
+                board::read_thread(repo, &h.id).unwrap().is_closed(),
+                "{name} did not honour the close"
+            );
+        }
+    }
+
+    /// Deleting a thread ref from the remote destroys nothing.
+    ///
+    /// Anyone with push access can run `git push --delete`, and nothing stops
+    /// them trying. Nothing on a board depends on a ref being absent, though,
+    /// so the next sync from any clone that still holds the thread puts it
+    /// back: an attacker buys a window, never a loss.
+    #[test]
+    fn a_deleted_thread_ref_is_restored_by_any_clone_that_still_has_it() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_CUSTOM.to_string(),
+        };
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+
+        let h = board::create_thread(&a, &human(), "durable", None, None).unwrap();
+        board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "keep me")).unwrap();
+        sync_with(&a, &remote).unwrap();
+
+        // The attack, in one plain-git command.
+        let dead = format!(":{}", board::thread_ref(&h.id));
+        git(&a_dir, &["push", "--end-of-options", &remote.url, &dead]).unwrap();
+        let gone = git(
+            &hub,
+            &["for-each-ref", "--format=%(refname)", "refs/h5i/board/threads/"],
+        )
+        .unwrap();
+        assert!(gone.trim().is_empty(), "the delete really landed");
+
+        sync_with(&a, &remote).unwrap();
+        let back = git(
+            &hub,
+            &["for-each-ref", "--format=%(refname)", "refs/h5i/board/threads/"],
+        )
+        .unwrap();
+        assert!(back.contains(&h.id), "one sync should restore it:\n{back}");
+    }
+
     /// A board with no remote configured gets a local one, and it works — that
     /// is what makes solo use run the same code as a team.
     #[test]
@@ -686,6 +805,48 @@ mod tests {
         assert!(listed.contains(&h.id), "the thread should be on the remote:\n{listed}");
     }
 
+    /// Publishing under branches is the same board, and it is what lets a forge
+    /// protect it: rulesets only reach `refs/heads/**`, so a custom namespace
+    /// gets no server-side refusal of a delete or a force-push.
+    #[test]
+    fn a_board_can_publish_under_branches_a_forge_can_protect() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_BRANCH.to_string(),
+        };
+        assert!(remote.is_branch_namespace());
+
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let h = board::create_thread(&a, &human(), "protected", None, None).unwrap();
+        board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "hello")).unwrap();
+        sync_with(&a, &remote).unwrap();
+
+        // It really is a branch, which is the whole point.
+        let heads = git(&hub, &["for-each-ref", "--format=%(refname)", "refs/heads/"]).unwrap();
+        assert!(
+            heads.contains(&format!("refs/heads/h5i-board/threads/{}", h.id)),
+            "the thread should be a branch:\n{heads}"
+        );
+
+        // And a second clone reads it back through the same namespace.
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+        sync_with(&b, &remote).unwrap();
+        let seen = board::read_thread(&b, &h.id).unwrap();
+        assert_eq!(seen.posts[0].body, "hello");
+        // The local mirror keeps its own namespace either way, so nothing else
+        // in the board has to know which one is in use.
+        assert!(b.refname_to_id(&board::thread_ref(&h.id)).is_ok());
+    }
+
     #[test]
     fn a_configured_remote_round_trips_and_a_dash_leading_url_is_refused() {
         let root = tempfile::tempdir().unwrap();
@@ -693,6 +854,11 @@ mod tests {
         assert!(set_remote(&h5i_root, "  git@example.com:team/board.git  ").is_ok());
         assert_eq!(remote(&h5i_root).unwrap().url, "git@example.com:team/board.git");
         assert!(!remote(&h5i_root).unwrap().is_default);
+        assert_eq!(remote(&h5i_root).unwrap().namespace, NS_CUSTOM);
+        set_namespace(&h5i_root, true).unwrap();
+        assert!(remote(&h5i_root).unwrap().is_branch_namespace());
+        set_namespace(&h5i_root, false).unwrap();
+        assert_eq!(remote(&h5i_root).unwrap().namespace, NS_CUSTOM);
 
         assert!(set_remote(&h5i_root, "--upload-pack=evil").is_err());
         assert!(set_remote(&h5i_root, "").is_err());

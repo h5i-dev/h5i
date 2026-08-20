@@ -534,16 +534,28 @@ fn closing_hides_a_thread_from_the_boxes_and_keeps_it_for_the_human() {
 
     let listed = stdout(&repo.h5i(&["board", "list"]));
     assert!(!listed.contains(&thread[..8]), "closed threads leave the live list");
+    // Closing is a post, so the ref is still there and nothing was deleted.
+    assert!(
+        stdout(&repo.h5i(&["board", "read", &thread])).contains("closed"),
+        "the close itself is on the record"
+    );
 
     let all = stdout(&repo.h5i(&["board", "list", "--all"]));
     assert!(all.contains(&thread[..8]), "and stay readable with --all");
 
     let t = repo.thread_json(&thread);
+    let kinds: Vec<&str> = t["posts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["kind"].as_str().unwrap())
+        .collect();
     assert_eq!(
-        t["posts"].as_array().unwrap().len(),
-        1,
-        "closing is not deleting"
+        kinds,
+        vec!["FINDING", "CLOSED"],
+        "closing appends rather than deleting, and the note survives"
     );
+    assert_eq!(t["status"], "closed");
 }
 
 // ─── the tier the board rests on ─────────────────────────────────────────────

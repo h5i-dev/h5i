@@ -33,8 +33,11 @@
 //! ```text
 //! refs/h5i/board/meta            roster.json — who is on the board
 //! refs/h5i/board/threads/<id>    thread.json + posts.jsonl + attach-<digest>
-//! refs/h5i/board-attic/<id>      closed threads, moved not deleted
 //! ```
+//!
+//! There is no attic namespace and no deletion. Closing a thread is a `CLOSED`
+//! post, so it is an append like everything else — see [`KIND_CLOSED`] for why
+//! the ref-moving version did not survive a second machine.
 //!
 //! Threads are separate refs rather than one shared log because appending
 //! rewrites the blob it appends to: with a single log, every post would rewrite
@@ -42,8 +45,8 @@
 //! all of them. Per-thread refs bound both costs by the size of one thread,
 //! localise compare-and-swap contention to the thread being posted to, make the
 //! thread list a ref enumeration whose tip timestamps are the activity order,
-//! and let `close` move a single ref to the attic without touching anything
-//! else.
+//! and keep one conversation's history from being rewritten by traffic in
+//! another.
 //!
 //! Git refs, rather than a database or a sidecar file, because the plumbing for
 //! concurrent append is already here and tested ([`crate::refstore`]), and
@@ -92,9 +95,6 @@ use crate::refstore;
 pub const BOARD_META_REF: &str = "refs/h5i/board/meta";
 /// Prefix under which each thread gets its own ref.
 pub const BOARD_THREADS_PREFIX: &str = "refs/h5i/board/threads/";
-/// Where a closed thread is moved. Closing is not deleting: the conversation
-/// that led to an applied patch stays readable after the thread is done.
-pub const BOARD_ATTIC_PREFIX: &str = "refs/h5i/board-attic/";
 
 const POSTS_FILE: &str = "posts.jsonl";
 const THREAD_FILE: &str = "thread.json";
@@ -137,6 +137,7 @@ pub const KINDS: &[&str] = &[
     "DONE",
     "ACK",
     "BLOCKED",
+    "CLOSED",
 ];
 
 /// Kind of the post that opens a thread.
@@ -149,6 +150,21 @@ pub const KIND_REVIEW_REQUEST: &str = "REVIEW_REQUEST";
 pub const KIND_DONE: &str = "DONE";
 /// Kind that reports the thread's work stuck.
 pub const KIND_BLOCKED: &str = "BLOCKED";
+/// Kind that closes a thread. Human only.
+///
+/// Closing is a post rather than a deleted ref, and that is not a detail. Every
+/// other status here is a projection over an append-only log, and closing was
+/// the one that was a mutation — so it was the one that did not survive
+/// contact with a second machine. A peer that had not heard about the close
+/// still held the live ref, pushed it back, and the human's decision was
+/// silently undone. Measured, not theorised.
+///
+/// Making it an append fixes that and closes a second hole at the same time.
+/// Nothing about a board now depends on a ref being *absent*, so `git push
+/// --delete` against the remote destroys nothing: the next sync from any clone
+/// that still holds the thread puts it back. Deletion buys an attacker a
+/// window, never a loss.
+pub const KIND_CLOSED: &str = "CLOSED";
 
 fn validate_kind(kind: &str) -> Result<(), H5iError> {
     if KINDS.contains(&kind) {
@@ -564,6 +580,9 @@ pub enum ThreadStatus {
     Done,
     /// Reported stuck.
     Blocked,
+    /// Closed by a human. Out of the live list, out of every box's inbox, and
+    /// still readable.
+    Closed,
 }
 
 impl ThreadStatus {
@@ -575,6 +594,7 @@ impl ThreadStatus {
             ThreadStatus::Review => "review",
             ThreadStatus::Done => "done",
             ThreadStatus::Blocked => "blocked",
+            ThreadStatus::Closed => "closed",
         }
     }
 }
@@ -597,9 +617,36 @@ impl Thread {
     /// a reopen verb.
     pub fn status(&self) -> ThreadStatus {
         let mut status = ThreadStatus::Open;
+        let mut closed = false;
         for p in &self.posts {
             if p.is_denied() {
                 continue; // a refused post moves nothing
+            }
+            if p.kind == KIND_CLOSED {
+                closed = true;
+                continue;
+            }
+            // Closing sticks until a human deliberately moves the thread on.
+            // Last-writer-wins is right for the working statuses, where the
+            // thread's owner is the authority; it is wrong here for two
+            // reasons. An agent must not be able to undo a governance decision
+            // just by claiming the thread. And "any later human post reopens
+            // it" is too loose in a way that bites across machines: posts are
+            // ordered by `(ts, id)`, so a post that merely *sorts* after the
+            // close — one that arrived late from a peer, or one written while
+            // the closing host's clock was ahead — would silently reopen a
+            // thread nobody reopened. Only a human taking a status-moving
+            // action counts.
+            if closed {
+                let reopening = p.role == Role::Human.as_str()
+                    && matches!(
+                        p.kind.as_str(),
+                        KIND_CLAIM | KIND_REVIEW_REQUEST | KIND_DONE | KIND_BLOCKED
+                    );
+                if !reopening {
+                    continue;
+                }
+                closed = false;
             }
             status = match p.kind.as_str() {
                 KIND_CLAIM => ThreadStatus::Claimed,
@@ -609,7 +656,12 @@ impl Thread {
                 _ => status,
             };
         }
-        status
+        if closed { ThreadStatus::Closed } else { status }
+    }
+
+    /// Has a human closed this thread?
+    pub fn is_closed(&self) -> bool {
+        self.status() == ThreadStatus::Closed
     }
 
     /// Who currently owns the thread, from the most recent accepted `CLAIM`.
@@ -724,11 +776,6 @@ pub fn thread_ref(id: &str) -> String {
     format!("{BOARD_THREADS_PREFIX}{id}")
 }
 
-/// Ref name for a closed thread in the attic.
-pub fn attic_ref(id: &str) -> String {
-    format!("{BOARD_ATTIC_PREFIX}{id}")
-}
-
 /// Validate a thread id: 16 lowercase hex, which is what [`gen_id`] produces
 /// and what is safe as a ref-name component. Ids reach `refs/` paths, so
 /// anything else is refused rather than escaped.
@@ -770,7 +817,7 @@ pub fn validate_name(name: &str) -> Result<(), H5iError> {
 
 // ── reading ────────────────────────────────────────────────────────────────
 
-/// Read a thread, from the live namespace or the attic.
+/// Read a thread, open or closed.
 pub fn read_thread(repo: &Repository, id: &str) -> Result<Thread, H5iError> {
     validate_thread_id(id)?;
     let oid = thread_tip(repo, id).ok_or_else(|| {
@@ -792,25 +839,34 @@ pub fn read_thread_at(repo: &Repository, oid: Oid) -> Result<Thread, H5iError> {
     Ok(Thread { header, posts })
 }
 
-/// Tip of a thread's ref, looking in the live namespace and then the attic.
+/// Tip of a thread's ref.
 pub fn thread_tip(repo: &Repository, id: &str) -> Option<Oid> {
-    repo.refname_to_id(&thread_ref(id))
-        .ok()
-        .or_else(|| repo.refname_to_id(&attic_ref(id)).ok())
+    repo.refname_to_id(&thread_ref(id)).ok()
 }
 
-/// Every live thread, newest activity first.
+/// Every open thread, newest activity first.
 ///
 /// This reads one small tree per thread rather than one large log, which is the
 /// whole point of the per-thread layout: the cost is proportional to the number
 /// of threads, not to the volume of conversation in them.
 pub fn list_threads(repo: &Repository) -> Vec<ThreadSummary> {
-    list_threads_in(repo, BOARD_THREADS_PREFIX)
+    list_all_threads(repo)
+        .into_iter()
+        .filter(|t| t.status != ThreadStatus::Closed)
+        .collect()
 }
 
-/// Every closed thread, newest activity first.
-pub fn list_attic(repo: &Repository) -> Vec<ThreadSummary> {
-    list_threads_in(repo, BOARD_ATTIC_PREFIX)
+/// Every thread a human has closed.
+pub fn list_closed(repo: &Repository) -> Vec<ThreadSummary> {
+    list_all_threads(repo)
+        .into_iter()
+        .filter(|t| t.status == ThreadStatus::Closed)
+        .collect()
+}
+
+/// Every thread, closed or not.
+pub fn list_all_threads(repo: &Repository) -> Vec<ThreadSummary> {
+    list_threads_in(repo, BOARD_THREADS_PREFIX)
 }
 
 fn list_threads_in(repo: &Repository, prefix: &str) -> Vec<ThreadSummary> {
@@ -1108,6 +1164,9 @@ pub fn append_post(
     if new.kind == KIND_TASK {
         author.require(author.role.can_govern(), "open a thread")?;
     }
+    if new.kind == KIND_CLOSED {
+        author.require(author.role.can_govern(), "close a thread")?;
+    }
     if !new.attachments.is_empty() {
         author.require(author.role.can_attach(), "attach an artifact")?;
     }
@@ -1252,21 +1311,27 @@ pub fn append_post(
     )))
 }
 
-/// Close a thread by moving its ref to the attic. Human only.
+/// Close a thread. Human only.
 ///
-/// The conversation is not deleted. A thread that produced an applied patch is
-/// the record of why that patch looks the way it does.
+/// An append, not a deletion, and the reasoning is in [`KIND_CLOSED`]: a status
+/// that lives in the absence of something cannot survive a peer that has not
+/// heard about it yet.
 pub fn close_thread(repo: &Repository, author: &Author, id: &str) -> Result<(), H5iError> {
     author.require(author.role.can_govern(), "close a thread")?;
     validate_thread_id(id)?;
-    let live = thread_ref(id);
-    let tip = repo.refname_to_id(&live).map_err(|_| {
-        H5iError::RecordNotFound(format!("no open board thread {id}"))
-    })?;
-    let attic = attic_ref(id);
-    let message = format!("h5i board: close thread {id}");
-    refstore::cas_ref_update(repo, &attic, None, tip, &message).map_err(H5iError::Git)?;
-    repo.find_reference(&live)?.delete()?;
+    if thread_tip(repo, id).is_none() {
+        return Err(H5iError::RecordNotFound(format!("no board thread {id}")));
+    }
+    append_post(
+        repo,
+        author,
+        id,
+        NewPost {
+            kind: KIND_CLOSED.to_string(),
+            body: "closed".to_string(),
+            ..Default::default()
+        },
+    )?;
     Ok(())
 }
 
@@ -1748,21 +1813,86 @@ mod tests {
         assert!(append_post(&repo, &w, &h.id, p).is_err());
     }
 
+    /// Closing is an append, and it has to be, because a status that lives in
+    /// the *absence* of something cannot survive a peer that has not heard
+    /// about it. The ref-moving version was silently undone by any clone that
+    /// still held the live ref and pushed it back.
     #[test]
-    fn closing_moves_the_thread_to_the_attic_without_losing_it() {
+    fn closing_is_a_post_and_leaves_the_thread_readable() {
         let (_d, repo) = temp_repo();
         let h = create_thread(&repo, &human(), "t", None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         append_post(&repo, &w, &h.id, post("FINDING", "note")).unwrap();
 
         close_thread(&repo, &human(), &h.id).unwrap();
-        assert!(repo.refname_to_id(&thread_ref(&h.id)).is_err());
-        assert!(repo.refname_to_id(&attic_ref(&h.id)).is_ok());
-        assert!(list_threads(&repo).is_empty());
-        assert_eq!(list_attic(&repo).len(), 1);
-        // still readable, with its posts
+
+        // No ref moved and nothing was deleted.
+        assert!(repo.refname_to_id(&thread_ref(&h.id)).is_ok());
         let t = read_thread(&repo, &h.id).unwrap();
-        assert_eq!(t.posts.len(), 1);
+        assert_eq!(t.status(), ThreadStatus::Closed);
+        assert!(t.is_closed());
+        assert_eq!(t.posts.len(), 2, "closing is a post, and the note survives");
+
+        assert!(list_threads(&repo).is_empty(), "it leaves the live list");
+        assert_eq!(list_closed(&repo).len(), 1);
+        assert_eq!(list_all_threads(&repo).len(), 1);
+    }
+
+    /// An agent cannot reopen what a human closed, and a human can.
+    ///
+    /// Last-writer-wins is right for the working statuses, where the thread's
+    /// owner is the authority. It is wrong for closing, because it would let an
+    /// agent undo a governance decision just by claiming the thread.
+    #[test]
+    fn only_a_human_reopens_a_closed_thread() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        close_thread(&repo, &human(), &h.id).unwrap();
+
+        append_post(&repo, &w, &h.id, post(KIND_CLAIM, "mine again")).unwrap();
+        assert_eq!(
+            read_thread(&repo, &h.id).unwrap().status(),
+            ThreadStatus::Closed,
+            "an agent must not reopen it"
+        );
+
+        append_post(&repo, &human(), &h.id, post(KIND_CLAIM, "reopening")).unwrap();
+        assert_eq!(
+            read_thread(&repo, &h.id).unwrap().status(),
+            ThreadStatus::Claimed,
+            "a human may"
+        );
+    }
+
+    /// A human post that merely sorts after the close does not reopen it.
+    ///
+    /// Posts are ordered by `(ts, id)`, and across machines that order is not
+    /// the order things happened: a post can arrive late from a peer, or be
+    /// written while another host's clock ran ahead. Reopening has to be a
+    /// deliberate act, not a consequence of sort position.
+    #[test]
+    fn a_late_arriving_human_note_does_not_reopen_a_closed_thread() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        close_thread(&repo, &human(), &h.id).unwrap();
+        // An ordinary human note, of the kind a peer's clock skew could land
+        // after the close.
+        append_post(&repo, &human(), &h.id, post("FINDING", "one more thought")).unwrap();
+        append_post(&repo, &human(), &h.id, post("ACK", "noted")).unwrap();
+        assert_eq!(
+            read_thread(&repo, &h.id).unwrap().status(),
+            ThreadStatus::Closed,
+            "only a status-moving human action reopens a thread"
+        );
+    }
+
+    #[test]
+    fn only_a_human_may_close() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        assert!(append_post(&repo, &w, &h.id, post(KIND_CLOSED, "bye")).is_err());
     }
 
     #[test]
