@@ -378,10 +378,15 @@ the engine rather than by a box, so `--allow` and `--receipts` mean the same
 thing on a bare host as inside one:
 
 ```bash
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --browser-only
+
 h5i-browser-light serve https://docs.rs/ --allow docs.rs &
 h5i-browser-light session snapshot
 h5i-browser-light skill install          # teach an agent to drive it
 ```
+
+`install.sh` takes `--with-browser` to install both binaries, or `--browser-only`
+for the engine alone.
 
 What a box adds is that the agent cannot go around the browser. A standalone run
 is not sandboxed and does not claim to be; what it offers is a browser whose

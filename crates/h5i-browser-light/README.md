@@ -41,15 +41,16 @@ h5i-browser-light session requests                   # everything it fetched, an
 
 ## Install
 
-Ships as its own binary in every [h5i release](https://github.com/h5i-dev/h5i/releases):
-
 ```bash
-curl -L https://github.com/h5i-dev/h5i/releases/latest/download/h5i-browser-light-<VERSION>-<TARGET>.tar.gz | tar -xz
-sudo mv h5i-browser-light /usr/local/bin/
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --browser-only
 
 h5i-browser-light skill install    # teach an agent to drive it
 h5i-browser-light doctor           # fonts, proxy, allowlist
 ```
+
+`--browser-only` installs this engine and nothing else; `--with-browser` installs
+it alongside h5i. The script verifies the published checksum before it installs
+anything.
 
 Not on crates.io, and that is not an oversight: the crate depends on `boa` by git
 revision, because no published version's ICU requirements can coexist with the
