@@ -14,6 +14,8 @@
 #   scripts/board_experiment.sh -r codex         # Codex instead of Claude
 #   scripts/board_experiment.sh -t "why is the sky blue" -t "…"
 #   scripts/board_experiment.sh --attach         # then watch it in tmux
+#   scripts/board_experiment.sh --transcript     # also dump the board to markdown
+#   scripts/board_experiment.sh --transcript -d DIR   # …for a run that already happened
 #
 # Why it is shaped the way it is, in the three places that are not obvious:
 #
@@ -45,6 +47,7 @@ WORKDIR="${BOARD_EXPERIMENT_DIR:-$HOME/h5i-board-experiment}"
 REPO_URL=""
 ATTACH=0
 CLEAN=0
+WANT_TRANSCRIPT=0
 WAIT_SECS=600
 TOPICS=()
 
@@ -74,6 +77,7 @@ while [ $# -gt 0 ]; do
     --repo)        REPO_URL="$2"; shift 2 ;;
     --wait)        WAIT_SECS="$2"; shift 2 ;;
     --attach)      ATTACH=1; shift ;;
+    --transcript)  WANT_TRANSCRIPT=1; shift ;;
     --clean)       CLEAN=1; shift ;;
     -h|--help)     usage 0 ;;
     *) echo "unknown option: $1" >&2; usage 1 ;;
@@ -101,6 +105,85 @@ fi
 # ── preflight ────────────────────────────────────────────────────────────────
 
 die() { echo "✖ $*" >&2; exit 1; }
+
+# The board, flattened into one markdown file: every thread, every post, in
+# order, with its score and the host that vouched for it.
+#
+# Regenerable on demand rather than written once when the watch loop happens to
+# end. The first version was a single shot at the end of `--wait`, which meant a
+# short wait captured four posts of a conversation that went on to fifteen and
+# there was no way to get the rest without re-running everything. A transcript
+# you cannot re-take is a transcript of the wrong moment.
+write_transcript() {
+  local first="$WORKDIR/agent-1" out="$WORKDIR/transcript.md"
+  [ -d "$first" ] || die "no experiment at $WORKDIR — run one first, or pass -d"
+  ( cd "$first" && "$H5I" board sync >/dev/null 2>&1 )
+  {
+    echo "# Board experiment"
+    echo
+    echo "Read from \`$first\` at $(date -Iseconds)."
+    echo
+    ( cd "$first" && "$H5I" board status --json ) | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print("| participant | role | box | state |")
+print("|---|---|---|---|")
+for e in d["roster"]:
+    print("| %s | %s | %s | %s |" % (
+        e["agent"], e["role"], e.get("box_id") or "—",
+        "revoked" if e.get("revoked_at") else "active"))
+'
+    for t in $( cd "$first" && "$H5I" board status --json | python3 -c '
+import json, sys
+for t in json.load(sys.stdin)["threads"]:
+    print(t["header"]["id"])' ); do
+      echo
+      ( cd "$first" && "$H5I" board read "$t" --json 2>/dev/null ) | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+lanes = {v["id"]: v["lane"] for v in d.get("vouch", [])}
+posts = d["posts"]
+scores = {}
+for p in posts:
+    if p["kind"] in ("UPVOTE", "DOWNVOTE") and p.get("reply_to"):
+        scores.setdefault(p["reply_to"], {})[p["sender"]] = 1 if p["kind"] == "UPVOTE" else -1
+print("## " + d["header"]["title"])
+print()
+print("`%s` · %s" % (d["header"]["id"], d["status"]))
+for p in posts:
+    if p["kind"] in ("UPVOTE", "DOWNVOTE"):
+        continue
+    n = sum(scores.get(p["id"], {}).values())
+    head = "### %s — %s (%s)" % (p["kind"], p["sender"], p["role"])
+    if n:
+        head += "  ▲%d" % n if n > 0 else "  ▼%d" % -n
+    print()
+    print(head)
+    print()
+    bits = [lanes.get(p["id"], "")]
+    if p.get("box_id"):
+        bits.append(p["box_id"])
+    if p.get("redactions"):
+        bits.append("redacted: " + ", ".join(p["redactions"]))
+    if p.get("denied"):
+        bits.append("REFUSED: " + p["denied"])
+    print("*" + " · ".join(b for b in bits if b) + "*")
+    print()
+    print(p["body"])
+'
+    done
+  } > "$out"
+  echo "  transcript written: $out  ($(wc -l < "$out") lines)"
+}
+
+# `--transcript` against a workspace that already exists is a request for the
+# transcript, not for a new experiment: re-running would wipe the conversation
+# it was asked to write down.
+if [ "$WANT_TRANSCRIPT" = "1" ] && [ -d "$WORKDIR/agent-1" ]; then
+  H5I="${H5I:-/usr/local/bin/h5i}"
+  write_transcript
+  exit 0
+fi
 
 case "$WORKDIR" in
   /tmp/*|/tmp) die "a workspace under /tmp cannot work: a box replaces /tmp with a
@@ -342,33 +425,17 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   sleep 10
 done
 
-# ── the transcript ───────────────────────────────────────────────────────────
+# ── the result ───────────────────────────────────────────────────────────────
+#
+# The summary always; the transcript only when asked. Three agents over three
+# threads already runs to three hundred lines and a longer argument runs to
+# thousands, which is a lot of file to write on the chance that somebody wants
+# it — and since it can be regenerated from the board at any time, writing it by
+# default buys nothing.
 
 echo
 ( cd "$first" && "$H5I" board sync >/dev/null 2>&1 )
-out="$WORKDIR/transcript.md"
-{
-  echo "# Board experiment"
-  echo
-  echo "$AGENTS × $RUNTIME, ${#tids[@]} threads, $(date -Iseconds)"
-  for t in "${tids[@]}"; do
-    echo
-    ( cd "$first" && "$H5I" board read "$t" --json 2>/dev/null ) | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print("## " + d["header"]["title"])
-print()
-for p in d["posts"]:
-    if p["kind"] in ("UPVOTE", "DOWNVOTE"):
-        continue
-    score = d.get("vouch") and ""
-    print("### %s — %s (%s)" % (p["kind"], p["sender"], p["role"]))
-    print()
-    print(p["body"])
-    print()
-'
-  done
-} > "$out"
+[ "$WANT_TRANSCRIPT" = "1" ] && write_transcript
 
 echo "── result ──"
 for t in "${tids[@]}"; do
@@ -381,7 +448,7 @@ print("  %-58s %2d posts  %s" % (d["header"]["title"][:58], len(posts), ", ".joi
 '
 done
 echo
-echo "  transcript: $out"
+[ "$WANT_TRANSCRIPT" = "1" ] || echo "  transcript: $0 --transcript -d $WORKDIR"
 echo "  read it:    (cd $first && $H5I board read <id>)"
 echo "  the UI:     (cd $first && $H5I ui --open)   then the BOARD tab"
 echo "  clean up:   $0 --clean -d $WORKDIR"

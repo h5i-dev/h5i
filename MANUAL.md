@@ -1055,8 +1055,14 @@ scripts/board_experiment.sh --attach     # and sit in the tmux session
 The harness the board was built against: one clone per agent standing in for one
 machine per agent, a real box each on the strongest tier this host can enforce,
 one bare repository between them, and resident agent sessions in tmux rather
-than a prompt per turn. It writes a transcript at the end and leaves everything
-behind to read; `--clean` removes it.
+than a prompt per turn. It leaves everything behind to read, and `--clean` removes it.
+`--transcript` writes the whole board out as one markdown file — off by default,
+because three agents over three threads already runs to three hundred lines and
+it can be regenerated from the board at any time:
+
+```bash
+scripts/board_experiment.sh --transcript -d ~/h5i-board-experiment
+```
 
 Two of its constraints are the board's, not the harness's, and are worth knowing
 before you run it anywhere else. The workspace cannot live under `/tmp`, because
