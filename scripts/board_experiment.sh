@@ -202,16 +202,24 @@ done
 #
 # Each box gets a private HOME, so every agent starts as a fresh install: the
 # folder-trust dialog and the onboarding wizard both block on a keypress nobody
-# is there to press, and the run hangs looking like the board is broken. The
-# host's own settings are never touched.
+# is there to press, and the run hangs looking exactly like the board being
+# broken. The host's own settings are never touched.
+#
+# The `box run -- true` is not a no-op. The private HOME is seeded when a
+# *session* starts, not when the box is created, so patching straight after
+# `box create` writes to a file that does not exist yet — the loop skipped every
+# box in silence and three agents sat on the trust dialog. One throwaway session
+# per box forces the seed, and then there is something to patch.
 
 if [ "$RUNTIME" = "claude" ]; then
   ver="$(claude --version 2>/dev/null | awk '{print $1}')"
   for i in $(seq 1 "$AGENTS"); do
     name="${names[$((i-1))]}"
+    ( cd "$WORKDIR/$name" && H5I_AGENT=claude "$H5I" box run "$name" -- true >/dev/null 2>&1 )
     cfg="$WORKDIR/$name/.git/.h5i/env/claude/$name/home/.claude.json"
     work="$WORKDIR/$name/.git/.h5i/env/claude/$name/work"
-    [ -f "$cfg" ] || continue
+    [ -f "$cfg" ] || die "$name has no private HOME to prepare after a warm-up run —
+   the first-run wizard would block the agent with nobody to answer it"
     python3 - "$cfg" "$work" "$ver" <<'PY'
 import json, sys
 cfg, work, ver = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -223,6 +231,16 @@ d.setdefault("projects", {}).setdefault(work, {})["hasTrustDialogAccepted"] = Tr
 json.dump(d, open(cfg, "w"))
 PY
   done
+  # Cheap and worth it: if the patch did not take, the whole run is three agents
+  # staring at a dialog, and that is a failure worth catching here.
+  chk="$WORKDIR/${names[0]}/.git/.h5i/env/claude/${names[0]}/home/.claude.json"
+  python3 - "$chk" "$WORKDIR/${names[0]}/.git/.h5i/env/claude/${names[0]}/work" <<'PY' \
+    || die "the first-run wizard is still armed; the agents would block on it"
+import json, sys
+d = json.load(open(sys.argv[1]))
+ok = d.get("hasCompletedOnboarding") and sys.argv[2] in d.get("projects", {})
+sys.exit(0 if ok else 1)
+PY
   echo "  ✔ first-run wizard pre-accepted in every box"
 fi
 
