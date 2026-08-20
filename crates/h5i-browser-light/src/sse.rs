@@ -26,7 +26,7 @@
 //! central claim quietly stop covering the bytes that follow it.
 
 use std::io::{BufReader, Read};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
 use url::Url;
@@ -37,13 +37,12 @@ use crate::wsclient::{Direction, Event};
 /// Cap on one event's data, so a server cannot grow this without bound.
 const MAX_EVENT_BYTES: usize = 1 << 20;
 
-/// Cap on undelivered events, matching the socket client's.
+/// How many undelivered events this may hold, matching the socket client's —
+/// and bounded for the same reason. See [`crate::wsclient`].
 const MAX_QUEUED: usize = 512;
 
 /// One open event stream.
 pub struct EventStream {
-    inbox: Mutex<Vec<Event>>,
-    dropped: Mutex<usize>,
     rx: Mutex<Receiver<Event>>,
     stop: Arc<std::sync::atomic::AtomicBool>,
     pub url: Url,
@@ -63,7 +62,8 @@ impl EventStream {
         // code as every other request here.
         let response = broker.open_event_stream(url, document)?;
 
-        let (tx, rx) = channel();
+        let (tx, rx) = std::sync::mpsc::sync_channel(MAX_QUEUED);
+        let _ = tx.send(Event::Open);
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop_for_thread = stop.clone();
         let broker_for_thread = broker.clone();
@@ -83,8 +83,6 @@ impl EventStream {
             .map_err(|e| format!("could not start the event-stream reader: {e}"))?;
 
         Ok(EventStream {
-            inbox: Mutex::new(vec![Event::Open]),
-            dropped: Mutex::new(0),
             rx: Mutex::new(rx),
             stop,
             url: url.clone(),
@@ -94,28 +92,13 @@ impl EventStream {
 
     /// Everything that has arrived since the last drain.
     pub fn drain(&self) -> Vec<Event> {
+        let mut out = Vec::new();
         if let Ok(rx) = self.rx.lock() {
             while let Ok(event) = rx.try_recv() {
-                if let Ok(mut inbox) = self.inbox.lock() {
-                    inbox.push(event);
-                    if inbox.len() > MAX_QUEUED {
-                        let over = inbox.len() - MAX_QUEUED;
-                        inbox.drain(..over);
-                        if let Ok(mut dropped) = self.dropped.lock() {
-                            *dropped += over;
-                        }
-                    }
-                }
+                out.push(event);
             }
         }
-        self.inbox
-            .lock()
-            .map(|mut inbox| std::mem::take(&mut *inbox))
-            .unwrap_or_default()
-    }
-
-    pub fn dropped(&self) -> usize {
-        self.dropped.lock().map(|d| *d).unwrap_or(0)
+        out
     }
 
     /// Ask the reader to stop.
@@ -155,7 +138,7 @@ impl Drop for EventStream {
 /// A stream that ends fires `error` and stays ended.
 fn read_loop(
     response: reqwest::blocking::Response,
-    tx: Sender<Event>,
+    tx: SyncSender<Event>,
     broker: Arc<Broker>,
     url: Url,
     stop: Arc<std::sync::atomic::AtomicBool>,
@@ -163,6 +146,11 @@ fn read_loop(
     let mut reader = BufReader::new(response);
     let mut data = String::new();
     let mut kind = String::new();
+    // Whether a `data` field was seen at all, which is not the same as whether
+    // it had content. `data:\n\n` and `event: ping\ndata:\n\n` are ordinary
+    // keep-alive shapes, and the spec dispatches on the blank line whenever a
+    // data field appeared. Guarding on `!data.is_empty()` swallowed them.
+    let mut saw_data = false;
 
     loop {
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
@@ -185,28 +173,37 @@ fn read_loop(
 
         if line.is_empty() {
             // Blank line: dispatch what has accumulated.
-            if !data.is_empty() {
-                if let Err(e) =
-                    broker.record_socket_frame(&url, Direction::Receive, data.len() as u64)
+            if saw_data {
+                if let Err(e) = broker.record_socket_frame(
+                    &url,
+                    Direction::StreamReceive,
+                    data.len() as u64,
+                )
                 {
                     let _ = tx.send(Event::Failed(format!(
                         "an event arrived that could not be receipted, so it was not delivered: {e}"
                     )));
                     return;
                 }
-                let payload = if kind.is_empty() || kind == "message" {
-                    std::mem::take(&mut data)
+                // The name travels as its own field rather than packed into
+                // the payload. Packing it meant the prelude had to guess which
+                // messages carried one, and a plain multi-line
+                // `data: one\ndata: two` was read as an event named `one`.
+                let event = if kind.is_empty() || kind == "message" {
+                    Event::Message(std::mem::take(&mut data))
                 } else {
-                    // The type is carried in-band because the drain protocol
-                    // has one string per event; the prelude splits it back out.
-                    format!("{kind}\n{}", std::mem::take(&mut data))
+                    Event::Named {
+                        name: std::mem::take(&mut kind),
+                        data: std::mem::take(&mut data),
+                    }
                 };
-                if tx.send(Event::Message(payload)).is_err() {
+                if tx.send(event).is_err() {
                     return;
                 }
             }
             data.clear();
             kind.clear();
+            saw_data = false;
             continue;
         }
 
@@ -221,6 +218,7 @@ fn read_loop(
         };
         match field {
             "data" => {
+                saw_data = true;
                 if data.len() + value.len() > MAX_EVENT_BYTES {
                     let _ = tx.send(Event::Failed(
                         "an event exceeded the size this engine holds for one".to_string(),
@@ -244,22 +242,26 @@ fn read_loop(
 
 /// `read_line` with a cap, because a server that never sends a newline is an
 /// unbounded allocation on this side.
+///
+/// Accumulates **bytes** and decodes once at the end. Pushing each byte as a
+/// `char` decoded the stream as Latin-1, so every non-ASCII payload arrived
+/// mangled — `café` reaching the page as `cafÃ©` — and the byte count that goes
+/// into the receipt was wrong along with it.
 fn read_line_capped<R: Read>(
     reader: &mut BufReader<R>,
     out: &mut String,
 ) -> std::io::Result<usize> {
-    let mut taken = 0usize;
+    let mut bytes: Vec<u8> = Vec::new();
     loop {
         let mut byte = [0u8; 1];
         match reader.read(&mut byte)? {
-            0 => return Ok(taken),
+            0 => break,
             _ => {
-                taken += 1;
-                out.push(byte[0] as char);
+                bytes.push(byte[0]);
                 if byte[0] == b'\n' {
-                    return Ok(taken);
+                    break;
                 }
-                if taken > MAX_EVENT_BYTES {
+                if bytes.len() > MAX_EVENT_BYTES {
                     return Err(std::io::Error::other(
                         "a line in this event stream exceeded the engine's cap",
                     ));
@@ -267,6 +269,9 @@ fn read_line_capped<R: Read>(
             }
         }
     }
+    let taken = bytes.len();
+    out.push_str(&String::from_utf8_lossy(&bytes));
+    Ok(taken)
 }
 
 #[cfg(test)]
@@ -329,9 +334,9 @@ mod tests {
         let methods: Vec<&str> = records.iter().map(|r| r.method.as_str()).collect();
         assert!(methods.contains(&"SSE-OPEN"), "{methods:?}");
         assert_eq!(
-            methods.iter().filter(|m| **m == "WS-RECV").count(),
+            methods.iter().filter(|m| **m == "SSE-RECV").count(),
             4,
-            "one request and one response record per event: {methods:?}"
+            "one request and one response record per event, labelled as SSE: {methods:?}"
         );
 
         let _ = server.join();
@@ -379,6 +384,125 @@ mod tests {
         }
         assert_eq!(messages, vec!["real".to_string()]);
         let _ = server.join();
+    }
+
+    #[test]
+    fn multi_line_data_reaches_the_page_as_a_plain_message() {
+        // The regression. The name used to travel packed into the payload as a
+        // first line, and the JS side guessed which messages had one — so
+        // `data: one\ndata: two` became an event *named* `one` carrying `two`,
+        // and `onmessage` never fired at all.
+        let (port, server) = sse_server("data: one\ndata: two\n\n");
+        let sink = Arc::new(crate::receipt::MemorySink::new());
+        let broker = broker_with(sink);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/events")).unwrap();
+        let stream = EventStream::open(broker, &url, None).expect("opened");
+
+        let got = collect_one(&stream);
+        assert_eq!(
+            got,
+            Some(Event::Message("one\ntwo".to_string())),
+            "a plain multi-line message must not become a named event"
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_named_event_carries_its_name_beside_the_data() {
+        let (port, server) = sse_server("event: tick\ndata: payload\n\n");
+        let sink = Arc::new(crate::receipt::MemorySink::new());
+        let broker = broker_with(sink);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/events")).unwrap();
+        let stream = EventStream::open(broker, &url, None).expect("opened");
+
+        assert_eq!(
+            collect_one(&stream),
+            Some(Event::Named {
+                name: "tick".to_string(),
+                data: "payload".to_string()
+            })
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_non_ascii_payload_survives_the_wire() {
+        // The reader used to push each byte as a `char`, decoding the stream as
+        // Latin-1, so every multi-byte character arrived mangled and the
+        // receipted byte count was wrong with it.
+        let (port, server) = sse_server("data: café → 日本語\n\n");
+        let sink = Arc::new(crate::receipt::MemorySink::new());
+        let broker = broker_with(sink);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/events")).unwrap();
+        let stream = EventStream::open(broker, &url, None).expect("opened");
+
+        assert_eq!(
+            collect_one(&stream),
+            Some(Event::Message("café → 日本語".to_string()))
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn an_event_with_an_empty_data_field_still_dispatches() {
+        // `data:\n\n` and `event: ping\ndata:\n\n` are ordinary keep-alive
+        // shapes. The spec dispatches on the blank line whenever a data field
+        // appeared; guarding on non-empty content swallowed them entirely.
+        let (port, server) = sse_server("event: ping\ndata:\n\n");
+        let sink = Arc::new(crate::receipt::MemorySink::new());
+        let broker = broker_with(sink);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/events")).unwrap();
+        let stream = EventStream::open(broker, &url, None).expect("opened");
+
+        assert_eq!(
+            collect_one(&stream),
+            Some(Event::Named {
+                name: "ping".to_string(),
+                data: String::new()
+            })
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_stream_that_opened_is_receipted_at_both_phases() {
+        // Every other path in the broker writes both halves. A request that
+        // never completes leaves the console's request/response pairing showing
+        // an open connection for the life of the session.
+        let (port, server) = sse_server("data: x\n\n");
+        let sink = Arc::new(crate::receipt::MemorySink::new());
+        let broker = broker_with(sink.clone());
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/events")).unwrap();
+        let stream = EventStream::open(broker, &url, None).expect("opened");
+        let _ = collect_one(&stream);
+
+        let opens: Vec<_> = sink
+            .records()
+            .into_iter()
+            .filter(|r| r.method == "SSE-OPEN")
+            .collect();
+        assert_eq!(opens.len(), 2, "both phases: {opens:?}");
+        assert!(opens.iter().any(|r| r.phase == crate::receipt::Phase::Request));
+        let response = opens
+            .iter()
+            .find(|r| r.phase == crate::receipt::Phase::Response)
+            .expect("a response half");
+        assert_eq!(response.status, Some(200));
+        let _ = server.join();
+    }
+
+    /// Wait for the first message-shaped event, or give up.
+    fn collect_one(stream: &EventStream) -> Option<Event> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            for event in stream.drain() {
+                if matches!(event, Event::Message(_) | Event::Named { .. }) {
+                    return Some(event);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        None
     }
 
     #[test]

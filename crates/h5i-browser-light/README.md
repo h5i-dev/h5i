@@ -547,9 +547,10 @@ also the place it rendered a half-built page.
 hundred messages could be honoured by receipting the handshake alone — and then
 the central claim would quietly stop covering the bytes after it, which is
 exactly the CONNECT-gate blindness this engine exists to remove. Frames are
-written as ordinary request/response pairs with `WS-SEND`/`WS-RECV` as the
-method, so the console, `h5i box watch` and the export bundle show socket
-traffic with no changes to any of them.
+written as ordinary request/response pairs with `WS-SEND`, `WS-RECV` or
+`SSE-RECV` as the method — each naming the protocol it actually was — so the
+console, `h5i box watch` and the export bundle show socket traffic with no
+changes to any of them.
 
 Two refusals, by name:
 

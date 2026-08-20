@@ -693,7 +693,8 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         });
 
     let Some(log) = &session.actions else {
-        return control_verb(session, request);
+        let (reply, changed) = control_verb(session, request);
+        return (redact_reply(&session.secrets, reply), changed);
     };
 
     let seq = match log.begin(verb, target.as_deref()) {
@@ -741,7 +742,43 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             },
         );
     }
-    (answer, changed)
+    // Redacted after the action log is written, so the log keeps the engine's
+    // own account and only what leaves for the agent is scrubbed.
+    (redact_reply(&session.secrets, answer), changed)
+}
+
+/// Put credential placeholders back into anything on its way out.
+///
+/// [`crate::secrets`] describes this as the rule that anything written back out
+/// goes through — and until now nothing called it, which made the module's own
+/// claim false. It is applied here, at the one point every reply passes through,
+/// rather than at each site that might echo something.
+///
+/// This is not only tidiness. A login form that reflects what was typed — into
+/// a hidden field, a validation message, a page title — puts the value into the
+/// DOM, and the next `snapshot` or `markdown` would carry it back to the agent
+/// the indirection exists to keep it from. Scanning the reply catches that
+/// wherever it comes from.
+///
+/// The cost is a string scan per reply against a handful of values, on a path
+/// that has already done a policy check and a layout pass.
+fn redact_reply(secrets: &crate::secrets::Secrets, value: Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(secrets.redact(&text)),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| redact_reply(secrets, item))
+                .collect(),
+        ),
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(name, item)| (name, redact_reply(secrets, item)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 /// Handle one control request against the resident page.
@@ -792,7 +829,14 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             // The baseline is dropped either way. A delta across a login would
             // describe the page a human just used, which is the one thing this
             // mode exists to keep out of the agent's hands.
+            //
+            // And the served refs with it. They carry the id, role and *name*
+            // of every actionable element from the pre-login reading; leaving
+            // them would let a ref minted before the login be honoured after
+            // it, and would let a `stale-ref` message quote page state the
+            // agent never read.
             session.last_snapshot = None;
+            session.served_refs = None;
             (
                 json!({
                     "ok": true,
@@ -1139,7 +1183,13 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 .map(|r| r.render())
                 .collect::<Vec<_>>()
                 .join("\n");
-            let highest = all.last().map(|r| r.seq);
+            // The highest seq, not the last appended. Sequence numbers are
+            // taken before the append, and a socket reader thread appends
+            // concurrently with the page's own fetches — so append order and
+            // seq order can differ, and `last()` would either re-show a row or
+            // skip one permanently. A hole in a log this verb documents as
+            // complete by construction is the worst of the two.
+            let highest = all.iter().map(|r| r.seq).max();
 
             (
                 json!({
@@ -1194,10 +1244,17 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             };
 
             let waited = session.page.wait_for(&target);
-            // `changed` only when the page actually ran something: a condition
+            // `changed` only when something actually happened: a condition
             // already true has moved nothing, and sending every attached viewer
             // a frame for it would undo the zero-frames-at-rest property.
-            let moved = waited.settled.elapsed_ms > 0 || waited.settled.timers_run > 0;
+            //
+            // `waited.changed` is first because it is the only one that sees a
+            // socket message: those arrive on real time, advancing neither the
+            // virtual clock nor the timer count, so a wait satisfied by one
+            // left every viewer showing the page from before it.
+            let moved = waited.changed
+                || waited.settled.elapsed_ms > 0
+                || waited.settled.timers_run > 0;
             (
                 json!({
                     "ok": true,
@@ -1226,7 +1283,9 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             let Some(waited) = session.page.wait_for_script(expr) else {
                 return (VerbError::no_script(Verb::WaitForScript).reply(), false);
             };
-            let moved = waited.settled.elapsed_ms > 0 || waited.settled.timers_run > 0;
+            let moved = waited.changed
+                || waited.settled.elapsed_ms > 0
+                || waited.settled.timers_run > 0;
             (
                 json!({
                     "ok": true,
@@ -1370,13 +1429,34 @@ fn resolve_ref(
     };
     let wanted = reference.trim_start_matches('@');
     match served.iter().find(|e| e.id == wanted) {
-        Some(before) if before == entry => Ok(entry.clone()),
+        Some(before) if same_target(before, entry) => Ok(entry.clone()),
         // Either it named something else in the served reading, or it was not
         // in it at all. Both mean the same thing to the caller and get the same
         // answer, which names what the ref points at *now* — the one piece of
         // evidence the session has and the agent does not.
         Some(_) | None => Err(VerbError::stale_ref(reference, &describe(entry))),
     }
+}
+
+/// Whether two readings of a ref name the same thing.
+///
+/// Compares identity, **not** `name`, and that distinction is the whole of it.
+/// `accessible_name` reports a text input's *current value* (and a password
+/// field's mask), so `type @e1 alice` changes `@e1`'s name from `username` to
+/// `alice` without renumbering anything. A full `RefEntry` equality therefore
+/// refused the second `type` on the same field — which is exactly the retry the
+/// README documents ("`type` replaces the field rather than appending, so
+/// retrying after a failed submit does not produce `alicealice`") and exactly
+/// what the skill promises when it says typing renumbers nothing.
+///
+/// What identifies a ref is where it sits and what it is: the id it was served
+/// under, the node it resolved to, its role, and — for a link — where it goes.
+/// A page that changed any of those changed the thing the agent read.
+fn same_target(before: &crate::snapshot::RefEntry, now: &crate::snapshot::RefEntry) -> bool {
+    before.id == now.id
+        && before.node_id == now.node_id
+        && before.role == now.role
+        && before.href == now.href
 }
 
 /// A ref entry as one line of prose, safe to put in an error message.
@@ -2169,6 +2249,47 @@ mod tests {
     }
 
     #[test]
+    fn a_credential_a_page_reflects_back_is_redacted_on_the_way_out() {
+        // `secrets` documents redaction as the rule that anything written back
+        // out goes through, and nothing called it. It matters beyond tidiness:
+        // a login form that reflects what was typed — a hidden field, a
+        // validation message, a title — puts the value in the DOM, and the next
+        // snapshot would hand it to the agent the indirection exists to keep it
+        // from.
+        let mut session = session_with(
+            "<html><body><p id='echo'>nothing yet</p></body></html>",
+        );
+        session.secrets =
+            crate::secrets::Secrets::from_pairs(&[("H5I_SECRET_ACME", "hunter2-secret")]);
+
+        // Stand in for the page having reflected it: put the value where a
+        // read verb will find it.
+        let dom = session.page.dom();
+        {
+            let doc = dom.borrow();
+            let node = doc.query_selector("#echo").ok().flatten();
+            assert!(node.is_some(), "the fixture needs the node");
+        }
+        let reply = redact_reply(
+            &session.secrets,
+            json!({
+                "ok": true,
+                "text": "the form said hunter2-secret back",
+                "nested": {"rows": ["hunter2-secret"]},
+            }),
+        );
+        let rendered = reply.to_string();
+        assert!(
+            !rendered.contains("hunter2-secret"),
+            "the value survived a reply: {rendered}"
+        );
+        assert!(
+            rendered.contains("$H5I_SECRET_ACME"),
+            "and it should say which credential it was: {rendered}"
+        );
+    }
+
+    #[test]
     fn env_lists_names_and_the_engine_has_no_verb_that_returns_a_value() {
         let mut session = session_with("<html><body><p>hi</p></body></html>");
         session.secrets = crate::secrets::Secrets::from_pairs(&[
@@ -2561,6 +2682,33 @@ mod tests {
         assert_ne!(
             reply["code"], "stale-ref",
             "typing and scrolling do not renumber refs: {reply:?}"
+        );
+    }
+
+    #[test]
+    fn typing_into_one_ref_twice_is_the_documented_retry_and_must_work() {
+        // README: "`type` replaces the field rather than appending, so retrying
+        // after a failed submit does not produce `alicealice`." That retry
+        // types into the *same* ref twice.
+        let mut session = session_with(
+            "<html><body><form><input name='user'></form></body></html>",
+        );
+        let refs = serve_refs(&mut session);
+        let id = refs[0].id.clone();
+
+        let (first, _) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": id.clone(), "text": "alice"}),
+        );
+        assert_eq!(first["ok"], true, "{first:?}");
+
+        let (second, _) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": id, "text": "bob"}),
+        );
+        assert_eq!(
+            second["ok"], true,
+            "the documented retry was refused: {second:?}"
         );
     }
 

@@ -1852,6 +1852,30 @@ fn write_cookie(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 // no thread of control to deliver into. For an agent driving a page this is
 // invisible; for anything expecting real-time delivery it is not.
 
+/// One drained event as `[kind, payload, name]`.
+///
+/// Always three elements, and `name` carries the event type for a server-sent
+/// event. It used to be packed into the payload as a first line and unpacked by
+/// a heuristic on the JS side, which read a plain multi-line
+/// `data: one\ndata: two` as an event *named* `one`.
+fn entry_for(
+    event: crate::wsclient::Event,
+    context: &mut Context,
+) -> JsResult<boa_engine::object::builtins::JsArray> {
+    let (kind, payload, name) = match event {
+        crate::wsclient::Event::Open => ("open", String::new(), String::new()),
+        crate::wsclient::Event::Message(text) => ("message", text, String::new()),
+        crate::wsclient::Event::Named { name, data } => ("message", data, name),
+        crate::wsclient::Event::Closed(why) => ("close", why, String::new()),
+        crate::wsclient::Event::Failed(why) => ("error", why, String::new()),
+    };
+    let entry = boa_engine::object::builtins::JsArray::new(context)?;
+    entry.push(js_string!(kind), context)?;
+    entry.push(js_string!(payload.as_str()), context)?;
+    entry.push(js_string!(name.as_str()), context)?;
+    Ok(entry)
+}
+
 /// Open a socket. Returns its id, or throws with the reason.
 fn socket_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let raw = arg_string(args, 0, context)?;
@@ -1912,31 +1936,7 @@ fn socket_drain(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     };
 
     for event in socket.drain() {
-        let (kind, payload) = match event {
-            crate::wsclient::Event::Open => ("open", String::new()),
-            crate::wsclient::Event::Message(text) => ("message", text),
-            crate::wsclient::Event::Closed(why) => ("close", why),
-            crate::wsclient::Event::Failed(why) => ("error", why),
-        };
-        let pair = boa_engine::object::builtins::JsArray::new(context)?;
-        pair.push(js_string!(kind), context)?;
-        pair.push(js_string!(payload.as_str()), context)?;
-        out.push(pair, context)?;
-    }
-
-    // Dropped messages become an error event rather than being silently
-    // absorbed: a page that lost frames behaved differently from one that did
-    // not, and the difference should not be invisible.
-    let dropped = socket.dropped();
-    if dropped > 0 {
-        let pair = boa_engine::object::builtins::JsArray::new(context)?;
-        pair.push(js_string!("error"), context)?;
-        let text = format!(
-            "{dropped} message(s) were dropped: this socket queued more than the engine holds \
-             for one that is not being read"
-        );
-        pair.push(js_string!(text.as_str()), context)?;
-        out.push(pair, context)?;
+        out.push(entry_for(event, context)?, context)?;
     }
 
     Ok(out.into())
@@ -1987,28 +1987,7 @@ fn sse_drain(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     };
 
     for event in stream.drain() {
-        let (kind, payload) = match event {
-            crate::wsclient::Event::Open => ("open", String::new()),
-            crate::wsclient::Event::Message(text) => ("message", text),
-            crate::wsclient::Event::Closed(why) => ("close", why),
-            crate::wsclient::Event::Failed(why) => ("error", why),
-        };
-        let pair = boa_engine::object::builtins::JsArray::new(context)?;
-        pair.push(js_string!(kind), context)?;
-        pair.push(js_string!(payload.as_str()), context)?;
-        out.push(pair, context)?;
-    }
-
-    let dropped = stream.dropped();
-    if dropped > 0 {
-        let pair = boa_engine::object::builtins::JsArray::new(context)?;
-        pair.push(js_string!("error"), context)?;
-        let text = format!(
-            "{dropped} event(s) were dropped: this stream queued more than the engine holds \
-             for one that is not being read"
-        );
-        pair.push(js_string!(text.as_str()), context)?;
-        out.push(pair, context)?;
+        out.push(entry_for(event, context)?, context)?;
     }
 
     Ok(out.into())

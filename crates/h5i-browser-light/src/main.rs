@@ -550,17 +550,23 @@ fn serve(
 ) -> Result<(), H5iError> {
     let (requests, factory, page) = load(target, net, view)?;
     let stream_file = stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
-    let control_file = control_file
+    let chosen = control_file
         .or_else(|| std::env::var(CONTROL_FILE_VAR).ok().map(PathBuf::from))
-        .or_else(|| stream_file.as_deref().map(control_file_beside))
-        // The other half of `session_port`'s default. Without this the two
-        // disagree: the verbs would look somewhere `serve` never wrote.
-        .or_else(default_control_file);
+        .or_else(|| stream_file.as_deref().map(control_file_beside));
+    // The other half of `session_port`'s default. Without this the two
+    // disagree: the verbs would look somewhere `serve` never wrote.
+    let defaulted = chosen.is_none();
+    let control_file = chosen.or_else(default_control_file);
 
-    // Created 0700 before anything is advertised into it, and checked when it
-    // already exists. A control file is a port number and a port number is a
-    // redirect, so the directory holding one has to be ours alone.
-    if let Some(path) = &control_file
+    // Created 0700 before anything is advertised into it — but **only** the
+    // directory this binary chose. `session_port` already exempts a path
+    // someone typed on the same principle, and applying the check here anyway
+    // broke a documented invocation: SKILL.md tells an agent to give each
+    // concurrent session its own `--control-file`, and
+    // `serve --control-file /tmp/a.control` then aborted on `/tmp` being
+    // mode 1777 before opening anything.
+    if defaulted
+        && let Some(path) = &control_file
         && let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -778,6 +784,20 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
         })?,
     };
 
+    // Absence first, and privacy second. The other order made the *first* thing
+    // a new standalone user ever sees — running a verb before `serve` — a
+    // warning about credentials being redirected to somebody else's listener,
+    // when the real answer is "nothing is running yet". A missing directory is
+    // not a suspicious one.
+    if !path.exists() {
+        return Err(H5iError::Metadata(format!(
+            "no session is listening ({} does not exist). Start one with \
+             `h5i-browser-light serve <url>` — it holds a page open for these verbs to \
+             drive — or point at a running one with --control-file or --port.",
+            path.display()
+        )));
+    }
+
     // Only for the default. A path someone typed is a path someone chose.
     if explicit_none
         && let Some(parent) = path.parent()
@@ -787,15 +807,6 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
             "refusing to read a session port from {}: {why}. A port number there is enough \
              to point `session type` — carrying a substituted credential — at somebody \
              else's listener. Pass --control-file or --port to use it anyway.",
-            path.display()
-        )));
-    }
-
-    if !path.exists() {
-        return Err(H5iError::Metadata(format!(
-            "no session is listening ({} does not exist). Start one with \
-             `h5i-browser-light serve <url>` — it holds a page open for these verbs to \
-             drive — or point at a running one with --control-file or --port.",
             path.display()
         )));
     }
@@ -1222,6 +1233,28 @@ mod tests {
             .expect("chmod");
         std::fs::write(&file, "1").expect("write");
         assert!(check_private_dir(&file).is_err());
+    }
+
+    #[test]
+    fn a_control_file_the_caller_named_is_not_second_guessed() {
+        // SKILL.md tells an agent to give each concurrent session its own
+        // `--control-file`. Applying the private-directory rule to a path
+        // somebody typed made `serve --control-file /tmp/a.control` abort on
+        // `/tmp` being mode 1777, before it opened anything — a documented
+        // invocation refused by a guard meant for the path nobody chose.
+        //
+        // `session_port` already drew that line; this is the same line on the
+        // serving side, asserted through the predicate they share.
+        assert!(
+            check_private_dir(std::path::Path::new("/tmp")).is_err(),
+            "the fixture assumes /tmp is world-writable"
+        );
+        // The rule still applies to a default, and default_control_file never
+        // points at a shared directory in the first place.
+        temp_env(&[("XDG_RUNTIME_DIR", Some("/run/user/1000"))], || {
+            let path = default_control_file().expect("a path");
+            assert!(!path.starts_with("/tmp"), "{}", path.display());
+        });
     }
 
     #[cfg(unix)]

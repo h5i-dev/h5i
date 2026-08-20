@@ -4109,6 +4109,12 @@
           socket._fire("message", event);
         } else if (kind === "close") {
           socket.readyState = WebSocket.CLOSED;
+          // Tell the engine too, not just this map. Dropping it only here left
+          // the Rust side holding the connection for the life of the page: the
+          // snapshot reported a phantom open socket forever, and every later
+          // `wait_for` polled in real time for the whole network budget
+          // because the engine still believed something might arrive.
+          api.socketClose(socket._id);
           openSockets.delete(socket._id);
           const event = new Event("close");
           event.code = 1006;
@@ -4133,25 +4139,17 @@
           stream.readyState = EventSource.OPEN;
           stream._fire("open", new Event("open"));
         } else if (kind === "message") {
-          // The reader carries a named type in-band, because the drain
-          // protocol has one string per event. First line is the name when
-          // there is one; a plain `message` has no prefix.
-          let name = "message";
-          let data = payload;
-          const cut = payload.indexOf("\n");
-          if (cut > 0 && !payload.slice(0, cut).includes(" ")) {
-            const candidate = payload.slice(0, cut);
-            if (/^[A-Za-z_][A-Za-z0-9_-]*$/.test(candidate) && candidate !== "data") {
-              name = candidate;
-              data = payload.slice(cut + 1);
-            }
-          }
+          // The name arrives as its own field. Reading it out of the payload
+          // meant guessing, and a plain `data: one\ndata: two` was read as an
+          // event named `one` carrying `two`, so `onmessage` never fired.
+          const name = entry[2] || "message";
           const event = new Event(name);
-          event.data = data;
+          event.data = payload;
           event.origin = stream._url;
           stream._fire(name === "message" ? "message" : name, event);
         } else if (kind === "close") {
           stream.readyState = EventSource.CLOSED;
+          api.sseClose(stream._id);
           openStreams.delete(stream._id);
           const event = new Event("error");
           event.message = payload;

@@ -41,7 +41,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
 use h5i_error::H5iError;
@@ -53,11 +53,18 @@ use crate::ws::{self, Incoming};
 /// Longest a handshake may take.
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Cap on how many undelivered messages a socket may buffer.
+/// How many undelivered messages a socket may hold.
 ///
-/// A page that opens a socket and never reads it must not grow without bound
-/// inside a memory-capped box. Past this, the oldest are dropped and the drop is
-/// counted and reported, rather than the connection quietly becoming a leak.
+/// A **bounded** channel, which is a stronger statement than the cap this used
+/// to apply on the way out. The old shape trimmed an unbounded queue when the
+/// page happened to drain it — but the page only drains at a settle, and a
+/// resident session is idle between verbs by design, so a chatty socket grew
+/// without limit in exactly the case the cap was written for.
+///
+/// Bounded, the reader thread blocks instead, TCP back-pressures the server, and
+/// nothing is silently lost. That also removes a drop counter which, because it
+/// only ever increased, made every later drain report an error event — and an
+/// event delivered every round is a page the settle loop can never call idle.
 const MAX_QUEUED: usize = 512;
 
 /// What a socket hands the page.
@@ -65,6 +72,14 @@ const MAX_QUEUED: usize = 512;
 pub enum Event {
     Open,
     Message(String),
+    /// A message carrying an event name, which only server-sent events have.
+    ///
+    /// A separate variant rather than a marker inside the payload. The first
+    /// attempt packed the name into the string as a first line and let the
+    /// prelude guess which messages had one, so a plain multi-line
+    /// `data: one\ndata: two` was read as an event *named* `one` carrying
+    /// `two`, and the page's `onmessage` never fired.
+    Named { name: String, data: String },
     /// The peer or the transport ended it. Carries a reason for the page's
     /// `close` event, and for the console.
     Closed(String),
@@ -76,10 +91,6 @@ pub enum Event {
 pub struct Socket {
     /// The write half. `None` once closed.
     out: Mutex<Option<TcpStream>>,
-    /// Frames the reader thread has delivered and the page has not drained.
-    inbox: Mutex<Vec<Event>>,
-    /// How many were dropped to stay under the cap.
-    dropped: Mutex<usize>,
     rx: Mutex<Receiver<Event>>,
     /// The receipt sequence the handshake was recorded under, so frames can be
     /// attributed to the connection that carried them.
@@ -144,7 +155,10 @@ impl Socket {
         // is quiet almost all the time.
         let _ = stream.set_read_timeout(None);
 
-        let (tx, rx) = channel();
+        let (tx, rx) = std::sync::mpsc::sync_channel(MAX_QUEUED);
+        // Queued before the reader starts, so `open` reaches the page ahead of
+        // anything the peer says. Capacity is far above one, so it cannot block.
+        let _ = tx.send(Event::Open);
         let broker_for_thread = broker.clone();
         let url_for_thread = url.clone();
 
@@ -158,8 +172,6 @@ impl Socket {
 
         Ok(Socket {
             out: Mutex::new(Some(stream)),
-            inbox: Mutex::new(vec![Event::Open]),
-            dropped: Mutex::new(0),
             rx: Mutex::new(rx),
             seq,
             url: url.clone(),
@@ -187,33 +199,13 @@ impl Socket {
     /// Non-blocking by construction: this is called from the settle loop and
     /// from verb boundaries, and a blocking read there would stall the page.
     pub fn drain(&self) -> Vec<Event> {
+        let mut out = Vec::new();
         if let Ok(rx) = self.rx.lock() {
             while let Ok(event) = rx.try_recv() {
-                if let Ok(mut inbox) = self.inbox.lock() {
-                    inbox.push(event);
-                    if inbox.len() > MAX_QUEUED {
-                        let over = inbox.len() - MAX_QUEUED;
-                        inbox.drain(..over);
-                        if let Ok(mut dropped) = self.dropped.lock() {
-                            *dropped += over;
-                        }
-                    }
-                }
+                out.push(event);
             }
         }
-        self.inbox
-            .lock()
-            .map(|mut inbox| std::mem::take(&mut *inbox))
-            .unwrap_or_default()
-    }
-
-    /// How many messages were dropped to stay under the queue cap.
-    ///
-    /// Counted rather than hidden: a page that lost messages behaved
-    /// differently from one that did not, and an agent reading the result
-    /// should be able to know which it is looking at.
-    pub fn dropped(&self) -> usize {
-        self.dropped.lock().map(|d| *d).unwrap_or(0)
+        out
     }
 
     pub fn close(&self) {
@@ -248,6 +240,14 @@ impl Drop for Socket {
 pub enum Direction {
     Send,
     Receive,
+    /// An event on a server-sent stream.
+    ///
+    /// Its own variant because the receipt has to say what actually crossed the
+    /// wire. An `EventSource` opened as `SSE-OPEN` and then recorded every
+    /// event as `WS-RECV`, which describes a WebSocket frame on a connection
+    /// that is not one — a log that misdescribes the protocol, in an engine
+    /// whose claim is that the log is the truth about the wire.
+    StreamReceive,
 }
 
 impl Direction {
@@ -262,6 +262,7 @@ impl Direction {
         match self {
             Direction::Send => "WS-SEND",
             Direction::Receive => "WS-RECV",
+            Direction::StreamReceive => "SSE-RECV",
         }
     }
 }
@@ -269,7 +270,7 @@ impl Direction {
 /// Read frames until the socket ends, receipting each one.
 fn read_loop(
     mut reader: BufReader<TcpStream>,
-    tx: Sender<Event>,
+    tx: SyncSender<Event>,
     broker: Arc<Broker>,
     url: Url,
 ) {

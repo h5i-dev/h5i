@@ -241,6 +241,14 @@ impl WaitEnd {
 pub struct Waited {
     /// Whether the condition was true when the wait stopped.
     pub met: bool,
+    /// Whether the page changed while waiting.
+    ///
+    /// Set by the caller from the realm's dirty flag, because the settle's own
+    /// counters do not see it: a socket message delivers on real time, so it
+    /// advances neither the virtual clock nor the timer count. A wait satisfied
+    /// by one therefore looked like a wait that did nothing, and every attached
+    /// viewer kept showing the page from before the message.
+    pub changed: bool,
     /// The settle underneath it, so the caller sees the same accounting a
     /// snapshot would have carried.
     pub settled: Settled,
@@ -568,7 +576,12 @@ impl Script {
         } else {
             WaitEnd::Quiescent
         };
-        Waited { met, settled, end }
+        Waited {
+            met,
+            settled,
+            end,
+            changed: false,
+        }
     }
 
     /// Ask the predicate, whichever kind it is.

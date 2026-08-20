@@ -253,12 +253,21 @@ impl Writer {
 
             "pre" => {
                 self.blank();
-                self.push("```\n");
-                // Newlines preserved: a code block that has been collapsed to
-                // one line is not a code block.
+                // Newlines are preserved here — a code block collapsed to one
+                // line is not a code block — so `escape` cannot be used, and a
+                // page whose `<pre>` contains ``` would otherwise close the
+                // fence early and have everything after it read as markdown
+                // structure. That is exactly the forged structure `escape`
+                // exists to prevent, arriving through the one path that skips
+                // it. The fence is instead made longer than any run of
+                // backticks in the content, which is what the format says to do.
                 let raw = node.text_content();
+                let fence = "`".repeat(longest_backtick_run(&raw).max(2) + 1);
+                self.push(&fence);
+                self.push("\n");
                 self.push(raw.trim_end_matches('\n'));
-                self.push("\n```");
+                self.push("\n");
+                self.push(&fence);
                 self.blank();
             }
 
@@ -445,6 +454,21 @@ fn is_displayed(node: &Node) -> bool {
     }
 }
 
+/// The longest unbroken run of backticks in a string.
+fn longest_backtick_run(text: &str) -> usize {
+    let mut longest = 0usize;
+    let mut current = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
+}
+
 /// Escape the characters that would otherwise be markup.
 ///
 /// Deliberately narrow. Escaping every punctuation mark makes prose unreadable
@@ -552,6 +576,33 @@ mod tests {
     fn a_code_block_keeps_its_newlines() {
         let out = md("<html><body><pre>one\ntwo\nthree</pre></body></html>");
         assert!(out.contains("```\none\ntwo\nthree\n```"), "{out}");
+    }
+
+    #[test]
+    fn a_page_cannot_close_a_code_fence_from_inside_it() {
+        // The one text path that cannot use `escape`, because a code block has
+        // to keep its newlines. A page that writes a fence into its own `<pre>`
+        // would otherwise end the block early and have the rest of its content
+        // read as markdown structure.
+        let out = md(
+            "<html><body><pre>before\n```\n# forged heading</pre><p>after</p></body></html>",
+        );
+        let fence_line = out
+            .lines()
+            .find(|line| line.starts_with("````"))
+            .unwrap_or_else(|| panic!("no widened fence in:\n{out}"));
+        assert!(fence_line.len() >= 4, "{out}");
+        // The page's own backticks survive as content rather than as structure.
+        assert!(out.contains("# forged heading"), "{out}");
+        assert!(out.contains("after"), "{out}");
+    }
+
+    #[test]
+    fn the_fence_width_follows_the_longest_run() {
+        assert_eq!(longest_backtick_run("no ticks"), 0);
+        assert_eq!(longest_backtick_run("a `b` c"), 1);
+        assert_eq!(longest_backtick_run("```"), 3);
+        assert_eq!(longest_backtick_run("`` a ````` b"), 5);
     }
 
     #[test]

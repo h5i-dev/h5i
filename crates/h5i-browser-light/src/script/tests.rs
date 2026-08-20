@@ -856,6 +856,67 @@ fn a_page_can_open_a_socket_read_a_message_and_the_receipt_holds_every_frame() {
 }
 
 #[test]
+fn a_peer_that_closes_releases_the_engine_side_too() {
+    // The leak. The prelude used to drop a closed socket from its own map and
+    // never tell the engine, so `host.sockets` held the connection for the life
+    // of the page: every snapshot carried a phantom "this page holds 1 open
+    // socket" note, and every later `wait_for` polled in real time for the
+    // whole ten-second network budget waiting on a connection that was gone.
+    let (port, server) = socket_server("bye");
+
+    let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
+    let broker = std::sync::Arc::new(
+        crate::net::Broker::new(crate::policy::Policy::new(), sink, None).expect("broker"),
+    );
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = crate::engine::PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        crate::engine::PageOptions::default(),
+    );
+    let base = url::Url::parse("http://127.0.0.1/").unwrap();
+    let page = factory.from_html("<html><body><p>x</p></body></html>", &base);
+    let mut script = Script::new(page.dom(), broker, &base).expect("realm");
+
+    script
+        .eval(&format!(
+            "globalThis.sock = new WebSocket('ws://127.0.0.1:{port}/');\
+             globalThis.closed = false;\
+             sock.onclose = () => {{ globalThis.closed = true; }};"
+        ))
+        .expect("opened");
+    assert_eq!(script.open_sockets(), 1, "it is open to begin with");
+
+    // The server greets and then hangs up, so a close reaches the page.
+    let waited = script.settle_until_expr("globalThis.closed === true");
+    assert!(waited.met, "no close arrived: {}", waited.render());
+
+    assert_eq!(
+        script.open_sockets(),
+        0,
+        "the engine still holds a connection the page has closed"
+    );
+    assert_eq!(
+        script.open_sockets_via_prelude(),
+        0,
+        "and the page agrees"
+    );
+
+    // The consequence that made it expensive: a later wait must not poll in
+    // real time for a connection nobody has.
+    let started = std::time::Instant::now();
+    let after = script.settle_until_expr("false");
+    assert_eq!(after.end, crate::script::WaitEnd::Quiescent, "{}", after.render());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "it waited out a budget for a dead socket: {:?}",
+        started.elapsed()
+    );
+
+    let _ = server.join();
+}
+
+#[test]
 fn an_open_socket_does_not_make_a_page_look_permanently_busy() {
     // The trap the interval precedent already records: a perpetual thing that
     // counts as pending makes every page holding one report "still busy" on

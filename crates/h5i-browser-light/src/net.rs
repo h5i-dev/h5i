@@ -525,7 +525,10 @@ impl Broker {
         self.sink.append(&record)?;
         let mut outcome = record.response();
         outcome.bytes = Some(bytes);
-        outcome.status = Some(101);
+        // No status. 101 is the WebSocket upgrade's, and stamping it on every
+        // frame said "switching protocols" four hundred times on one
+        // connection — and said it on event streams, which never switched
+        // anything. A frame is not an exchange with a status of its own.
         self.sink.append(&outcome)
     }
 
@@ -582,7 +585,22 @@ impl Broker {
         }
 
         match request.send() {
-            Ok(response) => Ok(response),
+            Ok(response) => {
+                // The response half, on success too. Every other path here
+                // writes both phases, and a reader that pairs them — the
+                // console's request/response linkage, `h5i box watch` — showed
+                // an `SSE-OPEN` request that never completed for the life of
+                // the session. It records that the connection was *established*;
+                // what flows after it is receipted per event.
+                let mut outcome = record.response();
+                outcome.status = Some(response.status().as_u16());
+                if let Err(e) = self.sink.append(&outcome) {
+                    return Err(format!(
+                        "refusing to stream: the receipt could not be written: {e}"
+                    ));
+                }
+                Ok(response)
+            }
             Err(error) => {
                 let mut outcome = record.response();
                 outcome.error = Some(error.to_string());

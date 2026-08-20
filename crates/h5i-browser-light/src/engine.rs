@@ -830,6 +830,8 @@ impl Page {
             let met = ready();
             return crate::script::Waited {
                 met,
+                // No realm ran, so nothing can have changed.
+                changed: false,
                 settled: crate::script::Settled {
                     elapsed_ms: 0,
                     timers_run: 0,
@@ -844,8 +846,8 @@ impl Page {
             };
         };
 
-        let waited = script.settle_until(&mut ready);
-        self.after_script(waited.settled.clone());
+        let mut waited = script.settle_until(&mut ready);
+        waited.changed = self.after_script(waited.settled.clone());
         waited
     }
 
@@ -855,8 +857,8 @@ impl Page {
     /// routing answer rather than as a condition that failed.
     pub fn wait_for_script(&mut self, expr: &str) -> Option<crate::script::Waited> {
         let script = self.script.as_mut()?;
-        let waited = script.settle_until_expr(expr);
-        self.after_script(waited.settled.clone());
+        let mut waited = script.settle_until_expr(expr);
+        waited.changed = self.after_script(waited.settled.clone());
         Some(waited)
     }
 
@@ -866,12 +868,13 @@ impl Page {
     /// page's own code, so it owes the same layout re-resolve and the same
     /// `settled` record, and forgetting either would leave the next snapshot
     /// describing a document the engine had not laid out.
-    fn after_script(&mut self, settled: crate::script::Settled) {
+    fn after_script(&mut self, settled: crate::script::Settled) -> bool {
         let dirty = self.script.as_mut().map(|s| s.take_dirty()).unwrap_or(false);
         self.settled = Some(settled);
         if dirty {
             self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
         }
+        dirty
     }
 
     /// How many sockets this page holds open.
