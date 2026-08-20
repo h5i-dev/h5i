@@ -134,6 +134,14 @@ enum Command {
     #[command(subcommand)]
     Session(SessionVerb),
 
+    /// Write or print the agent skill this binary carries.
+    ///
+    /// The skill teaches an agent to drive this browser on a bare host: the
+    /// verbs, the ref rule, the error codes, and — the part it must not get
+    /// wrong — which guarantees hold anywhere and which need an h5i box.
+    #[command(subcommand)]
+    Skill(SkillCommands),
+
     /// Report what this engine can and cannot do, as JSON.
     ///
     /// h5i reads this to decide what to route here rather than inferring it
@@ -320,6 +328,24 @@ enum SessionVerb {
     },
 }
 
+#[derive(Subcommand)]
+enum SkillCommands {
+    /// Write the skill to disk. Defaults to this runtime's per-user skill
+    /// directory; `$H5I_SKILL_DIR` overrides it, which is how a box redirects
+    /// an install to an in-box location.
+    Install {
+        /// Write here instead of the default target.
+        #[arg(long, value_name = "DIR")]
+        target: Option<PathBuf>,
+    },
+
+    /// Print the skill to stdout.
+    Show,
+
+    /// Print where `install` would write.
+    Path,
+}
+
 #[derive(Args, Clone)]
 struct SessionArgs {
     /// The file a `serve` wrote its control port into. Defaults to
@@ -434,6 +460,7 @@ fn run() -> Result<(), H5iError> {
             Ok(())
         }
         Command::Doctor { net } => doctor(&net),
+        Command::Skill(action) => skill(action),
         Command::Session(verb) => session(verb),
         Command::Open {
             target,
@@ -525,7 +552,20 @@ fn serve(
     let stream_file = stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
     let control_file = control_file
         .or_else(|| std::env::var(CONTROL_FILE_VAR).ok().map(PathBuf::from))
-        .or_else(|| stream_file.as_deref().map(control_file_beside));
+        .or_else(|| stream_file.as_deref().map(control_file_beside))
+        // The other half of `session_port`'s default. Without this the two
+        // disagree: the verbs would look somewhere `serve` never wrote.
+        .or_else(default_control_file);
+
+    // Created 0700 before anything is advertised into it, and checked when it
+    // already exists. A control file is a port number and a port number is a
+    // redirect, so the directory holding one has to be ours alone.
+    if let Some(path) = &control_file
+        && let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        make_private_dir(parent)?;
+    }
     let action_log = action_log.or_else(|| std::env::var(ACTIONS_VAR).ok().map(PathBuf::from));
     h5i_browser_light::stream::serve(
         factory,
@@ -540,6 +580,31 @@ fn serve(
             requests,
         },
     )
+}
+
+/// Write or print the skill this binary carries.
+fn skill(action: SkillCommands) -> Result<(), H5iError> {
+    match action {
+        SkillCommands::Install { target } => {
+            let target = match target {
+                Some(path) => path,
+                None => h5i_browser_light::skill::default_target()?,
+            };
+            let written = h5i_browser_light::skill::install(&target)?;
+            println!(
+                "installed the {} skill ({} page(s), v{}) -> {}",
+                h5i_browser_light::skill::NAME,
+                written.len(),
+                env!("CARGO_PKG_VERSION"),
+                target.display()
+            );
+        }
+        SkillCommands::Show => print!("{}", h5i_browser_light::skill::page(None)?),
+        SkillCommands::Path => {
+            println!("{}", h5i_browser_light::skill::default_target()?.display())
+        }
+    }
+    Ok(())
 }
 
 /// Drive the resident session.
@@ -685,7 +750,7 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
     if let Some(port) = at.port {
         return Ok(port);
     }
-    let path = at
+    let explicit = at
         .control_file
         .clone()
         .or_else(|| std::env::var(CONTROL_FILE_VAR).ok().map(PathBuf::from))
@@ -693,15 +758,152 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
             std::env::var(STREAM_FILE_VAR)
                 .ok()
                 .map(|s| control_file_beside(Path::new(&s)))
-        })
-        .ok_or_else(|| {
+        });
+
+    let explicit_none = explicit.is_none();
+    let path = match explicit {
+        // Named by the caller or by h5i, which is a deliberate act; the
+        // directory check below is for the path nobody named.
+        Some(path) => path,
+        // Nothing said where the session is, which on a bare host is the
+        // ordinary case rather than a mistake: h5i sets those variables inside
+        // a box and nothing sets them outside one. `serve` writes here by
+        // default, so the documented no-flags path works with no h5i anywhere.
+        None => default_control_file().ok_or_else(|| {
             H5iError::Metadata(
-                "no session to talk to: pass --control-file or --port, or set \
-                 $H5I_BROWSER_STREAM_FILE (h5i sets it inside a box)."
+                "no session to talk to, and no per-user runtime directory to look in. \
+                 Pass --control-file or --port, or set $XDG_RUNTIME_DIR or $HOME."
                     .into(),
             )
-        })?;
+        })?,
+    };
+
+    // Only for the default. A path someone typed is a path someone chose.
+    if explicit_none
+        && let Some(parent) = path.parent()
+        && let Err(why) = check_private_dir(parent)
+    {
+        return Err(H5iError::Metadata(format!(
+            "refusing to read a session port from {}: {why}. A port number there is enough \
+             to point `session type` — carrying a substituted credential — at somebody \
+             else's listener. Pass --control-file or --port to use it anyway.",
+            path.display()
+        )));
+    }
+
+    if !path.exists() {
+        return Err(H5iError::Metadata(format!(
+            "no session is listening ({} does not exist). Start one with \
+             `h5i-browser-light serve <url>` — it holds a page open for these verbs to \
+             drive — or point at a running one with --control-file or --port.",
+            path.display()
+        )));
+    }
     h5i_browser_light::stream::read_port_file(&path)
+}
+
+/// Where a session advertises itself when nothing else says.
+///
+/// **Per-user, and never a shared directory.** The file holds a port number,
+/// and a port number is enough to point `session type` — with a substituted
+/// credential in it — at somebody else's listener. On a multi-user host a
+/// default under `/tmp` would make that a one-line attack, so there is no
+/// fallback to one: `$XDG_RUNTIME_DIR` first (per-user and 0700 by
+/// convention), then a directory under `$HOME`, and then nothing rather than
+/// somewhere writable by strangers.
+fn default_control_file() -> Option<PathBuf> {
+    default_session_dir().map(|dir| dir.join("session.control"))
+}
+
+/// Whether a directory is ours alone.
+///
+/// Ownership and mode rather than a list of bad paths. Blacklisting `/tmp`
+/// looked sufficient until a test set `HOME=/tmp` — which happens for real
+/// daemons — and the default landed under a world-writable parent anyway.
+/// A rule about the directory itself does not have that class of hole.
+///
+/// Non-Unix has no cheap equivalent, so it answers yes: `LOCALAPPDATA` is
+/// per-user by construction, and inventing a Windows ACL check here would be a
+/// guess wearing the shape of a guarantee.
+#[cfg(unix)]
+fn check_private_dir(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = std::fs::metadata(dir).map_err(|e| format!("cannot inspect {}: {e}", dir.display()))?;
+    if !meta.is_dir() {
+        return Err(format!("{} is not a directory", dir.display()));
+    }
+    // Safe: the only caller is this process reading its own runtime dir.
+    let me = unsafe { libc_getuid() };
+    if meta.uid() != me {
+        return Err(format!(
+            "{} is owned by uid {} and this process is uid {me}",
+            dir.display(),
+            meta.uid()
+        ));
+    }
+    if meta.mode() & 0o022 != 0 {
+        return Err(format!(
+            "{} is writable by group or other (mode {:o})",
+            dir.display(),
+            meta.mode() & 0o777
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn check_private_dir(_dir: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+/// `getuid`, without taking a dependency on `libc` for one call.
+#[cfg(unix)]
+unsafe fn libc_getuid() -> u32 {
+    unsafe extern "C" {
+        fn getuid() -> u32;
+    }
+    unsafe { getuid() }
+}
+
+/// Create the session directory, private to this user.
+///
+/// `serve` calls this before advertising. 0700 at creation rather than a
+/// chmod afterwards, so there is no window in which it exists and is readable.
+#[cfg(unix)]
+fn make_private_dir(dir: &Path) -> Result<(), H5iError> {
+    use std::os::unix::fs::DirBuilderExt;
+    if dir.exists() {
+        return check_private_dir(dir).map_err(H5iError::Metadata);
+    }
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .map_err(|e| H5iError::with_path(e, dir))
+}
+
+#[cfg(not(unix))]
+fn make_private_dir(dir: &Path) -> Result<(), H5iError> {
+    std::fs::create_dir_all(dir).map_err(|e| H5iError::with_path(e, dir))
+}
+
+fn default_session_dir() -> Option<PathBuf> {
+    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR")
+        && !runtime.trim().is_empty()
+    {
+        return Some(PathBuf::from(runtime).join("h5i-browser-light"));
+    }
+    // `LOCALAPPDATA` on Windows, `HOME` elsewhere. Both are per-user.
+    let home = std::env::var("LOCALAPPDATA")
+        .ok()
+        .or_else(|| std::env::var("HOME").ok())
+        .filter(|h| !h.trim().is_empty())?;
+    Some(
+        PathBuf::from(home)
+            .join(".cache")
+            .join("h5i-browser-light"),
+    )
 }
 
 /// The control file that belongs to a given stream file.
@@ -961,6 +1163,118 @@ fn parse_target(target: &str) -> Result<Target, H5iError> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The default session path is per-user, or absent.
+    ///
+    /// Guarded because the failure is silent and serious: a shared directory
+    /// would let any local user publish a port and receive the next
+    /// `session type` — including one carrying a substituted credential.
+    #[test]
+    fn the_default_session_directory_is_never_shared() {
+        // Nothing to go on: no path at all rather than a guess.
+        temp_env(&[("XDG_RUNTIME_DIR", None), ("HOME", None), ("LOCALAPPDATA", None)], || {
+            assert!(default_control_file().is_none());
+        });
+
+        // A runtime dir is preferred, because it is per-user and 0700.
+        temp_env(&[("XDG_RUNTIME_DIR", Some("/run/user/1000")), ("HOME", Some("/home/a"))], || {
+            let path = default_control_file().expect("a path");
+            assert!(
+                path.starts_with("/run/user/1000"),
+                "{}",
+                path.display()
+            );
+        });
+
+        // Falling back to HOME, still per-user.
+        temp_env(&[("XDG_RUNTIME_DIR", Some("")), ("HOME", Some("/home/a"))], || {
+            let path = default_control_file().expect("a path");
+            assert!(path.starts_with("/home/a"), "{}", path.display());
+        });
+
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_session_directory_somebody_else_can_write_is_refused() {
+        // The rule that replaced a blacklist. Setting `HOME=/tmp` — which real
+        // daemons do — put the default under a world-writable parent, and no
+        // list of bad paths would have caught it. This checks the directory
+        // instead, which does not have that class of hole.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("chmod");
+        assert!(check_private_dir(dir.path()).is_ok());
+
+        for mode in [0o777, 0o770, 0o707, 0o722] {
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode))
+                .expect("chmod");
+            let why = check_private_dir(dir.path())
+                .expect_err(&format!("mode {mode:o} should be refused"));
+            assert!(why.contains("writable"), "{why}");
+        }
+
+        // And a path that is not a directory at all.
+        let file = dir.path().join("f");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("chmod");
+        std::fs::write(&file, "1").expect("write");
+        assert!(check_private_dir(&file).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn serve_creates_its_session_directory_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().expect("tempdir");
+        let dir = base.path().join("nested").join("session");
+        make_private_dir(&dir).expect("created");
+        let mode = std::fs::metadata(&dir).expect("meta").permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "created {:o}", mode & 0o777);
+    }
+
+    #[test]
+    fn serve_and_the_verbs_agree_on_where_a_session_lives() {
+        // The two halves have to name the same file or the verbs look
+        // somewhere `serve` never wrote, which reads as "no session running"
+        // on a host where one is.
+        temp_env(&[("XDG_RUNTIME_DIR", Some("/run/user/4242"))], || {
+            let path = default_control_file().expect("a path");
+            assert_eq!(
+                path,
+                std::path::PathBuf::from("/run/user/4242/h5i-browser-light/session.control")
+            );
+        });
+    }
+
+    /// Set some environment variables, run, and put them back.
+    ///
+    /// Serialised on a mutex: these tests write process-global state, and the
+    /// test harness runs them on threads.
+    fn temp_env(vars: &[(&str, Option<&str>)], body: impl FnOnce()) {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|(name, _)| (name.to_string(), std::env::var(name).ok()))
+            .collect();
+        for (name, value) in vars {
+            match value {
+                Some(v) => unsafe { std::env::set_var(name, v) },
+                None => unsafe { std::env::remove_var(name) },
+            }
+        }
+        body();
+        for (name, value) in saved {
+            match value {
+                Some(v) => unsafe { std::env::set_var(&name, v) },
+                None => unsafe { std::env::remove_var(&name) },
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

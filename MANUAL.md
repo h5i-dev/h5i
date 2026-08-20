@@ -370,6 +370,23 @@ h5i sends a press and a release together: typing works exactly, and holding a
 key down does not. Clicks are placed at the resolution of a terminal cell, which
 is fine for a form and coarse for a dense canvas.
 
+### The browser engine, on its own
+
+h5i's own browser engine ships as a second binary, `h5i-browser-light`, and runs
+with no h5i anywhere. Its allowlist and its fail-closed receipts are enforced by
+the engine rather than by a box, so `--allow` and `--receipts` mean the same
+thing on a bare host as inside one:
+
+```bash
+h5i-browser-light serve https://docs.rs/ --allow docs.rs &
+h5i-browser-light session snapshot
+h5i-browser-light skill install          # teach an agent to drive it
+```
+
+What a box adds is that the agent cannot go around the browser. A standalone run
+is not sandboxed and does not claim to be; what it offers is a browser whose
+whole network activity is in a log you can read.
+
 ### Inspecting what happened
 
 ```bash

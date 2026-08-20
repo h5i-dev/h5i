@@ -18,6 +18,53 @@ requests:
      200 GET https://example.com/ (559 bytes, 79ms)
 ```
 
+## Install
+
+It ships as its own binary in every h5i release, because it is useful with no
+h5i anywhere:
+
+```bash
+curl -L https://github.com/h5i-dev/h5i/releases/latest/download/h5i-browser-light-<VERSION>-<TARGET>.tar.gz | tar -xz
+sudo mv h5i-browser-light /usr/local/bin/
+
+h5i-browser-light skill install     # teach an agent to drive it
+h5i-browser-light doctor            # fonts, proxy, allowlist
+```
+
+Not on crates.io, and that is not an oversight: the crate depends on `boa` by
+git revision, because no published version's ICU requirements can coexist with
+the ones `parley` pulls through blitz. `scripts/check_boa_release.sh` fails the
+build the day that stops being true.
+
+```bash
+h5i-browser-light serve https://docs.rs/ --allow docs.rs &
+h5i-browser-light session snapshot
+h5i-browser-light session markdown
+h5i-browser-light session requests
+```
+
+`serve` advertises itself in a per-user runtime directory, so the `session`
+verbs find it with no flags and no environment.
+
+## What holds where
+
+Two different claims, and conflating them would be the kind of overstatement
+this engine exists to avoid.
+
+**Anywhere, including a bare host.** Every request this browser makes is checked
+against the allowlist — every request and every redirect hop — and written to
+the receipt before any bytes move. If the receipt cannot be written, the request
+does not happen. That is enforced by the engine, not by anything around it, so
+`--allow` and `--receipts` mean exactly the same thing on a laptop as in a box.
+
+**Only inside an h5i box.** That the agent cannot simply go around the browser.
+On a bare host nothing stops another tool from fetching whatever it likes.
+
+So a standalone run is not sandboxed, and this README will not say it is. What
+it is: a browser whose entire network activity is in a log you can read, which
+is a claim no other headless browser can make, because no other one is its own
+HTTP client.
+
 ## Why this exists
 
 h5i already drives Chromium through agent-browser, and will keep doing so for
