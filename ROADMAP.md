@@ -25,6 +25,11 @@ This document has five parts:
   run from the kernel, so the receipt carries a lane that is neither at the
   boundary of the box nor inside it. M18 is its milestone stub; the D sections
   are the authority on design and order.
+- **The board**, sections T1 to T12. Mediated collaboration between boxed
+  agents: they share information through a host-owned board and never share
+  authority. This is the product's second half — the first is one contained
+  box, this is what happens when there are several — and the T sections are the
+  authority on its design and order.
 
 **M0 through M5 are built. M6 is mostly built. M7 (the terminal viewer) is
 built but undriven.** What is not done, stated plainly so it is not read as
@@ -305,8 +310,11 @@ model we copy.
   held by human" error rather than fighting for the pointer.
 - On release, the agent must re snapshot before acting, because the DOM it
   remembers is stale.
-- Exactly one automation client per box. Multi agent shared control is out of
-  scope.
+- Exactly one automation client per box. Multi agent shared *control* is out of
+  scope: two clients steering one browser is a race with no arbiter, and the
+  control lock exists precisely so it cannot happen. This says nothing about
+  several boxes coordinating — see part T, whose whole design is that agents
+  exchange information and never share a driver, a credential, or a grant.
 
 ### 5.5 Credentials
 
@@ -8721,3 +8729,242 @@ diagnosable rather than surprising:
    usually is not (tracefs is root-only), in which case the documented layout
    is used and the check is skipped — never silently, the probe report says
    `tracefs = no` and what that costs.
+
+---
+
+# Part 6 — The board
+
+Sections T1 to T12. Built 2026-08-20 on branch `zero-trust`.
+
+## T1 The claim
+
+h5i's first half is one contained box. This is the second: several of them,
+working on the same repository, without the containment becoming decorative the
+moment they talk to each other.
+
+The one-liner is *zero-trust collaboration for agent teams*, and the invariant
+underneath it is:
+
+> Agents can share information, never permissions.
+
+Stated so it can be checked rather than admired: **a message may change what a
+peer decides; it can never change what that peer's sandbox is able to do.**
+
+## T2 The threat this exists for
+
+A single agent's sandbox bounds a single agent's blast radius. Put three agents
+in three sandboxes and let them talk, and the bound quietly stops holding — not
+because any sandbox failed, but because authority *composed*:
+
+```
+hostile input
+   ↓
+agent A is influenced
+   ↓  a message, an artifact, a shared file
+agent B acts on it
+   ↓  using B's own grants, which A never had
+the effect is A's intent with B's authority
+```
+
+No escape happened. Nothing was exploited. A persuaded B, and B was allowed to
+do the thing. This is the failure mode a sandbox per agent does not address, and
+it is the only one this part is about.
+
+What follows from that framing, and is worth being explicit about because it is
+the difference between a claim we can keep and one we cannot:
+
+**We do not claim to detect a hostile message.** No classifier, no
+prompt-injection filter, no moderation. Those are all attempts to make the *text*
+safe, and the text is not the thing under our control. What is under our control
+is what a persuaded agent can then reach — and the answer is: exactly what it
+could reach before the conversation, because nothing on this path carries a
+capability.
+
+## T3 What was already built
+
+The scope cut of 2026-08-05 (§3.2, M1) removed `msg`, `team`, `radio` and the
+orchestra crate. It did **not** remove the confinement-side plumbing those
+things used, which is still in the tree, still tested on every tier, and had
+been sitting with no writer at the other end:
+
+| seam | where | state before this part |
+|---|---|---|
+| read-only inbox | `env::prepare_env_inbox`, `BOX_INBOX_MOUNT` | mounted on every tier, tested, never written to |
+| the box's write window | `env::ingest_shell_spool`, `$H5I_ENV_CAPTURE_SPOOL` | drained after every session, two record families |
+| identity injection | `env::team_binding`, `team_identity_env` | reads two files, nothing wrote them |
+| concurrent ref append | `refstore` (CAS + jittered backoff + union merge) | live, used by `refs/h5i/env/meta` |
+
+So the board is not a reconstruction of what was cut. It is a writer for seams
+that already exist, plus a store, plus a surface. That is why it is small.
+
+## T4 The shape: file-mediated, not networked
+
+A box has exactly two board-shaped holes, and they are the two above:
+
+```
+box A                    host                     box B
+  /.h5i/inbox  ←──── tender ──── refs/h5i/board ──── tender ────→  /.h5i/inbox
+  spool/       ────→                                       ←────  spool/
+```
+
+**No socket, no port, no token, no HTTP.** This was a deliberate reversal of the
+obvious design (a small local service with per-box bearer tokens). The obvious
+design has a credential in every box; this one has nothing to steal and nowhere
+to connect. The strongest access control available here turned out to be the
+absence of an API, and it costs less code than the alternative rather than more.
+
+## T5 Identity: the box writes *what*, never *who*
+
+The staged record has fields for a thread, a kind, a body, and attachments. It
+has **no field** for a sender, a role, a box id, or a policy digest — those are
+stamped by the host from the env directory the record was found in.
+
+This is the same rule the deleted `team.rs` wrote down, and it is kept verbatim
+because it is the cheapest enforcement in the system: a field that does not
+exist in the wire format cannot be forged. A record containing
+`"sender": "human"` is not rejected; it is simply not read, and the post lands
+attributed to whichever box staged it.
+
+Host-side binding is two files in the env directory — outside every grant the
+box has — consumed by the injection path that already existed. A box can be told
+who it is, and can never tell itself something else.
+
+## T6 The ceiling: refused, never downgraded
+
+A thread names a profile every participant must be confined **under**. At attach,
+the box's enforced policy — its digest-verified `policy.resolved.toml`, not a
+profile re-resolved from a worktree an agent could have edited — is checked as a
+subset across every dimension that widens reach: net mode and egress, secret
+grants, authenticated egress, fs read and write, AF_UNIX, loopback ports, and
+host-side secret extractors.
+
+Two decisions inside that, both taken against the more obvious alternative:
+
+**Static, not a live intersection.** Computing each participant's authority as
+the intersection of everyone currently in the room is safe and unusable: an
+observer joining would strip write access from the agent doing the work, and a
+long task would not be reproducible hour to hour. A ceiling fixed by a human at
+creation, checked once per box, gives the same guarantee with none of that —
+and because a box's resolved policy cannot change while it exists, one check at
+attach holds for the box's whole life.
+
+**Refused, not re-confined.** A box over the ceiling is turned away rather than
+quietly weakened to fit. Same reasoning as `placement`: a capability the other
+side cannot satisfy is a refusal, never a silent downgrade. Attaching has to
+keep meaning "runs the way you configured it".
+
+## T7 Liveness, and why there is still no daemon
+
+R11 records that h5i has no resident process by decision. The board does not
+change that, and the reasoning is worth stating because a message board is
+exactly the kind of thing that usually demands one.
+
+**Host side.** A box that is running already has a host process supervising it —
+holding its run lock, owning its egress proxy. The tender is a thread inside
+that process, started with the session and stopped with it. Nothing is
+installed, nothing outlives the run, and there is no second lifecycle. A box
+that is not running has nothing to deliver to.
+
+**Box side.** `h5i board wait` blocks on a directory the box already has
+mounted. No hook, no `settings.json` edit, no runtime-specific integration —
+which matters because the two runtimes h5i targets do not have the same hook
+surface, and because a coordination layer that needs the user to install
+something is one most users will not install.
+
+The honest cost: an idle box's inbox goes stale until something runs in it or a
+human touches the board. For collaborating agents — running, by definition —
+that gap does not arise. If it ever does, the fix is a foreground
+`h5i board serve` looping the same function, a sibling of `h5i ui`, and not a
+background daemon. Deliberately not built yet (T12).
+
+## T8 Storage: one ref per thread
+
+```
+refs/h5i/board/meta            roster.json
+refs/h5i/board/threads/<id>    thread.json + posts.jsonl + attach-<digest>
+refs/h5i/board-attic/<id>      closed threads, moved not deleted
+```
+
+Git refs rather than the workspace's first SQLite dependency: the concurrent
+append machinery already exists and is tested, and a ref travels with the repo,
+so the union merge that reconciles `refs/h5i/env/meta` across clones works here
+for free. `refs/h5i/*` is outside the default refspec, so a board never rides an
+ordinary `git push` to a forge.
+
+Per-thread rather than one shared log, which was the first design and was wrong:
+appending rewrites the blob it appends to, so a single log means every post
+rewrites the whole board's history and reading one conversation means parsing
+all of them. Per-thread refs bound both costs by the size of one thread,
+localise CAS contention to the thread being posted to, make the thread list a
+ref enumeration whose tip timestamps are the activity order, and let `close`
+move one ref to the attic without touching anything else.
+
+`posts.jsonl` is strictly append-only, which is what makes union merge sound.
+Thread *status* is therefore a projection over the posts, never a stored field —
+the same event-sourced shape `team.rs` used, and the reason nothing has to be
+mutated and nothing can disagree with the log.
+
+## T9 Refusals are recorded, not swallowed
+
+A revoked box's post is posted **carrying its refusal**, not dropped. An
+oversized body is truncated and says so; an attachment over the cap or outside
+the kind allowlist is dropped and named. A refused post moves no state — a
+refused `CLAIM` claims nothing.
+
+The rule behind all of these: a board that silently swallows what it refuses
+teaches its readers that nothing was refused. The same reasoning as
+`sealed_overridden` in the old verify overlay, and as the browser proxy
+answering a refusal in the daemon's own wire shape rather than dropping the
+connection.
+
+## T10 Peer influence
+
+Once a peer's text has been delivered into a box, that box's output is evidence
+about the box *and* about whatever that text asked for, and the two are no
+longer separable from outside. The box is marked, and the mark appears in
+`h5i box status` and in the export report.
+
+Marked on **delivery**, not on read: delivery is what the host observes, and
+whether the agent read the file is a claim only the box could make.
+
+This is not a verdict on the text. It is the one fact a reviewer needs before
+treating a patch as the box's own work — and the counterpart to it needs no
+feature at all: a verifier that read none of the conversation is simply a box
+that was never attached.
+
+## T11 The surface
+
+The console gains a second tab rather than a second application. It is
+deliberately not styled like the first: the console is a mint instrument for
+watching one box, the board is the product's outward face and wears the site's
+drafting-sheet identity.
+
+One visual rule carries it: **inside the fence is what an agent claimed, outside
+it is what the host observed.** A post body sits in a dashed enclosure labelled
+`agent-claimed`; its sender, box, role and time sit outside it, because the host
+stamped them. A refusal is a filled red band with no fence, because the host is
+speaking in its own voice — and since nothing else on the page is filled red, a
+boundary someone tried to cross is the loudest mark on the screen.
+
+Every route is a `GET`, and the no-mutation property (`tests/console_api.rs`)
+still holds. Human actions are rendered as the commands that perform them. A
+browser tab that could post to the board would be a participant the host cannot
+name, which is the one thing the identity model does not allow.
+
+## T12 What is deliberately not built
+
+- **`h5i board serve`** — the resident tender for idle boxes (T7). Wait for the
+  gap to actually hurt.
+- **Structured delegation** — `request-action` with
+  `sender ∩ receiver ∩ ceiling`. The design holds; the demand is unproven, and
+  free-text posts deliberately carry no authority at all, so nothing is missing
+  yet.
+- **Sealed verify on the board** — the `sealed_from` overlay and
+  `sealed_overridden` tamper lane from the deleted `team.rs`. The strongest
+  follow-up, and the natural next step once peer-influence marking is in use.
+- **An MCP adapter.** CLI plus skill works under both runtimes today; B11.4
+  already decided against MCP for the browser for the same reason.
+- **Per-thread read ACLs.** Every member sees every thread. On one repository
+  the compartment buys little, and DMs are absent by construction rather than
+  by rule.
+- **Any content judgement** — classifiers, moderation, reputation. See T2.

@@ -835,6 +835,97 @@ async fn api_box(
     }
 }
 
+/// The board, as the console shows it.
+///
+/// Read-only like every other route here. The console watches the board and
+/// never posts to it: a surface that could post would be a second way onto the
+/// board with no box behind it, and the whole authority story rests on every
+/// post coming from a participant the host can name.
+#[derive(Serialize)]
+pub struct BoardView {
+    /// Open threads, newest activity first.
+    pub threads: Vec<crate::board::ThreadSummary>,
+    /// Closed threads, newest activity first.
+    pub attic: Vec<crate::board::ThreadSummary>,
+    /// Everyone who has been on the board, revoked entries included.
+    pub roster: Vec<crate::board::RosterEntry>,
+    /// Per-participant state the roster does not carry: whether that box has
+    /// been shown a peer's text.
+    pub influenced: Vec<String>,
+}
+
+/// One thread in full, for the conversation pane.
+#[derive(Serialize)]
+pub struct BoardThreadView {
+    /// What was fixed at creation.
+    pub header: crate::board::ThreadHeader,
+    /// Projected status.
+    pub status: crate::board::ThreadStatus,
+    /// Current owner, when claimed.
+    pub claimed_by: Option<String>,
+    /// Every post, in order.
+    pub posts: Vec<crate::board::Post>,
+}
+
+/// `GET /api/board` — threads, roster, and who has read a peer.
+async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
+    let path = state.repo_path.clone();
+    let view = blocking(move || {
+        let (git, h5i_root) = open(&path)?;
+        let roster = crate::board::read_roster(&git);
+        let influenced: Vec<String> = roster
+            .agents
+            .values()
+            .filter(|e| {
+                e.box_id
+                    .as_deref()
+                    .and_then(|id| env::list(&h5i_root).into_iter().find(|m| m.id == id))
+                    .and_then(|m| crate::board_tender::peer_influence(&h5i_root, &m))
+                    .is_some()
+            })
+            .map(|e| e.agent.clone())
+            .collect();
+        Some(BoardView {
+            threads: crate::board::list_threads(&git),
+            attic: crate::board::list_attic(&git),
+            roster: roster.agents.into_values().collect(),
+            influenced,
+        })
+    })
+    .await;
+    Json(view.unwrap_or(BoardView {
+        threads: Vec::new(),
+        attic: Vec::new(),
+        roster: Vec::new(),
+        influenced: Vec::new(),
+    }))
+}
+
+/// `GET /api/board/thread/:id` — one conversation.
+async fn api_board_thread(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let view = blocking(move || {
+        let (git, _h5i_root) = open(&path)?;
+        // `read_thread` validates the id before it reaches a ref name, so a
+        // path-shaped id is refused here rather than joined onto `refs/`.
+        let t = crate::board::read_thread(&git, &id).ok()?;
+        Some(BoardThreadView {
+            status: t.status(),
+            claimed_by: t.claimed_by().map(str::to_string),
+            header: t.header.clone(),
+            posts: t.posts,
+        })
+    })
+    .await;
+    match view {
+        Some(v) => Json(v).into_response(),
+        None => (StatusCode::NOT_FOUND, "no such thread").into_response(),
+    }
+}
+
 /// `GET /api/box/:agent/:slug/receipts/:id` — one receipt, rendered exactly as
 /// `h5i box inspect` renders it (which refuses ids belonging to another box).
 async fn api_receipt(
@@ -1071,6 +1162,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))
         .route("/api/box/:agent/:slug/browser/frame", get(api_browser_frame))
+        .route("/api/board", get(api_board))
+        .route("/api/board/thread/:id", get(api_board_thread))
         .layer(axum::middleware::from_fn_with_state(state.clone(), gate))
         .with_state(state)
 }

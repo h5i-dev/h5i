@@ -1,0 +1,1700 @@
+//! The board: mediated collaboration between boxed agents.
+//!
+//! Agents in separate boxes cannot reach each other. They post to a board the
+//! host owns, and the host decides what each box gets to see. The product
+//! claim this implements is narrow and worth stating exactly:
+//!
+//! > Agents can share information, never permissions.
+//!
+//! A message can change what a peer *decides*; it can never change what that
+//! peer's sandbox is *able to do*. Nothing in this module grants a capability,
+//! and there is deliberately no code path by which a post could: the board
+//! carries text and content-addressed artifacts, and every privileged action
+//! (apply, export, push) stays a host command a box cannot invoke.
+//!
+//! ## The two authority rules
+//!
+//! **The box writes what, never who.** A post's `body`, `kind` and attachments
+//! are the agent's claim. Its `sender`, `box_id`, `role` and `policy_digest`
+//! are stamped by the host from the box's env binding — never read out of the
+//! payload the box wrote. [`Author`] is that stamp, and the only way to make
+//! one is to be host-side code that already knows which box it is talking
+//! about. A box asserting `"sender": "human"` in its spooled JSON changes
+//! nothing, because that field is not read.
+//!
+//! **Only humans change trust boundaries.** Creating a thread, attaching a box
+//! to the board, revoking one, and closing a thread are [`Role::Human`]
+//! operations, refused here for any other role. This is defence in depth: a box
+//! also cannot *reach* these calls, because the store lives outside every write
+//! grant it has.
+//!
+//! ## Layout: one ref per thread
+//!
+//! ```text
+//! refs/h5i/board/meta            roster.json — who is on the board
+//! refs/h5i/board/threads/<id>    thread.json + posts.jsonl + attach-<digest>
+//! refs/h5i/board-attic/<id>      closed threads, moved not deleted
+//! ```
+//!
+//! Threads are separate refs rather than one shared log because appending
+//! rewrites the blob it appends to: with a single log, every post would rewrite
+//! the entire board's history, and reading one conversation would mean parsing
+//! all of them. Per-thread refs bound both costs by the size of one thread,
+//! localise compare-and-swap contention to the thread being posted to, make the
+//! thread list a ref enumeration whose tip timestamps are the activity order,
+//! and let `close` move a single ref to the attic without touching anything
+//! else.
+//!
+//! Git refs, rather than a database or a sidecar file, because the plumbing for
+//! concurrent append is already here and tested ([`crate::refstore`]), and
+//! because a ref travels with the repo — the same union-merge that reconciles
+//! `refs/h5i/env/meta` across clones works here for free. `refs/h5i/*` is
+//! outside the default refspec, so a board never rides an ordinary `git push`
+//! to a forge.
+//!
+//! ## What is a projection, and what is stored
+//!
+//! `posts.jsonl` is strictly append-only, which is what makes a thread safe to
+//! union-merge: two clones that each appended produce non-overlapping line sets
+//! that reconcile by id. Thread *status* is therefore never a stored field that
+//! someone mutates — it is a pure function of the posts ([`Thread::status`]),
+//! in the same event-sourced shape the team runs used. `thread.json` holds only
+//! what is fixed at creation (title, ceiling, author, time).
+//!
+//! ## Untrusted text
+//!
+//! Bodies are stored verbatim, exactly as [`crate::redact`] prescribes:
+//! storage keeps the bytes, rendering sanitises. A post body is peer input to
+//! whoever reads it — an agent, or a human at a terminal — so render it through
+//! [`Post::display_body`] rather than printing the field.
+
+use std::collections::{BTreeMap, HashMap};
+
+use git2::{Oid, Repository};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::error::H5iError;
+use crate::refstore;
+
+/// Ref holding the board roster. A sibling of the `threads/` namespace, not a
+/// parent of it: roster entries outlive any one thread.
+pub const BOARD_META_REF: &str = "refs/h5i/board/meta";
+/// Prefix under which each thread gets its own ref.
+pub const BOARD_THREADS_PREFIX: &str = "refs/h5i/board/threads/";
+/// Where a closed thread is moved. Closing is not deleting: the conversation
+/// that led to an applied patch stays readable after the thread is done.
+pub const BOARD_ATTIC_PREFIX: &str = "refs/h5i/board-attic/";
+
+const POSTS_FILE: &str = "posts.jsonl";
+const THREAD_FILE: &str = "thread.json";
+const ROSTER_FILE: &str = "roster.json";
+const ATTACH_PREFIX: &str = "attach-";
+
+/// Wire-format version written by this build.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Attempts before an append gives up. Each retry is an object write and a ref
+/// compare-and-swap; a writer would have to lose this many consecutive races to
+/// fail, which bursty posting from a handful of boxes will not do.
+const MAX_ATTEMPTS: usize = 64;
+
+/// Largest single post body accepted, in bytes. A board is for coordination;
+/// anything larger belongs in an attachment, where it is content-addressed and
+/// deduplicated.
+pub const MAX_BODY_BYTES: usize = 64 * 1024;
+/// Largest single attachment payload, in bytes.
+pub const MAX_ATTACHMENT_BYTES: usize = 1024 * 1024;
+/// Most attachments one post may carry.
+pub const MAX_ATTACHMENTS: usize = 8;
+
+// ── kinds ──────────────────────────────────────────────────────────────────
+
+/// The post kinds this build writes.
+///
+/// Kept as strings rather than a closed enum so that a thread written by a
+/// newer build still parses here: an unknown kind renders as itself instead of
+/// failing the line. Writers are validated against this list; readers are not.
+pub const KINDS: &[&str] = &[
+    "TASK",
+    "ASK",
+    "FINDING",
+    "RISK",
+    "PROPOSAL",
+    "CLAIM",
+    "REVIEW_REQUEST",
+    "HANDOFF",
+    "DONE",
+    "ACK",
+    "BLOCKED",
+];
+
+/// Kind of the post that opens a thread.
+pub const KIND_TASK: &str = "TASK";
+/// Kind that takes ownership of a thread.
+pub const KIND_CLAIM: &str = "CLAIM";
+/// Kind that asks for review of submitted work.
+pub const KIND_REVIEW_REQUEST: &str = "REVIEW_REQUEST";
+/// Kind that reports the thread's work finished.
+pub const KIND_DONE: &str = "DONE";
+/// Kind that reports the thread's work stuck.
+pub const KIND_BLOCKED: &str = "BLOCKED";
+
+fn validate_kind(kind: &str) -> Result<(), H5iError> {
+    if KINDS.contains(&kind) {
+        return Ok(());
+    }
+    Err(H5iError::Metadata(format!(
+        "unknown post kind {:?}: use one of {}",
+        crate::redact::sanitize_display(kind),
+        KINDS.join(", ")
+    )))
+}
+
+// ── roles ──────────────────────────────────────────────────────────────────
+
+/// What a participant may do on the board.
+///
+/// A role is assigned by a human at attach time and recorded in the roster; it
+/// is not something an agent can claim for itself. The gradient is deliberately
+/// coarse — four roles, checked with three predicates — because a policy
+/// language nobody can hold in their head is a policy nobody can audit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// Does the work: posts, claims threads, attaches patches.
+    Worker,
+    /// Reviews the work: posts and attaches, but never claims a thread.
+    Reviewer,
+    /// Reads only. An observer's presence changes no other participant's
+    /// authority — ceilings are fixed per thread, not intersected per room.
+    Observer,
+    /// The person. The only role that may change the board's membership or a
+    /// thread's existence.
+    Human,
+}
+
+impl Role {
+    /// May this role add posts to a thread?
+    pub fn can_post(self) -> bool {
+        !matches!(self, Role::Observer)
+    }
+
+    /// May this role claim a thread, becoming its owner?
+    pub fn can_claim(self) -> bool {
+        matches!(self, Role::Worker | Role::Human)
+    }
+
+    /// May this role attach an artifact to a post?
+    pub fn can_attach(self) -> bool {
+        matches!(self, Role::Worker | Role::Reviewer | Role::Human)
+    }
+
+    /// May this role change who is on the board, or whether a thread exists?
+    ///
+    /// Human only, always. This is the fifth invariant in one predicate.
+    pub fn can_govern(self) -> bool {
+        matches!(self, Role::Human)
+    }
+
+    /// The role's name as written in the roster and on a post.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Worker => "worker",
+            Role::Reviewer => "reviewer",
+            Role::Observer => "observer",
+            Role::Human => "human",
+        }
+    }
+
+    /// Parse a role name, rejecting anything unrecognised rather than
+    /// defaulting: a typo that silently became `observer` would look like a
+    /// broken agent, and one that silently became `worker` would be a hole.
+    pub fn parse(s: &str) -> Result<Role, H5iError> {
+        match s {
+            "worker" => Ok(Role::Worker),
+            "reviewer" => Ok(Role::Reviewer),
+            "observer" => Ok(Role::Observer),
+            "human" => Ok(Role::Human),
+            other => Err(H5iError::Metadata(format!(
+                "unknown role {:?}: use worker, reviewer, observer or human",
+                crate::redact::sanitize_display(other)
+            ))),
+        }
+    }
+}
+
+// ── the host's stamp ───────────────────────────────────────────────────────
+
+/// Who the host says is posting.
+///
+/// Construction of this type is the moment authority is decided. Host-side code
+/// builds it from what it already knows — the human at the terminal, or the env
+/// directory a spooled record was found in — and never from the record's
+/// contents. Every field here lands on the post; none of them is readable from
+/// the box's own JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Author {
+    /// Board identity, e.g. `claude-worker`.
+    pub sender: String,
+    /// The box this identity is bound to, e.g. `env/claude/auth-race`. `None`
+    /// for a human at the host terminal, who is in no box.
+    pub box_id: Option<String>,
+    /// What this participant may do.
+    pub role: Role,
+    /// Digest of the resolved policy the box was confined by, so a reader can
+    /// tell whether two posts came from the same confinement.
+    pub policy_digest: Option<String>,
+}
+
+impl Author {
+    /// The human at the host terminal.
+    pub fn human(name: &str) -> Result<Author, H5iError> {
+        validate_name(name)?;
+        Ok(Author {
+            sender: name.to_string(),
+            box_id: None,
+            role: Role::Human,
+            policy_digest: None,
+        })
+    }
+
+    /// An agent in a box, as identified by the host from its env binding.
+    pub fn agent(
+        sender: &str,
+        box_id: &str,
+        role: Role,
+        policy_digest: Option<String>,
+    ) -> Result<Author, H5iError> {
+        validate_name(sender)?;
+        Ok(Author {
+            sender: sender.to_string(),
+            box_id: Some(box_id.to_string()),
+            role,
+            policy_digest,
+        })
+    }
+
+    fn require(&self, allowed: bool, what: &str) -> Result<(), H5iError> {
+        if allowed {
+            return Ok(());
+        }
+        Err(H5iError::Metadata(format!(
+            "{} may not {what} (role: {})",
+            crate::redact::sanitize_display(&self.sender),
+            self.role.as_str()
+        )))
+    }
+}
+
+// ── posts ──────────────────────────────────────────────────────────────────
+
+/// An artifact carried by a post.
+///
+/// The payload is a git blob in the thread's tree, addressed by the SHA-256 of
+/// its bytes, so the same patch posted twice is stored once. The `kind` is an
+/// allowlist rather than a MIME type: a board that accepts arbitrary uploads is
+/// a file-transfer channel between boxes, which is the thing this design exists
+/// to not be.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    /// `patch`, `test-report`, or `text`.
+    pub kind: String,
+    /// Lowercase hex SHA-256 of the payload; also its name in the tree.
+    pub digest: String,
+    /// Payload length in bytes.
+    pub size: usize,
+    /// Display name, e.g. `fix-refresh-race.diff`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Attachment kinds a post may carry.
+pub const ATTACHMENT_KINDS: &[&str] = &["patch", "test-report", "text"];
+
+fn validate_attachment_kind(kind: &str) -> Result<(), H5iError> {
+    if ATTACHMENT_KINDS.contains(&kind) {
+        return Ok(());
+    }
+    Err(H5iError::Metadata(format!(
+        "unsupported attachment kind {:?}: use one of {}",
+        crate::redact::sanitize_display(kind),
+        ATTACHMENT_KINDS.join(", ")
+    )))
+}
+
+/// One post. Lines in `posts.jsonl` are exactly this struct's JSON.
+///
+/// The total order is `(ts, id)`: `ts` is fixed-width RFC3339 UTC so it sorts
+/// lexicographically, and `id` breaks ties deterministically. Fields added
+/// after v1 must be `#[serde(default)]` and skipped when empty, so a thread
+/// written by a newer build still reads here.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Post {
+    /// Stable id, 16 lowercase hex. Dedup key on merge, tie-break in the order.
+    pub id: String,
+    /// RFC3339 UTC, `YYYY-MM-DDThh:mm:ss.ffffffZ`.
+    pub ts: String,
+    /// Thread this post belongs to.
+    ///
+    /// Redundant with the ref the post is stored on, and carried anyway: a post
+    /// delivered into a box's inbox arrives as a loose file with no ref around
+    /// it, and a reader there still has to know which conversation it is part
+    /// of.
+    #[serde(default)]
+    pub thread: String,
+    /// Wire-format version.
+    #[serde(default)]
+    pub version: u32,
+    /// One of [`KINDS`], or an unknown kind from a newer build.
+    pub kind: String,
+    /// Free text. Stored verbatim — render via [`Post::display_body`].
+    pub body: String,
+    /// Id of the post this replies to, when it is a reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// Artifacts carried by this post.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+
+    // ── host-stamped below: never read from a box's payload ────────────────
+    /// Board identity the host attributes this post to.
+    pub sender: String,
+    /// Box the sender was bound to, absent for a human.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_id: Option<String>,
+    /// The sender's role at the time of posting.
+    pub role: String,
+    /// Digest of the confinement the sending box ran under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    /// Set when the host refused something on this post's behalf, e.g. an
+    /// attachment over the cap or a revoked sender. A refusal is recorded, not
+    /// silently dropped: a board that quietly swallows what it rejects teaches
+    /// its readers that nothing was rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denied: Option<String>,
+}
+
+impl Post {
+    /// Total-order key.
+    fn key(&self) -> (&str, &str) {
+        (&self.ts, &self.id)
+    }
+
+    /// The body, made safe to print to a terminal, with its line breaks intact.
+    ///
+    /// A post is peer input: it was written by another agent, or arrived from
+    /// another clone. Print this, not [`Post::body`].
+    pub fn display_body(&self) -> String {
+        crate::redact::sanitize_block(&self.body)
+    }
+
+    /// Was this post refused, in whole or in part, by the host?
+    pub fn is_denied(&self) -> bool {
+        self.denied.is_some()
+    }
+}
+
+// ── threads ────────────────────────────────────────────────────────────────
+
+/// The authority ceiling a thread's work is bounded by.
+///
+/// Recorded at creation and checked when a box attaches: the box's resolved
+/// profile must be a subset of the ceiling, or the attach is refused. Refused,
+/// not downgraded — silently weakening a box's confinement to fit a room is how
+/// a participant ends up less confined than its operator believes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ceiling {
+    /// Profile name the ceiling is expressed as, e.g. `code-review`.
+    pub profile: String,
+    /// Digest of that profile as resolved when the thread was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+/// What is fixed about a thread at creation. Stored as `thread.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadHeader {
+    /// Thread id, 16 lowercase hex; also its ref name.
+    pub id: String,
+    /// One-line title.
+    pub title: String,
+    /// RFC3339 UTC creation time.
+    pub created_at: String,
+    /// Who created it. A thread is always created by a human.
+    pub created_by: String,
+    /// Wire-format version.
+    #[serde(default)]
+    pub version: u32,
+    /// Authority ceiling for work in this thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling: Option<Ceiling>,
+    /// Git branch the thread's work lives on, when it has one. Metadata for
+    /// display and filtering — the board's layout does not depend on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+impl ThreadHeader {
+    /// The title, made safe to print.
+    pub fn display_title(&self) -> String {
+        crate::redact::sanitize_display(&self.title)
+    }
+}
+
+/// Where a thread has got to. Computed from its posts, never stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadStatus {
+    /// Nobody has claimed it.
+    Open,
+    /// Claimed and being worked.
+    Claimed,
+    /// Work submitted, review requested.
+    Review,
+    /// Reported finished.
+    Done,
+    /// Reported stuck.
+    Blocked,
+}
+
+impl ThreadStatus {
+    /// The status name as rendered.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThreadStatus::Open => "open",
+            ThreadStatus::Claimed => "claimed",
+            ThreadStatus::Review => "review",
+            ThreadStatus::Done => "done",
+            ThreadStatus::Blocked => "blocked",
+        }
+    }
+}
+
+/// A thread and its posts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Thread {
+    /// What was fixed at creation.
+    pub header: ThreadHeader,
+    /// Posts in `(ts, id)` order.
+    pub posts: Vec<Post>,
+}
+
+impl Thread {
+    /// The thread's status, projected from its posts.
+    ///
+    /// The projection walks in order and lets each signalling post move the
+    /// state, so the last thing that happened wins: a `DONE` followed by a
+    /// re-`CLAIM` is claimed again, which is what reopening looks like without
+    /// a reopen verb.
+    pub fn status(&self) -> ThreadStatus {
+        let mut status = ThreadStatus::Open;
+        for p in &self.posts {
+            if p.is_denied() {
+                continue; // a refused post moves nothing
+            }
+            status = match p.kind.as_str() {
+                KIND_CLAIM => ThreadStatus::Claimed,
+                KIND_REVIEW_REQUEST => ThreadStatus::Review,
+                KIND_DONE => ThreadStatus::Done,
+                KIND_BLOCKED => ThreadStatus::Blocked,
+                _ => status,
+            };
+        }
+        status
+    }
+
+    /// Who currently owns the thread, from the most recent accepted `CLAIM`.
+    pub fn claimed_by(&self) -> Option<&str> {
+        self.posts
+            .iter()
+            .rev()
+            .find(|p| p.kind == KIND_CLAIM && !p.is_denied())
+            .map(|p| p.sender.as_str())
+    }
+
+    /// Distinct senders who have posted, in first-post order.
+    pub fn participants(&self) -> Vec<&str> {
+        let mut seen = Vec::new();
+        for p in &self.posts {
+            let s = p.sender.as_str();
+            if !seen.contains(&s) {
+                seen.push(s);
+            }
+        }
+        seen
+    }
+
+    /// Timestamp of the newest post, or the creation time when there are none.
+    pub fn last_activity(&self) -> &str {
+        self.posts
+            .last()
+            .map(|p| p.ts.as_str())
+            .unwrap_or(self.header.created_at.as_str())
+    }
+}
+
+/// A thread as it appears in a list, without its full post log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadSummary {
+    /// What was fixed at creation.
+    pub header: ThreadHeader,
+    /// Projected status.
+    pub status: ThreadStatus,
+    /// Current owner, when claimed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<String>,
+    /// How many posts the thread holds.
+    pub posts: usize,
+    /// Timestamp of the newest post.
+    pub last_activity: String,
+    /// Refused posts in this thread — the count a reviewer should look at.
+    pub denials: usize,
+}
+
+// ── roster ─────────────────────────────────────────────────────────────────
+
+/// One participant's membership record, host-authored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RosterEntry {
+    /// Board identity.
+    pub agent: String,
+    /// Box this identity is bound to, absent for a human.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_id: Option<String>,
+    /// What this participant may do.
+    pub role: Role,
+    /// Digest of the box's resolved policy at attach time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
+    /// RFC3339 UTC attach time.
+    pub attached_at: String,
+    /// RFC3339 UTC revocation time. A revoked entry is kept, not deleted: the
+    /// posts it made are still attributed to it, and a reader needs to be able
+    /// to look up who that was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<String>,
+}
+
+impl RosterEntry {
+    /// Is this participant still allowed to post?
+    pub fn is_active(&self) -> bool {
+        self.revoked_at.is_none()
+    }
+}
+
+/// The board's membership, stored as `roster.json` on the meta ref.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Roster {
+    /// Participants by board identity.
+    #[serde(default)]
+    pub agents: BTreeMap<String, RosterEntry>,
+}
+
+impl Roster {
+    /// Look up a participant.
+    pub fn get(&self, agent: &str) -> Option<&RosterEntry> {
+        self.agents.get(agent)
+    }
+
+    /// Participants who have not been revoked.
+    pub fn active(&self) -> impl Iterator<Item = &RosterEntry> {
+        self.agents.values().filter(|e| e.is_active())
+    }
+
+    /// The active participant bound to `box_id`, if any.
+    pub fn by_box(&self, box_id: &str) -> Option<&RosterEntry> {
+        self.active()
+            .find(|e| e.box_id.as_deref() == Some(box_id))
+    }
+}
+
+// ── ref helpers ────────────────────────────────────────────────────────────
+
+/// Ref name for a thread.
+pub fn thread_ref(id: &str) -> String {
+    format!("{BOARD_THREADS_PREFIX}{id}")
+}
+
+/// Ref name for a closed thread in the attic.
+pub fn attic_ref(id: &str) -> String {
+    format!("{BOARD_ATTIC_PREFIX}{id}")
+}
+
+/// Validate a thread id: 16 lowercase hex, which is what [`gen_id`] produces
+/// and what is safe as a ref-name component. Ids reach `refs/` paths, so
+/// anything else is refused rather than escaped.
+pub fn validate_thread_id(id: &str) -> Result<(), H5iError> {
+    if id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
+        return Ok(());
+    }
+    Err(H5iError::Metadata(format!(
+        "invalid thread id {:?}: expected 16 lowercase hex characters",
+        crate::redact::sanitize_display(id)
+    )))
+}
+
+/// Validate a board identity against `[A-Za-z0-9._-]+`.
+///
+/// Names become roster keys, post fields and terminal output, so the charset is
+/// the conservative one: no whitespace, no path separators, no control
+/// characters.
+pub fn validate_name(name: &str) -> Result<(), H5iError> {
+    if name.is_empty() {
+        return Err(H5iError::Metadata("board identity must not be empty".into()));
+    }
+    if name.len() > 64 {
+        return Err(H5iError::Metadata(
+            "board identity must be 64 characters or fewer".into(),
+        ));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(H5iError::Metadata(format!(
+            "invalid board identity {:?}: use letters, digits, '.', '_', '-' only",
+            crate::redact::sanitize_display(name)
+        )));
+    }
+    Ok(())
+}
+
+// ── reading ────────────────────────────────────────────────────────────────
+
+/// Read a thread, from the live namespace or the attic.
+pub fn read_thread(repo: &Repository, id: &str) -> Result<Thread, H5iError> {
+    validate_thread_id(id)?;
+    let oid = thread_tip(repo, id).ok_or_else(|| {
+        H5iError::RecordNotFound(format!("no board thread {id} in this repository"))
+    })?;
+    read_thread_at(repo, oid)
+}
+
+/// Read the thread whose ref tip is `oid`.
+pub fn read_thread_at(repo: &Repository, oid: Oid) -> Result<Thread, H5iError> {
+    let header: ThreadHeader = refstore::read_file_from_commit(repo, oid, THREAD_FILE)
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .ok_or_else(|| {
+            H5iError::Metadata("board thread is missing its thread.json header".into())
+        })?;
+    let posts = parse_posts(
+        &refstore::read_file_from_commit(repo, oid, POSTS_FILE).unwrap_or_default(),
+    );
+    Ok(Thread { header, posts })
+}
+
+/// Tip of a thread's ref, looking in the live namespace and then the attic.
+pub fn thread_tip(repo: &Repository, id: &str) -> Option<Oid> {
+    repo.refname_to_id(&thread_ref(id))
+        .ok()
+        .or_else(|| repo.refname_to_id(&attic_ref(id)).ok())
+}
+
+/// Every live thread, newest activity first.
+///
+/// This reads one small tree per thread rather than one large log, which is the
+/// whole point of the per-thread layout: the cost is proportional to the number
+/// of threads, not to the volume of conversation in them.
+pub fn list_threads(repo: &Repository) -> Vec<ThreadSummary> {
+    list_threads_in(repo, BOARD_THREADS_PREFIX)
+}
+
+/// Every closed thread, newest activity first.
+pub fn list_attic(repo: &Repository) -> Vec<ThreadSummary> {
+    list_threads_in(repo, BOARD_ATTIC_PREFIX)
+}
+
+fn list_threads_in(repo: &Repository, prefix: &str) -> Vec<ThreadSummary> {
+    let glob = format!("{prefix}*");
+    let Ok(refs) = repo.references_glob(&glob) else {
+        return Vec::new();
+    };
+    let mut out: Vec<ThreadSummary> = refs
+        .filter_map(|r| r.ok())
+        .filter_map(|r| r.target())
+        .filter_map(|oid| read_thread_at(repo, oid).ok())
+        .map(|t| summarize(&t))
+        .collect();
+    // Newest activity first; id breaks ties so the order is stable.
+    out.sort_by(|a, b| {
+        b.last_activity
+            .cmp(&a.last_activity)
+            .then_with(|| a.header.id.cmp(&b.header.id))
+    });
+    out
+}
+
+fn summarize(t: &Thread) -> ThreadSummary {
+    ThreadSummary {
+        header: t.header.clone(),
+        status: t.status(),
+        claimed_by: t.claimed_by().map(str::to_string),
+        posts: t.posts.len(),
+        last_activity: t.last_activity().to_string(),
+        denials: t.posts.iter().filter(|p| p.is_denied()).count(),
+    }
+}
+
+/// Read an attachment's payload out of a thread.
+pub fn read_attachment(
+    repo: &Repository,
+    thread_id: &str,
+    digest: &str,
+) -> Result<Vec<u8>, H5iError> {
+    validate_thread_id(thread_id)?;
+    validate_digest(digest)?;
+    let oid = thread_tip(repo, thread_id).ok_or_else(|| {
+        H5iError::RecordNotFound(format!("no board thread {thread_id} in this repository"))
+    })?;
+    let commit = repo.find_commit(oid)?;
+    let tree = commit.tree()?;
+    let entry = tree
+        .get_name(&attachment_path(digest))
+        .ok_or_else(|| H5iError::RecordNotFound(format!("no attachment {digest} in thread")))?;
+    let blob = repo.find_blob(entry.id())?;
+    Ok(blob.content().to_vec())
+}
+
+/// The board roster.
+pub fn read_roster(repo: &Repository) -> Roster {
+    repo.refname_to_id(BOARD_META_REF)
+        .ok()
+        .and_then(|oid| refstore::read_file_from_commit(repo, oid, ROSTER_FILE))
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Parse a `posts.jsonl` blob, skipping blank and malformed lines so one bad
+/// line written by a future build does not make a thread unreadable.
+fn parse_posts(content: &str) -> Vec<Post> {
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| serde_json::from_str::<Post>(l).ok())
+        .collect()
+}
+
+// ── writing: threads ───────────────────────────────────────────────────────
+
+/// What a new post carries. The fields a box is allowed to decide.
+#[derive(Debug, Clone, Default)]
+pub struct NewPost {
+    /// One of [`KINDS`].
+    pub kind: String,
+    /// Free text.
+    pub body: String,
+    /// Post being replied to.
+    pub reply_to: Option<String>,
+    /// Artifacts, as `(kind, name, payload)`.
+    pub attachments: Vec<NewAttachment>,
+    /// A refusal the host decided before the post was written. Set by ingest
+    /// when it accepts a record but rejects part of it.
+    pub denied: Option<String>,
+}
+
+/// An artifact to attach, before it is hashed and stored.
+#[derive(Debug, Clone)]
+pub struct NewAttachment {
+    /// One of [`ATTACHMENT_KINDS`].
+    pub kind: String,
+    /// Display name.
+    pub name: Option<String>,
+    /// Payload bytes.
+    pub payload: Vec<u8>,
+}
+
+// ── the box's side of the wire ─────────────────────────────────────────────
+
+/// A post staged by a box in its capture spool, waiting for the host to ingest
+/// it.
+///
+/// Note what is **not** here: no sender, no role, no box id, no policy digest.
+/// Those are the host's to decide, and leaving them out of the wire format is
+/// the cheapest possible enforcement — a field that does not exist cannot be
+/// forged. Ingest builds the [`Author`] from the env directory the record was
+/// found in.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BoardPostSpool {
+    /// Thread to post into.
+    pub thread: String,
+    /// One of [`KINDS`].
+    pub kind: String,
+    /// Free text.
+    pub body: String,
+    /// Post being replied to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// Artifacts, inline. Every permitted attachment kind is text, so there is
+    /// no base64 and no second spool file to correlate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<SpoolAttachment>,
+}
+
+/// An artifact staged inline by a box.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpoolAttachment {
+    /// One of [`ATTACHMENT_KINDS`].
+    pub kind: String,
+    /// Display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Payload, as text.
+    pub text: String,
+}
+
+impl BoardPostSpool {
+    /// Turn a staged record into the post fields the host will accept.
+    ///
+    /// Anything the record asks for that exceeds a limit is dropped and named
+    /// in `denied`, rather than failing the whole record: a box that attaches
+    /// something too large should still have its message delivered, with the
+    /// refusal visible next to it.
+    pub fn into_new_post(self) -> NewPost {
+        let mut denied: Vec<String> = Vec::new();
+        let mut attachments = Vec::new();
+        for a in self.attachments {
+            if !ATTACHMENT_KINDS.contains(&a.kind.as_str()) {
+                denied.push(format!("attachment of unsupported kind {:?} dropped", a.kind));
+                continue;
+            }
+            if a.text.len() > MAX_ATTACHMENT_BYTES {
+                denied.push(format!(
+                    "attachment {} dropped: {} bytes over the {MAX_ATTACHMENT_BYTES}-byte limit",
+                    a.name.as_deref().unwrap_or("(unnamed)"),
+                    a.text.len()
+                ));
+                continue;
+            }
+            if attachments.len() >= MAX_ATTACHMENTS {
+                denied.push("further attachments dropped: over the per-post limit".into());
+                break;
+            }
+            attachments.push(NewAttachment {
+                kind: a.kind,
+                name: a.name,
+                payload: a.text.into_bytes(),
+            });
+        }
+        let mut body = self.body;
+        if body.len() > MAX_BODY_BYTES {
+            body.truncate(MAX_BODY_BYTES);
+            denied.push(format!("body truncated to {MAX_BODY_BYTES} bytes"));
+        }
+        NewPost {
+            kind: self.kind,
+            body,
+            reply_to: self.reply_to,
+            attachments,
+            denied: if denied.is_empty() {
+                None
+            } else {
+                Some(denied.join("; "))
+            },
+        }
+    }
+}
+
+/// A thread as delivered into a box's read-only inbox.
+///
+/// The box sees the header and the posts, and nothing about the board's
+/// machinery: no roster, no ref names, no other threads it is not part of.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboxThread {
+    /// What was fixed at creation.
+    pub header: ThreadHeader,
+    /// Projected status at delivery time.
+    pub status: ThreadStatus,
+    /// Current owner, when claimed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<String>,
+    /// Every post in the thread, in order.
+    pub posts: Vec<Post>,
+}
+
+impl InboxThread {
+    /// Build the box-facing view of a thread.
+    pub fn of(t: &Thread) -> InboxThread {
+        InboxThread {
+            header: t.header.clone(),
+            status: t.status(),
+            claimed_by: t.claimed_by().map(str::to_string),
+            posts: t.posts.clone(),
+        }
+    }
+}
+
+/// Create a thread. Human only.
+///
+/// The ceiling is recorded here and enforced at attach time; a thread created
+/// without one bounds nothing, which is honest but should be rare.
+pub fn create_thread(
+    repo: &Repository,
+    author: &Author,
+    title: &str,
+    ceiling: Option<Ceiling>,
+    branch: Option<String>,
+) -> Result<ThreadHeader, H5iError> {
+    author.require(author.role.can_govern(), "create a thread")?;
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(H5iError::Metadata("a thread needs a title".into()));
+    }
+    if title.len() > 200 {
+        return Err(H5iError::Metadata(
+            "thread title must be 200 characters or fewer".into(),
+        ));
+    }
+
+    let ts = now_ts();
+    let id = gen_id(&ts, &author.sender, title);
+    let header = ThreadHeader {
+        id: id.clone(),
+        title: title.to_string(),
+        created_at: ts,
+        created_by: author.sender.clone(),
+        version: PROTOCOL_VERSION,
+        ceiling,
+        branch,
+    };
+    let header_json = serde_json::to_string_pretty(&header)?;
+
+    let refname = thread_ref(&id);
+    if repo.refname_to_id(&refname).is_ok() {
+        return Err(H5iError::Internal(format!(
+            "board thread {id} already exists"
+        )));
+    }
+
+    let tree_oid = refstore::build_tree(repo, None, &[(THREAD_FILE, &header_json), (POSTS_FILE, "")])?;
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = refstore::signature(repo)?;
+    let message = format!("h5i board: open thread {id}");
+    let commit = repo.commit(None, &sig, &sig, &message, &tree, &[])?;
+    refstore::cas_ref_update(repo, &refname, None, commit, &message).map_err(H5iError::Git)?;
+
+    Ok(header)
+}
+
+/// Append a post to a thread.
+///
+/// Every check that could refuse the post happens before the compare-and-swap
+/// loop, so a retry never re-runs validation and a refusal never costs a round
+/// of contention.
+pub fn append_post(
+    repo: &Repository,
+    author: &Author,
+    thread_id: &str,
+    new: NewPost,
+) -> Result<Post, H5iError> {
+    validate_thread_id(thread_id)?;
+    validate_kind(&new.kind)?;
+    author.require(author.role.can_post(), "post to a thread")?;
+    if new.kind == KIND_CLAIM {
+        author.require(author.role.can_claim(), "claim a thread")?;
+    }
+    if new.kind == KIND_TASK {
+        author.require(author.role.can_govern(), "open a thread")?;
+    }
+    if !new.attachments.is_empty() {
+        author.require(author.role.can_attach(), "attach an artifact")?;
+    }
+    if new.body.len() > MAX_BODY_BYTES {
+        return Err(H5iError::Metadata(format!(
+            "post body is {} bytes, over the {MAX_BODY_BYTES}-byte limit — attach it instead",
+            new.body.len()
+        )));
+    }
+    if new.attachments.len() > MAX_ATTACHMENTS {
+        return Err(H5iError::Metadata(format!(
+            "{} attachments, over the limit of {MAX_ATTACHMENTS}",
+            new.attachments.len()
+        )));
+    }
+    for a in &new.attachments {
+        validate_attachment_kind(&a.kind)?;
+        if a.payload.len() > MAX_ATTACHMENT_BYTES {
+            return Err(H5iError::Metadata(format!(
+                "attachment is {} bytes, over the {MAX_ATTACHMENT_BYTES}-byte limit",
+                a.payload.len()
+            )));
+        }
+    }
+
+    let ts = now_ts();
+    let id = gen_id(&ts, &author.sender, &new.body);
+    let attachments: Vec<Attachment> = new
+        .attachments
+        .iter()
+        .map(|a| Attachment {
+            kind: a.kind.clone(),
+            digest: refstore::sha256_hex(&a.payload),
+            size: a.payload.len(),
+            name: a.name.clone(),
+        })
+        .collect();
+
+    let post = Post {
+        id,
+        ts,
+        thread: thread_id.to_string(),
+        version: PROTOCOL_VERSION,
+        kind: new.kind,
+        body: new.body,
+        reply_to: new.reply_to,
+        attachments,
+        sender: author.sender.clone(),
+        box_id: author.box_id.clone(),
+        role: author.role.as_str().to_string(),
+        policy_digest: author.policy_digest.clone(),
+        denied: new.denied,
+    };
+    let line = serde_json::to_string(&post)?;
+    let refname = thread_ref(thread_id);
+    let message = format!("h5i board: {} in {}", post.kind, thread_id);
+
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        refstore::cas_backoff(attempt);
+        let tip = repo.refname_to_id(&refname).ok().ok_or_else(|| {
+            H5iError::RecordNotFound(format!("no open board thread {thread_id}"))
+        })?;
+        let parent = repo.find_commit(tip)?;
+        let base_tree = parent.tree().ok();
+
+        let mut log = refstore::read_blob_from_tree(repo, base_tree.as_ref(), POSTS_FILE)
+            .unwrap_or_default();
+        if !log.is_empty() && !log.ends_with('\n') {
+            log.push('\n');
+        }
+        log.push_str(&line);
+        log.push('\n');
+
+        // Attachment payloads go in as blobs alongside the log. Writing them
+        // inside the retry loop is deliberate: the tree has to be built over
+        // whatever base this attempt read, and a blob that already exists is
+        // free to write again.
+        let mut builder = repo.treebuilder(base_tree.as_ref())?;
+        let log_blob = repo.blob(log.as_bytes())?;
+        builder.insert(POSTS_FILE, log_blob, 0o100644)?;
+        for (meta, src) in post.attachments.iter().zip(new.attachments.iter()) {
+            let blob = repo.blob(&src.payload)?;
+            builder.insert(attachment_path(&meta.digest), blob, 0o100644)?;
+        }
+        let tree = repo.find_tree(builder.write()?)?;
+        let sig = refstore::signature(repo)?;
+        let new_oid = repo.commit(None, &sig, &sig, &message, &tree, &[&parent])?;
+
+        match refstore::cas_ref_update(repo, &refname, Some(tip), new_oid, &message) {
+            Ok(()) => return Ok(post),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(H5iError::Internal(format!(
+        "board post to {thread_id} could not be appended after {MAX_ATTEMPTS} attempts{}",
+        refstore::cas_error_detail(&last_err)
+    )))
+}
+
+/// Close a thread by moving its ref to the attic. Human only.
+///
+/// The conversation is not deleted. A thread that produced an applied patch is
+/// the record of why that patch looks the way it does.
+pub fn close_thread(repo: &Repository, author: &Author, id: &str) -> Result<(), H5iError> {
+    author.require(author.role.can_govern(), "close a thread")?;
+    validate_thread_id(id)?;
+    let live = thread_ref(id);
+    let tip = repo.refname_to_id(&live).map_err(|_| {
+        H5iError::RecordNotFound(format!("no open board thread {id}"))
+    })?;
+    let attic = attic_ref(id);
+    let message = format!("h5i board: close thread {id}");
+    refstore::cas_ref_update(repo, &attic, None, tip, &message).map_err(H5iError::Git)?;
+    repo.find_reference(&live)?.delete()?;
+    Ok(())
+}
+
+// ── writing: roster ────────────────────────────────────────────────────────
+
+/// Add or update a roster entry. Human only.
+pub fn put_roster_entry(
+    repo: &Repository,
+    author: &Author,
+    entry: RosterEntry,
+) -> Result<(), H5iError> {
+    author.require(author.role.can_govern(), "change board membership")?;
+    validate_name(&entry.agent)?;
+    update_roster(repo, &format!("h5i board: attach {}", entry.agent), |r| {
+        r.agents.insert(entry.agent.clone(), entry.clone());
+        Ok(())
+    })
+}
+
+/// Revoke a participant. Human only.
+///
+/// Revocation is immediate at the next ingest: a spooled record from a revoked
+/// box is refused and the refusal is recorded on the board.
+pub fn revoke(repo: &Repository, author: &Author, agent: &str) -> Result<(), H5iError> {
+    author.require(author.role.can_govern(), "revoke a participant")?;
+    validate_name(agent)?;
+    let ts = now_ts();
+    update_roster(repo, &format!("h5i board: revoke {agent}"), |r| {
+        match r.agents.get_mut(agent) {
+            Some(e) => {
+                if e.revoked_at.is_none() {
+                    e.revoked_at = Some(ts.clone());
+                }
+                Ok(())
+            }
+            None => Err(H5iError::RecordNotFound(format!(
+                "{agent} is not on this board"
+            ))),
+        }
+    })
+}
+
+fn update_roster<F>(repo: &Repository, message: &str, mut edit: F) -> Result<(), H5iError>
+where
+    F: FnMut(&mut Roster) -> Result<(), H5iError>,
+{
+    let mut last_err: Option<git2::Error> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        refstore::cas_backoff(attempt);
+        let tip = repo.refname_to_id(BOARD_META_REF).ok();
+        let parent = match tip {
+            Some(oid) => Some(repo.find_commit(oid)?),
+            None => None,
+        };
+        let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
+
+        let mut roster: Roster = refstore::read_blob_from_tree(repo, base_tree.as_ref(), ROSTER_FILE)
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        edit(&mut roster)?;
+        let roster_json = serde_json::to_string_pretty(&roster)?;
+
+        let tree_oid =
+            refstore::build_tree(repo, base_tree.as_ref(), &[(ROSTER_FILE, &roster_json)])?;
+        let tree = repo.find_tree(tree_oid)?;
+        let sig = refstore::signature(repo)?;
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let new_oid = repo.commit(None, &sig, &sig, message, &tree, &parents)?;
+
+        match refstore::cas_ref_update(repo, BOARD_META_REF, tip, new_oid, message) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(H5iError::Internal(format!(
+        "board roster could not be updated after {MAX_ATTEMPTS} attempts{}",
+        refstore::cas_error_detail(&last_err)
+    )))
+}
+
+// ── merging across clones ──────────────────────────────────────────────────
+
+/// Union-merge two tips of one thread's ref.
+///
+/// Safe because `posts.jsonl` is append-only: two clones that each posted hold
+/// non-overlapping line sets, so the union by id is the whole history and
+/// neither side loses a post. Attachment blobs merge by inheriting the local
+/// tree and layering the incoming ones, which is exactly right for
+/// content-addressed names — the same digest is the same bytes.
+pub fn union_merge_thread(
+    repo: &Repository,
+    local_oid: Oid,
+    incoming_oid: Oid,
+) -> Result<Oid, H5iError> {
+    let local_commit = repo.find_commit(local_oid)?;
+    let incoming_commit = repo.find_commit(incoming_oid)?;
+
+    let local_posts =
+        parse_posts(&refstore::read_file_from_commit(repo, local_oid, POSTS_FILE).unwrap_or_default());
+    let incoming_posts = parse_posts(
+        &refstore::read_file_from_commit(repo, incoming_oid, POSTS_FILE).unwrap_or_default(),
+    );
+    let merged = merge_post_sets(local_posts, incoming_posts);
+
+    // The header is fixed at creation, so either side's copy is the same. Take
+    // the local one when present and fall back to the incoming one, which is
+    // what happens when this clone is learning of the thread for the first time.
+    let header = refstore::read_file_from_commit(repo, local_oid, THREAD_FILE)
+        .or_else(|| refstore::read_file_from_commit(repo, incoming_oid, THREAD_FILE))
+        .ok_or_else(|| H5iError::Metadata("board thread is missing its thread.json".into()))?;
+
+    let base_tree = local_commit.tree().ok();
+    let mut builder = repo.treebuilder(base_tree.as_ref())?;
+    let posts_blob = repo.blob(merged.as_bytes())?;
+    builder.insert(POSTS_FILE, posts_blob, 0o100644)?;
+    let header_blob = repo.blob(header.as_bytes())?;
+    builder.insert(THREAD_FILE, header_blob, 0o100644)?;
+    // Layer in attachment blobs the incoming side has and we do not.
+    if let Ok(incoming_tree) = incoming_commit.tree() {
+        for entry in incoming_tree.iter() {
+            let Some(name) = entry.name() else { continue };
+            if name.starts_with(ATTACH_PREFIX) && builder.get(name)?.is_none() {
+                builder.insert(name, entry.id(), 0o100644)?;
+            }
+        }
+    }
+    let tree = repo.find_tree(builder.write()?)?;
+
+    let sig = refstore::signature(repo)?;
+    let oid = repo.commit(
+        None,
+        &sig,
+        &sig,
+        "h5i board: union-merge thread",
+        &tree,
+        &[&local_commit, &incoming_commit],
+    )?;
+    Ok(oid)
+}
+
+/// Union-merge two tips of the roster ref.
+///
+/// A revocation always wins over a non-revocation, and the earlier revocation
+/// wins over a later one. Revocation is the safe direction: reconciling two
+/// clones must never resurrect a participant a human took off the board.
+pub fn union_merge_roster(
+    repo: &Repository,
+    local_oid: Oid,
+    incoming_oid: Oid,
+) -> Result<Oid, H5iError> {
+    let local_commit = repo.find_commit(local_oid)?;
+    let incoming_commit = repo.find_commit(incoming_oid)?;
+
+    let mut roster = read_roster_at(repo, local_oid);
+    for (name, incoming) in read_roster_at(repo, incoming_oid).agents {
+        match roster.agents.get_mut(&name) {
+            Some(local) => {
+                local.revoked_at = match (local.revoked_at.take(), incoming.revoked_at) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                };
+            }
+            None => {
+                roster.agents.insert(name, incoming);
+            }
+        }
+    }
+    let roster_json = serde_json::to_string_pretty(&roster)?;
+
+    let base_tree = local_commit.tree().ok();
+    let tree_oid = refstore::build_tree(repo, base_tree.as_ref(), &[(ROSTER_FILE, &roster_json)])?;
+    let tree = repo.find_tree(tree_oid)?;
+    let sig = refstore::signature(repo)?;
+    let oid = repo.commit(
+        None,
+        &sig,
+        &sig,
+        "h5i board: union-merge roster",
+        &tree,
+        &[&local_commit, &incoming_commit],
+    )?;
+    Ok(oid)
+}
+
+fn read_roster_at(repo: &Repository, oid: Oid) -> Roster {
+    refstore::read_file_from_commit(repo, oid, ROSTER_FILE)
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn merge_post_sets(a: Vec<Post>, b: Vec<Post>) -> String {
+    let mut by_id: HashMap<String, Post> = HashMap::new();
+    for p in a.into_iter().chain(b) {
+        by_id.entry(p.id.clone()).or_insert(p);
+    }
+    let mut posts: Vec<Post> = by_id.into_values().collect();
+    posts.sort_by(|x, y| x.key().cmp(&y.key()));
+    let mut out = String::new();
+    for p in &posts {
+        if let Ok(line) = serde_json::to_string(p) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+// ── small helpers ──────────────────────────────────────────────────────────
+
+fn attachment_path(digest: &str) -> String {
+    format!("{ATTACH_PREFIX}{digest}")
+}
+
+fn validate_digest(digest: &str) -> Result<(), H5iError> {
+    if digest.len() == 64
+        && digest
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    {
+        return Ok(());
+    }
+    Err(H5iError::Metadata(format!(
+        "invalid attachment digest {:?}",
+        crate::redact::sanitize_display(digest)
+    )))
+}
+
+/// RFC3339 UTC with microseconds, fixed width so it sorts lexicographically.
+pub fn now_ts() -> String {
+    chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.6fZ")
+        .to_string()
+}
+
+/// A stable 16-hex id derived from the record's fields plus a random nonce, so
+/// two identical bodies posted in the same microsecond still differ.
+fn gen_id(ts: &str, who: &str, what: &str) -> String {
+    let nonce = fastrand::u64(..);
+    let mut hasher = Sha256::new();
+    hasher.update(ts.as_bytes());
+    hasher.update([0]);
+    hasher.update(who.as_bytes());
+    hasher.update([0]);
+    hasher.update(what.as_bytes());
+    hasher.update([0]);
+    hasher.update(nonce.to_le_bytes());
+    let digest = hasher.finalize();
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_repo() -> (tempfile::TempDir, Repository) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(dir.path()).expect("init");
+        (dir, repo)
+    }
+
+    fn human() -> Author {
+        Author::human("operator").expect("human author")
+    }
+
+    fn worker(name: &str, box_id: &str) -> Author {
+        Author::agent(name, box_id, Role::Worker, Some("sha256:test".into())).expect("agent")
+    }
+
+    fn post(kind: &str, body: &str) -> NewPost {
+        NewPost {
+            kind: kind.to_string(),
+            body: body.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_thread_round_trips_through_its_ref() {
+        let (_d, repo) = temp_repo();
+        let header = create_thread(&repo, &human(), "fix the auth race", None, None).unwrap();
+        let thread = read_thread(&repo, &header.id).unwrap();
+        assert_eq!(thread.header.title, "fix the auth race");
+        assert_eq!(thread.header.created_by, "operator");
+        assert!(thread.posts.is_empty());
+        assert_eq!(thread.status(), ThreadStatus::Open);
+    }
+
+    #[test]
+    fn each_thread_gets_its_own_ref() {
+        let (_d, repo) = temp_repo();
+        let a = create_thread(&repo, &human(), "first", None, None).unwrap();
+        let b = create_thread(&repo, &human(), "second", None, None).unwrap();
+        assert_ne!(a.id, b.id);
+        assert!(repo.refname_to_id(&thread_ref(&a.id)).is_ok());
+        assert!(repo.refname_to_id(&thread_ref(&b.id)).is_ok());
+        assert_eq!(list_threads(&repo).len(), 2);
+    }
+
+    #[test]
+    fn status_is_projected_from_posts_not_stored() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+
+        append_post(&repo, &w, &h.id, post("FINDING", "found it")).unwrap();
+        assert_eq!(read_thread(&repo, &h.id).unwrap().status(), ThreadStatus::Open);
+
+        append_post(&repo, &w, &h.id, post(KIND_CLAIM, "mine")).unwrap();
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.status(), ThreadStatus::Claimed);
+        assert_eq!(t.claimed_by(), Some("claude-worker"));
+
+        append_post(&repo, &w, &h.id, post(KIND_REVIEW_REQUEST, "please look")).unwrap();
+        assert_eq!(read_thread(&repo, &h.id).unwrap().status(), ThreadStatus::Review);
+
+        append_post(&repo, &w, &h.id, post(KIND_DONE, "shipped")).unwrap();
+        assert_eq!(read_thread(&repo, &h.id).unwrap().status(), ThreadStatus::Done);
+    }
+
+    #[test]
+    fn the_sender_is_the_hosts_stamp_not_the_payload() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        // A box claiming to be someone else in its body changes nothing: the
+        // identity comes from the Author the host constructed.
+        let w = worker("codex-reviewer", "env/codex/t");
+        let mut p = post("FINDING", r#"{"sender":"operator","role":"human"}"#);
+        p.kind = "FINDING".into();
+        let written = append_post(&repo, &w, &h.id, p).unwrap();
+        assert_eq!(written.sender, "codex-reviewer");
+        assert_eq!(written.role, "worker");
+        assert_eq!(written.box_id.as_deref(), Some("env/codex/t"));
+    }
+
+    #[test]
+    fn an_observer_cannot_post_and_a_worker_cannot_govern() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let obs = Author::agent("watcher", "env/x/y", Role::Observer, None).unwrap();
+        assert!(append_post(&repo, &obs, &h.id, post("ASK", "hello")).is_err());
+
+        let w = worker("claude-worker", "env/claude/t");
+        assert!(create_thread(&repo, &w, "not allowed", None, None).is_err());
+        assert!(close_thread(&repo, &w, &h.id).is_err());
+        assert!(revoke(&repo, &w, "codex").is_err());
+    }
+
+    #[test]
+    fn a_reviewer_cannot_claim_a_thread() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let r = Author::agent("codex-reviewer", "env/codex/t", Role::Reviewer, None).unwrap();
+        assert!(append_post(&repo, &r, &h.id, post(KIND_CLAIM, "mine")).is_err());
+        // but may still post and review
+        assert!(append_post(&repo, &r, &h.id, post("FINDING", "a note")).is_ok());
+    }
+
+    #[test]
+    fn bodies_are_stored_verbatim_and_sanitized_only_on_render() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        let hostile = "line one\u{1b}[2Jcleared\nline two";
+        append_post(&repo, &w, &h.id, post("FINDING", hostile)).unwrap();
+
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.posts[0].body, hostile, "storage keeps the exact bytes");
+        let shown = t.posts[0].display_body();
+        assert!(!shown.contains('\u{1b}'), "render drops the escape");
+        assert!(shown.contains('\n'), "render keeps the line break");
+    }
+
+    #[test]
+    fn attachments_are_content_addressed_and_readable_back() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        let payload = b"--- a/x\n+++ b/x\n".to_vec();
+        let p = NewPost {
+            kind: KIND_REVIEW_REQUEST.into(),
+            body: "here it is".into(),
+            attachments: vec![NewAttachment {
+                kind: "patch".into(),
+                name: Some("fix.diff".into()),
+                payload: payload.clone(),
+            }],
+            ..Default::default()
+        };
+        let written = append_post(&repo, &w, &h.id, p).unwrap();
+        let a = &written.attachments[0];
+        assert_eq!(a.digest, refstore::sha256_hex(&payload));
+        assert_eq!(a.size, payload.len());
+        assert_eq!(read_attachment(&repo, &h.id, &a.digest).unwrap(), payload);
+    }
+
+    #[test]
+    fn an_oversized_body_is_refused_rather_than_truncated() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        let huge = "x".repeat(MAX_BODY_BYTES + 1);
+        assert!(append_post(&repo, &w, &h.id, post("FINDING", &huge)).is_err());
+    }
+
+    #[test]
+    fn an_unsupported_attachment_kind_is_refused() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        let p = NewPost {
+            kind: "FINDING".into(),
+            body: "b".into(),
+            attachments: vec![NewAttachment {
+                kind: "binary".into(),
+                name: None,
+                payload: vec![0u8; 4],
+            }],
+            ..Default::default()
+        };
+        assert!(append_post(&repo, &w, &h.id, p).is_err());
+    }
+
+    #[test]
+    fn closing_moves_the_thread_to_the_attic_without_losing_it() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        append_post(&repo, &w, &h.id, post("FINDING", "note")).unwrap();
+
+        close_thread(&repo, &human(), &h.id).unwrap();
+        assert!(repo.refname_to_id(&thread_ref(&h.id)).is_err());
+        assert!(repo.refname_to_id(&attic_ref(&h.id)).is_ok());
+        assert!(list_threads(&repo).is_empty());
+        assert_eq!(list_attic(&repo).len(), 1);
+        // still readable, with its posts
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.posts.len(), 1);
+    }
+
+    #[test]
+    fn a_denied_post_is_recorded_and_moves_no_state() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        let mut p = post(KIND_CLAIM, "mine");
+        p.denied = Some("sender revoked".into());
+        append_post(&repo, &w, &h.id, p).unwrap();
+
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.posts.len(), 1, "the refusal is on the board, not dropped");
+        assert!(t.posts[0].is_denied());
+        assert_eq!(t.status(), ThreadStatus::Open, "a refused claim claims nothing");
+        assert_eq!(t.claimed_by(), None);
+    }
+
+    #[test]
+    fn the_roster_records_attach_and_revoke() {
+        let (_d, repo) = temp_repo();
+        let entry = RosterEntry {
+            agent: "claude-worker".into(),
+            box_id: Some("env/claude/auth".into()),
+            role: Role::Worker,
+            policy_digest: Some("sha256:ab".into()),
+            attached_at: now_ts(),
+            revoked_at: None,
+        };
+        put_roster_entry(&repo, &human(), entry).unwrap();
+        let r = read_roster(&repo);
+        assert!(r.get("claude-worker").unwrap().is_active());
+        assert_eq!(r.by_box("env/claude/auth").unwrap().agent, "claude-worker");
+
+        revoke(&repo, &human(), "claude-worker").unwrap();
+        let r = read_roster(&repo);
+        assert!(!r.get("claude-worker").unwrap().is_active());
+        assert!(r.by_box("env/claude/auth").is_none());
+        assert_eq!(r.active().count(), 0);
+        assert_eq!(r.agents.len(), 1, "a revoked entry is kept for attribution");
+    }
+
+    #[test]
+    fn revoking_someone_who_is_not_a_member_is_an_error() {
+        let (_d, repo) = temp_repo();
+        assert!(revoke(&repo, &human(), "ghost").is_err());
+    }
+
+    #[test]
+    fn thread_ids_that_could_escape_a_ref_path_are_refused() {
+        for bad in ["../../evil", "ABCDEF0123456789", "short", ""] {
+            assert!(validate_thread_id(bad).is_err(), "{bad:?} should be refused");
+        }
+        assert!(validate_thread_id("0123456789abcdef").is_ok());
+    }
+
+    #[test]
+    fn board_identities_reject_separators_and_control_characters() {
+        for bad in ["", "a/b", "a b", "a\u{1b}b", "a\\b"] {
+            assert!(validate_name(bad).is_err(), "{bad:?} should be refused");
+        }
+        assert!(validate_name("claude-worker.2").is_ok());
+    }
+
+    #[test]
+    fn union_merge_keeps_both_sides_posts_exactly_once() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+
+        append_post(&repo, &w, &h.id, post("FINDING", "shared")).unwrap();
+        let common = repo.refname_to_id(&thread_ref(&h.id)).unwrap();
+
+        append_post(&repo, &w, &h.id, post("ASK", "local only")).unwrap();
+        let local = repo.refname_to_id(&thread_ref(&h.id)).unwrap();
+
+        // Rewind to the common tip and post something else: a second clone.
+        repo.reference(&thread_ref(&h.id), common, true, "rewind").unwrap();
+        append_post(&repo, &w, &h.id, post("RISK", "incoming only")).unwrap();
+        let incoming = repo.refname_to_id(&thread_ref(&h.id)).unwrap();
+
+        let merged = union_merge_thread(&repo, local, incoming).unwrap();
+        let t = read_thread_at(&repo, merged).unwrap();
+        assert_eq!(t.posts.len(), 3);
+        let bodies: Vec<&str> = t.posts.iter().map(|p| p.body.as_str()).collect();
+        assert!(bodies.contains(&"shared"));
+        assert!(bodies.contains(&"local only"));
+        assert!(bodies.contains(&"incoming only"));
+        // and the order is the canonical one
+        let mut sorted = t.posts.clone();
+        sorted.sort_by(|a, b| a.key().cmp(&b.key()));
+        assert_eq!(t.posts, sorted);
+    }
+
+    #[test]
+    fn union_merge_never_resurrects_a_revoked_participant() {
+        let (_d, repo) = temp_repo();
+        let entry = RosterEntry {
+            agent: "claude-worker".into(),
+            box_id: None,
+            role: Role::Worker,
+            policy_digest: None,
+            attached_at: now_ts(),
+            revoked_at: None,
+        };
+        put_roster_entry(&repo, &human(), entry).unwrap();
+        let unrevoked = repo.refname_to_id(BOARD_META_REF).unwrap();
+        revoke(&repo, &human(), "claude-worker").unwrap();
+        let revoked = repo.refname_to_id(BOARD_META_REF).unwrap();
+
+        for (a, b) in [(revoked, unrevoked), (unrevoked, revoked)] {
+            let merged = union_merge_roster(&repo, a, b).unwrap();
+            let r = read_roster_at(&repo, merged);
+            assert!(
+                !r.get("claude-worker").unwrap().is_active(),
+                "revocation must survive a merge in either direction"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_appends_to_one_thread_all_land() {
+        let (dir, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let path = dir.path().to_path_buf();
+        let id = h.id.clone();
+
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let path = path.clone();
+                let id = id.clone();
+                std::thread::spawn(move || {
+                    let repo = Repository::open(&path).unwrap();
+                    let w = worker(&format!("agent-{i}"), &format!("env/a/{i}"));
+                    for n in 0..3 {
+                        append_post(&repo, &w, &id, post("FINDING", &format!("{i}-{n}"))).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(read_thread(&repo, &id).unwrap().posts.len(), 12);
+    }
+}

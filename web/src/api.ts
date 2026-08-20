@@ -427,3 +427,104 @@ export const api = {
   browserFrameUrl: (agent: string, slug: string, seq: number) =>
     `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/browser/frame?seq=${seq}`,
 };
+
+// ── the board ────────────────────────────────────────────────────────────────
+//
+// Mirrors of `h5i_core::board`. The console reads the board and cannot post to
+// it: every route below is a GET, and there is no mutating counterpart to add.
+// A post has to come from a participant the host can name, which means it has
+// to come through a box's spool — not through a browser tab.
+
+/** `h5i_core::board::Ceiling` — the profile every participant must be under. */
+export interface BoardCeiling {
+  profile: string;
+  digest?: string;
+}
+
+/** `h5i_core::board::ThreadHeader` — what is fixed when a thread is opened. */
+export interface BoardThreadHeader {
+  id: string;
+  title: string;
+  created_at: string;
+  created_by: string;
+  version: number;
+  ceiling?: BoardCeiling;
+  branch?: string;
+}
+
+export type BoardStatus = "open" | "claimed" | "review" | "done" | "blocked";
+
+/** `h5i_core::board::Attachment` — content-addressed, kind from an allowlist. */
+export interface BoardAttachment {
+  kind: string;
+  digest: string;
+  size: number;
+  name?: string;
+}
+
+/**
+ * `h5i_core::board::Post`.
+ *
+ * The split that the UI has to render, and the reason this file names it: the
+ * agent chose `kind`, `body` and `attachments`; the host stamped `sender`,
+ * `box_id`, `role`, `policy_digest` and `denied`. One half is a claim and the
+ * other is an observation, and a reader who cannot tell them apart is reading
+ * the board wrong.
+ */
+export interface BoardPost {
+  id: string;
+  ts: string;
+  thread: string;
+  version: number;
+  kind: string;
+  body: string;
+  reply_to?: string;
+  attachments?: BoardAttachment[];
+  sender: string;
+  box_id?: string;
+  role: string;
+  policy_digest?: string;
+  denied?: string;
+}
+
+/** `h5i_core::board::ThreadSummary` — a thread without its posts. */
+export interface BoardThreadSummary {
+  header: BoardThreadHeader;
+  status: BoardStatus;
+  claimed_by?: string;
+  posts: number;
+  last_activity: string;
+  denials: number;
+}
+
+/** `h5i_core::board::RosterEntry` — membership, host-authored. */
+export interface BoardRosterEntry {
+  agent: string;
+  box_id?: string;
+  role: "worker" | "reviewer" | "observer" | "human";
+  policy_digest?: string;
+  attached_at: string;
+  revoked_at?: string;
+}
+
+/** `h5i_core::server::BoardView`. */
+export interface BoardOverview {
+  threads: BoardThreadSummary[];
+  attic: BoardThreadSummary[];
+  roster: BoardRosterEntry[];
+  /** Participants whose box has been shown a peer's text. */
+  influenced: string[];
+}
+
+/** `h5i_core::server::BoardThreadView`. */
+export interface BoardThread {
+  header: BoardThreadHeader;
+  status: BoardStatus;
+  claimed_by?: string;
+  posts: BoardPost[];
+}
+
+export const boardApi = {
+  overview: () => get<BoardOverview>("/api/board"),
+  thread: (id: string) => get<BoardThread>(`/api/board/thread/${encodeURIComponent(id)}`),
+};

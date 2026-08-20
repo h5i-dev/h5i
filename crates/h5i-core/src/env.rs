@@ -79,6 +79,8 @@ const BOX_CAPTURE_SPOOL: &str = "/.h5i/spool";
 const BOX_INBOX_MOUNT: &str = "/.h5i/inbox";
 /// Inbox subdir under the env admin dir; mounted read-only into the box.
 const ENV_INBOX_DIR: &str = "inbox";
+/// Capture-spool subdir under the env admin dir; the box's one writable window.
+const ENV_SPOOL_DIR: &str = "spool";
 #[cfg(unix)] // only the unix-gated RunLock references this
 const RUN_LOCK_FILE: &str = "run.lock";
 #[cfg(unix)] // only the unix-gated RunLock references this
@@ -3440,6 +3442,14 @@ pub fn env_inbox_dir(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
     m.dir(h5i_root).join(ENV_INBOX_DIR)
 }
 
+/// Host path of an env's capture spool (`<env>/spool/`) — the box's one
+/// writable window. Its counterpart to [`env_inbox_dir`]: the inbox is what the
+/// box may read, this is what it may write, and everything else under the env
+/// directory is outside both grants.
+pub fn env_capture_spool_dir(h5i_root: &Path, m: &EnvManifest) -> PathBuf {
+    m.dir(h5i_root).join(ENV_SPOOL_DIR)
+}
+
 /// Box-writable "seen" cursor for the inbox, stored in the capture spool (the
 /// inbox itself is read-only, so read-state can't live there). Ignored by the
 /// spool ingest, whose record names use different prefixes.
@@ -3509,7 +3519,7 @@ fn prepare_env_capture_spool(
     if policy.claim < IsolationClaim::Process {
         return Ok(Vec::new());
     }
-    let spool = m.dir(h5i_root).join("spool");
+    let spool = env_capture_spool_dir(h5i_root, m);
     std::fs::create_dir_all(&spool).map_err(|e| H5iError::with_path(e, &spool))?;
     let spool_inside = match policy.claim {
         claim if claim.image_backed() => {
@@ -5625,6 +5635,11 @@ fn run_inner(
         "run",
         Some(crate::secrets::redact_text(&argv.join(" "))),
     );
+    // Move this box's board mail for as long as the run lasts: drain what the
+    // agent posts, deliver what its peers post back. A no-op — and no thread —
+    // when the box is not on a board. Declared here so it outlives the run and
+    // makes one final pass on the way out.
+    let _board = crate::board_tender::SessionTender::start(repo.path(), h5i_root, m);
 
     // The stored policy, digest-verified, then re-resolved against a fresh
     // host probe (fail closed if the host can no longer satisfy the claim).
@@ -6005,6 +6020,10 @@ pub fn shell(
         if readonly { "observe" } else { "shell" },
         (!command.is_empty()).then(|| crate::secrets::redact_text(&command.join(" "))),
     );
+    // The board tender, for the length of the session. An interactive shell is
+    // where a human most often watches two agents talk, so this is the session
+    // that most wants its mail moving.
+    let _board = crate::board_tender::SessionTender::start(repo.path(), h5i_root, m);
 
     let mut policy = load_policy(h5i_root, m)?;
 
@@ -7024,7 +7043,7 @@ fn ingest_shell_spool(
     m: &mut EnvManifest,
     secrets: &[String],
 ) -> Result<usize, H5iError> {
-    let spool = m.dir(h5i_root).join("spool");
+    let spool = env_capture_spool_dir(h5i_root, m);
     if !spool.is_dir() {
         return Ok(0);
     }
@@ -7601,6 +7620,25 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
         clean(&m.isolation_claim),
         short(&m.policy_digest, 12)
     ));
+    // What this box has been shown by other agents. Not a verdict on the text —
+    // h5i does not claim to tell a hostile message from an ordinary one — but a
+    // fact a reviewer needs before treating this box's output as evidence about
+    // this box alone. A box that never appears here read nothing a peer wrote.
+    if let Some(influence) = crate::board_tender::peer_influence(h5i_root, m) {
+        out.push_str(&format!(
+            "  board    : peer-influenced since {} by {}\n",
+            clean(&influence.since),
+            influence
+                .senders
+                .iter()
+                .map(|s| clean(s))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        out.push_str(
+            "             its output reflects that conversation; verify with a box that read none of it\n",
+        );
+    }
     // Resolved policy details when readable (digest-verified).
     if let Ok(policy) = load_policy(h5i_root, m) {
         let p = &policy.profile;
@@ -9121,7 +9159,7 @@ impl SpoolPending {
 /// (the box may be writing it now) is simply skipped, never an error.
 fn scan_spool_pending(h5i_root: &Path, m: &EnvManifest) -> SpoolPending {
     let mut p = SpoolPending::default();
-    let spool = m.dir(h5i_root).join("spool");
+    let spool = env_capture_spool_dir(h5i_root, m);
     let Ok(rd) = std::fs::read_dir(&spool) else {
         return p;
     };
@@ -12468,7 +12506,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let h5i_root = dir.path();
         let m = canonical_manifest("claude", "fix");
-        let spool = m.dir(h5i_root).join("spool");
+        let spool = env_capture_spool_dir(h5i_root, &m);
         std::fs::create_dir_all(&spool).unwrap();
 
         write_inbox_capture_spool(
