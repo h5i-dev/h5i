@@ -4460,3 +4460,70 @@ fn removing_an_already_removed_node_is_a_no_op() {
         "the second removal must not stop the script:\n{rendered}"
     );
 }
+
+/// A page's own global wins over named access, as it does in a browser.
+///
+/// `<div id="thing">` exposes `window.thing`, and the page writing
+/// `var thing = [1,2,3]` must take that name back. The property was an
+/// accessor with no setter, so in sloppy mode the assignment was swallowed and
+/// the page read the element back out of its own variable — the quietest
+/// possible wrong answer, and one nothing in the page could detect.
+#[test]
+fn a_pages_own_variable_takes_a_name_back_from_named_access() {
+    let (page, _broker) = run_page(
+        "<html><body><div id='thing'>element</div><div id='report'></div>\
+         <script>\
+           var before = typeof thing;\
+           var thing = [1, 2, 3];\
+           document.getElementById('report').textContent = \
+             before + '|' + Array.isArray(thing) + '|' + thing.length;\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("object|true|3"),
+        "named access answers first, then the page's own value replaces it:\n{rendered}"
+    );
+}
+
+/// And a page that never assigns still gets the element.
+#[test]
+fn named_access_still_answers_when_the_page_does_not_take_the_name() {
+    let (page, _broker) = run_page(
+        "<html><body><div id='banner'>hello</div><div id='report'></div>\
+         <script>\
+           document.getElementById('report').textContent = banner.textContent;\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("hello"),
+        "the legacy global still resolves to the element:\n{rendered}"
+    );
+}
+
+/// Holding a node across its own removal keeps the node, not a stale lookup.
+///
+/// This is what the missing setter actually cost. A page doing
+/// `var el = document.getElementById("el"); el.remove(); el.parentNode` got a
+/// TypeError about converting null to an object, which reads as "parentNode is
+/// broken on a detached node". It was not: `el` was still the named-access
+/// getter, and that getter stops resolving the moment the element leaves the
+/// document, so the *variable* had gone rather than the property.
+#[test]
+fn a_variable_holding_a_node_survives_that_nodes_removal() {
+    let (page, _broker) = run_page(
+        "<html><body><div id='host'><span id='leaf'>x</span></div><div id='report'></div>\
+         <script>\
+           var leaf = document.getElementById('leaf');\
+           leaf.remove();\
+           document.getElementById('report').textContent = \
+             leaf.tagName + '|' + (leaf.parentNode === null) + '|' + leaf.isConnected;\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("SPAN|true|false"),
+        "the detached node is still readable through the page's own variable:\n{rendered}"
+    );
+}
