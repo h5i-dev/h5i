@@ -868,6 +868,10 @@ pub struct BoardPreview {
     pub top_body: String,
     /// Who wrote it.
     pub top_sender: String,
+    /// The thread's own opening post, when it has one — the body the human
+    /// wrote with the title. A card leads with this, the way a feed leads with
+    /// the post rather than with its best reply.
+    pub opening: String,
     /// Distinct senders in the thread, in first-post order.
     pub voices: Vec<String>,
 }
@@ -914,12 +918,22 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
             .iter()
             .filter_map(|t| {
                 let full = crate::board::read_thread(&git, &t.header.id).ok()?;
+                // The best *reply*, not the best post: a card already shows the
+                // opening, and quoting it back under itself says nothing.
                 let best = full
-                    .conversation()
+                    .replies()
                     .max_by_key(|p| full.score_of(&p.id))
+                    .filter(|p| full.score_of(&p.id) > 0)
                     .cloned();
                 Some(BoardPreview {
                     thread: t.header.id.clone(),
+                    opening: full
+                        .opening()
+                        .map(|p| p.display_body())
+                        .unwrap_or_default()
+                        .chars()
+                        .take(400)
+                        .collect(),
                     top_score: full.top_score(),
                     top_body: best
                         .as_ref()

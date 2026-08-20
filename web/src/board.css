@@ -37,17 +37,34 @@
   --brd-green: #62c98c;
   --brd-mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
 
+  /* The type scale, sized against Reddit's — the surface people already read
+     threads on. Theirs: 18px post titles, 14px body and comments, 12px on the
+     byline. Ours was 12.5px body and 9.5px metadata, which is a caption scale;
+     it looked dense and precise in a screenshot and was tiring to actually
+     read. Metadata under 11px is the part that hurt most, because it is where
+     the lane and the sender live and those are the two things a reader is
+     supposed to check.
+
+     Titles stay a little under Reddit's because this is a three-column
+     instrument rather than a single feed column. */
+  --brd-fs-title: 19px;   /* the open conversation's heading */
+  --brd-fs-card: 15px;    /* a thread's title in a list or a card */
+  --brd-fs-body: 14px;    /* what you actually read */
+  --brd-fs-code: 13px;
+  --brd-fs-meta: 12px;    /* sender, box, time, counts */
+  --brd-fs-label: 11px;   /* uppercase section headers, pills, kinds, lanes */
+
   background: var(--brd-bg);
   color: var(--brd-text);
   min-height: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--brd-fs-body);
   line-height: 1.55;
 }
 
 .brd-body {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 240px;
+  grid-template-columns: 260px minmax(0, 1fr) 280px;
   height: 100%;
   min-height: 0;
 }
@@ -81,7 +98,7 @@
 
 .brd-h {
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-label);
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--brd-faint);
@@ -106,7 +123,7 @@
 }
 .brd-chip {
   font-family: var(--brd-mono);
-  font-size: 9.5px;
+  font-size: var(--brd-fs-label);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   padding: 0.1rem 0.5rem;
@@ -159,7 +176,7 @@
 }
 .brd-thread-title {
   display: block;
-  font-size: 12.5px;
+  font-size: var(--brd-fs-card);
   font-weight: 500;
   color: var(--brd-text);
   overflow-wrap: anywhere;
@@ -171,7 +188,7 @@
   align-items: center;
   margin-top: 0.3rem;
   font-family: var(--brd-mono);
-  font-size: 9.5px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-faint);
 }
 
@@ -179,7 +196,7 @@
 
 .brd-pill {
   font-family: var(--brd-mono);
-  font-size: 9px;
+  font-size: var(--brd-fs-label);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 0 0.4rem;
@@ -210,14 +227,14 @@
   border-bottom: 1px solid var(--brd-line2);
 }
 .brd-conv-title {
-  font-size: 16px;
+  font-size: var(--brd-fs-title);
   font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--brd-ink);
 }
 .brd-mono {
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-faint);
 }
 .brd-warn { color: var(--brd-amber); }
@@ -237,7 +254,7 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-dim);
   margin-bottom: 0.3rem;
 }
@@ -252,7 +269,7 @@
   align-items: center;
   justify-content: center;
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-label);
   font-weight: 700;
   border: 1px solid var(--brd-line2);
   background: #141419;
@@ -260,7 +277,7 @@
 }
 
 .brd-kind {
-  font-size: 9px;
+  font-size: var(--brd-fs-label);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 0 0.45rem;
@@ -281,7 +298,7 @@
   border-radius: 0;
   background: var(--brd-panel);
   padding: 0.6rem 0.75rem;
-  font-size: 12.5px;
+  font-size: var(--brd-fs-body);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -291,7 +308,7 @@
   top: -7px;
   right: 10px;
   font-family: var(--brd-mono);
-  font-size: 8.5px;
+  font-size: 9.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--brd-faint);
@@ -304,7 +321,7 @@
   gap: 0.4rem;
   align-items: center;
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-meta);
   border: 1px solid var(--brd-line2);
   border-radius: 0;
   padding: 0.15rem 0.6rem;
@@ -318,7 +335,7 @@
   gap: 0.6rem;
   align-items: baseline;
   font-family: var(--brd-mono);
-  font-size: 10.5px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-ink);
   background: var(--brd-red);
   padding: 0.45rem 0.75rem;
@@ -328,7 +345,7 @@
 .brd-hostline-who {
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  font-size: 9px;
+  font-size: var(--brd-fs-label);
   color: rgba(255, 255, 255, 0.72);
 }
 
@@ -340,12 +357,12 @@
   padding: 0.5rem 0.75rem;
   border-top: 1px solid var(--brd-line2);
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-meta);
 }
 
 .brd-cmd {
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-meta);
   border: 1px solid var(--brd-line2);
   border-radius: 0;
   padding: 0.2rem 0.6rem;
@@ -365,7 +382,7 @@
   padding: 0.55rem 0.65rem;
   margin-bottom: 0.5rem;
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-dim);
 }
 .brd-agent.is-revoked { opacity: 0.62; }
@@ -374,7 +391,7 @@
   align-items: center;
   gap: 0.45rem;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--brd-fs-card);
   color: var(--brd-ink);
   margin-bottom: 0.3rem;
 }
@@ -406,7 +423,7 @@
 .brd-empty,
 .brd-error,
 .brd-note {
-  font-size: 11px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-faint);
   padding: 0.75rem;
   line-height: 1.6;
@@ -417,7 +434,7 @@
   display: block;
   margin-top: 0.4rem;
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-red-text);
   overflow-wrap: anywhere;
 }
@@ -438,7 +455,7 @@
 .brd-blank p { margin: 0 0 0.7rem; }
 .brd-blank pre {
   font-family: var(--brd-mono);
-  font-size: 11px;
+  font-size: var(--brd-fs-code);
   color: var(--brd-text);
   background: var(--brd-panel);
   border: 1px solid var(--brd-line2);
@@ -468,7 +485,7 @@
   align-items: center;
   padding: 0 14px 0 16px;
   margin-right: 4px;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--h5-accent);
@@ -476,7 +493,7 @@
 }
 .wb-tab {
   font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-size: 14px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding: 0.55rem 1.15rem;
@@ -520,7 +537,7 @@
   gap: 0.6rem;
   align-items: baseline;
   font-family: var(--brd-mono);
-  font-size: 10.5px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-amber);
   background: rgba(214, 169, 78, 0.07);
   border-left: 2px solid var(--brd-amber);
@@ -531,7 +548,7 @@
 .brd-redacted-who {
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  font-size: 9px;
+  font-size: var(--brd-fs-label);
   color: var(--brd-faint);
 }
 
@@ -547,7 +564,7 @@
  * is always present — colour never carries the lane alone. */
 .brd-lane {
   font-family: var(--brd-mono);
-  font-size: 9.5px;
+  font-size: var(--brd-fs-label);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--brd-amber);
@@ -568,21 +585,21 @@
   color: var(--brd-ink);
   margin: 0.2rem 0 0.35rem;
 }
-.brd-fence .md-h1 { font-size: 14px; }
-.brd-fence .md-h2 { font-size: 13px; }
-.brd-fence .md-h3, .brd-fence .md-h4 { font-size: 12.5px; }
+.brd-fence .md-h1 { font-size: 16px; }
+.brd-fence .md-h2 { font-size: 15px; }
+.brd-fence .md-h3, .brd-fence .md-h4 { font-size: 14px; }
 .brd-fence .md-list { margin: 0 0 0.5rem; padding-left: 1.1rem; }
 .brd-fence .md-list li { margin: 0.1rem 0; }
 .brd-fence .md-inline-code {
   font-family: var(--brd-mono);
-  font-size: 11.5px;
+  font-size: var(--brd-fs-code);
   background: #16161c;
   border: 1px solid var(--brd-line2);
   padding: 0 0.25rem;
 }
 .brd-fence .md-code {
   font-family: var(--brd-mono);
-  font-size: 11.5px;
+  font-size: var(--brd-fs-code);
   background: #08080b;
   border: 1px solid var(--brd-line2);
   padding: 0.5rem 0.6rem;
@@ -594,7 +611,7 @@
    of showing it is that nothing is hidden behind friendly text. */
 .brd-fence .md-url {
   font-family: var(--brd-mono);
-  font-size: 10.5px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-faint);
   overflow-wrap: anywhere;
 }
@@ -607,7 +624,7 @@
    is neither brand nor refusal. */
 .brd-score {
   font-family: var(--brd-mono);
-  font-size: 10px;
+  font-size: var(--brd-fs-label);
   padding: 0 0.35rem;
   border: 1px solid var(--brd-line2);
 }
@@ -624,7 +641,7 @@
   border-bottom: 1px solid var(--brd-line2);
 }
 .brd-feed-head .brd-h { margin: 0; }
-.brd-feed-head .brd-dim { font-size: 10.5px; }
+.brd-feed-head .brd-dim { font-size: var(--brd-fs-meta); }
 .brd-feed {
   flex: 1;
   min-height: 0;
@@ -652,7 +669,7 @@
   flex: none;
   width: 3rem;
   font-family: var(--brd-mono);
-  font-size: 12px;
+  font-size: var(--brd-fs-card);
   color: var(--brd-faint);
   padding-top: 0.1rem;
 }
@@ -662,7 +679,7 @@
    reads as ragged rather than as a list. */
 .brd-card-body { flex: 1; min-width: 0; }
 .brd-card-title {
-  font-size: 13.5px;
+  font-size: var(--brd-fs-card);
   font-weight: 500;
   color: var(--brd-text);
   overflow-wrap: anywhere;
@@ -674,16 +691,59 @@
   align-items: center;
   margin-top: 0.25rem;
   font-family: var(--brd-mono);
-  font-size: 9.5px;
+  font-size: var(--brd-fs-meta);
   color: var(--brd-faint);
 }
 .brd-card-quote {
   margin-top: 0.4rem;
-  font-size: 12px;
+  font-size: var(--brd-fs-body);
   color: var(--brd-dim);
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The thread's own post, set apart from the replies to it. A discussion surface
+   reads as body-then-comments; without the separation the opening looks like
+   the first comment and the question looks like an opinion. */
+.brd-opening {
+  border-bottom: 1px solid var(--brd-line2);
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.2rem;
+}
+.brd-replies-head {
+  font-family: var(--brd-mono);
+  font-size: var(--brd-fs-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brd-faint);
+  margin: 0.6rem 0 0.2rem;
+}
+/* A command in the narrow right column has to wrap. `nowrap` is right in the
+   wide conversation footer, where a broken command line would be harder to
+   copy than a long one; in a 280px column the same rule pushed the chip out
+   past its own panel and over the text beside it. */
+.brd-agent-cmd .brd-cmd,
+.brd-empty code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* The best-scored reply, quoted under the card's own body — what the thread
+   produced, next to what it asked. */
+.brd-card-reply {
+  margin-top: 0.35rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--brd-line2);
+  font-size: var(--brd-fs-meta);
+  color: var(--brd-dim);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

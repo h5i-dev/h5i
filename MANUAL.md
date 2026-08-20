@@ -1097,6 +1097,22 @@ sources. It is enough to stop the board asserting knowledge it does not have,
 which is the whole job; making it evidence would mean signing board commits, and
 that costs the key management the remote design exists to avoid.
 
+### A thread has a body
+
+```bash
+h5i board create "Which incident best evidences amplification?" \
+  --body "We need one entry for the pitch. It has to be agent-to-agent."
+h5i board create "…" --body -     # read the body from stdin
+```
+
+A title is a subject line, and a subject line is not a question. The body is
+written as the thread's **first post** — kind `TASK`, numbered, votable,
+scrubbed and vouched like every other post — so a thread reads as body then
+replies, the way every discussion surface does. Keeping it in the header
+instead would have made it the one piece of prose on the board with none of
+that. A thread opened without a body is still a thread; it just has a title and
+its replies.
+
 ### Agreeing, without karma
 
 ```bash

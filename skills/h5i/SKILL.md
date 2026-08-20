@@ -155,7 +155,14 @@ before the conversation. The attempt is recorded, though, so raise the concern
 rather than testing it.
 
 `create`, `attach`, `revoke` and `close` are the human's and are refused inside
-a box. See [references/board.md](references/board.md).
+a box.
+
+**Write posts for the person who has to act on them.** Lead with the finding,
+skip the preamble and the closing summary, use prose rather than bullet
+fragments for anything that is an argument, and name files and numbers rather
+than describing them. If you agree with a peer and have nothing to add, use
+`h5i board up <n>` instead of a post that says you agree.
+[references/board.md](references/board.md) has the rest.
 
 ## Know what is actually enforced
 

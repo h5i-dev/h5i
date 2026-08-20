@@ -475,7 +475,7 @@ mod tests {
         let b = work_repo(&b_dir);
 
         // A opens a thread and posts, then publishes.
-        let h = board::create_thread(&a, &human(), "cross-machine", None, None).unwrap();
+        let h = board::create_thread(&a, &human(), "cross-machine", None, None, None).unwrap();
         board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "from A")).unwrap();
         sync_with(&a, &remote).unwrap();
 
@@ -516,7 +516,7 @@ mod tests {
         std::fs::create_dir_all(&b_dir).unwrap();
         let b = work_repo(&b_dir);
 
-        let h = board::create_thread(&a, &human(), "race", None, None).unwrap();
+        let h = board::create_thread(&a, &human(), "race", None, None, None).unwrap();
         sync_with(&a, &remote).unwrap();
         sync_with(&b, &remote).unwrap();
 
@@ -633,7 +633,7 @@ mod tests {
         std::fs::create_dir_all(&b_dir).unwrap();
         let b = work_repo(&b_dir);
 
-        let h = board::create_thread(&a, &human(), "vouch", None, None).unwrap();
+        let h = board::create_thread(&a, &human(), "vouch", None, None, None).unwrap();
         board::append_post(
             &a,
             &agent("alice").from_host("machine-a"),
@@ -682,7 +682,7 @@ mod tests {
         let dir = root.path().join("w");
         std::fs::create_dir_all(&dir).unwrap();
         let repo = work_repo(&dir);
-        let h = board::create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = board::create_thread(&repo, &human(), "t", None, None, None).unwrap();
         // `agent()` builds an author with no origin, the way a build from before
         // origins existed would.
         board::append_post(&repo, &agent("old"), &h.id, post("FINDING", "x")).unwrap();
@@ -714,7 +714,7 @@ mod tests {
         std::fs::create_dir_all(&b_dir).unwrap();
         let b = work_repo(&b_dir);
 
-        let h = board::create_thread(&a, &human(), "closing", None, None).unwrap();
+        let h = board::create_thread(&a, &human(), "closing", None, None, None).unwrap();
         sync_with(&a, &remote).unwrap();
         sync_with(&b, &remote).unwrap();
 
@@ -754,7 +754,7 @@ mod tests {
         std::fs::create_dir_all(&a_dir).unwrap();
         let a = work_repo(&a_dir);
 
-        let h = board::create_thread(&a, &human(), "durable", None, None).unwrap();
+        let h = board::create_thread(&a, &human(), "durable", None, None, None).unwrap();
         board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "keep me")).unwrap();
         sync_with(&a, &remote).unwrap();
 
@@ -792,7 +792,7 @@ mod tests {
         assert!(r.is_default, "an unconfigured board falls back to a local bare repo");
         assert!(default_remote_path(&h5i_root).join("HEAD").is_file());
 
-        let h = board::create_thread(&repo, &human(), "solo", None, None).unwrap();
+        let h = board::create_thread(&repo, &human(), "solo", None, None, None).unwrap();
         board::append_post(&repo, &agent("solo"), &h.id, post("FINDING", "alone")).unwrap();
         sync(&repo, &h5i_root).unwrap();
 
@@ -824,7 +824,7 @@ mod tests {
         let a_dir = root.path().join("a");
         std::fs::create_dir_all(&a_dir).unwrap();
         let a = work_repo(&a_dir);
-        let h = board::create_thread(&a, &human(), "protected", None, None).unwrap();
+        let h = board::create_thread(&a, &human(), "protected", None, None, None).unwrap();
         board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "hello")).unwrap();
         sync_with(&a, &remote).unwrap();
 

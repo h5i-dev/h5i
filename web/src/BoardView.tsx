@@ -321,18 +321,46 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
 
       <div className="brd-posts">
         {thread.posts.length === 0 && (
-          <div className="brd-dim brd-pad">No posts yet.</div>
+          <div className="brd-dim brd-pad">
+            No body and no replies yet — this thread is a title.
+          </div>
         )}
-        {thread.posts
-          .filter((p) => p.kind !== "UPVOTE" && p.kind !== "DOWNVOTE")
-          .map((p) => (
-            <PostRow
-              key={p.id}
-              p={p}
-              me={thread.origin}
-              score={thread.scores[p.id] ?? 0}
-            />
-          ))}
+        {(() => {
+          const shown = thread.posts.filter(
+            (p) => p.kind !== "UPVOTE" && p.kind !== "DOWNVOTE",
+          );
+          // The opening post is the thread's body, not its first comment, so it
+          // sits above the rule and the replies sit below it — the shape every
+          // discussion surface has, and the one a reader already knows.
+          const opening = shown.find((p) => p.kind === "TASK");
+          const replies = shown.filter((p) => p !== opening);
+          return (
+            <>
+              {opening && (
+                <div className="brd-opening">
+                  <PostRow
+                    p={opening}
+                    me={thread.origin}
+                    score={thread.scores[opening.id] ?? 0}
+                  />
+                </div>
+              )}
+              {opening && replies.length > 0 && (
+                <div className="brd-replies-head">
+                  {replies.length} {replies.length === 1 ? "reply" : "replies"}
+                </div>
+              )}
+              {replies.map((p) => (
+                <PostRow
+                  key={p.id}
+                  p={p}
+                  me={thread.origin}
+                  score={thread.scores[p.id] ?? 0}
+                />
+              ))}
+            </>
+          );
+        })()}
       </div>
 
       <div className="brd-conv-foot">
@@ -626,9 +654,15 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
                     </span>
                   )}
                 </div>
+                {p?.opening && (
+                  <div className="brd-card-quote">{plainText(p.opening)}</div>
+                )}
                 {p?.top_body && (
-                  <div className="brd-card-quote">
-                    <span className="brd-dim">{p.top_sender}: </span>
+                  <div className="brd-card-reply">
+                    {/* A non-breaking space, because a trailing ordinary one
+                        at the end of an inline element is collapsed away and
+                        the byline runs into the quote. */}
+                    <span className="brd-dim">{`top reply · ${p.top_sender}:\u00a0`}</span>
                     {plainText(p.top_body)}
                   </div>
                 )}

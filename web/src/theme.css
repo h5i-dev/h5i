@@ -70,6 +70,13 @@ body {
     Arial, sans-serif;
   --font-mono: "SFMono-Regular", "Menlo", "Consolas", "DejaVu Sans Mono",
     monospace;
+
+  /* The console read a size smaller than anything people actually read: 13px
+     body against Reddit's 14, and a long tail of 9px and 10px labels where a
+     byline would be 12. Dense is not the same as small — the density here comes
+     from the hairline grid and the column layout, and it survives type that can
+     be read without leaning in. Every size below moved up one step; nothing
+     changed shape. */
 }
 
 code,
@@ -99,7 +106,7 @@ pre,
 .sbx-pane-empty {
   padding: 24px;
   color: var(--bp-text-dim);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* ── top strip ─────────────────────────────────────────────────────────────── */
@@ -128,7 +135,7 @@ pre,
   flex-wrap: wrap;
 }
 .sbx-strip-label {
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--bp-text-dim);
@@ -146,12 +153,12 @@ pre,
   line-height: 1.1;
 }
 .sbx-vital-num {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .sbx-vital-label {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--bp-text-dim);
@@ -204,7 +211,7 @@ body.sbx-dragging {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -220,7 +227,7 @@ body.sbx-dragging {
   background: var(--bp-surface);
 }
 .sbx-chip {
-  font-size: 11px;
+  font-size: 12px;
   padding: 2px 8px;
   border-radius: 10px;
   border: 1px solid var(--bp-border);
@@ -231,10 +238,14 @@ body.sbx-dragging {
 .sbx-chip:hover {
   background: var(--bp-surface-2);
 }
+/* Selected, not filled. The accent is red now, and a filled red block on this
+   screen means one thing — a boundary the host refused. A chosen filter is not
+   that, so it takes the outline-and-accent-text treatment every other selected
+   thing here uses. */
 .sbx-chip.active {
-  background: var(--bp-blue-hi);
-  border-color: var(--bp-blue-hi);
-  color: #0b0e12;
+  background: var(--bp-surface-2);
+  border-color: var(--h5-accent);
+  color: var(--h5-accent);
   font-weight: 600;
 }
 .sbx-fleet-body {
@@ -253,10 +264,10 @@ body.sbx-dragging {
 }
 .sbx-env-id {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
 }
 .sbx-env-sub {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--bp-text-dim);
 }
 .sbx-env-sub-dim {
@@ -284,7 +295,7 @@ body.sbx-dragging {
   color: var(--bp-orange);
 }
 .sbx-status {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--bp-text-muted);
   font-family: var(--font-mono);
 }
@@ -294,7 +305,7 @@ body.sbx-dragging {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .sbx-pressure.clean {
@@ -347,12 +358,12 @@ body.sbx-dragging {
   flex-wrap: wrap;
 }
 .sbx-detail-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
 }
 .sbx-detail-digest {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--bp-text-dim);
 }
 .sbx-detail-body {
@@ -362,7 +373,7 @@ body.sbx-dragging {
   gap: 16px;
 }
 .sbx-callout {
-  font-size: 13px;
+  font-size: 14px;
 }
 .sbx-findings {
   display: flex;
@@ -379,7 +390,7 @@ body.sbx-dragging {
 }
 .sbx-timeline-head {
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--bp-text-dim);
@@ -417,21 +428,21 @@ body.sbx-dragging {
   min-width: 0;
 }
 .sbx-run-policy {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--bp-text-dim);
   display: flex;
   align-items: center;
 }
 .sbx-run-cmd {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--bp-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .sbx-run-meta {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--bp-text-dim);
   display: flex;
   align-items: center;
@@ -441,7 +452,7 @@ body.sbx-dragging {
 /* the facts of an ended share, under its receipt row. The security claim is
    words, not a colour: the colour only says which of the two it is. */
 .sbx-run-share {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--bp-violet);
   margin-top: 2px;
 }
@@ -449,7 +460,7 @@ body.sbx-dragging {
   color: var(--bp-orange);
 }
 .sbx-source {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   padding: 1px 5px;
@@ -478,12 +489,12 @@ body.sbx-dragging {
   border-right: none;
 }
 .sbx-lane-name {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--bp-text-dim);
 }
 .sbx-lane-allow {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--bp-text-dim);
   font-family: var(--font-mono);
   white-space: nowrap;
@@ -494,12 +505,12 @@ body.sbx-dragging {
 .sbx-lane-empty {
   padding: 12px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--bp-text-dim);
 }
 
 .sbx-verdict {
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   max-width: 100%;
   overflow: hidden;
@@ -535,7 +546,7 @@ body.sbx-dragging {
   margin: 0;
   padding: 10px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.45;
   background: var(--bp-surface);
   border: 1px solid var(--bp-border);
@@ -555,7 +566,7 @@ body.sbx-dragging {
 }
 .sbx-policy-head {
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--bp-text-dim);
@@ -573,7 +584,7 @@ body.sbx-dragging {
   gap: 8px;
   padding: 5px 10px;
   background: var(--bp-bg);
-  font-size: 12px;
+  font-size: 13px;
 }
 .sbx-policy-key {
   color: var(--bp-text-dim);
@@ -612,7 +623,7 @@ body.sbx-dragging {
   background: var(--bp-surface-2);
   border: 1px solid var(--bp-border-strong);
   border-radius: 3px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .bterm-badge {
   color: var(--bp-text-dim);
@@ -646,7 +657,7 @@ body.sbx-dragging {
   border-radius: 3px;
   padding: 3px 9px;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 .bterm-tabs button.on {
@@ -689,14 +700,14 @@ body.sbx-dragging {
 }
 .bterm-pane h3 {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--bp-text);
 }
 .bterm-pane header p {
   margin: 2px 0 0;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--bp-text-dim);
 }
 .bterm-rows {
@@ -707,7 +718,7 @@ body.sbx-dragging {
 .bterm-empty {
   margin: 0;
   padding: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--bp-text-dim);
 }
 .bterm-row {
@@ -721,7 +732,7 @@ body.sbx-dragging {
   border-left: 2px solid transparent;
   color: var(--bp-text-muted);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   text-align: left;
   cursor: pointer;
 }
@@ -748,7 +759,7 @@ body.sbx-dragging {
 }
 .bterm-cause {
   color: var(--bp-violet);
-  font-size: 10px;
+  font-size: 11px;
 }
 .bterm-prov {
   display: inline-flex;
@@ -759,7 +770,7 @@ body.sbx-dragging {
 .bterm-prov .grade {
   padding: 0 4px;
   border-radius: 2px;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   border: 1px solid var(--bp-border-strong);
 }
@@ -812,7 +823,7 @@ body.sbx-dragging {
   border-bottom: 2px solid transparent;
   padding: 5px 10px;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 .sbx-tabs button:hover {
@@ -845,13 +856,13 @@ body.sbx-dragging {
 }
 .bterm-page-url {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--bp-cyan);
   word-break: break-all;
 }
 .bterm-page-state {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--bp-text-muted);
 }
@@ -864,7 +875,7 @@ body.sbx-dragging {
   border: 1px solid var(--bp-border);
   border-radius: 2px;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--bp-cyan);
 }
 /* The engine caveat is not an error, so it does not get an error's colour. It
@@ -874,7 +885,7 @@ body.sbx-dragging {
   margin: 0;
   padding-left: 9px;
   border-left: 2px solid var(--bp-violet);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--bp-text-dim);
 }
@@ -918,7 +929,7 @@ body.sbx-dragging {
 }
 .bterm-frame figcaption {
   margin-top: 4px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--bp-text-dim);
 }
 
@@ -940,7 +951,7 @@ body.sbx-dragging {
 
 .bterm-fence-rule {
   font-family: var(--bp-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.02em;
   color: var(--bp-violet, #8b7ec8);
   margin: 0;
@@ -948,7 +959,7 @@ body.sbx-dragging {
 }
 
 .bterm-fence-note {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--bp-dim, #8a8a99);
   margin: 4px 0 8px;

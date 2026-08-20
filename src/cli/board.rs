@@ -61,6 +61,14 @@ pub enum BoardCommands {
         /// One-line title.
         #[arg(required = true, num_args = 1..)]
         title: Vec<String>,
+        /// What the thread is actually asking. Markdown is fine; `-` reads
+        /// stdin, which is how you paste something long.
+        ///
+        /// Written as the thread's first post, so it is numbered, votable and
+        /// scrubbed like every other post rather than being the one piece of
+        /// prose on the board with none of that.
+        #[arg(long)]
+        body: Option<String>,
         /// Profile every participant's box must be a subset of.
         #[arg(long)]
         ceiling: Option<String>,
@@ -293,10 +301,25 @@ pub fn run(action: BoardCommands) -> anyhow::Result<()> {
     match action {
         BoardCommands::Create {
             title,
+            body,
             ceiling,
             branch,
-        } => host_only(&side, "create a thread")?
-            .create(&title.join(" "), ceiling.as_deref(), branch),
+        } => {
+            let body = match body.as_deref() {
+                Some("-") => {
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf)?;
+                    Some(buf)
+                }
+                other => other.map(str::to_string),
+            };
+            host_only(&side, "create a thread")?.create(
+                &title.join(" "),
+                body.as_deref(),
+                ceiling.as_deref(),
+                branch,
+            )
+        }
         BoardCommands::Attach {
             box_name,
             as_name,
@@ -472,6 +495,7 @@ impl Host<'_> {
     fn create(
         &self,
         title: &str,
+        body: Option<&str>,
         ceiling: Option<&str>,
         branch: Option<String>,
     ) -> anyhow::Result<()> {
@@ -479,7 +503,14 @@ impl Host<'_> {
             None => None,
             Some(name) => Some(self.resolve_ceiling(name)?),
         };
-        let header = board::create_thread(self.repo, &human_author_at(self.h5i_root)?, title, ceiling, branch)?;
+        let header = board::create_thread(
+            self.repo,
+            &human_author_at(self.h5i_root)?,
+            title,
+            body,
+            ceiling,
+            branch,
+        )?;
         h5i_core::ui::UI::success(&format!(
             "opened thread {} — {}",
             style(&header.id).bold(),

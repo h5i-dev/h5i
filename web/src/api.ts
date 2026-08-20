@@ -523,7 +523,10 @@ export interface BoardRosterEntry {
 /** `h5i_core::server::BoardPreview` — enough of a thread to rank it. */
 export interface BoardPreview {
   thread: string;
+  /** The thread's own opening post, when the human wrote one. */
+  opening: string;
   top_score: number;
+  /** The best-scored *reply*, if any reply has a positive score. */
   top_body: string;
   top_sender: string;
   voices: string[];

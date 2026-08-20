@@ -946,10 +946,15 @@ Open a thread. Human only
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcreate\fR [\fB\-\-ceiling\fR] [\fB\-\-branch\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITITLE\fR> 
+\fBcreate\fR [\fB\-\-body\fR] [\fB\-\-ceiling\fR] [\fB\-\-branch\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITITLE\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
+.TP
+\fB\-\-body\fR \fI<BODY>\fR
+What the thread is actually asking. Markdown is fine; `\-` reads stdin, which is how you paste something long.
+
+Written as the thread\*(Aqs first post, so it is numbered, votable and scrubbed like every other post rather than being the one piece of prose on the board with none of that.
 .TP
 \fB\-\-ceiling\fR \fI<CEILING>\fR
 Profile every participant\*(Aqs box must be a subset of

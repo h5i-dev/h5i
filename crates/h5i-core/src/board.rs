@@ -716,6 +716,25 @@ impl Thread {
             .filter(|p| !matches!(p.kind.as_str(), KIND_UPVOTE | KIND_DOWNVOTE))
     }
 
+    /// The post that states the thread, when it has one.
+    ///
+    /// The first `TASK` post, which `create_thread` writes from the body it was
+    /// given. A thread opened with a title alone has none, and a reader sees
+    /// the title and the replies — which is fine, and is what every thread
+    /// looked like before bodies existed.
+    pub fn opening(&self) -> Option<&Post> {
+        self.posts
+            .iter()
+            .find(|p| p.kind == KIND_TASK && !p.is_denied())
+    }
+
+    /// Everything after the opening post: what Reddit would call the comments.
+    pub fn replies(&self) -> impl Iterator<Item = &Post> {
+        let opening = self.opening().map(|p| p.id.clone());
+        self.conversation()
+            .filter(move |p| Some(&p.id) != opening.as_ref())
+    }
+
     /// The thread's own standing: the best score any single post in it reached.
     ///
     /// A sum would reward length — a thread with twenty mildly agreed posts
@@ -1158,10 +1177,23 @@ impl InboxThread {
 ///
 /// The ceiling is recorded here and enforced at attach time; a thread created
 /// without one bounds nothing, which is honest but should be rare.
+/// Open a thread, optionally with the body that states it.
+///
+/// A title alone is a subject line, and a subject line is not a question. The
+/// body is written as the thread's first post — kind `TASK`, human-authored,
+/// numbered and votable like any other — so a thread is title plus opening
+/// post, which is the shape every discussion surface has converged on and the
+/// shape a reader already knows how to skim.
+///
+/// Making it a post rather than a field in the header is what keeps it honest:
+/// it goes through the same scrub, carries the same host stamp, gets the same
+/// vouching lane, and can be agreed with. A body kept in `thread.json` would
+/// have been the one piece of prose on the board with none of that.
 pub fn create_thread(
     repo: &Repository,
     author: &Author,
     title: &str,
+    body: Option<&str>,
     ceiling: Option<Ceiling>,
     branch: Option<String>,
 ) -> Result<ThreadHeader, H5iError> {
@@ -1205,6 +1237,19 @@ pub fn create_thread(
     let message = format!("h5i board: open thread {id}");
     let commit = repo.commit(None, &sig, &sig, &message, &tree, &[])?;
     refstore::cas_ref_update(repo, &refname, None, commit, &message).map_err(H5iError::Git)?;
+
+    if let Some(body) = body.map(str::trim).filter(|b| !b.is_empty()) {
+        append_post(
+            repo,
+            author,
+            &id,
+            NewPost {
+                kind: KIND_TASK.to_string(),
+                body: body.to_string(),
+                ..Default::default()
+            },
+        )?;
+    }
 
     Ok(header)
 }
@@ -1752,7 +1797,7 @@ mod tests {
     #[test]
     fn a_thread_round_trips_through_its_ref() {
         let (_d, repo) = temp_repo();
-        let header = create_thread(&repo, &human(), "fix the auth race", None, None).unwrap();
+        let header = create_thread(&repo, &human(), "fix the auth race", None, None, None).unwrap();
         let thread = read_thread(&repo, &header.id).unwrap();
         assert_eq!(thread.header.title, "fix the auth race");
         assert_eq!(thread.header.created_by, "operator");
@@ -1763,8 +1808,8 @@ mod tests {
     #[test]
     fn each_thread_gets_its_own_ref() {
         let (_d, repo) = temp_repo();
-        let a = create_thread(&repo, &human(), "first", None, None).unwrap();
-        let b = create_thread(&repo, &human(), "second", None, None).unwrap();
+        let a = create_thread(&repo, &human(), "first", None, None, None).unwrap();
+        let b = create_thread(&repo, &human(), "second", None, None, None).unwrap();
         assert_ne!(a.id, b.id);
         assert!(repo.refname_to_id(&thread_ref(&a.id)).is_ok());
         assert!(repo.refname_to_id(&thread_ref(&b.id)).is_ok());
@@ -1774,7 +1819,7 @@ mod tests {
     #[test]
     fn status_is_projected_from_posts_not_stored() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
 
         append_post(&repo, &w, &h.id, post("FINDING", "found it")).unwrap();
@@ -1795,7 +1840,7 @@ mod tests {
     #[test]
     fn the_sender_is_the_hosts_stamp_not_the_payload() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         // A box claiming to be someone else in its body changes nothing: the
         // identity comes from the Author the host constructed.
         let w = worker("codex-reviewer", "env/codex/t");
@@ -1810,12 +1855,12 @@ mod tests {
     #[test]
     fn an_observer_cannot_post_and_a_worker_cannot_govern() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let obs = Author::agent("watcher", "env/x/y", Role::Observer, None).unwrap();
         assert!(append_post(&repo, &obs, &h.id, post("ASK", "hello")).is_err());
 
         let w = worker("claude-worker", "env/claude/t");
-        assert!(create_thread(&repo, &w, "not allowed", None, None).is_err());
+        assert!(create_thread(&repo, &w, "not allowed", None, None, None).is_err());
         assert!(close_thread(&repo, &w, &h.id).is_err());
         assert!(revoke(&repo, &w, "codex").is_err());
     }
@@ -1823,7 +1868,7 @@ mod tests {
     #[test]
     fn a_reviewer_cannot_claim_a_thread() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let r = Author::agent("codex-reviewer", "env/codex/t", Role::Reviewer, None).unwrap();
         assert!(append_post(&repo, &r, &h.id, post(KIND_CLAIM, "mine")).is_err());
         // but may still post and review
@@ -1839,7 +1884,7 @@ mod tests {
     #[test]
     fn control_sequences_are_stored_and_neutralised_only_on_render() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         let hostile = "line one\u{1b}[2Jcleared\nline two";
         append_post(&repo, &w, &h.id, post("FINDING", hostile)).unwrap();
@@ -1854,7 +1899,7 @@ mod tests {
     #[test]
     fn attachments_are_content_addressed_and_readable_back() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         let payload = b"--- a/x\n+++ b/x\n".to_vec();
         let p = NewPost {
@@ -1877,7 +1922,7 @@ mod tests {
     #[test]
     fn an_oversized_body_is_refused_rather_than_truncated() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         let huge = "x".repeat(MAX_BODY_BYTES + 1);
         assert!(append_post(&repo, &w, &h.id, post("FINDING", &huge)).is_err());
@@ -1886,7 +1931,7 @@ mod tests {
     #[test]
     fn an_unsupported_attachment_kind_is_refused() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         let p = NewPost {
             kind: "FINDING".into(),
@@ -1908,7 +1953,7 @@ mod tests {
     #[test]
     fn closing_is_a_post_and_leaves_the_thread_readable() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         append_post(&repo, &w, &h.id, post("FINDING", "note")).unwrap();
 
@@ -1934,7 +1979,7 @@ mod tests {
     #[test]
     fn only_a_human_reopens_a_closed_thread() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         close_thread(&repo, &human(), &h.id).unwrap();
 
@@ -1962,7 +2007,7 @@ mod tests {
     #[test]
     fn a_late_arriving_human_note_does_not_reopen_a_closed_thread() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         close_thread(&repo, &human(), &h.id).unwrap();
         // An ordinary human note, of the kind a peer's clock skew could land
         // after the close.
@@ -1980,7 +2025,7 @@ mod tests {
     #[test]
     fn votes_are_posts_and_one_participant_counts_once() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let a = worker("alice", "env/a/1");
         let b = worker("bob", "env/b/1");
         let target = append_post(&repo, &a, &h.id, post("PROPOSAL", "single-flight it")).unwrap();
@@ -2016,7 +2061,7 @@ mod tests {
     #[test]
     fn a_vote_moves_no_state_and_is_not_part_of_the_conversation() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("alice", "env/a/1");
         let target = append_post(&repo, &w, &h.id, post("FINDING", "the bug")).unwrap();
         append_post(
@@ -2042,15 +2087,82 @@ mod tests {
     #[test]
     fn a_vote_must_name_the_post_it_is_about() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("alice", "env/a/1");
         assert!(append_post(&repo, &w, &h.id, post(KIND_UPVOTE, "+1")).is_err());
+    }
+
+    /// A thread is a title *and* a body, and the body is a post.
+    ///
+    /// Written as the first `TASK` post rather than a field in the header, so
+    /// it is numbered, votable, scrubbed and vouched like every other piece of
+    /// prose here instead of being the one that is none of those.
+    #[test]
+    fn a_thread_body_is_its_first_post_and_behaves_like_one() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(
+            &repo,
+            &human(),
+            "fix the auth race",
+            Some("`refresh()` re-sends with the **pre-rotation** token."),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let t = read_thread(&repo, &h.id).unwrap();
+        let opening = t.opening().expect("a thread opened with a body has one");
+        assert_eq!(opening.kind, KIND_TASK);
+        assert!(opening.body.contains("pre-rotation"));
+        assert_eq!(t.replies().count(), 0);
+
+        // It is a post: agreeing with it works like agreeing with anything.
+        append_post(
+            &repo,
+            &worker("alice", "env/a/1"),
+            &h.id,
+            NewPost {
+                kind: KIND_UPVOTE.into(),
+                body: "+1".into(),
+                reply_to: Some(opening.id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.score_of(&t.opening().unwrap().id), 1);
+        assert_eq!(t.status(), ThreadStatus::Open, "a body claims nothing");
+    }
+
+    /// A title-only thread still works, and simply has no opening post.
+    #[test]
+    fn a_thread_without_a_body_has_no_opening_post() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "just a title", None, None, None).unwrap();
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert!(t.opening().is_none());
+        assert!(t.posts.is_empty());
+
+        // And a reply to it is a reply, not an opening.
+        append_post(&repo, &worker("alice", "env/a/1"), &h.id, post("FINDING", "x")).unwrap();
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert!(t.opening().is_none());
+        assert_eq!(t.replies().count(), 1);
+    }
+
+    /// An agent cannot open a thread by posting a `TASK` into one.
+    #[test]
+    fn only_a_human_writes_an_opening_post() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
+        let w = worker("alice", "env/a/1");
+        assert!(append_post(&repo, &w, &h.id, post(KIND_TASK, "my thread now")).is_err());
     }
 
     #[test]
     fn only_a_human_may_close() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         assert!(append_post(&repo, &w, &h.id, post(KIND_CLOSED, "bye")).is_err());
     }
@@ -2058,7 +2170,7 @@ mod tests {
     #[test]
     fn a_denied_post_is_recorded_and_moves_no_state() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         let mut p = post(KIND_CLAIM, "mine");
         p.denied = Some("sender revoked".into());
@@ -2148,7 +2260,7 @@ mod tests {
     #[test]
     fn union_merge_keeps_both_sides_posts_exactly_once() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
 
         append_post(&repo, &w, &h.id, post("FINDING", "shared")).unwrap();
@@ -2214,7 +2326,7 @@ mod tests {
     #[test]
     fn a_credential_in_a_post_is_scrubbed_before_it_is_stored() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
 
@@ -2245,7 +2357,7 @@ mod tests {
     #[test]
     fn a_credential_behind_a_placeholder_word_is_still_scrubbed() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         let token = format!("ghp_{}", "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2");
 
@@ -2267,7 +2379,7 @@ mod tests {
     #[test]
     fn a_credential_in_an_attachment_is_scrubbed_and_the_digest_matches_the_stored_bytes() {
         let (_d, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
         let token = format!("ghp_{}", "M4n5B6v7C8x9Z0a1S2d3F4g5H6j7K8l9Q0w1");
 
@@ -2305,7 +2417,7 @@ mod tests {
         let (_d, repo) = temp_repo();
         let token = format!("ghp_{}", "T1r2E3w4Q5a6S7d8F9g0H1j2K3l4Z5x6C7v8");
         let header =
-            create_thread(&repo, &human(), &format!("debug {token}"), None, None).unwrap();
+            create_thread(&repo, &human(), &format!("debug {token}"), None, None, None).unwrap();
         assert!(!header.title.contains(&token));
         assert!(!read_thread(&repo, &header.id).unwrap().header.title.contains(&token));
     }
@@ -2313,7 +2425,7 @@ mod tests {
     #[test]
     fn concurrent_appends_to_one_thread_all_land() {
         let (dir, repo) = temp_repo();
-        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
         let path = dir.path().to_path_buf();
         let id = h.id.clone();
 

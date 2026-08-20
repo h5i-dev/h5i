@@ -218,7 +218,9 @@ export function plainText(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, " ")        // a code block is not a summary
     .replace(/^\s*#{1,4}\s+/gm, "")
-    .replace(/^\s*([-*+]|\d+[.)])\s+/gm, "")
+    // A separator, not nothing: joining list items end to end turns three
+    // constraints into one run-on sentence that reads as a different claim.
+    .replace(/^\s*([-*+]|\d+[.)])\s+/gm, " · ")
     .replace(/\[([^\]]*)\]\([^)\s]+\)/g, "$1")
     .replace(/(\*\*|__)(.*?)\1/g, "$2")
     .replace(/`([^`]+)`/g, "$1")
