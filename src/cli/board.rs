@@ -588,8 +588,13 @@ impl Host<'_> {
             .and_then(|e| e.box_id.clone())
             .and_then(|box_id| env::find(self.h5i_root, &box_id).ok())
         {
+            // Take the conversation away, and leave the binding alone. The
+            // roster is what says this participant is revoked; the binding is
+            // what says which participant that box *is*, and removing it would
+            // make the box unidentifiable — so anything it staged afterwards
+            // would be dropped in silence instead of posted carrying its
+            // refusal, which is the opposite of what revocation should show.
             board_tender::clear_inbox(self.h5i_root, &m);
-            board_tender::clear_binding(self.h5i_root, &m);
         }
         h5i_core::ui::UI::success(&format!("{agent} is off the board"));
         println!("  its posts stay, attributed. Anything it stages now is posted as refused.");

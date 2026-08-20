@@ -1345,7 +1345,25 @@ pub fn put_roster_entry(
 ) -> Result<(), H5iError> {
     author.require(author.role.can_govern(), "change board membership")?;
     validate_name(&entry.agent)?;
+    let ts = now_ts();
     update_roster(repo, &format!("h5i board: attach {}", entry.agent), |r| {
+        // A box carries one identity at a time. Attaching it under a new name
+        // retires the old entry rather than leaving two active rows pointing at
+        // the same box — which is not tidiness: the tender resolves a box to its
+        // participant by scanning for that box id, so a stale duplicate makes
+        // which identity a box has depend on how two names happen to sort.
+        // Retired, not deleted, because the posts it made are still attributed
+        // to it and a reader has to be able to look it up.
+        if let Some(box_id) = entry.box_id.as_deref() {
+            for other in r.agents.values_mut() {
+                if other.agent != entry.agent
+                    && other.box_id.as_deref() == Some(box_id)
+                    && other.revoked_at.is_none()
+                {
+                    other.revoked_at = Some(ts.clone());
+                }
+            }
+        }
         r.agents.insert(entry.agent.clone(), entry.clone());
         Ok(())
     })
@@ -1933,6 +1951,34 @@ mod tests {
         assert!(r.by_box("env/claude/auth").is_none());
         assert_eq!(r.active().count(), 0);
         assert_eq!(r.agents.len(), 1, "a revoked entry is kept for attribution");
+    }
+
+    /// A box carries one identity at a time.
+    ///
+    /// Re-attaching under a new name retires the old entry. Without that, two
+    /// active rows point at one box and the tender's lookup — which scans for a
+    /// box id — resolves to whichever name sorts first, so a box's identity
+    /// would depend on alphabetical order.
+    #[test]
+    fn re_attaching_a_box_retires_the_identity_it_had_before() {
+        let (_d, repo) = temp_repo();
+        let mk = |agent: &str| RosterEntry {
+            agent: agent.into(),
+            box_id: Some("env/a/w".into()),
+            role: Role::Worker,
+            policy_digest: None,
+            attached_at: now_ts(),
+            revoked_at: None,
+        };
+        put_roster_entry(&repo, &human(), mk("worker")).unwrap();
+        put_roster_entry(&repo, &human(), mk("worker2")).unwrap();
+
+        let r = read_roster(&repo);
+        assert!(!r.get("worker").unwrap().is_active(), "the old identity retires");
+        assert!(r.get("worker2").unwrap().is_active());
+        assert_eq!(r.active().count(), 1, "exactly one identity per box");
+        assert_eq!(r.by_box("env/a/w").unwrap().agent, "worker2");
+        assert_eq!(r.agents.len(), 2, "the retired entry stays for attribution");
     }
 
     #[test]

@@ -611,3 +611,59 @@ fn an_unconfined_box_can_be_attached_only_with_the_explicit_flag() {
         stderr(&out)
     );
 }
+
+/// A box id is a path, and paths get reused.
+///
+/// Remove a box and create another with the same name and it inherits
+/// `env/<agent>/<slug>` — and, if membership were decided by the roster alone,
+/// a human's decision about a *different* box. Measured before the check
+/// existed: a recreated box that had never been attached was handed the board's
+/// threads on the first pass.
+///
+/// Membership is confirmed from both ends now. The roster says which identity a
+/// box carries; the binding file in its env directory says the box was actually
+/// bound to it, and `box rm` takes that file with the directory.
+#[test]
+fn a_recreated_box_does_not_inherit_the_membership_of_the_one_it_replaced() {
+    let repo = Repo::new();
+    repo.create_thread("t", None);
+    repo.h5i(&["box", "create", "worker-box"]);
+    repo.attach("worker-box", "claude-worker", "worker");
+    repo.h5i(&["board", "status"]);
+
+    let inbox = repo.env_dir("env/tester/worker-box").join("inbox");
+    assert_eq!(
+        std::fs::read_dir(&inbox).unwrap().count(),
+        1,
+        "the attached box should have the thread"
+    );
+
+    repo.h5i(&["box", "rm", "worker-box", "--force"]);
+    repo.h5i(&["box", "create", "worker-box"]);
+    repo.h5i(&["board", "status"]);
+
+    let inbox = repo.env_dir("env/tester/worker-box").join("inbox");
+    let delivered = std::fs::read_dir(&inbox).map(|d| d.count()).unwrap_or(0);
+    assert_eq!(
+        delivered, 0,
+        "a box that was never attached must not be handed the conversation"
+    );
+
+    // And attaching it for real still works, retiring the identity it replaced.
+    repo.attach("worker-box", "claude-2", "worker");
+    repo.h5i(&["board", "status"]);
+    assert_eq!(
+        std::fs::read_dir(&inbox).unwrap().count(),
+        1,
+        "a genuine attach delivers again"
+    );
+
+    let roster = repo.board_json();
+    let rows = roster["roster"].as_array().unwrap();
+    let active: Vec<&str> = rows
+        .iter()
+        .filter(|e| e["revoked_at"].is_null())
+        .map(|e| e["agent"].as_str().unwrap())
+        .collect();
+    assert_eq!(active, vec!["claude-2"], "one identity per box: {rows:?}");
+}

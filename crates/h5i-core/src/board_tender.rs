@@ -106,12 +106,47 @@ impl TendReport {
 /// behaviour that makes the board feel like a conversation rather than a queue.
 pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendReport, H5iError> {
     let roster = board::read_roster(repo);
-    let Some(entry) = roster.agents.values().find(|e| e.box_id.as_deref() == Some(&m.id)) else {
+    // `by_box` finds the *active* participant for this box. A retired entry
+    // still exists so its posts stay attributable, and must not be picked up
+    // here as though the box were still carrying that identity.
+    let Some(entry) = roster.by_box(&m.id).or_else(|| {
+        // Revoked-but-still-bound: drain what it staged so the refusal is
+        // recorded rather than lost, which `drain_spool` handles by posting it
+        // with its denial. Delivery is skipped below.
+        roster
+            .agents
+            .values()
+            .find(|e| e.box_id.as_deref() == Some(&m.id))
+    }) else {
         // Not on the board. Nothing to drain and nothing to deliver — and in
         // particular, no inbox contents, so a box that was revoked and had its
         // entry removed does not keep reading yesterday's threads.
         return Ok(TendReport::default());
     };
+
+    // The roster entry is not enough on its own. A box id is a path —
+    // `env/<agent>/<slug>` — and paths get reused: remove a box and create
+    // another with the same name and it inherits the id, and with it a roster
+    // entry a human wrote about a different box. Measured before this check
+    // existed: a recreated box that had never been attached was handed the
+    // board's threads on the first pass.
+    //
+    // So membership has to be confirmed from both ends. The roster says which
+    // identity that box carries; the binding file in the env directory says the
+    // box was actually bound to it, and `box rm` takes that file with the
+    // directory. Only a real attach writes both. Neither is reachable from
+    // inside the box, so this is two host-side facts agreeing, not a secret.
+    let bound = env::team_binding(h5i_root, m).map(|(_run, agent)| agent);
+    if bound.as_deref() != Some(entry.agent.as_str()) {
+        // Note this is *not* how revocation is expressed: a revoked box keeps
+        // its binding, so it stays identifiable and anything it stages is
+        // posted carrying the refusal. This branch is the box that was never
+        // bound to this identity at all.
+        // Take the conversation away too: a box holding a stale inbox is a box
+        // still reading a board it is not on.
+        clear_inbox(h5i_root, m);
+        return Ok(TendReport::default());
+    }
 
     let mut report = drain_spool(repo, h5i_root, m, entry)?;
     if entry.is_active() {
@@ -679,13 +714,6 @@ pub fn write_binding(h5i_root: &Path, m: &EnvManifest, agent: &str) -> Result<()
     let run = dir.join("team-run");
     std::fs::write(&run, "board").map_err(|e| H5iError::with_path(e, &run))?;
     Ok(())
-}
-
-/// Remove a box's board binding, so a later run gets no board identity.
-pub fn clear_binding(h5i_root: &Path, m: &EnvManifest) {
-    let dir = m.dir(h5i_root);
-    let _ = std::fs::remove_file(dir.join("team-identity"));
-    let _ = std::fs::remove_file(dir.join("team-run"));
 }
 
 /// The role a box currently has on the board, if it is on it.

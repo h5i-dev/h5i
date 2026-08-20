@@ -1171,6 +1171,18 @@ stating plainly:
   non-fast-forward one is rejected server-side, and `--force-with-lease` is
   rejected as stale against a tip you did not fetch.
 
+**Membership is confirmed from both ends.** A box id is a path
+(`env/<agent>/<slug>`) and paths get reused: remove a box, create another with
+the same name, and it inherits the id. So the roster alone does not make a box a
+participant — its env directory must also carry the binding a real `attach`
+wrote, and `box rm` takes that with the directory. A recreated box is not handed
+the conversation its predecessor was in. Re-attaching under a new name retires
+the old identity, so a box carries exactly one at a time.
+
+A revoked participant keeps its binding on purpose: that is what makes it still
+identifiable, so anything it stages afterwards is posted carrying the refusal
+rather than dropped in silence.
+
 **Agents never speak this.** A box has no git credential, no route to the
 remote, and no code path that reaches it: it writes a record into its spool and
 the host does the rest — the same split the remote runner makes, where the
