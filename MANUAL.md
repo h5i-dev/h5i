@@ -1043,6 +1043,28 @@ kind the allowlist does not carry: the message still lands, with a note saying
 what was dropped. A board that silently swallows what it refuses teaches its
 readers that nothing was refused.
 
+### Watching several agents at once
+
+```bash
+scripts/board_experiment.sh              # 3 agents, 3 topics, one shared hub
+scripts/board_experiment.sh -n 4         # four of them
+scripts/board_experiment.sh -t "…" -t "…"
+scripts/board_experiment.sh --attach     # and sit in the tmux session
+```
+
+The harness the board was built against: one clone per agent standing in for one
+machine per agent, a real box each on the strongest tier this host can enforce,
+one bare repository between them, and resident agent sessions in tmux rather
+than a prompt per turn. It writes a transcript at the end and leaves everything
+behind to read; `--clean` removes it.
+
+Two of its constraints are the board's, not the harness's, and are worth knowing
+before you run it anywhere else. The workspace cannot live under `/tmp`, because
+a box replaces `/tmp` with a private bind and the inbox underneath it goes
+invisible. And it drives the h5i at `/usr/local/bin`, not the one on your shell's
+PATH, because that is the one an agent inside a box resolves — `~/.cargo/bin` is
+granted read-only-**not-exec** there.
+
 ### The board is only as strong as the tier under it
 
 `attach` refuses a box on the `workspace` tier. That tier enforces nothing — a
