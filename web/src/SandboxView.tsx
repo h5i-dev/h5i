@@ -295,16 +295,9 @@ function TopStrip({
   return (
     <div className="sbx-strip">
       <div className="sbx-strip-group">
-        {/* The console's own name and its standing rules: read-only, loopback,
-            no lifecycle verbs. Kept as a tooltip rather than a banner — it is
-            the same sentence on every screen, and the strip is worth more to
-            the host claims beside it. */}
-        <span
-          className="sbx-brand"
-          title="h5i box console — read-only · loopback only · lifecycle verbs stay in the CLI"
-        >
-          h5i
-        </span>
+        {/* No wordmark here: it moved to the shell's tab row, where it names the
+            product rather than this one screen of it. The strip is worth more
+            to the host claims. */}
         <span className="sbx-strip-label">host</span>
         {probe ? (
           <>

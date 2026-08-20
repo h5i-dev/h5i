@@ -46,6 +46,14 @@ function Shell() {
   return (
     <div className="wb-shell">
       <div className="wb-tabs" role="tablist" aria-label="surface">
+        {/* The wordmark names the product, so it lives with the switch between
+            its two screens rather than inside either one of them. */}
+        <span
+          className="wb-brand"
+          title="h5i — read-only · loopback only · lifecycle verbs stay in the CLI"
+        >
+          h5i
+        </span>
         <button
           type="button"
           role="tab"

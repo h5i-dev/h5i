@@ -1,7 +1,23 @@
-/* h5i box console — the palette and layout the old workbench used, cut down to
-   the one screen this bundle ships. Type is a system stack on purpose: the
-   console is served over loopback and must render identically on a machine
-   with no route out, so nothing here fetches a font. */
+/* h5i box console — one screen over the fleet.
+ *
+ * The palette is the site's: a near-black ground, a greyscale ramp doing the
+ * structural work, and red as the lone accent. It used to be mint, which made
+ * the console and the board look like two products; they are two instruments of
+ * one, and they now share a colour system.
+ *
+ * Red is spent under one rule, the same one the board follows. Red as *text or
+ * rule* is brand and selection — the wordmark, an active tab, a focus ring, a
+ * grabbed divider. Red as a *fill* means exactly one thing: a boundary the host
+ * refused to let anyone cross. Since nothing else on the screen is filled red,
+ * a denial is the loudest mark on it, which is the only ranking a console over
+ * a sandbox should have.
+ *
+ * The semantic tones (green, amber) are muted rather than bright, so they read
+ * as part of the same system instead of competing with the accent for the eye.
+ *
+ * Type is a system stack on purpose: the console is served over loopback and
+ * must render identically on a machine with no route out, so nothing here
+ * fetches a font. */
 
 html,
 body,
@@ -18,28 +34,37 @@ body {
 }
 
 :root {
-  /* Near-black with a slight blue tint, and a mint signature accent. The
-     legacy blue tokens are aliased to the accent so Blueprint's own rules
-     cascade to it without being restyled one by one. */
-  --bp-bg: #0a0c10;
-  --bp-surface: #12161c;
-  --bp-surface-2: #1a1f26;
-  --bp-elev: #232931;
-  --bp-border: #2a3138;
-  --bp-border-strong: #3a424b;
-  --bp-text: #f6f7f9;
-  --bp-text-muted: #abb3bf;
-  --bp-text-dim: #6b7785;
-  --h5-accent: #42e2d0;
-  --h5-accent-hi: #7cefe0;
-  --h5-accent-bg: rgba(66, 226, 208, 0.14);
+  /* The greyscale ramp. Neutral with a faint warm bias rather than the blue one
+     it had, so it sits under a red accent instead of fighting it. The legacy
+     blue tokens are aliased to the accent so Blueprint's own rules cascade to
+     it without being restyled one by one. */
+  --bp-bg: #08080b;
+  --bp-surface: #0e0e12;
+  --bp-surface-2: #141419;
+  --bp-elev: #1c1c22;
+  --bp-border: #232329;
+  --bp-border-strong: #3a3a45;
+  --bp-text: #f4f4f6;
+  --bp-text-muted: #a4a4ae;
+  --bp-text-dim: #7d7d86;
+
+  /* Red as text and rule: brand, selection, focus. AA on the ground above. */
+  --h5-accent: #ff6258;
+  --h5-accent-hi: #ff8a82;
+  --h5-accent-bg: rgba(224, 36, 27, 0.16);
+  /* Red as a fill. Reserved for a refusal — see the note at the top. */
+  --h5-red-solid: #e0241b;
+  --h5-red-ink: #ffffff;
+
   --bp-blue: var(--h5-accent);
   --bp-blue-hi: var(--h5-accent-hi);
   --bp-blue-bg: var(--h5-accent-bg);
   --bp-violet: #b48bd9;
-  --bp-green-hi: #5ee2a0;
-  --bp-orange: #f0a050;
-  --bp-red: #ff6b6b;
+  /* Muted semantics, from the site's terminal tones. */
+  --bp-cyan: #a9bdd0;
+  --bp-green-hi: #62c98c;
+  --bp-orange: #d6a94e;
+  --bp-red: #ff6258;
 
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
     Arial, sans-serif;
@@ -69,14 +94,6 @@ pre,
   display: flex;
   flex-direction: column;
   height: 100vh;
-}
-/* The brand sits in the top strip, left of the host claims: one row, not two. */
-.sbx-brand {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--h5-accent);
-  margin-right: 8px;
 }
 
 .sbx-pane-empty {
@@ -293,8 +310,12 @@ body.sbx-dragging {
   color: var(--bp-orange);
   font-weight: 600;
 }
+/* The one filled red on the console. Everything else that is red is a hairline
+   or a word; this is a boundary somebody hit, and it should stop a scan. */
 .sbx-pressure.critical {
-  color: var(--bp-red);
+  color: var(--h5-red-ink);
+  background: var(--h5-red-solid);
+  padding: 0 6px;
   font-weight: 700;
 }
 
@@ -379,7 +400,8 @@ body.sbx-dragging {
   border-bottom: none;
 }
 .sbx-lane-row.selected {
-  background: var(--h5-accent-bg);
+  background: var(--bp-surface-2);
+  box-shadow: inset 2px 0 0 var(--h5-accent);
 }
 .sbx-lane-row:hover {
   background: var(--bp-surface-2);
@@ -628,9 +650,10 @@ body.sbx-dragging {
   cursor: pointer;
 }
 .bterm-tabs button.on {
-  color: var(--bp-bg);
-  background: var(--h5-accent);
-  border-color: var(--h5-accent);
+  color: var(--bp-text);
+  background: none;
+  border-color: var(--bp-border-strong);
+  border-bottom-color: var(--h5-accent);
 }
 .bterm-count {
   margin-left: 6px;
@@ -709,7 +732,7 @@ body.sbx-dragging {
   opacity: 0.32;
 }
 .bterm-row.sel {
-  background: var(--h5-accent-bg);
+  background: var(--bp-surface-2);
   border-left-color: var(--h5-accent);
 }
 .bterm-row.linked {
@@ -768,7 +791,7 @@ body.sbx-dragging {
   opacity: 0.85;
 }
 .bterm-row.sev-action .bterm-text {
-  color: var(--h5-accent-hi);
+  color: var(--bp-cyan);
 }
 .bterm-row.sev-ok .bterm-text {
   color: var(--bp-text-muted);
@@ -823,7 +846,7 @@ body.sbx-dragging {
 .bterm-page-url {
   margin: 0;
   font-size: 12px;
-  color: var(--h5-accent-hi);
+  color: var(--bp-cyan);
   word-break: break-all;
 }
 .bterm-page-state {
@@ -842,7 +865,7 @@ body.sbx-dragging {
   border-radius: 2px;
   padding: 0 4px;
   font-size: 10px;
-  color: var(--h5-accent-hi);
+  color: var(--bp-cyan);
 }
 /* The engine caveat is not an error, so it does not get an error's colour. It
    is the one thing on this screen most likely to be misread, so it gets a rule

@@ -18,6 +18,11 @@
  */
 
 .brd {
+  /* The board's tokens are its own even though the console now shares its
+     colour system: the two surfaces agree on the palette and disagree on
+     everything else — the board is squared, ruled and mono-labelled where the
+     console is a Blueprint instrument panel. Keeping the tokens separate is
+     what lets one change without dragging the other with it. */
   --brd-bg: #08080b;
   --brd-panel: #0e0e12;
   --brd-line: #191920;
@@ -34,7 +39,7 @@
 
   background: var(--brd-bg);
   color: var(--brd-text);
-  height: 100%;
+  min-height: 0;
   overflow: hidden;
   font-size: 13px;
   line-height: 1.55;
@@ -444,37 +449,64 @@
 }
 .brd-pad { padding: 0.75rem; }
 
-/* ── the shell's surface switch ───────────────────────────────────────────── */
+/* ── the shell: wordmark, surface switch, surface ──────────────────────────── */
 
+/* The wordmark sits with the tabs rather than inside the console's own strip.
+   It names the product, not one of its screens, so it belongs to the frame both
+   screens hang in — and the row reads as one masthead instead of a bare switch
+   above a branded panel. */
 .wb-tabs {
   display: flex;
   gap: 0;
   align-items: stretch;
-  border-bottom: 1px solid #232a33;
-  background: #0a0c10;
+  border-bottom: 1px solid var(--bp-border);
+  background: var(--bp-surface);
   flex: none;
+}
+.wb-brand {
+  display: flex;
+  align-items: center;
+  padding: 0 14px 0 16px;
+  margin-right: 4px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--h5-accent);
+  border-right: 1px solid var(--bp-border);
 }
 .wb-tab {
   font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
+  font-size: 13px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  padding: 0.4rem 1rem;
+  padding: 0.55rem 1.15rem;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  color: #7a8694;
+  color: var(--bp-text-dim);
   cursor: pointer;
 }
-.wb-tab:hover { color: #dbe2ea; }
-/* Each surface's active tab is underlined in its own accent, so the switch
- * itself says which instrument you are holding. */
-.wb-tab.is-on { color: #dbe2ea; }
-.wb-tab.is-on.for-console { border-bottom-color: #42e2d0; }
-.wb-tab.is-on.for-board { border-bottom-color: #e0241b; }
-.wb-tab:focus-visible { outline: 1px solid #42e2d0; outline-offset: -2px; }
+.wb-tab:hover { color: var(--bp-text); }
+.wb-tab.is-on {
+  color: var(--bp-text);
+  border-bottom-color: var(--h5-accent);
+}
+.wb-tab:focus-visible {
+  outline: 1px solid var(--h5-accent);
+  outline-offset: -2px;
+}
 
+/* A flex column, not just a sized box. The console's own shell is `flex: 1`
+   inside its parent, so a plain block here left it at content height — and the
+   fleet/detail divider, being a grid column rather than a border, stopped
+   halfway down the window with it. */
 .wb-surface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.wb-surface > * {
   flex: 1;
   min-height: 0;
 }
