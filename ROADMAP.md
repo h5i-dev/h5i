@@ -5613,36 +5613,43 @@ together, and §B12.6's rule applies unchanged: implementing more, measuring mor
 and counting more honestly are three different things, and only the first is
 engineering.
 
-**The Kitesurf comparison, worked through, says this engine is behind.** Their
-announcement claims "215,000+ tests passing". Read as subtests, which is what
-it must be, since WPT expands to only about 200,000 tests at file x variant x
-scope and no young engine passes all of them. One arithmetic fact settles the
-shape of the comparison:
+**The Kitesurf comparison: withdrawn, 2026-08-19.** This section previously
+worked an arithmetic argument to the conclusion that Kitesurf's stated
+"215,000+ tests passing" could not include the CJK block, and therefore that a
+like-for-like reading put this engine at about half their breadth. The argument
+was wrong, and it is worth keeping the wreckage because the mistake is a tidy
+example of the thing this file keeps warning about.
 
-> The CJK `encode-href` block alone is **217,263 subtests**. That is larger than
-> Kitesurf's entire stated total.
+It ran: the CJK `encode-href` block is 217,263 subtests, which is larger than
+Kitesurf's whole stated total, so they cannot be passing it. That inference
+treats a block as **pass-all-or-none**. Nothing requires an engine to pass every
+subtest in a directory, and partial coverage is the normal case for all of them,
+including this one. An engine passing 150,000 of that block has a total entirely
+consistent with 215,000 and a number that includes CJK encoding. The premise
+does not support the conclusion, and the like-for-like table built on it does
+not stand.
 
-So Kitesurf cannot be passing that block; it would exceed their whole score by
-itself. Their 215,000 is therefore spread across the rest of the platform, while
-**65% of this engine's 333,690 is that single block**. The like-for-like figure
-is the one with it removed:
+What actually follows is narrower and less satisfying: **the two numbers are not
+comparable in either direction.** Two reasons, and either is sufficient. Their
+harness is not this one, and this one cannot reach workers, `.py` handlers or
+TLS, so it scores 584,707 subtests where a full wptserve run reaches roughly two
+million: the denominators are different corpora. And the composition of their
+number is not published, so subtracting our CJK block while leaving theirs in
+place would be a comparison rigged in our own favour, which is the same error in
+the other direction.
 
-| | subtests |
-| --- | --- |
-| Kitesurf, stated | 215,000 |
-| **This engine, excluding the CJK block** | **116,428** |
-| This engine, headline | 333,690 |
+So there is no defensible comparison here, and this file should not have printed
+one. **The claim that survives is entirely about this engine and needs no
+competitor at all:** 333,690 is true, 65% of it is one block, and both halves
+have to be said together.
 
-**About half their breadth, not one and a half times it.** Anyone quoting
-333,690 against 215,000 would be making a claim that reverses under ten minutes
-of arithmetic, and the reversal is not close.
-
-Two caveats keep even that comparison honest. Their harness is not this one:
-this one cannot reach workers, `.py` handlers or TLS, so it scores 584,707
-subtests where a full wptserve run reaches roughly two million. And a corpus
-neither engine runs is not evidence about either. The defensible claim is the
-narrow one: **on the platform outside legacy CJK URL encoding, this engine
-passes fewer subtests than Kitesurf does.**
+The failure mode is §B12.8's, arriving in a new place. That entry recorded that
+a large failure cluster usually has one cheap structural cause, and that an hour
+of reading actual failure messages beats a week of implementing what a count
+seemed to ask for. This is the same lesson pointed at a *comparison*: an
+arithmetic argument that felt conclusive was doing the work that reading the
+other engine's published methodology should have done. Comparative claims about
+someone else's number need their methodology, not our calculator.
 
 ### B13.4 What this is worth, plainly
 
