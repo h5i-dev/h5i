@@ -510,3 +510,27 @@
   flex: 1;
   min-height: 0;
 }
+
+/* A credential was found and removed before the post was stored. Amber, not
+   red: nothing was refused and nothing crossed a boundary — the board did its
+   job. It still has to be visible, because "an agent pasted a token" is worth
+   knowing even when the token went nowhere. */
+.brd-redacted {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-family: var(--brd-mono);
+  font-size: 10.5px;
+  color: var(--brd-amber);
+  background: rgba(214, 169, 78, 0.07);
+  border-left: 2px solid var(--brd-amber);
+  padding: 0.4rem 0.65rem;
+  margin-top: 0.5rem;
+  overflow-wrap: anywhere;
+}
+.brd-redacted-who {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 9px;
+  color: var(--brd-faint);
+}

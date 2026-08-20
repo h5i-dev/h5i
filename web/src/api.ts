@@ -485,6 +485,8 @@ export interface BoardPost {
   role: string;
   policy_digest?: string;
   denied?: string;
+  /** Secret-detector rules that fired; the credential itself never landed. */
+  redactions?: string[];
 }
 
 /** `h5i_core::board::ThreadSummary` — a thread without its posts. */

@@ -63,12 +63,22 @@
 //!
 //! ## Untrusted text
 //!
-//! Bodies are stored verbatim, exactly as [`crate::redact`] prescribes:
-//! storage keeps the bytes, rendering sanitises. A post body is peer input to
-//! whoever reads it — an agent, or a human at a terminal — so render it through
-//! [`Post::display_body`] rather than printing the field.
+//! Bodies keep their terminal control sequences and are neutralised at render,
+//! exactly as [`crate::redact`] prescribes: storage keeps the bytes, rendering
+//! sanitises. A post body is peer input to whoever reads it — an agent, or a
+//! human at a terminal — so render it through [`Post::display_body`] rather
+//! than printing the field.
+//!
+//! Credentials are the opposite, and the asymmetry is the point. An escape
+//! sequence is dangerous when it reaches a terminal, so the renderer owns it. A
+//! credential is dangerous the moment it is *stored* — a git object is
+//! immutable, it is in every clone, and if the board has a remote it is
+//! published — so it never gets that far. [`append_post`] scrubs the body and
+//! every attachment before writing, unconditionally, and records which rules
+//! fired in [`Post::redactions`].
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 
 use git2::{Oid, Repository};
 use serde::{Deserialize, Serialize};
@@ -374,6 +384,13 @@ pub struct Post {
     /// its readers that nothing was rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub denied: Option<String>,
+    /// Secret-detector rules that fired while this post was being written.
+    ///
+    /// The body and every attachment are scrubbed unconditionally before they
+    /// are stored; this names what was found, so a reviewer can see that an
+    /// agent pasted a credential without the credential being on the board.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub redactions: Vec<String>,
 }
 
 impl Post {
@@ -948,11 +965,14 @@ pub fn create_thread(
         ));
     }
 
+    // Titles are published as widely as bodies, and are the part a reader sees
+    // without opening anything.
+    let title = crate::secrets::redact_text(title);
     let ts = now_ts();
-    let id = gen_id(&ts, &author.sender, title);
+    let id = gen_id(&ts, &author.sender, &title);
     let header = ThreadHeader {
         id: id.clone(),
-        title: title.to_string(),
+        title: title.clone(),
         created_at: ts,
         created_by: author.sender.clone(),
         version: PROTOCOL_VERSION,
@@ -1023,15 +1043,57 @@ pub fn append_post(
         }
     }
 
+    // Scrub before storing, and scrub unconditionally.
+    //
+    // A post is the one thing on this board written to be read by someone else,
+    // and an agent pastes what it is looking at — a failing request, a config
+    // dump, an environment. Once that is a git object it is immutable, it is in
+    // every clone, and if the board's remote is a forge it is published. The
+    // receipt store learned this the hard way and its note is the rule here
+    // too: never gate the scrub on the detector. `scan_text` carries a
+    // placeholder stoplist so it stays quiet on `example: ghp_…`, which is
+    // right for reporting and fail-open for publication; `redact_text` has no
+    // stoplist for exactly that reason. So scan only to name the rules, and
+    // always scrub.
+    let scrubbed_body = crate::secrets::redact_text(&new.body);
+    let mut rules: Vec<String> = crate::secrets::scan_text(Path::new("<board>"), &new.body)
+        .iter()
+        .map(|f| f.rule_id.to_string())
+        .collect();
+    let scrubbed: Vec<Vec<u8>> = new
+        .attachments
+        .iter()
+        .map(|a| match std::str::from_utf8(&a.payload) {
+            Ok(text) => {
+                rules.extend(
+                    crate::secrets::scan_text(Path::new("<board-attachment>"), text)
+                        .iter()
+                        .map(|f| f.rule_id.to_string()),
+                );
+                crate::secrets::redact_text(text).into_bytes()
+            }
+            // Attachment kinds are all text, so this is a caller handing us
+            // bytes that are not. Redact the valid UTF-8 runs and keep the
+            // rest, the way the receipt store handles a binary payload, rather
+            // than storing it untouched.
+            Err(_) => crate::receipt::redact_binary(&a.payload),
+        })
+        .collect();
+    rules.sort();
+    rules.dedup();
+
     let ts = now_ts();
-    let id = gen_id(&ts, &author.sender, &new.body);
+    let id = gen_id(&ts, &author.sender, &scrubbed_body);
+    // Addressed by the digest of what is actually stored, so the content
+    // address describes the bytes a reader will get back.
     let attachments: Vec<Attachment> = new
         .attachments
         .iter()
-        .map(|a| Attachment {
+        .zip(scrubbed.iter())
+        .map(|(a, payload)| Attachment {
             kind: a.kind.clone(),
-            digest: refstore::sha256_hex(&a.payload),
-            size: a.payload.len(),
+            digest: refstore::sha256_hex(payload),
+            size: payload.len(),
             name: a.name.clone(),
         })
         .collect();
@@ -1042,7 +1104,7 @@ pub fn append_post(
         thread: thread_id.to_string(),
         version: PROTOCOL_VERSION,
         kind: new.kind,
-        body: new.body,
+        body: scrubbed_body,
         reply_to: new.reply_to,
         attachments,
         sender: author.sender.clone(),
@@ -1050,6 +1112,7 @@ pub fn append_post(
         role: author.role.as_str().to_string(),
         policy_digest: author.policy_digest.clone(),
         denied: new.denied,
+        redactions: rules,
     };
     let line = serde_json::to_string(&post)?;
     let refname = thread_ref(thread_id);
@@ -1079,8 +1142,8 @@ pub fn append_post(
         let mut builder = repo.treebuilder(base_tree.as_ref())?;
         let log_blob = repo.blob(log.as_bytes())?;
         builder.insert(POSTS_FILE, log_blob, 0o100644)?;
-        for (meta, src) in post.attachments.iter().zip(new.attachments.iter()) {
-            let blob = repo.blob(&src.payload)?;
+        for (meta, payload) in post.attachments.iter().zip(scrubbed.iter()) {
+            let blob = repo.blob(payload)?;
             builder.insert(attachment_path(&meta.digest), blob, 0o100644)?;
         }
         let tree = repo.find_tree(builder.write()?)?;
@@ -1472,8 +1535,14 @@ mod tests {
         assert!(append_post(&repo, &r, &h.id, post("FINDING", "a note")).is_ok());
     }
 
+    /// Terminal control sequences are kept in storage and neutralised at render,
+    /// which is the opposite of how a credential is handled two tests below.
+    /// The distinction is deliberate: an escape sequence is only dangerous when
+    /// it reaches a terminal, so storage keeps the bytes and the renderer is
+    /// responsible. A credential is dangerous the moment it is *stored*, so it
+    /// never gets that far.
     #[test]
-    fn bodies_are_stored_verbatim_and_sanitized_only_on_render() {
+    fn control_sequences_are_stored_and_neutralised_only_on_render() {
         let (_d, repo) = temp_repo();
         let h = create_thread(&repo, &human(), "t", None, None).unwrap();
         let w = worker("claude-worker", "env/claude/t");
@@ -1481,7 +1550,7 @@ mod tests {
         append_post(&repo, &w, &h.id, post("FINDING", hostile)).unwrap();
 
         let t = read_thread(&repo, &h.id).unwrap();
-        assert_eq!(t.posts[0].body, hostile, "storage keeps the exact bytes");
+        assert_eq!(t.posts[0].body, hostile, "storage keeps the escape bytes");
         let shown = t.posts[0].display_body();
         assert!(!shown.contains('\u{1b}'), "render drops the escape");
         assert!(shown.contains('\n'), "render keeps the line break");
@@ -1670,6 +1739,115 @@ mod tests {
                 "revocation must survive a merge in either direction"
             );
         }
+    }
+
+    /// A credential in a post never reaches the store, and the scrub is not
+    /// conditional on the detector agreeing that it is one.
+    ///
+    /// This is the property the whole remote story rests on. A post is written
+    /// to be read by someone else, and an agent pastes what it is looking at —
+    /// a failing request, an environment dump. Once that is a git object it is
+    /// immutable and in every clone, and if the board's remote is a forge it is
+    /// published. The receipt store's note applies here word for word: gating
+    /// the scrub on `scan_text` puts the hole back, because that scanner has a
+    /// placeholder stoplist and goes quiet on `example: <real credential>`.
+    #[test]
+    fn a_credential_in_a_post_is_scrubbed_before_it_is_stored() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        let token = format!("ghp_{}", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+
+        let written = append_post(
+            &repo,
+            &w,
+            &h.id,
+            post("FINDING", &format!("the call fails with {token} in the header")),
+        )
+        .unwrap();
+
+        assert!(!written.body.contains(&token), "the token must not be stored");
+        assert!(
+            !written.redactions.is_empty(),
+            "and the reader should be told a credential was found"
+        );
+        // Read it back off the ref, not out of the return value: the point is
+        // what landed in the object store.
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert!(!t.posts[0].body.contains(&token));
+    }
+
+    /// The same, for a credential the detector deliberately stays quiet about.
+    ///
+    /// `scan_text` suppresses lines that look like documentation, so it reports
+    /// nothing here. The scrub still has to happen — that gap is exactly how a
+    /// real credential gets published behind the word "example".
+    #[test]
+    fn a_credential_behind_a_placeholder_word_is_still_scrubbed() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        let token = format!("ghp_{}", "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2");
+
+        let written = append_post(
+            &repo,
+            &w,
+            &h.id,
+            post("FINDING", &format!("example config: token = {token}")),
+        )
+        .unwrap();
+        assert!(
+            !written.body.contains(&token),
+            "the scrub must not be gated on the detector reporting a finding"
+        );
+    }
+
+    /// An attachment is published as widely as a body, so it is scrubbed too —
+    /// and the content address describes the bytes that were actually stored.
+    #[test]
+    fn a_credential_in_an_attachment_is_scrubbed_and_the_digest_matches_the_stored_bytes() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("claude-worker", "env/claude/t");
+        let token = format!("ghp_{}", "M4n5B6v7C8x9Z0a1S2d3F4g5H6j7K8l9Q0w1");
+
+        let written = append_post(
+            &repo,
+            &w,
+            &h.id,
+            NewPost {
+                kind: KIND_REVIEW_REQUEST.into(),
+                body: "here is the diff".into(),
+                attachments: vec![NewAttachment {
+                    kind: "patch".into(),
+                    name: Some("fix.diff".into()),
+                    payload: format!("+auth = \"{token}\"\n").into_bytes(),
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let stored = read_attachment(&repo, &h.id, &written.attachments[0].digest).unwrap();
+        let text = String::from_utf8(stored.clone()).unwrap();
+        assert!(!text.contains(&token), "the attachment must be scrubbed too");
+        assert_eq!(
+            written.attachments[0].digest,
+            refstore::sha256_hex(&stored),
+            "the content address has to describe the stored bytes"
+        );
+        assert_eq!(written.attachments[0].size, stored.len());
+    }
+
+    /// A title is the part a reader sees without opening anything.
+    #[test]
+    fn a_credential_in_a_thread_title_is_scrubbed() {
+        let (_d, repo) = temp_repo();
+        let token = format!("ghp_{}", "T1r2E3w4Q5a6S7d8F9g0H1j2K3l4Z5x6C7v8");
+        let header =
+            create_thread(&repo, &human(), &format!("debug {token}"), None, None).unwrap();
+        assert!(!header.title.contains(&token));
+        assert!(!read_thread(&repo, &header.id).unwrap().header.title.contains(&token));
     }
 
     #[test]

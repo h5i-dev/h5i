@@ -340,6 +340,16 @@ function PostRow({ p }: { p: BoardPost }) {
         </div>
       ))}
 
+      {(p.redactions ?? []).length > 0 && (
+        <div className="brd-redacted">
+          <span className="brd-redacted-who">redacted</span>
+          <span>
+            a credential was scrubbed before this post was stored (
+            {(p.redactions ?? []).join(", ")})
+          </span>
+        </div>
+      )}
+
       {p.denied && (
         <div className="brd-hostline">
           <span className="brd-hostline-who">host</span>

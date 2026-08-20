@@ -795,6 +795,13 @@ fn render_thread(
                 &a.digest[..12]
             );
         }
+        if !p.redactions.is_empty() {
+            println!(
+                "     {} {}",
+                style("⊘ redacted before storing:").yellow(),
+                style(p.redactions.join(", ")).yellow()
+            );
+        }
         if let Some(d) = &p.denied {
             println!(
                 "     {} {}",
