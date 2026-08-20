@@ -1985,6 +1985,7 @@ name = "h5i-error"
 version = "0.2.8"
 dependencies = [
  "git2",
+ "openssl",
  "serde_json",
  "thiserror 2.0.18",
  "toml 0.8.23",
