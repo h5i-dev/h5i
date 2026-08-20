@@ -898,3 +898,59 @@ body.sbx-dragging {
   font-size: 10px;
   color: var(--bp-text-dim);
 }
+
+/* ── the fence ─────────────────────────────────────────────────────────────
+   The console's own copy of the boundary the snapshot prints. Drawn rather
+   than printed, and drawn as a border rather than as content, so a page that
+   writes the marker into its own text gets a text node inside the region and
+   never the region's edge.
+
+   The violet rule is the idiom `.bterm-page-caveat` already uses for "this is
+   the engine talking about the page, not the page" — reused so the two read as
+   one convention rather than two. */
+.bterm-fence {
+  border: 1px dashed var(--bp-violet, #8b7ec8);
+  border-radius: 6px;
+  padding: 8px 10px 10px;
+  margin-top: 8px;
+}
+
+.bterm-fence-rule {
+  font-family: var(--bp-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--bp-violet, #8b7ec8);
+  margin: 0;
+  user-select: none;
+}
+
+.bterm-fence-note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--bp-dim, #8a8a99);
+  margin: 4px 0 8px;
+  max-width: 78ch;
+}
+
+/* The page and its cost, side by side. Collapses to one column on a narrow
+   viewport, the same breakpoint `.bterm-panes` already uses, so the pairing is
+   a layout affordance rather than a requirement. */
+.bterm-paired {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 8px;
+  align-items: start;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 900px) {
+  .bterm-paired {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Inside the pair the page pane is no longer full width, so the margin it
+   carried for that case would double the gap. */
+.bterm-paired .bterm-page {
+  margin-bottom: 0;
+}

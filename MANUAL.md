@@ -370,6 +370,28 @@ h5i sends a press and a release together: typing works exactly, and holding a
 key down does not. Clicks are placed at the resolution of a terminal cell, which
 is fine for a form and coarse for a dense canvas.
 
+### The browser engine, on its own
+
+h5i's own browser engine ships as a second binary, `h5i-browser-light`, and runs
+with no h5i anywhere. Its allowlist and its fail-closed receipts are enforced by
+the engine rather than by a box, so `--allow` and `--receipts` mean the same
+thing on a bare host as inside one:
+
+```bash
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --browser-only
+
+h5i-browser-light serve https://docs.rs/ --allow docs.rs &
+h5i-browser-light session snapshot
+h5i-browser-light skill install          # teach an agent to drive it
+```
+
+`install.sh` takes `--with-browser` to install both binaries, or `--browser-only`
+for the engine alone.
+
+What a box adds is that the agent cannot go around the browser. A standalone run
+is not sandboxed and does not claim to be; what it offers is a browser whose
+whole network activity is in a log you can read.
+
 ### Inspecting what happened
 
 ```bash
@@ -379,7 +401,36 @@ h5i box doctor <name>               # can it still enforce its claim? are its re
 h5i box secrets <name>              # declared grants, dry-run resolution, never values
 h5i box inspect <name> --capture <id>
 h5i box compare <a> <b>             # boxes side by side
+h5i box watch <name>                # policy decisions, one line each, as they happen
+h5i box watch <name> --deny-only    # only what was refused
 ```
+
+`h5i box watch` is the tail of the receipt rather than a viewer: no viewport, no
+panes, no control lock, and nothing it prints can take the controls. It is meant
+to be piped, grepped, and left running in a second pane while an agent works.
+
+Every row names the lane that observed it and the grade of that evidence, as
+words:
+
+```
+09:14:02  box  fail-closed  request   allow  GET https://docs.rs/blitz/  #41 subresource
+09:14:02  box  fail-closed  response  200    #41 12.0 KB, 84ms
+09:14:03  box  fail-closed  request   DENY   GET https://telemetry.example.com/collect  #43
+09:14:03  box  fail-closed  policy           telemetry.example.com: not in net.egress   (<- #43)
+```
+
+Terse is not licence to drop the qualifier. A row that did not say whether the
+box or the host observed it would assert more than h5i knows, so the lane and
+the grade are on every line and colour never carries them alone.
+
+`--deny-only` keeps a refusal's **pair**: the request row carries the method and
+the URL, the verdict row carries the reason, and dropping either leaves half an
+answer. `--json` emits the same event envelope the console reads, one object per
+line, so the three readers of that stream agree on the wire shape.
+
+Only h5i's own browser engine writes a live request log, and an image-backed
+tier keeps it out of the host's reach. `watch` says so in its header rather than
+leaving an empty screen to be interpreted.
 
 ### Lifecycle
 
@@ -858,6 +909,22 @@ you picked: the policy that was actually enforced, the services it declares,
 its diffstat against the pinned base, and a flight recorder with one row per
 receipt across five lanes (FS, NET, PROC, RES, PAGE). Click a row for the
 rendered receipt, the same text `h5i box inspect` prints.
+
+**The browser tab draws the page beside what it cost.** For a box running h5i's
+own engine, the rendered page sits directly beside the request log that produced
+it, so "what did looking at this page cost, and what was refused while I looked"
+is one glance rather than two panes and a correlation done by eye. That picture
+is only honest because this engine *is* the HTTP client: the list is the decision
+record written before the bytes moved, not an observation made from beside the
+network.
+
+**And it draws the fence.** Everything the page supplied — its URLs, its console
+output, the subjects of policy verdicts, the rendered frame — is wrapped in the
+same `--- BEGIN/END UNTRUSTED PAGE CONTENT ---` boundary the engine prints for a
+model, with the same note. The engine fences that text before it reaches
+something deciding what to do next; without this the console showed it to a
+person with no boundary at all, which left the human reader with less framing
+than the model got.
 
 **It cannot drive anything.** Every route is a `GET`. `shell`, `run`, `export`,
 `propose`, `apply` and `rm` stay in the CLI, where a human types them, so there

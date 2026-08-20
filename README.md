@@ -61,6 +61,9 @@ h5i gives you:
 curl -fsSL https://h5i.dev/install.sh | sh
 # if you would rather not add a domain to the chain:
 # curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
+
+# add the browser engine, which also runs standalone:
+curl -fsSL https://h5i.dev/install.sh | sh -s -- --with-browser
 ```
 
 Or build from source:

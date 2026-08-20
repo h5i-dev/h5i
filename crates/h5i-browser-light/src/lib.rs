@@ -33,14 +33,22 @@
 pub mod encoding;
 pub mod cookies;
 pub mod engine;
+pub mod extract;
 pub mod fonts;
+pub mod markdown;
 pub mod net;
 pub mod policy;
 pub mod receipt;
 pub mod script;
+pub mod selector;
+pub mod skill;
+pub mod secrets;
 pub mod snapshot;
+pub mod sse;
 pub mod stream;
+pub mod verbs;
 pub mod ws;
+pub mod wsclient;
 
 pub use engine::{Page, PageFactory, PageOptions};
 pub use policy::{Policy, Verdict};

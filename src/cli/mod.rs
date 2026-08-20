@@ -32,6 +32,11 @@ pub mod placement;
 #[cfg(feature = "runner")]
 pub mod runner;
 pub mod skill;
+// `h5i box watch`. Not feature-gated: `browser_events` is exported from
+// h5i-core unconditionally, and the verb is how someone finds out what a box
+// is doing without opening a browser — which is exactly the build that has no
+// console to open.
+pub mod watch;
 // The box console. Gated with the `web` feature it drives, so a
 // `--no-default-features` binary has no `ui` verb rather than a broken one.
 #[cfg(feature = "web")]

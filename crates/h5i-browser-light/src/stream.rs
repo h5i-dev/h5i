@@ -43,6 +43,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 use base64::Engine as _;
@@ -52,6 +53,7 @@ use url::Url;
 
 use crate::engine::{Page, PageFactory};
 use crate::receipt::ActionLog;
+use crate::verbs::{Verb, VerbError};
 use crate::ws::{self, Incoming};
 
 /// How far a key scrolls, as a fraction of the viewport.
@@ -82,6 +84,13 @@ pub struct ServeOptions {
     /// Serve one viewer and exit, which is what the tests and a one-shot
     /// demo want.
     pub once: bool,
+    /// The in-memory half of the receipt sink, so the session can answer
+    /// `requests` without reading back the file it just wrote.
+    ///
+    /// This is the same sink the fail-closed rule runs through, not a copy kept
+    /// alongside it: what the verb reports is what the broker recorded, or the
+    /// fetch did not happen.
+    pub requests: Arc<crate::receipt::MemorySink>,
 }
 
 impl Default for ServeOptions {
@@ -93,6 +102,7 @@ impl Default for ServeOptions {
             control_file: None,
             action_log: None,
             once: false,
+            requests: Arc::new(crate::receipt::MemorySink::new()),
         }
     }
 }
@@ -160,6 +170,29 @@ struct Session {
     /// answers about one thing.
     last_snapshot: Option<crate::snapshot::Snapshot>,
 
+    /// Credentials this session may substitute on the way to the page.
+    ///
+    /// Read once at startup so a later `setenv` cannot widen what the agent can
+    /// reach. See [`crate::secrets`] for why the namespace is narrower than
+    /// `H5I_*`.
+    secrets: crate::secrets::Secrets,
+
+    /// The request log, live.
+    ///
+    /// See [`ServeOptions::requests`]. Held rather than reached through the
+    /// broker because `Sink` is deliberately a one-method trait — `append` and
+    /// nothing else — and widening it to be readable would weaken the thing
+    /// that makes the guarantee simple to state.
+    requests: Arc<crate::receipt::MemorySink>,
+
+    /// The refs this session last handed to a control client.
+    ///
+    /// The other half of `last_snapshot`, kept separately because it answers a
+    /// different question. `last_snapshot` is the baseline a delta is computed
+    /// against; this is the evidence that an agent's `@e5` still means what the
+    /// agent read. See [`resolve_ref`].
+    served_refs: Option<Vec<crate::snapshot::RefEntry>>,
+
     /// Whether a human is typing a credential right now.
     ///
     /// While this is set every control verb that reads the page is refused —
@@ -186,16 +219,19 @@ impl Session {
     /// It is not: frames still go to the live view, by design, and the viewer
     /// socket is in the box. Claiming otherwise here would be the one thing
     /// this project says it does not do.
-    fn login_refusal(verb: &str) -> Value {
+    fn login_refusal(verb: crate::verbs::Verb) -> Value {
         json!({
             "ok": false,
+            "code": crate::verbs::Code::LoginMode.as_str(),
+            "retryable": false,
             "error": format!(
-                "`{verb}` is refused while this session is in login mode: a credential typed \
+                "`{}` is refused while this session is in login mode: a credential typed \
                  into a page the agent can read has been given to the agent. The live view \
                  still streams — the person typing has to see the page — so this refuses the \
                  control path and not an agent that attaches to the viewer socket itself. End \
                  login mode with `session login --off` and reads resume, with whatever session \
-                 the login established still in the jar."
+                 the login established still in the jar.",
+                verb.name()
             ),
             "login": true,
             "frames_withheld": false,
@@ -301,6 +337,9 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         seq: 0,
         actions,
         last_snapshot: None,
+        served_refs: None,
+        requests: options.requests.clone(),
+        secrets: crate::secrets::Secrets::from_env(),
         login: false,
     };
     run_session(session, rx, options.once);
@@ -569,9 +608,18 @@ fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError
                 }
                 reply_rx
                     .recv()
-                    .unwrap_or_else(|_| error_reply("the session ended before it answered"))
+                    .unwrap_or_else(|_| {
+                        VerbError::new(
+                            crate::verbs::Code::Internal,
+                            "the session ended before it answered",
+                        )
+                        .reply()
+                    })
             }
-            Err(error) => error_reply(&format!("not JSON: {error}")),
+            Err(error) => VerbError::bad_request(format!(
+                "the control channel takes one JSON object per line; this was not JSON: {error}"
+            ))
+            .reply(),
         };
         writeln!(writer, "{answer}").map_err(H5iError::Io)?;
         writer.flush().map_err(H5iError::Io)?;
@@ -579,9 +627,6 @@ fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError
     Ok(())
 }
 
-fn error_reply(message: &str) -> Value {
-    json!({"ok": false, "error": message})
-}
 
 /// Read a port advertised in a file by [`write_port_file`].
 pub fn read_port_file(path: &Path) -> Result<u16, H5iError> {
@@ -648,7 +693,8 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         });
 
     let Some(log) = &session.actions else {
-        return control_verb(session, request);
+        let (reply, changed) = control_verb(session, request);
+        return (redact_reply(&session.secrets, reply), changed);
     };
 
     let seq = match log.begin(verb, target.as_deref()) {
@@ -657,9 +703,10 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         // other refusal, so this does not read as the verb having half-happened.
         Err(error) => {
             return (
-                error_reply(&format!(
+                VerbError::refused(format!(
                     "refusing to act: the action could not be recorded: {error}"
-                )),
+                ))
+                .reply(),
                 false,
             )
         }
@@ -695,7 +742,43 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             },
         );
     }
-    (answer, changed)
+    // Redacted after the action log is written, so the log keeps the engine's
+    // own account and only what leaves for the agent is scrubbed.
+    (redact_reply(&session.secrets, answer), changed)
+}
+
+/// Put credential placeholders back into anything on its way out.
+///
+/// [`crate::secrets`] describes this as the rule that anything written back out
+/// goes through — and until now nothing called it, which made the module's own
+/// claim false. It is applied here, at the one point every reply passes through,
+/// rather than at each site that might echo something.
+///
+/// This is not only tidiness. A login form that reflects what was typed — into
+/// a hidden field, a validation message, a page title — puts the value into the
+/// DOM, and the next `snapshot` or `markdown` would carry it back to the agent
+/// the indirection exists to keep it from. Scanning the reply catches that
+/// wherever it comes from.
+///
+/// The cost is a string scan per reply against a handful of values, on a path
+/// that has already done a policy check and a layout pass.
+fn redact_reply(secrets: &crate::secrets::Secrets, value: Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(secrets.redact(&text)),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| redact_reply(secrets, item))
+                .collect(),
+        ),
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(name, item)| (name, redact_reply(secrets, item)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 /// Handle one control request against the resident page.
@@ -703,18 +786,22 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 /// Returns the reply and whether the page moved, because the caller is the only
 /// thing that knows who else is watching.
 fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
-    let verb = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    let name = request.get("verb").and_then(Value::as_str).unwrap_or("");
+    let Some(verb) = crate::verbs::Verb::from_name(name) else {
+        return (VerbError::unknown_verb(name).reply(), false);
+    };
 
-    // Reads are refused while a human is typing a credential. `status` and
-    // `login` are not reads of the page: one reports the mode, the other is how
-    // it ends, and refusing either would make the mode impossible to leave.
-    if session.login && !matches!(verb, "status" | "login") {
+    // Reads are refused while a human is typing a credential, and which verbs
+    // those are is a property of the verb rather than a list kept here. See
+    // `Verb::readable_during_login`: the allowlist used to be two string
+    // literals, where a typo widened it silently.
+    if session.login && !verb.readable_during_login() {
         return (Session::login_refusal(verb), false);
     }
 
     match verb {
         // What the session is, for a client that just connected.
-        "status" => (
+        Verb::Status => (
             json!({
                 "ok": true,
                 "url": session.page.url().to_string(),
@@ -725,6 +812,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 // stolen jar.
                 "cookies": session.factory.broker().jar().len(),
                 "login": session.login,
+                "open_sockets": session.page.open_sockets(),
             }),
             false,
         ),
@@ -735,13 +823,20 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         // was supposed to arrive with the cookie jar, because a jar is what
         // makes logging in worth doing and a readable page is what makes it
         // unsafe.
-        "login" => {
+        Verb::Login => {
             let on = request.get("on").and_then(Value::as_bool).unwrap_or(true);
             session.login = on;
             // The baseline is dropped either way. A delta across a login would
             // describe the page a human just used, which is the one thing this
             // mode exists to keep out of the agent's hands.
+            //
+            // And the served refs with it. They carry the id, role and *name*
+            // of every actionable element from the pre-login reading; leaving
+            // them would let a ref minted before the login be honoured after
+            // it, and would let a `stale-ref` message quote page state the
+            // agent never read.
             session.last_snapshot = None;
+            session.served_refs = None;
             (
                 json!({
                     "ok": true,
@@ -760,7 +855,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             )
         }
 
-        "snapshot" => {
+        Verb::Snapshot => {
             let snapshot = session.page.snapshot();
             let wants_delta = request.get("delta").and_then(Value::as_bool).unwrap_or(false);
 
@@ -771,6 +866,11 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 .then(|| session.last_snapshot.as_ref().map(|prev| snapshot.delta(prev)))
                 .flatten();
 
+            // A live socket is the one thing here that makes two reads of one
+            // page disagree without the agent having acted. Reported, because
+            // the determinism this engine claims elsewhere genuinely does not
+            // hold for a page holding one.
+            let sockets = session.page.open_sockets();
             let mut reply = json!({
                 "ok": true,
                 "url": session.page.url().to_string(),
@@ -805,6 +905,47 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 }
             }
 
+            // The durable handle beside the ordinal one.
+            //
+            // Computed here and *only* here: the action verbs take their own
+            // internal captures to get a live node id, and paying for a
+            // selector on each of those would put a per-ref tree walk on every
+            // click. An agent reads a snapshot once per turn and acts several
+            // times, so this is the right side of that trade.
+            let selectors = {
+                let dom = session.page.dom();
+                let doc = dom.borrow();
+                snapshot
+                    .refs
+                    .iter()
+                    .map(|entry| {
+                        json!({
+                            "id": entry.id,
+                            "role": entry.role,
+                            "name": entry.name,
+                            // Absent rather than guessed when none could be
+                            // verified: a selector that resolves elsewhere is
+                            // worse than no selector, because it looks like a
+                            // handle.
+                            "selector": crate::selector::for_node(&doc, entry.node_id),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+            reply["refs"] = json!(selectors);
+            if sockets > 0 {
+                reply["open_sockets"] = json!(sockets);
+                reply["note"] = json!(format!(
+                    "this page holds {sockets} open socket(s). Messages arrive on real time and \
+                     are delivered when a verb runs, so two reads of this page can differ \
+                     without you having done anything — unlike every other page here."
+                ));
+            }
+
+            // What the agent is about to hold refs from. `resolve_ref` checks
+            // the next `@ref` against this, which is the whole staleness story:
+            // a ref is only honoured against the reading it was minted in.
+            session.served_refs = Some(snapshot.refs.clone());
             session.last_snapshot = Some(snapshot);
             (reply, false)
         }
@@ -814,7 +955,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         // make. `moved` is reported rather than assumed: a scroll at the bottom
         // of a document changes nothing, and an agent that cannot tell will
         // loop asking for more page that does not exist.
-        "scroll" => {
+        Verb::Scroll => {
             let by = request.get("by").and_then(Value::as_f64).unwrap_or(0.0);
             let moved = session.page.scroll_by(0.0, by);
             let (_, offset) = session.page.scroll_offset();
@@ -829,15 +970,20 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             )
         }
 
-        "navigate" => {
+        Verb::Navigate => {
             let Some(target) = request.get("url").and_then(Value::as_str) else {
-                return (error_reply("navigate needs a `url`"), false);
+                return (VerbError::bad_request("`navigate` needs a `url`.").reply(), false);
             };
             // Resolved against the current page, so an agent may say
             // `/docs` for the same reason a person may click one.
             let resolved = match session.page.url().join(target) {
                 Ok(url) => url,
-                Err(error) => return (error_reply(&format!("`{target}` is not a URL: {error}")), false),
+                Err(error) => {
+                    return (
+                        VerbError::bad_request(format!("`{target}` is not a URL: {error}")).reply(),
+                        false,
+                    );
+                }
             };
             match session.factory.open(&resolved) {
                 Ok(page) => {
@@ -846,53 +992,78 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 }
                 // A refusal is an answer, not a crash: the allowlist saying no
                 // is the engine working, and the agent needs to read it as one.
-                Err(error) => (error_reply(&format!("{error}")), false),
+                Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
             }
         }
 
         // Typing and submitting are the pair that make a login reachable: a
         // session an agent cannot type into stops at the first form, so these
         // ship together or neither is worth having.
-        "type" => {
+        Verb::Type => {
             let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (error_reply("type needs a `ref`"), false);
+                return (VerbError::bad_request("`type` needs a `ref` from a snapshot.").reply(), false);
             };
             let Some(text) = request.get("text").and_then(Value::as_str) else {
-                return (error_reply("type needs `text`"), false);
+                return (VerbError::bad_request("`type` needs `text`.").reply(), false);
             };
+            // The one place a credential is resolved, guarded by the predicate
+            // rather than by this call site remembering to ask.
+            let resolved = if Verb::Type.substitutes_secrets() {
+                session.secrets.substitute(text)
+            } else {
+                crate::secrets::Resolved {
+                    text: text.to_string(),
+                    used: Vec::new(),
+                    missing: Vec::new(),
+                }
+            };
+            let text = resolved.text.as_str();
             let snapshot = session.page.snapshot();
-            let Some(entry) = snapshot.resolve(reference) else {
-                return (
-                    error_reply(&format!("no such ref `{reference}` on this page")),
-                    false,
-                );
+            let entry = match resolve_ref(session, &snapshot, reference) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
             };
             let node_id = entry.node_id;
             let role = entry.role.clone();
             if !session.page.type_into(node_id, text) {
                 return (
-                    error_reply(&format!("`{reference}` is a {role}, not a field to type into")),
+                    VerbError::wrong_role(reference, &role, "a field to type into").reply(),
                     false,
                 );
             }
-            (json!({"ok": true, "ref": reference}), true)
+            // Names, never values. A receipt that carried the credential would
+            // be a credential in every export that receipt reaches, which is
+            // the same rule the cookie jar follows by reporting a count.
+            let mut reply = json!({"ok": true, "ref": reference});
+            if resolved.substituted() {
+                reply["used"] = json!(resolved.used);
+            }
+            if !resolved.missing.is_empty() {
+                // Said rather than left to be discovered as a failed login that
+                // looks like a wrong password.
+                reply["unresolved"] = json!(resolved.missing);
+                reply["note"] = json!(format!(
+                    "{} placeholder(s) named nothing set in this session and were typed \
+                     literally. `env` lists what is available.",
+                    resolved.missing.len()
+                ));
+            }
+            (reply, true)
         }
 
-        "submit" => {
+        Verb::Submit => {
             let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (error_reply("submit needs a `ref` inside the form"), false);
+                return (VerbError::bad_request("`submit` needs a `ref` inside the form.").reply(), false);
             };
             let snapshot = session.page.snapshot();
-            let Some(entry) = snapshot.resolve(reference) else {
-                return (
-                    error_reply(&format!("no such ref `{reference}` on this page")),
-                    false,
-                );
+            let entry = match resolve_ref(session, &snapshot, reference) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
             };
             let node_id = entry.node_id;
             let submission = match session.page.submit_form(node_id) {
                 Ok(submission) => submission,
-                Err(error) => return (error_reply(&format!("{error}")), false),
+                Err(error) => return (VerbError::refused(format!("{error}")).reply(), false),
             };
             match session.factory.open_submission(&submission) {
                 Ok(page) => {
@@ -906,20 +1077,18 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                         true,
                     )
                 }
-                Err(error) => (error_reply(&format!("{error}")), false),
+                Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
             }
         }
 
-        "click" => {
+        Verb::Click => {
             let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (error_reply("click needs a `ref`"), false);
+                return (VerbError::bad_request("`click` needs a `ref` from a snapshot.").reply(), false);
             };
             let snapshot = session.page.snapshot();
-            let Some(entry) = snapshot.resolve(reference) else {
-                return (
-                    error_reply(&format!("no such ref `{reference}` on this page")),
-                    false,
-                );
+            let entry = match resolve_ref(session, &snapshot, reference) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
             };
             let node_id = entry.node_id;
             let role = entry.role.clone();
@@ -954,30 +1123,354 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 
             let Some(href) = href else {
                 return (
-                    error_reply(&format!("`{reference}` is a {role} with nothing to follow")),
+                    VerbError::wrong_role(reference, &role, "something to follow").reply(),
                     false,
                 );
             };
             let resolved = match session.page.url().join(&href) {
                 Ok(url) => url,
-                Err(error) => return (error_reply(&format!("`{href}` is not a URL: {error}")), false),
+                Err(error) => {
+                    return (
+                        VerbError::bad_request(format!("`{href}` is not a URL: {error}")).reply(),
+                        false,
+                    );
+                }
             };
             match session.factory.open(&resolved) {
                 Ok(page) => {
                     session.page = page;
                     (json!({"ok": true, "url": session.page.url().to_string()}), true)
                 }
-                Err(error) => (error_reply(&format!("{error}")), false),
+                Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
             }
         }
 
-        other => (
-            error_reply(&format!(
-                "`{other}` is not a verb this engine has (status, snapshot, navigate, \
-                 scroll, type, submit, click)"
-            )),
-            false,
-        ),
+
+        // The verb no other engine can offer honestly.
+        //
+        // Chromium's request list is an *observation* of the network made from
+        // beside it, and it fails open: attach races, freshly created targets,
+        // workers, buffer limits. Obscura's CDP `Network.*` events are batched
+        // and emitted after navigation completes, reconstructed from a stored
+        // list, so anything reading them live sees a compressed, out-of-time
+        // picture. Lightpanda has no equivalent at all.
+        //
+        // Here the engine *is* the HTTP client, so this is not a report about
+        // the network — it is the decision record the broker wrote before the
+        // bytes moved. If it is not here, it did not happen.
+        Verb::Requests => {
+            let all = session.requests.records();
+
+            // `since` lets an agent ask what happened after its last look, the
+            // same shape `snapshot --delta` has and for the same reason: the
+            // whole log re-read after every click is the wrong size for a loop.
+            let since = request.get("since").and_then(Value::as_u64);
+            let rows: Vec<&crate::receipt::RequestRecord> = all
+                .iter()
+                .filter(|r| since.is_none_or(|floor| r.seq > floor))
+                .collect();
+
+            // Counted over the *whole* log rather than the window, because
+            // "nothing was refused" is a claim about the session and an agent
+            // that only ever asks for windows should still be able to make it.
+            let denied = all
+                .iter()
+                .filter(|r| r.phase == crate::receipt::Phase::Request && !r.allowed)
+                .count();
+
+            let text = rows
+                .iter()
+                .map(|r| r.render())
+                .collect::<Vec<_>>()
+                .join("\n");
+            // The highest seq, not the last appended. Sequence numbers are
+            // taken before the append, and a socket reader thread appends
+            // concurrently with the page's own fetches — so append order and
+            // seq order can differ, and `last()` would either re-show a row or
+            // skip one permanently. A hole in a log this verb documents as
+            // complete by construction is the worst of the two.
+            let highest = all.iter().map(|r| r.seq).max();
+
+            (
+                json!({
+                    "ok": true,
+                    "requests": rows,
+                    // The cursor to pass back as `since`. Named rather than
+                    // left to be derived from the last row, which is absent
+                    // when the window is empty.
+                    "cursor": highest,
+                    "shown": rows.len(),
+                    "total": all.len(),
+                    "denied": denied,
+                    "text": text,
+                }),
+                false,
+            )
+        }
+
+        // The wait an agent loop needs. Before this the only option on a
+        // scripted page was to snapshot and hope.
+        //
+        // Neither reference engine can do the interesting half of this. Both
+        // wait on a wall clock with hard-coded fudge — Lightpanda a 500ms
+        // network-idle debounce, Obscura a 150ms quiet window, a 1s grace, a
+        // 500ms tail and a 5s deadline that marks the page idle even when the
+        // deadline is what ended it. Here the settle runs on a virtual clock,
+        // so a page's `setTimeout(1000)` costs nothing and two runs of the same
+        // page answer the same way.
+        Verb::WaitFor => {
+            let selector = request.get("selector").and_then(Value::as_str);
+            let text = request.get("text").and_then(Value::as_str);
+            let target = match (selector, text) {
+                (Some(s), None) => crate::engine::WaitTarget::Selector(s.to_string()),
+                (None, Some(t)) => crate::engine::WaitTarget::Text(t.to_string()),
+                (Some(_), Some(_)) => {
+                    return (
+                        VerbError::bad_request(
+                            "`wait_for` takes a `selector` or a `text`, not both: two conditions \
+                             are two waits, and which one was met would not be reported.",
+                        )
+                        .reply(),
+                        false,
+                    );
+                }
+                (None, None) => {
+                    return (
+                        VerbError::bad_request("`wait_for` needs a `selector` or a `text`.")
+                            .reply(),
+                        false,
+                    );
+                }
+            };
+
+            let waited = session.page.wait_for(&target);
+            // `changed` only when something actually happened: a condition
+            // already true has moved nothing, and sending every attached viewer
+            // a frame for it would undo the zero-frames-at-rest property.
+            //
+            // `waited.changed` is first because it is the only one that sees a
+            // socket message: those arrive on real time, advancing neither the
+            // virtual clock nor the timer count, so a wait satisfied by one
+            // left every viewer showing the page from before it.
+            let moved = waited.changed
+                || waited.settled.elapsed_ms > 0
+                || waited.settled.timers_run > 0;
+            (
+                json!({
+                    "ok": true,
+                    "met": waited.met,
+                    // Three outcomes, not two. "Not found and the page has
+                    // nothing left to run" is a different fact from "not found
+                    // and it was still working", and an agent branches
+                    // differently on them.
+                    "end": waited.end.as_str(),
+                    "waited_ms": waited.settled.elapsed_ms,
+                    "pending_timers": waited.settled.pending_timers,
+                    "message": waited.render(),
+                }),
+                moved,
+            )
+        }
+
+        Verb::WaitForScript => {
+            let Some(expr) = request.get("expr").and_then(Value::as_str) else {
+                return (
+                    VerbError::bad_request("`wait_for_script` needs an `expr` to evaluate.")
+                        .reply(),
+                    false,
+                );
+            };
+            let Some(waited) = session.page.wait_for_script(expr) else {
+                return (VerbError::no_script(Verb::WaitForScript).reply(), false);
+            };
+            let moved = waited.changed
+                || waited.settled.elapsed_ms > 0
+                || waited.settled.timers_run > 0;
+            (
+                json!({
+                    "ok": true,
+                    "met": waited.met,
+                    "end": waited.end.as_str(),
+                    "waited_ms": waited.settled.elapsed_ms,
+                    "pending_timers": waited.settled.pending_timers,
+                    "message": waited.render(),
+                }),
+                moved,
+            )
+        }
+
+        // Token economics. Three hundred lines of outline to find five titles
+        // is the wrong shape, and a model asked to transcribe them out of prose
+        // will occasionally invent one.
+        Verb::Extract => {
+            let Some(spec) = request.get("schema") else {
+                return (
+                    VerbError::bad_request(
+                        "`extract` needs a `schema`: an object of field names to selectors, \
+                         like {\"title\": \"h1\", \"links\": [\"a\"]}.",
+                    )
+                    .reply(),
+                    false,
+                );
+            };
+            let schema = match crate::extract::parse(spec) {
+                Ok(schema) => schema,
+                Err(e) => return (e.reply(), false),
+            };
+            let base = session.page.url().clone();
+            let dom = session.page.dom();
+            let result = {
+                let doc = dom.borrow();
+                crate::extract::run(&doc, &base, &schema)
+            };
+            match result {
+                // In-band, so a model reads it and corrects itself. A schema
+                // that matched nothing is the caller's to fix; answering it
+                // with an object full of nulls would look like a result.
+                Err(e) => (e.reply(), false),
+                Ok(data) => (json!({"ok": true, "data": data}), false),
+            }
+        }
+
+        Verb::Markdown => {
+            let max_bytes = request
+                .get("max_bytes")
+                .and_then(Value::as_u64)
+                .map(|n| n as usize)
+                .unwrap_or(crate::markdown::DEFAULT_MAX_BYTES);
+            let dom = session.page.dom();
+            let rendered = {
+                let doc = dom.borrow();
+                crate::markdown::capture(&doc, max_bytes)
+            };
+            let url = session.page.url().to_string();
+            (
+                json!({
+                    "ok": true,
+                    "url": url,
+                    "truncated": rendered.truncated,
+                    // Fenced, because this is page content reaching something
+                    // that is deciding what to do next.
+                    "text": rendered.render(&url),
+                }),
+                false,
+            )
+        }
+
+        // Discovery for the credential scheme, and the whole of it: an agent
+        // learns that a credential exists and what to call it, which is
+        // everything it needs to use one and nothing it needs to leak one.
+        Verb::Env => {
+            let names = session.secrets.names();
+            (
+                json!({
+                    "ok": true,
+                    "names": names,
+                    "prefix": crate::secrets::PREFIX,
+                    "message": if names.is_empty() {
+                        format!(
+                            "no credentials are available to this session. Set one in the \
+                             environment `serve` was started in, named `{}<SITE>_<FIELD>`, and \
+                             type it into a field as `${}<SITE>_<FIELD>`.",
+                            crate::secrets::PREFIX,
+                            crate::secrets::PREFIX
+                        )
+                    } else {
+                        format!(
+                            "{} credential(s). Names only — no verb in this engine returns a \
+                             value. Use one by typing its placeholder into a field.",
+                            names.len()
+                        )
+                    },
+                }),
+                false,
+            )
+        }
+    }
+}
+
+/// Resolve a `@ref`, refusing one that no longer means what the agent read.
+///
+/// `click`, `type` and `submit` each need a *live* node id, so each takes a
+/// fresh snapshot at action time. That much is right, and on its own it was the
+/// bug: refs are minted by walk order (`snapshot.rs`, `e1` is "the first
+/// actionable thing in this walk"), so if the page moved between the snapshot
+/// the agent read and the one taken here, `@e5` resolves to a **different
+/// element**, the action succeeds, and the reply says `ok`.
+///
+/// Nothing detected that. There was no memory-safety problem — the node id is
+/// freshly minted, so the click landed on a real node — and that is exactly
+/// what made it bad: a plausible wrong answer that looks like a right one is
+/// the state this engine says it does not leave things in.
+///
+/// So the fresh capture is checked against the refs this session last *served*.
+/// An identical entry — same id, same node, same role, same name — means the
+/// reading the agent acted on still describes the page.
+///
+/// **What this proves, and what it does not.** It is an equality check on one
+/// ref, not a proof that the document is unchanged: a page that mutates
+/// something the walk does not record still passes, and two different elements
+/// that agree on all four fields would too. What it catches is every case where
+/// the *handle* has come to mean something else, which is the failure that was
+/// silent before. It is not a claim that the page is the same page.
+fn resolve_ref(
+    session: &Session,
+    snapshot: &crate::snapshot::Snapshot,
+    reference: &str,
+) -> Result<crate::snapshot::RefEntry, VerbError> {
+    let Some(entry) = snapshot.resolve(reference) else {
+        return Err(VerbError::no_such_ref(reference));
+    };
+    // No snapshot has been served, so the caller cannot have read this ref
+    // anywhere. Distinguished from a stale one because the fix differs: this is
+    // "take a snapshot", that is "take another".
+    let Some(served) = session.served_refs.as_ref() else {
+        return Err(VerbError::no_snapshot(reference));
+    };
+    let wanted = reference.trim_start_matches('@');
+    match served.iter().find(|e| e.id == wanted) {
+        Some(before) if same_target(before, entry) => Ok(entry.clone()),
+        // Either it named something else in the served reading, or it was not
+        // in it at all. Both mean the same thing to the caller and get the same
+        // answer, which names what the ref points at *now* — the one piece of
+        // evidence the session has and the agent does not.
+        Some(_) | None => Err(VerbError::stale_ref(reference, &describe(entry))),
+    }
+}
+
+/// Whether two readings of a ref name the same thing.
+///
+/// Compares identity, **not** `name`, and that distinction is the whole of it.
+/// `accessible_name` reports a text input's *current value* (and a password
+/// field's mask), so `type @e1 alice` changes `@e1`'s name from `username` to
+/// `alice` without renumbering anything. A full `RefEntry` equality therefore
+/// refused the second `type` on the same field — which is exactly the retry the
+/// README documents ("`type` replaces the field rather than appending, so
+/// retrying after a failed submit does not produce `alicealice`") and exactly
+/// what the skill promises when it says typing renumbers nothing.
+///
+/// What identifies a ref is where it sits and what it is: the id it was served
+/// under, the node it resolved to, its role, and — for a link — where it goes.
+/// A page that changed any of those changed the thing the agent read.
+fn same_target(before: &crate::snapshot::RefEntry, now: &crate::snapshot::RefEntry) -> bool {
+    before.id == now.id
+        && before.node_id == now.node_id
+        && before.role == now.role
+        && before.href == now.href
+}
+
+/// A ref entry as one line of prose, safe to put in an error message.
+///
+/// The name is page-derived, and an error message is read *outside* the
+/// snapshot's fence. `one_line` is the same collapse the fence relies on, so a
+/// page cannot smuggle a second line — or a forged fence marker — into a reply
+/// by naming a button after one.
+fn describe(entry: &crate::snapshot::RefEntry) -> String {
+    let name = crate::snapshot::one_line(&entry.name);
+    if name.is_empty() {
+        format!("a {}", entry.role)
+    } else {
+        format!("a {} \"{}\"", entry.role, name)
     }
 }
 
@@ -1074,9 +1567,9 @@ mod tests {
     use std::sync::Arc;
 
     fn session_with(html: &str) -> Session {
-        let broker = Arc::new(
-            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-        );
+        let requests = Arc::new(MemorySink::new());
+        let broker =
+            Arc::new(Broker::new(Policy::new(), requests.clone(), None).expect("broker"));
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
         let sources = fonts.sources.clone();
         let options = crate::engine::PageOptions {
@@ -1093,6 +1586,9 @@ mod tests {
             seq: 0,
             actions: None,
             last_snapshot: None,
+            served_refs: None,
+            requests,
+            secrets: crate::secrets::Secrets::default(),
             login: false,
         }
     }
@@ -1100,9 +1596,9 @@ mod tests {
     /// A session whose page runs its own scripts, for the verbs that behave
     /// differently once script is present.
     fn scripted_session_with(html: &str) -> Session {
-        let broker = Arc::new(
-            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-        );
+        let requests = Arc::new(MemorySink::new());
+        let broker =
+            Arc::new(Broker::new(Policy::new(), requests.clone(), None).expect("broker"));
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let options = crate::engine::PageOptions {
             width: 400,
@@ -1119,8 +1615,25 @@ mod tests {
             seq: 0,
             actions: None,
             last_snapshot: None,
+            served_refs: None,
+            requests,
+            secrets: crate::secrets::Secrets::default(),
             login: false,
         }
+    }
+
+    /// Take a snapshot **through the verb**, and hand back the refs it served.
+    ///
+    /// Reaching into `session.page.snapshot()` gets a ref the agent was never
+    /// given, and the session now refuses to act on one of those — which is the
+    /// point of `resolve_ref`. Tests drive the same loop an agent does.
+    fn serve_refs(session: &mut Session) -> Vec<crate::snapshot::RefEntry> {
+        let (reply, _) = control_verb(session, &json!({"verb": "snapshot"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        session
+            .served_refs
+            .clone()
+            .expect("the snapshot verb records what it served")
     }
 
     fn tall_page() -> &'static str {
@@ -1506,7 +2019,10 @@ mod tests {
         assert!(!changed);
 
         // The link is @e1; typing into it must say *why* it cannot be typed
-        // into, not merely that it failed.
+        // into, not merely that it failed. Read the page first, the way an
+        // agent does — a ref the session never served is refused before the
+        // role is even looked at.
+        let _ = serve_refs(&mut session);
         let (reply, _) = control_verb(
             &mut session,
             &json!({"verb": "type", "ref": "e1", "text": "x"}),
@@ -1582,10 +2098,7 @@ mod tests {
              </script></body></html>",
         );
 
-        let reference = session
-            .page
-            .snapshot()
-            .refs
+        let reference = serve_refs(&mut session)
             .iter()
             .find(|r| r.name == "Add")
             .expect("the button has a ref")
@@ -1615,7 +2128,7 @@ mod tests {
              document.querySelector('#b').addEventListener('click', () => {});\
              </script></body></html>",
         );
-        let reference = session.page.snapshot().refs[0].id.clone();
+        let reference = serve_refs(&mut session)[0].id.clone();
         let (reply, _) = control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
 
         assert!(reply["requests"].is_array(), "{reply:?}");
@@ -1643,7 +2156,7 @@ mod tests {
         let mut session = scripted_session_with(
             "<html><body><a href='https://denied.test/'>go</a></body></html>",
         );
-        let reference = session.page.snapshot().refs[0].id.clone();
+        let reference = serve_refs(&mut session)[0].id.clone();
         let (reply, changed) =
             control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
 
@@ -1652,6 +2165,573 @@ mod tests {
         assert_eq!(reply["ok"], false, "{reply:?}");
         assert!(!changed);
         assert!(reply["error"].as_str().unwrap().contains("denied.test"), "{reply:?}");
+    }
+
+    #[test]
+    fn a_snapshot_carries_a_durable_handle_beside_the_ordinal_one() {
+        // `@e1` is a position in this reading; the selector is a handle that
+        // survives one. Both are reported, because they answer different
+        // questions and neither replaces the other.
+        let mut session = session_with(
+            "<html><body><form><input name='user'>\
+             <button id='go'>Sign in</button></form></body></html>",
+        );
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let refs = reply["refs"].as_array().expect("refs in the reply");
+        assert_eq!(refs.len(), 2, "{refs:?}");
+
+        let button = refs
+            .iter()
+            .find(|r| r["name"] == "Sign in")
+            .expect("the button");
+        assert_eq!(button["selector"], "#go");
+        // The ordinal is still there.
+        assert!(button["id"].as_str().unwrap().starts_with('e'));
+
+        let field = refs.iter().find(|r| r["name"] == "user").expect("the field");
+        assert!(
+            field["selector"]
+                .as_str()
+                .unwrap()
+                .contains("[name=\"user\"]"),
+            "{field:?}"
+        );
+    }
+
+    #[test]
+    fn a_credential_reaches_the_field_and_never_the_reply() {
+        // The whole claim, in one test. The agent names a credential, the value
+        // lands in the page, and nothing the agent can read ever holds it.
+        let mut session = session_with(
+            "<html><body><form action='/in' method='post'>\
+             <input name='pass' type='password'></form></body></html>",
+        );
+        session.secrets =
+            crate::secrets::Secrets::from_pairs(&[("H5I_SECRET_ACME_PASS", "hunter2")]);
+
+        let refs = serve_refs(&mut session);
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({
+                "verb": "type",
+                "ref": refs[0].id.clone(),
+                "text": "$H5I_SECRET_ACME_PASS",
+            }),
+        );
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(changed);
+        // The name, because a receipt has to be able to say a credential was
+        // used. Never the value.
+        assert_eq!(reply["used"], json!(["H5I_SECRET_ACME_PASS"]));
+        let rendered = reply.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "the value is in the reply: {rendered}"
+        );
+
+        // It really did reach the field.
+        assert_eq!(
+            session.page.field_value(refs[0].node_id).as_deref(),
+            Some("hunter2")
+        );
+
+        // And a snapshot does not read it back out. The engine renders a
+        // password field's value as its own placeholder, so this is the
+        // existing behaviour rather than a new promise — asserted so it stays.
+        let (snap, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert!(
+            !snap["text"].as_str().unwrap().contains("hunter2"),
+            "{snap:?}"
+        );
+    }
+
+    #[test]
+    fn a_credential_a_page_reflects_back_is_redacted_on_the_way_out() {
+        // `secrets` documents redaction as the rule that anything written back
+        // out goes through, and nothing called it. It matters beyond tidiness:
+        // a login form that reflects what was typed — a hidden field, a
+        // validation message, a title — puts the value in the DOM, and the next
+        // snapshot would hand it to the agent the indirection exists to keep it
+        // from.
+        let mut session = session_with(
+            "<html><body><p id='echo'>nothing yet</p></body></html>",
+        );
+        session.secrets =
+            crate::secrets::Secrets::from_pairs(&[("H5I_SECRET_ACME", "hunter2-secret")]);
+
+        // Stand in for the page having reflected it: put the value where a
+        // read verb will find it.
+        let dom = session.page.dom();
+        {
+            let doc = dom.borrow();
+            let node = doc.query_selector("#echo").ok().flatten();
+            assert!(node.is_some(), "the fixture needs the node");
+        }
+        let reply = redact_reply(
+            &session.secrets,
+            json!({
+                "ok": true,
+                "text": "the form said hunter2-secret back",
+                "nested": {"rows": ["hunter2-secret"]},
+            }),
+        );
+        let rendered = reply.to_string();
+        assert!(
+            !rendered.contains("hunter2-secret"),
+            "the value survived a reply: {rendered}"
+        );
+        assert!(
+            rendered.contains("$H5I_SECRET_ACME"),
+            "and it should say which credential it was: {rendered}"
+        );
+    }
+
+    #[test]
+    fn env_lists_names_and_the_engine_has_no_verb_that_returns_a_value() {
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        session.secrets = crate::secrets::Secrets::from_pairs(&[
+            ("H5I_SECRET_A", "aaaa-secret"),
+            ("H5I_SECRET_B", "bbbb-secret"),
+        ]);
+
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "env"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(!changed);
+        assert_eq!(reply["names"], json!(["H5I_SECRET_A", "H5I_SECRET_B"]));
+        let rendered = reply.to_string();
+        assert!(!rendered.contains("aaaa-secret"), "{rendered}");
+        assert!(!rendered.contains("bbbb-secret"), "{rendered}");
+    }
+
+    #[test]
+    fn env_is_refused_while_a_human_is_logging_in() {
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        session.login = true;
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "env"}));
+        assert_eq!(reply["code"], "login-mode", "{reply:?}");
+    }
+
+    #[test]
+    fn a_placeholder_that_names_nothing_is_reported_rather_than_emptied() {
+        let mut session = session_with(
+            "<html><body><input name='u'></body></html>",
+        );
+        let refs = serve_refs(&mut session);
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({
+                "verb": "type",
+                "ref": refs[0].id.clone(),
+                "text": "$H5I_SECRET_TYPO",
+            }),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["unresolved"], json!(["H5I_SECRET_TYPO"]));
+        // Typed literally, so the mistake is visible in the field rather than
+        // arriving as a login failure that looks like a wrong password.
+        assert_eq!(
+            session.page.field_value(refs[0].node_id).as_deref(),
+            Some("$H5I_SECRET_TYPO")
+        );
+    }
+
+    #[test]
+    fn waiting_for_something_already_there_costs_nothing() {
+        let mut session = session_with("<html><body><p id='done'>ready</p></body></html>");
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for", "selector": "#done"}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["met"], true);
+        assert_eq!(reply["end"], "met");
+        assert_eq!(reply["waited_ms"], 0);
+        assert!(!changed, "nothing ran, so no viewer needs a frame");
+    }
+
+    #[test]
+    fn a_page_that_cannot_change_says_so_instead_of_waiting() {
+        // The answer worth having. This page runs no script, so the element is
+        // never going to appear — and reporting that immediately is a different
+        // and more useful fact than timing out.
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        let started = std::time::Instant::now();
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for", "selector": "#never"}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["met"], false);
+        assert_eq!(
+            reply["end"], "quiescent",
+            "not `budget`: nothing was still working, so this is settled, not cut off"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "it should not have spent a budget proving the obvious"
+        );
+        let message = reply["message"].as_str().unwrap();
+        assert!(message.contains("nothing left to run"), "{message:?}");
+    }
+
+    #[test]
+    fn waiting_for_text_reads_the_outline_a_reader_would_see() {
+        // Not the raw tree: a match inside a `<script>` body is not something
+        // the agent would ever have read.
+        let mut session = session_with(
+            "<html><body><script>var marker = 'appeared';</script><p>hi</p></body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for", "text": "appeared"}),
+        );
+        assert_eq!(reply["met"], false, "script text is not page text: {reply:?}");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "wait_for", "text": "hi"}));
+        assert_eq!(reply["met"], true, "{reply:?}");
+    }
+
+    #[test]
+    fn a_wait_on_a_virtual_clock_is_free_and_repeatable() {
+        // The property neither reference engine has, and it turns out to be
+        // stronger than "the wait is cheap".
+        //
+        // The page arms a one second timer. Because the settle runs on a
+        // *virtual* clock and runs to quiescence, that timer has already fired
+        // by the time the session exists — so the wait does not wait at all, it
+        // answers. Both reference engines would have spent a real second here,
+        // or given up early on a wall-clock heuristic and reported a page that
+        // had not finished.
+        let page = "<html><body><div id='host'></div><script>\
+                    setTimeout(() => { const p = document.createElement('p'); \
+                    p.textContent = 'late'; document.querySelector('#host').appendChild(p); \
+                    }, 1000);</script></body></html>";
+
+        let started = std::time::Instant::now();
+        let mut first = scripted_session_with(page);
+        let (a, _) = control_verb(&mut first, &json!({"verb": "wait_for", "text": "late"}));
+        let real = started.elapsed();
+
+        assert_eq!(a["ok"], true, "{a:?}");
+        assert_eq!(a["met"], true, "the timer fired and the node landed: {a:?}");
+        assert_eq!(a["end"], "met");
+        assert!(
+            real < std::time::Duration::from_millis(900),
+            "a page's own second of delay costs the agent nothing: {real:?}"
+        );
+
+        // And the answer does not depend on how the machine was feeling.
+        let mut second = scripted_session_with(page);
+        let (b, _) = control_verb(&mut second, &json!({"verb": "wait_for", "text": "late"}));
+        assert_eq!(a["met"], b["met"]);
+        assert_eq!(a["end"], b["end"]);
+        assert_eq!(
+            a["waited_ms"], b["waited_ms"],
+            "two runs of one page answer identically"
+        );
+    }
+
+    #[test]
+    fn a_wait_answers_rather_than_waits_because_the_page_already_ran() {
+        // Worth pinning as a property rather than leaving as an accident: the
+        // settle runs a page to quiescence, so by the time any verb is served
+        // there is nothing pending. `wait_for` is therefore a *definitive*
+        // answer — found, or cannot appear — and not a sleep. An agent that
+        // polls it in a loop is doing no good and this is why.
+        let mut session = scripted_session_with(
+            "<html><body><p>here</p><script>var n = 1;</script></body></html>",
+        );
+        for _ in 0..3 {
+            let (reply, changed) = control_verb(
+                &mut session,
+                &json!({"verb": "wait_for", "selector": "#absent"}),
+            );
+            assert_eq!(reply["end"], "quiescent", "{reply:?}");
+            assert_eq!(reply["waited_ms"], 0);
+            assert!(!changed, "a wait that ran nothing moves no viewer");
+        }
+    }
+    #[test]
+    fn wait_for_script_needs_a_realm_and_says_so_as_a_routing_answer() {
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for_script", "expr": "true"}),
+        );
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "no-script");
+        assert_eq!(
+            reply["retryable"], false,
+            "retrying will not grow a script engine"
+        );
+
+        let mut scripted = scripted_session_with(
+            "<html><body><p>hi</p><script>var ready = true;</script></body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut scripted,
+            &json!({"verb": "wait_for_script", "expr": "globalThis.ready === true"}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["met"], true, "{reply:?}");
+    }
+
+    #[test]
+    fn a_condition_that_throws_is_not_yet_rather_than_an_error() {
+        // A page mid-build throws on the way to values it has not made, so a
+        // throw has to count as "not satisfied" or no useful condition can be
+        // written at all.
+        let mut session = scripted_session_with(
+            "<html><body><p>hi</p><script>var ok = 1;</script></body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for_script", "expr": "window.nothing.here.at.all"}),
+        );
+        assert_eq!(reply["ok"], true, "a throw is an answer, not a failure: {reply:?}");
+        assert_eq!(reply["met"], false);
+        assert_eq!(reply["end"], "quiescent");
+    }
+
+    #[test]
+    fn wait_for_refuses_two_conditions_at_once() {
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "wait_for", "selector": "p", "text": "hi"}),
+        );
+        assert_eq!(reply["code"], "bad-request", "{reply:?}");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "wait_for"}));
+        assert_eq!(reply["code"], "bad-request", "{reply:?}");
+    }
+
+    #[test]
+    fn the_request_log_is_readable_through_the_session_and_counts_refusals() {
+        // The claim this verb rests on: what it reports is what the broker
+        // recorded before the wire, not a reconstruction afterwards. So the
+        // test drives a real refusal and reads it back through the verb.
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "requests"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(!changed, "reading the log does not move the page");
+        assert_eq!(reply["denied"], 0);
+        assert_eq!(reply["total"], 0, "nothing has been fetched yet");
+        assert!(reply["cursor"].is_null(), "no cursor before any request");
+
+        // A navigation the policy refuses. The allowlist is empty and this is
+        // not loopback, so the broker records the decision and no bytes move.
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "navigate", "url": "https://denied.test/"}),
+        );
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "refused");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "requests"}));
+        assert_eq!(reply["denied"], 1, "the refusal is in the log: {reply:?}");
+        let rows = reply["requests"].as_array().expect("an array");
+        assert!(!rows.is_empty());
+        assert!(
+            rows.iter().any(|r| r["url"]
+                .as_str()
+                .is_some_and(|u| u.contains("denied.test"))),
+            "the refused URL is named: {reply:?}"
+        );
+        assert!(
+            reply["text"].as_str().unwrap().contains("DENIED"),
+            "{reply:?}"
+        );
+
+        // The cursor is the shape an agent loop needs: ask again with it and
+        // get only what is new, which here is nothing.
+        let cursor = reply["cursor"].as_u64().expect("a cursor once there are rows");
+        let (again, _) = control_verb(
+            &mut session,
+            &json!({"verb": "requests", "since": cursor}),
+        );
+        assert_eq!(again["shown"], 0, "{again:?}");
+        assert_eq!(
+            again["denied"], 1,
+            "counts describe the session, not the window: {again:?}"
+        );
+    }
+
+    #[test]
+    fn the_request_log_is_refused_while_a_human_is_logging_in() {
+        // It names URLs a login flow visited. Engine-written, but still a
+        // reading of where the page went.
+        let mut session = session_with("<html><body><p>hi</p></body></html>");
+        session.login = true;
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "requests"}));
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "login-mode", "{reply:?}");
+    }
+
+    #[test]
+    fn a_ref_from_a_reading_the_page_has_moved_on_from_is_refused() {
+        // The defect this check exists for, reproduced.
+        //
+        // Refs are minted by walk order, and the action verbs take a *fresh*
+        // snapshot to get a live node id. So when the page inserts an element
+        // earlier in document order, every later ref shifts by one: the agent's
+        // `@e2` now names what used to be `@e1`. Before this check the click
+        // landed on that other element and the reply said `ok`.
+        let mut session = scripted_session_with(
+            "<html><body><div id='top'></div>\
+             <button id='b'>Add</button>\
+             <a href='/second'>second</a>\
+             <script>document.querySelector('#b').addEventListener('click', () => {\
+               const a = document.createElement('a');\
+               a.setAttribute('href', '/first');\
+               a.textContent = 'first';\
+               document.querySelector('#top').appendChild(a);\
+             });</script></body></html>",
+        );
+
+        let refs = serve_refs(&mut session);
+        let button = refs
+            .iter()
+            .find(|r| r.name == "Add")
+            .expect("the button has a ref")
+            .clone();
+        let second = refs
+            .iter()
+            .find(|r| r.name == "second")
+            .expect("the link has a ref")
+            .clone();
+
+        // Click the button. Its handler inserts a link *above* it, so the walk
+        // renumbers and `second`'s id now belongs to something else.
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": button.id.clone()}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let after = session.page.snapshot();
+        let now = after.resolve(&second.id).expect("the id still resolves");
+        assert_ne!(
+            now.node_id, second.node_id,
+            "the fixture must actually renumber, or this test proves nothing"
+        );
+
+        // Acting on the ref the agent read is refused, by name, rather than
+        // acting on whatever that id happens to mean now.
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": second.id.clone()}),
+        );
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "stale-ref", "{reply:?}");
+        assert_eq!(reply["retryable"], true);
+        assert!(!changed, "a refused verb does not move the page");
+        let text = reply["error"].as_str().unwrap();
+        assert!(text.contains("snapshot"), "no recovery named: {text:?}");
+
+        // And the loop an agent is supposed to run works: read again, act on
+        // what that reading gave you.
+        let fresh = serve_refs(&mut session);
+        let second_again = fresh
+            .iter()
+            .find(|r| r.name == "second")
+            .expect("still on the page");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": second_again.id.clone()}),
+        );
+        assert_ne!(
+            reply["code"], "stale-ref",
+            "a ref from the current reading must be honoured: {reply:?}"
+        );
+    }
+
+    #[test]
+    fn a_ref_survives_everything_that_does_not_renumber_it() {
+        // The check has to be precise or it is a nuisance: typing into one
+        // field and then submitting is the login loop, and it must not require
+        // a re-read between every step.
+        let mut session = session_with(
+            "<html><body><form action='/in' method='post'>\
+             <input name='user'><input name='pass' type='password'>\
+             <button type='submit'>Sign in</button></form></body></html>",
+        );
+        let refs = serve_refs(&mut session);
+        assert_eq!(refs.len(), 3, "user, pass, submit");
+
+        for (index, text) in [(0usize, "alice"), (1, "hunter2")] {
+            let (reply, _) = control_verb(
+                &mut session,
+                &json!({"verb": "type", "ref": refs[index].id.clone(), "text": text}),
+            );
+            assert_eq!(reply["ok"], true, "step {index}: {reply:?}");
+        }
+
+        // Scrolling does not touch the DOM either.
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "scroll", "by": 50.0}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "submit", "ref": refs[2].id.clone()}),
+        );
+        assert_ne!(
+            reply["code"], "stale-ref",
+            "typing and scrolling do not renumber refs: {reply:?}"
+        );
+    }
+
+    #[test]
+    fn typing_into_one_ref_twice_is_the_documented_retry_and_must_work() {
+        // README: "`type` replaces the field rather than appending, so retrying
+        // after a failed submit does not produce `alicealice`." That retry
+        // types into the *same* ref twice.
+        let mut session = session_with(
+            "<html><body><form><input name='user'></form></body></html>",
+        );
+        let refs = serve_refs(&mut session);
+        let id = refs[0].id.clone();
+
+        let (first, _) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": id.clone(), "text": "alice"}),
+        );
+        assert_eq!(first["ok"], true, "{first:?}");
+
+        let (second, _) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": id, "text": "bob"}),
+        );
+        assert_eq!(
+            second["ok"], true,
+            "the documented retry was refused: {second:?}"
+        );
+    }
+
+    #[test]
+    fn acting_on_a_ref_before_reading_one_is_refused_as_its_own_thing() {
+        // Distinguished from a stale ref because the fix differs: this is
+        // "take a snapshot", that is "take another one".
+        let mut session = session_with(tall_page());
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "click", "ref": "e1"}));
+        assert_eq!(reply["code"], "no-snapshot", "{reply:?}");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn an_unknown_verb_is_named_and_the_known_ones_are_listed() {
+        let mut session = session_with(tall_page());
+        let (reply, changed) = control_verb(&mut session, &json!({"verb": "typewrite"}));
+        assert_eq!(reply["code"], "unknown-verb", "{reply:?}");
+        assert!(!changed);
+        let text = reply["error"].as_str().unwrap();
+        for verb in crate::verbs::Verb::ALL {
+            assert!(text.contains(verb.name()), "{} not listed", verb.name());
+        }
     }
 
     #[test]
@@ -1672,13 +2752,10 @@ mod delta_and_login_tests {
     use super::*;
 
     fn page_session(html: &str) -> Session {
+        let requests = std::sync::Arc::new(crate::receipt::MemorySink::new());
         let broker = std::sync::Arc::new(
-            crate::net::Broker::new(
-                crate::policy::Policy::new(),
-                std::sync::Arc::new(crate::receipt::MemorySink::new()),
-                None,
-            )
-            .expect("broker"),
+            crate::net::Broker::new(crate::policy::Policy::new(), requests.clone(), None)
+                .expect("broker"),
         );
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let factory = crate::engine::PageFactory::new(
@@ -1695,6 +2772,9 @@ mod delta_and_login_tests {
             seq: 0,
             actions: None,
             last_snapshot: None,
+            served_refs: None,
+            requests,
+            secrets: crate::secrets::Secrets::default(),
             login: false,
         }
     }
@@ -1778,7 +2858,7 @@ mod delta_and_login_tests {
     /// keep streaming by design, and the viewer socket is inside the box.
     #[test]
     fn the_login_refusal_does_not_claim_the_frames_are_withheld() {
-        let refusal = Session::login_refusal("snapshot");
+        let refusal = Session::login_refusal(Verb::Snapshot);
         assert_eq!(refusal["login"], true);
         assert_eq!(
             refusal["frames_withheld"], false,
