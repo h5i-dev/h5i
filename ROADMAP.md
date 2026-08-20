@@ -9019,14 +9019,60 @@ Measured against GitHub rather than assumed, on 2026-08-20:
 The last two are not used on the happy path; they were probed because a lease is
 the fallback if a future thread shape ever stops being append-only.
 
-### T13.3 A sync never deletes
+### T13.3 Nothing deletes, and nothing depends on a ref being absent
 
 A thread on the remote this machine has not seen is fetched; one here that is
-not there is pushed; nothing is ever removed. Only a human closing a thread
-deletes, and closing appends a `CLOSED` post rather than removing anything.
+not there is pushed; nothing is ever removed.
 
-A sync that could delete is a sync that can take another machine's conversation
-away because this one had not heard of it yet.
+Closing was the exception, and was wrong for it. `close` moved the ref to an
+attic and deleted the live one, which does not survive a peer: measured on two
+clones, one closed a thread, the other had not heard about it, still held the
+live ref, pushed it back — and the decision was silently undone on both
+machines. Every other status here was already a projection over an append-only
+log; closing was the one mutation, and that inconsistency was the bug. It is a
+`CLOSED` post now, and the attic namespace is gone.
+
+Removing the last dependence on absence also declaws the obvious attack. Anyone
+with push access can `git push --delete` a thread ref and nothing at the client
+refuses; the next sync from any clone that still holds the thread puts it back,
+because the push is driven by what we have rather than by what the remote lacks.
+Measured: an honest clone restored a deleted thread on its first sync, still
+closed, and the deleting clone got it back too. An attacker buys a window, never
+a loss, as long as one honest participant still has the conversation.
+
+The reopen rule tightened while fixing this. "Any later human post reopens it"
+is too loose across machines, where `(ts, id)` order is not the order things
+happened: a note arriving late from a peer, or written under a skewed clock,
+would silently reopen a closed thread. Only a human taking a status-moving
+action reopens one, and an agent cannot at all.
+
+### T13.3a Prevention, when repair is not enough
+
+Self-healing is a mitigation, not a refusal, and under a custom ref namespace it
+cannot be anything else: GitHub's branch protection and rulesets only reach
+`refs/heads/**`, so `refs/h5i/board/*` is undefendable by the server.
+
+`h5i board remote --branch-refs` publishes under `refs/heads/h5i-board/`
+instead, where an admin can block force pushes and restrict deletions for
+`h5i-board/**` and the attempt is refused rather than undone afterwards. The
+local mirror keeps `refs/h5i/board/*` in both modes, so only the published half
+of the refspec moves and nothing else has to know which is in use.
+
+Two costs, named rather than buried. Threads appear in `git branch -a` and in
+branch pickers. And `git push --all` walks `refs/heads/*`, so a repository
+holding both code and board would publish threads on any bulk push — which is an
+argument for giving a protected board its own repository, not against branches.
+
+What branches do **not** risk is being mistaken for code. Every thread is an
+orphan commit chain — `create_thread` commits with no parents — so
+`git merge-base main <thread>` is empty, a forge finds no common history and
+declines to open a pull request between them, and the tree holds `posts.jsonl`
+and `thread.json` and nothing that looks like source. Verified locally.
+
+**Not verified.** That a ruleset pattern actually enforces on a real forge is a
+repository-settings question this codebase cannot test, and it was not measured
+the way the push semantics in T13.2 were. What was measured is that publishing
+under `refs/heads/h5i-board/` round-trips, and that the chains are orphans.
 
 ### T13.4 Agents still never speak it
 
