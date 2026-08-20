@@ -96,6 +96,26 @@ impl Repo {
         self.dir.join(".git/.h5i").join(box_id)
     }
 
+    /// Put a box on the board.
+    ///
+    /// Always `--allow-unconfined`, because the harness pins the workspace tier
+    /// to stay hermetic (box creation never probes the host) and the board
+    /// refuses an unconfined participant by default. These tests are about
+    /// board mechanics, not about confinement; the guard itself has its own two
+    /// tests at the bottom of this file.
+    fn attach(&self, box_name: &str, as_name: &str, role: &str) -> Output {
+        self.h5i(&[
+            "board",
+            "attach",
+            box_name,
+            "--as",
+            as_name,
+            "--role",
+            role,
+            "--allow-unconfined",
+        ])
+    }
+
     /// Open a thread and return its id.
     fn create_thread(&self, title: &str, ceiling: Option<&str>) -> String {
         let mut args = vec!["board", "create", title];
@@ -152,12 +172,8 @@ fn two_boxes_hold_a_conversation_through_the_host() {
     let thread = repo.create_thread("fix the auth refresh race", None);
     repo.h5i(&["box", "create", "worker-box"]);
     repo.h5i(&["box", "create", "review-box"]);
-    repo.h5i(&[
-        "board", "attach", "worker-box", "--as", "claude-worker", "--role", "worker",
-    ]);
-    repo.h5i(&[
-        "board", "attach", "review-box", "--as", "codex-reviewer", "--role", "reviewer",
-    ]);
+    repo.attach("worker-box", "claude-worker", "worker");
+    repo.attach("review-box", "codex-reviewer", "reviewer");
 
     // The worker posts from inside its box.
     let out = repo.in_box(
@@ -204,9 +220,7 @@ fn the_sender_comes_from_the_box_the_record_was_found_in() {
     let repo = Repo::new();
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
-    repo.h5i(&[
-        "board", "attach", "worker-box", "--as", "claude-worker", "--role", "worker",
-    ]);
+    repo.attach("worker-box", "claude-worker", "worker");
 
     // Stage a record by hand that claims to be the human, from another box, with
     // a role it was never given. This is the shape of the attack the wire format
@@ -242,9 +256,7 @@ fn a_record_the_drain_will_not_accept_never_reaches_the_board() {
     let repo = Repo::new();
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
-    repo.h5i(&[
-        "board", "attach", "worker-box", "--as", "claude-worker", "--role", "worker",
-    ]);
+    repo.attach("worker-box", "claude-worker", "worker");
 
     let spool = repo.env_dir("env/tester/worker-box").join("spool");
     std::fs::create_dir_all(&spool).unwrap();
@@ -274,9 +286,7 @@ fn the_governing_verbs_are_refused_inside_a_box() {
     let repo = Repo::new();
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
-    repo.h5i(&[
-        "board", "attach", "worker-box", "--as", "claude-worker", "--role", "worker",
-    ]);
+    repo.attach("worker-box", "claude-worker", "worker");
 
     for args in [
         vec!["board", "create", "a thread of my own"],
@@ -303,9 +313,7 @@ fn an_observer_may_read_and_may_not_post() {
     let repo = Repo::new();
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "watch-box"]);
-    repo.h5i(&[
-        "board", "attach", "watch-box", "--as", "watcher", "--role", "observer",
-    ]);
+    repo.attach("watch-box", "watcher", "observer");
     repo.h5i(&["board", "post", &thread, "--kind", "FINDING", "something to see"]);
     repo.h5i(&["board", "status"]);
 
@@ -366,8 +374,18 @@ mode = "host"
     repo.create_thread("sealed work", Some("sealed"));
     repo.h5i(&["box", "create", "loose-box", "--profile", "reaching"]);
 
+    // `--allow-unconfined` so the tier guard is not what refuses this: the
+    // assertion below is about the *ceiling*, and a test that passed for the
+    // wrong reason would stop covering it.
     let out = repo.try_h5i(&[
-        "board", "attach", "loose-box", "--as", "loose", "--role", "worker",
+        "board",
+        "attach",
+        "loose-box",
+        "--as",
+        "loose",
+        "--role",
+        "worker",
+        "--allow-unconfined",
     ]);
     assert!(!out.status.success(), "an over-privileged box must not attach");
     let msg = stderr(&out);
@@ -408,9 +426,7 @@ mode = "deny"
 
     repo.create_thread("sealed work", Some("sealed"));
     repo.h5i(&["box", "create", "tight-box", "--profile", "sealed"]);
-    repo.h5i(&[
-        "board", "attach", "tight-box", "--as", "tight", "--role", "worker",
-    ]);
+    repo.attach("tight-box", "tight", "worker");
 
     let board = repo.board_json();
     assert_eq!(board["roster"][0]["agent"], "tight");
@@ -423,9 +439,7 @@ fn revoking_takes_the_conversation_away_and_records_what_comes_after() {
     let repo = Repo::new();
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
-    repo.h5i(&[
-        "board", "attach", "worker-box", "--as", "claude-worker", "--role", "worker",
-    ]);
+    repo.attach("worker-box", "claude-worker", "worker");
     repo.h5i(&["board", "post", &thread, "--kind", "FINDING", "context"]);
     repo.h5i(&["board", "status"]);
 
@@ -478,7 +492,7 @@ fn a_box_shown_a_peers_text_is_marked_and_one_that_is_not_stays_clean() {
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "talker"]);
     repo.h5i(&["box", "create", "verifier"]);
-    repo.h5i(&["board", "attach", "talker", "--as", "talker", "--role", "worker"]);
+    repo.attach("talker", "talker", "worker");
     repo.h5i(&["board", "post", &thread, "--kind", "FINDING", "peer text"]);
     repo.h5i(&["board", "status"]);
 
@@ -505,9 +519,7 @@ fn closing_hides_a_thread_from_the_boxes_and_keeps_it_for_the_human() {
     let repo = Repo::new();
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
-    repo.h5i(&[
-        "board", "attach", "worker-box", "--as", "claude-worker", "--role", "worker",
-    ]);
+    repo.attach("worker-box", "claude-worker", "worker");
     repo.h5i(&["board", "post", &thread, "--kind", "FINDING", "note"]);
     repo.h5i(&["board", "status"]);
 
@@ -531,5 +543,59 @@ fn closing_hides_a_thread_from_the_boxes_and_keeps_it_for_the_human() {
         t["posts"].as_array().unwrap().len(),
         1,
         "closing is not deleting"
+    );
+}
+
+// ─── the tier the board rests on ─────────────────────────────────────────────
+
+/// A box the host cannot confine is refused, because it could rewrite the board.
+///
+/// Measured before this guard existed: on the workspace tier a box read the
+/// board's bare repository, wrote a file into it, and deleted a ref. Every
+/// other tier makes those paths invisible — a stat returns ENOENT, not
+/// EACCES. Attaching is the moment the board starts making claims about a
+/// participant, and it must not make them about one that can edit the claims.
+#[test]
+fn a_box_the_host_cannot_confine_is_refused() {
+    let repo = Repo::new();
+    repo.create_thread("t", None);
+    repo.h5i(&["box", "create", "loose"]); // the harness pins the workspace tier
+
+    let out = repo.try_h5i(&["board", "attach", "loose", "--as", "loose"]);
+    assert!(!out.status.success(), "an unconfined box must not attach");
+    let msg = stderr(&out);
+    assert!(msg.contains("workspace tier"), "{msg}");
+    assert!(
+        msg.contains("--isolation process"),
+        "the refusal should say how to fix it:\n{msg}"
+    );
+    assert!(
+        repo.board_json()["roster"].as_array().unwrap().is_empty(),
+        "a refused attach must leave no roster entry"
+    );
+}
+
+/// And the operator can still take that risk deliberately, on a host that has
+/// no kernel tier at all — loudly, and never by default.
+#[test]
+fn an_unconfined_box_can_be_attached_only_with_the_explicit_flag() {
+    let repo = Repo::new();
+    repo.create_thread("t", None);
+    repo.h5i(&["box", "create", "loose"]);
+
+    let out = repo.h5i(&[
+        "board",
+        "attach",
+        "loose",
+        "--as",
+        "loose",
+        "--allow-unconfined",
+    ]);
+    assert_eq!(repo.board_json()["roster"][0]["agent"], "loose");
+    assert!(
+        stdout(&out).contains("unconfined") || stderr(&out).contains("unconfined"),
+        "attaching one anyway must say so:\nstdout: {}\nstderr: {}",
+        stdout(&out),
+        stderr(&out)
     );
 }

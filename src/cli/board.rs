@@ -83,6 +83,10 @@ pub enum BoardCommands {
         /// `worker`, `reviewer` or `observer`.
         #[arg(long, default_value = "worker")]
         role: String,
+        /// Attach a box the host cannot confine, accepting that it can rewrite
+        /// the board. Only for a host with no kernel tier available.
+        #[arg(long)]
+        allow_unconfined: bool,
     },
 
     /// Take a participant off the board. Human only.
@@ -267,7 +271,13 @@ pub fn run(action: BoardCommands) -> anyhow::Result<()> {
             box_name,
             as_name,
             role,
-        } => host_only(&side, "put a box on the board")?.attach(&box_name, &as_name, &role),
+            allow_unconfined,
+        } => host_only(&side, "put a box on the board")?.attach(
+            &box_name,
+            &as_name,
+            &role,
+            allow_unconfined,
+        ),
         BoardCommands::Revoke { agent } => {
             host_only(&side, "revoke a participant")?.revoke(&agent)
         }
@@ -440,13 +450,39 @@ impl Host<'_> {
         })
     }
 
-    fn attach(&self, box_name: &str, as_name: &str, role: &str) -> anyhow::Result<()> {
+    fn attach(
+        &self,
+        box_name: &str,
+        as_name: &str,
+        role: &str,
+        allow_unconfined: bool,
+    ) -> anyhow::Result<()> {
         let role = Role::parse(role)?;
         if matches!(role, Role::Human) {
             anyhow::bail!("a box cannot be attached as `human`: that role is the person");
         }
         let m = env::find(self.h5i_root, box_name)?;
         let policy = env::load_policy(self.h5i_root, &m)?;
+
+        // The board's integrity is exactly as strong as the tier its
+        // participants run on, and on the workspace tier it is not strong at
+        // all. That tier applies no Landlock, so the box is an ordinary process
+        // with the operator's permissions: measured on 2026-08-20, a box there
+        // read the board's bare repository, wrote into it, and deleted a ref.
+        // Every other tier makes the same paths *invisible* — not merely
+        // unwritable; a stat returns ENOENT.
+        //
+        // So an unconfined participant is refused rather than admitted with a
+        // warning. Attaching is the moment the board starts making claims about
+        // a box, and it must not make them about one that can rewrite the
+        // claims.
+        if m.isolation_claim == "workspace" && !allow_unconfined {
+            anyhow::bail!(
+                "{id} runs on the workspace tier, which enforces nothing.\n\n  A box there is an ordinary process with your permissions: it can read the\n  board, rewrite it, and delete threads from it. Nothing the board says about\n  this participant would mean anything.\n\n  Recreate it on a tier this host can enforce:\n    h5i box create {slug} --isolation process\n  `h5i box probe` shows what is available here.\n\n  If this host genuinely has no kernel tier, and you accept that this\n  participant can rewrite the board, pass --allow-unconfined.",
+                id = m.id,
+                slug = m.slug
+            );
+        }
 
         // Every open thread's ceiling has to hold, because the board is one
         // room: a box that could exceed one thread's ceiling is a box that
@@ -505,6 +541,11 @@ impl Host<'_> {
             style(as_name).bold(),
             role.as_str()
         ));
+        if m.isolation_claim == "workspace" {
+            h5i_core::ui::UI::warning(
+                "unconfined: this participant can read, rewrite and delete the board",
+            );
+        }
         println!("  policy   {}", short_digest(&Some(m.policy_digest)));
         println!(
             "  in the box, the agent reads with `h5i board list` and waits with `h5i board wait`"

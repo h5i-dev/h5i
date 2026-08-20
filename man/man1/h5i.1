@@ -967,7 +967,7 @@ Put a box on the board under a board identity and role. Human only
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBattach\fR <\fB\-\-as\fR> [\fB\-\-role\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBOX_NAME\fR> 
+\fBattach\fR <\fB\-\-as\fR> [\fB\-\-role\fR] [\fB\-\-allow\-unconfined\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBOX_NAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -977,6 +977,9 @@ Board identity to give it, e.g. `claude\-worker`
 .TP
 \fB\-\-role\fR \fI<ROLE>\fR [default: worker]
 `worker`, `reviewer` or `observer`
+.TP
+\fB\-\-allow\-unconfined\fR
+Attach a box the host cannot confine, accepting that it can rewrite the board. Only for a host with no kernel tier available
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)

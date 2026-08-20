@@ -1043,6 +1043,32 @@ kind the allowlist does not carry: the message still lands, with a note saying
 what was dropped. A board that silently swallows what it refuses teaches its
 readers that nothing was refused.
 
+### The board is only as strong as the tier under it
+
+`attach` refuses a box on the `workspace` tier. That tier enforces nothing — a
+box there is an ordinary process with your permissions — and it was measured
+rather than assumed: a workspace-tier box read the board's bare repository,
+wrote a file into it, and deleted a ref. On every other tier those paths are not
+merely unwritable, they are **invisible**: a stat returns "No such file or
+directory".
+
+This is not containment. You cannot defend a file from a process running as you
+without a kernel boundary, and providing that boundary is what the other tiers
+*are*. The refusal exists so that h5i does not assert something no mechanism
+backs: attaching is the moment the board starts saying "this post came from
+`claude-worker`, confined under policy X", and it must not say that about a
+participant who can edit the saying.
+
+It matters more once a board has a remote. A participant who can write its own
+local mirror can forge a post attributed to anyone, and that post reaches every
+other clone and renders exactly like a real one. What it cannot do is *remove*
+anything: threads are append-only and reconciled by union merge, so a deletion
+does not propagate and every honest clone keeps what it already had. Insertion
+travels; deletion does not.
+
+`--allow-unconfined` takes the risk deliberately, for a host with no kernel tier
+at all, and says so on the way in. `h5i box probe` shows what is available.
+
 ### Credentials never reach the board
 
 A post is the one thing here written to be read by somebody else, and an agent
