@@ -2079,7 +2079,7 @@ fn scripts_run_in_document_order_inline_and_external_together() {
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
     let page = factory.from_html(
-        "<html><body><p id='out'></p>\
+        "<html><body><div id='out'></div>\
          <script>globalThis.order = ['first'];</script>\
          <script src='/mid.js'></script>\
          <script>order.push('last'); document.querySelector('#out').textContent = order.join(',');</script>\
@@ -4402,5 +4402,61 @@ fn a_generated_key_is_not_reported_as_a_missing_api() {
             .any(|(n, _)| n == "Element.scrollIntoViewIfNeeded2"),
         "{:?}",
         script.unsupported()
+    );
+}
+
+/// Setting `textContent` detaches the old children; it must not destroy them.
+///
+/// A page that holds a reference to a child and then overwrites its parent's
+/// text still holds a live node afterwards, and every reactive UI does exactly
+/// that: the framework keeps its own pointer into the tree. Destroying the
+/// child freed its id, and the next mutation naming that id indexed a dead slot
+/// and panicked inside the layout engine — a panic that was caught and reported
+/// as a *successful* mutation, so the page's model of the tree and the real
+/// tree drifted apart and the failure surfaced somewhere else entirely.
+#[test]
+fn overwriting_text_detaches_the_old_children_without_destroying_them() {
+    let (_page, broker) = run_page(
+        "<html><body><div id='host'><span id='kept'>old</span></div><div id='out'></div>\
+         <script>\
+           var child = document.getElementById('kept');\
+           var parent = document.getElementById('host');\
+           parent.textContent = 'replaced';\
+           var alive = child.textContent;\
+           child.remove();\
+           document.getElementById('out').textContent = \
+             parent.textContent + '|' + alive + '|' + (child.parentNode === null);\
+         </script></body></html>",
+    );
+    let _ = broker;
+    let rendered = _page.snapshot().render();
+    assert!(
+        rendered.contains("replaced|old|true"),
+        "the parent took its new text, the detached child stayed readable, and \
+         removing it afterwards left it unparented rather than panicking:\n{rendered}"
+    );
+}
+
+/// Removing a node twice is a quiet no-op, not a caught panic.
+///
+/// "Remove it if it is still there" is ordinary teardown code. The arena index
+/// behind `remove_node` is unchecked, so a stale id used to panic; the guard
+/// turned that into a reported error and an apparently successful call, which
+/// is the worst of the three possible outcomes.
+#[test]
+fn removing_an_already_removed_node_is_a_no_op() {
+    let (page, _broker) = run_page(
+        "<html><body><div id='host'><span id='gone'>x</span></div><div id='out'></div>\
+         <script>\
+           var doomed = document.getElementById('gone');\
+           doomed.remove();\
+           doomed.remove();\
+           document.getElementById('out').textContent = 'survived';\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("survived"),
+        "the second removal must not stop the script:\n{rendered}"
     );
 }

@@ -536,6 +536,14 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
 fn remove_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    // `Mutator::remove_node` indexes the node arena unchecked, so a stale id
+    // panics rather than returning. Removing a node that is already gone is an
+    // ordinary thing for a page to do — it is what every "remove it if it is
+    // still there" teardown looks like — and it must be a quiet no-op, not a
+    // panic caught into a false success.
+    if host.dom.borrow().get_node(id).is_none() {
+        return Ok(JsValue::undefined());
+    }
     guard_mutation(&host, "removing a node", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
@@ -573,11 +581,30 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
             Some(blitz_dom::NodeData::Text(_))
         );
 
+        // Detach the old children; do not destroy them. A browser's
+        // `textContent = "x"` removes the children from the tree and leaves
+        // every one of them a live node, because script may still be holding a
+        // reference to one — and reactive UIs do exactly that. Dropping them
+        // instead freed their ids, and the next mutation naming one of those
+        // ids indexed a dead slot and panicked inside the layout engine.
+        //
+        // That panic was caught and reported, which made it *worse* rather than
+        // better: the caller's mutation looked like it had succeeded, so the
+        // page's idea of the tree and the real tree drifted apart, and the
+        // failure surfaced later as an unrelated `insertBefore` error in the
+        // middle of a render. React never recovered from it, which is why this
+        // engine could load its own console and paint nothing.
+        let old: Vec<usize> = doc
+            .get_node(id)
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
         let mut mutator = doc.mutate();
         if is_text {
             mutator.set_node_text(id, &text);
         } else {
-            mutator.remove_and_drop_all_children(id);
+            for child in old {
+                mutator.remove_node(child);
+            }
             let text_id = mutator.create_text_node(&text);
             mutator.append_children(id, &[text_id]);
         }
