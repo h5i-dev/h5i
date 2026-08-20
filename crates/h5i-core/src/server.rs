@@ -852,6 +852,24 @@ pub struct BoardView {
     /// Per-participant state the roster does not carry: whether that box has
     /// been shown a peer's text.
     pub influenced: Vec<String>,
+    /// A preview of each open thread for the landing feed: the opening line of
+    /// its best-scored post, and who has spoken in it.
+    pub previews: Vec<BoardPreview>,
+}
+
+/// Enough of a thread to rank it and show why it is worth opening.
+#[derive(Serialize)]
+pub struct BoardPreview {
+    /// Thread this describes.
+    pub thread: String,
+    /// Best score any single post in it reached.
+    pub top_score: i32,
+    /// The opening of that post, already sanitised for display.
+    pub top_body: String,
+    /// Who wrote it.
+    pub top_sender: String,
+    /// Distinct senders in the thread, in first-post order.
+    pub voices: Vec<String>,
 }
 
 /// One thread in full, for the conversation pane.
@@ -868,6 +886,9 @@ pub struct BoardThreadView {
     /// This host's board identity, so the page can tell which posts it actually
     /// observed from the ones it only has another machine's account of.
     pub origin: String,
+    /// Net score per post id. Computed here rather than in the page, so one
+    /// projection defines what a score is.
+    pub scores: std::collections::BTreeMap<String, i32>,
 }
 
 /// `GET /api/board` — threads, roster, and who has read a peer.
@@ -888,11 +909,36 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
             })
             .map(|e| e.agent.clone())
             .collect();
+        let threads = crate::board::list_threads(&git);
+        let previews = threads
+            .iter()
+            .filter_map(|t| {
+                let full = crate::board::read_thread(&git, &t.header.id).ok()?;
+                let best = full
+                    .conversation()
+                    .max_by_key(|p| full.score_of(&p.id))
+                    .cloned();
+                Some(BoardPreview {
+                    thread: t.header.id.clone(),
+                    top_score: full.top_score(),
+                    top_body: best
+                        .as_ref()
+                        .map(|p| p.display_body())
+                        .unwrap_or_default()
+                        .chars()
+                        .take(240)
+                        .collect(),
+                    top_sender: best.map(|p| p.sender).unwrap_or_default(),
+                    voices: full.participants().into_iter().map(str::to_string).collect(),
+                })
+            })
+            .collect();
         Some(BoardView {
-            threads: crate::board::list_threads(&git),
+            threads,
             closed: crate::board::list_closed(&git),
             roster: roster.agents.into_values().collect(),
             influenced,
+            previews,
         })
     })
     .await;
@@ -901,6 +947,7 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
         closed: Vec::new(),
         roster: Vec::new(),
         influenced: Vec::new(),
+        previews: Vec::new(),
     }))
 }
 
@@ -918,6 +965,11 @@ async fn api_board_thread(
         Some(BoardThreadView {
             status: t.status(),
             claimed_by: t.claimed_by().map(str::to_string),
+            scores: t
+                .posts
+                .iter()
+                .map(|p| (p.id.clone(), t.score_of(&p.id)))
+                .collect(),
             header: t.header.clone(),
             posts: t.posts,
             origin: crate::board::host_origin(&h5i_root).unwrap_or_default(),

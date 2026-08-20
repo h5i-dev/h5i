@@ -520,6 +520,15 @@ export interface BoardRosterEntry {
   revoked_at?: string;
 }
 
+/** `h5i_core::server::BoardPreview` — enough of a thread to rank it. */
+export interface BoardPreview {
+  thread: string;
+  top_score: number;
+  top_body: string;
+  top_sender: string;
+  voices: string[];
+}
+
 /** `h5i_core::server::BoardView`. */
 export interface BoardOverview {
   threads: BoardThreadSummary[];
@@ -527,6 +536,7 @@ export interface BoardOverview {
   roster: BoardRosterEntry[];
   /** Participants whose box has been shown a peer's text. */
   influenced: string[];
+  previews: BoardPreview[];
 }
 
 /** `h5i_core::server::BoardThreadView`. */
@@ -537,6 +547,8 @@ export interface BoardThread {
   posts: BoardPost[];
   /** This host's own board identity. */
   origin: string;
+  /** Net score per post id, projected server-side so there is one definition. */
+  scores: Record<string, number>;
 }
 
 export const boardApi = {

@@ -30,11 +30,13 @@ import {
   boardApi,
   type BoardOverview,
   type BoardPost,
+  type BoardPreview,
   type BoardStatus,
   type BoardThread,
   type BoardThreadSummary,
   type BoardRosterEntry,
 } from "./api";
+import { Markdown, plainText } from "./markdown";
 
 /** How often the thread list is re-read. Matches the fleet's cadence. */
 const LIST_POLL_MS = 8000;
@@ -51,12 +53,26 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: "refused", label: "refused" },
 ];
 
-export function BoardView() {
+export function BoardView({
+  initialThread = null,
+}: {
+  /** Thread named by `#board/<id>`, opened on first render. */
+  initialThread?: string | null;
+}) {
   const [overview, setOverview] = React.useState<BoardOverview | null>(null);
-  const [selected, setSelected] = React.useState<string | null>(null);
+  const [selected, setSelected] = React.useState<string | null>(initialThread);
   const [thread, setThread] = React.useState<BoardThread | null>(null);
   const [filter, setFilter] = React.useState<Filter>("all");
   const [error, setError] = React.useState<string | null>(null);
+
+  // Keep the address bar in step with the selection, so the URL is always the
+  // link to what is on screen rather than to where the reader started.
+  React.useEffect(() => {
+    const want = selected ? `#board/${selected}` : "#board";
+    if (window.location.hash !== want) {
+      window.history.replaceState({}, "", window.location.pathname + want);
+    }
+  }, [selected]);
 
   React.useEffect(() => {
     let live = true;
@@ -122,7 +138,15 @@ export function BoardView() {
           onSelect={setSelected}
           error={error}
         />
-        <Conversation thread={thread} empty={threads.length === 0} />
+        {thread ? (
+          <Conversation thread={thread} empty={false} />
+        ) : (
+          <Feed
+            threads={threads}
+            previews={overview?.previews ?? []}
+            onSelect={setSelected}
+          />
+        )}
         <Participants
           roster={overview?.roster ?? []}
           influenced={overview?.influenced ?? []}
@@ -299,9 +323,16 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
         {thread.posts.length === 0 && (
           <div className="brd-dim brd-pad">No posts yet.</div>
         )}
-        {thread.posts.map((p) => (
-          <PostRow key={p.id} p={p} me={thread.origin} />
-        ))}
+        {thread.posts
+          .filter((p) => p.kind !== "UPVOTE" && p.kind !== "DOWNVOTE")
+          .map((p) => (
+            <PostRow
+              key={p.id}
+              p={p}
+              me={thread.origin}
+              score={thread.scores[p.id] ?? 0}
+            />
+          ))}
       </div>
 
       <div className="brd-conv-foot">
@@ -313,7 +344,15 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
   );
 }
 
-function PostRow({ p, me }: { p: BoardPost; me: string }) {
+function PostRow({
+  p,
+  me,
+  score,
+}: {
+  p: BoardPost;
+  me: string;
+  score: number;
+}) {
   const observed = !!p.origin && p.origin === me;
   return (
     <div className={`brd-post${observed ? "" : " is-peer"}`}>
@@ -329,6 +368,11 @@ function PostRow({ p, me }: { p: BoardPost; me: string }) {
         {p.box_id && <span className="brd-dim">{p.box_id}</span>}
         <span className={`brd-kind is-${kindClass(p.kind)}`}>{p.kind}</span>
         <span className="brd-dim">{shortTime(p.ts)}</span>
+        {score !== 0 && (
+          <span className={`brd-score${score > 0 ? " is-up" : " is-down"}`}>
+            {score > 0 ? `▲${score}` : `▼${-score}`}
+          </span>
+        )}
       </div>
 
       <div className={`brd-lane${observed ? " is-observed" : ""}`}>
@@ -350,8 +394,13 @@ function PostRow({ p, me }: { p: BoardPost; me: string }) {
         )}
       </div>
 
-      {/* Inside the fence: what the agent said. */}
-      <div className="brd-fence">{p.body}</div>
+      {/* Inside the fence: what the agent said, rendered as markdown by a
+          renderer that emits React nodes and never an HTML string — see
+          `markdown.tsx`. Formatting the text must not be the thing that lets it
+          stop being text. */}
+      <div className="brd-fence">
+        <Markdown text={p.body} />
+      </div>
 
       {(p.attachments ?? []).map((a) => (
         <div key={a.digest} className="brd-attach">
@@ -491,4 +540,109 @@ function Row({ k, v, warn }: { k: string; v: string; warn?: boolean }) {
 /** `2026-08-20T14:02:11.123456Z` → `08-20 14:02`. */
 function shortTime(ts: string): string {
   return ts.length >= 16 ? `${ts.slice(5, 10)} ${ts.slice(11, 16)}` : ts;
+}
+
+// ── the landing feed ─────────────────────────────────────────────────────────
+
+/**
+ * What the board shows before you have picked anything.
+ *
+ * "Pick a thread" is the wrong first screen: it asks the reader to choose
+ * between titles when what they want to know is where the argument got to. So
+ * the feed leads with the best-scored post in each thread — the one the room
+ * agreed on — and ranks by that, with recency breaking ties. A board with
+ * nothing on it explains how to put something on it instead.
+ */
+function Feed({
+  threads,
+  previews,
+  onSelect,
+}: {
+  threads: BoardThreadSummary[];
+  previews: BoardPreview[];
+  onSelect: (id: string) => void;
+}) {
+  const byId = new Map(previews.map((p) => [p.thread, p]));
+  const ranked = [...threads].sort((a, b) => {
+    const sa = byId.get(a.header.id)?.top_score ?? 0;
+    const sb = byId.get(b.header.id)?.top_score ?? 0;
+    if (sa !== sb) return sb - sa;
+    return b.last_activity.localeCompare(a.last_activity);
+  });
+
+  if (ranked.length === 0) {
+    return (
+      <div className="brd-col brd-col-mid">
+        <div className="brd-blank">
+          <p>Nothing is on the board yet.</p>
+          <p className="brd-dim">
+            A human opens a thread and puts boxes on it. The agents inside them
+            read, post and submit; they never gain a capability by doing so.
+          </p>
+          <pre>
+{`h5i board create "fix the auth refresh race" --ceiling code-review
+h5i board attach claude-box --as claude-worker --role worker
+h5i board attach codex-box  --as codex-reviewer --role reviewer`}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="brd-col brd-col-mid">
+      <div className="brd-feed-head">
+        <span className="brd-h">what the board agreed on</span>
+        <span className="brd-dim">
+          ranked by the best-scored post in each thread
+        </span>
+      </div>
+      <div className="brd-feed">
+        {ranked.map((t) => {
+          const p = byId.get(t.header.id);
+          return (
+            <button
+              type="button"
+              className="brd-card"
+              key={t.header.id}
+              onClick={() => onSelect(t.header.id)}
+            >
+              <div className="brd-card-score">
+                <span className={p && p.top_score > 0 ? "is-up" : ""}>
+                  {p && p.top_score > 0 ? `▲${p.top_score}` : "–"}
+                </span>
+              </div>
+              <div className="brd-card-body">
+                <div className="brd-card-title">{t.header.title}</div>
+                <div className="brd-card-meta">
+                  <StatusPill status={t.status} />
+                  <span>{t.posts} posts</span>
+                  {(p?.voices.length ?? 0) > 0 && (
+                    <span>{p!.voices.join(", ")}</span>
+                  )}
+                  {t.denials > 0 && (
+                    <span className="brd-pill is-denial">
+                      {t.denials} refused
+                    </span>
+                  )}
+                </div>
+                {p?.top_body && (
+                  <div className="brd-card-quote">
+                    <span className="brd-dim">{p.top_sender}: </span>
+                    {plainText(p.top_body)}
+                  </div>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="brd-conv-foot">
+        <span className="brd-dim">
+          the console watches; agreeing happens in a terminal:
+        </span>
+        <Cmd text="h5i board up <n>" />
+      </div>
+    </div>
+  );
 }

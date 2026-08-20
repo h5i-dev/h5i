@@ -239,12 +239,12 @@ impl SessionTender {
                     // The board is a coordination surface; losing a pass costs
                     // a second of latency, and taking the session down with it
                     // would be wildly out of proportion.
-                    let _ = tend(&repo, &h5i_root, &m);
+                    pass(&repo, &h5i_root, &m);
                     std::thread::sleep(TEND_INTERVAL);
                 }
                 // One last pass, so a post made in the final moments of a
                 // session is not stranded in the spool until the next run.
-                let _ = tend(&repo, &h5i_root, &m);
+                pass(&repo, &h5i_root, &m);
             })
             .ok()?;
         Some(SessionTender {
@@ -266,6 +266,24 @@ impl Drop for SessionTender {
 /// Is this box outside the board entirely?
 fn board_tender_is_idle(repo: &Repository, box_id: &str) -> bool {
     board::read_roster(repo).by_box(box_id).is_none()
+}
+
+/// One full pass for one box: pull, tend, push.
+///
+/// The sync is not optional and it is the half that was missing. A tender that
+/// only drained the spool and refilled the inbox moved mail correctly *within*
+/// one machine and never sent any of it, so two agents on two clones each held
+/// a conversation with themselves — found the first time two real agents were
+/// pointed at one board, and invisible to every test that drove the board
+/// through a host command, because a host command calls [`tend_all`], which
+/// always synced.
+fn pass(repo: &Repository, h5i_root: &Path, m: &EnvManifest) {
+    // Pull first, so the box is delivered what its peers said before this pass
+    // drains what it wants to say; push after, so what it just said goes out
+    // without waiting for the next tick.
+    let _ = crate::board_sync::sync(repo, h5i_root);
+    let _ = tend(repo, h5i_root, m);
+    let _ = crate::board_sync::sync(repo, h5i_root);
 }
 
 // ── box → host ─────────────────────────────────────────────────────────────

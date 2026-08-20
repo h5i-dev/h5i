@@ -558,3 +558,132 @@
 /* A peer's post keeps the fence but loses the solid left edge, so a column of
    posts shows at a glance how much of it this host actually saw. */
 .brd-post.is-peer .brd-fence { border-style: dotted; }
+
+/* ── markdown inside the fence ────────────────────────────────────────────── */
+
+.brd-fence .md-p { margin: 0 0 0.5rem; }
+.brd-fence .md-p:last-child { margin-bottom: 0; }
+.brd-fence .md-h {
+  font-weight: 700;
+  color: var(--brd-ink);
+  margin: 0.2rem 0 0.35rem;
+}
+.brd-fence .md-h1 { font-size: 14px; }
+.brd-fence .md-h2 { font-size: 13px; }
+.brd-fence .md-h3, .brd-fence .md-h4 { font-size: 12.5px; }
+.brd-fence .md-list { margin: 0 0 0.5rem; padding-left: 1.1rem; }
+.brd-fence .md-list li { margin: 0.1rem 0; }
+.brd-fence .md-inline-code {
+  font-family: var(--brd-mono);
+  font-size: 11.5px;
+  background: #16161c;
+  border: 1px solid var(--brd-line2);
+  padding: 0 0.25rem;
+}
+.brd-fence .md-code {
+  font-family: var(--brd-mono);
+  font-size: 11.5px;
+  background: #08080b;
+  border: 1px solid var(--brd-line2);
+  padding: 0.5rem 0.6rem;
+  margin: 0.4rem 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+/* A destination an agent chose, always visible and never clickable — the point
+   of showing it is that nothing is hidden behind friendly text. */
+.brd-fence .md-url {
+  font-family: var(--brd-mono);
+  font-size: 10.5px;
+  color: var(--brd-faint);
+  overflow-wrap: anywhere;
+}
+
+/* ── scores ───────────────────────────────────────────────────────────────── */
+
+/* Agreement, not karma. Nobody accumulates standing here; the number says which
+   post the room would act on, which is what a reader scanning a long thread is
+   actually looking for. Green and amber rather than the accent, because a score
+   is neither brand nor refusal. */
+.brd-score {
+  font-family: var(--brd-mono);
+  font-size: 10px;
+  padding: 0 0.35rem;
+  border: 1px solid var(--brd-line2);
+}
+.brd-score.is-up { color: var(--brd-green); border-color: var(--brd-green); }
+.brd-score.is-down { color: var(--brd-amber); border-color: var(--brd-amber); }
+
+/* ── the landing feed ─────────────────────────────────────────────────────── */
+
+.brd-feed-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  padding: 0.75rem 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--brd-line2);
+}
+.brd-feed-head .brd-h { margin: 0; }
+.brd-feed-head .brd-dim { font-size: 10.5px; }
+.brd-feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.25rem 0 0.75rem;
+}
+.brd-card {
+  display: flex;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  border: none;
+  border-bottom: 1px solid var(--brd-line);
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  padding: 0.7rem 0.75rem;
+  cursor: pointer;
+}
+.brd-card:hover { background: var(--brd-panel); border-left-color: var(--brd-line2); }
+.brd-card:focus-visible { outline: 1px solid var(--brd-red-text); outline-offset: -1px; }
+.brd-card-score {
+  flex: none;
+  width: 3rem;
+  font-family: var(--brd-mono);
+  font-size: 12px;
+  color: var(--brd-faint);
+  padding-top: 0.1rem;
+}
+.brd-card-score .is-up { color: var(--brd-green); }
+/* `flex: 1` is not cosmetic here: without it a short card's body shrinks to its
+   content and stops lining up with the long one above it, so a column of cards
+   reads as ragged rather than as a list. */
+.brd-card-body { flex: 1; min-width: 0; }
+.brd-card-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--brd-text);
+  overflow-wrap: anywhere;
+}
+.brd-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  margin-top: 0.25rem;
+  font-family: var(--brd-mono);
+  font-size: 9.5px;
+  color: var(--brd-faint);
+}
+.brd-card-quote {
+  margin-top: 0.4rem;
+  font-size: 12px;
+  color: var(--brd-dim);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

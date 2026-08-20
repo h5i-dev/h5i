@@ -138,6 +138,8 @@ pub const KINDS: &[&str] = &[
     "ACK",
     "BLOCKED",
     "CLOSED",
+    "UPVOTE",
+    "DOWNVOTE",
 ];
 
 /// Kind of the post that opens a thread.
@@ -150,6 +152,21 @@ pub const KIND_REVIEW_REQUEST: &str = "REVIEW_REQUEST";
 pub const KIND_DONE: &str = "DONE";
 /// Kind that reports the thread's work stuck.
 pub const KIND_BLOCKED: &str = "BLOCKED";
+/// Kind that agrees with another post.
+///
+/// A vote is a post, which is what makes it safe here: it is append-only,
+/// host-stamped like everything else, and it merges across clones by the same
+/// union that merges the conversation. Nothing new had to be trusted to add it.
+///
+/// Deliberately *not* karma. There is no reputation, no ranking of
+/// participants, and no score that follows an agent between threads — a board
+/// where agents accumulate standing is a board where an agent has a reason to
+/// perform. What a vote says is narrower and more useful: **this is the post I
+/// would act on.** A human scanning a long thread wants that, and so does an
+/// agent deciding which of three proposals its peers converged on.
+pub const KIND_UPVOTE: &str = "UPVOTE";
+/// Kind that disagrees with another post.
+pub const KIND_DOWNVOTE: &str = "DOWNVOTE";
 /// Kind that closes a thread. Human only.
 ///
 /// Closing is a post rather than a deleted ref, and that is not a detail. Every
@@ -622,6 +639,9 @@ impl Thread {
             if p.is_denied() {
                 continue; // a refused post moves nothing
             }
+            if matches!(p.kind.as_str(), KIND_UPVOTE | KIND_DOWNVOTE) {
+                continue; // agreeing with a post is not a move in the thread
+            }
             if p.kind == KIND_CLOSED {
                 closed = true;
                 continue;
@@ -662,6 +682,51 @@ impl Thread {
     /// Has a human closed this thread?
     pub fn is_closed(&self) -> bool {
         self.status() == ThreadStatus::Closed
+    }
+
+    /// Net score of one post: agreements minus disagreements.
+    ///
+    /// One vote per participant per post, last one winning, so changing your
+    /// mind is a second vote rather than an edit — which keeps the log
+    /// append-only and keeps the change itself visible. A refused vote counts
+    /// for nothing, exactly like a refused claim.
+    pub fn score_of(&self, post_id: &str) -> i32 {
+        let mut by_voter: BTreeMap<&str, i32> = BTreeMap::new();
+        for p in &self.posts {
+            if p.is_denied() || p.reply_to.as_deref() != Some(post_id) {
+                continue;
+            }
+            match p.kind.as_str() {
+                KIND_UPVOTE => {
+                    by_voter.insert(p.sender.as_str(), 1);
+                }
+                KIND_DOWNVOTE => {
+                    by_voter.insert(p.sender.as_str(), -1);
+                }
+                _ => {}
+            }
+        }
+        by_voter.values().sum()
+    }
+
+    /// Posts that are not votes — the conversation, without its scoring.
+    pub fn conversation(&self) -> impl Iterator<Item = &Post> {
+        self.posts
+            .iter()
+            .filter(|p| !matches!(p.kind.as_str(), KIND_UPVOTE | KIND_DOWNVOTE))
+    }
+
+    /// The thread's own standing: the best score any single post in it reached.
+    ///
+    /// A sum would reward length — a thread with twenty mildly agreed posts
+    /// would outrank one with a single answer everybody wanted. What a reader
+    /// scanning a board is looking for is the thread that produced something,
+    /// so the thread is worth what its best post is worth.
+    pub fn top_score(&self) -> i32 {
+        self.conversation()
+            .map(|p| self.score_of(&p.id))
+            .max()
+            .unwrap_or(0)
     }
 
     /// Who currently owns the thread, from the most recent accepted `CLAIM`.
@@ -1166,6 +1231,11 @@ pub fn append_post(
     }
     if new.kind == KIND_CLOSED {
         author.require(author.role.can_govern(), "close a thread")?;
+    }
+    if matches!(new.kind.as_str(), KIND_UPVOTE | KIND_DOWNVOTE) && new.reply_to.is_none() {
+        return Err(H5iError::Metadata(
+            "a vote has to name the post it is about (--reply-to)".into(),
+        ));
     }
     if !new.attachments.is_empty() {
         author.require(author.role.can_attach(), "attach an artifact")?;
@@ -1903,6 +1973,78 @@ mod tests {
             ThreadStatus::Closed,
             "only a status-moving human action reopens a thread"
         );
+    }
+
+    /// A vote is a post, so it merges and travels like everything else — and
+    /// one participant's opinion counts once however often they express it.
+    #[test]
+    fn votes_are_posts_and_one_participant_counts_once() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let a = worker("alice", "env/a/1");
+        let b = worker("bob", "env/b/1");
+        let target = append_post(&repo, &a, &h.id, post("PROPOSAL", "single-flight it")).unwrap();
+
+        let vote = |who: &Author, kind: &str| {
+            append_post(
+                &repo,
+                who,
+                &h.id,
+                NewPost {
+                    kind: kind.to_string(),
+                    body: "+1".into(),
+                    reply_to: Some(target.id.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        };
+        vote(&a, KIND_UPVOTE);
+        vote(&a, KIND_UPVOTE); // saying it twice is still one opinion
+        vote(&b, KIND_UPVOTE);
+        assert_eq!(read_thread(&repo, &h.id).unwrap().score_of(&target.id), 2);
+
+        // Changing your mind is another post, not an edit, so the change stays
+        // visible in the log.
+        vote(&b, KIND_DOWNVOTE);
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.score_of(&target.id), 0);
+        assert_eq!(t.top_score(), 0);
+    }
+
+    /// A vote is not a turn in the conversation and must not move the thread on.
+    #[test]
+    fn a_vote_moves_no_state_and_is_not_part_of_the_conversation() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("alice", "env/a/1");
+        let target = append_post(&repo, &w, &h.id, post("FINDING", "the bug")).unwrap();
+        append_post(
+            &repo,
+            &w,
+            &h.id,
+            NewPost {
+                kind: KIND_UPVOTE.into(),
+                body: "+1".into(),
+                reply_to: Some(target.id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let t = read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.status(), ThreadStatus::Open, "agreeing claims nothing");
+        assert_eq!(t.posts.len(), 2);
+        assert_eq!(t.conversation().count(), 1, "the vote is not a turn");
+    }
+
+    /// A vote with nothing to point at is refused rather than counted as zero.
+    #[test]
+    fn a_vote_must_name_the_post_it_is_about() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None).unwrap();
+        let w = worker("alice", "env/a/1");
+        assert!(append_post(&repo, &w, &h.id, post(KIND_UPVOTE, "+1")).is_err());
     }
 
     #[test]
