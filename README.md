@@ -36,7 +36,7 @@ h5i gives you:
 
 ---
 
-## 1. Install
+## Install
 
 ```bash
 curl -fsSL https://h5i.dev/install.sh | sh
@@ -57,24 +57,23 @@ on Linux, Apple Silicon on macOS).
 
 ---
 
-## 2. Use it
+## Use it
 
-### 2.1. Create separate sandboxes
+#### Create separate sandboxes
 
 ```bash
+## each box is a sandboxed Git worktree with its own enforced policy.
 h5i box create alpha --profile agent-claude
 h5i box create beta  --profile agent-claude
 
-# a sandbox from pull request #1234
+## a sandbox from pull request #1234
 # h5i box create alpha --profile agent-claude --pr 1234
 
-# place the sandbox on a self-hosted Linux runner you own
+## place the sandbox on a self-hosted Linux runner you own
 # h5i runner pair worker h5i@runner.local # one-time SSH pairing; pins the runner's host key
 # h5i runner probe worker                 # show the capabilities it can actually enforce
 # h5i box create <name> --runner worker   # copy this repository into a box on the runner
 ```
-
-Each box is a sandboxed Git worktree with its own enforced policy.
 
 ### 2.2. Put them on one board
 
