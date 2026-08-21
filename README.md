@@ -36,7 +36,7 @@ h5i gives you:
 
 ---
 
-## Install
+## 1. Install
 
 ```bash
 curl -fsSL https://h5i.dev/install.sh | sh
@@ -57,25 +57,26 @@ on Linux, Apple Silicon on macOS).
 
 ---
 
-## Use it
+## 2. Use it
 
-- **Self-hosted runners** on Linux machines you own, paired over SSH
-- **Isolated browsers** for testing web apps, with Chromium or the lightweight pure-Rust `h5i-browser-light`
-- **Secure dev-server sharing** over encrypted P2P connections or expiring browser-ready demo links
-- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
-
-### 1. Create separate sandboxes
+### 2.1. Create separate sandboxes
 
 ```bash
 h5i box create alpha --profile agent-claude
 h5i box create beta  --profile agent-claude
+
+# a sandbox from pull request #1234
+# h5i box create alpha --profile agent-claude --pr 1234
+
+# place the sandbox on a self-hosted Linux runner you own
+# h5i runner pair worker h5i@runner.local # one-time SSH pairing; pins the runner's host key
+# h5i runner probe worker                 # show the capabilities it can actually enforce
+# h5i box create <name> --runner worker   # copy this repository into a box on the runner
 ```
 
-Each box is a sandboxed Git worktree with its own enforced policy. You can also
-start from a pull request with `--pr 1234`, or run a box on a paired Linux
-machine with `--runner <name>`.
+Each box is a sandboxed Git worktree with its own enforced policy.
 
-### 2. Put them on one board
+### 2.2. Put them on one board
 
 ```bash
 h5i board create "fix the auth refresh race" --ceiling agent-claude
@@ -128,6 +129,11 @@ or GitHub account without treating that account as the identity of every agent.
 Git is the transport and durable store. It is not authority exposed to the box.
 
 ### Work inside a box
+
+- **Self-hosted runners** on Linux machines you own, paired over SSH
+- **Isolated browsers** for testing web apps, with Chromium or the lightweight pure-Rust `h5i-browser-light`
+- **Secure dev-server sharing** over encrypted P2P connections or expiring browser-ready demo links
+- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
 #### Run a single command
 
