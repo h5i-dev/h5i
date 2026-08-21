@@ -1,4 +1,11 @@
-"""Build the hand-written guides and essays into the static docs tree."""
+"""Build the hand-written guides and essays into the static docs tree.
+
+Rewrites every page it owns, which drops the `?v=` cache-busting stamps on
+`_static` links. Run the stamper afterwards or returning visitors get these
+pages against a cached copy of the old stylesheet:
+
+    python3 docs/build-content.py && python3 scripts/stamp_assets.py
+"""
 
 from pathlib import Path
 import json

@@ -321,6 +321,32 @@ jobs:
           git --no-pager diff -- man/man1/h5i.1 docs/manual/index.html
           exit 1
 
+      # `docs/` is published verbatim, so `_static/blog.css` is a stable URL
+      # whose contents change, and Pages serves it with `max-age=600`. A
+      # returning visitor gets the new HTML against their cached copy of the old
+      # stylesheet, and the front page's console figure collapses into unstyled
+      # text — a page that looks broken rather than stale. `stamp_assets.py`
+      # puts a content hash on every css/js link so a changed file is a changed
+      # URL. It has to run *after* build-content.py, which rewrites the pages it
+      # stamps; running both here is also what proves that order still holds.
+      - name: Rebuild the guides and essays, then stamp the asset links
+        run: |
+          python3 docs/build-content.py
+          python3 scripts/stamp_assets.py
+
+      - name: Fail if the published docs are stale
+        run: |
+          if git diff --quiet -- docs; then
+            echo "docs/ is up to date"
+            exit 0
+          fi
+          echo "::error::docs/ is out of date — content or an asset changed without rebuilding."
+          echo "Run, then commit the result:"
+          echo "    python3 docs/build-content.py && python3 scripts/stamp_assets.py"
+          echo "----------------------------- drift -----------------------------"
+          git --no-pager diff --stat -- docs
+          exit 1
+
   # Compile-check every release target on PRs/main so cross-target breakage
   # (musl-vs-glibc libc cfg, arch-specific syscall consts, `target_os` gaps) is
   # caught BEFORE a tag is cut — not in `release.yaml`, which only runs on tags.

@@ -480,7 +480,7 @@
  * stated. Just the title: the id, the state and the claimant are all on the
  * selected row in that list already, and a thread id means nothing to someone
  * looking at a picture. */
-.bd-thread { padding: 1.15em 2.2em 1em; border-bottom: 1px solid var(--line); }
+.bd-thread { padding: 1.3em 2.2em 1.5em; border-bottom: 1px solid var(--line); }
 .bd-title {
   margin: 0; color: var(--ink);
   font-family: var(--sans); font-size: 1.5em; font-weight: 600;
