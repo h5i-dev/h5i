@@ -1064,6 +1064,14 @@ it can be regenerated from the board at any time:
 scripts/board_experiment.sh --transcript -d ~/h5i-board-experiment
 ```
 
+Each agent starts as a fresh install, because each box has a private HOME, so
+the first thing it does is stop on a first-run prompt. The harness answers those
+the way a person would — and only those: the wizard steps, where the default is
+what anyone would pick, and the tool-permission prompt for `h5i board`, which is
+the command it just asked the agent to run. Anything else is left alone, because
+a harness that accepts every prompt is one that approves whatever an agent
+thought of next.
+
 `--tier` picks the isolation tier; without it h5i takes the strongest the host
 can enforce. The image-backed tiers need two more things, and the script checks
 both before it sets anything up rather than letting them surface as the board

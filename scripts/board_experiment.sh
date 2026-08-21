@@ -376,44 +376,42 @@ for i in $(seq 1 "$AGENTS"); do
   echo "  ✔ $name: box attached as $role${tier:+ on $tier}"
 done
 
-# ── get the agent past its own first-run wizard ──────────────────────────────
+# ── answering the agent's own first-run prompts ──────────────────────────────
 #
-# Each box gets a private HOME, so every agent starts as a fresh install: the
-# folder-trust dialog and the onboarding wizard both block on a keypress nobody
-# is there to press, and the run hangs looking exactly like the board being
-# broken. The host's own settings are never touched.
+# Every box gets a private HOME, so each agent starts as a fresh install and
+# stops on a prompt with nobody there to press a key. The first version of this
+# tried to pre-empt that by writing the config the wizard checks — and lost. On
+# a supervised box the file said `hasCompletedOnboarding: true`,
+# `lastOnboardingVersion` matched the running build, and `settings.json` already
+# had a theme, and the theme picker came up anyway. Which key gates it is
+# somebody else's implementation detail and not one worth chasing.
 #
-# The `box run -- true` is not a no-op. The private HOME is seeded when a
-# *session* starts, not when the box is created, so patching straight after
-# `box create` writes to a file that does not exist yet — the loop skipped every
-# box in silence and three agents sat on the trust dialog. One throwaway session
-# per box forces the seed, and then there is something to patch.
-
-if [ "$RUNTIME" = "claude" ]; then
-  ver="$(claude --version 2>/dev/null | awk '{print $1}')"
-  for i in $(seq 1 "$AGENTS"); do
-    name="${names[$((i-1))]}"
-    ( cd "$WORKDIR/$name" && H5I_AGENT=claude "$H5I" box run "$name" -- true >/dev/null 2>&1 )
-    cfg="$WORKDIR/$name/.git/.h5i/env/claude/$name/home/.claude.json"
-    work="$WORKDIR/$name/.git/.h5i/env/claude/$name/work"
-    # No host-side file to patch is normal on the image-backed tiers: there the
-    # HOME lives inside the container (`/tmp/agent-home`) and dies with it, so
-    # there is nothing here to edit. The in-box prologue below covers that case,
-    # and covers this one too if the seed did not happen.
-    [ -f "$cfg" ] || continue
-    python3 - "$cfg" "$work" "$ver" <<'PY'
-import json, sys
-cfg, work, ver = sys.argv[1], sys.argv[2], sys.argv[3]
-d = json.load(open(cfg))
-d["hasCompletedOnboarding"] = True
-if ver:
-    d["lastOnboardingVersion"] = ver
-d.setdefault("projects", {}).setdefault(work, {})["hasTrustDialogAccepted"] = True
-json.dump(d, open(cfg, "w"))
-PY
+# So the harness does what a person does: it watches for the prompt and answers
+# it. That is robust to whichever gate fires, and to the next one.
+#
+# Deliberately narrow. It answers **only** the first-run steps — where the
+# default is what a human would pick — and **only** the tool-permission prompt
+# for `h5i board`, which is the command it just asked the agent to run. Anything
+# else is left alone and reported, because a harness that blanket-accepts every
+# prompt is a harness that approves whatever an agent thought of next.
+settle_panes() {
+  local rounds="$1" answered=0 p s
+  for _ in $(seq 1 "$rounds"); do
+    for p in $(seq 0 $((AGENTS-1))); do
+      s="$(tmux capture-pane -p -t "$SESSION.$p" 2>/dev/null | tail -30)"
+      case "$s" in
+        *"trust this folder"*|*"Dark mode"*|*"Light mode"*|*"Press Enter to continue"*)
+          tmux send-keys -t "$SESSION.$p" Enter; answered=$((answered+1)) ;;
+        *"h5i board"*"ask again"*|*"ask again"*"h5i board"*)
+          # "yes, and don't ask again for h5i board *" — option 2 on this prompt.
+          tmux send-keys -t "$SESSION.$p" 2; sleep 1
+          tmux send-keys -t "$SESSION.$p" Enter; answered=$((answered+1)) ;;
+      esac
+    done
+    sleep 5
   done
-  echo "  ✔ first-run wizard pre-accepted where there is a host-side HOME"
-fi
+  echo "  ✔ answered $answered first-run prompt(s) across the panes"
+}
 
 # ── the topics ───────────────────────────────────────────────────────────────
 
@@ -493,6 +491,7 @@ sleep 8
 #
 # Only when the file is absent: an existing one has real state in it (a token, a
 # session) and a blind overwrite would throw that away.
+ver="$("$RUNTIME" --version 2>/dev/null | awk '{print $1}')"
 PRELUDE='[ -f "$HOME/.claude.json" ] || { mkdir -p "$HOME"; printf "{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"projects\":{\"%s\":{\"hasTrustDialogAccepted\":true}}}" "'"${ver:-9.9.9}"'" "$PWD" > "$HOME/.claude.json"; }'
 
 for i in $(seq 1 "$AGENTS"); do
@@ -504,6 +503,9 @@ for i in $(seq 1 "$AGENTS"); do
   sleep 12
 done
 echo "  ✔ $AGENTS agent(s) running in tmux session '$SESSION'"
+# Two minutes of watching for first-run prompts. Long enough for a container to
+# finish starting, which is when its agent asks its first question.
+settle_panes 24
 echo
 
 [ "$ATTACH" = "1" ] && exec tmux attach -t "$SESSION"
