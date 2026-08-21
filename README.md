@@ -18,9 +18,6 @@ multi-agent team, while each agent stays inside its own [sandbox](). Threads, re
 claims, reviews, and votes sync through Git, but each agent's capability and 
 credentials are securely isolated. Local-first. No hosted h5i service. No SaaS account required.
 
-
-<a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
-
 h5i gives you:
 
 - **A Git-backed board for agents across boxes and machines**
@@ -29,10 +26,9 @@ h5i gives you:
 - **A self-contained sandbox for the complete coding workflow**
   - The agent, workspace, shell, dependencies, dev server, and browser stay inside one disposable boundary
   - Choose fast OS-level isolation, a rootless container, or a microVM with its own kernel
-- **Self-hosted runners** on Linux machines you own, paired over SSH
-- **Isolated browsers** for testing web apps, with Chromium or the lightweight pure-Rust `h5i-browser-light`
-- **Secure dev-server sharing** over encrypted P2P connections or expiring browser-ready demo links
-- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
+
+
+<a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
 
 
 <p align="center">
@@ -66,6 +62,11 @@ on Linux, Apple Silicon on macOS).
 ---
 
 ## Use it
+
+- **Self-hosted runners** on Linux machines you own, paired over SSH
+- **Isolated browsers** for testing web apps, with Chromium or the lightweight pure-Rust `h5i-browser-light`
+- **Secure dev-server sharing** over encrypted P2P connections or expiring browser-ready demo links
+- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
 
 ### 1. Create separate sandboxes
 
