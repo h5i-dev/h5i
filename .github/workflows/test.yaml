@@ -306,45 +306,40 @@ jobs:
       - name: Regenerate the /manual/ HTML (from MANUAL.md)
         run: python3 scripts/gen_manual.py
 
-      - name: Fail if the committed manuals are stale
-        run: |
-          if git diff --quiet -- man/man1/h5i.1 docs/manual/index.html; then
-            echo "manuals are up to date"
-            exit 0
-          fi
-          echo "::error::Generated manuals are out of date — a source change landed without regenerating."
-          echo "Run on Linux, then commit the result:"
-          echo "    ./scripts/gen_man.sh"
-          echo "    python3 -m pip install -r scripts/requirements.txt && python3 scripts/gen_manual.py"
-          echo "    git add man/man1/h5i.1 docs/manual/index.html"
-          echo "----------------------------- drift -----------------------------"
-          git --no-pager diff -- man/man1/h5i.1 docs/manual/index.html
-          exit 1
-
       # `docs/` is published verbatim, so `_static/blog.css` is a stable URL
       # whose contents change, and Pages serves it with `max-age=600`. A
       # returning visitor gets the new HTML against their cached copy of the old
       # stylesheet, and the front page's console figure collapses into unstyled
       # text — a page that looks broken rather than stale. `stamp_assets.py`
       # puts a content hash on every css/js link so a changed file is a changed
-      # URL. It has to run *after* build-content.py, which rewrites the pages it
-      # stamps; running both here is also what proves that order still holds.
+      # URL.
+      #
+      # It runs LAST, and the staleness check runs after it, because it rewrites
+      # files the two generators above also own: `gen_manual.py` emits
+      # `docs/manual/index.html` with bare asset links and the stamper adds the
+      # hashes. Checking between them cannot pass — the committed file is either
+      # unstamped, which the stamper changes, or stamped, which the generator
+      # changes. One pipeline, one check at the end of it.
       - name: Rebuild the guides and essays, then stamp the asset links
         run: |
           python3 docs/build-content.py
           python3 scripts/stamp_assets.py
 
-      - name: Fail if the published docs are stale
+      - name: Fail if the generated manuals or published docs are stale
         run: |
-          if git diff --quiet -- docs; then
-            echo "docs/ is up to date"
+          if git diff --quiet -- man/man1/h5i.1 docs; then
+            echo "man page and docs/ are up to date"
             exit 0
           fi
-          echo "::error::docs/ is out of date — content or an asset changed without rebuilding."
-          echo "Run, then commit the result:"
-          echo "    python3 docs/build-content.py && python3 scripts/stamp_assets.py"
+          echo "::error::Generated files are out of date — a source change landed without regenerating."
+          echo "Run all four on Linux, in this order, then commit the result:"
+          echo "    ./scripts/gen_man.sh"
+          echo "    python3 -m pip install -r scripts/requirements.txt && python3 scripts/gen_manual.py"
+          echo "    python3 docs/build-content.py"
+          echo "    python3 scripts/stamp_assets.py"
+          echo "The order matters: the last step stamps files the others write."
           echo "----------------------------- drift -----------------------------"
-          git --no-pager diff --stat -- docs
+          git --no-pager diff --stat -- man/man1/h5i.1 docs
           exit 1
 
   # Compile-check every release target on PRs/main so cross-target breakage
