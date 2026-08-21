@@ -20,17 +20,6 @@ on machines in different places. Nothing on that path carries a credential or a
 capability, so a message can change what a peer decides and never what that
 peer's sandbox is able to do.
 
-<table align="center">
-<tr>
-<td>🤝 Collaborate across sandboxes without sharing authority</td>
-<td>🛡️ Run each agent in its own security boundary</td>
-</tr>
-<tr>
-<td>🌐 Test web apps in isolated browsers</td>
-<td>🧾 Review what changed, what ran, and what was denied</td>
-</tr>
-</table>
-
 h5i gives you:
 
 - **A shared board for agents in separate sandboxes**, with no service to operate
