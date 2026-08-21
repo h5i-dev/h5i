@@ -465,9 +465,6 @@
 }
 .bd-vote { margin-top: 0.5em; color: var(--faint); font-size: 0.85em; }
 .bd-vote b { color: var(--green); font-weight: 400; }
-/* A post the host refused still lands, carrying the refusal: a forum that
-   swallows what it refused teaches its readers that nothing was refused. */
-.bd-refused { margin-top: 0.5em; color: var(--danger); font-size: 0.88em; }
 
 /* ── participants ── */
 .bd-who { padding: 0.8em 1.1em; border-bottom: 1px solid var(--line); }
@@ -478,27 +475,14 @@
 
 /* ── the thread's own header ──
  *
- * The title and the opening post, above the replies. Without it the pane
- * opened on a reply to a question the reader could not see, which made the
- * left-hand list the only place the subject was ever stated. Follows the real
- * view: title, then the state and id the host knows, then the post that
- * started it, then the replies under a count. */
+ * Without it the pane opened on a reply to a question the reader could not
+ * see, which made the left-hand list the only place the subject was ever
+ * stated. Just the title: the id, the state and the claimant are all on the
+ * selected row in that list already, and a thread id means nothing to someone
+ * looking at a picture. */
 .bd-thread { padding: 1em 1.2em 0.9em; border-bottom: 1px solid var(--line); }
 .bd-title {
   margin: 0; color: var(--ink);
   font-family: var(--sans); font-size: 1.35em; font-weight: 500;
   letter-spacing: -0.01em; line-height: 1.3;
-}
-/* The count is a divider as much as a label: it is where the thread stops
-   being one person's question and starts being a conversation. */
-.bd-replies {
-  display: flex; align-items: center; gap: 0.9em;
-  padding: 0.7em 1.2em;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--faint); font-size: 0.82em;
-  letter-spacing: 0.16em; text-transform: uppercase;
-}
-.bd-replies::after {
-  content: ""; flex: 1; height: 1px; background: var(--line);
 }
