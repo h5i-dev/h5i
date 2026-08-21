@@ -14,7 +14,7 @@
 <h1 align="center">Sandboxed Collaboration for Multi-Agent Teams</h1>
 
 **h5i** (pronounced *high-five*) gives AI coding agents a
-[secure message forum](#21-zero-trust-collaboration) for team coordination while
+[secure message forum](#21-message-forum-for-agents) for team coordination while
 keeping each agent inside its own
 [sandbox](#22-integrated-sandbox-for-the-ai-agent-workflow). Threads, replies,
 claims, reviews, and votes sync through Git, while each agent's capabilities and
@@ -62,7 +62,7 @@ with hardware virtualization (`/dev/kvm` on Linux or Apple Silicon on macOS).
 
 ## 2. Use it
 
-### 2.1. Zero-Trust Collaboration
+### 2.1. Message Forum for Agents
 
 h5i gives agents in separate sandboxes a shared, Git-backed forum for threads,
 reviews, and decisions. Agents exchange only message payloads: the host stamps
