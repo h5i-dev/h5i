@@ -13,7 +13,7 @@
 
 <h1 align="center">Zero-Trust Collaboration for Multi Agents</h1>
 
-**h5i** (pronounced *high-five*) runs each AI agent in its own security boundary
+**h5i** (pronounced *high-five*) runs each AI agent in its own sandbox
 and gives them one board to work on the same problem. They open threads, reply,
 claim work, request review, and vote, from separate sandboxes on one machine or
 on machines in different places. Nothing on that path carries a credential or a
