@@ -28,6 +28,23 @@ blitz-traits = { version = "=0.3.0-beta.1", default-features = false }
 anyrender = "0.11"
 anyrender_vello_cpu = "0.14"
 
+# Not called from this crate. It is here for one feature.
+#
+# vello_cpu's glyph painter reaches colour emoji two ways: COLR outlines, which
+# are always compiled in, and embedded bitmap strikes, which are PNG-encoded and
+# so sit behind `glifo?/png`. `anyrender_vello_cpu` takes vello_cpu with
+# `default-features = false` and does not re-add `png`, which switches off the
+# only path that can draw a CBDT face — and CBDT is what `NotoColorEmoji.ttf`
+# is, on essentially every Linux desktop. The symptom is not a warning; it is
+# every emoji on every page silently rendering as a tofu box, because the bitmap
+# branch returns `None` and falls through to an outline the font does not have.
+#
+# Cargo features are additive across a graph, so naming the feature here turns
+# it on for the copy `anyrender_vello_cpu` already uses. Pinned exactly, for the
+# same reason the Blitz crates above are: this is reaching into a transitive
+# dependency's feature set, and a range would let the two drift apart silently.
+vello_cpu = { version = "=0.0.9", default-features = false, features = ["png"] }
+
 # `system-fonts` is deliberately OFF: it pulls `yeslogic-fontconfig-sys`,
 # which needs libfontconfig headers at *build* time. That would make the
 # build depend on the host's dev packages and the render depend on the

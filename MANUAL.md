@@ -1532,6 +1532,23 @@ while a person types a credential into the live view: the session it establishes
 stays in the jar afterwards, and the agent can see *that* it is logged in
 without ever reading the cookie that says so.
 
+Fonts are found by walking the system font directories at startup, not linked in
+at build time, so `h5i-browser-light doctor` reports what it found and
+`--font-file` names one directly. The scan keeps a budget of two dozen files, and
+what it spends them on is a preference order: the regular text faces first, then
+an emoji face, then weight and slant variants. Emoji sit ahead of the variants
+deliberately — a slant can be synthesised and an emoji face is the only cover for
+a range no other font on the system has.
+
+Colour emoji render as colour, both the outline kind (COLR) and the embedded
+bitmap kind that `NotoColorEmoji` uses. A `--font-file` naming a bitmap-only face
+is registered but ordered behind every face that can draw an outline, because
+such a font also claims the digits, `#`, `*` and the space for its keycap
+sequences: in front, it wins those characters, draws none of them, and reports
+each as a full emoji square, so the page loses every number and every word space
+at once. That reads as a broken layout engine rather than a font problem, which
+is why the ordering is a rule and not a preference.
+
 ### Driving the browser itself
 
 That is `agent-browser`, run **inside** the box, and its `--help` is the verb
