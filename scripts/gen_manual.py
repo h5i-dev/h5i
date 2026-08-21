@@ -11,7 +11,10 @@ It wraps the rendered manual in the site shell (nav, footer, dark/red theme)
 with a sticky sidebar TOC + scrollspy, and uses a GitHub-compatible heading
 slugify so MANUAL.md's in-doc cross-references resolve.
 """
-import re, markdown
+import re, subprocess, sys
+from pathlib import Path
+
+import markdown
 
 src = open("MANUAL.md", encoding="utf-8").read()
 
@@ -275,3 +278,11 @@ page = (HEAD.replace("__STYLE__", STYLE).replace("__NAV__", NAV)
 open("docs/manual/index.html", "w", encoding="utf-8").write(page)
 print("wrote docs/manual/index.html  bytes:", len(page))
 print("h2 sections:", body.count("<h2"), "| h3:", body.count("<h3"), "| code blocks:", body.count("<pre"), "| tables:", body.count("<table"))
+
+# Stamp this file's `_static` links straight away. The generator that writes a
+# page is the only thing that knows it just went stale, and leaving that to a
+# separate command means anyone who regenerates the manual on its own leaves a
+# tree CI rejects, having run exactly the command the docs told them to.
+_stamp = Path(__file__).resolve().parent / "stamp_assets.py"
+subprocess.run([sys.executable, str(_stamp)], check=True, stdout=subprocess.DEVNULL)
+
