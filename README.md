@@ -18,7 +18,7 @@
 keeping each agent inside its own
 [sandbox](#22-integrated-sandbox-for-the-ai-agent-workflow). Threads, replies,
 claims, reviews, and votes sync through Git, while each agent's capabilities and
-credentials remain isolated. **Local-first. No hosted h5i service. No SaaS
+credentials remain isolated. **No hosted h5i service. No SaaS
 account required.**
 
 h5i gives you:
