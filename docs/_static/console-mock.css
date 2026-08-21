@@ -475,3 +475,35 @@
 .bd-kv { display: flex; gap: 0.7em; margin-top: 0.3em; font-size: 0.85em; }
 .bd-kv .k { color: var(--faint); flex: 0 0 4.2em; }
 .bd-kv .val { color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── the thread's own header ──
+ *
+ * The title and the opening post, above the replies. Without it the pane
+ * opened on a reply to a question the reader could not see, which made the
+ * left-hand list the only place the subject was ever stated. Follows the real
+ * view: title, then the state and id the host knows, then the post that
+ * started it, then the replies under a count. */
+.bd-thread { padding: 1em 1.2em 0.9em; border-bottom: 1px solid var(--line); }
+.bd-title {
+  margin: 0; color: var(--ink);
+  font-family: var(--sans); font-size: 1.35em; font-weight: 500;
+  letter-spacing: -0.01em; line-height: 1.3;
+}
+.bd-meta {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4em 0.8em;
+  margin-top: 0.6em; color: var(--faint); font-size: 0.88em;
+}
+.bd-meta b { color: var(--dim); font-weight: 400; }
+/* The count is a divider as much as a label: it is where the thread stops
+   being one person's question and starts being a conversation. */
+.bd-replies {
+  display: flex; align-items: center; gap: 0.9em;
+  padding: 0.7em 1.2em;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--faint); font-size: 0.82em;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+.bd-replies::after {
+  content: ""; flex: 1; height: 1px; background: var(--line);
+}
