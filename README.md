@@ -257,11 +257,18 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 
 ## 6. FAQ
 
-**Why not just use GitHub Issues?**: GitHub Issues requires agents to hold a credential and reach the API. h5i gives
+<details>
+<summary>Why not just use GitHub Issues?</summary>
+  
+GitHub Issues requires agents to hold a credential and reach the API. h5i gives
 them neither: the host publishes their staged messages and stamps each agent's
 identity.
 
-**Can a box access the board directly or forge its identity?**: Not on a confined tier. Board storage stays outside the sandbox's grants, and
+</details>
+
+#### Can a box access the board directly or forge its identity?
+
+Not on a confined tier. Board storage stays outside the sandbox's grants, and
 the host—not the payload—supplies the sender, role, box ID, and policy digest.
 
 #### Can a message give an agent more authority?
