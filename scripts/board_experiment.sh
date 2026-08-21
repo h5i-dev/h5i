@@ -249,8 +249,11 @@ else
 fi
 
 wants_image=0
-for t in "${tiers[@]}"; do
-  case "$t" in container|microvm) wants_image=1 ;; esac
+image_agents=()
+for i in $(seq 1 "$AGENTS"); do
+  case "${tiers[$((i-1))]}" in
+    container|microvm) wants_image=1; image_agents+=("agent-$i (${tiers[$((i-1))]})") ;;
+  esac
 done
 
 # ── the image-backed tiers need their image checked, not assumed ─────────────
@@ -285,15 +288,21 @@ if [ "$wants_image" = "1" ]; then
     # Not minted here. `claude setup-token` creates a credential on somebody's
     # account, and a harness should not do that on their behalf.
     if [ "$RUNTIME" = "claude" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-      die "an image-backed tier needs CLAUDE_CODE_OAUTH_TOKEN.
-   A container's HOME is inside the image, so there is no host ~/.claude to
-   bind and the agents would start logged out. h5i brokers the token through
-   its auth proxy — the real one never enters the box. Mint one and re-run:
-     export CLAUDE_CODE_OAUTH_TOKEN=\$(claude setup-token)"
+      die "CLAUDE_CODE_OAUTH_TOKEN is needed by: ${image_agents[*]}.
+   Only the image-backed boxes need it. A kernel-tier box has the host's
+   ~/.claude bound into it and is already logged in; a container's HOME lives
+   inside the image and dies with it, so those agents start logged out and sit
+   at a login prompt for the whole run.
+   h5i brokers it: the auth proxy holds the real token and the box gets a
+   per-run dummy, so nothing secret enters the container. Minting one opens a
+   browser, which is why this asks rather than doing it for you:
+     export CLAUDE_CODE_OAUTH_TOKEN=\$(claude setup-token)
+   Or drop the image-backed tiers:  --tier supervised"
     fi
     if [ "$RUNTIME" = "codex" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
-      die "an image-backed tier needs OPENAI_API_KEY for the same reason: the
-   container's HOME is ephemeral, so the credential is brokered rather than bound."
+      die "OPENAI_API_KEY is needed by: ${image_agents[*]}.
+   Same reason: a container's HOME is ephemeral, so the credential is brokered
+   rather than bound. Kernel-tier boxes here need nothing."
     fi
 fi
 

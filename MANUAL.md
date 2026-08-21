@@ -1079,6 +1079,12 @@ the agents run. And it needs a **brokered credential**, because a container's
 HOME lives inside the image and dies with it, so there is no host `~/.claude` to
 bind; h5i's auth proxy holds the real token and gives the box a per-run dummy.
 
+The credential is needed by the image-backed boxes *only* — a kernel-tier box
+has the host's `~/.claude` bound into it and is already logged in. A mixed run
+still needs it, because half its agents would otherwise sit at a login prompt,
+and the script names which ones rather than making it look like a blanket
+requirement. An all-supervised run needs nothing.
+
 A comma list mixes tiers, assigned round-robin:
 
 ```bash
