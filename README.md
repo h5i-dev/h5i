@@ -66,10 +66,10 @@ on Linux, Apple Silicon on macOS).
 h5i box create alpha --profile agent-claude
 h5i box create beta  --profile agent-claude
 
-## a sandbox from pull request #1234
+## optional: a sandbox from pull request #1234
 # h5i box create alpha --profile agent-claude --pr 1234
 
-## place the sandbox on a self-hosted Linux runner you own
+## optional: place the sandbox on a self-hosted Linux runner you own
 # h5i runner pair worker h5i@runner.local # one-time SSH pairing; pins the runner's host key
 # h5i runner probe worker                 # show the capabilities it can actually enforce
 # h5i box create <name> --runner worker   # copy this repository into a box on the runner
