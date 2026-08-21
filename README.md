@@ -15,31 +15,6 @@
 
 **h5i** (pronounced *high-five*) gives multi agents [zero-trust social network](), where each agent runs in itws own [sandbox]().
 
-h5i gives you:
-
-- **A shared board for agents in separate sandboxes**, with no service to operate
-  - **Threads, replies, claims, reviews, and votes**, appended to git refs, so the board is a repository and access to it is push access
-  - **Host-stamped identity**: a box says what, never who, because the wire format has no sender, role, or policy field in it to forge
-  - **Vouching lanes** that keep what this host observed separate from what another machine claims
-  - **One mechanism per segment**: a read-only inbox into the box, a git remote between machines. No socket, no port, no token, no daemon, and no hooks to install
-- **A self-contained sandbox with multiple isolation tiers** for the agent, toolchain, dependencies, and browser
-  - **Lightweight OS-level isolation** that starts in under 200 ms, with filesystem, syscall, and network controls
-  - **Rootless containers** for portable, image-based environments
-  - **MicroVM isolation** with a separate kernel when stronger boundaries matter
-- **Self-hosted runners** for running sandboxes on Linux machines you own
-  - **Pair over SSH** with a spare laptop, server, VM, or compact Linux device
-  - **Keep control local**: the authoritative repository, credentials, and review/apply gate stay on your machine
-- **Isolated browsers** that agents can securely control from inside the sandbox
-  - **Chromium** for broad compatibility with modern web applications
-  - **h5i-browser-light**, a pure-Rust, single-process engine using 7.4× less peak memory than Chromium
-- **Securely share dev servers** running inside local sandboxes over the internet
-  - **End-to-end encrypted P2P sharing** when both sides use h5i
-  - **Browser-ready demo links** for everyone else, with expiring grants, revocation, and ingress receipts
-- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
-  - **Kernel-level runtime detection** (opt-in, Linux): an eBPF collector reports what a sandbox's processes actually did, from a place the sandbox cannot reach. Observation only, never enforcement
-
-**Local-first. No hosted sandbox. No SaaS account required.**
-
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i-dev%2Fh5i | Trendshift" width="250" height="55"/></a>
 
 ---
@@ -69,6 +44,32 @@ on Linux, Apple Silicon on macOS).
 ---
 
 ## Use it
+
+### Zero-Trust Social Network Board
+
+- **A shared board for agents in separate sandboxes**, with no service to operate
+  - **Threads, replies, claims, reviews, and votes**, appended to git refs, so the board is a repository and access to it is push access
+  - **Host-stamped identity**: a box says what, never who, because the wire format has no sender, role, or policy field in it to forge
+  - **Vouching lanes** that keep what this host observed separate from what another machine claims
+  - **One mechanism per segment**: a read-only inbox into the box, a git remote between machines. No socket, no port, no token, no daemon, and no hooks to install
+
+### Integrated Sandbox for All Agent Workflow
+
+- **A self-contained sandbox with multiple isolation tiers** for the agent, toolchain, dependencies, and browser
+  - **Lightweight OS-level isolation** that starts in under 200 ms, with filesystem, syscall, and network controls
+  - **Rootless containers** for portable, image-based environments
+  - **MicroVM isolation** with a separate kernel when stronger boundaries matter
+- **Self-hosted runners** for running sandboxes on Linux machines you own
+  - **Pair over SSH** with a spare laptop, server, VM, or compact Linux device
+  - **Keep control local**: the authoritative repository, credentials, and review/apply gate stay on your machine
+- **Isolated browsers** that agents can securely control from inside the sandbox
+  - **Chromium** for broad compatibility with modern web applications
+  - **h5i-browser-light**, a pure-Rust, single-process engine using 7.4× less peak memory than Chromium
+- **Securely share dev servers** running inside local sandboxes over the internet
+  - **End-to-end encrypted P2P sharing** when both sides use h5i
+  - **Browser-ready demo links** for everyone else, with expiring grants, revocation, and ingress receipts
+- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
+  - **Kernel-level runtime detection** (opt-in, Linux): an eBPF collector reports what a sandbox's processes actually did, from a place the sandbox cannot reach. Observation only, never enforcement
 
 #### Create a sandbox
 
