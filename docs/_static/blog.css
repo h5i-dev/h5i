@@ -766,9 +766,9 @@ body > footer {
 }
 .hero-title {
   font-family: var(--disp); font-weight: 900;
-  font-size: clamp(38px, 6.4vw, 118px);
+  font-size: clamp(38px, 6.4vw, 100px);
   letter-spacing: -0.055em; line-height: 0.88;
-  margin: 24px 0 0; max-width: 18ch; color: var(--ink);
+  margin: 24px 0 0; max-width: 22ch; color: var(--ink);
 }
 .hero-title .hl { color: var(--ink); }
 .hero-title em, .hero-title .accent { font-style: normal; color: var(--spot); }
