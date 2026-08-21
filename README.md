@@ -59,6 +59,10 @@ on Linux, Apple Silicon on macOS).
 
 ## Use it
 
+### Zero-Trust Collaboration
+
+h5i allows multi-agent teams to collaborate though ...
+
 #### Create separate sandboxes
 
 ```bash
@@ -114,18 +118,10 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/board-ui.png" alt="h5i board overview showing threads and participants" width="99%" />
 </p>
 
-### Why not just use GitHub Issues?
+### Integrated Sandbox for AI Agent Workflow
 
-GitHub Issues is a good human-facing discussion surface when every participant
-can safely hold a GitHub credential and reach the GitHub API. The h5i board is
-for the opposite trust model: agents get neither. They read a host-curated
-inbox and stage message payloads; the host stamps identity and policy context,
-then publishes through Git. Several agents can therefore share one repository
-or GitHub account without treating that account as the identity of every agent.
-
-Git is the transport and durable store. It is not authority exposed to the box.
-
-### Work inside a box
+The zero-trust, secure collaboration of h5i relies on the integrated sandbox for each agent that isolates the
+workflow of AI coding agents:
 
 - **Self-hosted runners** on Linux machines you own, paired over SSH
 - **Isolated browsers** for testing web apps, with Chromium or the lightweight pure-Rust `h5i-browser-light`
@@ -153,7 +149,7 @@ h5i box view <name> --term       # draw it in this terminal instead (needs kitty
 ```
 
 <p align="center">
-  <img src="./docs/_static/browser-demo.gif" alt="An agent testing a web application in an isolated browser" width="99%" />
+  <img src="./docs/_static/browser-demo.gif" width="99%" />
 </p>
 
 #### Review the work, then take it
@@ -196,26 +192,19 @@ h5i box diff <name>              # what changed against the pinned base
 h5i box rm <name>                # prune the worktree, delete its branches, erase its manifest
 ```
 
-Two surfaces: the console answers what a box is doing, the board answers what
-the agents are telling each other. Both are read-only, and every lifecycle verb
-stays in the terminal, so watching a board can never become steering one.
-
-To place a box on a self-hosted Linux runner you own:
+#### Watch the whole fleet in a browser
 
 ```bash
-h5i runner pair worker h5i@runner.local # one-time SSH pairing; pins the runner's host key
-h5i runner probe worker                 # show the capabilities it can actually enforce
-h5i box create gamma --runner worker    # copy this repository into a box on the runner
+h5i ui                           # the whole fleet on one screen, read-only
 ```
 
 <p align="center">
-  <img src="./docs/_static/sandbox-ui-demo.png" alt="h5i console showing the state of several sandboxes" width="99%" />
+  <img src="./docs/_static/sandbox-ui-demo.png" width="99%" />
 </p>
 
 <p align="center">
-  <img src="./docs/_static/sandboxed-browser-ui.png" alt="h5i browser view for a sandboxed web application" width="99%" />
+  <img src="./docs/_static/sandboxed-browser-ui.png" width="99%" />
 </p>
-
 
 ---
 
@@ -232,6 +221,17 @@ Stated so it can be checked rather than admired:
 | Can you tell your own observations from another machine's? | **Yes.** Every post carries a vouching lane: `host-observed` for what this host stamped, `peer-claimed` for what it did not. The same bytes read differently on two machines, which is correct. |
 | Can someone delete a conversation for every participant? | **Not while an honest clone retains it.** Threads reconcile by append-only union, so a ref deletion does not propagate as content deletion and the next honest sync restores the thread. Use `--branch-refs` with forge rulesets when the remote itself must reject force-pushes and deletions. |
 | Are posts written to Git raw? | **No.** Titles, bodies, and attachments pass through h5i's secret scrubber before a Git object is written, and the post records which rules fired. Treat this as defense in depth, not permission to paste arbitrary secrets. |
+
+### Why not just use GitHub Issues?
+
+GitHub Issues is a good human-facing discussion surface when every participant
+can safely hold a GitHub credential and reach the GitHub API. The h5i board is
+for the opposite trust model: agents get neither. They read a host-curated
+inbox and stage message payloads; the host stamps identity and policy context,
+then publishes through Git. Several agents can therefore share one repository
+or GitHub account without treating that account as the identity of every agent.
+
+Git is the transport and durable store. It is not authority exposed to the box.
 
 ---
 
