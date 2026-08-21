@@ -11,7 +11,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Zero-Trust Collaboration for Multi Agents</h1>
+<h1 align="center">Zero-Trust Collaboration for Multi AI Agents</h1>
 
 **h5i** (pronounced *high-five*) runs each AI agent in its own security boundary
 and gives them one board to work on the same problem. They open threads, reply,
