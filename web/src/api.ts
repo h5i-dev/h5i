@@ -428,31 +428,31 @@ export const api = {
     `/api/box/${encodeURIComponent(agent)}/${encodeURIComponent(slug)}/browser/frame?seq=${seq}`,
 };
 
-// ── the board ────────────────────────────────────────────────────────────────
+// ── the forum ────────────────────────────────────────────────────────────────
 //
-// Mirrors of `h5i_core::board`. The console reads the board and cannot post to
+// Mirrors of `h5i_core::forum`. The console reads the forum and cannot post to
 // it: every route below is a GET, and there is no mutating counterpart to add.
 // A post has to come from a participant the host can name, which means it has
 // to come through a box's spool — not through a browser tab.
 
-/** `h5i_core::board::Ceiling` — the profile every participant must be under. */
-export interface BoardCeiling {
+/** `h5i_core::forum::Ceiling` — the profile every participant must be under. */
+export interface ForumCeiling {
   profile: string;
   digest?: string;
 }
 
-/** `h5i_core::board::ThreadHeader` — what is fixed when a thread is opened. */
-export interface BoardThreadHeader {
+/** `h5i_core::forum::ThreadHeader` — what is fixed when a thread is opened. */
+export interface ForumThreadHeader {
   id: string;
   title: string;
   created_at: string;
   created_by: string;
   version: number;
-  ceiling?: BoardCeiling;
+  ceiling?: ForumCeiling;
   branch?: string;
 }
 
-export type BoardStatus =
+export type ForumStatus =
   | "open"
   | "claimed"
   | "review"
@@ -460,8 +460,8 @@ export type BoardStatus =
   | "blocked"
   | "closed";
 
-/** `h5i_core::board::Attachment` — content-addressed, kind from an allowlist. */
-export interface BoardAttachment {
+/** `h5i_core::forum::Attachment` — content-addressed, kind from an allowlist. */
+export interface ForumAttachment {
   kind: string;
   digest: string;
   size: number;
@@ -469,15 +469,15 @@ export interface BoardAttachment {
 }
 
 /**
- * `h5i_core::board::Post`.
+ * `h5i_core::forum::Post`.
  *
  * The split that the UI has to render, and the reason this file names it: the
  * agent chose `kind`, `body` and `attachments`; the host stamped `sender`,
  * `box_id`, `role`, `policy_digest` and `denied`. One half is a claim and the
  * other is an observation, and a reader who cannot tell them apart is reading
- * the board wrong.
+ * the forum wrong.
  */
-export interface BoardPost {
+export interface ForumPost {
   id: string;
   ts: string;
   thread: string;
@@ -485,7 +485,7 @@ export interface BoardPost {
   kind: string;
   body: string;
   reply_to?: string;
-  attachments?: BoardAttachment[];
+  attachments?: ForumAttachment[];
   sender: string;
   box_id?: string;
   role: string;
@@ -500,18 +500,18 @@ export interface BoardPost {
   origin?: string;
 }
 
-/** `h5i_core::board::ThreadSummary` — a thread without its posts. */
-export interface BoardThreadSummary {
-  header: BoardThreadHeader;
-  status: BoardStatus;
+/** `h5i_core::forum::ThreadSummary` — a thread without its posts. */
+export interface ForumThreadSummary {
+  header: ForumThreadHeader;
+  status: ForumStatus;
   claimed_by?: string;
   posts: number;
   last_activity: string;
   denials: number;
 }
 
-/** `h5i_core::board::RosterEntry` — membership, host-authored. */
-export interface BoardRosterEntry {
+/** `h5i_core::forum::RosterEntry` — membership, host-authored. */
+export interface ForumRosterEntry {
   agent: string;
   box_id?: string;
   role: "worker" | "reviewer" | "observer" | "human";
@@ -520,8 +520,8 @@ export interface BoardRosterEntry {
   revoked_at?: string;
 }
 
-/** `h5i_core::server::BoardPreview` — enough of a thread to rank it. */
-export interface BoardPreview {
+/** `h5i_core::server::ForumPreview` — enough of a thread to rank it. */
+export interface ForumPreview {
   thread: string;
   /** The thread's own opening post, when the human wrote one. */
   opening: string;
@@ -532,29 +532,29 @@ export interface BoardPreview {
   voices: string[];
 }
 
-/** `h5i_core::server::BoardView`. */
-export interface BoardOverview {
-  threads: BoardThreadSummary[];
-  closed: BoardThreadSummary[];
-  roster: BoardRosterEntry[];
+/** `h5i_core::server::ForumView`. */
+export interface ForumOverview {
+  threads: ForumThreadSummary[];
+  closed: ForumThreadSummary[];
+  roster: ForumRosterEntry[];
   /** Participants whose box has been shown a peer's text. */
   influenced: string[];
-  previews: BoardPreview[];
+  previews: ForumPreview[];
 }
 
-/** `h5i_core::server::BoardThreadView`. */
-export interface BoardThread {
-  header: BoardThreadHeader;
-  status: BoardStatus;
+/** `h5i_core::server::ForumThreadView`. */
+export interface ForumThread {
+  header: ForumThreadHeader;
+  status: ForumStatus;
   claimed_by?: string;
-  posts: BoardPost[];
-  /** This host's own board identity. */
+  posts: ForumPost[];
+  /** This host's own forum identity. */
   origin: string;
   /** Net score per post id, projected server-side so there is one definition. */
   scores: Record<string, number>;
 }
 
-export const boardApi = {
-  overview: () => get<BoardOverview>("/api/board"),
-  thread: (id: string) => get<BoardThread>(`/api/board/thread/${encodeURIComponent(id)}`),
+export const forumApi = {
+  overview: () => get<ForumOverview>("/api/forum"),
+  thread: (id: string) => get<ForumThread>(`/api/forum/thread/${encodeURIComponent(id)}`),
 };

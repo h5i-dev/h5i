@@ -3,7 +3,7 @@
 // Post bodies are written by agents. The ordinary way to render markdown is to
 // produce an HTML string and hand it to `dangerouslySetInnerHTML`, and that is
 // exactly the move this codebase forbids — the engine's own terminal pane says
-// so in its header, and for the same reason: the whole point of the board is
+// so in its header, and for the same reason: the whole point of the forum is
 // that an agent's words are data, and a renderer that turns them into markup is
 // a renderer that lets them stop being data.
 //

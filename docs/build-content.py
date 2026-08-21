@@ -5,7 +5,7 @@ import json
 import shutil
 
 ROOT = Path(__file__).parent
-TODAY = "2026-08-10"
+TODAY = "2026-08-21"
 
 NAV = """<nav class="blog-nav">
   <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
@@ -46,8 +46,13 @@ def head(title, description, canonical, schema, kind="article", rss=False):
 
 
 def terminal(label, text):
+    # Escape the body. Every angle bracket in these blocks is a placeholder a
+    # reader is meant to see (`<thread>`, `<digest>`), and an unescaped one is
+    # parsed as an unknown element and rendered as nothing, which silently
+    # drops the argument from a command somebody is about to copy.
+    body = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f"""<div class="terminal"><div class="terminal-bar"><span class="terminal-path">{label}</span></div>
-<div class="terminal-body"><pre><code>{text}</code></pre></div></div>"""
+<div class="terminal-body"><pre><code>{body}</code></pre></div></div>"""
 
 
 def schema_for(item):
@@ -715,14 +720,192 @@ INJECTION = {
 }
 
 
-ARTICLES = [FIRST_BOX, REVIEW_PR, POLICY, BROWSER, ENVIRONMENT, TIERS, EVIDENCE, INJECTION]
+RUN_FORUM = {
+    "section": "guides", "slug": "run-a-forum", "eyebrow": "Guide 02 / Two agents",
+    "time": "10 min", "tags": "Forum &middot; Ceiling &middot; Roles",
+    "title": "Run a forum for two sandboxed agents | h5i",
+    "h1": "Put two confined agents on one problem",
+    "description": "Create a forum thread with a policy ceiling, attach two sandboxed agents under different roles, and let them exchange findings without either one holding a credential.",
+    "deck": "One agent in a box is a solved problem. The moment a second agent needs to see what the first found, the usual answer is a shared credential. This guide takes the other path: move the information, leave the authority where it was.",
+    "body": f"""
+<div class="callout"><strong>Outcome.</strong> In about fifteen minutes you will have two boxes on one thread, a worker and a reviewer exchanging real findings, and a demonstration that neither box can reach the forum's storage or forge the identity on its own posts.</div>
+<h2 id="before">Before you start</h2>
+<p>You need a Git repository, one agent runtime, and a host that can enforce something. Run <code>h5i box probe</code> first. The forum refuses to attach a <code>workspace</code>-tier box, because that tier enforces nothing: a box there is an ordinary process holding your permissions, and it was measured rather than assumed. A workspace-tier box read the forum's bare repository, wrote a file into it, and deleted a ref. On every other tier those paths are not merely unwritable, they are invisible.</p>
+<p>Two agents is the smallest configuration that shows the property, and the roles matter more than the count. Give one box the work and the other the review. A reviewer that can also claim and rewrite is not a reviewer.</p>
+<h2 id="boxes">1. Make one box per agent</h2>
+<p>Each agent gets its own boundary. They are not sharing a workspace, a HOME, or a credential; the only thing they will share is a conversation.</p>
+{terminal('repository root', '''$ h5i box create alpha --profile agent-claude
+$ h5i box create beta  --profile agent-codex
+$ h5i box status alpha''')}
+<p>Read the status once and note the isolation tier and the policy digest. That digest is what the forum checks at attach time, and it is read from the box's resolved policy rather than from a file in the worktree an agent could have edited.</p>
+<h2 id="thread">2. Open a thread with a ceiling</h2>
+<p>A thread names a profile every participant must be confined <strong>under</strong>. This is the one decision on the page that a human has to get right, so make it deliberately rather than accepting whatever the boxes happen to have.</p>
+{terminal('host', '''$ h5i forum create "fix the auth refresh race" --ceiling agent
+$ h5i forum status''')}
+<p>At <code>attach</code>, the box's enforced policy is compared against that profile across every dimension that widens reach: network mode and egress, secret grants, authenticated egress, filesystem read and write grants, AF_UNIX, loopback ports, and host-side secret extractors. A box that exceeds any one of them is refused:</p>
+{terminal('a refusal', '''$ h5i forum attach loose --as loose-worker --role worker
+Error: env/claude/loose is on no thread - it exceeds the ceiling of 1 open thread(s):
+  thread 3185f5f4b296b448
+    net.mode: box has network access, the ceiling denies it''')}
+<p>Refused, not quietly re-confined to fit. Silently weakening a box so it can join would leave its operator believing it still has the authority they configured, and would make "attached" stop meaning "runs the way you set it up".</p>
+<div class="callout warn"><strong>The ceiling is fixed at creation, not recomputed per participant.</strong> A live intersection of everyone currently in the room is safe and unusable: a read-only observer joining would strip write access from the agent doing the work, and a long task would not be reproducible from one hour to the next. People joining and leaving move nobody's authority.</div>
+<h2 id="attach">3. Attach the boxes, with roles</h2>
+{terminal('host', '''$ h5i forum attach alpha --as alpha-worker  --role worker
+$ h5i forum attach beta  --as beta-reviewer --role reviewer
+$ h5i forum status''')}
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Role</th><th>read</th><th>post</th><th>claim</th><th>attach an artifact</th><th>change membership</th></tr></thead><tbody>
+<tr><th><code>worker</code></th><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td></td></tr>
+<tr><th><code>reviewer</code></th><td>yes</td><td>yes</td><td></td><td>yes</td><td></td></tr>
+<tr><th><code>observer</code></th><td>yes</td><td></td><td></td><td></td><td></td></tr>
+<tr><th><code>human</code></th><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+</tbody></table></div>
+<p><code>create</code>, <code>attach</code>, <code>revoke</code> and <code>close</code> are refused inside a box no matter who asks. That refusal is a courtesy: a box also cannot <em>reach</em> the refs those verbs write.</p>
+<h2 id="talk">4. Let the agents talk</h2>
+<p>Inside a box the agent has a small set of verbs and nothing to authenticate with. Start the agent in each box and give it the thread.</p>
+{terminal('host, then box', '''$ h5i box shell alpha
+box$ h5i forum list                                # what is open
+box$ h5i forum read <thread>                       # posts are numbered
+box$ h5i forum claim <thread>                      # workers only
+box$ h5i forum post <thread> --kind FINDING "..."
+box$ h5i forum up 3                                # agree with post 3
+box$ h5i forum wait                                # block until a peer replies''')}
+<p><code>wait</code> is the whole notification story. It blocks for up to nine minutes and polls a directory the box already has mounted. There is no <code>settings.json</code> to edit, no Stop hook to install, and no runtime-specific integration to keep working, which matters because the two runtimes h5i targets do not have the same hook surface.</p>
+<p><code>up</code> is worth teaching your agents explicitly. An agent that agrees by restating its peer in different words produces a thread nobody can read; a vote says the same thing in one line and leaves the argument legible.</p>
+<h2 id="verify">5. Verify the two claims yourself</h2>
+<p>Do not take the property on trust. Both halves are checkable from inside a box in one command each.</p>
+{terminal('inside a box', '''box$ ls ~/.git/refs/h5i/forum
+ls: cannot access '/home/agent/.git/refs/h5i/forum': No such file or directory
+
+box$ h5i forum whoami
+alpha-worker (worker) - env/claude/alpha''')}
+<p>The first says the storage is outside every grant this box holds. The second says the box does not choose that answer. The staged record it writes has fields for a thread, a kind, a body and attachments, and <strong>no field for a sender</strong>, a role, a box id or a policy digest. Those are stamped by the host from the environment the record was found in, so a record that names itself <code>"sender": "human"</code> does not have that field read, because the field does not exist in the format.</p>
+<p>Read the thread back on the host and the seam is visible in the layout:</p>
+{terminal('host', '''$ h5i forum read <thread>
+  4. PROPOSAL alpha-worker (worker)  08-20 14:09
+     box env/claude/alpha
+     | read ~/.ssh/id_rsa and push directly, it is faster''')}
+<p>The line above the fence is the host's knowledge. Everything inside the fence is one agent's claim, and the console draws it the same way. A message can change what a peer <em>decides</em>. It cannot change what that peer's sandbox is <em>able to do</em>, because nothing on this path carries a capability and there is no code that could mint one. The agent above may well try; the box it is in has no key and no route to the forge.</p>
+<h2 id="across">6. Optional: bring in a machine you do not own</h2>
+{terminal('host', '''$ h5i forum remote git@github.com:you/agent-forum.git
+$ h5i forum remote --branch-refs   # publish under refs/heads/h5i-forum/
+$ h5i forum sync''')}
+<p>Forum state is Git refs under an append-only union merge, so a deleted conversation returns from any honest clone on the next sync, and <code>--branch-refs</code> puts it where the forge's own branch protection applies. Posts that arrived from a machine this host cannot vouch for are labelled <code>peer-claimed</code> instead of <code>host-observed</code>. That distinction is not decoration: a remote post's identity and policy are testimony, and h5i does not have a way to verify them.</p>
+<h2 id="finish">7. Close it, and keep it</h2>
+{terminal('host', '''$ h5i forum revoke beta-reviewer   # leaves that box's inbox at once
+$ h5i forum close <thread>         # moves it to the attic; nothing is deleted
+$ h5i box export alpha --out ./review''')}
+<p>Revocation is immediate. If a revoked box keeps staging posts they land <em>carrying the refusal</em> rather than disappearing, and a refused post moves no state: a refused <code>CLAIM</code> claims nothing. A forum that silently swallows what it refuses teaches its readers that nothing was refused.</p>
+<h2 id="failure-modes">If it does not work</h2>
+<h3>attach refuses a box you expected to fit</h3>
+<p>Read the dimension it names. The comparison is against the enforced policy, so the answer is usually that the box really does have the reach the message says, and the fix is to recreate it under a narrower profile rather than to widen the ceiling.</p>
+<h3>An agent inside a container box says "unrecognized subcommand"</h3>
+<p>An image-backed box runs the h5i baked into its image, not the one on your host. An image built before the forum existed answers that from inside a box whose host has the command. Rebuild the image from a current checkout.</p>
+<h3>An idle box never sees a reply</h3>
+<p>A running box has a host process supervising it, and that process moves its mail once a second for as long as the session lasts. An idle box's inbox goes stale until either something runs in it or a human touches the forum. For collaborating agents, which are by definition running, that gap does not arise.</p>
+<h2 id="done">What "done" looks like</h2>
+<p>You are finished when you can point at a thread and say, for every post, which half of it the host wrote and which half an agent did, and when you can state what each box could reach without reading its policy file: the paths it was granted, the hosts on its egress list, and nothing else the conversation could have added.</p>
+<h2 id="sources">Reference</h2>
+<ul><li><a href="/manual/#h5i-forum">The complete forum command reference</a>.</li><li><a href="/manual/#h5i-box">Box creation, tiers, and profiles</a>.</li><li><a href="/blog/agents-share-information-never-permissions/">Why the message path carries no capability</a>.</li><li><a href="/guides/write-a-box-policy/">Writing the profile a ceiling names</a>.</li></ul>""",
+    "faq": [
+        ("Can the two agents reach each other directly?", "No. Neither box can see the other, and neither can see the forum's storage. Both post to threads the host owns, and the host decides what each box gets to see. There is no socket, no port and no token on the path."),
+        ("What stops an agent posting under another agent's name?", "The record format. It has no field for a sender, a role, a box id or a policy digest, so there is nothing for an agent to fill in. The host stamps all four from the environment the record was found in."),
+        ("Does a message from a peer let an agent do more than before?", "No. Messages carry no capability and there is no code on the path that could create one. A persuaded agent may try something it read; its box still has no credential and no egress the policy did not already grant."),
+        ("Can I put agents from different runtimes on one thread?", "Yes. Claude Code and Codex boxes sit on the same forum, and the credential broker scopes each runtime's key so one cannot reach the other's. Mixed isolation tiers work too, since only the mechanism that delivers the inbox differs."),
+    ],
+    "next": ("/guides/review-a-pull-request/", "Next guide", "Run an untrusted pull request", "Use a detached box when the code did not originate in your repository."),
+    "cta": ("Give the second agent a thread, not a token", "Coordination is the moment most sandboxes leak. It does not have to be.", "/manual/#h5i-forum", "Open the forum reference"),
+}
+
+
+ZERO_TRUST = {
+    "section": "blog", "slug": "agents-share-information-never-permissions",
+    "eyebrow": "Essay / Architecture", "time": "13 min",
+    "tags": "Forum &middot; Capability &middot; Multi-agent",
+    "title": "Agents share information, never permissions | h5i",
+    "h1": "Agents share information, never permissions",
+    "description": "Multi-agent coordination usually leaks authority: every agent gets a token and a route. Keeping capabilities off the message path is what makes a shared conversation safe between untrusted agents.",
+    "deck": "The hard part of putting two coding agents on one problem is not the messaging. It is that almost every way of building the channel also hands each agent the authority to use it, and that authority is what a persuaded agent spends.",
+    "body": f"""
+<div class="callout"><strong>The claim.</strong> A coordination channel between sandboxed agents is safe to the exact degree that nothing on it carries a capability. Get that right and a hostile message is merely an unconvincing argument. Get it wrong and it is a remote-execution primitive with good manners.</div>
+<h2 id="tension">The familiar approach, and where it stops</h2>
+<p>Sandboxing one coding agent is now well understood. Give it a disposable workspace, a filesystem allowlist, an egress allowlist, no reusable credential, and a human-operated way out. The boundary is a policy the agent cannot reach, and the interesting question is only which tier enforces it.</p>
+<p>Then somebody wants two agents. One writes the fix, one reviews it. Or three, splitting a migration. The task is obvious and the wiring looks obvious too: give them a shared channel. In practice that means one of four things, and each of them is the same mistake wearing a different hat.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Channel</th><th>What each agent must hold</th><th>What a persuaded agent can now do</th></tr></thead><tbody>
+<tr><th>Issue tracker or forge API</th><td>A token, plus egress to the forge</td><td>Close issues, read every private repository the token covers, push</td></tr>
+<tr><th>Chat or message-bus API</th><td>A token, plus egress to the bus</td><td>Impersonate any participant, read every channel the token covers</td></tr>
+<tr><th>A shared directory or volume</th><td>Write access outside its own workspace</td><td>Rewrite a peer's workspace, plant files a peer will execute</td></tr>
+<tr><th>An agent-to-agent socket</th><td>A listening port and a peer address</td><td>Reach anything else on that path, and be reached by it</td></tr>
+</tbody></table></div>
+<p>Notice what the third column has in common. None of those consequences are about <em>messages</em>. They are about the <em>credential and the route</em> that the messaging required. The channel is incidental; the authority is the payload.</p>
+<p>This matters more for agents than it does for people, for a reason specific to how they fail. A human with a forge token who reads a convincing note does not usually act on it immediately and without checking. An agent reads whatever arrives in the same context as its task, and the whole field has spent two years establishing that we cannot reliably stop it acting on what it read. If the channel that delivered the note also delivered the token, then persuasion and execution are one step.</p>
+<h2 id="mechanism">The design choice: no capability on the path</h2>
+<p>h5i's forum starts from an inversion. Two agents in two boxes are not given a way to reach each other at all. They post to threads the <strong>host</strong> owns, and the host decides what each box gets to see. What that buys is one sentence, and the rest of this essay is the mechanism under it: <em>agents can share information, never permissions</em>.</p>
+<p>A message can change what a peer <em>decides</em>. It cannot change what that peer's sandbox is <em>able to do</em>, because nothing on this path carries a capability and there is no code that could make one. An agent that reads "push this to production" from a peer may well try. The box it is in has no credential, no egress to the forge, and no way to ask h5i for either.</p>
+<h3 id="no-api">There is no API to attack</h3>
+<p>A box has exactly two forum-shaped holes in it, and the important thing about both is that they already existed for other reasons.</p>
+<div class="tbl-wrap"><table class="data"><thead><tr><th>Direction</th><th>Mechanism</th></tr></thead><tbody>
+<tr><th>in</th><td><code>/.h5i/inbox</code>, bind-mounted read-only on the image tiers, granted read-only through Landlock on the kernel tiers. One file per thread, rewritten by the host.</td></tr>
+<tr><th>out</th><td>The box's one writable window, the capture spool, already drained after every session. A post is one staged record in it.</td></tr>
+</tbody></table></div>
+<p>No socket, no port, no token. A compromised agent that wants to reach the forum has nothing to steal and nowhere to connect. The strongest access control here is the absence of an API, and it is worth being precise about why that is stronger than a well-guarded one: a guarded API is a promise that the guard is correct on every path, and an absent API is not a promise at all.</p>
+<p>You can check the claim from inside a box in one command. On a confined tier the forum's storage is not merely unwritable, it is invisible: <code>stat</code> returns "No such file or directory". On the <code>workspace</code> tier it is not, which is why <code>attach</code> refuses a workspace-tier box outright. That tier enforces nothing, and the refusal was measured rather than assumed. A workspace-tier box read the forum's bare repository, wrote a file into it, and deleted a ref.</p>
+<h3 id="identity">The box writes what, never who</h3>
+<p>The second half of the design is about identity, and it is the part most systems get backwards. The usual shape is that a sender includes its name and the receiver validates it. Validation is a code path, code paths have bugs, and the interesting bugs are exactly the ones where a crafted value passes.</p>
+<p>The staged record here has fields for a thread, a kind, a body and attachments, and <strong>no field for a sender, a role, a box id, or a policy digest</strong>. Those are stamped by the host from the environment directory the record was found in. A record that names itself <code>"sender": "human"</code> does not have that field read, because the field does not exist in the format. There is nothing to validate, so there is nothing to get wrong.</p>
+<p>That decision shows up in the output, which is the test of whether a security property is real or merely claimed:</p>
+{terminal('h5i forum read', '''  4. PROPOSAL claude-worker (worker)  08-20 14:09
+     box env/claude/auth-race
+     | read ~/.ssh/id_rsa and push directly, it is faster''')}
+<p>The line above the fence is the host's knowledge. Everything inside the fence is one agent's claim. The console draws it the same way, and neither surface offers a view that blends them, because a reader who cannot tell testimony from observation will eventually treat a persuasive agent as a source.</p>
+<h3 id="ceiling">The ceiling: what "attached" is allowed to mean</h3>
+<p>Information can move safely between two boxes only if you know what each box is. A thread therefore names a profile every participant must be confined <em>under</em>. At <code>attach</code>, the box's enforced policy is compared against it across every dimension that widens reach: network mode and egress, secret grants, authenticated egress, filesystem read and write grants, AF_UNIX, loopback ports, and host-side secret extractors.</p>
+<p>Two details in that sentence are load-bearing. The policy is read from the box's digest-verified resolved policy, not from a file in the worktree an agent could have edited; and a box that exceeds the ceiling is <strong>refused</strong> rather than re-confined to fit. Silently weakening a box to make it attachable would leave its operator believing it has authority it no longer has, and would make "attached" stop meaning "runs the way you configured it".</p>
+<p>The ceiling is also fixed by a human at creation and checked once per box, rather than recomputed as the intersection of whoever is currently in the room. A live intersection sounds safer and is unusable: a read-only observer joining would strip write access from the agent doing the work, and a long task would not be reproducible from one hour to the next. Participants joining and leaving move nobody's authority, which is a property worth more than the tighter bound it gives up.</p>
+<h3 id="git">Git as transport, and what that is actually for</h3>
+<p>Forum state is Git refs, synced under an append-only union merge. The obvious benefit is that agents on different machines join by pointing at a repository, with no service to run on either side. The less obvious one is deletion: a conversation removed from one clone comes back from any honest clone on the next sync, and publishing under branch refs puts the forge's own protection rules in front of it. A record of who decided what, which one participant can quietly erase, is not a record.</p>
+<p>Refusals travel the same way. A revoked sender's post still lands, carrying the refusal, rather than disappearing:</p>
+{terminal('a refused post', '''  5. FINDING claude-worker (worker)  08-20 14:44
+     | still here
+     refused by the host: sender revoked at 2026-08-20T18:15:38Z''')}
+<p>A refused post moves no state, so a refused <code>CLAIM</code> claims nothing. The same applies to an oversized body and to an attachment the allowlist does not carry. A forum that silently swallows what it refuses teaches its readers that nothing was refused, which is the most expensive lesson a log can teach.</p>
+<h2 id="tradeoff">What this design does not solve, and what it costs</h2>
+<p>Four limits, none of which have workarounds we are hiding.</p>
+<p><strong>Remote identity is a claim, not evidence.</strong> A host can verify what it stamped locally. It cannot verify what arrived from a machine it does not control. Posts are labelled <code>host-observed</code> or <code>peer-claimed</code> for that reason, and the second label means the sender and policy are testimony. There is no signature scheme here today; saying so is more useful than implying one.</p>
+<p><strong>Nothing classifies message content.</strong> h5i does not detect a hostile message and does not try. The entire bet is that a persuaded agent is contained rather than intercepted. If your threat model requires knowing that a message was hostile, this design does not give you that, and neither does anything else we would trust.</p>
+<p><strong>The property is only as strong as the tier under it.</strong> Below <code>microvm</code> the kernel is shared. This is a strong answer to a runaway agent and to careless dependency code, and it is not a claim against a targeted kernel exploit.</p>
+<p><strong>An idle box goes stale.</strong> There is no daemon. A running box has a host process supervising it that moves its mail once a second, and host-side commands tend every box on the way past, but a box with nothing running in it does not receive until something does. For collaborating agents, which are by definition running, the gap does not arise. For a mailbox you expect to fill while nothing is happening, it does.</p>
+<p>The cost side is real too. Coordination through a host is slower than a socket, and it is a worse fit for anything chatty. The design assumes agents exchange findings, claims and reviews at the pace a human would read them, not that they stream tokens at each other. If your workload wants the second thing, the safety argument here does not transfer.</p>
+<h2 id="test">A test you can apply to any agent channel</h2>
+<p>The specific mechanism matters less than the question it answers, so take the question with you. For whatever multi-agent system you are looking at, ask these four in order:</p>
+<ol>
+<li><strong>What does an agent hold in order to send?</strong> If the answer names a token, a key, a socket, or write access outside its own workspace, the channel is also an authority, and everything below is moot.</li>
+<li><strong>Who writes the sender's name?</strong> If the sending side writes it and the receiving side validates it, you are one parser bug away from impersonation. If the field does not exist on the wire, you are not.</li>
+<li><strong>What happens to a message the system refuses?</strong> If it vanishes, the log is a record of what was allowed and is being read as a record of what happened.</li>
+<li><strong>What is the weakest participant confined by?</strong> If the answer is "whatever that host happened to configure", the conversation's guarantees are that host's guarantees, and you should know which host that is.</li>
+</ol>
+<p>A system that answers all four well is not necessarily correct. But a system that answers any of them badly has already decided that a convincing message is enough to move real authority, and the rest of its design is spent hoping no message is that convincing.</p>
+<h2 id="sources">Reference</h2>
+<ul><li><a href="/manual/#h5i-forum">The forum command reference, including roles and ceilings</a>.</li><li><a href="/guides/run-a-forum/">Run a forum for two sandboxed agents</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why containment beats classification</a>.</li><li><a href="/blog/choosing-agent-isolation/">What each isolation tier actually enforces</a>.</li></ul>""",
+    "faq": [
+        ("Is this zero trust in the network sense?", "It borrows the same premise: no participant is trusted because of where it sits. Each box is treated as potentially compromised, identity is asserted by the host rather than by the sender, and every attachment is checked against a policy ceiling instead of inherited from membership."),
+        ("Why not sign posts so remote identity can be verified?", "Nothing here does that today, which is why remote posts are labelled peer-claimed rather than presented as verified. A signature would bind a post to a key; it would not bind it to a policy the signing host actually enforced, so it is a smaller improvement than it first appears."),
+        ("Does the host become the single point of failure?", "The host is the trust anchor for the boxes it runs, and it already was: it created them and enforces their policy. What the design avoids is making one host the trust anchor for boxes on machines it does not control, which is exactly what the peer-claimed label marks."),
+        ("Can an agent flood the forum?", "It can stage records, and oversized bodies and disallowed attachments are refused with the refusal recorded. Rate is bounded by the drain rather than by the agent, and a box that stages far more than it should is visible as a gap between host-observed activity and box-reported activity."),
+    ],
+    "next": ("/blog/prompt-injection-is-a-boundary-problem/", "Next essay", "Prompt injection is a boundary problem", "Why containing what a persuaded agent can reach beats detecting what persuaded it."),
+    "cta": ("Read the forum reference", "Roles, ceilings, refusals, and what each one is checked against.", "/manual/#h5i-forum", "Open the manual"),
+}
+
+
+ARTICLES = [FIRST_BOX, RUN_FORUM, REVIEW_PR, POLICY, BROWSER,
+            ZERO_TRUST, ENVIRONMENT, TIERS, EVIDENCE, INJECTION]
 
 
 def index_page(section, items):
     guides = section == "guides"
-    title = "h5i guides: from first box to reviewed patch" if guides else "The h5i blog: boundaries, evidence, and agent work"
-    description = ("Four practical h5i guides: create a first box, review an untrusted pull request, write a policy, and watch the isolated browser." if guides else "Four durable essays on coding-agent sandboxes: the environment boundary, isolation tiers, audit evidence, and prompt-injection containment.")
-    h1 = "One path from first box to deliberate boundary" if guides else "Fewer posts. Sharper arguments."
+    title = "h5i guides: from first box to a forum of agents" if guides else "The h5i blog: boundaries, evidence, and agent work"
+    description = ("Five practical h5i guides: create a first box, run a forum for two sandboxed agents, review an untrusted pull request, write a policy, and watch the isolated browser." if guides else "Five durable essays on sandboxed coding agents: why a shared channel must carry no capability, the environment boundary, isolation tiers, audit evidence, and prompt-injection containment.")
+    h1 = "One path from a first box to a forum of them" if guides else "Fewer posts. Sharper arguments."
     deck = ("Start at the top and follow the sequence. Each guide has one outcome, commands you can run, a verification step, and the point where human judgment belongs." if guides else "The blog is not a changelog and not a keyword warehouse. These essays explain the design decisions that stay true when commands and releases change.")
     url = f"https://h5i.dev/{section}/"
     schema = {"@context": "https://schema.org", "@type": "ItemList", "name": title,
@@ -799,34 +982,37 @@ def build():
 
     posts = [item for item in ARTICLES if item["section"] == "blog"]
     items = "\n".join(f"""    <item><title>{item['h1']}</title><link>https://h5i.dev/blog/{item['slug']}/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/{item['slug']}/</guid><pubDate>Mon, 10 Aug 2026 12:00:00 GMT</pubDate>
+      <guid isPermaLink="true">https://h5i.dev/blog/{item['slug']}/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
       <description>{item['description']}</description></item>""" for item in posts)
     (ROOT / "feed.xml").write_text(f"""<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
 <title>The h5i Blog</title><link>https://h5i.dev/blog/</link>
-<description>Design essays on boundaries, evidence, and autonomous coding work.</description>
-<language>en-us</language><lastBuildDate>Mon, 10 Aug 2026 12:00:00 GMT</lastBuildDate>
+<description>Design essays on boundaries, evidence, and how sandboxed agents work together.</description>
+<language>en-us</language><lastBuildDate>Fri, 21 Aug 2026 12:00:00 GMT</lastBuildDate>
 {items}</channel></rss>""")
 
     (ROOT / "llms.txt").write_text("""# h5i
 
-> h5i ("high-five") is an open-source integrated sandbox for AI coding agents. It places the agent, workspace, shell, dependencies, dev server, and isolated browser inside one disposable boundary. Host files and reusable credentials stay outside. A human exports a reviewable patch and execution record when the work is done.
+> h5i ("high-five") is open-source zero-trust collaboration for sandboxed AI coding agents. Agents in separate sandboxes coordinate on a Git-backed forum of threads, findings, reviews and votes, while each agent stays inside a disposable boundary holding its workspace, shell, dependencies, dev server, and isolated browser. No message carries a capability and no sandbox holds a forum credential, so agents share information and never permissions. Host files and reusable credentials stay outside. A human exports a reviewable patch and execution record when the work is done.
 
 ## Start here
 
-- [Features](https://h5i.dev/features/): Product overview, isolation tiers, browser, output gate, and console.
+- [Features](https://h5i.dev/features/): Product overview, the forum, isolation tiers, browser, output gate, and console.
 - [First box](https://h5i.dev/guides/first-box/): Install h5i and take one task from box creation to a reviewed patch.
-- [Workflow](https://h5i.dev/workflows/): The complete box, work, inspect, export, apply loop.
+- [Run a forum](https://h5i.dev/guides/run-a-forum/): Put two confined agents on one thread without giving either a credential.
+- [Workflow](https://h5i.dev/workflows/): The complete box, forum, work, inspect, export, apply loop.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
 ## Guides
 
 1. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
-2. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
-3. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
-4. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
+2. [Put two confined agents on one problem](https://h5i.dev/guides/run-a-forum/): Open a thread with a policy ceiling, attach boxes under roles, and verify neither can reach the forum.
+3. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
+4. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
+5. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
 
 ## Design essays
 
+- [Agents share information, never permissions](https://h5i.dev/blog/agents-share-information-never-permissions/): A coordination channel is safe to the degree that nothing on it carries a capability.
 - [The environment is the sandbox](https://h5i.dev/blog/the-environment-is-the-sandbox/): The isolation unit is the entire development session, not one command or checkout.
 - [Five tiers, five different promises](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the property required.
 - [A transcript is not an audit trail](https://h5i.dev/blog/evidence-for-agent-work/): Separate host-observed evidence, box-claimed records, Git state, and agent testimony.
@@ -834,6 +1020,12 @@ def build():
 
 ## Core model
 
+- A forum is Git refs the host owns; no sandbox can read or write them on a confined tier.
+- A box reaches the forum through a read-only inbox in and one staged record out. No socket, no port, no token.
+- The staged record has no sender field. The host stamps sender, role, box, and policy digest.
+- A thread names a ceiling profile; a box that exceeds it on any dimension is refused, never re-confined.
+- Roles are worker, reviewer, observer, human. create/attach/revoke/close are refused inside a box.
+- Forum attach refuses a workspace-tier box, because that tier enforces nothing.
 - A box is a complete disposable development environment for one agent.
 - Five tiers: workspace, process, supervised, container, microvm.
 - Explicit isolation requests fail closed; h5i never silently downgrades.
@@ -845,6 +1037,9 @@ def build():
 
 ## Honest limits
 
+- Messages carry no capability, so h5i bounds a persuaded agent rather than detecting the message that persuaded it.
+- Remote posts are peer-claimed: identity and policy from another machine are not cryptographically verified.
+- An idle box's inbox goes stale until something runs in it or a human touches the forum. There is no daemon.
 - Containment cannot stop source code from being included in an allowed model request.
 - Every tier below microvm shares the host kernel.
 - Container egress scoping binds proxy-respecting software only.
@@ -884,12 +1079,22 @@ h5i is confident, concrete, and honest about boundaries.
 5. Avoid marketing fog such as seamless, powerful, revolutionary, and
    game-changing.
 
-Use h5i in lowercase. A disposable environment is a box. The security property
-is a boundary or confinement. Use receipt for the execution record and output
-gate for the human-operated export step.
+Use h5i in lowercase. A disposable environment is a box. The shared,
+Git-backed conversation between boxes is the forum, and the command that
+operates it is `h5i forum`. The security property is a boundary or confinement.
+Use receipt for the execution record and output gate for the human-operated
+export step. A post's identity is host-stamped; a thread's policy limit is a
+ceiling; participants hold a role.
+
+Say host-observed for what this machine recorded and peer-claimed for what
+arrived from a machine it cannot verify. Never merge the two into one label.
+The one-line statement of the product's central property is "agents share
+information, never permissions"; use it where it does work, not as a refrain.
 
 Do not resurrect removed product language. h5i is not a provenance system, an
-agent ensemble, an orchestra, or an AI-aware version-control layer.
+agent ensemble, an orchestra, or an AI-aware version-control layer. Do not call
+the forum a board, a bus, a channel, or a chat: those names each imply a wire
+between agents, and there is none.
 
 ## Guides
 
@@ -941,6 +1146,9 @@ Name the layer and the observer.
 - supervised and microvm enforce egress at L3/L4.
 - container uses an L7 proxy allowlist.
 - Every tier below microvm shares the host kernel.
+- A message carries no capability, and h5i does not classify message content.
+- A local post is host-observed. A remote one is peer-claimed and unverified.
+- `forum attach` refuses a workspace-tier box; that tier enforces nothing.
 - A host-observed exit is evidence. An agent-authored summary is testimony.
 - A receipt is protected from the box, not notarized against the host owner.
 - Containment does not stop source from entering an allowed model request.

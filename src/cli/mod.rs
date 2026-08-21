@@ -5,11 +5,11 @@
 //! stays a thin router. A handler is
 //! `pub fn run(action: <Noun>Commands) -> anyhow::Result<()>`.
 
-// `h5i board`. Not feature-gated: the board is how two boxes coordinate at
+// `h5i forum`. Not feature-gated: the forum is how two boxes coordinate at
 // all, and a build that can make boxes but not let them talk is a build
 // missing the product's second half. It needs no extra dependency — the store
 // is git refs, the transport is the inbox and spool mounts that already exist.
-pub mod board;
+pub mod forum;
 pub mod boxes;
 pub mod browser;
 pub mod completion;

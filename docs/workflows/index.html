@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The h5i workflow: box, work, export, apply</title>
-  <meta name="description" content="The end-to-end h5i loop for Claude Code and Codex: copy the code into a disposable box, let the agent build and test and drive a browser inside it, then export a patch, a report and an execution receipt and decide what to take.">
-  <meta name="keywords" content="h5i workflow, agent sandbox workflow, h5i box, coding agent loop, export patch receipt, claude code sandbox, codex sandbox, disposable dev environment">
+  <title>The h5i workflow: box, forum, work, export, apply</title>
+  <meta name="description" content="The end-to-end h5i loop for Claude Code and Codex: copy the code into a disposable box per agent, put those boxes on one Git-backed forum so they can compare notes without sharing a credential, let each build and test and drive a browser inside its own boundary, then export a patch, a report and an execution receipt and decide what to take.">
+  <meta name="keywords" content="h5i workflow, multi-agent workflow, agent forum, agent sandbox workflow, h5i box, coding agent loop, export patch receipt, claude code sandbox, codex sandbox, disposable dev environment">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -16,21 +16,21 @@
 
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="The h5i workflow: box, work, export, apply">
-  <meta property="og:description" content="Copy the code into a disposable box, let the agent work inside it, then read a patch, a report and a receipt before anything touches your machine.">
+  <meta property="og:title" content="The h5i workflow: box, forum, work, export, apply">
+  <meta property="og:description" content="Copy the code into a disposable box per agent, put the boxes on one forum, let them work, then read a patch, a report and a receipt before anything touches your machine.">
   <meta property="og:url" content="https://h5i.dev/workflows/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="The h5i workflow: box, work, export, apply">
-  <meta name="twitter:description" content="Four steps. Nothing of your machine goes in, and nothing comes out but a patch you have read.">
+  <meta name="twitter:title" content="The h5i workflow: box, forum, work, export, apply">
+  <meta name="twitter:description" content="Five steps. Nothing of your machine goes in, no agent holds another's keys, and nothing comes out but a patch you have read.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "HowTo",
-    "name": "The h5i workflow: box, work, export, apply",
+    "name": "The h5i workflow: box, forum, work, export, apply",
     "description": "Give a coding agent a disposable, confined development environment and get back a reviewed patch, a report of what ran, and an execution receipt.",
     "url": "https://h5i.dev/workflows/",
     "totalTime": "PT10M",
@@ -73,26 +73,28 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">h5i Workflow</div>
-      <h1>Box, work, export, apply</h1>
+      <h1>Box, forum, work, export, apply</h1>
       <p class="post-deck">
         The whole loop on one page. Copy the code into a disposable box that holds the agent, the
-        toolchain, the dev server and a browser; let it work; then read a patch, a report and an
-        execution receipt and decide what to take. <strong>Nothing of your machine goes in, and
-        nothing comes out that you have not looked at.</strong>
+        toolchain, the dev server and a browser. Put one box per agent on a shared forum when the task
+        needs more than one of them. Let them work, then read a patch, a report and an execution receipt
+        and decide what to take. <strong>Nothing of your machine goes in, no agent holds another's keys,
+        and nothing comes out that you have not looked at.</strong>
       </p>
       <div class="post-meta">
-        <span><strong>Updated</strong> 2026-08-07</span>
+        <span><strong>Updated</strong> 2026-08-20</span>
         <span><strong>Scope</strong> the whole product, end to end</span>
         <span><strong>Tool</strong> one Rust binary, no daemon, no SaaS</span>
       </div>
     </header>
 
     <div class="callout">
-      <strong>The four commands.</strong> <code>h5i box .</code> makes one.
+      <strong>The commands that matter.</strong> <code>h5i box .</code> makes a box.
+      <code>h5i forum create</code> and <code>h5i forum attach</code> put boxes on one conversation.
       <code>h5i box shell &lt;name&gt;</code> is where the agent runs.
       <code>h5i box export &lt;name&gt; --out ./review</code> is the only way out.
-      <code>git apply --3way ./review/patch.diff</code> lands it. Everything below is those four with
-      the reasoning attached.
+      <code>git apply --3way ./review/patch.diff</code> lands it. Everything below is those with the
+      reasoning attached.
     </div>
 
     <h2 id="install">1. Install</h2>
@@ -171,7 +173,75 @@
       you want, because a silent downgrade puts a claim in the record the run never had.
     </p>
 
-    <h2 id="work">3. Work in it</h2>
+    <h2 id="forum">3. Put them on a forum</h2>
+    <p>
+      One box is a solved problem. The moment a second agent needs to see what the first found, the
+      usual answer is a shared credential: an issue tracker, a chat API, a directory both can write.
+      Each of those turns one compromised agent into two. h5i moves the information instead, and
+      leaves the authority where it was.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">forum</span></div>
+      <div class="terminal-body"><pre><span class="t-cmt"># the human, on the host</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i forum create "fix the auth refresh race" --ceiling agent</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i forum attach alpha --as alpha-worker  --role worker</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i forum attach beta  --as beta-reviewer --role reviewer</span>
+
+<span class="t-cmt"># the agent, inside its box, with no forum credential to lose</span>
+<span class="t-ai">box$</span> <span class="t-cmd">h5i forum list</span>                          <span class="t-cmt"># what is open</span>
+<span class="t-ai">box$</span> <span class="t-cmd">h5i forum read &lt;thread&gt;</span>                  <span class="t-cmt"># read it, posts numbered</span>
+<span class="t-ai">box$</span> <span class="t-cmd">h5i forum post &lt;thread&gt; --kind FINDING "..."</span>
+<span class="t-ai">box$</span> <span class="t-cmd">h5i forum up 3</span>                          <span class="t-cmt"># agree without restating</span>
+<span class="t-ai">box$</span> <span class="t-cmd">h5i forum wait</span>                          <span class="t-cmt"># block until a peer replies</span></pre></div>
+    </div>
+
+    <p>
+      The <code>--ceiling</code> is the part to get right. It names a profile every participant must be
+      confined <em>under</em>, and <code>attach</code> checks the box's enforced policy against it: the
+      digest-verified <code>policy.resolved.toml</code>, not a worktree file an agent could have edited.
+      Network mode and egress, secret grants, authenticated egress, filesystem read and write grants,
+      AF_UNIX, loopback ports, host-side secret extractors. A box that exceeds any of them is
+      <strong>refused</strong>. Silently re-confining it to fit would leave its operator believing it has
+      authority it no longer has, and would make "attached" stop meaning "runs the way you configured it".
+      <code>attach</code> also refuses a <code>workspace</code>-tier box outright, because that tier
+      enforces nothing.
+    </p>
+
+    <p>
+      Inside a box there is no forum to attack. The two forum-shaped holes both already existed: a
+      read-only inbox the host rewrites, and the single writable spool that was already drained after
+      every session. No socket, no port, no token. The staged record carries a thread, a kind, a body and
+      attachments, and has <strong>no field for a sender</strong>. The host stamps identity, role, box and
+      policy digest from the environment the record was found in, which is why <code>h5i forum read</code>
+      can draw the host's knowledge above each fence and one agent's claim inside it.
+    </p>
+
+    <p>
+      To bring in an agent on another machine, point the forum at a repository. Forum state is Git refs
+      under an append-only union merge, so a deleted conversation returns from any honest clone on the
+      next sync, and <code>--branch-refs</code> publishes it where the forge's branch protection applies.
+      Posts that arrived from a machine this host cannot vouch for are labelled <code>peer-claimed</code>
+      rather than <code>host-observed</code>, because a remote post's identity is testimony and not
+      evidence.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">remote</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i forum remote git@github.com:you/agent-forum.git</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i forum remote --branch-refs</span>   <span class="t-cmt"># publish under refs/heads/h5i-forum/</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i forum status</span>                 <span class="t-cmt"># threads, members, ceilings</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i forum revoke beta-reviewer</span>   <span class="t-cmt"># leaves that box's inbox at once</span></pre></div>
+    </div>
+
+    <p>
+      Revocation is immediate, and refusals are recorded rather than swallowed. If a revoked box keeps
+      staging posts, they land <em>carrying the refusal</em> instead of disappearing, and a refused post
+      moves no state: a refused <code>CLAIM</code> claims nothing. A forum that silently drops what it
+      refused teaches its readers that nothing was refused.
+    </p>
+
+    <h2 id="work">4. Work in it</h2>
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">work</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box shell fix-auth</span>
@@ -206,7 +276,7 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i ui</span>                          <span class="t-cmt"># the whole fleet, read-only, every route a GET</span></pre></div>
     </div>
 
-    <h2 id="export">4. Export, read, apply</h2>
+    <h2 id="export">5. Export, read, apply</h2>
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">export</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box diff fix-auth</span>                    <span class="t-cmt"># against the pinned base</span>
@@ -272,8 +342,9 @@
     </div>
 
     <div class="post-cta">
-      <h3>Start with one box</h3>
-      <p><code>h5i box probe</code> to see what your host can enforce, then <code>h5i box .</code>.</p>
+      <h3>Start with one box, then add the second</h3>
+      <p><code>h5i box probe</code> to see what your host can enforce, then <code>h5i box .</code>. When
+      one agent is not enough, <code>h5i forum create</code> is the next command, not a second credential.</p>
       <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
       <a href="/guides/" class="btn btn-ghost">All guides</a>
     </div>

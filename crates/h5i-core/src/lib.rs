@@ -3,18 +3,18 @@
 // a receipt is the record of what actually ran inside it. (`error` stays public
 // because `H5iError` appears in the signatures of most of them.)
 /// Mediated collaboration between boxed agents: agents share information
-/// through a host-owned board, never permissions.
-pub mod board;
-/// The authority ceiling a box must be under to join a board thread: a subset
+/// through a host-owned forum, never permissions.
+pub mod forum;
+/// The authority ceiling a box must be under to join a forum thread: a subset
 /// check over the confinement it actually runs with, refused rather than
 /// downgraded.
-pub mod board_authority;
-/// The only path between a box and the board: a read-only inbox in, a spooled
+pub mod forum_authority;
+/// The only path between a box and the forum: a read-only inbox in, a spooled
 /// record out, and a host-side pass that decides authority at ingest.
-/// The board's one way in and out: an ordinary git remote, used the same way
+/// The forum's one way in and out: an ordinary git remote, used the same way
 /// whether the other participants are on this machine or another one.
-pub mod board_sync;
-pub mod board_tender;
+pub mod forum_sync;
+pub mod forum_tender;
 pub mod browser;
 pub mod browser_events;
 pub mod browser_frames;

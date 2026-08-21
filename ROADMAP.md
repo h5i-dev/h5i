@@ -25,8 +25,8 @@ This document has five parts:
   run from the kernel, so the receipt carries a lane that is neither at the
   boundary of the box nor inside it. M18 is its milestone stub; the D sections
   are the authority on design and order.
-- **The board**, sections T1 to T12. Mediated collaboration between boxed
-  agents: they share information through a host-owned board and never share
+- **The forum**, sections T1 to T12. Mediated collaboration between boxed
+  agents: they share information through a host-owned forum and never share
   authority. This is the product's second half — the first is one contained
   box, this is what happens when there are several — and the T sections are the
   authority on its design and order.
@@ -8732,7 +8732,7 @@ diagnosable rather than surprising:
 
 ---
 
-# Part 6 — The board
+# Part 6 — The forum
 
 Sections T1 to T12. Built 2026-08-20 on branch `zero-trust`.
 
@@ -8794,16 +8794,16 @@ been sitting with no writer at the other end:
 | identity injection | `env::team_binding`, `team_identity_env` | reads two files, nothing wrote them |
 | concurrent ref append | `refstore` (CAS + jittered backoff + union merge) | live, used by `refs/h5i/env/meta` |
 
-So the board is not a reconstruction of what was cut. It is a writer for seams
+So the forum is not a reconstruction of what was cut. It is a writer for seams
 that already exist, plus a store, plus a surface. That is why it is small.
 
 ## T4 The shape: file-mediated, not networked
 
-A box has exactly two board-shaped holes, and they are the two above:
+A box has exactly two forum-shaped holes, and they are the two above:
 
 ```
 box A                    host                     box B
-  /.h5i/inbox  ←──── tender ──── refs/h5i/board ──── tender ────→  /.h5i/inbox
+  /.h5i/inbox  ←──── tender ──── refs/h5i/forum ──── tender ────→  /.h5i/inbox
   spool/       ────→                                       ←────  spool/
 ```
 
@@ -8855,8 +8855,8 @@ keep meaning "runs the way you configured it".
 
 ## T7 Liveness, and why there is still no daemon
 
-R11 records that h5i has no resident process by decision. The board does not
-change that, and the reasoning is worth stating because a message board is
+R11 records that h5i has no resident process by decision. The forum does not
+change that, and the reasoning is worth stating because a message forum is
 exactly the kind of thing that usually demands one.
 
 **Host side.** A box that is running already has a host process supervising it —
@@ -8865,23 +8865,23 @@ that process, started with the session and stopped with it. Nothing is
 installed, nothing outlives the run, and there is no second lifecycle. A box
 that is not running has nothing to deliver to.
 
-**Box side.** `h5i board wait` blocks on a directory the box already has
+**Box side.** `h5i forum wait` blocks on a directory the box already has
 mounted. No hook, no `settings.json` edit, no runtime-specific integration —
 which matters because the two runtimes h5i targets do not have the same hook
 surface, and because a coordination layer that needs the user to install
 something is one most users will not install.
 
 The honest cost: an idle box's inbox goes stale until something runs in it or a
-human touches the board. For collaborating agents — running, by definition —
+human touches the forum. For collaborating agents — running, by definition —
 that gap does not arise. If it ever does, the fix is a foreground
-`h5i board serve` looping the same function, a sibling of `h5i ui`, and not a
+`h5i forum serve` looping the same function, a sibling of `h5i ui`, and not a
 background daemon. Deliberately not built yet (T12).
 
 ## T8 Storage: one ref per thread
 
 ```
-refs/h5i/board/meta            roster.json
-refs/h5i/board/threads/<id>    thread.json + posts.jsonl + attach-<digest>
+refs/h5i/forum/meta            roster.json
+refs/h5i/forum/threads/<id>    thread.json + posts.jsonl + attach-<digest>
 ```
 
 Git refs rather than the workspace's first SQLite dependency: the concurrent
@@ -8891,12 +8891,12 @@ reconciles `refs/h5i/env/meta` across clones has the same shape here.
 **Correction, 2026-08-20.** This section originally claimed cross-clone sync came
 "for free". It did not: `union_merge_thread` and `union_merge_roster` had no
 callers, and neither did `env`'s own `union_merge_commits` — the push/pull that
-used it was cut in M1. The board was single-machine, and the merge was code
+used it was cut in M1. The forum was single-machine, and the merge was code
 nobody ran. T13 is what makes the claim true.
 
 Per-thread rather than one shared log, which was the first design and was wrong:
 appending rewrites the blob it appends to, so a single log means every post
-rewrites the whole board's history and reading one conversation means parsing
+rewrites the whole forum's history and reading one conversation means parsing
 all of them. Per-thread refs bound both costs by the size of one thread,
 localise CAS contention to the thread being posted to, make the thread list a
 ref enumeration whose tip timestamps are the activity order, and let `close`
@@ -8914,7 +8914,7 @@ oversized body is truncated and says so; an attachment over the cap or outside
 the kind allowlist is dropped and named. A refused post moves no state — a
 refused `CLAIM` claims nothing.
 
-The rule behind all of these: a board that silently swallows what it refuses
+The rule behind all of these: a forum that silently swallows what it refuses
 teaches its readers that nothing was refused. The same reasoning as
 `sealed_overridden` in the old verify overlay, and as the browser proxy
 answering a refusal in the daemon's own wire shape rather than dropping the
@@ -8939,7 +8939,7 @@ that was never attached.
 
 The console gains a second tab rather than a second application. It is
 deliberately not styled like the first: the console is a mint instrument for
-watching one box, the board is the product's outward face and wears the site's
+watching one box, the forum is the product's outward face and wears the site's
 drafting-sheet identity.
 
 One visual rule carries it: **inside the fence is what an agent claimed, outside
@@ -8951,18 +8951,18 @@ boundary someone tried to cross is the loudest mark on the screen.
 
 Every route is a `GET`, and the no-mutation property (`tests/console_api.rs`)
 still holds. Human actions are rendered as the commands that perform them. A
-browser tab that could post to the board would be a participant the host cannot
+browser tab that could post to the forum would be a participant the host cannot
 name, which is the one thing the identity model does not allow.
 
 ## T12 What is deliberately not built
 
-- **`h5i board serve`** — the resident tender for idle boxes (T7). Wait for the
+- **`h5i forum serve`** — the resident tender for idle boxes (T7). Wait for the
   gap to actually hurt.
 - **Structured delegation** — `request-action` with
   `sender ∩ receiver ∩ ceiling`. The design holds; the demand is unproven, and
   free-text posts deliberately carry no authority at all, so nothing is missing
   yet.
-- **Sealed verify on the board** — the `sealed_from` overlay and
+- **Sealed verify on the forum** — the `sealed_from` overlay and
   `sealed_overridden` tamper lane from the deleted `team.rs`. The strongest
   follow-up, and the natural next step once peer-influence marking is in use.
 - **An MCP adapter.** CLI plus skill works under both runtimes today; B11.4
@@ -8974,7 +8974,7 @@ name, which is the one thing the identity model does not allow.
 
 ## T13 The remote: one route, whether the peer is on this machine or another
 
-T4 said a box has exactly two board-shaped holes and no network. That stands, and
+T4 said a box has exactly two forum-shaped holes and no network. That stands, and
 it is about the box↔host segment. This section is the other segment — host↔store
 — and there the first design was wrong in a way worth recording.
 
@@ -8986,14 +8986,14 @@ second machine joins and everything it was supposed to handle happens at once. A
 push to a local bare repository costs a few milliseconds against a tender that
 runs once a second, so the shortcut buys nothing and hides everything.
 
-So every board has a remote, including a solo one, which falls back to a bare
+So every forum has a remote, including a solo one, which falls back to a bare
 repository under the sidecar root. **Solo and team differ by a URL and by
 nothing else.**
 
 ### T13.1 Why a git remote and not a service
 
 Because nobody has to run it. A team already operates a git host, and that host
-already answers the two questions a board would otherwise need its own answers
+already answers the two questions a forum would otherwise need its own answers
 for: **who may post** is push access, **who may read** is read access. A public
 repository is an open topic, a private one is an internal one. No server to
 deploy, no uptime to own, no roster to invent — which preserves the property T7
@@ -9011,7 +9011,7 @@ Measured against GitHub rather than assumed, on 2026-08-20:
 
 | probe | result |
 |---|---|
-| push to `refs/h5i/board-probe/t1` | accepted (and `refs/h5i/context/*` from an earlier era was already there) |
+| push to `refs/h5i/forum-probe/t1` | accepted (and `refs/h5i/context/*` from an earlier era was already there) |
 | non-fast-forward push to it | `! [rejected] (non-fast-forward)` |
 | `--force-with-lease` against the fetched tip | accepted |
 | `--force-with-lease` against a stale tip | `! [rejected] (stale info)` |
@@ -9050,18 +9050,18 @@ action reopens one, and an agent cannot at all.
 
 Self-healing is a mitigation, not a refusal, and under a custom ref namespace it
 cannot be anything else: GitHub's branch protection and rulesets only reach
-`refs/heads/**`, so `refs/h5i/board/*` is undefendable by the server.
+`refs/heads/**`, so `refs/h5i/forum/*` is undefendable by the server.
 
-`h5i board remote --branch-refs` publishes under `refs/heads/h5i-board/`
+`h5i forum remote --branch-refs` publishes under `refs/heads/h5i-forum/`
 instead, where an admin can block force pushes and restrict deletions for
-`h5i-board/**` and the attempt is refused rather than undone afterwards. The
-local mirror keeps `refs/h5i/board/*` in both modes, so only the published half
+`h5i-forum/**` and the attempt is refused rather than undone afterwards. The
+local mirror keeps `refs/h5i/forum/*` in both modes, so only the published half
 of the refspec moves and nothing else has to know which is in use.
 
 Two costs, named rather than buried. Threads appear in `git branch -a` and in
 branch pickers. And `git push --all` walks `refs/heads/*`, so a repository
-holding both code and board would publish threads on any bulk push — which is an
-argument for giving a protected board its own repository, not against branches.
+holding both code and forum would publish threads on any bulk push — which is an
+argument for giving a protected forum its own repository, not against branches.
 
 What branches do **not** risk is being mistaken for code. Every thread is an
 orphan commit chain — `create_thread` commits with no parents — so
@@ -9072,11 +9072,11 @@ and `thread.json` and nothing that looks like source. Verified locally.
 **Not verified.** That a ruleset pattern actually enforces on a real forge is a
 repository-settings question this codebase cannot test, and it was not measured
 the way the push semantics in T13.2 were. What was measured is that publishing
-under `refs/heads/h5i-board/` round-trips, and that the chains are orphans.
+under `refs/heads/h5i-forum/` round-trips, and that the chains are orphans.
 
 ### T13.4 Agents still never speak it
 
-The board being a repository does not make the board reachable from a box.
+The forum being a repository does not make the forum reachable from a box.
 Giving an agent a git credential for it would put a pushable credential inside
 the box, punch a hole in a `net.mode = deny` profile, and collapse the identity
 stamp into "whatever the box claims" plus N deploy keys to manage.
@@ -9085,7 +9085,7 @@ So the topology is two segments with exactly one mechanism each, which is more
 uniform than the version with a local shortcut, not less:
 
 ```
-box ──(read-only inbox / spool)── host ──(git remote)── board store
+box ──(read-only inbox / spool)── host ──(git remote)── forum store
 ```
 
 Fetching runs with `transfer.fsckObjects` and `fetch.fsckObjects` on, and parks
@@ -9107,7 +9107,7 @@ third tier rather than folding it into the other two. Built as T14.
 
 ## T14 The vouching lane
 
-Without this, the board's central promise degrades in silence the moment it
+Without this, the forum's central promise degrades in silence the moment it
 crosses a machine. On one host the line above a post is the host's *knowledge*:
 it stamped the sender out of an env directory it owns, and no agent could have
 written it. Fetch the same post from a peer and the host observed **nothing** —
@@ -9138,17 +9138,17 @@ What it buys is the one comparison that is sound — *did I stamp this?* — plu
 the ability to see that two posts claim different sources. That is enough to
 stop the UI asserting knowledge it does not have, which was the actual defect.
 
-The upgrade that would make it evidence is signing the board commits, and it is
+The upgrade that would make it evidence is signing the forum commits, and it is
 deliberately not taken: it costs key management, and the whole remote design is
 built on a team not having to operate anything. `runner_id` (R6) shows the shape
-if a future board wants it — an identity that is the hash of a host key cannot be
+if a future forum wants it — an identity that is the hash of a host key cannot be
 repointed at different hardware.
 
 ### T14.2 Why not just trust the forge
 
 The git host authenticated whoever pushed, which is real evidence — but it lives
 in the forge's push events and audit log, not in the object graph, so a clone
-cannot see it. A board that wanted to use it would have to talk to a specific
+cannot see it. A forum that wanted to use it would have to talk to a specific
 forge's API, which is the vendor coupling the remote design exists to avoid.
 Recorded here because it is the obvious next idea and it does not work as
 cheaply as it looks.

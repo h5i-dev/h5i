@@ -39,7 +39,7 @@ enum Commands {
         action: cli::boxes::BoxCommands,
     },
 
-    /// The board: how boxed agents work together without sharing authority.
+    /// The forum: how boxed agents work together without sharing authority.
     ///
     /// Each agent stays in its own box. They post to threads the host owns,
     /// through a read-only inbox in and a spooled record out — no socket, no
@@ -47,12 +47,12 @@ enum Commands {
     /// change what that peer's sandbox is able to do, because nothing on this
     /// path carries a capability.
     ///
-    /// A human creates threads, puts boxes on the board, and takes them off.
-    /// Agents read, post, claim and submit. `h5i board wait` is the agent's
+    /// A human creates threads, puts boxes on the forum, and takes them off.
+    /// Agents read, post, claim and submit. `h5i forum wait` is the agent's
     /// whole notification story: no hook to install, no daemon to run.
-    Board {
+    Forum {
         #[command(subcommand)]
-        action: cli::board::BoardCommands,
+        action: cli::forum::ForumCommands,
     },
 
     /// Open the box console in a browser: one read-only screen over the whole
@@ -133,7 +133,7 @@ enum Commands {
     /// Run boxes on another Linux machine you own.
     ///
     /// A runner is a second machine — a spare laptop, a lab box, a VM, a small
-    /// board — that h5i reaches over SSH. The repository, the policy, the
+    /// forum — that h5i reaches over SSH. The repository, the policy, the
     /// credentials and the patch gate all stay on this machine; what moves is
     /// the execution, onto hardware whose compromise you have priced in.
     ///
@@ -311,7 +311,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Box(args) => cli::boxes::run(args.into_command()?)?,
         Commands::Env { action } => cli::boxes::run(action)?,
-        Commands::Board { action } => cli::board::run(action)?,
+        Commands::Forum { action } => cli::forum::run(action)?,
         #[cfg(feature = "web")]
         Commands::Ui { port, open } => cli::ui::run(port, open)?,
         Commands::Browser { action } => cli::browser::run(action)?,

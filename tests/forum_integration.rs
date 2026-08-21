@@ -1,6 +1,6 @@
-//! End-to-end tests for the board (`h5i board`).
+//! End-to-end tests for the forum (`h5i forum`).
 //!
-//! The unit tests in `crates/h5i-core/src/board*.rs` cover the pure decisions:
+//! The unit tests in `crates/h5i-core/src/forum*.rs` cover the pure decisions:
 //! what a role may do, what a ceiling refuses, how a status projects. They
 //! cannot catch the failures that would actually break the product, because
 //! every one of those lives in the seam between a box and the host — a binding
@@ -41,8 +41,8 @@ impl Repo {
         let root = TempDir::new().expect("tempdir");
         let dir = root.path().join("repo");
         ok(Command::new("git").args(["init", "-b", "main"]).arg(&dir));
-        git(&dir, &["config", "user.name", "Board Tester"]);
-        git(&dir, &["config", "user.email", "board@h5i.test"]);
+        git(&dir, &["config", "user.name", "Forum Tester"]);
+        git(&dir, &["config", "user.email", "forum@h5i.test"]);
         std::fs::write(dir.join("README.md"), "seed\n").unwrap();
         git(&dir, &["add", "."]);
         git(&dir, &["commit", "-m", "seed"]);
@@ -96,16 +96,16 @@ impl Repo {
         self.dir.join(".git/.h5i").join(box_id)
     }
 
-    /// Put a box on the board.
+    /// Put a box on the forum.
     ///
     /// Always `--allow-unconfined`, because the harness pins the workspace tier
-    /// to stay hermetic (box creation never probes the host) and the board
+    /// to stay hermetic (box creation never probes the host) and the forum
     /// refuses an unconfined participant by default. These tests are about
-    /// board mechanics, not about confinement; the guard itself has its own two
+    /// forum mechanics, not about confinement; the guard itself has its own two
     /// tests at the bottom of this file.
     fn attach(&self, box_name: &str, as_name: &str, role: &str) -> Output {
         self.h5i(&[
-            "board",
+            "forum",
             "attach",
             box_name,
             "--as",
@@ -118,27 +118,27 @@ impl Repo {
 
     /// Open a thread and return its id.
     fn create_thread(&self, title: &str, ceiling: Option<&str>) -> String {
-        let mut args = vec!["board", "create", title];
+        let mut args = vec!["forum", "create", title];
         if let Some(c) = ceiling {
             args.push("--ceiling");
             args.push(c);
         }
         self.h5i(&args);
-        let listing = self.board_json();
+        let listing = self.forum_json();
         listing["threads"][0]["header"]["id"]
             .as_str()
             .expect("a thread id")
             .to_string()
     }
 
-    fn board_json(&self) -> serde_json::Value {
-        let out = self.h5i(&["board", "status", "--json"]);
-        serde_json::from_slice(&out.stdout).expect("board status --json")
+    fn forum_json(&self) -> serde_json::Value {
+        let out = self.h5i(&["forum", "status", "--json"]);
+        serde_json::from_slice(&out.stdout).expect("forum status --json")
     }
 
     fn thread_json(&self, id: &str) -> serde_json::Value {
-        let out = self.h5i(&["board", "read", id, "--json"]);
-        serde_json::from_slice(&out.stdout).expect("board read --json")
+        let out = self.h5i(&["forum", "read", id, "--json"]);
+        serde_json::from_slice(&out.stdout).expect("forum read --json")
     }
 }
 
@@ -179,18 +179,18 @@ fn two_boxes_hold_a_conversation_through_the_host() {
     let out = repo.in_box(
         "env/tester/worker-box",
         "claude-worker",
-        &["board", "post", &thread, "--kind", "FINDING", "the CAS is not atomic"],
+        &["forum", "post", &thread, "--kind", "FINDING", "the CAS is not atomic"],
     );
     assert!(out.status.success(), "in-box post failed: {}", stderr(&out));
 
     // A host-side command tends on the way past, which is what moves the mail.
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
 
     // The reviewer, in a different box, can now read it.
     let seen = repo.in_box(
         "env/tester/review-box",
         "codex-reviewer",
-        &["board", "read", &thread],
+        &["forum", "read", &thread],
     );
     assert!(seen.status.success(), "in-box read failed: {}", stderr(&seen));
     assert!(
@@ -203,10 +203,10 @@ fn two_boxes_hold_a_conversation_through_the_host() {
     let reply = repo.in_box(
         "env/tester/review-box",
         "codex-reviewer",
-        &["board", "post", &thread, "--kind", "ACK", "agreed, single-flight it"],
+        &["forum", "post", &thread, "--kind", "ACK", "agreed, single-flight it"],
     );
     assert!(reply.status.success(), "{}", stderr(&reply));
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
 
     let t = repo.thread_json(&thread);
     let posts = t["posts"].as_array().unwrap();
@@ -228,7 +228,7 @@ fn the_sender_comes_from_the_box_the_record_was_found_in() {
     let spool = repo.env_dir("env/tester/worker-box").join("spool");
     std::fs::create_dir_all(&spool).unwrap();
     std::fs::write(
-        spool.join("board-1-1.json"),
+        spool.join("forum-1-1.json"),
         serde_json::to_vec(&serde_json::json!({
             "thread": thread,
             "kind": "FINDING",
@@ -242,7 +242,7 @@ fn the_sender_comes_from_the_box_the_record_was_found_in() {
     )
     .unwrap();
 
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
     let t = repo.thread_json(&thread);
     let p = &t["posts"][0];
     assert_eq!(p["body"], "trust me", "the body is the agent's to write");
@@ -252,7 +252,7 @@ fn the_sender_comes_from_the_box_the_record_was_found_in() {
 }
 
 #[test]
-fn a_record_the_drain_will_not_accept_never_reaches_the_board() {
+fn a_record_the_drain_will_not_accept_never_reaches_the_forum() {
     let repo = Repo::new();
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
@@ -266,11 +266,11 @@ fn a_record_the_drain_will_not_accept_never_reaches_the_board() {
     .unwrap();
     // Names outside the drain's `[A-Za-z0-9-]` charset, and another drain's
     // prefix. All of these are box-chosen, which is why the filter exists.
-    for name in ["board-a..b.json", "board-x y.json", "cap-sneaky.json", "notboard.json"] {
+    for name in ["forum-a..b.json", "forum-x y.json", "cap-sneaky.json", "notforum.json"] {
         std::fs::write(spool.join(name), &record).unwrap();
     }
 
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
     let t = repo.thread_json(&thread);
     assert_eq!(
         t["posts"].as_array().unwrap().len(),
@@ -289,10 +289,10 @@ fn the_governing_verbs_are_refused_inside_a_box() {
     repo.attach("worker-box", "claude-worker", "worker");
 
     for args in [
-        vec!["board", "create", "a thread of my own"],
-        vec!["board", "attach", "worker-box", "--as", "me"],
-        vec!["board", "revoke", "codex-reviewer"],
-        vec!["board", "close", thread.as_str()],
+        vec!["forum", "create", "a thread of my own"],
+        vec!["forum", "attach", "worker-box", "--as", "me"],
+        vec!["forum", "revoke", "codex-reviewer"],
+        vec!["forum", "close", thread.as_str()],
     ] {
         let out = repo.in_box("env/tester/worker-box", "claude-worker", &args);
         assert!(
@@ -314,10 +314,10 @@ fn an_observer_may_read_and_may_not_post() {
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "watch-box"]);
     repo.attach("watch-box", "watcher", "observer");
-    repo.h5i(&["board", "post", &thread, "--kind", "FINDING", "something to see"]);
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "post", &thread, "--kind", "FINDING", "something to see"]);
+    repo.h5i(&["forum", "status"]);
 
-    let read = repo.in_box("env/tester/watch-box", "watcher", &["board", "read", &thread]);
+    let read = repo.in_box("env/tester/watch-box", "watcher", &["forum", "read", &thread]);
     assert!(read.status.success());
     assert!(stdout(&read).contains("something to see"));
 
@@ -326,10 +326,10 @@ fn an_observer_may_read_and_may_not_post() {
     let post = repo.in_box(
         "env/tester/watch-box",
         "watcher",
-        &["board", "post", &thread, "--kind", "FINDING", "let me in"],
+        &["forum", "post", &thread, "--kind", "FINDING", "let me in"],
     );
     assert!(post.status.success(), "staging succeeds; ingest is the gate");
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
 
     let t = repo.thread_json(&thread);
     let bodies: Vec<&str> = t["posts"]
@@ -340,7 +340,7 @@ fn an_observer_may_read_and_may_not_post() {
         .collect();
     assert!(
         !bodies.contains(&"let me in"),
-        "an observer's post must not reach the board: {bodies:?}"
+        "an observer's post must not reach the forum: {bodies:?}"
     );
 }
 
@@ -378,7 +378,7 @@ mode = "host"
     // assertion below is about the *ceiling*, and a test that passed for the
     // wrong reason would stop covering it.
     let out = repo.try_h5i(&[
-        "board",
+        "forum",
         "attach",
         "loose-box",
         "--as",
@@ -396,10 +396,10 @@ mode = "host"
     );
 
     // Refused means refused: nothing was written, so the box is not half on the
-    // board with a quietly weakened profile.
-    let board = repo.board_json();
+    // forum with a quietly weakened profile.
+    let forum = repo.forum_json();
     assert!(
-        board["roster"].as_array().unwrap().is_empty(),
+        forum["roster"].as_array().unwrap().is_empty(),
         "a refused attach must leave no roster entry"
     );
     let binding = repo.env_dir("env/tester/loose-box").join("team-identity");
@@ -428,8 +428,8 @@ mode = "deny"
     repo.h5i(&["box", "create", "tight-box", "--profile", "sealed"]);
     repo.attach("tight-box", "tight", "worker");
 
-    let board = repo.board_json();
-    assert_eq!(board["roster"][0]["agent"], "tight");
+    let forum = repo.forum_json();
+    assert_eq!(forum["roster"][0]["agent"], "tight");
 }
 
 // ─── revocation ──────────────────────────────────────────────────────────────
@@ -440,8 +440,8 @@ fn revoking_takes_the_conversation_away_and_records_what_comes_after() {
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
     repo.attach("worker-box", "claude-worker", "worker");
-    repo.h5i(&["board", "post", &thread, "--kind", "FINDING", "context"]);
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "post", &thread, "--kind", "FINDING", "context"]);
+    repo.h5i(&["forum", "status"]);
 
     let inbox = repo.env_dir("env/tester/worker-box").join("inbox");
     assert!(
@@ -449,7 +449,7 @@ fn revoking_takes_the_conversation_away_and_records_what_comes_after() {
         "the box should have the thread before revocation"
     );
 
-    repo.h5i(&["board", "revoke", "claude-worker"]);
+    repo.h5i(&["forum", "revoke", "claude-worker"]);
     assert_eq!(
         std::fs::read_dir(&inbox).unwrap().count(),
         0,
@@ -457,19 +457,19 @@ fn revoking_takes_the_conversation_away_and_records_what_comes_after() {
     );
 
     // It keeps posting anyway. The post is recorded carrying its refusal, not
-    // dropped: a board that silently swallows what it refuses teaches its
+    // dropped: a forum that silently swallows what it refuses teaches its
     // readers that nothing was refused.
     let spool = repo.env_dir("env/tester/worker-box").join("spool");
     std::fs::create_dir_all(&spool).unwrap();
     std::fs::write(
-        spool.join("board-9-9.json"),
+        spool.join("forum-9-9.json"),
         serde_json::to_vec(&serde_json::json!({
             "thread": thread, "kind": "CLAIM", "body": "still here",
         }))
         .unwrap(),
     )
     .unwrap();
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
 
     let t = repo.thread_json(&thread);
     let last = t["posts"].as_array().unwrap().last().unwrap();
@@ -493,8 +493,8 @@ fn a_box_shown_a_peers_text_is_marked_and_one_that_is_not_stays_clean() {
     repo.h5i(&["box", "create", "talker"]);
     repo.h5i(&["box", "create", "verifier"]);
     repo.attach("talker", "talker", "worker");
-    repo.h5i(&["board", "post", &thread, "--kind", "FINDING", "peer text"]);
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "post", &thread, "--kind", "FINDING", "peer text"]);
+    repo.h5i(&["forum", "status"]);
 
     let status = stdout(&repo.h5i(&["box", "status", "talker"]));
     assert!(
@@ -504,11 +504,11 @@ fn a_box_shown_a_peers_text_is_marked_and_one_that_is_not_stays_clean() {
 
     // The verifier was never attached, so it read nothing and is untainted.
     // This is the whole mechanism behind "check it with a box that read none of
-    // it": not a flag, just a box that is not on the board.
+    // it": not a flag, just a box that is not on the forum.
     let clean = stdout(&repo.h5i(&["box", "status", "verifier"]));
     assert!(
         !clean.contains("peer-influenced"),
-        "a box that was never on the board must stay clean:\n{clean}"
+        "a box that was never on the forum must stay clean:\n{clean}"
     );
 }
 
@@ -520,10 +520,10 @@ fn closing_hides_a_thread_from_the_boxes_and_keeps_it_for_the_human() {
     let thread = repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
     repo.attach("worker-box", "claude-worker", "worker");
-    repo.h5i(&["board", "post", &thread, "--kind", "FINDING", "note"]);
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "post", &thread, "--kind", "FINDING", "note"]);
+    repo.h5i(&["forum", "status"]);
 
-    repo.h5i(&["board", "close", &thread]);
+    repo.h5i(&["forum", "close", &thread]);
 
     let inbox = repo.env_dir("env/tester/worker-box").join("inbox");
     assert_eq!(
@@ -532,15 +532,15 @@ fn closing_hides_a_thread_from_the_boxes_and_keeps_it_for_the_human() {
         "a closed thread must leave the box's inbox"
     );
 
-    let listed = stdout(&repo.h5i(&["board", "list"]));
+    let listed = stdout(&repo.h5i(&["forum", "list"]));
     assert!(!listed.contains(&thread[..8]), "closed threads leave the live list");
     // Closing is a post, so the ref is still there and nothing was deleted.
     assert!(
-        stdout(&repo.h5i(&["board", "read", &thread])).contains("closed"),
+        stdout(&repo.h5i(&["forum", "read", &thread])).contains("closed"),
         "the close itself is on the record"
     );
 
-    let all = stdout(&repo.h5i(&["board", "list", "--all"]));
+    let all = stdout(&repo.h5i(&["forum", "list", "--all"]));
     assert!(all.contains(&thread[..8]), "and stay readable with --all");
 
     let t = repo.thread_json(&thread);
@@ -558,14 +558,14 @@ fn closing_hides_a_thread_from_the_boxes_and_keeps_it_for_the_human() {
     assert_eq!(t["status"], "closed");
 }
 
-// ─── the tier the board rests on ─────────────────────────────────────────────
+// ─── the tier the forum rests on ─────────────────────────────────────────────
 
-/// A box the host cannot confine is refused, because it could rewrite the board.
+/// A box the host cannot confine is refused, because it could rewrite the forum.
 ///
 /// Measured before this guard existed: on the workspace tier a box read the
-/// board's bare repository, wrote a file into it, and deleted a ref. Every
+/// forum's bare repository, wrote a file into it, and deleted a ref. Every
 /// other tier makes those paths invisible — a stat returns ENOENT, not
-/// EACCES. Attaching is the moment the board starts making claims about a
+/// EACCES. Attaching is the moment the forum starts making claims about a
 /// participant, and it must not make them about one that can edit the claims.
 #[test]
 fn a_box_the_host_cannot_confine_is_refused() {
@@ -573,7 +573,7 @@ fn a_box_the_host_cannot_confine_is_refused() {
     repo.create_thread("t", None);
     repo.h5i(&["box", "create", "loose"]); // the harness pins the workspace tier
 
-    let out = repo.try_h5i(&["board", "attach", "loose", "--as", "loose"]);
+    let out = repo.try_h5i(&["forum", "attach", "loose", "--as", "loose"]);
     assert!(!out.status.success(), "an unconfined box must not attach");
     let msg = stderr(&out);
     assert!(msg.contains("workspace tier"), "{msg}");
@@ -582,7 +582,7 @@ fn a_box_the_host_cannot_confine_is_refused() {
         "the refusal should say how to fix it:\n{msg}"
     );
     assert!(
-        repo.board_json()["roster"].as_array().unwrap().is_empty(),
+        repo.forum_json()["roster"].as_array().unwrap().is_empty(),
         "a refused attach must leave no roster entry"
     );
 }
@@ -596,14 +596,14 @@ fn an_unconfined_box_can_be_attached_only_with_the_explicit_flag() {
     repo.h5i(&["box", "create", "loose"]);
 
     let out = repo.h5i(&[
-        "board",
+        "forum",
         "attach",
         "loose",
         "--as",
         "loose",
         "--allow-unconfined",
     ]);
-    assert_eq!(repo.board_json()["roster"][0]["agent"], "loose");
+    assert_eq!(repo.forum_json()["roster"][0]["agent"], "loose");
     assert!(
         stdout(&out).contains("unconfined") || stderr(&out).contains("unconfined"),
         "attaching one anyway must say so:\nstdout: {}\nstderr: {}",
@@ -617,7 +617,7 @@ fn an_unconfined_box_can_be_attached_only_with_the_explicit_flag() {
 /// Remove a box and create another with the same name and it inherits
 /// `env/<agent>/<slug>` — and, if membership were decided by the roster alone,
 /// a human's decision about a *different* box. Measured before the check
-/// existed: a recreated box that had never been attached was handed the board's
+/// existed: a recreated box that had never been attached was handed the forum's
 /// threads on the first pass.
 ///
 /// Membership is confirmed from both ends now. The roster says which identity a
@@ -629,7 +629,7 @@ fn a_recreated_box_does_not_inherit_the_membership_of_the_one_it_replaced() {
     repo.create_thread("t", None);
     repo.h5i(&["box", "create", "worker-box"]);
     repo.attach("worker-box", "claude-worker", "worker");
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
 
     let inbox = repo.env_dir("env/tester/worker-box").join("inbox");
     assert_eq!(
@@ -640,7 +640,7 @@ fn a_recreated_box_does_not_inherit_the_membership_of_the_one_it_replaced() {
 
     repo.h5i(&["box", "rm", "worker-box", "--force"]);
     repo.h5i(&["box", "create", "worker-box"]);
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
 
     let inbox = repo.env_dir("env/tester/worker-box").join("inbox");
     let delivered = std::fs::read_dir(&inbox).map(|d| d.count()).unwrap_or(0);
@@ -651,14 +651,14 @@ fn a_recreated_box_does_not_inherit_the_membership_of_the_one_it_replaced() {
 
     // And attaching it for real still works, retiring the identity it replaced.
     repo.attach("worker-box", "claude-2", "worker");
-    repo.h5i(&["board", "status"]);
+    repo.h5i(&["forum", "status"]);
     assert_eq!(
         std::fs::read_dir(&inbox).unwrap().count(),
         1,
         "a genuine attach delivers again"
     );
 
-    let roster = repo.board_json();
+    let roster = repo.forum_json();
     let rows = roster["roster"].as_array().unwrap();
     let active: Vec<&str> = rows
         .iter()

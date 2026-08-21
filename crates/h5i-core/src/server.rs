@@ -835,31 +835,31 @@ async fn api_box(
     }
 }
 
-/// The board, as the console shows it.
+/// The forum, as the console shows it.
 ///
-/// Read-only like every other route here. The console watches the board and
+/// Read-only like every other route here. The console watches the forum and
 /// never posts to it: a surface that could post would be a second way onto the
-/// board with no box behind it, and the whole authority story rests on every
+/// forum with no box behind it, and the whole authority story rests on every
 /// post coming from a participant the host can name.
 #[derive(Serialize)]
-pub struct BoardView {
+pub struct ForumView {
     /// Open threads, newest activity first.
-    pub threads: Vec<crate::board::ThreadSummary>,
+    pub threads: Vec<crate::forum::ThreadSummary>,
     /// Threads a human has closed, newest activity first.
-    pub closed: Vec<crate::board::ThreadSummary>,
-    /// Everyone who has been on the board, revoked entries included.
-    pub roster: Vec<crate::board::RosterEntry>,
+    pub closed: Vec<crate::forum::ThreadSummary>,
+    /// Everyone who has been on the forum, revoked entries included.
+    pub roster: Vec<crate::forum::RosterEntry>,
     /// Per-participant state the roster does not carry: whether that box has
     /// been shown a peer's text.
     pub influenced: Vec<String>,
     /// A preview of each open thread for the landing feed: the opening line of
     /// its best-scored post, and who has spoken in it.
-    pub previews: Vec<BoardPreview>,
+    pub previews: Vec<ForumPreview>,
 }
 
 /// Enough of a thread to rank it and show why it is worth opening.
 #[derive(Serialize)]
-pub struct BoardPreview {
+pub struct ForumPreview {
     /// Thread this describes.
     pub thread: String,
     /// Best score any single post in it reached.
@@ -878,16 +878,16 @@ pub struct BoardPreview {
 
 /// One thread in full, for the conversation pane.
 #[derive(Serialize)]
-pub struct BoardThreadView {
+pub struct ForumThreadView {
     /// What was fixed at creation.
-    pub header: crate::board::ThreadHeader,
+    pub header: crate::forum::ThreadHeader,
     /// Projected status.
-    pub status: crate::board::ThreadStatus,
+    pub status: crate::forum::ThreadStatus,
     /// Current owner, when claimed.
     pub claimed_by: Option<String>,
     /// Every post, in order.
-    pub posts: Vec<crate::board::Post>,
-    /// This host's board identity, so the page can tell which posts it actually
+    pub posts: Vec<crate::forum::Post>,
+    /// This host's forum identity, so the page can tell which posts it actually
     /// observed from the ones it only has another machine's account of.
     pub origin: String,
     /// Net score per post id. Computed here rather than in the page, so one
@@ -895,12 +895,12 @@ pub struct BoardThreadView {
     pub scores: std::collections::BTreeMap<String, i32>,
 }
 
-/// `GET /api/board` — threads, roster, and who has read a peer.
-async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
+/// `GET /api/forum` — threads, roster, and who has read a peer.
+async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
     let path = state.repo_path.clone();
     let view = blocking(move || {
         let (git, h5i_root) = open(&path)?;
-        let roster = crate::board::read_roster(&git);
+        let roster = crate::forum::read_roster(&git);
         let influenced: Vec<String> = roster
             .agents
             .values()
@@ -908,16 +908,16 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
                 e.box_id
                     .as_deref()
                     .and_then(|id| env::list(&h5i_root).into_iter().find(|m| m.id == id))
-                    .and_then(|m| crate::board_tender::peer_influence(&h5i_root, &m))
+                    .and_then(|m| crate::forum_tender::peer_influence(&h5i_root, &m))
                     .is_some()
             })
             .map(|e| e.agent.clone())
             .collect();
-        let threads = crate::board::list_threads(&git);
+        let threads = crate::forum::list_threads(&git);
         let previews = threads
             .iter()
             .filter_map(|t| {
-                let full = crate::board::read_thread(&git, &t.header.id).ok()?;
+                let full = crate::forum::read_thread(&git, &t.header.id).ok()?;
                 // The best *reply*, not the best post: a card already shows the
                 // opening, and quoting it back under itself says nothing.
                 let best = full
@@ -925,7 +925,7 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
                     .max_by_key(|p| full.score_of(&p.id))
                     .filter(|p| full.score_of(&p.id) > 0)
                     .cloned();
-                Some(BoardPreview {
+                Some(ForumPreview {
                     thread: t.header.id.clone(),
                     opening: full
                         .opening()
@@ -947,16 +947,16 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
                 })
             })
             .collect();
-        Some(BoardView {
+        Some(ForumView {
             threads,
-            closed: crate::board::list_closed(&git),
+            closed: crate::forum::list_closed(&git),
             roster: roster.agents.into_values().collect(),
             influenced,
             previews,
         })
     })
     .await;
-    Json(view.unwrap_or(BoardView {
+    Json(view.unwrap_or(ForumView {
         threads: Vec::new(),
         closed: Vec::new(),
         roster: Vec::new(),
@@ -965,8 +965,8 @@ async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
     }))
 }
 
-/// `GET /api/board/thread/:id` — one conversation.
-async fn api_board_thread(
+/// `GET /api/forum/thread/:id` — one conversation.
+async fn api_forum_thread(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Response {
@@ -975,8 +975,8 @@ async fn api_board_thread(
         let (git, h5i_root) = open(&path)?;
         // `read_thread` validates the id before it reaches a ref name, so a
         // path-shaped id is refused here rather than joined onto `refs/`.
-        let t = crate::board::read_thread(&git, &id).ok()?;
-        Some(BoardThreadView {
+        let t = crate::forum::read_thread(&git, &id).ok()?;
+        Some(ForumThreadView {
             status: t.status(),
             claimed_by: t.claimed_by().map(str::to_string),
             scores: t
@@ -986,7 +986,7 @@ async fn api_board_thread(
                 .collect(),
             header: t.header.clone(),
             posts: t.posts,
-            origin: crate::board::host_origin(&h5i_root).unwrap_or_default(),
+            origin: crate::forum::host_origin(&h5i_root).unwrap_or_default(),
         })
     })
     .await;
@@ -1232,8 +1232,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))
         .route("/api/box/:agent/:slug/browser/frame", get(api_browser_frame))
-        .route("/api/board", get(api_board))
-        .route("/api/board/thread/:id", get(api_board_thread))
+        .route("/api/forum", get(api_forum))
+        .route("/api/forum/thread/:id", get(api_forum_thread))
         .layer(axum::middleware::from_fn_with_state(state.clone(), gate))
         .with_state(state)
 }

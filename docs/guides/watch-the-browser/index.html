@@ -24,8 +24,8 @@
         "@type": "Organization",
         "name": "h5i"
       },
-      "datePublished": "2026-08-10",
-      "dateModified": "2026-08-10",
+      "datePublished": "2026-08-21",
+      "dateModified": "2026-08-21",
       "mainEntityOfPage": "https://h5i.dev/guides/watch-the-browser/"
     },
     {
@@ -94,7 +94,7 @@
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
 </nav><main class="article-wrap"><article class="post">
-<header><div class="post-eyebrow">Guide 04 / Browser &middot; 2026-08-10</div>
+<header><div class="post-eyebrow">Guide 04 / Browser &middot; 2026-08-21</div>
 <h1>Watch the page, then take the controls</h1><p class="post-deck">The browser belongs inside the same boundary as the code and dev server. You still need a way to see it—and a handoff that cannot turn a stale page reference into the wrong click.</p>
 <div class="post-meta"><span>9 min read</span><span>Dev server &middot; Viewer &middot; Control lock</span></div></header>
 
@@ -108,7 +108,7 @@ $ h5i box shell browser-demo</code></pre></div></div>
 <p>The <code>browser</code> profile adds a fresh browser profile, the control daemon, and the socket access that daemon requires. Browser state is scoped to this box.</p>
 <h2 id="serve">2. Start the app and browser in the same session</h2>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">inside the box</span></div>
-<div class="terminal-body"><pre><code>box$ npm run dev &
+<div class="terminal-body"><pre><code>box$ npm run dev &amp;
 box$ agent-browser stream enable
 box$ agent-browser open http://localhost:3000
 box$ agent-browser snapshot</code></pre></div></div>

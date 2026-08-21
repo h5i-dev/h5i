@@ -293,7 +293,7 @@ fn raw_path(env_dir: &Path, id: &str) -> PathBuf {
 /// byte exactly. Splitting on the invalid sequences is what keeps a credential
 /// from hiding behind one stray byte.
 ///
-/// `pub(crate)` for the board, whose attachment kinds are all text and which
+/// `pub(crate)` for the forum, whose attachment kinds are all text and which
 /// therefore meets this case only when a caller hands it something that is not.
 pub(crate) fn redact_binary(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(raw.len());

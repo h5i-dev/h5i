@@ -53,7 +53,7 @@ pub struct ExportSummary {
     /// latest-record semantics, matching the console. A reviewer applying
     /// this bundle should know the box did not run alone.
     pub fs_overlap: Vec<String>,
-    /// Board participants whose text was delivered into this box, if any.
+    /// Forum participants whose text was delivered into this box, if any.
     ///
     /// Not a judgement about that text. It answers the one question a reviewer
     /// has to settle before reading the patch: is this the box's own work, or
@@ -271,7 +271,7 @@ pub fn export_with_remote(
         egress_denied,
         redactions,
         fs_overlap,
-        peer_influenced_by: crate::board_tender::peer_influence(h5i_root, m)
+        peer_influenced_by: crate::forum_tender::peer_influence(h5i_root, m)
             .map(|i| i.senders)
             .unwrap_or_default(),
     };

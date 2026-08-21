@@ -24,8 +24,8 @@
         "@type": "Organization",
         "name": "h5i"
       },
-      "datePublished": "2026-08-10",
-      "dateModified": "2026-08-10",
+      "datePublished": "2026-08-21",
+      "dateModified": "2026-08-21",
       "mainEntityOfPage": "https://h5i.dev/guides/first-box/"
     },
     {
@@ -94,7 +94,7 @@
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
 </nav><main class="article-wrap"><article class="post">
-<header><div class="post-eyebrow">Guide 01 / Start here &middot; 2026-08-10</div>
+<header><div class="post-eyebrow">Guide 01 / Start here &middot; 2026-08-21</div>
 <h1>Take one coding task from prompt to reviewed patch</h1><p class="post-deck">The useful unit is not a sandboxed command. It is the whole coding session: repository, agent, shell, dependencies, dev server, and browser inside one disposable boundary.</p>
 <div class="post-meta"><span>9 min read</span><span>Install &middot; Create &middot; Export</span></div></header>
 
@@ -118,10 +118,10 @@ $ h5i box status first-box</code></pre></div></div>
 <p>Do not skip that output on the first run. Find the answers to four questions: which tier was selected, whether the box shares the host kernel, which paths are writable, and how network access is scoped. The point is to verify the claim before asking the agent to do useful work.</p>
 <div class="terminal"><div class="terminal-bar"><span class="terminal-path">what to record</span></div>
 <div class="terminal-body"><pre><code>box       first-box
-base      <frozen commit>
+base      &lt;frozen commit&gt;
 profile   agent-claude
-isolation <resolved tier>
-policy    sha256:<digest>
+isolation &lt;resolved tier&gt;
+policy    sha256:&lt;digest&gt;
 write     $WORK only</code></pre></div></div>
 <div class="callout warn"><strong>Use the runtime-specific profile.</strong> Choose <code>agent-claude</code> or <code>agent-codex</code>. A box should not receive two runtimes' configuration or credential routes.</div>
 <h2 id="work">3. Work inside the boundary</h2>

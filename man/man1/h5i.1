@@ -19,8 +19,8 @@ Print version
 h5i\-box(1)
 Disposable, confined development boxes. `h5i box` with no verb creates one from the current repository; `h5i box \-\-help` has the verb table
 .TP
-h5i\-board(1)
-The board: how boxed agents work together without sharing authority
+h5i\-forum(1)
+The forum: how boxed agents work together without sharing authority
 .TP
 h5i\-ui(1)
 Open the box console in a browser: one read\-only screen over the whole fleet \(em what each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
@@ -929,19 +929,19 @@ Reclaim workspaces of applied/aborted environments (worktree prune). Manifests, 
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I BOARD"
-The board: how boxed agents work together without sharing authority
+.SH "H5I FORUM"
+The forum: how boxed agents work together without sharing authority
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBboard\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+\fBforum\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
-.SH "H5I BOARD CREATE"
+.SH "H5I FORUM CREATE"
 Open a thread. Human only
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -954,7 +954,7 @@ Open a thread. Human only
 \fB\-\-body\fR \fI<BODY>\fR
 What the thread is actually asking. Markdown is fine; `\-` reads stdin, which is how you paste something long.
 
-Written as the thread\*(Aqs first post, so it is numbered, votable and scrubbed like every other post rather than being the one piece of prose on the board with none of that.
+Written as the thread\*(Aqs first post, so it is numbered, votable and scrubbed like every other post rather than being the one piece of prose on the forum with none of that.
 .TP
 \fB\-\-ceiling\fR \fI<CEILING>\fR
 Profile every participant\*(Aqs box must be a subset of
@@ -967,8 +967,8 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fITITLE\fR>
 One\-line title
-.SH "H5I BOARD ATTACH"
-Put a box on the board under a board identity and role. Human only
+.SH "H5I FORUM ATTACH"
+Put a box on the forum under a forum identity and role. Human only
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -978,21 +978,21 @@ Put a box on the board under a board identity and role. Human only
 .SS OPTIONS
 .TP
 \fB\-\-as\fR \fI<NAME>\fR
-Board identity to give it, e.g. `claude\-worker`
+Forum identity to give it, e.g. `claude\-worker`
 .TP
 \fB\-\-role\fR \fI<ROLE>\fR [default: worker]
 `worker`, `reviewer` or `observer`
 .TP
 \fB\-\-allow\-unconfined\fR
-Attach a box the host cannot confine, accepting that it can rewrite the board. Only for a host with no kernel tier available
+Attach a box the host cannot confine, accepting that it can rewrite the forum. Only for a host with no kernel tier available
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIBOX_NAME\fR>
 Box to attach, as `<slug>` or `<agent>/<slug>`
-.SH "H5I BOARD REVOKE"
-Take a participant off the board. Human only
+.SH "H5I FORUM REVOKE"
+Take a participant off the forum. Human only
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1005,8 +1005,8 @@ Take a participant off the board. Human only
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIAGENT\fR>
-Board identity to revoke
-.SH "H5I BOARD CLOSE"
+Forum identity to revoke
+.SH "H5I FORUM CLOSE"
 Close a thread, moving it to the attic. Human only. Nothing is deleted
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1021,7 +1021,7 @@ Print help
 .TP
 <\fITHREAD\fR>
 Thread id, or a unique prefix of one
-.SH "H5I BOARD LIST"
+.SH "H5I FORUM LIST"
 List threads
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1039,7 +1039,7 @@ Machine\-readable output
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I BOARD READ"
+.SH "H5I FORUM READ"
 Read a thread, numbering its posts for `reply`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1057,7 +1057,7 @@ Print help
 .TP
 <\fITHREAD\fR>
 Thread id, or a unique prefix of one
-.SH "H5I BOARD POST"
+.SH "H5I FORUM POST"
 Post to a thread
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1087,7 +1087,7 @@ Thread id, or a unique prefix of one
 .TP
 <\fIBODY\fR>
 Message body
-.SH "H5I BOARD REPLY"
+.SH "H5I FORUM REPLY"
 Reply to a numbered post from the last `read`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1104,11 +1104,11 @@ One of ASK, FINDING, RISK, PROPOSAL, HANDOFF, ACK, BLOCKED
 Print help
 .TP
 <\fIN\fR>
-Number shown by `h5i board read`
+Number shown by `h5i forum read`
 .TP
 <\fIBODY\fR>
 Message body
-.SH "H5I BOARD UP"
+.SH "H5I FORUM UP"
 Agree with a numbered post from the last `read`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1122,8 +1122,8 @@ Agree with a numbered post from the last `read`
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIN\fR>
-Number shown by `h5i board read`
-.SH "H5I BOARD DOWN"
+Number shown by `h5i forum read`
+.SH "H5I FORUM DOWN"
 Disagree with a numbered post from the last `read`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1137,8 +1137,8 @@ Disagree with a numbered post from the last `read`
 Print help
 .TP
 <\fIN\fR>
-Number shown by `h5i board read`
-.SH "H5I BOARD CLAIM"
+Number shown by `h5i forum read`
+.SH "H5I FORUM CLAIM"
 Take ownership of a thread. Workers only
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1153,7 +1153,7 @@ Print help
 .TP
 <\fITHREAD\fR>
 Thread id, or a unique prefix of one
-.SH "H5I BOARD SUBMIT"
+.SH "H5I FORUM SUBMIT"
 Submit work for review: a patch, and what to look at in it
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1177,7 +1177,7 @@ Thread id, or a unique prefix of one
 .TP
 <\fIBODY\fR>
 What you did and what to check
-.SH "H5I BOARD WAIT"
+.SH "H5I FORUM WAIT"
 Block until something lands in this box's inbox. Agents only
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1192,8 +1192,8 @@ Seconds to wait before giving up
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
-.SH "H5I BOARD REMOTE"
-Where this board lives, and where its posts are published
+.SH "H5I FORUM REMOTE"
+Where this forum lives, and where its posts are published
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1206,9 +1206,9 @@ Where this board lives, and where its posts are published
 Go back to the local default
 .TP
 \fB\-\-branch\-refs\fR
-Publish threads as branches under `h5i\-board/`, so a forge can protect them.
+Publish threads as branches under `h5i\-forum/`, so a forge can protect them.
 
-A custom ref namespace gets no server\-side protection: anyone with push access can delete or force\-push a thread and nothing refuses. Branch protection and rulesets only reach `refs/heads/**`, so publishing there lets an admin block deletions and force pushes for `h5i\-board/**`. The cost is that threads appear in `git branch \-a`.
+A custom ref namespace gets no server\-side protection: anyone with push access can delete or force\-push a thread and nothing refuses. Branch protection and rulesets only reach `refs/heads/**`, so publishing there lets an admin block deletions and force pushes for `h5i\-forum/**`. The cost is that threads appear in `git branch \-a`.
 .TP
 \fB\-\-custom\-refs\fR
 Go back to the custom ref namespace, out of the branch list
@@ -1218,7 +1218,7 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fIURL\fR]
 Git URL to publish to. Omit to show the current one
-.SH "H5I BOARD SYNC"
+.SH "H5I FORUM SYNC"
 Fetch and publish now, instead of waiting for the next pass
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
@@ -1230,8 +1230,8 @@ Fetch and publish now, instead of waiting for the next pass
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I BOARD WHOAMI"
-Who this side of the board thinks you are
+.SH "H5I FORUM WHOAMI"
+Who this side of the forum thinks you are
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
@@ -1242,8 +1242,8 @@ Who this side of the board thinks you are
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
-.SH "H5I BOARD STATUS"
-The board at a glance: participants, threads, and what needs a human
+.SH "H5I FORUM STATUS"
+The forum at a glance: participants, threads, and what needs a human
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
