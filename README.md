@@ -220,7 +220,7 @@ downgrades: an unsatisfiable request fails closed.
 | `workspace` | a separate git worktree, no confinement |
 | `process` | Landlock filesystem allowlist, seccomp deny-list, namespaces, rlimits |
 | `supervised` | all of the above, plus a private network namespace with an **nftables egress allowlist pinned to resolved IPs**, DNS pinned by hosts file, and a seccomp-notify socket gate |
-| `container` | rootless Podman, read-only rootfs, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
+| `container` | rootless Podman, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
 | `microvm` | a hardware-isolated guest with **its own kernel**, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images, with the egress allowlist evaluated **by the VM's network stack** |
 
 microvm is the strongest tier and the only one that does not share the host kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon), and an image; otherwise, it is refused, never downgraded.
@@ -246,8 +246,6 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 
 ## 5. Documentation
 
-- [ROADMAP.md](ROADMAP.md): where this is going and what was cut to get there; Part 6 covers the board design, measurements, and remaining trust assumptions
-- [scripts/board_experiment.sh](scripts/board_experiment.sh): the tmux harness used to run several real agents, one clone each, on one board
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
 - [CONTRIBUTING.md](CONTRIBUTING.md): we welcome contributions of any kind
