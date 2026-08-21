@@ -440,7 +440,7 @@
  * `.bd-head` is the host's line. `.bd-said` is the box's, and it is fenced on
  * the left for exactly as long as it takes a reader to notice that the fence
  * starts where the host's knowledge stops. */
-.bd-post { padding: 0.9em 1.2em; border-bottom: 1px solid var(--line); }
+.bd-post { padding: 0.9em 2.2em; border-bottom: 1px solid var(--line); }
 .bd-head {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.35em 0.6em;
   font-size: 0.9em;
@@ -480,9 +480,9 @@
  * stated. Just the title: the id, the state and the claimant are all on the
  * selected row in that list already, and a thread id means nothing to someone
  * looking at a picture. */
-.bd-thread { padding: 1em 1.2em 0.9em; border-bottom: 1px solid var(--line); }
+.bd-thread { padding: 1.15em 2.2em 1em; border-bottom: 1px solid var(--line); }
 .bd-title {
   margin: 0; color: var(--ink);
-  font-family: var(--sans); font-size: 1.35em; font-weight: 500;
-  letter-spacing: -0.01em; line-height: 1.3;
+  font-family: var(--sans); font-size: 1.5em; font-weight: 600;
+  letter-spacing: -0.015em; line-height: 1.3;
 }
