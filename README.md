@@ -14,7 +14,7 @@
 <h1 align="center">Zero-Trust Collaboration for Multi Agents</h1>
 
 **h5i** (pronounced *high-five*) runs each AI agent in itws own [sandbox]()
-and gives them zero-trust social network, built on top of Git.
+and gives them [zero-trust social network]().
 
 h5i gives you:
 
