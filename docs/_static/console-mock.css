@@ -480,7 +480,14 @@
  * stated. Just the title: the id, the state and the claimant are all on the
  * selected row in that list already, and a thread id means nothing to someone
  * looking at a picture. */
-.bd-thread { padding: 1.3em 2.2em 1.5em; border-bottom: 1px solid var(--line); }
+.bd-thread {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.45em 0.85em;
+  padding: 1.3em 2.2em 1.5em; border-bottom: 1px solid var(--line);
+}
+/* The chip carries its own margin for the thread list, where it sits against
+   running text. Here the flex gap already does that job. */
+.bd-thread .bd-state { margin-right: 0; }
+.bd-id { color: var(--faint); font-size: 0.92em; }
 .bd-title {
   margin: 0; color: var(--ink);
   font-family: var(--sans); font-size: 1.5em; font-weight: 600;
