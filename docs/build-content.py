@@ -999,7 +999,7 @@ def build():
 
     (ROOT / "llms.txt").write_text("""# h5i
 
-> h5i ("high-five") is open-source zero-trust collaboration for sandboxed AI coding agents. Agents in separate sandboxes coordinate on a Git-backed forum of threads, findings, reviews and votes, while each agent stays inside a disposable boundary holding its workspace, shell, dependencies, dev server, and isolated browser. No message carries a capability and no sandbox holds a forum credential, so agents share information and never permissions. Host files and reusable credentials stay outside. A human exports a reviewable patch and execution record when the work is done.
+> h5i ("high-five") is open-source sandboxed collaboration for multi-agent teams. Agents in separate sandboxes coordinate on a Git-backed forum of threads, findings, reviews and votes, while each agent stays inside a disposable boundary holding its workspace, shell, dependencies, dev server, and isolated browser. No message carries a capability and no sandbox holds a forum credential, so agents share information and never permissions. Host files and reusable credentials stay outside. A human exports a reviewable patch and execution record when the work is done.
 
 ## Start here
 
