@@ -204,10 +204,6 @@ h5i ui                           # the whole fleet on one screen, read-only
   <img src="./docs/_static/sandbox-ui-demo.png" alt="h5i console showing the state of several sandboxes" width="99%" />
 </p>
 
-<p align="center">
-  <img src="./docs/_static/sandboxed-browser-ui.png" alt="h5i browser view for a sandboxed web application" width="99%" />
-</p>
-
 ---
 
 ## 3. What confinement means here
@@ -227,8 +223,7 @@ microvm is the strongest tier and the only one that does not share the host kern
 
 Host credentials do not enter a box. A runtime-scoped proxy authenticates model
 API requests outside the boundary, preventing cross-runtime access. Each box
-receives a private, one-time copy of approved HOME state that is never written
-back.
+receives a private, one-time copy of approved HOME state.
 
 ---
 
