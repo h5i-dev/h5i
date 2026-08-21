@@ -1697,7 +1697,10 @@ fn flatten_onto_white(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, H
     }
 
     let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
-    for pixel in rgba[..expected].chunks_exact(4) {
+    // `as_chunks` rather than `chunks_exact`: the chunk size is a constant, so
+    // each pixel arrives as a `[u8; 4]` whose four indexes the compiler can
+    // bounds-check once instead of four times per pixel.
+    for pixel in rgba[..expected].as_chunks::<4>().0 {
         let backdrop = 255 - pixel[3];
         rgb.extend_from_slice(&[
             pixel[0].saturating_add(backdrop),

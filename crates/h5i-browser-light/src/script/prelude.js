@@ -4242,6 +4242,24 @@
   /// Getters rather than values, so the global follows the element if the page
   /// replaces it, and never a name `globalThis` already has: an element with
   /// `id="document"` must not be able to take `document` away from the page.
+  ///
+  /// The setter is not optional, and leaving it out was a quiet way to hand a
+  /// page the wrong value. A getter-only accessor swallows every assignment in
+  /// sloppy mode, so with `<div id="thing">` on the page, `var thing = [1,2,3]`
+  /// left `thing` as the element and `Array.isArray(thing)` false — the page's
+  /// own variable never took. A browser lets the page win: the named property
+  /// lives behind the window in the prototype chain, so any assignment creates
+  /// an own property that shadows it. Replacing the accessor with a plain data
+  /// property on first write is the same behaviour with the machinery this
+  /// engine has, and it is what the platform calls a [Replaceable] attribute.
+  ///
+  /// This also fixes a symptom that looked like something else entirely. A page
+  /// that did `var el = document.getElementById("el"); el.remove();` and then
+  /// read `el.parentNode` got a TypeError about converting null to an object —
+  /// not because `parentNode` was broken on a detached node, but because `el`
+  /// was still the *named access* getter, which stops resolving the moment the
+  /// element leaves the document. The variable, not the property, was the thing
+  /// that had gone.
   globalThis.__h5iInstallNamedAccess = function () {
     for (const id of api.queryAll("[id]", 0)) {
       const name = api.getAttr(id, "id");
@@ -4251,6 +4269,16 @@
         configurable: true,
         enumerable: false,
         get() { return wrap(api.query("#" + cssEscapeIdent(name), 0)); },
+        set(value) {
+          // Enumerable, because what the page has just created is an ordinary
+          // global and should behave like one from here on.
+          Object.defineProperty(globalThis, name, {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value,
+          });
+        },
       });
     }
   };

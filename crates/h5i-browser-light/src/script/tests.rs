@@ -2079,7 +2079,7 @@ fn scripts_run_in_document_order_inline_and_external_together() {
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
     let page = factory.from_html(
-        "<html><body><p id='out'></p>\
+        "<html><body><div id='out'></div>\
          <script>globalThis.order = ['first'];</script>\
          <script src='/mid.js'></script>\
          <script>order.push('last'); document.querySelector('#out').textContent = order.join(',');</script>\
@@ -4402,5 +4402,128 @@ fn a_generated_key_is_not_reported_as_a_missing_api() {
             .any(|(n, _)| n == "Element.scrollIntoViewIfNeeded2"),
         "{:?}",
         script.unsupported()
+    );
+}
+
+/// Setting `textContent` detaches the old children; it must not destroy them.
+///
+/// A page that holds a reference to a child and then overwrites its parent's
+/// text still holds a live node afterwards, and every reactive UI does exactly
+/// that: the framework keeps its own pointer into the tree. Destroying the
+/// child freed its id, and the next mutation naming that id indexed a dead slot
+/// and panicked inside the layout engine — a panic that was caught and reported
+/// as a *successful* mutation, so the page's model of the tree and the real
+/// tree drifted apart and the failure surfaced somewhere else entirely.
+#[test]
+fn overwriting_text_detaches_the_old_children_without_destroying_them() {
+    let (_page, broker) = run_page(
+        "<html><body><div id='host'><span id='kept'>old</span></div><div id='out'></div>\
+         <script>\
+           var child = document.getElementById('kept');\
+           var parent = document.getElementById('host');\
+           parent.textContent = 'replaced';\
+           var alive = child.textContent;\
+           child.remove();\
+           document.getElementById('out').textContent = \
+             parent.textContent + '|' + alive + '|' + (child.parentNode === null);\
+         </script></body></html>",
+    );
+    let _ = broker;
+    let rendered = _page.snapshot().render();
+    assert!(
+        rendered.contains("replaced|old|true"),
+        "the parent took its new text, the detached child stayed readable, and \
+         removing it afterwards left it unparented rather than panicking:\n{rendered}"
+    );
+}
+
+/// Removing a node twice is a quiet no-op, not a caught panic.
+///
+/// "Remove it if it is still there" is ordinary teardown code. The arena index
+/// behind `remove_node` is unchecked, so a stale id used to panic; the guard
+/// turned that into a reported error and an apparently successful call, which
+/// is the worst of the three possible outcomes.
+#[test]
+fn removing_an_already_removed_node_is_a_no_op() {
+    let (page, _broker) = run_page(
+        "<html><body><div id='host'><span id='gone'>x</span></div><div id='out'></div>\
+         <script>\
+           var doomed = document.getElementById('gone');\
+           doomed.remove();\
+           doomed.remove();\
+           document.getElementById('out').textContent = 'survived';\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("survived"),
+        "the second removal must not stop the script:\n{rendered}"
+    );
+}
+
+/// A page's own global wins over named access, as it does in a browser.
+///
+/// `<div id="thing">` exposes `window.thing`, and the page writing
+/// `var thing = [1,2,3]` must take that name back. The property was an
+/// accessor with no setter, so in sloppy mode the assignment was swallowed and
+/// the page read the element back out of its own variable — the quietest
+/// possible wrong answer, and one nothing in the page could detect.
+#[test]
+fn a_pages_own_variable_takes_a_name_back_from_named_access() {
+    let (page, _broker) = run_page(
+        "<html><body><div id='thing'>element</div><div id='report'></div>\
+         <script>\
+           var before = typeof thing;\
+           var thing = [1, 2, 3];\
+           document.getElementById('report').textContent = \
+             before + '|' + Array.isArray(thing) + '|' + thing.length;\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("object|true|3"),
+        "named access answers first, then the page's own value replaces it:\n{rendered}"
+    );
+}
+
+/// And a page that never assigns still gets the element.
+#[test]
+fn named_access_still_answers_when_the_page_does_not_take_the_name() {
+    let (page, _broker) = run_page(
+        "<html><body><div id='banner'>hello</div><div id='report'></div>\
+         <script>\
+           document.getElementById('report').textContent = banner.textContent;\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("hello"),
+        "the legacy global still resolves to the element:\n{rendered}"
+    );
+}
+
+/// Holding a node across its own removal keeps the node, not a stale lookup.
+///
+/// This is what the missing setter actually cost. A page doing
+/// `var el = document.getElementById("el"); el.remove(); el.parentNode` got a
+/// TypeError about converting null to an object, which reads as "parentNode is
+/// broken on a detached node". It was not: `el` was still the named-access
+/// getter, and that getter stops resolving the moment the element leaves the
+/// document, so the *variable* had gone rather than the property.
+#[test]
+fn a_variable_holding_a_node_survives_that_nodes_removal() {
+    let (page, _broker) = run_page(
+        "<html><body><div id='host'><span id='leaf'>x</span></div><div id='report'></div>\
+         <script>\
+           var leaf = document.getElementById('leaf');\
+           leaf.remove();\
+           document.getElementById('report').textContent = \
+             leaf.tagName + '|' + (leaf.parentNode === null) + '|' + leaf.isConnected;\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("SPAN|true|false"),
+        "the detached node is still readable through the page's own variable:\n{rendered}"
     );
 }

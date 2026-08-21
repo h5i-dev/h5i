@@ -835,6 +835,167 @@ async fn api_box(
     }
 }
 
+/// The board, as the console shows it.
+///
+/// Read-only like every other route here. The console watches the board and
+/// never posts to it: a surface that could post would be a second way onto the
+/// board with no box behind it, and the whole authority story rests on every
+/// post coming from a participant the host can name.
+#[derive(Serialize)]
+pub struct BoardView {
+    /// Open threads, newest activity first.
+    pub threads: Vec<crate::board::ThreadSummary>,
+    /// Threads a human has closed, newest activity first.
+    pub closed: Vec<crate::board::ThreadSummary>,
+    /// Everyone who has been on the board, revoked entries included.
+    pub roster: Vec<crate::board::RosterEntry>,
+    /// Per-participant state the roster does not carry: whether that box has
+    /// been shown a peer's text.
+    pub influenced: Vec<String>,
+    /// A preview of each open thread for the landing feed: the opening line of
+    /// its best-scored post, and who has spoken in it.
+    pub previews: Vec<BoardPreview>,
+}
+
+/// Enough of a thread to rank it and show why it is worth opening.
+#[derive(Serialize)]
+pub struct BoardPreview {
+    /// Thread this describes.
+    pub thread: String,
+    /// Best score any single post in it reached.
+    pub top_score: i32,
+    /// The opening of that post, already sanitised for display.
+    pub top_body: String,
+    /// Who wrote it.
+    pub top_sender: String,
+    /// The thread's own opening post, when it has one — the body the human
+    /// wrote with the title. A card leads with this, the way a feed leads with
+    /// the post rather than with its best reply.
+    pub opening: String,
+    /// Distinct senders in the thread, in first-post order.
+    pub voices: Vec<String>,
+}
+
+/// One thread in full, for the conversation pane.
+#[derive(Serialize)]
+pub struct BoardThreadView {
+    /// What was fixed at creation.
+    pub header: crate::board::ThreadHeader,
+    /// Projected status.
+    pub status: crate::board::ThreadStatus,
+    /// Current owner, when claimed.
+    pub claimed_by: Option<String>,
+    /// Every post, in order.
+    pub posts: Vec<crate::board::Post>,
+    /// This host's board identity, so the page can tell which posts it actually
+    /// observed from the ones it only has another machine's account of.
+    pub origin: String,
+    /// Net score per post id. Computed here rather than in the page, so one
+    /// projection defines what a score is.
+    pub scores: std::collections::BTreeMap<String, i32>,
+}
+
+/// `GET /api/board` — threads, roster, and who has read a peer.
+async fn api_board(State(state): State<Arc<AppState>>) -> Json<BoardView> {
+    let path = state.repo_path.clone();
+    let view = blocking(move || {
+        let (git, h5i_root) = open(&path)?;
+        let roster = crate::board::read_roster(&git);
+        let influenced: Vec<String> = roster
+            .agents
+            .values()
+            .filter(|e| {
+                e.box_id
+                    .as_deref()
+                    .and_then(|id| env::list(&h5i_root).into_iter().find(|m| m.id == id))
+                    .and_then(|m| crate::board_tender::peer_influence(&h5i_root, &m))
+                    .is_some()
+            })
+            .map(|e| e.agent.clone())
+            .collect();
+        let threads = crate::board::list_threads(&git);
+        let previews = threads
+            .iter()
+            .filter_map(|t| {
+                let full = crate::board::read_thread(&git, &t.header.id).ok()?;
+                // The best *reply*, not the best post: a card already shows the
+                // opening, and quoting it back under itself says nothing.
+                let best = full
+                    .replies()
+                    .max_by_key(|p| full.score_of(&p.id))
+                    .filter(|p| full.score_of(&p.id) > 0)
+                    .cloned();
+                Some(BoardPreview {
+                    thread: t.header.id.clone(),
+                    opening: full
+                        .opening()
+                        .map(|p| p.display_body())
+                        .unwrap_or_default()
+                        .chars()
+                        .take(400)
+                        .collect(),
+                    top_score: full.top_score(),
+                    top_body: best
+                        .as_ref()
+                        .map(|p| p.display_body())
+                        .unwrap_or_default()
+                        .chars()
+                        .take(240)
+                        .collect(),
+                    top_sender: best.map(|p| p.sender).unwrap_or_default(),
+                    voices: full.participants().into_iter().map(str::to_string).collect(),
+                })
+            })
+            .collect();
+        Some(BoardView {
+            threads,
+            closed: crate::board::list_closed(&git),
+            roster: roster.agents.into_values().collect(),
+            influenced,
+            previews,
+        })
+    })
+    .await;
+    Json(view.unwrap_or(BoardView {
+        threads: Vec::new(),
+        closed: Vec::new(),
+        roster: Vec::new(),
+        influenced: Vec::new(),
+        previews: Vec::new(),
+    }))
+}
+
+/// `GET /api/board/thread/:id` — one conversation.
+async fn api_board_thread(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    let path = state.repo_path.clone();
+    let view = blocking(move || {
+        let (git, h5i_root) = open(&path)?;
+        // `read_thread` validates the id before it reaches a ref name, so a
+        // path-shaped id is refused here rather than joined onto `refs/`.
+        let t = crate::board::read_thread(&git, &id).ok()?;
+        Some(BoardThreadView {
+            status: t.status(),
+            claimed_by: t.claimed_by().map(str::to_string),
+            scores: t
+                .posts
+                .iter()
+                .map(|p| (p.id.clone(), t.score_of(&p.id)))
+                .collect(),
+            header: t.header.clone(),
+            posts: t.posts,
+            origin: crate::board::host_origin(&h5i_root).unwrap_or_default(),
+        })
+    })
+    .await;
+    match view {
+        Some(v) => Json(v).into_response(),
+        None => (StatusCode::NOT_FOUND, "no such thread").into_response(),
+    }
+}
+
 /// `GET /api/box/:agent/:slug/receipts/:id` — one receipt, rendered exactly as
 /// `h5i box inspect` renders it (which refuses ids belonging to another box).
 async fn api_receipt(
@@ -1071,6 +1232,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/box/:agent/:slug/receipts/:id", get(api_receipt))
         .route("/api/box/:agent/:slug/browser", get(api_browser))
         .route("/api/box/:agent/:slug/browser/frame", get(api_browser_frame))
+        .route("/api/board", get(api_board))
+        .route("/api/board/thread/:id", get(api_board_thread))
         .layer(axum::middleware::from_fn_with_state(state.clone(), gate))
         .with_state(state)
 }

@@ -123,6 +123,26 @@ fn preference_rank(path: &Path) -> u32 {
             return index as u32;
         }
     }
+    // An emoji face, ranked ahead of the weight and slant variants below.
+    //
+    // Measured, not guessed: on this Debian host the scan finds 817 files, the
+    // seventeen DejaVu bold/italic/condensed variants fill ranks 100-105, and
+    // `NotoColorEmoji.ttf` came out twenty-fifth against a cap of twenty-four —
+    // one slot short, which is why every emoji on every page was a tofu box on
+    // a machine that had the font installed the whole time.
+    //
+    // Ahead of them is the right call rather than a bigger cap: an oblique
+    // DejaVu is a nicety the shaper can synthesise, and an emoji face is the
+    // only cover for a range no other font on the system has at all. Coverage
+    // beats weight variants when the budget is the thing being spent.
+    //
+    // It still never becomes body text: it is behind all thirteen regular text
+    // faces here, and a bitmap-only face is ordered behind every drawable one
+    // when the families are registered — see `has_outlines`.
+    if name.contains("emoji") || name.contains("symbola") {
+        return 50;
+    }
+
     for (index, candidate) in preferred.iter().enumerate() {
         if name.starts_with(candidate) {
             return 100 + index as u32;
@@ -134,6 +154,61 @@ fn preference_rank(path: &Path) -> u32 {
         return 500;
     }
     1000
+}
+
+/// Whether a face carries glyph outlines, as opposed to only bitmaps.
+///
+/// This matters because of one specific, silent, and very confusing failure.
+/// `NotoColorEmoji.ttf` — the emoji font on essentially every Linux desktop —
+/// has `CBDT`/`CBLC` colour bitmaps and **no `glyf` table**, so a painter that
+/// draws outlines can draw nothing from it. That alone would be harmless: an
+/// emoji nobody can draw is a tofu box either way.
+///
+/// What is not harmless is its `cmap`. To support keycap sequences (`1️⃣`) the
+/// font claims `space`, `#`, `*` and the digits `0`-`9`. Put it in front of the
+/// text faces and it wins those characters, draws none of them, and reports
+/// each one's advance as a full emoji square. The page loses every number and
+/// every word space, and the text that remains is spread across the line. It
+/// reads as a layout engine that has broken, not as a missing font.
+///
+/// So a bitmap-only face is registered — it may still be the only cover for
+/// some codepoint, and it starts working for free the day the painter learns
+/// colour glyphs — but it is ordered behind every face that can actually draw.
+///
+/// Unparseable input answers `true`. Being unsure is not a reason to demote a
+/// font: the cost of a wrong `false` is the bug above, and the cost of a wrong
+/// `true` is the ordering we already had.
+fn has_outlines(bytes: &[u8]) -> bool {
+    fn tables_at(bytes: &[u8], base: usize) -> Option<bool> {
+        let count = u16::from_be_bytes(bytes.get(base + 4..base + 6)?.try_into().ok()?) as usize;
+        let mut outline = false;
+        let mut bitmap = false;
+        for i in 0..count {
+            let at = base + 12 + 16 * i;
+            match bytes.get(at..at + 4)? {
+                b"glyf" | b"CFF " | b"CFF2" => outline = true,
+                b"CBDT" | b"sbix" | b"EBDT" => bitmap = true,
+                _ => {}
+            }
+        }
+        // Only a face that has bitmaps *and* no outlines is the problem case.
+        // A face with neither is something else entirely and is left alone.
+        Some(outline || !bitmap)
+    }
+
+    let Some(tag) = bytes.get(0..4) else {
+        return true;
+    };
+    if tag == b"ttcf" {
+        // A collection: judge it by its first face, which is the one a
+        // single-family claim would come from anyway.
+        let Some(raw) = bytes.get(12..16) else {
+            return true;
+        };
+        let first = u32::from_be_bytes(raw.try_into().unwrap_or([0; 4])) as usize;
+        return tables_at(bytes, first).unwrap_or(true);
+    }
+    tables_at(bytes, 0).unwrap_or(true)
 }
 
 /// Walk a directory tree collecting font files. Depth-limited because a font
@@ -196,23 +271,64 @@ pub fn load(explicit: &[PathBuf], dirs: &[PathBuf], limit: Option<usize>) -> Fon
         system_fonts: false,
     });
 
+    // Two lists, joined at the end: a face that cannot draw an outline goes
+    // behind every face that can, whatever order it was named in. `--font-file`
+    // still means "register this" — it just no longer means "and let it capture
+    // the digits". See `has_outlines`.
     let mut families = Vec::new();
+    let mut bitmap_only = Vec::new();
+    let mut emoji = Vec::new();
     let mut registered_paths = Vec::new();
     for path in chosen {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
+        let drawable = has_outlines(&bytes);
+        let is_emoji = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.to_ascii_lowercase().contains("emoji"));
         let blob = Blob::new(Arc::new(bytes) as Arc<dyn AsRef<[u8]> + Send + Sync>);
         let added = collection.register_fonts(blob, None);
         if added.is_empty() {
             continue;
         }
+        let list = if drawable {
+            &mut families
+        } else {
+            &mut bitmap_only
+        };
         for (family_id, _) in added {
-            if !families.contains(&family_id) {
-                families.push(family_id);
+            if !list.contains(&family_id) {
+                list.push(family_id);
+            }
+            if is_emoji && !emoji.contains(&family_id) {
+                emoji.push(family_id);
             }
         }
         registered_paths.push(path);
+    }
+    families.retain(|id| !bitmap_only.contains(id));
+    families.extend(bitmap_only.iter().copied());
+
+    // Emoji is a query of its own, and it is the one that was going unanswered.
+    // Parley appends `GenericFamily::Emoji` to the candidate list for any
+    // cluster it has identified as emoji, ahead of whatever the stylesheet
+    // asked for. With nothing mapped to that generic the appended family
+    // contributed no candidates at all, so the search fell back to the Latin
+    // faces, found no coverage in any of them, and drew `.notdef`.
+    //
+    // Mapping only the emoji faces, rather than every family the way the
+    // generics below do: this generic exists to answer "which font draws a
+    // pictograph", and listing DejaVu under it would answer with a face whose
+    // honest reply is no.
+    let emoji_families: Vec<_> = emoji
+        .iter()
+        .filter(|id| families.contains(id) || bitmap_only.contains(id))
+        .copied()
+        .collect();
+    if !emoji_families.is_empty() {
+        collection.set_generic_families(GenericFamily::Emoji, emoji_families.into_iter());
     }
 
     // Without this, every `font-family: sans-serif` in every stylesheet
@@ -269,6 +385,82 @@ mod tests {
     }
 
     #[test]
+    fn a_colour_bitmap_face_is_not_treated_as_drawable() {
+        // The real thing, because the point of this check is a real font's real
+        // table set — a synthetic header would only test the parser.
+        let noto = Path::new("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf");
+        let Ok(bytes) = std::fs::read(noto) else {
+            // Not installed here. Skipping is right: this asserts about a file
+            // the host may not have, and inventing one would assert nothing.
+            return;
+        };
+        assert!(
+            !has_outlines(&bytes),
+            "NotoColorEmoji has CBDT and no glyf; letting it rank as drawable \
+             puts it in front of the text faces, where it captures the digits \
+             and the space and draws neither"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_text_face_is_drawable() {
+        for candidate in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ] {
+            if let Ok(bytes) = std::fs::read(candidate) {
+                assert!(has_outlines(&bytes), "{candidate} has outlines");
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn garbage_is_drawable_because_unsure_must_not_demote() {
+        assert!(has_outlines(b""));
+        assert!(has_outlines(b"not a font at all"));
+    }
+
+    #[test]
+    fn an_emoji_face_outranks_the_weight_variants() {
+        // The regression this pins is an off-by-one in a budget, not a
+        // preference. Ranked after the DejaVu obliques, `NotoColorEmoji` came
+        // twenty-fifth of 817 against a cap of twenty-four and was never
+        // registered — a tofu box on every page, on a host that had the font.
+        let emoji = preference_rank(Path::new("NotoColorEmoji.ttf"));
+        let oblique = preference_rank(Path::new("DejaVuSans-Oblique.ttf"));
+        let sans = preference_rank(Path::new("DejaVuSans.ttf"));
+        assert!(
+            emoji < oblique,
+            "a synthesisable slant must not outrank the only cover for a range"
+        );
+        assert!(sans < emoji, "and it is still never the body text face");
+    }
+
+    #[test]
+    fn the_default_scan_reaches_an_emoji_face() {
+        // The end-to-end version of the rank test: whatever this host has, if
+        // it has an emoji font at all then the real scan with the real cap must
+        // register it. Ranking it correctly is worthless if the budget still
+        // runs out first.
+        let dirs = default_font_dirs();
+        let mut all = Vec::new();
+        for dir in &dirs {
+            collect_font_files(dir, 0, &mut all);
+        }
+        let named = |p: &PathBuf| p.to_string_lossy().to_lowercase().contains("emoji");
+        if !all.iter().any(named) {
+            return; // no emoji font installed; nothing to assert
+        }
+        let setup = load(&[], &dirs, None);
+        assert!(
+            setup.sources.iter().any(named),
+            "an emoji font is installed but the scan did not reach it: {:?}",
+            setup.sources
+        );
+    }
+
+    #[test]
     fn only_font_extensions_are_collected() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("real.ttf"), b"not really a font").unwrap();
@@ -295,3 +487,4 @@ mod tests {
         assert!(setup.sources.is_empty());
     }
 }
+

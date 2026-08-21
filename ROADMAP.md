@@ -25,6 +25,11 @@ This document has five parts:
   run from the kernel, so the receipt carries a lane that is neither at the
   boundary of the box nor inside it. M18 is its milestone stub; the D sections
   are the authority on design and order.
+- **The board**, sections T1 to T12. Mediated collaboration between boxed
+  agents: they share information through a host-owned board and never share
+  authority. This is the product's second half — the first is one contained
+  box, this is what happens when there are several — and the T sections are the
+  authority on its design and order.
 
 **M0 through M5 are built. M6 is mostly built. M7 (the terminal viewer) is
 built but undriven.** What is not done, stated plainly so it is not read as
@@ -305,8 +310,11 @@ model we copy.
   held by human" error rather than fighting for the pointer.
 - On release, the agent must re snapshot before acting, because the DOM it
   remembers is stale.
-- Exactly one automation client per box. Multi agent shared control is out of
-  scope.
+- Exactly one automation client per box. Multi agent shared *control* is out of
+  scope: two clients steering one browser is a race with no arbiter, and the
+  control lock exists precisely so it cannot happen. This says nothing about
+  several boxes coordinating — see part T, whose whole design is that agents
+  exchange information and never share a driver, a credential, or a grant.
 
 ### 5.5 Credentials
 
@@ -8721,3 +8729,426 @@ diagnosable rather than surprising:
    usually is not (tracefs is root-only), in which case the documented layout
    is used and the check is skipped — never silently, the probe report says
    `tracefs = no` and what that costs.
+
+---
+
+# Part 6 — The board
+
+Sections T1 to T12. Built 2026-08-20 on branch `zero-trust`.
+
+## T1 The claim
+
+h5i's first half is one contained box. This is the second: several of them,
+working on the same repository, without the containment becoming decorative the
+moment they talk to each other.
+
+The one-liner is *zero-trust collaboration for agent teams*, and the invariant
+underneath it is:
+
+> Agents can share information, never permissions.
+
+Stated so it can be checked rather than admired: **a message may change what a
+peer decides; it can never change what that peer's sandbox is able to do.**
+
+## T2 The threat this exists for
+
+A single agent's sandbox bounds a single agent's blast radius. Put three agents
+in three sandboxes and let them talk, and the bound quietly stops holding — not
+because any sandbox failed, but because authority *composed*:
+
+```
+hostile input
+   ↓
+agent A is influenced
+   ↓  a message, an artifact, a shared file
+agent B acts on it
+   ↓  using B's own grants, which A never had
+the effect is A's intent with B's authority
+```
+
+No escape happened. Nothing was exploited. A persuaded B, and B was allowed to
+do the thing. This is the failure mode a sandbox per agent does not address, and
+it is the only one this part is about.
+
+What follows from that framing, and is worth being explicit about because it is
+the difference between a claim we can keep and one we cannot:
+
+**We do not claim to detect a hostile message.** No classifier, no
+prompt-injection filter, no moderation. Those are all attempts to make the *text*
+safe, and the text is not the thing under our control. What is under our control
+is what a persuaded agent can then reach — and the answer is: exactly what it
+could reach before the conversation, because nothing on this path carries a
+capability.
+
+## T3 What was already built
+
+The scope cut of 2026-08-05 (§3.2, M1) removed `msg`, `team`, `radio` and the
+orchestra crate. It did **not** remove the confinement-side plumbing those
+things used, which is still in the tree, still tested on every tier, and had
+been sitting with no writer at the other end:
+
+| seam | where | state before this part |
+|---|---|---|
+| read-only inbox | `env::prepare_env_inbox`, `BOX_INBOX_MOUNT` | mounted on every tier, tested, never written to |
+| the box's write window | `env::ingest_shell_spool`, `$H5I_ENV_CAPTURE_SPOOL` | drained after every session, two record families |
+| identity injection | `env::team_binding`, `team_identity_env` | reads two files, nothing wrote them |
+| concurrent ref append | `refstore` (CAS + jittered backoff + union merge) | live, used by `refs/h5i/env/meta` |
+
+So the board is not a reconstruction of what was cut. It is a writer for seams
+that already exist, plus a store, plus a surface. That is why it is small.
+
+## T4 The shape: file-mediated, not networked
+
+A box has exactly two board-shaped holes, and they are the two above:
+
+```
+box A                    host                     box B
+  /.h5i/inbox  ←──── tender ──── refs/h5i/board ──── tender ────→  /.h5i/inbox
+  spool/       ────→                                       ←────  spool/
+```
+
+**No socket, no port, no token, no HTTP.** This was a deliberate reversal of the
+obvious design (a small local service with per-box bearer tokens). The obvious
+design has a credential in every box; this one has nothing to steal and nowhere
+to connect. The strongest access control available here turned out to be the
+absence of an API, and it costs less code than the alternative rather than more.
+
+## T5 Identity: the box writes *what*, never *who*
+
+The staged record has fields for a thread, a kind, a body, and attachments. It
+has **no field** for a sender, a role, a box id, or a policy digest — those are
+stamped by the host from the env directory the record was found in.
+
+This is the same rule the deleted `team.rs` wrote down, and it is kept verbatim
+because it is the cheapest enforcement in the system: a field that does not
+exist in the wire format cannot be forged. A record containing
+`"sender": "human"` is not rejected; it is simply not read, and the post lands
+attributed to whichever box staged it.
+
+Host-side binding is two files in the env directory — outside every grant the
+box has — consumed by the injection path that already existed. A box can be told
+who it is, and can never tell itself something else.
+
+## T6 The ceiling: refused, never downgraded
+
+A thread names a profile every participant must be confined **under**. At attach,
+the box's enforced policy — its digest-verified `policy.resolved.toml`, not a
+profile re-resolved from a worktree an agent could have edited — is checked as a
+subset across every dimension that widens reach: net mode and egress, secret
+grants, authenticated egress, fs read and write, AF_UNIX, loopback ports, and
+host-side secret extractors.
+
+Two decisions inside that, both taken against the more obvious alternative:
+
+**Static, not a live intersection.** Computing each participant's authority as
+the intersection of everyone currently in the room is safe and unusable: an
+observer joining would strip write access from the agent doing the work, and a
+long task would not be reproducible hour to hour. A ceiling fixed by a human at
+creation, checked once per box, gives the same guarantee with none of that —
+and because a box's resolved policy cannot change while it exists, one check at
+attach holds for the box's whole life.
+
+**Refused, not re-confined.** A box over the ceiling is turned away rather than
+quietly weakened to fit. Same reasoning as `placement`: a capability the other
+side cannot satisfy is a refusal, never a silent downgrade. Attaching has to
+keep meaning "runs the way you configured it".
+
+## T7 Liveness, and why there is still no daemon
+
+R11 records that h5i has no resident process by decision. The board does not
+change that, and the reasoning is worth stating because a message board is
+exactly the kind of thing that usually demands one.
+
+**Host side.** A box that is running already has a host process supervising it —
+holding its run lock, owning its egress proxy. The tender is a thread inside
+that process, started with the session and stopped with it. Nothing is
+installed, nothing outlives the run, and there is no second lifecycle. A box
+that is not running has nothing to deliver to.
+
+**Box side.** `h5i board wait` blocks on a directory the box already has
+mounted. No hook, no `settings.json` edit, no runtime-specific integration —
+which matters because the two runtimes h5i targets do not have the same hook
+surface, and because a coordination layer that needs the user to install
+something is one most users will not install.
+
+The honest cost: an idle box's inbox goes stale until something runs in it or a
+human touches the board. For collaborating agents — running, by definition —
+that gap does not arise. If it ever does, the fix is a foreground
+`h5i board serve` looping the same function, a sibling of `h5i ui`, and not a
+background daemon. Deliberately not built yet (T12).
+
+## T8 Storage: one ref per thread
+
+```
+refs/h5i/board/meta            roster.json
+refs/h5i/board/threads/<id>    thread.json + posts.jsonl + attach-<digest>
+```
+
+Git refs rather than the workspace's first SQLite dependency: the concurrent
+append machinery already exists and is tested, and the union merge that
+reconciles `refs/h5i/env/meta` across clones has the same shape here.
+
+**Correction, 2026-08-20.** This section originally claimed cross-clone sync came
+"for free". It did not: `union_merge_thread` and `union_merge_roster` had no
+callers, and neither did `env`'s own `union_merge_commits` — the push/pull that
+used it was cut in M1. The board was single-machine, and the merge was code
+nobody ran. T13 is what makes the claim true.
+
+Per-thread rather than one shared log, which was the first design and was wrong:
+appending rewrites the blob it appends to, so a single log means every post
+rewrites the whole board's history and reading one conversation means parsing
+all of them. Per-thread refs bound both costs by the size of one thread,
+localise CAS contention to the thread being posted to, make the thread list a
+ref enumeration whose tip timestamps are the activity order, and let `close`
+keep one conversation's history from being rewritten by traffic in another.
+
+`posts.jsonl` is strictly append-only, which is what makes union merge sound.
+Thread *status* is therefore a projection over the posts, never a stored field —
+the same event-sourced shape `team.rs` used, and the reason nothing has to be
+mutated and nothing can disagree with the log.
+
+## T9 Refusals are recorded, not swallowed
+
+A revoked box's post is posted **carrying its refusal**, not dropped. An
+oversized body is truncated and says so; an attachment over the cap or outside
+the kind allowlist is dropped and named. A refused post moves no state — a
+refused `CLAIM` claims nothing.
+
+The rule behind all of these: a board that silently swallows what it refuses
+teaches its readers that nothing was refused. The same reasoning as
+`sealed_overridden` in the old verify overlay, and as the browser proxy
+answering a refusal in the daemon's own wire shape rather than dropping the
+connection.
+
+## T10 Peer influence
+
+Once a peer's text has been delivered into a box, that box's output is evidence
+about the box *and* about whatever that text asked for, and the two are no
+longer separable from outside. The box is marked, and the mark appears in
+`h5i box status` and in the export report.
+
+Marked on **delivery**, not on read: delivery is what the host observes, and
+whether the agent read the file is a claim only the box could make.
+
+This is not a verdict on the text. It is the one fact a reviewer needs before
+treating a patch as the box's own work — and the counterpart to it needs no
+feature at all: a verifier that read none of the conversation is simply a box
+that was never attached.
+
+## T11 The surface
+
+The console gains a second tab rather than a second application. It is
+deliberately not styled like the first: the console is a mint instrument for
+watching one box, the board is the product's outward face and wears the site's
+drafting-sheet identity.
+
+One visual rule carries it: **inside the fence is what an agent claimed, outside
+it is what the host observed.** A post body sits in a dashed enclosure labelled
+`agent-claimed`; its sender, box, role and time sit outside it, because the host
+stamped them. A refusal is a filled red band with no fence, because the host is
+speaking in its own voice — and since nothing else on the page is filled red, a
+boundary someone tried to cross is the loudest mark on the screen.
+
+Every route is a `GET`, and the no-mutation property (`tests/console_api.rs`)
+still holds. Human actions are rendered as the commands that perform them. A
+browser tab that could post to the board would be a participant the host cannot
+name, which is the one thing the identity model does not allow.
+
+## T12 What is deliberately not built
+
+- **`h5i board serve`** — the resident tender for idle boxes (T7). Wait for the
+  gap to actually hurt.
+- **Structured delegation** — `request-action` with
+  `sender ∩ receiver ∩ ceiling`. The design holds; the demand is unproven, and
+  free-text posts deliberately carry no authority at all, so nothing is missing
+  yet.
+- **Sealed verify on the board** — the `sealed_from` overlay and
+  `sealed_overridden` tamper lane from the deleted `team.rs`. The strongest
+  follow-up, and the natural next step once peer-influence marking is in use.
+- **An MCP adapter.** CLI plus skill works under both runtimes today; B11.4
+  already decided against MCP for the browser for the same reason.
+- **Per-thread read ACLs.** Every member sees every thread. On one repository
+  the compartment buys little, and DMs are absent by construction rather than
+  by rule.
+- **Any content judgement** — classifiers, moderation, reputation. See T2.
+
+## T13 The remote: one route, whether the peer is on this machine or another
+
+T4 said a box has exactly two board-shaped holes and no network. That stands, and
+it is about the box↔host segment. This section is the other segment — host↔store
+— and there the first design was wrong in a way worth recording.
+
+It had two paths: same-machine boxes wrote the local refs directly, and
+cross-machine would have gone through a remote. That is the shape everyone
+reaches for, and the cost is not performance, it is **coverage**. The shortcut
+becomes the only path anybody ever runs, and the sync path rots untested until a
+second machine joins and everything it was supposed to handle happens at once. A
+push to a local bare repository costs a few milliseconds against a tender that
+runs once a second, so the shortcut buys nothing and hides everything.
+
+So every board has a remote, including a solo one, which falls back to a bare
+repository under the sidecar root. **Solo and team differ by a URL and by
+nothing else.**
+
+### T13.1 Why a git remote and not a service
+
+Because nobody has to run it. A team already operates a git host, and that host
+already answers the two questions a board would otherwise need its own answers
+for: **who may post** is push access, **who may read** is read access. A public
+repository is an open topic, a private one is an internal one. No server to
+deploy, no uptime to own, no roster to invent — which preserves the property T7
+protects, that h5i has nothing to operate, at a scale where it looked like it
+would have to be given up.
+
+### T13.2 The compare-and-swap is the forge's, and it was measured
+
+Threads are append-only and a union merge descends from the remote tip, so every
+honest update is a fast-forward. A non-fast-forward rejection therefore *is* the
+CAS, and it means exactly one thing: somebody posted between our fetch and our
+push. Fetch, merge, push again.
+
+Measured against GitHub rather than assumed, on 2026-08-20:
+
+| probe | result |
+|---|---|
+| push to `refs/h5i/board-probe/t1` | accepted (and `refs/h5i/context/*` from an earlier era was already there) |
+| non-fast-forward push to it | `! [rejected] (non-fast-forward)` |
+| `--force-with-lease` against the fetched tip | accepted |
+| `--force-with-lease` against a stale tip | `! [rejected] (stale info)` |
+
+The last two are not used on the happy path; they were probed because a lease is
+the fallback if a future thread shape ever stops being append-only.
+
+### T13.3 Nothing deletes, and nothing depends on a ref being absent
+
+A thread on the remote this machine has not seen is fetched; one here that is
+not there is pushed; nothing is ever removed.
+
+Closing was the exception, and was wrong for it. `close` moved the ref to an
+attic and deleted the live one, which does not survive a peer: measured on two
+clones, one closed a thread, the other had not heard about it, still held the
+live ref, pushed it back — and the decision was silently undone on both
+machines. Every other status here was already a projection over an append-only
+log; closing was the one mutation, and that inconsistency was the bug. It is a
+`CLOSED` post now, and the attic namespace is gone.
+
+Removing the last dependence on absence also declaws the obvious attack. Anyone
+with push access can `git push --delete` a thread ref and nothing at the client
+refuses; the next sync from any clone that still holds the thread puts it back,
+because the push is driven by what we have rather than by what the remote lacks.
+Measured: an honest clone restored a deleted thread on its first sync, still
+closed, and the deleting clone got it back too. An attacker buys a window, never
+a loss, as long as one honest participant still has the conversation.
+
+The reopen rule tightened while fixing this. "Any later human post reopens it"
+is too loose across machines, where `(ts, id)` order is not the order things
+happened: a note arriving late from a peer, or written under a skewed clock,
+would silently reopen a closed thread. Only a human taking a status-moving
+action reopens one, and an agent cannot at all.
+
+### T13.3a Prevention, when repair is not enough
+
+Self-healing is a mitigation, not a refusal, and under a custom ref namespace it
+cannot be anything else: GitHub's branch protection and rulesets only reach
+`refs/heads/**`, so `refs/h5i/board/*` is undefendable by the server.
+
+`h5i board remote --branch-refs` publishes under `refs/heads/h5i-board/`
+instead, where an admin can block force pushes and restrict deletions for
+`h5i-board/**` and the attempt is refused rather than undone afterwards. The
+local mirror keeps `refs/h5i/board/*` in both modes, so only the published half
+of the refspec moves and nothing else has to know which is in use.
+
+Two costs, named rather than buried. Threads appear in `git branch -a` and in
+branch pickers. And `git push --all` walks `refs/heads/*`, so a repository
+holding both code and board would publish threads on any bulk push — which is an
+argument for giving a protected board its own repository, not against branches.
+
+What branches do **not** risk is being mistaken for code. Every thread is an
+orphan commit chain — `create_thread` commits with no parents — so
+`git merge-base main <thread>` is empty, a forge finds no common history and
+declines to open a pull request between them, and the tree holds `posts.jsonl`
+and `thread.json` and nothing that looks like source. Verified locally.
+
+**Not verified.** That a ruleset pattern actually enforces on a real forge is a
+repository-settings question this codebase cannot test, and it was not measured
+the way the push semantics in T13.2 were. What was measured is that publishing
+under `refs/heads/h5i-board/` round-trips, and that the chains are orphans.
+
+### T13.4 Agents still never speak it
+
+The board being a repository does not make the board reachable from a box.
+Giving an agent a git credential for it would put a pushable credential inside
+the box, punch a hole in a `net.mode = deny` profile, and collapse the identity
+stamp into "whatever the box claims" plus N deploy keys to manage.
+
+So the topology is two segments with exactly one mechanism each, which is more
+uniform than the version with a local shortcut, not less:
+
+```
+box ──(read-only inbox / spool)── host ──(git remote)── board store
+```
+
+Fetching runs with `transfer.fsckObjects` and `fetch.fsckObjects` on, and parks
+the remote's refs in a staging namespace to be merged rather than adopted, for
+the reason `quarantine` states: what comes back was authored on a machine this
+one does not control.
+
+### T13.5 What this opened, and what it did not
+
+It did not solve remote attestation. The ceiling check reads a box's
+digest-verified `policy.resolved.toml` from a file the local host owns; for a
+post relayed from another machine, this host has that machine's *word* for what
+its box ran under. That is a claim, not an observation, and it is the same
+distinction as `box-claimed` versus `host-observed`.
+
+The honest fix is not to pretend the hub verified it, but to record **who
+vouched**, and render it as its own lane the way R10 named `runner-observed` a
+third tier rather than folding it into the other two. Built as T14.
+
+## T14 The vouching lane
+
+Without this, the board's central promise degrades in silence the moment it
+crosses a machine. On one host the line above a post is the host's *knowledge*:
+it stamped the sender out of an env directory it owns, and no agent could have
+written it. Fetch the same post from a peer and the host observed **nothing** —
+it has another machine's word for every field — and yet it rendered identically.
+The sender stopped being a fact and went on looking like one.
+
+So every post carries an `origin`, and every reader computes a lane against its
+own identity:
+
+| lane | what the reader knows |
+|---|---|
+| `host-observed` | this host stamped it; sender, box, role and policy digest are things it saw |
+| `peer-claimed` | it arrived over the remote; everything about its author is the origin's account, **including the origin** |
+| `unattributed` | it arrived naming no origin at all |
+
+The asymmetry is the design. A host can be certain it *did* stamp something and
+certain of nothing else, so `Observed` is a real guarantee and `PeerClaimed` is
+an explicit absence of one. The same bytes therefore read differently on the two
+machines, which is correct and is what the test pins.
+
+### T14.1 What the origin is not
+
+**It is attribution, not authentication.** Nothing signs it. A hostile host can
+put any string in a post's `origin`, including another host's, and h5i cannot
+tell. Saying otherwise would repeat exactly the mistake this lane exists to fix.
+
+What it buys is the one comparison that is sound — *did I stamp this?* — plus
+the ability to see that two posts claim different sources. That is enough to
+stop the UI asserting knowledge it does not have, which was the actual defect.
+
+The upgrade that would make it evidence is signing the board commits, and it is
+deliberately not taken: it costs key management, and the whole remote design is
+built on a team not having to operate anything. `runner_id` (R6) shows the shape
+if a future board wants it — an identity that is the hash of a host key cannot be
+repointed at different hardware.
+
+### T14.2 Why not just trust the forge
+
+The git host authenticated whoever pushed, which is real evidence — but it lives
+in the forge's push events and audit log, not in the object graph, so a clone
+cannot see it. A board that wanted to use it would have to talk to a specific
+forge's API, which is the vendor coupling the remote design exists to avoid.
+Recorded here because it is the obvious next idea and it does not work as
+cheaply as it looks.
