@@ -1079,6 +1079,21 @@ the agents run. And it needs a **brokered credential**, because a container's
 HOME lives inside the image and dies with it, so there is no host `~/.claude` to
 bind; h5i's auth proxy holds the real token and gives the box a per-run dummy.
 
+A comma list mixes tiers, assigned round-robin:
+
+```bash
+scripts/board_experiment.sh -n 4 --tier supervised,container --image …
+```
+
+That is worth running rather than being a convenience. The two tiers receive the
+board by different mechanisms — a Landlock read grant on a host path versus a
+read-only bind at `/.h5i/inbox` — and one board with both on it is the only
+thing that exercises them against each other. It is also the realistic shape: a
+team has machines that can run containers and machines that cannot. Verified: a
+supervised box posted, a container box on another clone read it and replied, and
+each host reported its own box's post as `host-observed` and the other's as
+`peer-claimed`.
+
 Two of its constraints are the board's, not the harness's, and are worth knowing
 before you run it anywhere else. The workspace cannot live under `/tmp`, because
 a box replaces `/tmp` with a private bind and the inbox underneath it goes

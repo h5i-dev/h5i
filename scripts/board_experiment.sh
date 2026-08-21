@@ -13,6 +13,7 @@
 #   scripts/board_experiment.sh -n 4             # four of them
 #   scripts/board_experiment.sh -r codex         # Codex instead of Claude
 #   scripts/board_experiment.sh --tier container --image localhost/h5i-agent-claude:latest
+#   scripts/board_experiment.sh -n 4 --tier supervised,container   # a mixed board
 #   scripts/board_experiment.sh -t "why is the sky blue" -t "…"
 #   scripts/board_experiment.sh --attach         # then watch it in tmux
 #   scripts/board_experiment.sh --transcript     # also dump the board to markdown
@@ -78,7 +79,7 @@ while [ $# -gt 0 ]; do
     -t|--topic)    TOPICS+=("$2"); shift 2 ;;
     -d|--dir)      WORKDIR="$2"; shift 2 ;;
     --repo)        REPO_URL="$2"; shift 2 ;;
-    --tier)        TIER="$2"; shift 2 ;;
+    --tier)        TIER="$2"; shift 2 ;;   # one tier, or a comma list to mix
     --image)       IMAGE="$2"; shift 2 ;;
     --wait)        WAIT_SECS="$2"; shift 2 ;;
     --attach)      ATTACH=1; shift ;;
@@ -229,6 +230,29 @@ done
 
 [ "$AGENTS" -ge 2 ] 2>/dev/null || die "-n must be at least 2; a board with one participant is a notepad"
 
+# ── which tier each agent gets ───────────────────────────────────────────────
+#
+# A comma list assigns round-robin, so `--tier supervised,container` on four
+# agents gives two of each. That is not a convenience: the two tiers deliver the
+# board by different mechanisms — a Landlock grant on a host path versus a
+# read-only bind at `/.h5i/inbox` — and a run with both on one board is the only
+# thing that exercises them against each other. It is also the realistic shape,
+# because a team has machines that can run containers and machines that cannot.
+tiers=()
+if [ -n "$TIER" ]; then
+  IFS=',' read -r -a tier_list <<< "$TIER"
+  for i in $(seq 1 "$AGENTS"); do
+    tiers+=("${tier_list[$(( (i-1) % ${#tier_list[@]} ))]}")
+  done
+else
+  for i in $(seq 1 "$AGENTS"); do tiers+=(""); done
+fi
+
+wants_image=0
+for t in "${tiers[@]}"; do
+  case "$t" in container|microvm) wants_image=1 ;; esac
+done
+
 # ── the image-backed tiers need their image checked, not assumed ─────────────
 #
 # A container or microvm box runs the h5i **baked into its image**, not the one
@@ -237,14 +261,9 @@ done
 # as the board being broken rather than as the image being old — and it costs a
 # whole run to find out. Same reasoning as the `--body` probe above: check the
 # binary that will actually be used, not a version number.
-BOX_ARGS=()
-[ -n "$TIER" ] && BOX_ARGS+=(--isolation "$TIER")
-[ -n "$IMAGE" ] && BOX_ARGS+=(--image "$IMAGE")
-
-case "$TIER" in
-  container|microvm)
-    [ -n "$IMAGE" ] || die "--tier $TIER needs --image (the box runs that image's h5i, and
-   which image it is decides whether the agents can reach the board at all)"
+if [ "$wants_image" = "1" ]; then
+    [ -n "$IMAGE" ] || die "an image-backed tier needs --image (the box runs that image's
+   h5i, and which image it is decides whether the agents can reach the board at all)"
     engine="podman"; command -v podman >/dev/null || engine="docker"
     command -v "$engine" >/dev/null || die "no podman or docker, and --tier $TIER needs one"
     "$engine" image exists "$IMAGE" 2>/dev/null || "$engine" image inspect "$IMAGE" >/dev/null 2>&1 \
@@ -266,22 +285,25 @@ case "$TIER" in
     # Not minted here. `claude setup-token` creates a credential on somebody's
     # account, and a harness should not do that on their behalf.
     if [ "$RUNTIME" = "claude" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-      die "--tier $TIER needs CLAUDE_CODE_OAUTH_TOKEN.
+      die "an image-backed tier needs CLAUDE_CODE_OAUTH_TOKEN.
    A container's HOME is inside the image, so there is no host ~/.claude to
    bind and the agents would start logged out. h5i brokers the token through
    its auth proxy — the real one never enters the box. Mint one and re-run:
      export CLAUDE_CODE_OAUTH_TOKEN=\$(claude setup-token)"
     fi
     if [ "$RUNTIME" = "codex" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
-      die "--tier $TIER needs OPENAI_API_KEY for the same reason: the container's
-   HOME is ephemeral, so the credential is brokered rather than bound."
+      die "an image-backed tier needs OPENAI_API_KEY for the same reason: the
+   container's HOME is ephemeral, so the credential is brokered rather than bound."
     fi
-    ;;
-esac
+fi
 
 echo "── h5i board experiment ──"
 echo "  agents   : $AGENTS × $RUNTIME"
-echo "  tier     : ${TIER:-auto}${IMAGE:+  ($IMAGE)}"
+if [ -n "$TIER" ]; then
+  echo "  tiers    : $(printf '%s ' "${tiers[@]}")${IMAGE:+ ($IMAGE)}"
+else
+  echo "  tiers    : auto (the strongest this host can enforce)"
+fi
 echo "  topics   : ${#TOPICS[@]}"
 echo "  workspace: $WORKDIR"
 echo "  h5i      : $H5I ($("$H5I" --version))"
@@ -328,13 +350,21 @@ done
 for i in $(seq 1 "$AGENTS"); do
   name="${names[$((i-1))]}"; role="${roles[$((i-1))]}"
   dir="$WORKDIR/$name"
-  ( cd "$dir" && H5I_AGENT=claude "$H5I" box create --profile agent "${BOX_ARGS[@]}" "$name" >/dev/null 2>&1 ) \
-    || die "could not create a box for $name${TIER:+ on the $TIER tier} — try \`h5i box probe\`"
+  tier="${tiers[$((i-1))]}"
+  args=()
+  [ -n "$tier" ] && args+=(--isolation "$tier")
+  case "$tier" in container|microvm) args+=(--image "$IMAGE") ;; esac
+  ( cd "$dir" && H5I_AGENT=claude "$H5I" box create --profile agent "${args[@]}" "$name" >/dev/null 2>&1 ) \
+    || die "could not create a box for $name${tier:+ on the $tier tier}.
+   The \`agent\` profile needs an API route out, which only the supervised and
+   container tiers can enforce — an explicit tier fails closed rather than
+   quietly giving you a box the agent cannot work in. \`h5i box probe\` shows what
+   this host has."
   ( cd "$dir" && "$H5I" board sync >/dev/null 2>&1 )
   ( cd "$dir" && "$H5I" board attach "claude/$name" --as "$name" --role "$role" >/dev/null 2>&1 ) \
     || die "could not attach $name to the board"
   ( cd "$dir" && "$H5I" board sync >/dev/null 2>&1 )
-  echo "  ✔ $name: box attached as $role"
+  echo "  ✔ $name: box attached as $role${tier:+ on $tier}"
 done
 
 # ── get the agent past its own first-run wizard ──────────────────────────────
