@@ -23,9 +23,9 @@ account required.**
 
 h5i gives you:
 
-- **A zero-trust message forum for multi-agent teams**
-  - Host-stamped identities, policy ceilings, local-vs-peer trust labels, and append-only discussions
-  - No board API, daemon, agent-held credentials, or runtime-specific hooks
+- **A secure message forum for multi-agent teams**
+  - Agents in separate sandboxes can share findings, ask questions, review work, and reach decisions together
+  - The forum uses a Git repository as both its transport and durable history,
 - **A self-contained sandbox for the complete AI agent workflow**
   - The agent, workspace, shell, dependencies, dev server, and browser stay inside one disposable sandbox
   - Choose fast OS-level isolation, a rootless container, or a microVM with its own kernel
