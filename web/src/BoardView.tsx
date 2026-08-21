@@ -126,33 +126,47 @@ export function BoardView({
   const threads = overview?.threads ?? [];
   const shown = threads.filter((t) => matches(t, filter));
 
+  // The cohort is the roster plus whoever the open thread quotes, so a peer's
+  // agent that this host has no row for still gets a face nobody else on this
+  // screen is using.
+  const faces = React.useMemo(
+    () =>
+      faceMap([
+        ...(overview?.roster ?? []).map((e) => e.agent),
+        ...(thread?.posts ?? []).map((p) => p.sender),
+      ]),
+    [overview?.roster, thread?.posts],
+  );
+
   return (
-    <div className="brd">
-      <div className="brd-body">
-        <ThreadList
-          threads={shown}
-          closed={overview?.closed ?? []}
-          filter={filter}
-          onFilter={setFilter}
-          selected={selected}
-          onSelect={setSelected}
-          error={error}
-        />
-        {thread ? (
-          <Conversation thread={thread} empty={false} />
-        ) : (
-          <Feed
-            threads={threads}
-            previews={overview?.previews ?? []}
+    <Faces.Provider value={faces}>
+      <div className="brd">
+        <div className="brd-body">
+          <ThreadList
+            threads={shown}
+            closed={overview?.closed ?? []}
+            filter={filter}
+            onFilter={setFilter}
+            selected={selected}
             onSelect={setSelected}
+            error={error}
           />
-        )}
-        <Participants
-          roster={overview?.roster ?? []}
-          influenced={overview?.influenced ?? []}
-        />
+          {thread ? (
+            <Conversation thread={thread} empty={false} />
+          ) : (
+            <Feed
+              threads={threads}
+              previews={overview?.previews ?? []}
+              onSelect={setSelected}
+            />
+          )}
+          <Participants
+            roster={overview?.roster ?? []}
+            influenced={overview?.influenced ?? []}
+          />
+        </div>
       </div>
-    </div>
+    </Faces.Provider>
   );
 }
 
@@ -256,7 +270,9 @@ function ThreadRow({
         <StatusPill status={t.status} />
         <span>{t.claimed_by ?? "unclaimed"}</span>
         <span>{t.posts} posts</span>
-        {t.denials > 0 && <span className="brd-pill is-denial">{t.denials} refused</span>}
+        {t.denials > 0 && (
+          <span className="brd-pill is-denial">{t.denials} refused</span>
+        )}
       </span>
     </button>
   );
@@ -288,7 +304,7 @@ function Conversation({
                 doing so.
               </p>
               <pre>
-{`h5i board create "fix the auth refresh race" --ceiling code-review
+                {`h5i board create "fix the auth refresh race" --ceiling code-review
 h5i board attach claude-box --as claude-worker --role worker
 h5i board attach codex-box  --as codex-reviewer --role reviewer`}
               </pre>
@@ -364,7 +380,9 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
       </div>
 
       <div className="brd-conv-foot">
-        <span className="brd-dim">the console watches. act from a terminal:</span>
+        <span className="brd-dim">
+          the console watches. act from a terminal:
+        </span>
         <Cmd text={`h5i board read ${thread.header.id}`} />
         <Cmd text={`h5i board close ${thread.header.id}`} />
       </div>
@@ -461,11 +479,119 @@ function PostRow({
 }
 
 /** A square initial, coloured by name so two agents stay distinguishable. */
+/**
+ * Faces for the participants, picked from the name.
+ *
+ * Initials do not work here. Agents get named `agent-1`, `agent-2`,
+ * `claude-worker`, `codex-reviewer` — the first letter is the same for most of
+ * a board and a hashed hue is not a difference you can hold in your head while
+ * scanning a thread. These are distinguishable at a glance and, being derived
+ * from the name, are the same on every machine looking at the same board.
+ *
+ * Chosen to have distinct silhouettes rather than to be decorative, and
+ * deliberately free of anything that carries meaning elsewhere on this screen:
+ * no ticks, no warnings, no red. A face that reads as a status is worse than no
+ * face at all.
+ */
+const FACES = [
+  "🦊",
+  "🐢",
+  "🦉",
+  "🐙",
+  "🦁",
+  "🐝",
+  "🦋",
+  "🐧",
+  "🦀",
+  "🐳",
+  "🦔",
+  "🐿",
+  "🦩",
+  "🐊",
+  "🦚",
+  "🐺",
+  "🌵",
+  "🍄",
+  "🌻",
+  "🍁",
+  "🌲",
+  "🪴",
+  "🌊",
+  "🪐",
+  "🎈",
+  "🎩",
+  "🧭",
+  "🔭",
+  "🪁",
+  "🧩",
+  "🎲",
+  "🪗",
+];
+
+/** A stable index from a name: same participant, same face, everywhere. */
+function faceOf(name: string): string {
+  // FNV-1a, because a plain sum collides on anagrams — and `agent-1` through
+  // `agent-9` differ by one character, which is exactly the case that has to
+  // spread.
+  let h = 0x811c9dc5;
+  for (const ch of name) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return FACES[h % FACES.length];
+}
+
+/**
+ * Faces for one board, with collisions resolved.
+ *
+ * Hashing alone gives two participants the same face often enough to matter —
+ * eleven names into thirty-two faces collides about five times in six — and a
+ * duplicate face is worse than the initials it replaced, because it looks like
+ * a fact. So a name that lands on a taken face probes forward.
+ *
+ * Sorting first is what keeps this agreeing across machines: every host holding
+ * the same participant set walks it in the same order and resolves the same
+ * way, so a face is a thing two people can refer to out loud. It is not
+ * pinned for all time — a new participant sorting earlier can displace a later
+ * one — which is the price of never showing the same face twice, and the right
+ * side of that trade for a board that is read while it is being written.
+ *
+ * Past `FACES.length` participants the probe stops and faces repeat, because
+ * there is nothing left to move to. A board that large has outgrown telling
+ * people apart by icon anyway, and the name is next to every one of them.
+ */
+function faceMap(names: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const name of [...new Set(names)].sort()) {
+    let face = faceOf(name);
+    if (taken.size < FACES.length) {
+      let at = FACES.indexOf(face);
+      while (taken.has(face)) {
+        at = (at + 1) % FACES.length;
+        face = FACES[at];
+      }
+    }
+    taken.add(face);
+    out.set(name, face);
+  }
+  return out;
+}
+
+/**
+ * The board's faces, so a post and the participants panel agree.
+ *
+ * The default is the bare hash rather than an empty map: a post can name a
+ * sender this host has no roster row for — a peer's agent, or one revoked long
+ * enough ago to have been pruned — and such a post still has to render.
+ */
+const Faces = React.createContext<Map<string, string> | null>(null);
+
 function Avatar({ name }: { name: string }) {
-  const hue = [...name].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+  const faces = React.useContext(Faces);
   return (
-    <span className="brd-avatar" style={{ color: `hsl(${hue} 45% 68%)` }}>
-      {name.slice(0, 1).toUpperCase()}
+    <span className="brd-avatar" title={name}>
+      {faces?.get(name) ?? faceOf(name)}
     </span>
   );
 }
@@ -524,15 +650,22 @@ function Participants({
         </div>
       )}
       {roster.map((e) => (
-        <div key={e.agent} className={`brd-agent${e.revoked_at ? " is-revoked" : ""}`}>
+        <div
+          key={e.agent}
+          className={`brd-agent${e.revoked_at ? " is-revoked" : ""}`}
+        >
           <div className="brd-agent-name">
             <Avatar name={e.agent} />
             {e.agent}
-            <span className={`brd-dot ${e.revoked_at ? "is-off" : "is-live"}`} />
+            <span
+              className={`brd-dot ${e.revoked_at ? "is-off" : "is-live"}`}
+            />
           </div>
           <Row k="role" v={e.role} />
           {e.box_id && <Row k="box" v={e.box_id} />}
-          {e.policy_digest && <Row k="policy" v={e.policy_digest.slice(0, 12)} />}
+          {e.policy_digest && (
+            <Row k="policy" v={e.policy_digest.slice(0, 12)} />
+          )}
           {influenced.includes(e.agent) && (
             <Row k="influenced" v="read a peer" warn />
           )}
@@ -608,7 +741,7 @@ function Feed({
             read, post and submit; they never gain a capability by doing so.
           </p>
           <pre>
-{`h5i board create "fix the auth refresh race" --ceiling code-review
+            {`h5i board create "fix the auth refresh race" --ceiling code-review
 h5i board attach claude-box --as claude-worker --role worker
 h5i board attach codex-box  --as codex-reviewer --role reviewer`}
           </pre>

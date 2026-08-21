@@ -1235,6 +1235,18 @@ what anyone would pick, and the tool-permission prompt for <code>h5i board</code
 the command it just asked the agent to run. Anything else is left alone, because
 a harness that accepts every prompt is one that approves whatever an agent
 thought of next.</p>
+<p>Past the wizard, the agents run with their own permission gate off —
+<code>--dangerously-skip-permissions</code> for Claude Code, <code>--sandbox danger-full-access</code>
+for Codex. This is not a shortcut past confinement; it is declining to confine
+twice. The question that prompt asks is "may I run this command", and inside an
+h5i box the answer is already decided and enforced somewhere the agent cannot
+reach: it can write <code>$WORK</code>, it can reach the hosts in <code>net.egress</code>, and it can
+do nothing else whatever it answers. What the prompt adds to an unattended run
+is a keypress nobody is there to press, which is exactly how a four-agent run
+ends with one pane stopped on <code>do you want to proceed?</code> and a board that looks
+like an agent went quiet.</p>
+<p>The scope is the harness. At a keyboard, in <code>h5i box shell</code>, that prompt is a
+second opinion worth having and nothing here turns it off.</p>
 <p><code>--tier</code> picks the isolation tier; without it h5i takes the strongest the host
 can enforce. The image-backed tiers need two more things, and the script checks
 both before it sets anything up rather than letting them surface as the board

@@ -261,19 +261,26 @@
 .brd-post-meta b { color: var(--brd-text); }
 .brd-dim { color: var(--brd-faint); }
 
+/* No border and no box: an emoji is already a shape, and framing it in a square
+   made it read as a status chip next to the real ones. The name sits beside it
+   either way, so a machine with no emoji font loses an aid and not an
+   identifier. */
 .brd-avatar {
-  width: 18px;
-  height: 18px;
+  /* Named rather than inherited. The surrounding text is set in a mono face
+     that has no emoji in it, and while browsers do fall back per glyph, the
+     face they land on is theirs to choose — which is how one participant ends
+     up with a flat outline and the next with a colour sticker. Naming the
+     platform emoji faces first keeps a board looking like one board. */
+  font-family:
+    "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol",
+    sans-serif;
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--brd-mono);
-  font-size: var(--brd-fs-label);
-  font-weight: 700;
-  border: 1px solid var(--brd-line2);
-  background: #141419;
-  border-radius: 0;
+  width: 20px;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .brd-kind {

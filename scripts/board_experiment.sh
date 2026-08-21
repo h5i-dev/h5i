@@ -306,8 +306,28 @@ if [ "$wants_image" = "1" ]; then
     fi
 fi
 
+# Turn the agent's own permission gate off, because the box already is the
+# gate — and a second one only stalls an unattended run.
+#
+# This is not a shortcut past confinement, it is declining to confine twice. The
+# agent's prompt asks "may I run this command"; the answer inside an h5i box is
+# already decided and enforced by Landlock or by the container: it can write
+# `$WORK`, it can reach the hosts in `net.egress`, and it cannot do anything
+# else no matter what it answers. What the prompt adds is a keypress nobody is
+# there to press. `containers/README.md` makes the same argument for Codex,
+# whose nested sandbox actively breaks an h5i worktree.
+#
+# It is scoped to this harness, which runs agents unattended in boxes. It is not
+# a recommendation for `h5i box shell` at a keyboard, where the prompt is a
+# second opinion worth having.
+case "$RUNTIME" in
+  claude) AGENT_FLAGS="--dangerously-skip-permissions" ;;
+  codex)  AGENT_FLAGS="--sandbox danger-full-access" ;;
+  *)      AGENT_FLAGS="" ;;
+esac
+
 echo "── h5i board experiment ──"
-echo "  agents   : $AGENTS × $RUNTIME"
+echo "  agents   : $AGENTS × $RUNTIME${AGENT_FLAGS:+ ($AGENT_FLAGS)}"
 if [ -n "$TIER" ]; then
   echo "  tiers    : $(printf '%s ' "${tiers[@]}")${IMAGE:+ ($IMAGE)}"
 else
@@ -404,6 +424,8 @@ settle_panes() {
           tmux send-keys -t "$SESSION.$p" Enter; answered=$((answered+1)) ;;
         *"h5i board"*"ask again"*|*"ask again"*"h5i board"*)
           # "yes, and don't ask again for h5i board *" — option 2 on this prompt.
+          # Should not appear now that the agent runs with its own gate off, but
+          # a build that ignores the flag would otherwise hang the whole run.
           tmux send-keys -t "$SESSION.$p" 2; sleep 1
           tmux send-keys -t "$SESSION.$p" Enter; answered=$((answered+1)) ;;
       esac
@@ -492,12 +514,13 @@ sleep 8
 # Only when the file is absent: an existing one has real state in it (a token, a
 # session) and a blind overwrite would throw that away.
 ver="$("$RUNTIME" --version 2>/dev/null | awk '{print $1}')"
+
 PRELUDE='[ -f "$HOME/.claude.json" ] || { mkdir -p "$HOME"; printf "{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"projects\":{\"%s\":{\"hasTrustDialogAccepted\":true}}}" "'"${ver:-9.9.9}"'" "$PWD" > "$HOME/.claude.json"; }'
 
 for i in $(seq 1 "$AGENTS"); do
   tmux send-keys -t "$SESSION.$((i-1))" "$PRELUDE" Enter
   sleep 1
-  tmux send-keys -t "$SESSION.$((i-1))" "$RUNTIME \"\$(cat .board-task)\"" Enter
+  tmux send-keys -t "$SESSION.$((i-1))" "$RUNTIME $AGENT_FLAGS \"\$(cat .board-task)\"" Enter
   # Stagger, so the first agent has something on the board for the second to
   # react to. Launching together produces N independent monologues.
   sleep 12

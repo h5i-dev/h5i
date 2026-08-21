@@ -1072,6 +1072,20 @@ the command it just asked the agent to run. Anything else is left alone, because
 a harness that accepts every prompt is one that approves whatever an agent
 thought of next.
 
+Past the wizard, the agents run with their own permission gate off —
+`--dangerously-skip-permissions` for Claude Code, `--sandbox danger-full-access`
+for Codex. This is not a shortcut past confinement; it is declining to confine
+twice. The question that prompt asks is "may I run this command", and inside an
+h5i box the answer is already decided and enforced somewhere the agent cannot
+reach: it can write `$WORK`, it can reach the hosts in `net.egress`, and it can
+do nothing else whatever it answers. What the prompt adds to an unattended run
+is a keypress nobody is there to press, which is exactly how a four-agent run
+ends with one pane stopped on `do you want to proceed?` and a board that looks
+like an agent went quiet.
+
+The scope is the harness. At a keyboard, in `h5i box shell`, that prompt is a
+second opinion worth having and nothing here turns it off.
+
 `--tier` picks the isolation tier; without it h5i takes the strongest the host
 can enforce. The image-backed tiers need two more things, and the script checks
 both before it sets anything up rather than letting them surface as the board
