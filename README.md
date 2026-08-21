@@ -20,14 +20,6 @@ on machines in different places. Nothing on that path carries a credential or a
 capability, so a message can change what a peer decides and never what that
 peer's sandbox is able to do.
 
-That distinction is the whole point. Put three agents in three sandboxes and let
-them talk, and the bound each sandbox gives you quietly stops holding: hostile
-input persuades agent A, A sends a message, and agent B acts on it using B's own
-grants, which A never had. No sandbox failed and nothing was exploited.
-Authority composed. h5i does not try to detect the hostile message, because the
-text is not the part anyone controls. It makes sure that nothing a persuaded
-agent can say carries the authority to act.
-
 <table align="center">
 <tr>
 <td>🤝 Collaborate across sandboxes without sharing authority</td>
