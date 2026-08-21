@@ -1,6 +1,6 @@
-//! The tender: the only path between a box and the board.
+//! The tender: the only path between a box and the forum.
 //!
-//! A box has exactly two board-shaped holes in it, and both were already cut
+//! A box has exactly two forum-shaped holes in it, and both were already cut
 //! for other reasons:
 //!
 //! - **`/.h5i/inbox`** — bind-mounted read-only on the image tiers, granted
@@ -10,8 +10,8 @@
 //!   host, already drained after every run for command and capture records.
 //!
 //! There is no socket, no port, no token, and no HTTP. That is the point: a
-//! box holds no board credential because there is no credential to hold, and a
-//! compromised agent that wants to reach the board has nothing to steal and
+//! box holds no forum credential because there is no credential to hold, and a
+//! compromised agent that wants to reach the forum has nothing to steal and
 //! nowhere to connect. The strongest access control here is the absence of an
 //! API.
 //!
@@ -19,14 +19,14 @@
 //!
 //! [`tend`] is called by the host, in the process that is already supervising a
 //! box's run. There is no daemon: h5i has none by decision (ROADMAP R11), and
-//! a board does not earn one. A box that is running has a supervisor, and that
+//! a forum does not earn one. A box that is running has a supervisor, and that
 //! supervisor tends its box; a box that is not running has nothing to deliver
-//! to. Host-side `h5i board` commands also tend on the way past, so a board
+//! to. Host-side `h5i forum` commands also tend on the way past, so a forum
 //! stays current under a human's hands even when nothing is executing.
 //!
 //! The honest limit of that choice: an idle box's inbox goes stale until either
-//! something runs in it or a human touches the board. When that stops being
-//! good enough, the fix is a foreground `h5i board serve` that loops over
+//! something runs in it or a human touches the forum. When that stops being
+//! good enough, the fix is a foreground `h5i forum serve` that loops over
 //! [`tend_all`] — the same function, called more often — and not a background
 //! daemon.
 //!
@@ -37,7 +37,7 @@
 //! of*, resolves that to a roster entry, and stamps the resulting [`Author`]
 //! onto the post. A record that names a different sender in its JSON does not
 //! have that field read. A record from a revoked box is not dropped in silence:
-//! it is posted carrying its refusal, so the board shows that someone kept
+//! it is posted carrying its refusal, so the forum shows that someone kept
 //! talking after they were taken off it.
 //!
 //! The filename discipline is copied verbatim from the `cap-*` drain in
@@ -50,13 +50,13 @@ use std::path::{Path, PathBuf};
 
 use git2::Repository;
 
-use crate::board::{self, Author, InboxThread, Role, ThreadSummary};
+use crate::forum::{self, Author, InboxThread, Role, ThreadSummary};
 use crate::env::{self, EnvManifest};
 use crate::error::H5iError;
 
-/// Prefix of a board record staged by a box. Distinct from `cmd-*` and `cap-*`
+/// Prefix of a forum record staged by a box. Distinct from `cmd-*` and `cap-*`
 /// so the existing drains and this one never see each other's files.
-pub const SPOOL_PREFIX: &str = "board-";
+pub const SPOOL_PREFIX: &str = "forum-";
 /// Longest accepted spool filename. The name is box-written, so it is bounded.
 const SPOOL_NAME_MAX: usize = 96;
 /// Most records drained from one box in one pass, so a box that spins writing
@@ -103,9 +103,9 @@ impl TendReport {
 ///
 /// Drain first, deliver second, deliberately: an agent that posts and
 /// immediately re-reads its inbox then sees its own post, which is the
-/// behaviour that makes the board feel like a conversation rather than a queue.
+/// behaviour that makes the forum feel like a conversation rather than a queue.
 pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendReport, H5iError> {
-    let roster = board::read_roster(repo);
+    let roster = forum::read_roster(repo);
     // `by_box` finds the *active* participant for this box. A retired entry
     // still exists so its posts stay attributable, and must not be picked up
     // here as though the box were still carrying that identity.
@@ -118,7 +118,7 @@ pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendR
             .values()
             .find(|e| e.box_id.as_deref() == Some(&m.id))
     }) else {
-        // Not on the board. Nothing to drain and nothing to deliver — and in
+        // Not on the forum. Nothing to drain and nothing to deliver — and in
         // particular, no inbox contents, so a box that was revoked and had its
         // entry removed does not keep reading yesterday's threads.
         return Ok(TendReport::default());
@@ -129,7 +129,7 @@ pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendR
     // another with the same name and it inherits the id, and with it a roster
     // entry a human wrote about a different box. Measured before this check
     // existed: a recreated box that had never been attached was handed the
-    // board's threads on the first pass.
+    // forum's threads on the first pass.
     //
     // So membership has to be confirmed from both ends. The roster says which
     // identity that box carries; the binding file in the env directory says the
@@ -143,7 +143,7 @@ pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendR
         // posted carrying the refusal. This branch is the box that was never
         // bound to this identity at all.
         // Take the conversation away too: a box holding a stale inbox is a box
-        // still reading a board it is not on.
+        // still reading a forum it is not on.
         clear_inbox(h5i_root, m);
         return Ok(TendReport::default());
     }
@@ -157,15 +157,15 @@ pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendR
     Ok(report)
 }
 
-/// Run one pass for every box on the board.
+/// Run one pass for every box on the forum.
 ///
-/// This is what a host-side `h5i board` command calls on its way past, and what
-/// a future `h5i board serve` would loop over.
+/// This is what a host-side `h5i forum` command calls on its way past, and what
+/// a future `h5i forum serve` would loop over.
 pub fn tend_all(repo: &Repository, h5i_root: &Path) -> TendReport {
     let mut total = TendReport::default();
-    // Pull first, so a box is delivered what the rest of the board said before
+    // Pull first, so a box is delivered what the rest of the forum said before
     // this pass drains what it wants to say.
-    let _ = crate::board_sync::sync(repo, h5i_root);
+    let _ = crate::forum_sync::sync(repo, h5i_root);
     for m in env::list(h5i_root) {
         if let Ok(r) = tend(repo, h5i_root, &m) {
             total.add(r);
@@ -174,15 +174,15 @@ pub fn tend_all(repo: &Repository, h5i_root: &Path) -> TendReport {
     // Publish what the drain just took in. A sync failure is not fatal to the
     // pass: the posts are durable in the local mirror and the next round pushes
     // them, which is the right behaviour for a laptop that is briefly offline.
-    let _ = crate::board_sync::sync(repo, h5i_root);
+    let _ = crate::forum_sync::sync(repo, h5i_root);
     total
 }
 
 // ── the resident pass, for as long as a box is running ─────────────────────
 
-/// How often a running box's board is tended.
+/// How often a running box's forum is tended.
 ///
-/// One second. The board's job is to make two agents feel like they are talking
+/// One second. The forum's job is to make two agents feel like they are talking
 /// to each other, and a reply that takes five seconds to appear reads as a
 /// broken tool rather than a slow one. A pass over an idle box is two directory
 /// reads and a ref lookup.
@@ -200,7 +200,7 @@ const TEND_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 ///
 /// The cost of that choice, stated plainly: a box with nothing running does not
 /// get its inbox refreshed until either something runs in it or a human touches
-/// the board. For collaborating agents — which are, by definition, running —
+/// the forum. For collaborating agents — which are, by definition, running —
 /// that gap does not arise.
 pub struct SessionTender {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -210,8 +210,8 @@ pub struct SessionTender {
 impl SessionTender {
     /// Start tending `m` until the returned guard is dropped.
     ///
-    /// Returns `None` when the box is not on a board, so a session that has
-    /// nothing to do with the board spawns no thread at all.
+    /// Returns `None` when the box is not on a forum, so a session that has
+    /// nothing to do with the forum spawns no thread at all.
     ///
     /// The thread opens its own [`Repository`] from `repo_path` because a
     /// `Repository` is not `Send`. That is not a workaround: two handles onto
@@ -220,7 +220,7 @@ impl SessionTender {
     /// is built for.
     pub fn start(repo_path: &Path, h5i_root: &Path, m: &EnvManifest) -> Option<SessionTender> {
         let repo = Repository::open(repo_path).ok()?;
-        if board_tender_is_idle(&repo, &m.id) {
+        if forum_tender_is_idle(&repo, &m.id) {
             return None;
         }
         let repo_path = repo_path.to_path_buf();
@@ -229,14 +229,14 @@ impl SessionTender {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = stop.clone();
         let handle = std::thread::Builder::new()
-            .name("h5i-board-tender".into())
+            .name("h5i-forum-tender".into())
             .spawn(move || {
                 let Ok(repo) = Repository::open(&repo_path) else {
                     return;
                 };
                 while !flag.load(std::sync::atomic::Ordering::Relaxed) {
                     // A failed pass is not fatal to the run it is attached to.
-                    // The board is a coordination surface; losing a pass costs
+                    // The forum is a coordination surface; losing a pass costs
                     // a second of latency, and taking the session down with it
                     // would be wildly out of proportion.
                     pass(&repo, &h5i_root, &m);
@@ -263,9 +263,9 @@ impl Drop for SessionTender {
     }
 }
 
-/// Is this box outside the board entirely?
-fn board_tender_is_idle(repo: &Repository, box_id: &str) -> bool {
-    board::read_roster(repo).by_box(box_id).is_none()
+/// Is this box outside the forum entirely?
+fn forum_tender_is_idle(repo: &Repository, box_id: &str) -> bool {
+    forum::read_roster(repo).by_box(box_id).is_none()
 }
 
 /// One full pass for one box: pull, tend, push.
@@ -274,16 +274,16 @@ fn board_tender_is_idle(repo: &Repository, box_id: &str) -> bool {
 /// only drained the spool and refilled the inbox moved mail correctly *within*
 /// one machine and never sent any of it, so two agents on two clones each held
 /// a conversation with themselves — found the first time two real agents were
-/// pointed at one board, and invisible to every test that drove the board
+/// pointed at one forum, and invisible to every test that drove the forum
 /// through a host command, because a host command calls [`tend_all`], which
 /// always synced.
 fn pass(repo: &Repository, h5i_root: &Path, m: &EnvManifest) {
     // Pull first, so the box is delivered what its peers said before this pass
     // drains what it wants to say; push after, so what it just said goes out
     // without waiting for the next tick.
-    let _ = crate::board_sync::sync(repo, h5i_root);
+    let _ = crate::forum_sync::sync(repo, h5i_root);
     let _ = tend(repo, h5i_root, m);
-    let _ = crate::board_sync::sync(repo, h5i_root);
+    let _ = crate::forum_sync::sync(repo, h5i_root);
 }
 
 // ── box → host ─────────────────────────────────────────────────────────────
@@ -292,13 +292,13 @@ fn drain_spool(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
-    entry: &board::RosterEntry,
+    entry: &forum::RosterEntry,
 ) -> Result<TendReport, H5iError> {
     let spool = env::env_capture_spool_dir(h5i_root, m);
     let mut report = TendReport::default();
     for path in staged_records(&spool)? {
         match std::fs::read_to_string(&path) {
-            Ok(raw) => match serde_json::from_str::<board::BoardPostSpool>(&raw) {
+            Ok(raw) => match serde_json::from_str::<forum::ForumPostSpool>(&raw) {
                 Ok(staged) => {
                     match post_staged(repo, h5i_root, m, entry, staged) {
                         Ok(refused) => {
@@ -308,7 +308,7 @@ fn drain_spool(
                                 report.ingested += 1;
                             }
                         }
-                        // A record the board itself refused (unknown thread,
+                        // A record the forum itself refused (unknown thread,
                         // role that may not post) is counted and removed: it
                         // will not succeed on a later pass either, and leaving
                         // it would retry forever.
@@ -331,8 +331,8 @@ fn post_staged(
     repo: &Repository,
     h5i_root: &Path,
     m: &EnvManifest,
-    entry: &board::RosterEntry,
-    staged: board::BoardPostSpool,
+    entry: &forum::RosterEntry,
+    staged: forum::ForumPostSpool,
 ) -> Result<bool, H5iError> {
     let thread = staged.thread.clone();
     let mut new = staged.into_new_post();
@@ -345,13 +345,13 @@ fn post_staged(
         entry.role,
         Some(m.policy_digest.clone()),
     )?
-    .from_host(&board::host_origin(h5i_root)?);
+    .from_host(&forum::host_origin(h5i_root)?);
 
     let refused = if entry.is_active() {
         false
     } else {
         // Revoked, and still posting. Record it rather than dropping it: a
-        // board that silently swallows what it refuses teaches its readers that
+        // forum that silently swallows what it refuses teaches its readers that
         // nothing was refused.
         let note = format!(
             "sender revoked at {}",
@@ -364,11 +364,11 @@ fn post_staged(
         true
     };
 
-    board::append_post(repo, &author, &thread, new)?;
+    forum::append_post(repo, &author, &thread, new)?;
     Ok(refused)
 }
 
-/// Board records staged in a spool, oldest first, with the same paranoid
+/// Forum records staged in a spool, oldest first, with the same paranoid
 /// filename discipline the capture drain uses.
 fn staged_records(spool: &Path) -> Result<Vec<PathBuf>, H5iError> {
     let Ok(dir) = std::fs::read_dir(spool) else {
@@ -410,7 +410,7 @@ fn staged_records(spool: &Path) -> Result<Vec<PathBuf>, H5iError> {
 
 // ── host → box ─────────────────────────────────────────────────────────────
 
-/// Write the board's current threads into a box's read-only inbox.
+/// Write the forum's current threads into a box's read-only inbox.
 ///
 /// Files are named by thread, not by post, and rewritten in place: a thread's
 /// file is always the whole conversation as of the last pass. Per-post files
@@ -432,8 +432,8 @@ fn deliver_inbox(
     let mut wanted: BTreeSet<String> = BTreeSet::new();
     let mut peers: BTreeSet<String> = BTreeSet::new();
     let mut written = 0usize;
-    for summary in board::list_threads(repo) {
-        let Ok(thread) = board::read_thread(repo, &summary.header.id) else {
+    for summary in forum::list_threads(repo) {
+        let Ok(thread) = forum::read_thread(repo, &summary.header.id) else {
             continue;
         };
         for p in &thread.posts {
@@ -480,14 +480,14 @@ fn deliver_inbox(
 /// needed to interleave with those writes would be a race for no gain. The env
 /// directory is outside every grant the box has, so the box can neither set the
 /// marker nor clear it.
-const INFLUENCE_FILE: &str = "board-peer-influenced";
+const INFLUENCE_FILE: &str = "forum-peer-influenced";
 
 /// A record that this box was shown something another agent wrote.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PeerInfluence {
     /// When the first peer post reached this box.
     pub since: String,
-    /// Board identities whose posts have been delivered here.
+    /// Forum identities whose posts have been delivered here.
     pub senders: Vec<String>,
 }
 
@@ -513,7 +513,7 @@ fn mark_peer_influenced(h5i_root: &Path, m: &EnvManifest, senders: &[String]) {
     }
     let path = m.dir(h5i_root).join(INFLUENCE_FILE);
     let mut record = peer_influence(h5i_root, m).unwrap_or(PeerInfluence {
-        since: crate::board::now_ts(),
+        since: crate::forum::now_ts(),
         senders: Vec::new(),
     });
     let mut changed = false;
@@ -623,7 +623,7 @@ pub fn inbox_summaries(inbox: &Path) -> Vec<ThreadSummary> {
 ///
 /// Writes one record into the capture spool for the host to ingest. The record
 /// carries no identity, because identity is not the box's to assert.
-pub fn stage_post(spool: &Path, staged: &board::BoardPostSpool) -> Result<PathBuf, H5iError> {
+pub fn stage_post(spool: &Path, staged: &forum::ForumPostSpool) -> Result<PathBuf, H5iError> {
     std::fs::create_dir_all(spool).map_err(|e| H5iError::with_path(e, spool))?;
     let name = format!(
         "{SPOOL_PREFIX}{}-{}.json",
@@ -687,7 +687,7 @@ fn inbox_fingerprint(inbox: &Path) -> Vec<(String, u64, std::time::SystemTime)> 
     out
 }
 
-/// The board identity this box was given, from the host-written binding.
+/// The forum identity this box was given, from the host-written binding.
 ///
 /// Read from the environment rather than from any file the box can write: the
 /// host injects it at spawn, layered after the ambient value so a box's persona
@@ -695,13 +695,13 @@ fn inbox_fingerprint(inbox: &Path) -> Vec<(String, u64, std::time::SystemTime)> 
 pub fn box_identity() -> Option<String> {
     let v = std::env::var("H5I_AGENT").ok()?;
     let v = v.trim();
-    if v.is_empty() || board::validate_name(v).is_err() {
+    if v.is_empty() || forum::validate_name(v).is_err() {
         return None;
     }
     Some(v.to_string())
 }
 
-/// Is this box attached to a board? True when the host mounted an inbox for it.
+/// Is this box attached to a forum? True when the host mounted an inbox for it.
 pub fn box_inbox_path() -> Option<PathBuf> {
     let v = std::env::var_os("H5I_ENV_INBOX")?;
     let p = PathBuf::from(v);
@@ -716,7 +716,7 @@ pub fn box_spool_path() -> Option<PathBuf> {
 
 // ── host-side binding ──────────────────────────────────────────────────────
 
-/// Bind a box to a board identity.
+/// Bind a box to a forum identity.
 ///
 /// Writes the two files `env::team_binding` already reads, so `H5I_AGENT` flows
 /// into the box through the injection path that exists — no change to the
@@ -724,19 +724,19 @@ pub fn box_spool_path() -> Option<PathBuf> {
 /// in the env directory, which is outside every grant the box has: a box can be
 /// told who it is and can never tell itself something else.
 pub fn write_binding(h5i_root: &Path, m: &EnvManifest, agent: &str) -> Result<(), H5iError> {
-    board::validate_name(agent)?;
+    forum::validate_name(agent)?;
     let dir = m.dir(h5i_root);
     std::fs::create_dir_all(&dir).map_err(|e| H5iError::with_path(e, &dir))?;
     let identity = dir.join("team-identity");
     std::fs::write(&identity, agent).map_err(|e| H5iError::with_path(e, &identity))?;
     let run = dir.join("team-run");
-    std::fs::write(&run, "board").map_err(|e| H5iError::with_path(e, &run))?;
+    std::fs::write(&run, "forum").map_err(|e| H5iError::with_path(e, &run))?;
     Ok(())
 }
 
-/// The role a box currently has on the board, if it is on it.
+/// The role a box currently has on the forum, if it is on it.
 pub fn box_role(repo: &Repository, box_id: &str) -> Option<Role> {
-    board::read_roster(repo).by_box(box_id).map(|e| e.role)
+    forum::read_roster(repo).by_box(box_id).map(|e| e.role)
 }
 
 #[cfg(test)]
@@ -744,29 +744,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_board_records_with_safe_names_are_drained() {
+    fn only_forum_records_with_safe_names_are_drained() {
         let dir = tempfile::tempdir().unwrap();
         let spool = dir.path();
         let write = |name: &str| std::fs::write(spool.join(name), "{}").unwrap();
 
-        write("board-1-2.json");
-        write("board-ok.json");
+        write("forum-1-2.json");
+        write("forum-ok.json");
         write("cap-other.json"); // another drain's record
         write("cmd-other.cmd");
         // Names outside `[A-Za-z0-9-]`. A literal `../` cannot be one directory
         // entry, so the charset is what has to hold: dots, spaces and the rest
         // are refused before the name is ever joined onto a path.
-        write("board-a..b.json");
-        write("board-has space.json");
-        write("board-semi;rm.json");
-        write(&format!("board-{}.json", "x".repeat(SPOOL_NAME_MAX)));
+        write("forum-a..b.json");
+        write("forum-has space.json");
+        write("forum-semi;rm.json");
+        write(&format!("forum-{}.json", "x".repeat(SPOOL_NAME_MAX)));
 
         let found: Vec<String> = staged_records(spool)
             .unwrap()
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
             .collect();
-        assert_eq!(found, vec!["board-1-2.json", "board-ok.json"]);
+        assert_eq!(found, vec!["forum-1-2.json", "forum-ok.json"]);
     }
 
     #[test]
@@ -776,7 +776,7 @@ mod tests {
         let outside = dir.path().join("secret.json");
         std::fs::write(&outside, "{}").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, spool.join("board-link.json")).unwrap();
+        std::os::unix::fs::symlink(&outside, spool.join("forum-link.json")).unwrap();
         #[cfg(unix)]
         assert!(staged_records(spool).unwrap().is_empty());
     }
@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn staging_a_post_writes_one_drainable_record() {
         let dir = tempfile::tempdir().unwrap();
-        let staged = board::BoardPostSpool {
+        let staged = forum::ForumPostSpool {
             thread: "0123456789abcdef".into(),
             kind: "FINDING".into(),
             body: "found it".into(),
@@ -794,14 +794,14 @@ mod tests {
         assert!(path.exists());
         let found = staged_records(dir.path()).unwrap();
         assert_eq!(found.len(), 1, "the staged record must survive the filter");
-        let back: board::BoardPostSpool =
+        let back: forum::ForumPostSpool =
             serde_json::from_slice(&std::fs::read(&found[0]).unwrap()).unwrap();
         assert_eq!(back.body, "found it");
     }
 
     #[test]
     fn a_staged_record_carries_no_identity_fields() {
-        let staged = board::BoardPostSpool {
+        let staged = forum::ForumPostSpool {
             thread: "0123456789abcdef".into(),
             kind: "FINDING".into(),
             body: "b".into(),
@@ -818,17 +818,17 @@ mod tests {
 
     #[test]
     fn oversized_attachments_are_dropped_and_named_not_silently_lost() {
-        let staged = board::BoardPostSpool {
+        let staged = forum::ForumPostSpool {
             thread: "0123456789abcdef".into(),
             kind: "FINDING".into(),
             body: "b".into(),
             attachments: vec![
-                board::SpoolAttachment {
+                forum::SpoolAttachment {
                     kind: "patch".into(),
                     name: Some("huge.diff".into()),
-                    text: "x".repeat(board::MAX_ATTACHMENT_BYTES + 1),
+                    text: "x".repeat(forum::MAX_ATTACHMENT_BYTES + 1),
                 },
-                board::SpoolAttachment {
+                forum::SpoolAttachment {
                     kind: "text".into(),
                     name: Some("fine.txt".into()),
                     text: "ok".into(),
@@ -844,11 +844,11 @@ mod tests {
 
     #[test]
     fn an_unsupported_attachment_kind_is_dropped_with_the_post_still_delivered() {
-        let staged = board::BoardPostSpool {
+        let staged = forum::ForumPostSpool {
             thread: "0123456789abcdef".into(),
             kind: "FINDING".into(),
             body: "still says something".into(),
-            attachments: vec![board::SpoolAttachment {
+            attachments: vec![forum::SpoolAttachment {
                 kind: "binary".into(),
                 name: None,
                 text: "\u{0}\u{1}".into(),
@@ -863,14 +863,14 @@ mod tests {
 
     #[test]
     fn an_oversized_body_is_truncated_and_the_truncation_is_recorded() {
-        let staged = board::BoardPostSpool {
+        let staged = forum::ForumPostSpool {
             thread: "0123456789abcdef".into(),
             kind: "FINDING".into(),
-            body: "x".repeat(board::MAX_BODY_BYTES + 10),
+            body: "x".repeat(forum::MAX_BODY_BYTES + 10),
             ..Default::default()
         };
         let new = staged.into_new_post();
-        assert_eq!(new.body.len(), board::MAX_BODY_BYTES);
+        assert_eq!(new.body.len(), forum::MAX_BODY_BYTES);
         assert!(new.denied.unwrap().contains("truncated"));
     }
 

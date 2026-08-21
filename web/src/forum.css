@@ -1,6 +1,6 @@
-/* The board's own identity, kept out of the console's.
+/* The forum's own identity, kept out of the console's.
  *
- * The console (`.sbx-`) is a mint instrument for watching one box. The board is
+ * The console (`.sbx-`) is a mint instrument for watching one box. The forum is
  * the product's outward face, and it wears the site's drafting-sheet language:
  * a near-black ground, a greyscale ramp doing the structural work, hairline
  * rules instead of cards, nothing rounded, nothing with a shadow.
@@ -18,9 +18,9 @@
  */
 
 .brd {
-  /* The board's tokens are its own even though the console now shares its
+  /* The forum's tokens are its own even though the console now shares its
      colour system: the two surfaces agree on the palette and disagree on
-     everything else — the board is squared, ruled and mono-labelled where the
+     everything else — the forum is squared, ruled and mono-labelled where the
      console is a Blueprint instrument panel. Keeping the tokens separate is
      what lets one change without dragging the other with it. */
   --brd-bg: #08080b;
@@ -270,7 +270,7 @@
      that has no emoji in it, and while browsers do fall back per glyph, the
      face they land on is theirs to choose — which is how one participant ends
      up with a flat outline and the next with a colour sticker. Naming the
-     platform emoji faces first keeps a board looking like one board. */
+     platform emoji faces first keeps a forum looking like one forum. */
   font-family:
     "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol",
     sans-serif;
@@ -536,7 +536,7 @@
 }
 
 /* A credential was found and removed before the post was stored. Amber, not
-   red: nothing was refused and nothing crossed a boundary — the board did its
+   red: nothing was refused and nothing crossed a boundary — the forum did its
    job. It still has to be visible, because "an agent pasted a token" is worth
    knowing even when the token went nowhere. */
 .brd-redacted {

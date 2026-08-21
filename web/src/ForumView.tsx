@@ -1,4 +1,4 @@
-// The board: what the agents said to each other, and what the host did about
+// The forum: what the agents said to each other, and what the host did about
 // it.
 //
 // This surface has one job the console does not: making the trust boundary
@@ -15,26 +15,26 @@
 // no fence at all, because the host is speaking in its own voice.
 //
 // That is also why the palette is not the console's. The console is a mint
-// instrument for watching one box; the board is the product's outward face, and
+// instrument for watching one box; the forum is the product's outward face, and
 // it wears the site's drafting-sheet identity: near-black ground, greyscale
 // doing the structural work, and red reserved so tightly that the only filled
 // red on the page is a boundary the host refused to let anyone cross.
 //
 // Read-only, like everything else here (see crates/h5i-core/src/server.rs). The
 // human actions — revoke, close, apply — are shown as the commands that perform
-// them, to be run in a terminal. A browser tab that could post to the board
+// them, to be run in a terminal. A browser tab that could post to the forum
 // would be a participant the host cannot name.
 
 import React from "react";
 import {
-  boardApi,
-  type BoardOverview,
-  type BoardPost,
-  type BoardPreview,
-  type BoardStatus,
-  type BoardThread,
-  type BoardThreadSummary,
-  type BoardRosterEntry,
+  forumApi,
+  type ForumOverview,
+  type ForumPost,
+  type ForumPreview,
+  type ForumStatus,
+  type ForumThread,
+  type ForumThreadSummary,
+  type ForumRosterEntry,
 } from "./api";
 import { Markdown, plainText } from "./markdown";
 
@@ -53,22 +53,22 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: "refused", label: "refused" },
 ];
 
-export function BoardView({
+export function ForumView({
   initialThread = null,
 }: {
-  /** Thread named by `#board/<id>`, opened on first render. */
+  /** Thread named by `#forum/<id>`, opened on first render. */
   initialThread?: string | null;
 }) {
-  const [overview, setOverview] = React.useState<BoardOverview | null>(null);
+  const [overview, setOverview] = React.useState<ForumOverview | null>(null);
   const [selected, setSelected] = React.useState<string | null>(initialThread);
-  const [thread, setThread] = React.useState<BoardThread | null>(null);
+  const [thread, setThread] = React.useState<ForumThread | null>(null);
   const [filter, setFilter] = React.useState<Filter>("all");
   const [error, setError] = React.useState<string | null>(null);
 
   // Keep the address bar in step with the selection, so the URL is always the
   // link to what is on screen rather than to where the reader started.
   React.useEffect(() => {
-    const want = selected ? `#board/${selected}` : "#board";
+    const want = selected ? `#forum/${selected}` : "#forum";
     if (window.location.hash !== want) {
       window.history.replaceState({}, "", window.location.pathname + want);
     }
@@ -77,7 +77,7 @@ export function BoardView({
   React.useEffect(() => {
     let live = true;
     const load = () =>
-      boardApi
+      forumApi
         .overview()
         .then((o) => {
           if (!live) return;
@@ -100,7 +100,7 @@ export function BoardView({
     }
     let live = true;
     const load = () =>
-      boardApi
+      forumApi
         .thread(selected)
         .then((t) => live && setThread(t))
         .catch(() => live && setThread(null));
@@ -170,7 +170,7 @@ export function BoardView({
   );
 }
 
-function matches(t: BoardThreadSummary, f: Filter): boolean {
+function matches(t: ForumThreadSummary, f: Filter): boolean {
   switch (f) {
     case "all":
       return true;
@@ -192,8 +192,8 @@ function ThreadList({
   onSelect,
   error,
 }: {
-  threads: BoardThreadSummary[];
-  closed: BoardThreadSummary[];
+  threads: ForumThreadSummary[];
+  closed: ForumThreadSummary[];
   filter: Filter;
   onFilter: (f: Filter) => void;
   selected: string | null;
@@ -219,7 +219,7 @@ function ThreadList({
       {threads.length === 0 && !error && (
         <div className="brd-empty">
           no threads here.
-          <code>h5i board create "…"</code>
+          <code>h5i forum create "…"</code>
         </div>
       )}
       {threads.map((t) => (
@@ -254,7 +254,7 @@ function ThreadRow({
   closed,
   onSelect,
 }: {
-  t: BoardThreadSummary;
+  t: ForumThreadSummary;
   selected: boolean;
   closed?: boolean;
   onSelect: (id: string) => void;
@@ -278,7 +278,7 @@ function ThreadRow({
   );
 }
 
-function StatusPill({ status }: { status: BoardStatus }) {
+function StatusPill({ status }: { status: ForumStatus }) {
   return <span className={`brd-pill is-${status}`}>{status}</span>;
 }
 
@@ -288,7 +288,7 @@ function Conversation({
   thread,
   empty,
 }: {
-  thread: BoardThread | null;
+  thread: ForumThread | null;
   empty: boolean;
 }) {
   if (!thread) {
@@ -297,16 +297,16 @@ function Conversation({
         <div className="brd-blank">
           {empty ? (
             <>
-              <p>Nothing is on the board yet.</p>
+              <p>Nothing is on the forum yet.</p>
               <p className="brd-dim">
                 A human opens a thread and puts boxes on it. The agents inside
                 them read, post and submit; they never gain a capability by
                 doing so.
               </p>
               <pre>
-                {`h5i board create "fix the auth refresh race" --ceiling code-review
-h5i board attach claude-box --as claude-worker --role worker
-h5i board attach codex-box  --as codex-reviewer --role reviewer`}
+                {`h5i forum create "fix the auth refresh race" --ceiling code-review
+h5i forum attach claude-box --as claude-worker --role worker
+h5i forum attach codex-box  --as codex-reviewer --role reviewer`}
               </pre>
             </>
           ) : (
@@ -383,8 +383,8 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
         <span className="brd-dim">
           the console watches. act from a terminal:
         </span>
-        <Cmd text={`h5i board read ${thread.header.id}`} />
-        <Cmd text={`h5i board close ${thread.header.id}`} />
+        <Cmd text={`h5i forum read ${thread.header.id}`} />
+        <Cmd text={`h5i forum close ${thread.header.id}`} />
       </div>
     </div>
   );
@@ -395,7 +395,7 @@ function PostRow({
   me,
   score,
 }: {
-  p: BoardPost;
+  p: ForumPost;
   me: string;
   score: number;
 }) {
@@ -484,9 +484,9 @@ function PostRow({
  *
  * Initials do not work here. Agents get named `agent-1`, `agent-2`,
  * `claude-worker`, `codex-reviewer` — the first letter is the same for most of
- * a board and a hashed hue is not a difference you can hold in your head while
+ * a forum and a hashed hue is not a difference you can hold in your head while
  * scanning a thread. These are distinguishable at a glance and, being derived
- * from the name, are the same on every machine looking at the same board.
+ * from the name, are the same on every machine looking at the same forum.
  *
  * Chosen to have distinct silhouettes rather than to be decorative, and
  * deliberately free of anything that carries meaning elsewhere on this screen:
@@ -542,7 +542,7 @@ function faceOf(name: string): string {
 }
 
 /**
- * Faces for one board, with collisions resolved.
+ * Faces for one forum, with collisions resolved.
  *
  * Hashing alone gives two participants the same face often enough to matter —
  * eleven names into thirty-two faces collides about five times in six — and a
@@ -554,10 +554,10 @@ function faceOf(name: string): string {
  * way, so a face is a thing two people can refer to out loud. It is not
  * pinned for all time — a new participant sorting earlier can displace a later
  * one — which is the price of never showing the same face twice, and the right
- * side of that trade for a board that is read while it is being written.
+ * side of that trade for a forum that is read while it is being written.
  *
  * Past `FACES.length` participants the probe stops and faces repeat, because
- * there is nothing left to move to. A board that large has outgrown telling
+ * there is nothing left to move to. A forum that large has outgrown telling
  * people apart by icon anyway, and the name is next to every one of them.
  */
 function faceMap(names: string[]): Map<string, string> {
@@ -579,7 +579,7 @@ function faceMap(names: string[]): Map<string, string> {
 }
 
 /**
- * The board's faces, so a post and the participants panel agree.
+ * The forum's faces, so a post and the participants panel agree.
  *
  * The default is the bare hash rather than an empty map: a post can name a
  * sender this host has no roster row for — a peer's agent, or one revoked long
@@ -637,7 +637,7 @@ function Participants({
   roster,
   influenced,
 }: {
-  roster: BoardRosterEntry[];
+  roster: ForumRosterEntry[];
   influenced: string[];
 }) {
   return (
@@ -646,7 +646,7 @@ function Participants({
       {roster.length === 0 && (
         <div className="brd-empty">
           nobody yet.
-          <code>h5i board attach &lt;box&gt; --as &lt;name&gt;</code>
+          <code>h5i forum attach &lt;box&gt; --as &lt;name&gt;</code>
         </div>
       )}
       {roster.map((e) => (
@@ -673,7 +673,7 @@ function Participants({
             <Row k="revoked" v={shortTime(e.revoked_at)} warn />
           ) : (
             <div className="brd-agent-cmd">
-              <Cmd text={`h5i board revoke ${e.agent}`} />
+              <Cmd text={`h5i forum revoke ${e.agent}`} />
             </div>
           )}
         </div>
@@ -706,12 +706,12 @@ function shortTime(ts: string): string {
 // ── the landing feed ─────────────────────────────────────────────────────────
 
 /**
- * What the board shows before you have picked anything.
+ * What the forum shows before you have picked anything.
  *
  * "Pick a thread" is the wrong first screen: it asks the reader to choose
  * between titles when what they want to know is where the argument got to. So
  * the feed leads with the best-scored post in each thread — the one the room
- * agreed on — and ranks by that, with recency breaking ties. A board with
+ * agreed on — and ranks by that, with recency breaking ties. A forum with
  * nothing on it explains how to put something on it instead.
  */
 function Feed({
@@ -719,8 +719,8 @@ function Feed({
   previews,
   onSelect,
 }: {
-  threads: BoardThreadSummary[];
-  previews: BoardPreview[];
+  threads: ForumThreadSummary[];
+  previews: ForumPreview[];
   onSelect: (id: string) => void;
 }) {
   const byId = new Map(previews.map((p) => [p.thread, p]));
@@ -735,15 +735,15 @@ function Feed({
     return (
       <div className="brd-col brd-col-mid">
         <div className="brd-blank">
-          <p>Nothing is on the board yet.</p>
+          <p>Nothing is on the forum yet.</p>
           <p className="brd-dim">
             A human opens a thread and puts boxes on it. The agents inside them
             read, post and submit; they never gain a capability by doing so.
           </p>
           <pre>
-            {`h5i board create "fix the auth refresh race" --ceiling code-review
-h5i board attach claude-box --as claude-worker --role worker
-h5i board attach codex-box  --as codex-reviewer --role reviewer`}
+            {`h5i forum create "fix the auth refresh race" --ceiling code-review
+h5i forum attach claude-box --as claude-worker --role worker
+h5i forum attach codex-box  --as codex-reviewer --role reviewer`}
           </pre>
         </div>
       </div>
@@ -753,7 +753,7 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
   return (
     <div className="brd-col brd-col-mid">
       <div className="brd-feed-head">
-        <span className="brd-h">what the board agreed on</span>
+        <span className="brd-h">what the forum agreed on</span>
         <span className="brd-dim">
           ranked by the best-scored post in each thread
         </span>
@@ -808,7 +808,7 @@ h5i board attach codex-box  --as codex-reviewer --role reviewer`}
         <span className="brd-dim">
           the console watches; agreeing happens in a terminal:
         </span>
-        <Cmd text="h5i board up <n>" />
+        <Cmd text="h5i forum up <n>" />
       </div>
     </div>
   );

@@ -6,10 +6,10 @@ import "normalize.css/normalize.css";
 import "@blueprintjs/core/lib/css/blueprint.css";
 import "@blueprintjs/icons/lib/css/blueprint-icons.css";
 import "./theme.css";
-import "./board.css";
+import "./forum.css";
 
 import { SandboxView } from "./SandboxView";
-import { BoardView } from "./BoardView";
+import { ForumView } from "./ForumView";
 
 FocusStyleManager.onlyShowFocusOnTabs();
 
@@ -29,7 +29,7 @@ if (window.location.search.includes("token=")) {
   );
 }
 
-type Surface = "console" | "board";
+type Surface = "console" | "forum";
 
 /**
  * Two surfaces, one shell.
@@ -39,17 +39,17 @@ type Surface = "console" | "board";
  * surface is remembered so a reload lands where you were.
  *
  * They are deliberately not merged. The console answers "what is this box
- * doing"; the board answers "what are these agents telling each other". They
+ * doing"; the forum answers "what are these agents telling each other". They
  * look different because they *are* different instruments, and a reader should
  * know which one they are holding without reading a label.
  */
 function Shell() {
   // The fragment wins over the remembered choice, so a URL can name a surface:
-  // `…/#board` opens the board whatever this browser was last looking at, which
+  // `…/#forum` opens the forum whatever this browser was last looking at, which
   // is what makes a link to it worth sending.
   const [surface, setSurface] = React.useState<Surface>(() => {
     const head = window.location.hash.replace(/^#/, "").split("/")[0];
-    if (head === "board" || head === "console") return head;
+    if (head === "forum" || head === "console") return head;
     return (localStorage.getItem("h5i.surface") as Surface) ?? "console";
   });
   const pick = (s: Surface) => {
@@ -57,11 +57,11 @@ function Shell() {
     localStorage.setItem("h5i.surface", s);
     window.history.replaceState({}, "", `${window.location.pathname}#${s}`);
   };
-  // `#board/<thread>` opens straight into one conversation, which is the link
-  // worth sending to a colleague — "look at this thread", not "open the board
+  // `#forum/<thread>` opens straight into one conversation, which is the link
+  // worth sending to a colleague — "look at this thread", not "open the forum
   // and find it".
   const initialThread =
-    surface === "board"
+    surface === "forum"
       ? (window.location.hash.replace(/^#/, "").split("/")[1] ?? null)
       : null;
   return (
@@ -87,18 +87,18 @@ function Shell() {
         <button
           type="button"
           role="tab"
-          aria-selected={surface === "board"}
-          className={`wb-tab for-board${surface === "board" ? " is-on" : ""}`}
-          onClick={() => pick("board")}
+          aria-selected={surface === "forum"}
+          className={`wb-tab for-forum${surface === "forum" ? " is-on" : ""}`}
+          onClick={() => pick("forum")}
         >
-          board
+          forum
         </button>
       </div>
       <div className="wb-surface">
         {surface === "console" ? (
           <SandboxView />
         ) : (
-          <BoardView initialThread={initialThread} />
+          <ForumView initialThread={initialThread} />
         )}
       </div>
     </div>

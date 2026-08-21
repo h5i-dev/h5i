@@ -6,7 +6,7 @@
 //!
 //! > Agents can share information, never permissions.
 //!
-//! Sharing information is what the board does. Not sharing permissions is what
+//! Sharing information is what the forum does. Not sharing permissions is what
 //! this module does, and it does it by making the ceiling a property of the
 //! *room* rather than of the conversation in it.
 //!
@@ -94,7 +94,7 @@ pub fn check(b: &Profile, ceiling: &Profile) -> Vec<Violation> {
 
     // ── credentials ────────────────────────────────────────────────────────
     //
-    // The sharpest dimension. A credential inside a box is authority the board
+    // The sharpest dimension. A credential inside a box is authority the forum
     // can never take back, because the box can use it without asking h5i.
     for grant in &b.secret_grants {
         if !ceiling.secrets.iter().any(|c| c == &grant.name) {

@@ -1,6 +1,6 @@
-//! The board's one way in and out: an ordinary git remote.
+//! The forum's one way in and out: an ordinary git remote.
 //!
-//! Every board has a remote, including a board with one participant on one
+//! Every forum has a remote, including a forum with one participant on one
 //! machine. That is deliberate, and it is the opposite of an optimisation.
 //!
 //! The tempting design gives same-machine boxes a shortcut — write the refs
@@ -17,7 +17,7 @@
 //! ## Why a git remote rather than a service
 //!
 //! Because nobody has to run it. A team already operates a git host, and that
-//! host already answers the two questions a board would otherwise need its own
+//! host already answers the two questions a forum would otherwise need its own
 //! answers for: **who may post** is push access, and **who may read** is read
 //! access. A public repository is an open topic; a private one is an internal
 //! one. There is no server to deploy, no uptime to own, and no roster to
@@ -51,24 +51,24 @@
 //! remote, and no code path that reaches this module: it writes a record into
 //! its spool and the host does the rest. That is the same split the remote
 //! runner makes — the worker is h5i, the host holds the key — and it is why a
-//! compromised agent cannot push to the board even though the board is a repo.
+//! compromised agent cannot push to the forum even though the forum is a repo.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use git2::Repository;
 
-use crate::board;
+use crate::forum;
 use crate::error::H5iError;
 
-/// Refs the board owns locally. The remote side is [`Remote::namespace`].
-const LIVE: &str = "refs/h5i/board/*";
+/// Refs the forum owns locally. The remote side is [`Remote::namespace`].
+const LIVE: &str = "refs/h5i/forum/*";
 
 /// Default remote namespace: the same custom one used locally.
 ///
 /// Invisible to `git branch`, and adequate for a local bare repository or any
 /// remote where nobody hostile has push access.
-pub const NS_CUSTOM: &str = "refs/h5i/board";
+pub const NS_CUSTOM: &str = "refs/h5i/forum";
 
 /// Remote namespace that a forge will protect.
 ///
@@ -78,22 +78,22 @@ pub const NS_CUSTOM: &str = "refs/h5i/board";
 /// `git push --delete` a thread or force-push over it, and nothing at the
 /// server refuses. Publishing under branches instead lets a repository admin
 /// switch on "restrict deletions" and "block force pushes" for the pattern
-/// `h5i-board/**`, which turns this design's *self-healing* into actual
+/// `h5i-forum/**`, which turns this design's *self-healing* into actual
 /// prevention.
 ///
 /// The cost is that threads show up in `git branch -a` and in branch pickers.
 /// Namespacing contains that; it does not remove it. So it is a choice, and a
-/// solo board on a local bare repository has no reason to pay it.
-pub const NS_BRANCH: &str = "refs/heads/h5i-board";
+/// solo forum on a local bare repository has no reason to pay it.
+pub const NS_BRANCH: &str = "refs/heads/h5i-forum";
 /// Where a fetch parks the remote's view before it is merged in.
-const INCOMING: &str = "refs/h5i/board-incoming";
+const INCOMING: &str = "refs/h5i/forum-incoming";
 
 /// Attempts before a sync gives up. Each retry is a fetch, a merge and a push;
-/// losing this many consecutive races means the board is busier than a git
+/// losing this many consecutive races means the forum is busier than a git
 /// remote can serve, which is a different problem from a lost update.
 const MAX_ATTEMPTS: usize = 8;
 
-/// Where this machine's board lives.
+/// Where this machine's forum lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
     /// A git URL, or a path. Anything `git fetch` accepts.
@@ -107,7 +107,7 @@ pub struct Remote {
 }
 
 impl Remote {
-    /// Are the board's threads published as branches a forge can protect?
+    /// Are the forum's threads published as branches a forge can protect?
     pub fn is_branch_namespace(&self) -> bool {
         self.namespace == NS_BRANCH
     }
@@ -116,16 +116,16 @@ impl Remote {
 /// Host-side location of the configured remote.
 ///
 /// Under the sidecar root, which is outside every grant a box has — the same
-/// reasoning that keeps the runner's config out of the repository. A board URL
+/// reasoning that keeps the runner's config out of the repository. A forum URL
 /// in a worktree file would be a value an agent could edit, and redirecting the
-/// board is redirecting every post on it.
+/// forum is redirecting every post on it.
 fn remote_file(h5i_root: &Path) -> PathBuf {
-    h5i_root.join("board").join("remote")
+    h5i_root.join("forum").join("remote")
 }
 
 /// Host-side location of the chosen remote namespace.
 fn namespace_file(h5i_root: &Path) -> PathBuf {
-    h5i_root.join("board").join("namespace")
+    h5i_root.join("forum").join("namespace")
 }
 
 fn read_namespace(h5i_root: &Path) -> String {
@@ -135,9 +135,9 @@ fn read_namespace(h5i_root: &Path) -> String {
     }
 }
 
-/// Path of the local bare repository a board falls back to.
+/// Path of the local bare repository a forum falls back to.
 fn default_remote_path(h5i_root: &Path) -> PathBuf {
-    h5i_root.join("board.git")
+    h5i_root.join("forum.git")
 }
 
 /// The configured remote, creating the local default if nothing is set.
@@ -164,18 +164,18 @@ pub fn remote(h5i_root: &Path) -> Result<Remote, H5iError> {
     })
 }
 
-/// Point this machine's board at `url`. Human-only, host-side.
+/// Point this machine's forum at `url`. Human-only, host-side.
 pub fn set_remote(h5i_root: &Path, url: &str) -> Result<(), H5iError> {
     let url = url.trim();
     if url.is_empty() {
-        return Err(H5iError::Metadata("a board remote needs a URL".into()));
+        return Err(H5iError::Metadata("a forum remote needs a URL".into()));
     }
     // A URL is handed to `git` as an argument, so a leading `-` would be read
     // as an option. `--end-of-options` covers the calls below, and refusing it
     // here covers everything that ever reads this file.
     if url.starts_with('-') {
         return Err(H5iError::Metadata(format!(
-            "refusing a board remote that starts with '-': {url:?}"
+            "refusing a forum remote that starts with '-': {url:?}"
         )));
     }
     let path = remote_file(h5i_root);
@@ -220,7 +220,7 @@ impl SyncReport {
     }
 }
 
-/// Bring the local board and the remote into agreement.
+/// Bring the local forum and the remote into agreement.
 ///
 /// Fetch, union-merge anything that diverged, push. A rejected push means
 /// somebody posted between the fetch and the push, so the whole round runs
@@ -254,7 +254,7 @@ pub fn sync_with(repo: &Repository, remote: &Remote) -> Result<SyncReport, H5iEr
         }
     }
     Err(H5iError::Internal(format!(
-        "board sync lost {MAX_ATTEMPTS} consecutive races against {} — \
+        "forum sync lost {MAX_ATTEMPTS} consecutive races against {} — \
          the remote is busier than this can serve",
         remote.url
     )))
@@ -267,7 +267,7 @@ enum SyncError {
     Fatal(H5iError),
 }
 
-/// Fetch the remote's board and fold it into ours. Returns how many local tips
+/// Fetch the remote's forum and fold it into ours. Returns how many local tips
 /// moved.
 fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iError> {
     // Into a staging namespace, never straight onto the live refs: what comes
@@ -290,8 +290,8 @@ fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iErro
     );
     match out {
         Ok(_) => {}
-        // A remote with no board yet has no matching refs, which git reports as
-        // an error on some versions. That is an empty board, not a failure.
+        // A remote with no forum yet has no matching refs, which git reports as
+        // an error on some versions. That is an empty forum, not a failure.
         Err(e) if is_empty_remote(&e) => return Ok(0),
         Err(e) => return Err(e),
     }
@@ -311,17 +311,17 @@ fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iErro
                 if repo.graph_descendant_of(local_oid, incoming_oid).unwrap_or(false) {
                     continue; // we already contain it
                 }
-                let merged = if local.starts_with("refs/h5i/board/meta") {
-                    board::union_merge_roster(repo, local_oid, incoming_oid)?
+                let merged = if local.starts_with("refs/h5i/forum/meta") {
+                    forum::union_merge_roster(repo, local_oid, incoming_oid)?
                 } else {
-                    board::union_merge_thread(repo, local_oid, incoming_oid)?
+                    forum::union_merge_thread(repo, local_oid, incoming_oid)?
                 };
-                repo.reference(&local, merged, true, "h5i board: merge remote")?;
+                repo.reference(&local, merged, true, "h5i forum: merge remote")?;
                 moved += 1;
             }
             // A thread this machine has never seen.
             Err(_) => {
-                repo.reference(&local, incoming_oid, false, "h5i board: adopt remote")?;
+                repo.reference(&local, incoming_oid, false, "h5i forum: adopt remote")?;
                 moved += 1;
             }
         }
@@ -341,17 +341,17 @@ fn incoming_pairs(repo: &Repository) -> Result<Vec<(String, String)>, H5iError> 
             let Some(leaf) = name.rsplit('/').next() else {
                 continue;
             };
-            // The leaf is a thread id or `meta`, both of which the board's own
+            // The leaf is a thread id or `meta`, both of which the forum's own
             // validator accepts. Anything else was not written by us.
-            if leaf != "meta" && board::validate_thread_id(leaf).is_err() {
+            if leaf != "meta" && forum::validate_thread_id(leaf).is_err() {
                 continue;
             }
             // `threads/<id>` loses its middle component through a `*` refspec,
             // so put it back.
             let local = if leaf == "meta" {
-                board::BOARD_META_REF.to_string()
+                forum::FORUM_META_REF.to_string()
             } else {
-                board::thread_ref(leaf)
+                forum::thread_ref(leaf)
             };
             out.push((name.to_string(), local));
         }
@@ -359,7 +359,7 @@ fn incoming_pairs(repo: &Repository) -> Result<Vec<(String, String)>, H5iError> 
     Ok(out)
 }
 
-/// Push the local board. `Contended` when the remote moved under us.
+/// Push the local forum. `Contended` when the remote moved under us.
 fn push(dir: &Path, remote: &Remote) -> Result<usize, SyncError> {
     // No `--force`: an append-only thread that has been merged onto the remote
     // tip is a fast-forward, so a rejection means someone else got there first
@@ -397,7 +397,7 @@ fn is_no_matching_ref(e: &H5iError) -> bool {
 
 /// Run git in `dir` with the hardening the rest of this codebase's shell-outs
 /// use: no hooks, no `ext::` transport, and object checking on both directions
-/// of the wire, because a board's remote is a machine this one does not own.
+/// of the wire, because a forum's remote is a machine this one does not own.
 fn git(dir: &Path, args: &[&str]) -> Result<String, H5iError> {
     let out = Command::new("git")
         .arg("-c")
@@ -425,7 +425,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, H5iError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::board::{Author, NewPost, Role};
+    use crate::forum::{Author, NewPost, Role};
 
     fn work_repo(dir: &Path) -> Repository {
         let repo = Repository::init(dir).expect("init");
@@ -475,22 +475,22 @@ mod tests {
         let b = work_repo(&b_dir);
 
         // A opens a thread and posts, then publishes.
-        let h = board::create_thread(&a, &human(), "cross-machine", None, None, None).unwrap();
-        board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "from A")).unwrap();
+        let h = forum::create_thread(&a, &human(), "cross-machine", None, None, None).unwrap();
+        forum::append_post(&a, &agent("alice"), &h.id, post("FINDING", "from A")).unwrap();
         sync_with(&a, &remote).unwrap();
 
         // B has never heard of it; one sync and it has the whole thread.
         let r = sync_with(&b, &remote).unwrap();
         assert!(r.pulled > 0, "B should adopt the thread");
-        let seen = board::read_thread(&b, &h.id).unwrap();
+        let seen = forum::read_thread(&b, &h.id).unwrap();
         assert_eq!(seen.posts.len(), 1);
         assert_eq!(seen.posts[0].body, "from A");
 
         // B replies and publishes; A picks it up.
-        board::append_post(&b, &agent("bob"), &h.id, post("ACK", "from B")).unwrap();
+        forum::append_post(&b, &agent("bob"), &h.id, post("ACK", "from B")).unwrap();
         sync_with(&b, &remote).unwrap();
         sync_with(&a, &remote).unwrap();
-        let back = board::read_thread(&a, &h.id).unwrap();
+        let back = forum::read_thread(&a, &h.id).unwrap();
         let bodies: Vec<&str> = back.posts.iter().map(|p| p.body.as_str()).collect();
         assert!(bodies.contains(&"from A") && bodies.contains(&"from B"), "{bodies:?}");
     }
@@ -516,13 +516,13 @@ mod tests {
         std::fs::create_dir_all(&b_dir).unwrap();
         let b = work_repo(&b_dir);
 
-        let h = board::create_thread(&a, &human(), "race", None, None, None).unwrap();
+        let h = forum::create_thread(&a, &human(), "race", None, None, None).unwrap();
         sync_with(&a, &remote).unwrap();
         sync_with(&b, &remote).unwrap();
 
         // Diverge: each side appends without seeing the other.
-        board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "A only")).unwrap();
-        board::append_post(&b, &agent("bob"), &h.id, post("FINDING", "B only")).unwrap();
+        forum::append_post(&a, &agent("alice"), &h.id, post("FINDING", "A only")).unwrap();
+        forum::append_post(&b, &agent("bob"), &h.id, post("FINDING", "B only")).unwrap();
 
         sync_with(&a, &remote).unwrap();
         // B's push is a non-fast-forward, so its sync must fetch, merge and
@@ -531,7 +531,7 @@ mod tests {
         sync_with(&a, &remote).unwrap();
 
         for (name, repo) in [("A", &a), ("B", &b)] {
-            let t = board::read_thread(repo, &h.id).unwrap();
+            let t = forum::read_thread(repo, &h.id).unwrap();
             let bodies: Vec<&str> = t.posts.iter().map(|p| p.body.as_str()).collect();
             assert!(
                 bodies.contains(&"A only") && bodies.contains(&"B only"),
@@ -562,15 +562,15 @@ mod tests {
         std::fs::create_dir_all(&b_dir).unwrap();
         let b = work_repo(&b_dir);
 
-        board::put_roster_entry(
+        forum::put_roster_entry(
             &a,
             &human(),
-            board::RosterEntry {
+            forum::RosterEntry {
                 agent: "mallory".into(),
                 box_id: None,
                 role: Role::Worker,
                 policy_digest: None,
-                attached_at: board::now_ts(),
+                attached_at: forum::now_ts(),
                 revoked_at: None,
             },
         )
@@ -580,16 +580,16 @@ mod tests {
 
         // A revokes. B, which still thinks mallory is active, adds someone else
         // and syncs — the merge must not resurrect mallory.
-        board::revoke(&a, &human(), "mallory").unwrap();
-        board::put_roster_entry(
+        forum::revoke(&a, &human(), "mallory").unwrap();
+        forum::put_roster_entry(
             &b,
             &human(),
-            board::RosterEntry {
+            forum::RosterEntry {
                 agent: "carol".into(),
                 box_id: None,
                 role: Role::Reviewer,
                 policy_digest: None,
-                attached_at: board::now_ts(),
+                attached_at: forum::now_ts(),
                 revoked_at: None,
             },
         )
@@ -599,7 +599,7 @@ mod tests {
         sync_with(&a, &remote).unwrap();
 
         for (name, repo) in [("A", &a), ("B", &b)] {
-            let r = board::read_roster(repo);
+            let r = forum::read_roster(repo);
             assert!(
                 !r.get("mallory").unwrap().is_active(),
                 "{name} resurrected a revoked participant"
@@ -633,8 +633,8 @@ mod tests {
         std::fs::create_dir_all(&b_dir).unwrap();
         let b = work_repo(&b_dir);
 
-        let h = board::create_thread(&a, &human(), "vouch", None, None, None).unwrap();
-        board::append_post(
+        let h = forum::create_thread(&a, &human(), "vouch", None, None, None).unwrap();
+        forum::append_post(
             &a,
             &agent("alice").from_host("machine-a"),
             &h.id,
@@ -643,7 +643,7 @@ mod tests {
         .unwrap();
         sync_with(&a, &remote).unwrap();
         sync_with(&b, &remote).unwrap();
-        board::append_post(
+        forum::append_post(
             &b,
             &agent("bob").from_host("machine-b"),
             &h.id,
@@ -653,7 +653,7 @@ mod tests {
         sync_with(&b, &remote).unwrap();
         sync_with(&a, &remote).unwrap();
 
-        let seen = board::read_thread(&a, &h.id).unwrap();
+        let seen = forum::read_thread(&a, &h.id).unwrap();
         let by_body = |body: &str| {
             seen.posts
                 .iter()
@@ -661,16 +661,16 @@ mod tests {
                 .unwrap()
                 .vouch("machine-a")
         };
-        assert_eq!(by_body("from A"), board::Vouch::Observed);
+        assert_eq!(by_body("from A"), forum::Vouch::Observed);
         assert_eq!(
             by_body("from B"),
-            board::Vouch::PeerClaimed {
+            forum::Vouch::PeerClaimed {
                 origin: "machine-b".into()
             }
         );
 
         // And the other way round on the other machine, from the same bytes.
-        let seen_b = board::read_thread(&b, &h.id).unwrap();
+        let seen_b = forum::read_thread(&b, &h.id).unwrap();
         let a_post = seen_b.posts.iter().find(|p| p.body == "from A").unwrap();
         assert!(!a_post.vouch("machine-b").is_observed());
     }
@@ -682,12 +682,12 @@ mod tests {
         let dir = root.path().join("w");
         std::fs::create_dir_all(&dir).unwrap();
         let repo = work_repo(&dir);
-        let h = board::create_thread(&repo, &human(), "t", None, None, None).unwrap();
+        let h = forum::create_thread(&repo, &human(), "t", None, None, None).unwrap();
         // `agent()` builds an author with no origin, the way a build from before
         // origins existed would.
-        board::append_post(&repo, &agent("old"), &h.id, post("FINDING", "x")).unwrap();
-        let t = board::read_thread(&repo, &h.id).unwrap();
-        assert_eq!(t.posts[0].vouch("machine-a"), board::Vouch::Unattributed);
+        forum::append_post(&repo, &agent("old"), &h.id, post("FINDING", "x")).unwrap();
+        let t = forum::read_thread(&repo, &h.id).unwrap();
+        assert_eq!(t.posts[0].vouch("machine-a"), forum::Vouch::Unattributed);
         assert!(!t.posts[0].vouch("").is_observed(), "an empty identity matches nothing");
     }
 
@@ -714,11 +714,11 @@ mod tests {
         std::fs::create_dir_all(&b_dir).unwrap();
         let b = work_repo(&b_dir);
 
-        let h = board::create_thread(&a, &human(), "closing", None, None, None).unwrap();
+        let h = forum::create_thread(&a, &human(), "closing", None, None, None).unwrap();
         sync_with(&a, &remote).unwrap();
         sync_with(&b, &remote).unwrap();
 
-        board::close_thread(&a, &human(), &h.id).unwrap();
+        forum::close_thread(&a, &human(), &h.id).unwrap();
         sync_with(&a, &remote).unwrap();
         // B pushes its own (still open) view first, exactly as it would have
         // done before hearing about the close.
@@ -727,7 +727,7 @@ mod tests {
 
         for (name, repo) in [("A", &a), ("B", &b)] {
             assert!(
-                board::read_thread(repo, &h.id).unwrap().is_closed(),
+                forum::read_thread(repo, &h.id).unwrap().is_closed(),
                 "{name} did not honour the close"
             );
         }
@@ -736,7 +736,7 @@ mod tests {
     /// Deleting a thread ref from the remote destroys nothing.
     ///
     /// Anyone with push access can run `git push --delete`, and nothing stops
-    /// them trying. Nothing on a board depends on a ref being absent, though,
+    /// them trying. Nothing on a forum depends on a ref being absent, though,
     /// so the next sync from any clone that still holds the thread puts it
     /// back: an attacker buys a window, never a loss.
     #[test]
@@ -754,16 +754,16 @@ mod tests {
         std::fs::create_dir_all(&a_dir).unwrap();
         let a = work_repo(&a_dir);
 
-        let h = board::create_thread(&a, &human(), "durable", None, None, None).unwrap();
-        board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "keep me")).unwrap();
+        let h = forum::create_thread(&a, &human(), "durable", None, None, None).unwrap();
+        forum::append_post(&a, &agent("alice"), &h.id, post("FINDING", "keep me")).unwrap();
         sync_with(&a, &remote).unwrap();
 
         // The attack, in one plain-git command.
-        let dead = format!(":{}", board::thread_ref(&h.id));
+        let dead = format!(":{}", forum::thread_ref(&h.id));
         git(&a_dir, &["push", "--end-of-options", &remote.url, &dead]).unwrap();
         let gone = git(
             &hub,
-            &["for-each-ref", "--format=%(refname)", "refs/h5i/board/threads/"],
+            &["for-each-ref", "--format=%(refname)", "refs/h5i/forum/threads/"],
         )
         .unwrap();
         assert!(gone.trim().is_empty(), "the delete really landed");
@@ -771,16 +771,16 @@ mod tests {
         sync_with(&a, &remote).unwrap();
         let back = git(
             &hub,
-            &["for-each-ref", "--format=%(refname)", "refs/h5i/board/threads/"],
+            &["for-each-ref", "--format=%(refname)", "refs/h5i/forum/threads/"],
         )
         .unwrap();
         assert!(back.contains(&h.id), "one sync should restore it:\n{back}");
     }
 
-    /// A board with no remote configured gets a local one, and it works — that
+    /// A forum with no remote configured gets a local one, and it works — that
     /// is what makes solo use run the same code as a team.
     #[test]
-    fn a_board_with_no_configured_remote_still_syncs() {
+    fn a_forum_with_no_configured_remote_still_syncs() {
         let root = tempfile::tempdir().unwrap();
         let work = root.path().join("w");
         std::fs::create_dir_all(&work).unwrap();
@@ -789,27 +789,27 @@ mod tests {
         std::fs::create_dir_all(&h5i_root).unwrap();
 
         let r = remote(&h5i_root).unwrap();
-        assert!(r.is_default, "an unconfigured board falls back to a local bare repo");
+        assert!(r.is_default, "an unconfigured forum falls back to a local bare repo");
         assert!(default_remote_path(&h5i_root).join("HEAD").is_file());
 
-        let h = board::create_thread(&repo, &human(), "solo", None, None, None).unwrap();
-        board::append_post(&repo, &agent("solo"), &h.id, post("FINDING", "alone")).unwrap();
+        let h = forum::create_thread(&repo, &human(), "solo", None, None, None).unwrap();
+        forum::append_post(&repo, &agent("solo"), &h.id, post("FINDING", "alone")).unwrap();
         sync(&repo, &h5i_root).unwrap();
 
         // It really landed on the remote, rather than the push being skipped.
         let listed = git(
             &default_remote_path(&h5i_root),
-            &["for-each-ref", "--format=%(refname)", "refs/h5i/board/"],
+            &["for-each-ref", "--format=%(refname)", "refs/h5i/forum/"],
         )
         .unwrap();
         assert!(listed.contains(&h.id), "the thread should be on the remote:\n{listed}");
     }
 
-    /// Publishing under branches is the same board, and it is what lets a forge
+    /// Publishing under branches is the same forum, and it is what lets a forge
     /// protect it: rulesets only reach `refs/heads/**`, so a custom namespace
     /// gets no server-side refusal of a delete or a force-push.
     #[test]
-    fn a_board_can_publish_under_branches_a_forge_can_protect() {
+    fn a_forum_can_publish_under_branches_a_forge_can_protect() {
         let root = tempfile::tempdir().unwrap();
         let hub = root.path().join("hub.git");
         std::fs::create_dir_all(&hub).unwrap();
@@ -824,14 +824,14 @@ mod tests {
         let a_dir = root.path().join("a");
         std::fs::create_dir_all(&a_dir).unwrap();
         let a = work_repo(&a_dir);
-        let h = board::create_thread(&a, &human(), "protected", None, None, None).unwrap();
-        board::append_post(&a, &agent("alice"), &h.id, post("FINDING", "hello")).unwrap();
+        let h = forum::create_thread(&a, &human(), "protected", None, None, None).unwrap();
+        forum::append_post(&a, &agent("alice"), &h.id, post("FINDING", "hello")).unwrap();
         sync_with(&a, &remote).unwrap();
 
         // It really is a branch, which is the whole point.
         let heads = git(&hub, &["for-each-ref", "--format=%(refname)", "refs/heads/"]).unwrap();
         assert!(
-            heads.contains(&format!("refs/heads/h5i-board/threads/{}", h.id)),
+            heads.contains(&format!("refs/heads/h5i-forum/threads/{}", h.id)),
             "the thread should be a branch:\n{heads}"
         );
 
@@ -840,19 +840,19 @@ mod tests {
         std::fs::create_dir_all(&b_dir).unwrap();
         let b = work_repo(&b_dir);
         sync_with(&b, &remote).unwrap();
-        let seen = board::read_thread(&b, &h.id).unwrap();
+        let seen = forum::read_thread(&b, &h.id).unwrap();
         assert_eq!(seen.posts[0].body, "hello");
         // The local mirror keeps its own namespace either way, so nothing else
-        // in the board has to know which one is in use.
-        assert!(b.refname_to_id(&board::thread_ref(&h.id)).is_ok());
+        // in the forum has to know which one is in use.
+        assert!(b.refname_to_id(&forum::thread_ref(&h.id)).is_ok());
     }
 
     #[test]
     fn a_configured_remote_round_trips_and_a_dash_leading_url_is_refused() {
         let root = tempfile::tempdir().unwrap();
         let h5i_root = root.path().to_path_buf();
-        assert!(set_remote(&h5i_root, "  git@example.com:team/board.git  ").is_ok());
-        assert_eq!(remote(&h5i_root).unwrap().url, "git@example.com:team/board.git");
+        assert!(set_remote(&h5i_root, "  git@example.com:team/forum.git  ").is_ok());
+        assert_eq!(remote(&h5i_root).unwrap().url, "git@example.com:team/forum.git");
         assert!(!remote(&h5i_root).unwrap().is_default);
         assert_eq!(remote(&h5i_root).unwrap().namespace, NS_CUSTOM);
         set_namespace(&h5i_root, true).unwrap();

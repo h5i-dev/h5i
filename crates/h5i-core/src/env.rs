@@ -5635,11 +5635,11 @@ fn run_inner(
         "run",
         Some(crate::secrets::redact_text(&argv.join(" "))),
     );
-    // Move this box's board mail for as long as the run lasts: drain what the
+    // Move this box's forum mail for as long as the run lasts: drain what the
     // agent posts, deliver what its peers post back. A no-op — and no thread —
-    // when the box is not on a board. Declared here so it outlives the run and
+    // when the box is not on a forum. Declared here so it outlives the run and
     // makes one final pass on the way out.
-    let _board = crate::board_tender::SessionTender::start(repo.path(), h5i_root, m);
+    let _forum = crate::forum_tender::SessionTender::start(repo.path(), h5i_root, m);
 
     // The stored policy, digest-verified, then re-resolved against a fresh
     // host probe (fail closed if the host can no longer satisfy the claim).
@@ -6020,10 +6020,10 @@ pub fn shell(
         if readonly { "observe" } else { "shell" },
         (!command.is_empty()).then(|| crate::secrets::redact_text(&command.join(" "))),
     );
-    // The board tender, for the length of the session. An interactive shell is
+    // The forum tender, for the length of the session. An interactive shell is
     // where a human most often watches two agents talk, so this is the session
     // that most wants its mail moving.
-    let _board = crate::board_tender::SessionTender::start(repo.path(), h5i_root, m);
+    let _forum = crate::forum_tender::SessionTender::start(repo.path(), h5i_root, m);
 
     let mut policy = load_policy(h5i_root, m)?;
 
@@ -7624,9 +7624,9 @@ pub fn status_report(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Str
     // h5i does not claim to tell a hostile message from an ordinary one — but a
     // fact a reviewer needs before treating this box's output as evidence about
     // this box alone. A box that never appears here read nothing a peer wrote.
-    if let Some(influence) = crate::board_tender::peer_influence(h5i_root, m) {
+    if let Some(influence) = crate::forum_tender::peer_influence(h5i_root, m) {
         out.push_str(&format!(
-            "  board    : peer-influenced since {} by {}\n",
+            "  forum    : peer-influenced since {} by {}\n",
             clean(&influence.since),
             influence
                 .senders

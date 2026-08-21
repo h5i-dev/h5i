@@ -1,6 +1,6 @@
-//! The board: mediated collaboration between boxed agents.
+//! The forum: mediated collaboration between boxed agents.
 //!
-//! Agents in separate boxes cannot reach each other. They post to a board the
+//! Agents in separate boxes cannot reach each other. They post to a forum the
 //! host owns, and the host decides what each box gets to see. The product
 //! claim this implements is narrow and worth stating exactly:
 //!
@@ -8,7 +8,7 @@
 //!
 //! A message can change what a peer *decides*; it can never change what that
 //! peer's sandbox is *able to do*. Nothing in this module grants a capability,
-//! and there is deliberately no code path by which a post could: the board
+//! and there is deliberately no code path by which a post could: the forum
 //! carries text and content-addressed artifacts, and every privileged action
 //! (apply, export, push) stays a host command a box cannot invoke.
 //!
@@ -23,7 +23,7 @@
 //! nothing, because that field is not read.
 //!
 //! **Only humans change trust boundaries.** Creating a thread, attaching a box
-//! to the board, revoking one, and closing a thread are [`Role::Human`]
+//! to the forum, revoking one, and closing a thread are [`Role::Human`]
 //! operations, refused here for any other role. This is defence in depth: a box
 //! also cannot *reach* these calls, because the store lives outside every write
 //! grant it has.
@@ -31,8 +31,8 @@
 //! ## Layout: one ref per thread
 //!
 //! ```text
-//! refs/h5i/board/meta            roster.json — who is on the board
-//! refs/h5i/board/threads/<id>    thread.json + posts.jsonl + attach-<digest>
+//! refs/h5i/forum/meta            roster.json — who is on the forum
+//! refs/h5i/forum/threads/<id>    thread.json + posts.jsonl + attach-<digest>
 //! ```
 //!
 //! There is no attic namespace and no deletion. Closing a thread is a `CLOSED`
@@ -41,7 +41,7 @@
 //!
 //! Threads are separate refs rather than one shared log because appending
 //! rewrites the blob it appends to: with a single log, every post would rewrite
-//! the entire board's history, and reading one conversation would mean parsing
+//! the entire forum's history, and reading one conversation would mean parsing
 //! all of them. Per-thread refs bound both costs by the size of one thread,
 //! localise compare-and-swap contention to the thread being posted to, make the
 //! thread list a ref enumeration whose tip timestamps are the activity order,
@@ -52,7 +52,7 @@
 //! concurrent append is already here and tested ([`crate::refstore`]), and
 //! because a ref travels with the repo — the same union-merge that reconciles
 //! `refs/h5i/env/meta` across clones works here for free. `refs/h5i/*` is
-//! outside the default refspec, so a board never rides an ordinary `git push`
+//! outside the default refspec, so a forum never rides an ordinary `git push`
 //! to a forge.
 //!
 //! ## What is a projection, and what is stored
@@ -75,7 +75,7 @@
 //! Credentials are the opposite, and the asymmetry is the point. An escape
 //! sequence is dangerous when it reaches a terminal, so the renderer owns it. A
 //! credential is dangerous the moment it is *stored* — a git object is
-//! immutable, it is in every clone, and if the board has a remote it is
+//! immutable, it is in every clone, and if the forum has a remote it is
 //! published — so it never gets that far. [`append_post`] scrubs the body and
 //! every attachment before writing, unconditionally, and records which rules
 //! fired in [`Post::redactions`].
@@ -90,11 +90,11 @@ use sha2::{Digest, Sha256};
 use crate::error::H5iError;
 use crate::refstore;
 
-/// Ref holding the board roster. A sibling of the `threads/` namespace, not a
+/// Ref holding the forum roster. A sibling of the `threads/` namespace, not a
 /// parent of it: roster entries outlive any one thread.
-pub const BOARD_META_REF: &str = "refs/h5i/board/meta";
+pub const FORUM_META_REF: &str = "refs/h5i/forum/meta";
 /// Prefix under which each thread gets its own ref.
-pub const BOARD_THREADS_PREFIX: &str = "refs/h5i/board/threads/";
+pub const FORUM_THREADS_PREFIX: &str = "refs/h5i/forum/threads/";
 
 const POSTS_FILE: &str = "posts.jsonl";
 const THREAD_FILE: &str = "thread.json";
@@ -109,7 +109,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// fail, which bursty posting from a handful of boxes will not do.
 const MAX_ATTEMPTS: usize = 64;
 
-/// Largest single post body accepted, in bytes. A board is for coordination;
+/// Largest single post body accepted, in bytes. A forum is for coordination;
 /// anything larger belongs in an attachment, where it is content-addressed and
 /// deduplicated.
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -159,8 +159,8 @@ pub const KIND_BLOCKED: &str = "BLOCKED";
 /// union that merges the conversation. Nothing new had to be trusted to add it.
 ///
 /// Deliberately *not* karma. There is no reputation, no ranking of
-/// participants, and no score that follows an agent between threads — a board
-/// where agents accumulate standing is a board where an agent has a reason to
+/// participants, and no score that follows an agent between threads — a forum
+/// where agents accumulate standing is a forum where an agent has a reason to
 /// perform. What a vote says is narrower and more useful: **this is the post I
 /// would act on.** A human scanning a long thread wants that, and so does an
 /// agent deciding which of three proposals its peers converged on.
@@ -177,7 +177,7 @@ pub const KIND_DOWNVOTE: &str = "DOWNVOTE";
 /// silently undone. Measured, not theorised.
 ///
 /// Making it an append fixes that and closes a second hole at the same time.
-/// Nothing about a board now depends on a ref being *absent*, so `git push
+/// Nothing about a forum now depends on a ref being *absent*, so `git push
 /// --delete` against the remote destroys nothing: the next sync from any clone
 /// that still holds the thread puts it back. Deletion buys an attacker a
 /// window, never a loss.
@@ -196,7 +196,7 @@ fn validate_kind(kind: &str) -> Result<(), H5iError> {
 
 // ── roles ──────────────────────────────────────────────────────────────────
 
-/// What a participant may do on the board.
+/// What a participant may do on the forum.
 ///
 /// A role is assigned by a human at attach time and recorded in the roster; it
 /// is not something an agent can claim for itself. The gradient is deliberately
@@ -212,7 +212,7 @@ pub enum Role {
     /// Reads only. An observer's presence changes no other participant's
     /// authority — ceilings are fixed per thread, not intersected per room.
     Observer,
-    /// The person. The only role that may change the board's membership or a
+    /// The person. The only role that may change the forum's membership or a
     /// thread's existence.
     Human,
 }
@@ -233,7 +233,7 @@ impl Role {
         matches!(self, Role::Worker | Role::Reviewer | Role::Human)
     }
 
-    /// May this role change who is on the board, or whether a thread exists?
+    /// May this role change who is on the forum, or whether a thread exists?
     ///
     /// Human only, always. This is the fifth invariant in one predicate.
     pub fn can_govern(self) -> bool {
@@ -278,7 +278,7 @@ impl Role {
 /// the box's own JSON.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Author {
-    /// Board identity, e.g. `claude-worker`.
+    /// Forum identity, e.g. `claude-worker`.
     pub sender: String,
     /// The box this identity is bound to, e.g. `env/claude/auth-race`. `None`
     /// for a human at the host terminal, who is in no box.
@@ -353,7 +353,7 @@ impl Author {
 ///
 /// The payload is a git blob in the thread's tree, addressed by the SHA-256 of
 /// its bytes, so the same patch posted twice is stored once. The `kind` is an
-/// allowlist rather than a MIME type: a board that accepts arbitrary uploads is
+/// allowlist rather than a MIME type: a forum that accepts arbitrary uploads is
 /// a file-transfer channel between boxes, which is the thing this design exists
 /// to not be.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -418,7 +418,7 @@ pub struct Post {
     pub attachments: Vec<Attachment>,
 
     // ── host-stamped below: never read from a box's payload ────────────────
-    /// Board identity the host attributes this post to.
+    /// Forum identity the host attributes this post to.
     pub sender: String,
     /// Box the sender was bound to, absent for a human.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -430,7 +430,7 @@ pub struct Post {
     pub policy_digest: Option<String>,
     /// Set when the host refused something on this post's behalf, e.g. an
     /// attachment over the cap or a revoked sender. A refusal is recorded, not
-    /// silently dropped: a board that quietly swallows what it rejects teaches
+    /// silently dropped: a forum that quietly swallows what it rejects teaches
     /// its readers that nothing was rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub denied: Option<String>,
@@ -447,7 +447,7 @@ pub struct Post {
     ///
     /// The body and every attachment are scrubbed unconditionally before they
     /// are stored; this names what was found, so a reviewer can see that an
-    /// agent pasted a credential without the credential being on the board.
+    /// agent pasted a credential without the credential being on the forum.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub redactions: Vec<String>,
 }
@@ -459,8 +459,8 @@ pub struct Post {
 /// into either — `runner-observed` exists because "a signature from a machine
 /// the threat model already sacrificed is not evidence".
 ///
-/// A board that crosses machines needs the same distinction, and needs it
-/// badly, because without it the board's central promise degrades in silence.
+/// A forum that crosses machines needs the same distinction, and needs it
+/// badly, because without it the forum's central promise degrades in silence.
 /// On one machine the line above a post is the host's knowledge: it stamped the
 /// sender from the env directory it owns, and no agent could have written it.
 /// Fetch that same post from a peer and the host observed *nothing* — it has
@@ -571,7 +571,7 @@ pub struct ThreadHeader {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ceiling: Option<Ceiling>,
     /// Git branch the thread's work lives on, when it has one. Metadata for
-    /// display and filtering — the board's layout does not depend on it.
+    /// display and filtering — the forum's layout does not depend on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
 }
@@ -739,7 +739,7 @@ impl Thread {
     ///
     /// A sum would reward length — a thread with twenty mildly agreed posts
     /// would outrank one with a single answer everybody wanted. What a reader
-    /// scanning a board is looking for is the thread that produced something,
+    /// scanning a forum is looking for is the thread that produced something,
     /// so the thread is worth what its best post is worth.
     pub fn top_score(&self) -> i32 {
         self.conversation()
@@ -801,7 +801,7 @@ pub struct ThreadSummary {
 /// One participant's membership record, host-authored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RosterEntry {
-    /// Board identity.
+    /// Forum identity.
     pub agent: String,
     /// Box this identity is bound to, absent for a human.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -827,10 +827,10 @@ impl RosterEntry {
     }
 }
 
-/// The board's membership, stored as `roster.json` on the meta ref.
+/// The forum's membership, stored as `roster.json` on the meta ref.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Roster {
-    /// Participants by board identity.
+    /// Participants by forum identity.
     #[serde(default)]
     pub agents: BTreeMap<String, RosterEntry>,
 }
@@ -857,7 +857,7 @@ impl Roster {
 
 /// Ref name for a thread.
 pub fn thread_ref(id: &str) -> String {
-    format!("{BOARD_THREADS_PREFIX}{id}")
+    format!("{FORUM_THREADS_PREFIX}{id}")
 }
 
 /// Validate a thread id: 16 lowercase hex, which is what [`gen_id`] produces
@@ -873,18 +873,18 @@ pub fn validate_thread_id(id: &str) -> Result<(), H5iError> {
     )))
 }
 
-/// Validate a board identity against `[A-Za-z0-9._-]+`.
+/// Validate a forum identity against `[A-Za-z0-9._-]+`.
 ///
 /// Names become roster keys, post fields and terminal output, so the charset is
 /// the conservative one: no whitespace, no path separators, no control
 /// characters.
 pub fn validate_name(name: &str) -> Result<(), H5iError> {
     if name.is_empty() {
-        return Err(H5iError::Metadata("board identity must not be empty".into()));
+        return Err(H5iError::Metadata("forum identity must not be empty".into()));
     }
     if name.len() > 64 {
         return Err(H5iError::Metadata(
-            "board identity must be 64 characters or fewer".into(),
+            "forum identity must be 64 characters or fewer".into(),
         ));
     }
     if !name
@@ -892,7 +892,7 @@ pub fn validate_name(name: &str) -> Result<(), H5iError> {
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
     {
         return Err(H5iError::Metadata(format!(
-            "invalid board identity {:?}: use letters, digits, '.', '_', '-' only",
+            "invalid forum identity {:?}: use letters, digits, '.', '_', '-' only",
             crate::redact::sanitize_display(name)
         )));
     }
@@ -905,7 +905,7 @@ pub fn validate_name(name: &str) -> Result<(), H5iError> {
 pub fn read_thread(repo: &Repository, id: &str) -> Result<Thread, H5iError> {
     validate_thread_id(id)?;
     let oid = thread_tip(repo, id).ok_or_else(|| {
-        H5iError::RecordNotFound(format!("no board thread {id} in this repository"))
+        H5iError::RecordNotFound(format!("no forum thread {id} in this repository"))
     })?;
     read_thread_at(repo, oid)
 }
@@ -915,7 +915,7 @@ pub fn read_thread_at(repo: &Repository, oid: Oid) -> Result<Thread, H5iError> {
     let header: ThreadHeader = refstore::read_file_from_commit(repo, oid, THREAD_FILE)
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .ok_or_else(|| {
-            H5iError::Metadata("board thread is missing its thread.json header".into())
+            H5iError::Metadata("forum thread is missing its thread.json header".into())
         })?;
     let posts = parse_posts(
         &refstore::read_file_from_commit(repo, oid, POSTS_FILE).unwrap_or_default(),
@@ -950,7 +950,7 @@ pub fn list_closed(repo: &Repository) -> Vec<ThreadSummary> {
 
 /// Every thread, closed or not.
 pub fn list_all_threads(repo: &Repository) -> Vec<ThreadSummary> {
-    list_threads_in(repo, BOARD_THREADS_PREFIX)
+    list_threads_in(repo, FORUM_THREADS_PREFIX)
 }
 
 fn list_threads_in(repo: &Repository, prefix: &str) -> Vec<ThreadSummary> {
@@ -993,7 +993,7 @@ pub fn read_attachment(
     validate_thread_id(thread_id)?;
     validate_digest(digest)?;
     let oid = thread_tip(repo, thread_id).ok_or_else(|| {
-        H5iError::RecordNotFound(format!("no board thread {thread_id} in this repository"))
+        H5iError::RecordNotFound(format!("no forum thread {thread_id} in this repository"))
     })?;
     let commit = repo.find_commit(oid)?;
     let tree = commit.tree()?;
@@ -1004,9 +1004,9 @@ pub fn read_attachment(
     Ok(blob.content().to_vec())
 }
 
-/// The board roster.
+/// The forum roster.
 pub fn read_roster(repo: &Repository) -> Roster {
-    repo.refname_to_id(BOARD_META_REF)
+    repo.refname_to_id(FORUM_META_REF)
         .ok()
         .and_then(|oid| refstore::read_file_from_commit(repo, oid, ROSTER_FILE))
         .and_then(|raw| serde_json::from_str(&raw).ok())
@@ -1064,7 +1064,7 @@ pub struct NewAttachment {
 /// forged. Ingest builds the [`Author`] from the env directory the record was
 /// found in.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct BoardPostSpool {
+pub struct ForumPostSpool {
     /// Thread to post into.
     pub thread: String,
     /// One of [`KINDS`].
@@ -1092,7 +1092,7 @@ pub struct SpoolAttachment {
     pub text: String,
 }
 
-impl BoardPostSpool {
+impl ForumPostSpool {
     /// Turn a staged record into the post fields the host will accept.
     ///
     /// Anything the record asks for that exceeds a limit is dropped and named
@@ -1146,7 +1146,7 @@ impl BoardPostSpool {
 
 /// A thread as delivered into a box's read-only inbox.
 ///
-/// The box sees the header and the posts, and nothing about the board's
+/// The box sees the header and the posts, and nothing about the forum's
 /// machinery: no roster, no ref names, no other threads it is not part of.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InboxThread {
@@ -1188,7 +1188,7 @@ impl InboxThread {
 /// Making it a post rather than a field in the header is what keeps it honest:
 /// it goes through the same scrub, carries the same host stamp, gets the same
 /// vouching lane, and can be agreed with. A body kept in `thread.json` would
-/// have been the one piece of prose on the board with none of that.
+/// have been the one piece of prose on the forum with none of that.
 pub fn create_thread(
     repo: &Repository,
     author: &Author,
@@ -1227,14 +1227,14 @@ pub fn create_thread(
     let refname = thread_ref(&id);
     if repo.refname_to_id(&refname).is_ok() {
         return Err(H5iError::Internal(format!(
-            "board thread {id} already exists"
+            "forum thread {id} already exists"
         )));
     }
 
     let tree_oid = refstore::build_tree(repo, None, &[(THREAD_FILE, &header_json), (POSTS_FILE, "")])?;
     let tree = repo.find_tree(tree_oid)?;
     let sig = refstore::signature(repo)?;
-    let message = format!("h5i board: open thread {id}");
+    let message = format!("h5i forum: open thread {id}");
     let commit = repo.commit(None, &sig, &sig, &message, &tree, &[])?;
     refstore::cas_ref_update(repo, &refname, None, commit, &message).map_err(H5iError::Git)?;
 
@@ -1309,10 +1309,10 @@ pub fn append_post(
 
     // Scrub before storing, and scrub unconditionally.
     //
-    // A post is the one thing on this board written to be read by someone else,
+    // A post is the one thing on this forum written to be read by someone else,
     // and an agent pastes what it is looking at — a failing request, a config
     // dump, an environment. Once that is a git object it is immutable, it is in
-    // every clone, and if the board's remote is a forge it is published. The
+    // every clone, and if the forum's remote is a forge it is published. The
     // receipt store learned this the hard way and its note is the rule here
     // too: never gate the scrub on the detector. `scan_text` carries a
     // placeholder stoplist so it stays quiet on `example: ghp_…`, which is
@@ -1320,7 +1320,7 @@ pub fn append_post(
     // stoplist for exactly that reason. So scan only to name the rules, and
     // always scrub.
     let scrubbed_body = crate::secrets::redact_text(&new.body);
-    let mut rules: Vec<String> = crate::secrets::scan_text(Path::new("<board>"), &new.body)
+    let mut rules: Vec<String> = crate::secrets::scan_text(Path::new("<forum>"), &new.body)
         .iter()
         .map(|f| f.rule_id.to_string())
         .collect();
@@ -1330,7 +1330,7 @@ pub fn append_post(
         .map(|a| match std::str::from_utf8(&a.payload) {
             Ok(text) => {
                 rules.extend(
-                    crate::secrets::scan_text(Path::new("<board-attachment>"), text)
+                    crate::secrets::scan_text(Path::new("<forum-attachment>"), text)
                         .iter()
                         .map(|f| f.rule_id.to_string()),
                 );
@@ -1381,13 +1381,13 @@ pub fn append_post(
     };
     let line = serde_json::to_string(&post)?;
     let refname = thread_ref(thread_id);
-    let message = format!("h5i board: {} in {}", post.kind, thread_id);
+    let message = format!("h5i forum: {} in {}", post.kind, thread_id);
 
     let mut last_err: Option<git2::Error> = None;
     for attempt in 0..MAX_ATTEMPTS {
         refstore::cas_backoff(attempt);
         let tip = repo.refname_to_id(&refname).ok().ok_or_else(|| {
-            H5iError::RecordNotFound(format!("no open board thread {thread_id}"))
+            H5iError::RecordNotFound(format!("no open forum thread {thread_id}"))
         })?;
         let parent = repo.find_commit(tip)?;
         let base_tree = parent.tree().ok();
@@ -1421,7 +1421,7 @@ pub fn append_post(
         }
     }
     Err(H5iError::Internal(format!(
-        "board post to {thread_id} could not be appended after {MAX_ATTEMPTS} attempts{}",
+        "forum post to {thread_id} could not be appended after {MAX_ATTEMPTS} attempts{}",
         refstore::cas_error_detail(&last_err)
     )))
 }
@@ -1435,7 +1435,7 @@ pub fn close_thread(repo: &Repository, author: &Author, id: &str) -> Result<(), 
     author.require(author.role.can_govern(), "close a thread")?;
     validate_thread_id(id)?;
     if thread_tip(repo, id).is_none() {
-        return Err(H5iError::RecordNotFound(format!("no board thread {id}")));
+        return Err(H5iError::RecordNotFound(format!("no forum thread {id}")));
     }
     append_post(
         repo,
@@ -1458,10 +1458,10 @@ pub fn put_roster_entry(
     author: &Author,
     entry: RosterEntry,
 ) -> Result<(), H5iError> {
-    author.require(author.role.can_govern(), "change board membership")?;
+    author.require(author.role.can_govern(), "change forum membership")?;
     validate_name(&entry.agent)?;
     let ts = now_ts();
-    update_roster(repo, &format!("h5i board: attach {}", entry.agent), |r| {
+    update_roster(repo, &format!("h5i forum: attach {}", entry.agent), |r| {
         // A box carries one identity at a time. Attaching it under a new name
         // retires the old entry rather than leaving two active rows pointing at
         // the same box — which is not tidiness: the tender resolves a box to its
@@ -1487,12 +1487,12 @@ pub fn put_roster_entry(
 /// Revoke a participant. Human only.
 ///
 /// Revocation is immediate at the next ingest: a spooled record from a revoked
-/// box is refused and the refusal is recorded on the board.
+/// box is refused and the refusal is recorded on the forum.
 pub fn revoke(repo: &Repository, author: &Author, agent: &str) -> Result<(), H5iError> {
     author.require(author.role.can_govern(), "revoke a participant")?;
     validate_name(agent)?;
     let ts = now_ts();
-    update_roster(repo, &format!("h5i board: revoke {agent}"), |r| {
+    update_roster(repo, &format!("h5i forum: revoke {agent}"), |r| {
         match r.agents.get_mut(agent) {
             Some(e) => {
                 if e.revoked_at.is_none() {
@@ -1501,7 +1501,7 @@ pub fn revoke(repo: &Repository, author: &Author, agent: &str) -> Result<(), H5i
                 Ok(())
             }
             None => Err(H5iError::RecordNotFound(format!(
-                "{agent} is not on this board"
+                "{agent} is not on this forum"
             ))),
         }
     })
@@ -1514,7 +1514,7 @@ where
     let mut last_err: Option<git2::Error> = None;
     for attempt in 0..MAX_ATTEMPTS {
         refstore::cas_backoff(attempt);
-        let tip = repo.refname_to_id(BOARD_META_REF).ok();
+        let tip = repo.refname_to_id(FORUM_META_REF).ok();
         let parent = match tip {
             Some(oid) => Some(repo.find_commit(oid)?),
             None => None,
@@ -1534,13 +1534,13 @@ where
         let parents: Vec<&git2::Commit> = parent.iter().collect();
         let new_oid = repo.commit(None, &sig, &sig, message, &tree, &parents)?;
 
-        match refstore::cas_ref_update(repo, BOARD_META_REF, tip, new_oid, message) {
+        match refstore::cas_ref_update(repo, FORUM_META_REF, tip, new_oid, message) {
             Ok(()) => return Ok(()),
             Err(e) => last_err = Some(e),
         }
     }
     Err(H5iError::Internal(format!(
-        "board roster could not be updated after {MAX_ATTEMPTS} attempts{}",
+        "forum roster could not be updated after {MAX_ATTEMPTS} attempts{}",
         refstore::cas_error_detail(&last_err)
     )))
 }
@@ -1574,7 +1574,7 @@ pub fn union_merge_thread(
     // what happens when this clone is learning of the thread for the first time.
     let header = refstore::read_file_from_commit(repo, local_oid, THREAD_FILE)
         .or_else(|| refstore::read_file_from_commit(repo, incoming_oid, THREAD_FILE))
-        .ok_or_else(|| H5iError::Metadata("board thread is missing its thread.json".into()))?;
+        .ok_or_else(|| H5iError::Metadata("forum thread is missing its thread.json".into()))?;
 
     let base_tree = local_commit.tree().ok();
     let mut builder = repo.treebuilder(base_tree.as_ref())?;
@@ -1598,7 +1598,7 @@ pub fn union_merge_thread(
         None,
         &sig,
         &sig,
-        "h5i board: union-merge thread",
+        "h5i forum: union-merge thread",
         &tree,
         &[&local_commit, &incoming_commit],
     )?;
@@ -1609,7 +1609,7 @@ pub fn union_merge_thread(
 ///
 /// A revocation always wins over a non-revocation, and the earlier revocation
 /// wins over a later one. Revocation is the safe direction: reconciling two
-/// clones must never resurrect a participant a human took off the board.
+/// clones must never resurrect a participant a human took off the forum.
 pub fn union_merge_roster(
     repo: &Repository,
     local_oid: Oid,
@@ -1644,7 +1644,7 @@ pub fn union_merge_roster(
         None,
         &sig,
         &sig,
-        "h5i board: union-merge roster",
+        "h5i forum: union-merge roster",
         &tree,
         &[&local_commit, &incoming_commit],
     )?;
@@ -1694,7 +1694,7 @@ fn validate_digest(digest: &str) -> Result<(), H5iError> {
     )))
 }
 
-/// This host's board identity, minted once and kept host-side.
+/// This host's forum identity, minted once and kept host-side.
 ///
 /// A random 128-bit value with the machine's hostname appended for legibility,
 /// stored under the sidecar root where no box can reach it. Deliberately *not*
@@ -1703,11 +1703,11 @@ fn validate_digest(digest: &str) -> Result<(), H5iError> {
 /// sound — "did I stamp this?" — plus the ability to see that two posts claim
 /// different sources.
 ///
-/// The upgrade that would make it evidence is signing the board commits, which
+/// The upgrade that would make it evidence is signing the forum commits, which
 /// costs key management; the deliberate trade here is the one the whole remote
 /// design makes, that a team should not have to operate anything.
 pub fn host_origin(h5i_root: &Path) -> Result<String, H5iError> {
-    let path = h5i_root.join("board").join("origin");
+    let path = h5i_root.join("forum").join("origin");
     if let Ok(raw) = std::fs::read_to_string(&path) {
         let id = raw.trim();
         if !id.is_empty() && validate_name(id).is_ok() {
@@ -2177,7 +2177,7 @@ mod tests {
         append_post(&repo, &w, &h.id, p).unwrap();
 
         let t = read_thread(&repo, &h.id).unwrap();
-        assert_eq!(t.posts.len(), 1, "the refusal is on the board, not dropped");
+        assert_eq!(t.posts.len(), 1, "the refusal is on the forum, not dropped");
         assert!(t.posts[0].is_denied());
         assert_eq!(t.status(), ThreadStatus::Open, "a refused claim claims nothing");
         assert_eq!(t.claimed_by(), None);
@@ -2250,7 +2250,7 @@ mod tests {
     }
 
     #[test]
-    fn board_identities_reject_separators_and_control_characters() {
+    fn forum_identities_reject_separators_and_control_characters() {
         for bad in ["", "a/b", "a b", "a\u{1b}b", "a\\b"] {
             assert!(validate_name(bad).is_err(), "{bad:?} should be refused");
         }
@@ -2299,9 +2299,9 @@ mod tests {
             revoked_at: None,
         };
         put_roster_entry(&repo, &human(), entry).unwrap();
-        let unrevoked = repo.refname_to_id(BOARD_META_REF).unwrap();
+        let unrevoked = repo.refname_to_id(FORUM_META_REF).unwrap();
         revoke(&repo, &human(), "claude-worker").unwrap();
-        let revoked = repo.refname_to_id(BOARD_META_REF).unwrap();
+        let revoked = repo.refname_to_id(FORUM_META_REF).unwrap();
 
         for (a, b) in [(revoked, unrevoked), (unrevoked, revoked)] {
             let merged = union_merge_roster(&repo, a, b).unwrap();
@@ -2319,7 +2319,7 @@ mod tests {
     /// This is the property the whole remote story rests on. A post is written
     /// to be read by someone else, and an agent pastes what it is looking at —
     /// a failing request, an environment dump. Once that is a git object it is
-    /// immutable and in every clone, and if the board's remote is a forge it is
+    /// immutable and in every clone, and if the forum's remote is a forge it is
     /// published. The receipt store's note applies here word for word: gating
     /// the scrub on `scan_text` puts the hole back, because that scanner has a
     /// placeholder stoplist and goes quiet on `example: <real credential>`.

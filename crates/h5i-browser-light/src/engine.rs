@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use anyrender::ImageRenderer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
-use blitz_dom::{BaseDocument, DocumentConfig};
+use blitz_dom::node::SpecialElementData;
+use blitz_dom::{BaseDocument, DocumentConfig, local_name};
 use blitz_html::HtmlDocument;
 use blitz_paint::paint_scene;
 use blitz_traits::shell::{ColorScheme, Viewport};
@@ -421,6 +422,8 @@ impl Page {
                 ),
             },
         };
+
+        seed_checkbox_state(&mut doc);
 
         // Twice, deliberately. The broker is synchronous, so subresources have
         // already completed by the time parsing returns, but their results
@@ -1748,6 +1751,65 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, H5iError>
     Ok(png)
 }
 
+/// Give every checkbox and radio its checked state *before* the first style
+/// pass, so `:checked` can match during the cascade.
+///
+/// blitz decides this in `create_checkbox_input`, which runs during **layout
+/// construction**. Selector matching runs before that, in the same `resolve`,
+/// so when stylo asks an unclicked page "is this `:checked`?" the element's
+/// `special_data` is still `None`, the answer is `unwrap_or(false)`, and every
+/// `:checked` rule loses. Resolving twice does not save it: the second pass
+/// finds nothing dirty and skips the cascade, so the rule never gets a second
+/// chance.
+///
+/// The consequence is not subtle. The script-free tab and accordion pattern
+/// (`input:checked ~ .panel { display: block }`) renders as a tab strip with no
+/// panel under it, which is exactly the case where a page deliberately avoided
+/// JavaScript so that it would still work for a reader like this one.
+///
+/// This seeds the same value from the same attribute that blitz would have
+/// used, only early enough to be seen. `create_checkbox_input` then finds the
+/// state already present and leaves it alone, so style and layout agree.
+///
+/// HTML boolean-attribute semantics: presence means checked, whatever the
+/// value. That matches blitz's own rule, which matters more here than being
+/// independently right, because both passes have to reach the same answer.
+fn seed_checkbox_state(doc: &mut BaseDocument) {
+    let inputs: Vec<(usize, bool)> = doc
+        .tree()
+        .iter()
+        .filter_map(|(id, node)| {
+            let element = node.data.downcast_element()?;
+            if element.name.local != local_name!("input") {
+                return None;
+            }
+            // Only the two types blitz builds checkbox state for. A `type` it
+            // does not know is a text input there, and would be one here too.
+            if !matches!(
+                element.attr(local_name!("type")),
+                Some(t) if t.eq_ignore_ascii_case("checkbox") || t.eq_ignore_ascii_case("radio")
+            ) {
+                return None;
+            }
+            // Never overwrite state that already exists: on a re-parse the
+            // element may carry a value a click or a script put there.
+            if !matches!(element.special_data, SpecialElementData::None) {
+                return None;
+            }
+            Some((id, element.has_attr(local_name!("checked"))))
+        })
+        .collect();
+
+    for (id, checked) in inputs {
+        if let Some(element) = doc
+            .get_node_mut(id)
+            .and_then(|node| node.data.downcast_element_mut())
+        {
+            element.special_data = SpecialElementData::CheckboxInput(checked);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1943,6 +2005,80 @@ mod tests {
         assert!(
             corner.iter().all(|&c| c > 250),
             "the live view's frame should be white here, got {corner:?}"
+        );
+    }
+
+    #[test]
+    fn a_checked_input_styles_its_siblings() {
+        // The script-free tab pattern: a radio, and a panel that only becomes
+        // visible because a `:checked ~` rule says so. blitz decides an input's
+        // checked state during *layout construction*, which runs after selector
+        // matching, so before `seed_checkbox_state` every `:checked` rule lost
+        // and this page painted a white square where the panel should be.
+        //
+        // Asserted in pixels rather than in text, because text extraction does
+        // not honour `display: none` and would report both panels either way.
+        let sink = Arc::new(MemorySink::new());
+        let mut page = page_from(
+            "<!doctype html><style>html,body{margin:0}\
+             .panel{display:none;width:400px;height:200px;background:#000}\
+             #on:checked ~ .panel{display:block}</style>\
+             <input type=\"radio\" name=\"t\" id=\"on\" checked><div class=\"panel\"></div>",
+            Policy::new(),
+            sink,
+        );
+
+        let painted = decoded(&page.screenshot_png().expect("screenshot"));
+        assert_eq!(
+            painted.get_pixel(CANVAS.0, CANVAS.1).0,
+            [0, 0, 0],
+            "`:checked ~ .panel` should have made the black panel visible"
+        );
+    }
+
+    #[test]
+    fn an_unchecked_input_does_not_style_its_siblings() {
+        // The other half, so the test above cannot pass by making everything
+        // match: the same page with the attribute removed must stay blank.
+        let sink = Arc::new(MemorySink::new());
+        let mut page = page_from(
+            "<!doctype html><style>html,body{margin:0}\
+             .panel{display:none;width:400px;height:200px;background:#000}\
+             #on:checked ~ .panel{display:block}</style>\
+             <input type=\"radio\" name=\"t\" id=\"on\"><div class=\"panel\"></div>",
+            Policy::new(),
+            sink,
+        );
+
+        let painted = decoded(&page.screenshot_png().expect("screenshot"));
+        assert_eq!(
+            painted.get_pixel(CANVAS.0, CANVAS.1).0,
+            [255, 255, 255],
+            "nothing is checked, so the panel should still be display:none"
+        );
+    }
+
+    #[test]
+    fn a_checkbox_keeps_its_checked_state_through_layout() {
+        // `seed_checkbox_state` writes the state blitz would have written
+        // later. If the two ever disagreed, the cascade and the layout would be
+        // describing different pages; this pins that they agree for a checkbox
+        // as well as a radio.
+        let sink = Arc::new(MemorySink::new());
+        let mut page = page_from(
+            "<!doctype html><style>html,body{margin:0}\
+             .panel{display:none;width:400px;height:200px;background:#000}\
+             input:checked ~ .panel{display:block}</style>\
+             <input type=\"checkbox\" checked><div class=\"panel\"></div>",
+            Policy::new(),
+            sink,
+        );
+
+        let painted = decoded(&page.screenshot_png().expect("screenshot"));
+        assert_eq!(
+            painted.get_pixel(CANVAS.0, CANVAS.1).0,
+            [0, 0, 0],
+            "a checked checkbox should match `:checked` during the cascade too"
         );
     }
 
