@@ -314,12 +314,11 @@ jobs:
       # puts a content hash on every css/js link so a changed file is a changed
       # URL.
       #
-      # It runs LAST, and the staleness check runs after it, because it rewrites
-      # files the two generators above also own: `gen_manual.py` emits
-      # `docs/manual/index.html` with bare asset links and the stamper adds the
-      # hashes. Checking between them cannot pass — the committed file is either
-      # unstamped, which the stamper changes, or stamped, which the generator
-      # changes. One pipeline, one check at the end of it.
+      # Both generators above now re-stamp what they rewrite, so running either
+      # on its own leaves a consistent tree. This still runs explicitly, for the
+      # case neither of them covers: a stylesheet edited with no page
+      # regenerated at all, where every stamp in `docs/` is stale and nothing
+      # has been asked to notice.
       - name: Rebuild the guides and essays, then stamp the asset links
         run: |
           python3 docs/build-content.py
@@ -332,12 +331,13 @@ jobs:
             exit 0
           fi
           echo "::error::Generated files are out of date — a source change landed without regenerating."
-          echo "Run all four on Linux, in this order, then commit the result:"
+          echo "Run on Linux, then commit the result:"
           echo "    ./scripts/gen_man.sh"
           echo "    python3 -m pip install -r scripts/requirements.txt && python3 scripts/gen_manual.py"
           echo "    python3 docs/build-content.py"
+          echo "Each re-stamps the pages it writes, so the order does not matter."
+          echo "If you only edited a file under docs/_static, run this instead:"
           echo "    python3 scripts/stamp_assets.py"
-          echo "The order matters: the last step stamps files the others write."
           echo "----------------------------- drift -----------------------------"
           git --no-pager diff --stat -- man/man1/h5i.1 docs
           exit 1

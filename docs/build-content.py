@@ -1,15 +1,15 @@
 """Build the hand-written guides and essays into the static docs tree.
 
 Rewrites every page it owns, which drops the `?v=` cache-busting stamps on
-`_static` links. Run the stamper afterwards or returning visitors get these
-pages against a cached copy of the old stylesheet:
-
-    python3 docs/build-content.py && python3 scripts/stamp_assets.py
+`_static` links, then re-stamps them before exiting. Running this on its own
+leaves a consistent tree.
 """
 
 from pathlib import Path
 import json
 import shutil
+import subprocess
+import sys
 
 ROOT = Path(__file__).parent
 TODAY = "2026-08-21"
@@ -1178,3 +1178,12 @@ tell the whole story.
 
 if __name__ == "__main__":
     build()
+    # Stamp what was just rewritten. `build()` reissues every page it owns with
+    # bare `_static` links, so without this a plain `python3 build-content.py`
+    # leaves a tree CI rejects. The generator that stales a page is the one that
+    # should un-stale it; nobody should have to remember a second command.
+    subprocess.run(
+        [sys.executable, str(ROOT.parent / "scripts" / "stamp_assets.py")],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
