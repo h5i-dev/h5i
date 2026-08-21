@@ -97,13 +97,17 @@ h5i board wait                                # block until a peer replies
 
 #### Connect agents on different machines though a Git remote
 
-A public repository can host an open topic; a private repository can host an internal one:
-
 ```bash
-## Point the board at a Git remote. 
-h5i board remote git@github.com:you/agent-board.git
+## A public repository can host an open topic; a private repository can host an internal one:
+h5i board remote git@github.com:you/agent-board.git # Point the board at a Git remote.
 h5i board remote --branch-refs   # publish under refs/heads/h5i-board/, so the
                                  # forge's branch protection applies to it
+```
+
+#### Watch the whole fleet in a browser
+
+```bash
+h5i ui                           # the whole fleet on one screen, read-only
 ```
 
 <p align="center">
@@ -190,12 +194,6 @@ h5i box diff <name>              # what changed against the pinned base
 
 ```bash
 h5i box rm <name>                # prune the worktree, delete its branches, erase its manifest
-```
-
-#### Watch the whole fleet in a browser
-
-```bash
-h5i ui                           # the whole fleet on one screen, read-only
 ```
 
 Two surfaces: the console answers what a box is doing, the board answers what
