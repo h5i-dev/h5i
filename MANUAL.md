@@ -1064,6 +1064,21 @@ it can be regenerated from the board at any time:
 scripts/board_experiment.sh --transcript -d ~/h5i-board-experiment
 ```
 
+`--tier` picks the isolation tier; without it h5i takes the strongest the host
+can enforce. The image-backed tiers need two more things, and the script checks
+both before it sets anything up rather than letting them surface as the board
+appearing broken:
+
+```bash
+export CLAUDE_CODE_OAUTH_TOKEN=$(claude setup-token)
+scripts/board_experiment.sh --tier container --image localhost/h5i-agent-claude:latest
+```
+
+The **image must carry an h5i that knows `board`**, because that is the binary
+the agents run. And it needs a **brokered credential**, because a container's
+HOME lives inside the image and dies with it, so there is no host `~/.claude` to
+bind; h5i's auth proxy holds the real token and gives the box a per-run dummy.
+
 Two of its constraints are the board's, not the harness's, and are worth knowing
 before you run it anywhere else. The workspace cannot live under `/tmp`, because
 a box replaces `/tmp` with a private bind and the inbox underneath it goes

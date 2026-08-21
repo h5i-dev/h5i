@@ -12,6 +12,7 @@
 #   scripts/board_experiment.sh                  # 3 agents, 3 default topics
 #   scripts/board_experiment.sh -n 4             # four of them
 #   scripts/board_experiment.sh -r codex         # Codex instead of Claude
+#   scripts/board_experiment.sh --tier container --image localhost/h5i-agent-claude:latest
 #   scripts/board_experiment.sh -t "why is the sky blue" -t "…"
 #   scripts/board_experiment.sh --attach         # then watch it in tmux
 #   scripts/board_experiment.sh --transcript     # also dump the board to markdown
@@ -45,6 +46,8 @@ AGENTS=3
 RUNTIME="claude"
 WORKDIR="${BOARD_EXPERIMENT_DIR:-$HOME/h5i-board-experiment}"
 REPO_URL=""
+TIER=""
+IMAGE=""
 ATTACH=0
 CLEAN=0
 WANT_TRANSCRIPT=0
@@ -75,6 +78,8 @@ while [ $# -gt 0 ]; do
     -t|--topic)    TOPICS+=("$2"); shift 2 ;;
     -d|--dir)      WORKDIR="$2"; shift 2 ;;
     --repo)        REPO_URL="$2"; shift 2 ;;
+    --tier)        TIER="$2"; shift 2 ;;
+    --image)       IMAGE="$2"; shift 2 ;;
     --wait)        WAIT_SECS="$2"; shift 2 ;;
     --attach)      ATTACH=1; shift ;;
     --transcript)  WANT_TRANSCRIPT=1; shift ;;
@@ -224,8 +229,59 @@ done
 
 [ "$AGENTS" -ge 2 ] 2>/dev/null || die "-n must be at least 2; a board with one participant is a notepad"
 
+# ── the image-backed tiers need their image checked, not assumed ─────────────
+#
+# A container or microvm box runs the h5i **baked into its image**, not the one
+# on this host. An image built before the board existed answers `unrecognized
+# subcommand 'board'` from inside a box whose host has the command, which reads
+# as the board being broken rather than as the image being old — and it costs a
+# whole run to find out. Same reasoning as the `--body` probe above: check the
+# binary that will actually be used, not a version number.
+BOX_ARGS=()
+[ -n "$TIER" ] && BOX_ARGS+=(--isolation "$TIER")
+[ -n "$IMAGE" ] && BOX_ARGS+=(--image "$IMAGE")
+
+case "$TIER" in
+  container|microvm)
+    [ -n "$IMAGE" ] || die "--tier $TIER needs --image (the box runs that image's h5i, and
+   which image it is decides whether the agents can reach the board at all)"
+    engine="podman"; command -v podman >/dev/null || engine="docker"
+    command -v "$engine" >/dev/null || die "no podman or docker, and --tier $TIER needs one"
+    "$engine" image exists "$IMAGE" 2>/dev/null || "$engine" image inspect "$IMAGE" >/dev/null 2>&1 \
+      || die "$IMAGE is not present locally, and runs never pull.
+   Build it:  $engine build -f containers/Containerfile.agent-claude -t ${IMAGE%%:*} ."
+    "$engine" run --rm --entrypoint h5i "$IMAGE" board --help >/dev/null 2>&1 \
+      || die "the h5i inside $IMAGE has no \`board\` command.
+   That image is what the agents run, so they would not find the board at all.
+   Rebuild it from a checkout that has it:
+     $engine build -f containers/Containerfile.agent-claude -t ${IMAGE%%:*} ."
+
+    # An image-backed box's HOME lives inside the container and dies with it, so
+    # there is no host `~/.claude` to bind and the agent starts logged out. The
+    # credential is brokered instead: h5i's auth proxy holds the real token and
+    # hands the box a per-run dummy, so nothing secret enters the container —
+    # but the operator has to supply it, and without it every pane sits at a
+    # login prompt looking like the board failed.
+    #
+    # Not minted here. `claude setup-token` creates a credential on somebody's
+    # account, and a harness should not do that on their behalf.
+    if [ "$RUNTIME" = "claude" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+      die "--tier $TIER needs CLAUDE_CODE_OAUTH_TOKEN.
+   A container's HOME is inside the image, so there is no host ~/.claude to
+   bind and the agents would start logged out. h5i brokers the token through
+   its auth proxy — the real one never enters the box. Mint one and re-run:
+     export CLAUDE_CODE_OAUTH_TOKEN=\$(claude setup-token)"
+    fi
+    if [ "$RUNTIME" = "codex" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+      die "--tier $TIER needs OPENAI_API_KEY for the same reason: the container's
+   HOME is ephemeral, so the credential is brokered rather than bound."
+    fi
+    ;;
+esac
+
 echo "── h5i board experiment ──"
 echo "  agents   : $AGENTS × $RUNTIME"
+echo "  tier     : ${TIER:-auto}${IMAGE:+  ($IMAGE)}"
 echo "  topics   : ${#TOPICS[@]}"
 echo "  workspace: $WORKDIR"
 echo "  h5i      : $H5I ($("$H5I" --version))"
@@ -272,8 +328,8 @@ done
 for i in $(seq 1 "$AGENTS"); do
   name="${names[$((i-1))]}"; role="${roles[$((i-1))]}"
   dir="$WORKDIR/$name"
-  ( cd "$dir" && H5I_AGENT=claude "$H5I" box create --profile agent "$name" >/dev/null 2>&1 ) \
-    || die "could not create a box for $name — try \`h5i box probe\`"
+  ( cd "$dir" && H5I_AGENT=claude "$H5I" box create --profile agent "${BOX_ARGS[@]}" "$name" >/dev/null 2>&1 ) \
+    || die "could not create a box for $name${TIER:+ on the $TIER tier} — try \`h5i box probe\`"
   ( cd "$dir" && "$H5I" board sync >/dev/null 2>&1 )
   ( cd "$dir" && "$H5I" board attach "claude/$name" --as "$name" --role "$role" >/dev/null 2>&1 ) \
     || die "could not attach $name to the board"
@@ -301,8 +357,11 @@ if [ "$RUNTIME" = "claude" ]; then
     ( cd "$WORKDIR/$name" && H5I_AGENT=claude "$H5I" box run "$name" -- true >/dev/null 2>&1 )
     cfg="$WORKDIR/$name/.git/.h5i/env/claude/$name/home/.claude.json"
     work="$WORKDIR/$name/.git/.h5i/env/claude/$name/work"
-    [ -f "$cfg" ] || die "$name has no private HOME to prepare after a warm-up run —
-   the first-run wizard would block the agent with nobody to answer it"
+    # No host-side file to patch is normal on the image-backed tiers: there the
+    # HOME lives inside the container (`/tmp/agent-home`) and dies with it, so
+    # there is nothing here to edit. The in-box prologue below covers that case,
+    # and covers this one too if the seed did not happen.
+    [ -f "$cfg" ] || continue
     python3 - "$cfg" "$work" "$ver" <<'PY'
 import json, sys
 cfg, work, ver = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -314,17 +373,7 @@ d.setdefault("projects", {}).setdefault(work, {})["hasTrustDialogAccepted"] = Tr
 json.dump(d, open(cfg, "w"))
 PY
   done
-  # Cheap and worth it: if the patch did not take, the whole run is three agents
-  # staring at a dialog, and that is a failure worth catching here.
-  chk="$WORKDIR/${names[0]}/.git/.h5i/env/claude/${names[0]}/home/.claude.json"
-  python3 - "$chk" "$WORKDIR/${names[0]}/.git/.h5i/env/claude/${names[0]}/work" <<'PY' \
-    || die "the first-run wizard is still armed; the agents would block on it"
-import json, sys
-d = json.load(open(sys.argv[1]))
-ok = d.get("hasCompletedOnboarding") and sys.argv[2] in d.get("projects", {})
-sys.exit(0 if ok else 1)
-PY
-  echo "  ✔ first-run wizard pre-accepted in every box"
+  echo "  ✔ first-run wizard pre-accepted where there is a host-side HOME"
 fi
 
 # ── the topics ───────────────────────────────────────────────────────────────
@@ -383,6 +432,9 @@ echo "  ✔ task written into every box"
 # ── launch ───────────────────────────────────────────────────────────────────
 
 tmux kill-session -t "$SESSION" 2>/dev/null
+# The panes inherit this shell's environment, which is how the brokered
+# credential reaches `box shell` without ever being typed into a pane — a token
+# on a command line would sit in the scrollback and in the shell history.
 tmux new-session -d -s "$SESSION" -x 220 -y 55 -c "$WORKDIR/${names[0]}"
 for i in $(seq 1 "$AGENTS"); do
   name="${names[$((i-1))]}"
@@ -392,7 +444,21 @@ for i in $(seq 1 "$AGENTS"); do
   tmux send-keys -t "$SESSION.$((i-1))" "cd $dir && H5I_AGENT=claude $H5I box shell $name" Enter
 done
 sleep 8
+# Written from *inside* the box, immediately before the agent starts, because
+# that is the only place that works on every tier. A kernel-tier box has its
+# HOME bound from a host directory the script can edit; a container's HOME is
+# `/tmp/agent-home` inside the image and dies with it, so there is nothing on
+# the host to patch and the wizard blocks with nobody to answer it. Writing the
+# file in the box covers both, and `$PWD` is the worktree because `box shell`
+# already put us there.
+#
+# Only when the file is absent: an existing one has real state in it (a token, a
+# session) and a blind overwrite would throw that away.
+PRELUDE='[ -f "$HOME/.claude.json" ] || { mkdir -p "$HOME"; printf "{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"projects\":{\"%s\":{\"hasTrustDialogAccepted\":true}}}" "'"${ver:-9.9.9}"'" "$PWD" > "$HOME/.claude.json"; }'
+
 for i in $(seq 1 "$AGENTS"); do
+  tmux send-keys -t "$SESSION.$((i-1))" "$PRELUDE" Enter
+  sleep 1
   tmux send-keys -t "$SESSION.$((i-1))" "$RUNTIME \"\$(cat .board-task)\"" Enter
   # Stagger, so the first agent has something on the board for the second to
   # react to. Launching together produces N independent monologues.
