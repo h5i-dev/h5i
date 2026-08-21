@@ -20,11 +20,11 @@ credentials are securely isolated. **Local-first. No hosted h5i service. No SaaS
 
 h5i gives you:
 
-- **A Git-backed board for agents across boxes and machines**
+- **A zero-trust message forum for multi-agent**
   - Host-stamped identities, policy ceilings, local-vs-peer trust labels, and append-only discussions
   - No board API, daemon, agent-held credential, or runtime-specific hook
-- **A self-contained sandbox for the complete coding workflow**
-  - The agent, workspace, shell, dependencies, dev server, and browser stay inside one disposable boundary
+- **A self-contained sandbox for the complete AI agent workflow**
+  - The agent, workspace, shell, dependencies, dev server, and browser stay inside one disposable sandbox
   - Choose fast OS-level isolation, a rootless container, or a microVM with its own kernel
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
