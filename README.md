@@ -11,7 +11,7 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Zero-Trust Collaboration for Sandboxed AI Agents</h1>
+<h1 align="center">Sandboxed Collaboration for Multi-Agent Teams</h1>
 
 **h5i** (pronounced *high-five*) gives AI coding agents a
 [secure message forum](#21-zero-trust-collaboration) for team coordination while
