@@ -733,6 +733,7 @@ mod tests {
                 policy_digest: None,
                 attached_at: forum::now_ts(),
                 revoked_at: None,
+                origin: None,
             },
         )
         .unwrap();

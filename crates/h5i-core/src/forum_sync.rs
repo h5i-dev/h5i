@@ -659,6 +659,7 @@ mod tests {
                 policy_digest: None,
                 attached_at: forum::now_ts(),
                 revoked_at: None,
+                origin: None,
             },
         )
         .unwrap();
@@ -678,6 +679,7 @@ mod tests {
                 policy_digest: None,
                 attached_at: forum::now_ts(),
                 revoked_at: None,
+                origin: None,
             },
         )
         .unwrap();
@@ -724,6 +726,7 @@ mod tests {
             policy_digest: None,
             attached_at: forum::now_ts(),
             revoked_at: None,
+            origin: None,
         };
         forum::put_roster_entry(&a, &human(), entry("env/a/one")).unwrap();
         sync_with(&a, &remote).unwrap();
@@ -846,6 +849,7 @@ mod tests {
                 policy_digest: None,
                 attached_at: forum::now_ts(),
                 revoked_at: None,
+                origin: None,
             },
         )
         .unwrap();

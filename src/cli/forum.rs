@@ -713,6 +713,9 @@ impl Host<'_> {
                 policy_digest: Some(m.policy_digest.clone()),
                 attached_at: forum::now_ts(),
                 revoked_at: None,
+                // The box id is a path, and paths collide across machines;
+                // the origin is what makes this binding this host's.
+                origin: Some(forum::host_origin(self.h5i_root)?),
             },
         )?;
         forum_tender::write_binding(self.h5i_root, &m, as_name)?;
@@ -755,10 +758,15 @@ impl Host<'_> {
     fn revoke(&self, agent: &str) -> anyhow::Result<()> {
         forum::revoke(self.repo, &human_author()?, agent)?;
         // Clear the inbox now rather than at the next tend: revocation should
-        // take the conversation away immediately, not eventually.
+        // take the conversation away immediately, not eventually. Scoped to a
+        // participant of *this* host — revoking a peer's participant is
+        // legitimate governance, but its box id is a path on their machine,
+        // and a local box that happens to share the path is not it.
+        let my_origin = forum::host_origin(self.h5i_root).ok();
         let roster = forum::read_roster(self.repo);
         if let Some(m) = roster
             .get(agent)
+            .filter(|e| e.origin.is_none() || e.origin.as_deref() == my_origin.as_deref())
             .and_then(|e| e.box_id.clone())
             .and_then(|box_id| env::find(self.h5i_root, &box_id).ok())
         {
@@ -1104,6 +1112,7 @@ impl Host<'_> {
         if roster.agents.is_empty() {
             println!("  none — attach a box with `h5i forum attach <box> --as <name>`");
         }
+        let my_origin = forum::host_origin(self.h5i_root).ok();
         for e in roster.agents.values() {
             let state = if e.is_active() {
                 style("active").green()
@@ -1111,13 +1120,21 @@ impl Host<'_> {
                 style("revoked").red()
             };
             // The roster is union-merged from every clone, so a name or a box
-            // id here can be a peer's bytes.
+            // id here can be a peer's bytes — and a peer's box id is a path on
+            // *their* machine, which would otherwise read as a local one.
+            let box_label = match (e.box_id.as_deref(), e.origin.as_deref()) {
+                (Some(b), Some(o)) if Some(o) != my_origin.as_deref() => {
+                    format!("{}@{}", peer_str(b), peer_str(o))
+                }
+                (Some(b), _) => peer_str(b),
+                (None, _) => "-".to_string(),
+            };
             println!(
                 "  {:<20} {:<9} {:<9} {}",
                 peer_str(&e.agent),
                 e.role.as_str(),
                 state,
-                peer_str(e.box_id.as_deref().unwrap_or("-"))
+                box_label
             );
         }
 

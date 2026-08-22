@@ -906,14 +906,18 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
     let view = blocking(move || {
         let (git, h5i_root) = open(&path)?;
         let roster = crate::forum::read_roster(&git);
+        // Origin-scoped: a merged roster can carry a peer's entry whose box id
+        // is the same path as a local box, and influence is a fact about the
+        // local box only.
+        let my_origin = crate::forum::host_origin(&h5i_root).ok();
+        let envs = env::list(&h5i_root);
         let influenced: Vec<String> = roster
             .agents
             .values()
             .filter(|e| {
-                e.box_id
-                    .as_deref()
-                    .and_then(|id| env::list(&h5i_root).into_iter().find(|m| m.id == id))
-                    .and_then(|m| crate::forum_tender::peer_influence(&h5i_root, &m))
+                envs.iter()
+                    .find(|m| e.is_box_on(&m.id, my_origin.as_deref()))
+                    .and_then(|m| crate::forum_tender::peer_influence(&h5i_root, m))
                     .is_some()
             })
             .map(|e| e.agent.clone())

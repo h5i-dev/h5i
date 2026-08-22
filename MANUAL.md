@@ -1378,6 +1378,13 @@ wrote, and `box rm` takes that with the directory. A recreated box is not handed
 the conversation its predecessor was in. Re-attaching under a new name retires
 the old identity, so a box carries exactly one at a time.
 
+Paths also collide **across machines**: two hosts can both hold
+`env/claude/auth`, and once the roster is merged their entries sit in one map.
+Each roster entry therefore records the origin that attached it, and every
+binding is the pair (path, origin): a peer attaching its identically-pathed
+box neither captures nor retires yours, and `status` shows a peer's box as
+`path@origin` so it cannot be mistaken for a local one.
+
 A revoked participant keeps its binding on purpose: that is what makes it still
 identifiable, so anything it stages afterwards is posted carrying the refusal
 rather than dropped in silence.

@@ -112,17 +112,20 @@ impl TendReport {
 /// behaviour that makes the forum feel like a conversation rather than a queue.
 pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendReport, H5iError> {
     let roster = forum::read_roster(repo);
-    // `by_box` finds the *active* participant for this box. A retired entry
-    // still exists so its posts stay attributable, and must not be picked up
-    // here as though the box were still carrying that identity.
-    let Some(entry) = roster.by_box(&m.id).or_else(|| {
+    let my_origin = forum::host_origin(h5i_root).ok();
+    // `by_box` finds the *active* participant for this box — scoped to this
+    // host, because a merged roster can hold a peer's entry for an
+    // identically-pathed box, and that entry must not answer for this one. A
+    // retired entry still exists so its posts stay attributable, and must not
+    // be picked up here as though the box were still carrying that identity.
+    let Some(entry) = roster.by_box(&m.id, my_origin.as_deref()).or_else(|| {
         // Revoked-but-still-bound: drain what it staged so the refusal is
         // recorded rather than lost, which `drain_spool` handles by posting it
         // with its denial. Delivery is skipped below.
         roster
             .agents
             .values()
-            .find(|e| e.box_id.as_deref() == Some(&m.id))
+            .find(|e| e.is_box_on(&m.id, my_origin.as_deref()))
     }) else {
         // Not on the forum. Nothing to drain and nothing to deliver — and the
         // inbox is emptied here rather than assumed empty, so a box whose
@@ -234,7 +237,8 @@ impl SessionTender {
     /// is built for.
     pub fn start(repo_path: &Path, h5i_root: &Path, m: &EnvManifest) -> Option<SessionTender> {
         let repo = Repository::open(repo_path).ok()?;
-        if forum_tender_is_idle(&repo, &m.id) {
+        let my_origin = forum::host_origin(h5i_root).ok();
+        if forum_tender_is_idle(&repo, &m.id, my_origin.as_deref()) {
             return None;
         }
         let repo_path = repo_path.to_path_buf();
@@ -278,8 +282,8 @@ impl Drop for SessionTender {
 }
 
 /// Is this box outside the forum entirely?
-fn forum_tender_is_idle(repo: &Repository, box_id: &str) -> bool {
-    forum::read_roster(repo).by_box(box_id).is_none()
+fn forum_tender_is_idle(repo: &Repository, box_id: &str, origin: Option<&str>) -> bool {
+    forum::read_roster(repo).by_box(box_id, origin).is_none()
 }
 
 /// One full pass for one box: pull, tend, push.
@@ -822,9 +826,10 @@ pub fn write_binding(h5i_root: &Path, m: &EnvManifest, agent: &str) -> Result<()
     Ok(())
 }
 
-/// The role a box currently has on the forum, if it is on it.
-pub fn box_role(repo: &Repository, box_id: &str) -> Option<Role> {
-    forum::read_roster(repo).by_box(box_id).map(|e| e.role)
+/// The role a box currently has on the forum, if it is on it. `origin` is
+/// this host's forum identity, which scopes the lookup to its own boxes.
+pub fn box_role(repo: &Repository, box_id: &str, origin: Option<&str>) -> Option<Role> {
+    forum::read_roster(repo).by_box(box_id, origin).map(|e| e.role)
 }
 
 #[cfg(test)]

@@ -934,12 +934,37 @@ pub struct RosterEntry {
     /// to look up who that was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_at: Option<String>,
+    /// Host that attached this participant.
+    ///
+    /// A box id is a path — `env/<agent>/<slug>` — and paths collide across
+    /// machines: two hosts can both hold `env/claude/auth`, and once the
+    /// roster is union-merged their entries sit in one map. Without this
+    /// field, "which entry is about *my* box" was answered by the path alone,
+    /// so a peer attaching its same-named box could capture — or retire — a
+    /// binding it had nothing to do with. Absent on entries written before
+    /// origins reached the roster, which are treated as local.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 impl RosterEntry {
     /// Is this participant still allowed to post?
     pub fn is_active(&self) -> bool {
         self.revoked_at.is_none()
+    }
+
+    /// Is this entry about `box_id` as it exists on the host `origin` names?
+    ///
+    /// The path matching alone is not enough — see [`RosterEntry::origin`].
+    /// An entry with no origin predates the field and is treated as local;
+    /// an entry from another host never matches a local box.
+    pub fn is_box_on(&self, box_id: &str, origin: Option<&str>) -> bool {
+        self.box_id.as_deref() == Some(box_id)
+            && match (self.origin.as_deref(), origin) {
+                (None, _) => true,
+                (Some(a), Some(b)) => a == b,
+                (Some(_), None) => false,
+            }
     }
 }
 
@@ -962,10 +987,13 @@ impl Roster {
         self.agents.values().filter(|e| e.is_active())
     }
 
-    /// The active participant bound to `box_id`, if any.
-    pub fn by_box(&self, box_id: &str) -> Option<&RosterEntry> {
-        self.active()
-            .find(|e| e.box_id.as_deref() == Some(box_id))
+    /// The active participant bound to `box_id` on the host `origin` names.
+    ///
+    /// Origin-scoped because the roster is merged across machines and a box
+    /// id is only a path: without the scope, whichever same-pathed entry
+    /// sorted first — possibly a peer's — answered for a local box.
+    pub fn by_box(&self, box_id: &str, origin: Option<&str>) -> Option<&RosterEntry> {
+        self.active().find(|e| e.is_box_on(box_id, origin))
     }
 }
 
@@ -1615,15 +1643,34 @@ pub fn put_roster_entry(
         // made would now read as the new box's work, which is exactly the
         // record this forum exists to keep straight. Refused, with the way out
         // named, rather than resolved by whoever attached last.
+        // "The same box" is the path *and* the host: two machines can both
+        // hold `env/claude/auth`, and a peer's identically-pathed box must
+        // not read as an update to this one. Either side missing its origin
+        // is a pre-origin entry, compared by path alone as it always was.
+        let same_box = |existing: &RosterEntry| {
+            existing.box_id == entry.box_id
+                && match (existing.origin.as_deref(), entry.origin.as_deref()) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                }
+        };
         if let Some(existing) = r.agents.get(&entry.agent)
             && existing.revoked_at.is_none()
-            && existing.box_id != entry.box_id
+            && !same_box(existing)
         {
+            let holder = match (&existing.box_id, &existing.origin) {
+                (Some(b), Some(o)) => format!(
+                    "{} on {}",
+                    crate::redact::sanitize_display(b),
+                    crate::redact::sanitize_display(o)
+                ),
+                (Some(b), None) => crate::redact::sanitize_display(b),
+                (None, _) => "the human".to_string(),
+            };
             return Err(H5iError::Metadata(format!(
-                "{} is already the identity of {} — revoke it first, or attach \
+                "{} is already the identity of {holder} — revoke it first, or attach \
                  under another name",
                 crate::redact::sanitize_display(&entry.agent),
-                existing.box_id.as_deref().unwrap_or("the human"),
             )));
         }
         // A box carries one identity at a time. Attaching it under a new name
@@ -1632,12 +1679,16 @@ pub fn put_roster_entry(
         // participant by scanning for that box id, so a stale duplicate makes
         // which identity a box has depend on how two names happen to sort.
         // Retired, not deleted, because the posts it made are still attributed
-        // to it and a reader has to be able to look it up.
+        // to it and a reader has to be able to look it up. Scoped to this
+        // host's own box: a peer's entry that merely shares the path is
+        // somebody else's participant, and retiring it here would be a
+        // cross-machine revocation nobody asked for — one the merge's
+        // revocation-wins rule would then make permanent everywhere.
         if let Some(box_id) = entry.box_id.as_deref() {
             for other in r.agents.values_mut() {
                 if other.agent != entry.agent
-                    && other.box_id.as_deref() == Some(box_id)
                     && other.revoked_at.is_none()
+                    && other.is_box_on(box_id, entry.origin.as_deref())
                 {
                     other.revoked_at = Some(ts.clone());
                 }
@@ -2457,16 +2508,17 @@ mod tests {
             policy_digest: Some("sha256:ab".into()),
             attached_at: now_ts(),
             revoked_at: None,
+            origin: None,
         };
         put_roster_entry(&repo, &human(), entry).unwrap();
         let r = read_roster(&repo);
         assert!(r.get("claude-worker").unwrap().is_active());
-        assert_eq!(r.by_box("env/claude/auth").unwrap().agent, "claude-worker");
+        assert_eq!(r.by_box("env/claude/auth", None).unwrap().agent, "claude-worker");
 
         revoke(&repo, &human(), "claude-worker").unwrap();
         let r = read_roster(&repo);
         assert!(!r.get("claude-worker").unwrap().is_active());
-        assert!(r.by_box("env/claude/auth").is_none());
+        assert!(r.by_box("env/claude/auth", None).is_none());
         assert_eq!(r.active().count(), 0);
         assert_eq!(r.agents.len(), 1, "a revoked entry is kept for attribution");
     }
@@ -2487,6 +2539,7 @@ mod tests {
             policy_digest: None,
             attached_at: now_ts(),
             revoked_at: None,
+            origin: None,
         };
         put_roster_entry(&repo, &human(), mk("worker")).unwrap();
         put_roster_entry(&repo, &human(), mk("worker2")).unwrap();
@@ -2495,7 +2548,7 @@ mod tests {
         assert!(!r.get("worker").unwrap().is_active(), "the old identity retires");
         assert!(r.get("worker2").unwrap().is_active());
         assert_eq!(r.active().count(), 1, "exactly one identity per box");
-        assert_eq!(r.by_box("env/a/w").unwrap().agent, "worker2");
+        assert_eq!(r.by_box("env/a/w", None).unwrap().agent, "worker2");
         assert_eq!(r.agents.len(), 2, "the retired entry stays for attribution");
     }
 
@@ -2503,6 +2556,52 @@ mod tests {
     fn revoking_someone_who_is_not_a_member_is_an_error() {
         let (_d, repo) = temp_repo();
         assert!(revoke(&repo, &human(), "ghost").is_err());
+    }
+
+    /// A box id is a path, and two machines can hold the same path. Once the
+    /// roster is merged, a peer's identically-pathed box must not capture,
+    /// retire, or answer for a local one — each host's binding is (path,
+    /// origin), not path alone.
+    #[test]
+    fn the_same_box_path_on_two_hosts_is_two_different_boxes() {
+        let (_d, repo) = temp_repo();
+        let entry = |name: &str, origin: &str| RosterEntry {
+            agent: name.into(),
+            box_id: Some("env/claude/auth".into()),
+            role: Role::Worker,
+            policy_digest: None,
+            attached_at: now_ts(),
+            revoked_at: None,
+            origin: Some(origin.into()),
+        };
+
+        // Host A attaches its box; host B attaches its own box, which merely
+        // shares the path. B's attach must not retire A's participant — the
+        // merge's revocation-wins rule would make that ejection permanent on
+        // every clone.
+        put_roster_entry(&repo, &human(), entry("alpha", "machine-a")).unwrap();
+        put_roster_entry(&repo, &human(), entry("beta", "machine-b")).unwrap();
+        let r = read_roster(&repo);
+        assert!(r.get("alpha").unwrap().is_active(), "A's box must survive B's attach");
+        assert!(r.get("beta").unwrap().is_active());
+
+        // Each host resolves the path to its own participant, whatever order
+        // the names happen to sort in.
+        assert_eq!(r.by_box("env/claude/auth", Some("machine-a")).unwrap().agent, "alpha");
+        assert_eq!(r.by_box("env/claude/auth", Some("machine-b")).unwrap().agent, "beta");
+
+        // And the equal path does not make B "the same box" for the purpose
+        // of taking over A's name.
+        let err = put_roster_entry(&repo, &human(), entry("alpha", "machine-b")).unwrap_err();
+        assert!(err.to_string().contains("already the identity"), "{err}");
+
+        // Re-attaching on the same host is still an ordinary update, and it
+        // still retires that host's old name for the box.
+        put_roster_entry(&repo, &human(), entry("alpha-2", "machine-a")).unwrap();
+        let r = read_roster(&repo);
+        assert!(!r.get("alpha").unwrap().is_active(), "A's old name retires");
+        assert!(r.get("beta").unwrap().is_active(), "B's box is untouched by A's rename");
+        assert_eq!(r.by_box("env/claude/auth", Some("machine-a")).unwrap().agent, "alpha-2");
     }
 
     /// A live identity cannot be handed to a second box: the overwrite would
@@ -2517,6 +2616,7 @@ mod tests {
             policy_digest: None,
             attached_at: now_ts(),
             revoked_at: None,
+            origin: None,
         };
         put_roster_entry(&repo, &human(), mk("env/a/one")).unwrap();
         let err = put_roster_entry(&repo, &human(), mk("env/b/two")).unwrap_err();
@@ -2552,6 +2652,7 @@ mod tests {
             policy_digest: None,
             attached_at: now_ts(),
             revoked_at: None,
+            origin: None,
         };
         assert!(put_roster_entry(&repo, &human(), entry(Role::Worker)).is_err());
         assert!(put_roster_entry(&repo, &human(), entry(Role::Observer)).is_err());
@@ -2635,6 +2736,7 @@ mod tests {
             policy_digest: None,
             attached_at: now_ts(),
             revoked_at: None,
+            origin: None,
         };
         put_roster_entry(&repo, &human(), entry).unwrap();
         let unrevoked = repo.refname_to_id(FORUM_META_REF).unwrap();
