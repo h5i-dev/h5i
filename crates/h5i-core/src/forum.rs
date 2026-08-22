@@ -1292,7 +1292,15 @@ impl ForumPostSpool {
         }
         let mut body = self.body;
         if body.len() > MAX_BODY_BYTES {
-            body.truncate(MAX_BODY_BYTES);
+            // The record is box-written, so the boundary can land mid-character
+            // — and `String::truncate` panics off a char boundary, which would
+            // let a staged record crash the host draining it. Back up to the
+            // nearest boundary instead.
+            let mut cut = MAX_BODY_BYTES;
+            while !body.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            body.truncate(cut);
             denied.push(format!("body truncated to {MAX_BODY_BYTES} bytes"));
         }
         NewPost {

@@ -996,6 +996,25 @@ mod tests {
         );
     }
 
+    /// The truncation boundary is a byte count and the body is box-written, so
+    /// the cut can land mid-character — which used to panic the host draining
+    /// the record. An agent must not be able to crash the tender with a body.
+    #[test]
+    fn an_oversized_multibyte_body_truncates_without_panicking() {
+        let mut body = "x".repeat(forum::MAX_BODY_BYTES - 1);
+        body.push_str("ああああ"); // a 3-byte char straddles the boundary
+        let staged = forum::ForumPostSpool {
+            thread: "0123456789abcdef".into(),
+            kind: "FINDING".into(),
+            body,
+            ..Default::default()
+        };
+        let new = staged.into_new_post();
+        assert!(new.body.len() <= forum::MAX_BODY_BYTES);
+        assert!(new.body.is_char_boundary(new.body.len()));
+        assert!(new.denied.unwrap().contains("truncated"));
+    }
+
     #[test]
     fn an_inbox_read_skips_files_it_does_not_understand() {
         let dir = tempfile::tempdir().unwrap();

@@ -163,6 +163,7 @@ export function ForumView({
           <Participants
             roster={overview?.roster ?? []}
             influenced={overview?.influenced ?? []}
+            hostOrigin={overview?.host_origin ?? ""}
           />
         </div>
       </div>
@@ -636,9 +637,11 @@ function Cmd({ text }: { text: string }) {
 function Participants({
   roster,
   influenced,
+  hostOrigin,
 }: {
   roster: ForumRosterEntry[];
   influenced: string[];
+  hostOrigin: string;
 }) {
   return (
     <div className="brd-col brd-col-right">
@@ -662,7 +665,19 @@ function Participants({
             />
           </div>
           <Row k="role" v={e.role} />
-          {e.box_id && <Row k="box" v={e.box_id} />}
+          {/* A box id is a path on the machine that attached it. A peer's
+              entry can share a local path exactly, so the origin is the only
+              thing keeping the two apart on screen. */}
+          {e.box_id && (
+            <Row
+              k="box"
+              v={
+                e.origin && e.origin !== hostOrigin
+                  ? `${e.box_id}@${e.origin}`
+                  : e.box_id
+              }
+            />
+          )}
           {e.policy_digest && (
             <Row k="policy" v={e.policy_digest.slice(0, 12)} />
           )}

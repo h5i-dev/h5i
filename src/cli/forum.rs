@@ -675,6 +675,27 @@ impl Host<'_> {
                 anyhow::anyhow!("a bare repository has no policy file to check against")
             })?;
             let ceiling = h5i_core::sandbox::load_profile(workdir, &c.profile, None)?;
+            // The header pinned the ceiling's digest at creation for exactly
+            // this comparison: the profile file is re-resolved here, and a
+            // profile that changed since the thread was opened is no longer
+            // the ceiling the human declared. Checking a box against the
+            // edited version would be enforcing a boundary nobody set —
+            // refused, with both digests named, rather than drifted past.
+            if let Some(pinned) = &c.digest {
+                let current = forum_authority::profile_digest(&ceiling);
+                if &current != pinned {
+                    anyhow::bail!(
+                        "the ceiling of thread {} has drifted: profile {} now resolves to \
+                         sha256:{} but the thread pinned sha256:{}.\n  \
+                         The profile file changed after the thread was opened. Restore the \
+                         profile, or close the thread and open one under the current profile.",
+                        summary.header.id,
+                        c.profile,
+                        &current[..12],
+                        pinned.get(..12).unwrap_or(pinned),
+                    );
+                }
+            }
             let violations = forum_authority::check(&policy.profile, &ceiling);
             if !violations.is_empty() {
                 refused.push((summary.header.id.clone(), violations));
@@ -1492,9 +1513,16 @@ fn render_thread(
     );
     print!("{}", style(format!("  {}", header.id)).dim());
     if let Some(c) = &header.ceiling {
+        // The header can have been adopted from a peer, so its profile name
+        // is peer bytes like everything else on this line's level.
         print!(
             "{}",
-            style(format!("  ceiling {} {}", c.profile, short_digest(&c.digest))).dim()
+            style(format!(
+                "  ceiling {} {}",
+                peer_str(&c.profile),
+                short_digest(&c.digest)
+            ))
+            .dim()
         );
     }
     println!();
@@ -1650,9 +1678,14 @@ fn peer_str(s: &str) -> String {
 }
 
 fn short_digest(d: &Option<String>) -> String {
-    match d {
-        Some(s) if s.len() >= 12 => format!("sha256:{}", &s[..12]),
-        Some(s) => s.clone(),
+    // The digest can sit in an adopted thread's header, which makes it peer
+    // bytes: the preview must neither assume its length lands on a char
+    // boundary nor echo it raw.
+    match d.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => format!(
+            "sha256:{}",
+            peer_str(&s.chars().take(12).collect::<String>())
+        ),
         None => "-".to_string(),
     }
 }
@@ -1862,5 +1895,20 @@ mod tests {
         let hostile = "\u{1b}]0;owned\u{7}2026-08-20T14:02:11Z";
         assert!(!short_time(hostile).contains('\u{1b}'));
         assert!(!peer_str("evil\u{1b}[2Jname").contains('\u{1b}'));
+    }
+
+    /// A ceiling digest can sit in an adopted thread's header: peer bytes.
+    /// Byte-slicing it panicked on multibyte input, and echoing it raw handed
+    /// a hostile clone an escape sequence.
+    #[test]
+    fn a_hostile_ceiling_digest_neither_panics_nor_escapes() {
+        let ok = short_digest(&Some("ab12cd34ef56ab12cd34ef56".into()));
+        assert_eq!(ok, "sha256:ab12cd34ef56");
+        // Multibyte at the twelfth byte: the old code panicked here.
+        assert!(!short_digest(&Some("ああああああ".into())).is_empty());
+        let hostile = short_digest(&Some("\u{1b}[2Jab12cd34ef56".into()));
+        assert!(!hostile.contains('\u{1b}'));
+        assert_eq!(short_digest(&None), "-");
+        assert_eq!(short_digest(&Some("  ".into())), "-");
     }
 }

@@ -860,6 +860,10 @@ pub struct ForumView {
     /// page showing scores without saying what they count would be asserting
     /// more than it knows.
     pub vote_rule: &'static str,
+    /// This host's forum identity, so the page can tell a local box id from a
+    /// peer's identically-pathed one: a roster entry's box id is a path on the
+    /// machine its `origin` names, not necessarily on this one.
+    pub host_origin: String,
 }
 
 /// Enough of a thread to rank it and show why it is worth opening.
@@ -966,6 +970,7 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
             influenced,
             previews,
             vote_rule: ctx.rule.as_str(),
+            host_origin: my_origin.unwrap_or_default(),
         })
     })
     .await;
@@ -976,6 +981,7 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
         influenced: Vec::new(),
         previews: Vec::new(),
         vote_rule: crate::forum::VoteRule::Origin.as_str(),
+        host_origin: String::new(),
     }))
 }
 

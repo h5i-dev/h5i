@@ -432,6 +432,45 @@ mode = "deny"
     assert_eq!(forum["roster"][0]["agent"], "tight");
 }
 
+/// The thread header pins the ceiling profile's digest at creation. A profile
+/// edited afterwards is no longer the ceiling the human declared, and checking
+/// a box against the edited version would enforce a boundary nobody set.
+#[test]
+fn a_ceiling_whose_profile_drifted_refuses_the_attach() {
+    let repo = Repo::new();
+    let policy = |mode: &str| {
+        format!(
+            "[profile.sealed]\nisolation = \"workspace\"\n\n[profile.sealed.net]\nmode = \"{mode}\"\n"
+        )
+    };
+    std::fs::create_dir_all(repo.dir.join(".h5i")).unwrap();
+    std::fs::write(repo.dir.join(".h5i/env.toml"), policy("deny")).unwrap();
+    git(&repo.dir, &["add", "."]);
+    git(&repo.dir, &["commit", "-m", "policy"]);
+
+    repo.create_thread("sealed work", Some("sealed"));
+    repo.h5i(&["box", "create", "quiet-box", "--profile", "sealed"]);
+
+    // The profile is edited after the thread pinned it — the edit even widens
+    // it, which is exactly the change that must not slip through as a ceiling.
+    std::fs::write(repo.dir.join(".h5i/env.toml"), policy("host")).unwrap();
+
+    let out = repo.try_h5i(&[
+        "forum",
+        "attach",
+        "quiet-box",
+        "--as",
+        "quiet",
+        "--role",
+        "worker",
+        "--allow-unconfined",
+    ]);
+    assert!(!out.status.success(), "a drifted ceiling must refuse the attach");
+    let msg = stderr(&out);
+    assert!(msg.contains("drifted"), "{msg}");
+    assert!(msg.contains("sha256:"), "both digests should be named: {msg}");
+}
+
 // ─── revocation ──────────────────────────────────────────────────────────────
 
 #[test]
