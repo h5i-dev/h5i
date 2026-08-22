@@ -599,6 +599,26 @@ mod tests {
     use super::*;
     use crate::forum::{Author, NewPost, Role};
 
+    /// A timeout must never read as contention. The sync loop retries a
+    /// `Contended` push up to eight times; if a timed-out git were classified
+    /// that way, a dead remote would turn one 45s wait into eight — six
+    /// minutes — instead of failing once. So the timeout message must match
+    /// none of the retry markers.
+    #[test]
+    fn a_timeout_is_fatal_not_contention() {
+        let timeout = H5iError::Metadata(
+            "git push exceeded 45s against the remote and was stopped — \
+             the remote is unreachable or not responding"
+                .into(),
+        );
+        assert!(!is_rejected(&timeout), "a timeout is not a non-fast-forward rejection");
+        assert!(!is_no_matching_ref(&timeout), "a timeout is not an empty push");
+        assert!(!is_empty_remote(&timeout), "a timeout is not an empty remote");
+        // And the markers still classify what they should.
+        let rejected = H5iError::Metadata("![rejected] (non-fast-forward)".into());
+        assert!(is_rejected(&rejected));
+    }
+
     /// A git that never answers is killed at the deadline rather than hanging
     /// the caller — which is what keeps a dead remote from wedging a box
     /// session's shutdown, since the tender's thread is joined on drop.

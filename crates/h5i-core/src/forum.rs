@@ -1051,7 +1051,19 @@ pub fn read_thread(repo: &Repository, id: &str) -> Result<Thread, H5iError> {
     let oid = thread_tip(repo, id).ok_or_else(|| {
         H5iError::RecordNotFound(format!("no forum thread {id} in this repository"))
     })?;
-    read_thread_at(repo, oid)
+    let thread = read_thread_at(repo, oid)?;
+    // The header has to agree with the ref it hangs on. h5i writes them
+    // together, so a mismatch is a ref a peer manufactured — and `read <id>`
+    // opening a thread whose header names a *different* id is the same
+    // inconsistency `list` already refuses to show. Refuse it here too, so a
+    // forged ref is uniformly rejected rather than listed nowhere yet openable.
+    if thread.header.id != id {
+        return Err(H5iError::Metadata(format!(
+            "forum thread {id} carries a header for {:?} — a forged ref, refused",
+            crate::redact::sanitize_display(&thread.header.id)
+        )));
+    }
+    Ok(thread)
 }
 
 /// Read the thread whose ref tip is `oid`.
@@ -1105,6 +1117,14 @@ fn list_threads_in(repo: &Repository, prefix: &str) -> Vec<ThreadSummary> {
     let mut out: Vec<ThreadSummary> = refs
         .filter_map(|r| r.ok())
         .filter_map(|r| Some((r.name()?.rsplit('/').next()?.to_string(), r.target()?)))
+        // The leaf must be a real thread id — 16 lowercase hex. Sync validates
+        // this before it adopts anything, but listing reads whatever refs exist
+        // under the namespace, and a leaf that is not a well-formed id is a ref
+        // this build did not write. It matters beyond tidiness: readers slice
+        // `id[..8]` for a short form, which would panic on a shorter or
+        // non-ASCII id, so an id that is not the shape gen_id produces is never
+        // summarised.
+        .filter(|(leaf, _)| validate_thread_id(leaf).is_ok())
         .filter_map(|(leaf, oid)| read_thread_at(repo, oid).ok().map(|t| (leaf, t)))
         // The header has to agree with the ref it hangs on. h5i always writes
         // them together, so a mismatch is a ref somebody else manufactured —
@@ -2686,6 +2706,52 @@ mod tests {
 
         let listed: Vec<String> = list_threads(&repo).into_iter().map(|t| t.header.id).collect();
         assert_eq!(listed, vec![real.id.clone()], "the forged ref must not be listed");
+
+        // And it is refused on read too, not merely hidden from the list —
+        // otherwise `read <fake_id>` opens a thread whose header names a
+        // different id than the one that was typed.
+        let err = read_thread(&repo, fake_id).unwrap_err();
+        assert!(err.to_string().contains("forged ref"), "{err}");
+        // The real thread still reads by its own id.
+        assert_eq!(read_thread(&repo, &real.id).unwrap().header.id, real.id);
+    }
+
+    /// A ref whose leaf is not a well-formed thread id is never summarised —
+    /// readers slice `id[..8]`, so a non-hex or short id in the list would be
+    /// a panic waiting for a `forum list`.
+    #[test]
+    fn a_ref_with_a_malformed_leaf_is_not_listed() {
+        let (_d, repo) = temp_repo();
+        let real = create_thread(&repo, &human(), "real", None, None, None).unwrap();
+        let oid = thread_tip(&repo, &real.id).unwrap();
+
+        // A ref under the threads namespace whose leaf is not 16-hex, with a
+        // header that agrees with it — so only the id-shape check catches it.
+        let bad_leaf = "nothex";
+        let raw = format!("{FORUM_THREADS_PREFIX}{bad_leaf}");
+        // Give it a matching header so the leaf==header.id filter would pass.
+        let ts = now_ts();
+        let header = ThreadHeader {
+            id: bad_leaf.to_string(),
+            title: "forged".into(),
+            created_at: ts.clone(),
+            created_by: "peer".into(),
+            version: PROTOCOL_VERSION,
+            ceiling: None,
+            branch: None,
+        };
+        let header_json = serde_json::to_string(&header).unwrap();
+        let tree_oid = refstore::build_tree(&repo, None, &[(THREAD_FILE, &header_json), (POSTS_FILE, "")]).unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = refstore::signature(&repo).unwrap();
+        let _ = oid;
+        let commit = repo.commit(None, &sig, &sig, "forged", &tree, &[]).unwrap();
+        repo.reference(&raw, commit, false, "forged").unwrap();
+
+        // It must not appear, and `forum list` (which slices id[..8]) must not
+        // have anything short to slice.
+        let listed: Vec<String> = list_all_threads(&repo).into_iter().map(|t| t.header.id).collect();
+        assert_eq!(listed, vec![real.id.clone()]);
     }
 
     #[test]
