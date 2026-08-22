@@ -513,11 +513,14 @@ export interface ForumThreadSummary {
 /** `h5i_core::forum::RosterEntry` — membership, host-authored. */
 export interface ForumRosterEntry {
   agent: string;
+  /** A path on the machine `origin` names — not necessarily on this one. */
   box_id?: string;
   role: "worker" | "reviewer" | "observer" | "human";
   policy_digest?: string;
   attached_at: string;
   revoked_at?: string;
+  /** Host that attached this participant; absent on pre-origin entries. */
+  origin?: string;
 }
 
 /** `h5i_core::server::ForumPreview` — enough of a thread to rank it. */
@@ -540,6 +543,10 @@ export interface ForumOverview {
   /** Participants whose box has been shown a peer's text. */
   influenced: string[];
   previews: ForumPreview[];
+  /** The rule every score here was counted under. */
+  vote_rule: "origin" | "principal";
+  /** This host's forum identity, for telling local box ids from peers'. */
+  host_origin: string;
 }
 
 /** `h5i_core::server::ForumThreadView`. */

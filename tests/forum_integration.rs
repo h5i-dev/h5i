@@ -432,6 +432,45 @@ mode = "deny"
     assert_eq!(forum["roster"][0]["agent"], "tight");
 }
 
+/// The thread header pins the ceiling profile's digest at creation. A profile
+/// edited afterwards is no longer the ceiling the human declared, and checking
+/// a box against the edited version would enforce a boundary nobody set.
+#[test]
+fn a_ceiling_whose_profile_drifted_refuses_the_attach() {
+    let repo = Repo::new();
+    let policy = |mode: &str| {
+        format!(
+            "[profile.sealed]\nisolation = \"workspace\"\n\n[profile.sealed.net]\nmode = \"{mode}\"\n"
+        )
+    };
+    std::fs::create_dir_all(repo.dir.join(".h5i")).unwrap();
+    std::fs::write(repo.dir.join(".h5i/env.toml"), policy("deny")).unwrap();
+    git(&repo.dir, &["add", "."]);
+    git(&repo.dir, &["commit", "-m", "policy"]);
+
+    repo.create_thread("sealed work", Some("sealed"));
+    repo.h5i(&["box", "create", "quiet-box", "--profile", "sealed"]);
+
+    // The profile is edited after the thread pinned it — the edit even widens
+    // it, which is exactly the change that must not slip through as a ceiling.
+    std::fs::write(repo.dir.join(".h5i/env.toml"), policy("host")).unwrap();
+
+    let out = repo.try_h5i(&[
+        "forum",
+        "attach",
+        "quiet-box",
+        "--as",
+        "quiet",
+        "--role",
+        "worker",
+        "--allow-unconfined",
+    ]);
+    assert!(!out.status.success(), "a drifted ceiling must refuse the attach");
+    let msg = stderr(&out);
+    assert!(msg.contains("drifted"), "{msg}");
+    assert!(msg.contains("sha256:"), "both digests should be named: {msg}");
+}
+
 // ─── revocation ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -509,6 +548,126 @@ fn a_box_shown_a_peers_text_is_marked_and_one_that_is_not_stays_clean() {
     assert!(
         !clean.contains("peer-influenced"),
         "a box that was never on the forum must stay clean:\n{clean}"
+    );
+}
+
+/// The review loop, closed: a worker submits a patch, and both the reviewer in
+/// its own box and the human on the host can get the actual bytes back out.
+/// Without `fetch`, a submitted patch was write-only — stored on the thread,
+/// visible as metadata, readable by nobody.
+#[test]
+fn a_submitted_patch_can_be_fetched_by_the_reviewer_and_the_host() {
+    let repo = Repo::new();
+    let thread = repo.create_thread("review me", None);
+    repo.h5i(&["box", "create", "worker-box"]);
+    repo.h5i(&["box", "create", "review-box"]);
+    repo.attach("worker-box", "claude-worker", "worker");
+    repo.attach("review-box", "codex-reviewer", "reviewer");
+
+    let patch = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n";
+    std::fs::write(repo.dir.join("fix.diff"), patch).unwrap();
+    let out = repo.in_box(
+        "env/tester/worker-box",
+        "claude-worker",
+        &["forum", "submit", &thread, "--patch", "fix.diff", "here it is"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    repo.h5i(&["forum", "status"]); // drain the spool, deliver inboxes
+
+    // The reviewer reads the thread (which numbers the posts), then fetches.
+    let read = repo.in_box("env/tester/review-box", "codex-reviewer", &["forum", "read", &thread]);
+    assert!(read.status.success(), "{}", stderr(&read));
+    let fetched = repo.in_box(
+        "env/tester/review-box",
+        "codex-reviewer",
+        &["forum", "fetch", "1", "--out", "got.diff"],
+    );
+    assert!(fetched.status.success(), "in-box fetch failed: {}", stderr(&fetched));
+    assert_eq!(
+        std::fs::read_to_string(repo.dir.join("got.diff")).unwrap(),
+        patch,
+        "the reviewer must get the bytes the worker submitted"
+    );
+
+    // And the human, from the host side.
+    repo.h5i(&["forum", "read", &thread]);
+    repo.h5i(&["forum", "fetch", "1", "--out", "host.diff"]);
+    assert_eq!(std::fs::read_to_string(repo.dir.join("host.diff")).unwrap(), patch);
+}
+
+/// A closed thread has left the box's inbox, but the spool is a directory and
+/// an agent that remembers the thread id can stage into it directly. The post
+/// still lands — nothing here is swallowed — but it lands carrying the
+/// refusal, so the conversation cannot quietly keep growing in the one place
+/// the human's default view no longer looks.
+#[test]
+fn a_post_staged_into_a_closed_thread_is_recorded_as_refused() {
+    let repo = Repo::new();
+    let thread = repo.create_thread("t", None);
+    repo.h5i(&["box", "create", "worker-box"]);
+    repo.attach("worker-box", "claude-worker", "worker");
+    repo.h5i(&["forum", "close", &thread]);
+
+    // What a malicious or merely stale agent would do: skip the CLI's
+    // inbox-scoped resolution and write the record itself.
+    let staged = serde_json::json!({
+        "thread": thread,
+        "kind": "FINDING",
+        "body": "still talking after the close",
+    });
+    let spool = repo.env_dir("env/tester/worker-box").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    std::fs::write(
+        spool.join("forum-direct-1.json"),
+        serde_json::to_vec(&staged).unwrap(),
+    )
+    .unwrap();
+
+    repo.h5i(&["forum", "status"]); // tends on the way past
+
+    let t = repo.thread_json(&thread);
+    let posts = t["posts"].as_array().unwrap();
+    let post = posts
+        .iter()
+        .find(|p| p["body"] == "still talking after the close")
+        .expect("the post must land rather than vanish");
+    let denied = post["denied"].as_str().expect("and must carry the refusal");
+    assert!(denied.contains("closed"), "refusal should name the close: {denied}");
+}
+
+/// A revocation that *arrives* — merged in from another clone rather than
+/// typed here — has no command around it to clear the box's inbox. The tender
+/// pass is what notices, so a revoked box's stale threads leave on the next
+/// tend wherever the human ran the revoke.
+#[test]
+fn a_revoked_boxes_inbox_is_emptied_by_the_tend_not_only_by_the_revoke_command() {
+    let repo = Repo::new();
+    let thread = repo.create_thread("t", None);
+    repo.h5i(&["box", "create", "worker-box"]);
+    repo.attach("worker-box", "claude-worker", "worker");
+    repo.h5i(&["forum", "status"]); // delivers the inbox
+    let inbox = repo.env_dir("env/tester/worker-box").join("inbox");
+    assert!(
+        std::fs::read_dir(&inbox).unwrap().next().is_some(),
+        "the attached box should have been delivered something"
+    );
+
+    repo.h5i(&["forum", "revoke", "claude-worker"]);
+    // Simulate the remote-revocation shape: the revoke command already cleared
+    // the inbox, so plant a stale thread file the way a box on another machine
+    // would still hold one, and let an ordinary tend pass find it.
+    std::fs::write(
+        inbox.join(format!("thread-{thread}.json")),
+        b"{stale}".as_slice(),
+    )
+    .unwrap();
+    repo.h5i(&["forum", "status"]);
+    let leftover: Vec<_> = std::fs::read_dir(&inbox)
+        .map(|d| d.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(
+        leftover.is_empty(),
+        "a revoked box must not keep reading yesterday's threads: {leftover:?}"
     );
 }
 

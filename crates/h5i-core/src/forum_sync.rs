@@ -53,13 +53,31 @@
 //! runner makes — the worker is h5i, the host holds the key — and it is why a
 //! compromised agent cannot push to the forum even though the forum is a repo.
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use git2::Repository;
 
 use crate::forum;
 use crate::error::H5iError;
+
+/// Wall-clock ceiling on any one git invocation.
+///
+/// A fetch or push of a small forum is subsecond against a healthy remote;
+/// this is far past that, so it never trips on a slow-but-alive host. What it
+/// bounds is a *dead* one. Git has no timeout of its own for an unresponsive
+/// SSH or TCP peer, and the tender runs `sync` on a thread the session joins
+/// on shutdown — so without this ceiling a partitioned remote turns "the box
+/// exited" into "the box will not exit", and a plain `h5i forum sync` into a
+/// command that never returns. A killed git leaves no corruption: its writes
+/// are lockfile-and-rename, so a bounded push simply did not land, and the
+/// next sync retries.
+const GIT_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// How often the wait loop polls for the child while bounding it.
+const GIT_POLL: Duration = Duration::from_millis(50);
 
 /// Refs the forum owns locally. The remote side is [`Remote::namespace`].
 const LIVE: &str = "refs/h5i/forum/*";
@@ -205,9 +223,9 @@ pub fn set_namespace(h5i_root: &Path, branch_refs: bool) -> Result<(), H5iError>
 /// What one sync moved.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncReport {
-    /// Threads whose local tip advanced because of something fetched.
+    /// Refs whose local tip advanced because of something fetched.
     pub pulled: usize,
-    /// Threads pushed to the remote.
+    /// Refs the remote was missing and was sent.
     pub pushed: usize,
     /// Rounds spent losing a race to another writer.
     pub retries: usize,
@@ -238,9 +256,18 @@ pub fn sync_with(repo: &Repository, remote: &Remote) -> Result<SyncReport, H5iEr
 
     for attempt in 0..MAX_ATTEMPTS {
         report.pulled += pull(repo, &dir, remote)?;
+        // What the remote is missing, counted against the tips this round's
+        // fetch staged. `git push` cannot say this itself — a push where
+        // everything was already up to date succeeds exactly like one that
+        // moved something — and a report that counted attempts rather than
+        // movement kept an idle forum looking busy forever.
+        let pending = pending_push(repo);
+        if pending == 0 {
+            return Ok(report);
+        }
         match push(&dir, remote) {
-            Ok(pushed) => {
-                report.pushed += pushed;
+            Ok(()) => {
+                report.pushed += pending;
                 return Ok(report);
             }
             // A rejection here is the compare-and-swap doing its job: the
@@ -291,8 +318,16 @@ fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iErro
     match out {
         Ok(_) => {}
         // A remote with no forum yet has no matching refs, which git reports as
-        // an error on some versions. That is an empty forum, not a failure.
-        Err(e) if is_empty_remote(&e) => return Ok(0),
+        // an error on some versions. That is an empty forum, not a failure —
+        // but it also means `--prune` never ran, and the staging namespace may
+        // still mirror a *previous* remote. Left in place, those tips would
+        // tell `pending_push` the new remote already holds everything the old
+        // one did, and the push that should seed it would be skipped forever.
+        // An empty remote stages nothing, so make the staging say so.
+        Err(e) if is_empty_remote(&e) => {
+            clear_staging(repo);
+            return Ok(0);
+        }
         Err(e) => return Err(e),
     }
 
@@ -305,14 +340,29 @@ fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iErro
             // Already have exactly this.
             Ok(local_oid) if local_oid == incoming_oid => {}
             Ok(local_oid) => {
-                // Both sides moved. Union-merge rather than pick a winner: the
-                // log is append-only, so the union is the whole history and
-                // neither side loses a post.
                 if repo.graph_descendant_of(local_oid, incoming_oid).unwrap_or(false) {
                     continue; // we already contain it
                 }
+                // The remote is simply ahead: take its tip. Merging here would
+                // be *correct* — the union of a history with its own prefix —
+                // but it would mint a commit, and that commit is news to the
+                // next peer, whose own no-op merge is news back to us. Two
+                // quiet clones then trade contentless merge commits forever.
+                // Measured before this branch existed: one post followed by
+                // six idle sync round-trips left the thread ref twelve commits
+                // deep, all of them empty merges — and the resident tender
+                // syncs every second. Fast-forward is not an optimisation; it
+                // is what makes an idle forum go quiet.
+                if repo.graph_descendant_of(incoming_oid, local_oid).unwrap_or(false) {
+                    repo.reference(&local, incoming_oid, true, "h5i forum: fast-forward remote")?;
+                    moved += 1;
+                    continue;
+                }
+                // Both sides moved. Union-merge rather than pick a winner: the
+                // log is append-only, so the union is the whole history and
+                // neither side loses a post.
                 let merged = if local.starts_with("refs/h5i/forum/meta") {
-                    forum::union_merge_roster(repo, local_oid, incoming_oid)?
+                    forum::union_merge_meta(repo, local_oid, incoming_oid)?
                 } else {
                     forum::union_merge_thread(repo, local_oid, incoming_oid)?
                 };
@@ -327,6 +377,23 @@ fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iErro
         }
     }
     Ok(moved)
+}
+
+/// Drop every staged incoming ref, so the staging namespace reflects a remote
+/// that has nothing rather than whichever remote was fetched last.
+fn clear_staging(repo: &Repository) {
+    let Ok(refs) = repo.references_glob(&format!("{INCOMING}/live/*")) else {
+        return;
+    };
+    let names: Vec<String> = refs
+        .filter_map(|r| r.ok())
+        .filter_map(|r| r.name().map(str::to_string))
+        .collect();
+    for name in names {
+        if let Ok(mut r) = repo.find_reference(&name) {
+            let _ = r.delete();
+        }
+    }
 }
 
 /// Map every staged incoming ref to the local ref it belongs to.
@@ -359,8 +426,26 @@ fn incoming_pairs(repo: &Repository) -> Result<Vec<(String, String)>, H5iError> 
     Ok(out)
 }
 
+/// Local forum refs the remote does not have yet, measured against the tips
+/// the current round's fetch parked in the staging namespace. Zero means the
+/// remote already holds everything we do, and the push can be skipped.
+fn pending_push(repo: &Repository) -> usize {
+    let Ok(refs) = repo.references_glob("refs/h5i/forum/*") else {
+        return 0;
+    };
+    refs.filter_map(|r| r.ok())
+        .filter_map(|r| Some((r.name()?.to_string(), r.target()?)))
+        .filter(|(name, oid)| {
+            let Some(rest) = name.strip_prefix("refs/h5i/forum/") else {
+                return false;
+            };
+            repo.refname_to_id(&format!("{INCOMING}/live/{rest}")).ok() != Some(*oid)
+        })
+        .count()
+}
+
 /// Push the local forum. `Contended` when the remote moved under us.
-fn push(dir: &Path, remote: &Remote) -> Result<usize, SyncError> {
+fn push(dir: &Path, remote: &Remote) -> Result<(), SyncError> {
     // No `--force`: an append-only thread that has been merged onto the remote
     // tip is a fast-forward, so a rejection means someone else got there first
     // and the right answer is to merge again, never to overwrite them.
@@ -369,10 +454,10 @@ fn push(dir: &Path, remote: &Remote) -> Result<usize, SyncError> {
         dir,
         &["push", "--quiet", "--end-of-options", &remote.url, &live_spec],
     ) {
-        Ok(_) => Ok(1),
+        Ok(_) => Ok(()),
         Err(e) if is_rejected(&e) => Err(SyncError::Contended),
         // Nothing local to push is success, not failure.
-        Err(e) if is_no_matching_ref(&e) => Ok(0),
+        Err(e) if is_no_matching_ref(&e) => Ok(()),
         Err(e) => Err(SyncError::Fatal(e)),
     }
 }
@@ -398,8 +483,28 @@ fn is_no_matching_ref(e: &H5iError) -> bool {
 /// Run git in `dir` with the hardening the rest of this codebase's shell-outs
 /// use: no hooks, no `ext::` transport, and object checking on both directions
 /// of the wire, because a forum's remote is a machine this one does not own.
+///
+/// Two pieces of the caller's environment are overridden, because this module
+/// depends on things most git invocations do not:
+///
+/// - `LC_ALL=C`: the sync loop *classifies* git's stderr — a non-fast-forward
+///   rejection is the compare-and-swap saying retry, not an error — and git
+///   localises its messages. On a Japanese locale the marker text would never
+///   match, and every contended push would surface as a failure instead of a
+///   retry.
+/// - `GIT_DIR` and its companions are dropped: they redirect git away from the
+///   repository `current_dir` names, and a shell that exported them (a hook,
+///   a script) would have this module fetching and pushing someone else's
+///   refs. The repository is an argument here, never ambient state.
 fn git(dir: &Path, args: &[&str]) -> Result<String, H5iError> {
-    let out = Command::new("git")
+    let mut cmd = Command::new("git");
+    cmd.env("LC_ALL", "C")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_NAMESPACE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
         .arg("-c")
         .arg("core.hooksPath=/dev/null")
         .arg("-c")
@@ -409,23 +514,142 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, H5iError> {
         .arg("-c")
         .arg("fetch.fsckObjects=true")
         .args(args)
-        .current_dir(dir)
-        .output()
+        .current_dir(dir);
+    let label = args.first().copied().unwrap_or("");
+    run_bounded(cmd, GIT_TIMEOUT, label)
+}
+
+/// Run `cmd` to completion, or kill it and error if it outruns `timeout`.
+///
+/// The output pipes are drained on their own threads: a child that fills a
+/// pipe buffer and blocks on the write would never reach `try_wait`, so
+/// polling the exit status without reading the pipes would deadlock on exactly
+/// the hang this bound exists to prevent. A killed child leaves no corruption
+/// here — git's writes are lockfile-and-rename — so the operation simply did
+/// not land and the next sync retries.
+fn run_bounded(mut cmd: Command, timeout: Duration, label: &str) -> Result<String, H5iError> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| H5iError::Metadata(format!("could not run git: {e}")))?;
-    if !out.status.success() {
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = stdout_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = stderr_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // The remote is not answering. Kill the child and return at
+                    // once, rather than holding a session's shutdown open on a
+                    // dead peer. The reader threads are deliberately *not*
+                    // joined here: git fetch/push spawns an `ssh` grandchild
+                    // that inherits the output pipe, and killing git does not
+                    // kill ssh — so a join would block on the pipe staying open
+                    // until ssh itself gave up, which is the very wait this
+                    // bound exists to cut. The readers detach and end when the
+                    // grandchild does; their buffers are discarded.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    drop(out_reader);
+                    drop(err_reader);
+                    return Err(H5iError::Metadata(format!(
+                        "git {label} exceeded {}s against the remote and was stopped — \
+                         the remote is unreachable or not responding",
+                        timeout.as_secs()
+                    )));
+                }
+                std::thread::sleep(GIT_POLL);
+            }
+            Err(e) => return Err(H5iError::Metadata(format!("git wait failed: {e}"))),
+        }
+    };
+
+    let stdout = out_reader.join().unwrap_or_default();
+    let stderr = err_reader.join().unwrap_or_default();
+    if !status.success() {
         return Err(H5iError::Metadata(format!(
-            "git {} failed: {}",
-            args.first().copied().unwrap_or(""),
-            String::from_utf8_lossy(&out.stderr).trim()
+            "git {label} failed: {}",
+            String::from_utf8_lossy(&stderr).trim()
         )));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    Ok(String::from_utf8_lossy(&stdout).to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::forum::{Author, NewPost, Role};
+
+    /// A timeout must never read as contention. The sync loop retries a
+    /// `Contended` push up to eight times; if a timed-out git were classified
+    /// that way, a dead remote would turn one 45s wait into eight — six
+    /// minutes — instead of failing once. So the timeout message must match
+    /// none of the retry markers.
+    #[test]
+    fn a_timeout_is_fatal_not_contention() {
+        let timeout = H5iError::Metadata(
+            "git push exceeded 45s against the remote and was stopped — \
+             the remote is unreachable or not responding"
+                .into(),
+        );
+        assert!(!is_rejected(&timeout), "a timeout is not a non-fast-forward rejection");
+        assert!(!is_no_matching_ref(&timeout), "a timeout is not an empty push");
+        assert!(!is_empty_remote(&timeout), "a timeout is not an empty remote");
+        // And the markers still classify what they should.
+        let rejected = H5iError::Metadata("![rejected] (non-fast-forward)".into());
+        assert!(is_rejected(&rejected));
+    }
+
+    /// A git that never answers is killed at the deadline rather than hanging
+    /// the caller — which is what keeps a dead remote from wedging a box
+    /// session's shutdown, since the tender's thread is joined on drop.
+    #[test]
+    fn a_hanging_git_is_bounded_not_waited_on_forever() {
+        // `sh -c 'sleep 60'` stands in for a git that has connected to a dead
+        // peer and is waiting on a socket that will never answer.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 60"]);
+        let start = Instant::now();
+        let r = run_bounded(cmd, Duration::from_millis(300), "fetch");
+        let elapsed = start.elapsed();
+        assert!(r.is_err(), "a child that outruns the timeout must error");
+        assert!(
+            r.unwrap_err().to_string().contains("unreachable or not responding"),
+            "the error should name the cause"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "it must return near the deadline, not after the child would finish: {elapsed:?}"
+        );
+    }
+
+    /// The bound does not truncate a healthy command's output.
+    #[test]
+    fn a_prompt_command_returns_its_full_output_within_the_bound() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf 'hello world'"]);
+        let out = run_bounded(cmd, Duration::from_secs(5), "test").unwrap();
+        assert_eq!(out, "hello world");
+    }
 
     fn work_repo(dir: &Path) -> Repository {
         let repo = Repository::init(dir).expect("init");
@@ -572,6 +796,7 @@ mod tests {
                 policy_digest: None,
                 attached_at: forum::now_ts(),
                 revoked_at: None,
+                origin: None,
             },
         )
         .unwrap();
@@ -591,6 +816,7 @@ mod tests {
                 policy_digest: None,
                 attached_at: forum::now_ts(),
                 revoked_at: None,
+                origin: None,
             },
         )
         .unwrap();
@@ -605,6 +831,186 @@ mod tests {
                 "{name} resurrected a revoked participant"
             );
             assert!(r.get("carol").is_some(), "{name} lost the other addition");
+        }
+    }
+
+    /// An identity claimed on one clone is refused on another once the roster
+    /// has travelled: the same guard that stops a local takeover stops the
+    /// cross-machine name collision the sender-keyed design used to fold
+    /// silently into one participant.
+    #[test]
+    fn a_name_taken_on_one_clone_cannot_be_attached_on_another() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_CUSTOM.to_string(),
+        };
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+
+        let entry = |box_id: &str| forum::RosterEntry {
+            agent: "claude-worker".into(),
+            box_id: Some(box_id.into()),
+            role: Role::Worker,
+            policy_digest: None,
+            attached_at: forum::now_ts(),
+            revoked_at: None,
+            origin: None,
+        };
+        forum::put_roster_entry(&a, &human(), entry("env/a/one")).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+
+        let err = forum::put_roster_entry(&b, &human(), entry("env/b/two")).unwrap_err();
+        assert!(err.to_string().contains("already the identity"), "{err}");
+        assert_eq!(
+            forum::read_roster(&b).get("claude-worker").unwrap().box_id.as_deref(),
+            Some("env/a/one"),
+            "the travelled entry must keep its box"
+        );
+    }
+
+    /// After the forum converges, syncing moves nothing and mints nothing.
+    ///
+    /// The regression this pins down: a clone that was merely *behind* used to
+    /// union-merge instead of fast-forwarding, minting a contentless merge
+    /// commit — which the other clone then merged, minting another. One post
+    /// followed by six idle round-trips left the thread ref twelve commits
+    /// deep, growing forever at one commit per tender pass.
+    #[test]
+    fn an_idle_forum_goes_quiet_instead_of_trading_empty_merges() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_CUSTOM.to_string(),
+        };
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+
+        let h = forum::create_thread(&a, &human(), "quiet", None, None, None).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+        // One side posts; the other is now strictly behind.
+        forum::append_post(&a, &agent("alice"), &h.id, post("FINDING", "news")).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+        sync_with(&a, &remote).unwrap();
+
+        // Converged. From here, nothing may move.
+        let refname = forum::thread_ref(&h.id);
+        let tip_a = a.refname_to_id(&refname).unwrap();
+        let tip_b = b.refname_to_id(&refname).unwrap();
+        assert_eq!(tip_a, tip_b, "both clones should hold the same tip");
+        for _ in 0..3 {
+            assert!(sync_with(&a, &remote).unwrap().is_empty(), "idle sync must move nothing");
+            assert!(sync_with(&b, &remote).unwrap().is_empty(), "idle sync must move nothing");
+        }
+        assert_eq!(a.refname_to_id(&refname).unwrap(), tip_a);
+        assert_eq!(b.refname_to_id(&refname).unwrap(), tip_b);
+
+        // And the whole exchange cost what it should: the create, the post,
+        // and at most one real merge — not a commit per pass.
+        let mut walk = a.revwalk().unwrap();
+        walk.push(tip_a).unwrap();
+        let depth = walk.count();
+        assert!(depth <= 4, "an idle forum must not accrete commits, got {depth}");
+    }
+
+    /// Enrollments and the vote policy live on the meta ref, so they travel
+    /// and merge exactly the way the roster does — including through a merge
+    /// where both sides had touched their meta ref.
+    #[test]
+    fn enrollments_and_policy_travel_with_the_meta_ref() {
+        use crate::forum::VoteRule;
+        use crate::forum_identity;
+
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_CUSTOM.to_string(),
+        };
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+
+        // B enrolls its machine and tightens the vote rule.
+        forum_identity::put_enrollment(
+            &b,
+            &human(),
+            forum_identity::Enrollment {
+                version: forum_identity::ENROLLMENT_VERSION,
+                principal: "github.com/user/12345678".into(),
+                display_name: "hideakih".into(),
+                origin: "machine-b".into(),
+                ssh_pubkey: "ssh-ed25519 AAAATEST".into(),
+                enrolled_at: forum::now_ts(),
+                signature: "-----BEGIN SSH SIGNATURE-----\nx\n-----END SSH SIGNATURE-----\n"
+                    .into(),
+            },
+        )
+        .unwrap();
+        forum_identity::set_vote_rule(&b, &human(), VoteRule::Principal).unwrap();
+
+        // A, which has not heard any of that, changes its own meta ref too, so
+        // the reconciliation is a real merge rather than an adoption.
+        forum::put_roster_entry(
+            &a,
+            &human(),
+            forum::RosterEntry {
+                agent: "carol".into(),
+                box_id: None,
+                role: Role::Worker,
+                policy_digest: None,
+                attached_at: forum::now_ts(),
+                revoked_at: None,
+                origin: None,
+            },
+        )
+        .unwrap();
+
+        sync_with(&b, &remote).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+
+        for (name, repo) in [("A", &a), ("B", &b)] {
+            let e = forum_identity::read_enrollments(repo);
+            assert_eq!(
+                e.by_origin.get("machine-b").map(|e| e.principal.as_str()),
+                Some("github.com/user/12345678"),
+                "{name} lost the enrollment"
+            );
+            assert_eq!(
+                forum_identity::read_policy(repo).vote,
+                VoteRule::Principal,
+                "{name} lost the policy"
+            );
+            assert!(
+                forum::read_roster(repo).get("carol").is_some(),
+                "{name} lost the roster entry the merge crossed"
+            );
         }
     }
 

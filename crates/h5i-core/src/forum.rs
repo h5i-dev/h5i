@@ -99,6 +99,10 @@ pub const FORUM_THREADS_PREFIX: &str = "refs/h5i/forum/threads/";
 const POSTS_FILE: &str = "posts.jsonl";
 const THREAD_FILE: &str = "thread.json";
 const ROSTER_FILE: &str = "roster.json";
+/// Enrolled principal bindings, a sibling of the roster on the meta ref.
+pub(crate) const ENROLLMENTS_FILE: &str = "enrollments.json";
+/// Forum-wide policy, a sibling of the roster on the meta ref.
+pub(crate) const POLICY_FILE: &str = "policy.json";
 const ATTACH_PREFIX: &str = "attach-";
 
 /// Wire-format version written by this build.
@@ -345,6 +349,12 @@ impl Author {
             self.role.as_str()
         )))
     }
+
+    /// Refuse unless this author may govern. The check the sibling modules —
+    /// enrollment, policy — use for their own human-only writes.
+    pub fn require_govern(&self, what: &str) -> Result<(), H5iError> {
+        self.require(self.role.can_govern(), what)
+    }
 }
 
 // ── posts ──────────────────────────────────────────────────────────────────
@@ -536,6 +546,94 @@ impl Post {
     }
 }
 
+// ── counting votes ─────────────────────────────────────────────────────────
+
+/// What one vote is one unit of.
+///
+/// The identity a forum can actually count is layered, and each layer buys a
+/// different guarantee:
+///
+/// - a **sender** is a display name a worktree picked — free to mint, so it is
+///   never the unit;
+/// - an **origin** is the machine the host stamped — one per host, so a
+///   hundred worktrees on one laptop are one opinion;
+/// - a **principal** is the forge account an origin was enrolled under
+///   ([`crate::forum_identity`]) — one per person, so two laptops belonging to
+///   one account are still one opinion.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VoteRule {
+    /// One vote per host origin. The zero-setup default: nothing to enroll,
+    /// and worktree multiplication buys nothing because every worktree on a
+    /// machine posts through the same stamp. A pre-origin post falls back to
+    /// its sender, which is the best that can be said about it.
+    #[default]
+    Origin,
+    /// One vote per enrolled principal. Votes from an origin nobody enrolled
+    /// count for nothing — not because they are hostile, but because a forum
+    /// that promised "one account, one vote" and quietly counted anonymous
+    /// machines would be lying about the promise.
+    Principal,
+}
+
+impl VoteRule {
+    /// The rule's name as stored in the policy and shown to a reader.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VoteRule::Origin => "origin",
+            VoteRule::Principal => "principal",
+        }
+    }
+
+    /// Parse a rule name, refusing typos rather than defaulting: a policy that
+    /// silently became `origin` would loosen a forum somebody meant to tighten.
+    pub fn parse(s: &str) -> Result<VoteRule, H5iError> {
+        match s {
+            "origin" => Ok(VoteRule::Origin),
+            "principal" => Ok(VoteRule::Principal),
+            other => Err(H5iError::Metadata(format!(
+                "unknown vote rule {:?}: use origin or principal",
+                crate::redact::sanitize_display(other)
+            ))),
+        }
+    }
+}
+
+/// Everything [`Thread::score_of_with`] needs to decide whose vote counts.
+///
+/// Built once per read from the forum's meta ref (see
+/// [`crate::forum_identity::vote_context`]) rather than looked up per post, so
+/// counting stays a pure function over the posts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VoteContext {
+    /// The rule in force.
+    pub rule: VoteRule,
+    /// Enrolled bindings, `origin → principal`. Only consulted under
+    /// [`VoteRule::Principal`].
+    pub principals: BTreeMap<String, String>,
+}
+
+impl VoteContext {
+    /// The dedup key this post's vote counts under, or `None` when it counts
+    /// for nothing under the rule in force.
+    ///
+    /// Keys are prefixed by their layer so an origin can never collide with a
+    /// sender that happens to spell the same.
+    fn voter_key(&self, p: &Post) -> Option<String> {
+        match self.rule {
+            VoteRule::Origin => Some(match p.origin.as_deref() {
+                Some(o) => format!("o:{o}"),
+                None => format!("s:{}", p.sender),
+            }),
+            VoteRule::Principal => {
+                let origin = p.origin.as_deref()?;
+                let principal = self.principals.get(origin)?;
+                Some(format!("p:{principal}"))
+            }
+        }
+    }
+}
+
 // ── threads ────────────────────────────────────────────────────────────────
 
 /// The authority ceiling a thread's work is bounded by.
@@ -690,21 +788,34 @@ impl Thread {
     /// mind is a second vote rather than an edit — which keeps the log
     /// append-only and keeps the change itself visible. A refused vote counts
     /// for nothing, exactly like a refused claim.
+    ///
+    /// "Participant" is decided by [`VoteContext`], and the default is the
+    /// **host origin**, not the sender name. A sender name is free to mint: one
+    /// person can open a hundred worktrees, attach each under a fresh name, and
+    /// every one of them posts through the same host — so the origin the host
+    /// stamps is the honest unit of opinion, and a hundred agents on one
+    /// machine are one vote. The sender is only the key of last resort, for
+    /// posts written before origins existed.
     pub fn score_of(&self, post_id: &str) -> i32 {
-        let mut by_voter: BTreeMap<&str, i32> = BTreeMap::new();
+        self.score_of_with(post_id, &VoteContext::default())
+    }
+
+    /// [`Thread::score_of`] under an explicit counting rule.
+    pub fn score_of_with(&self, post_id: &str, ctx: &VoteContext) -> i32 {
+        let mut by_voter: BTreeMap<String, i32> = BTreeMap::new();
         for p in &self.posts {
             if p.is_denied() || p.reply_to.as_deref() != Some(post_id) {
                 continue;
             }
-            match p.kind.as_str() {
-                KIND_UPVOTE => {
-                    by_voter.insert(p.sender.as_str(), 1);
-                }
-                KIND_DOWNVOTE => {
-                    by_voter.insert(p.sender.as_str(), -1);
-                }
-                _ => {}
-            }
+            let weight = match p.kind.as_str() {
+                KIND_UPVOTE => 1,
+                KIND_DOWNVOTE => -1,
+                _ => continue,
+            };
+            let Some(voter) = ctx.voter_key(p) else {
+                continue;
+            };
+            by_voter.insert(voter, weight);
         }
         by_voter.values().sum()
     }
@@ -742,8 +853,13 @@ impl Thread {
     /// scanning a forum is looking for is the thread that produced something,
     /// so the thread is worth what its best post is worth.
     pub fn top_score(&self) -> i32 {
+        self.top_score_with(&VoteContext::default())
+    }
+
+    /// [`Thread::top_score`] under an explicit counting rule.
+    pub fn top_score_with(&self, ctx: &VoteContext) -> i32 {
         self.conversation()
-            .map(|p| self.score_of(&p.id))
+            .map(|p| self.score_of_with(&p.id, ctx))
             .max()
             .unwrap_or(0)
     }
@@ -818,12 +934,37 @@ pub struct RosterEntry {
     /// to look up who that was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_at: Option<String>,
+    /// Host that attached this participant.
+    ///
+    /// A box id is a path — `env/<agent>/<slug>` — and paths collide across
+    /// machines: two hosts can both hold `env/claude/auth`, and once the
+    /// roster is union-merged their entries sit in one map. Without this
+    /// field, "which entry is about *my* box" was answered by the path alone,
+    /// so a peer attaching its same-named box could capture — or retire — a
+    /// binding it had nothing to do with. Absent on entries written before
+    /// origins reached the roster, which are treated as local.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 impl RosterEntry {
     /// Is this participant still allowed to post?
     pub fn is_active(&self) -> bool {
         self.revoked_at.is_none()
+    }
+
+    /// Is this entry about `box_id` as it exists on the host `origin` names?
+    ///
+    /// The path matching alone is not enough — see [`RosterEntry::origin`].
+    /// An entry with no origin predates the field and is treated as local;
+    /// an entry from another host never matches a local box.
+    pub fn is_box_on(&self, box_id: &str, origin: Option<&str>) -> bool {
+        self.box_id.as_deref() == Some(box_id)
+            && match (self.origin.as_deref(), origin) {
+                (None, _) => true,
+                (Some(a), Some(b)) => a == b,
+                (Some(_), None) => false,
+            }
     }
 }
 
@@ -846,10 +987,13 @@ impl Roster {
         self.agents.values().filter(|e| e.is_active())
     }
 
-    /// The active participant bound to `box_id`, if any.
-    pub fn by_box(&self, box_id: &str) -> Option<&RosterEntry> {
-        self.active()
-            .find(|e| e.box_id.as_deref() == Some(box_id))
+    /// The active participant bound to `box_id` on the host `origin` names.
+    ///
+    /// Origin-scoped because the roster is merged across machines and a box
+    /// id is only a path: without the scope, whichever same-pathed entry
+    /// sorted first — possibly a peer's — answered for a local box.
+    pub fn by_box(&self, box_id: &str, origin: Option<&str>) -> Option<&RosterEntry> {
+        self.active().find(|e| e.is_box_on(box_id, origin))
     }
 }
 
@@ -907,7 +1051,19 @@ pub fn read_thread(repo: &Repository, id: &str) -> Result<Thread, H5iError> {
     let oid = thread_tip(repo, id).ok_or_else(|| {
         H5iError::RecordNotFound(format!("no forum thread {id} in this repository"))
     })?;
-    read_thread_at(repo, oid)
+    let thread = read_thread_at(repo, oid)?;
+    // The header has to agree with the ref it hangs on. h5i writes them
+    // together, so a mismatch is a ref a peer manufactured — and `read <id>`
+    // opening a thread whose header names a *different* id is the same
+    // inconsistency `list` already refuses to show. Refuse it here too, so a
+    // forged ref is uniformly rejected rather than listed nowhere yet openable.
+    if thread.header.id != id {
+        return Err(H5iError::Metadata(format!(
+            "forum thread {id} carries a header for {:?} — a forged ref, refused",
+            crate::redact::sanitize_display(&thread.header.id)
+        )));
+    }
+    Ok(thread)
 }
 
 /// Read the thread whose ref tip is `oid`.
@@ -960,9 +1116,23 @@ fn list_threads_in(repo: &Repository, prefix: &str) -> Vec<ThreadSummary> {
     };
     let mut out: Vec<ThreadSummary> = refs
         .filter_map(|r| r.ok())
-        .filter_map(|r| r.target())
-        .filter_map(|oid| read_thread_at(repo, oid).ok())
-        .map(|t| summarize(&t))
+        .filter_map(|r| Some((r.name()?.rsplit('/').next()?.to_string(), r.target()?)))
+        // The leaf must be a real thread id — 16 lowercase hex. Sync validates
+        // this before it adopts anything, but listing reads whatever refs exist
+        // under the namespace, and a leaf that is not a well-formed id is a ref
+        // this build did not write. It matters beyond tidiness: readers slice
+        // `id[..8]` for a short form, which would panic on a shorter or
+        // non-ASCII id, so an id that is not the shape gen_id produces is never
+        // summarised.
+        .filter(|(leaf, _)| validate_thread_id(leaf).is_ok())
+        .filter_map(|(leaf, oid)| read_thread_at(repo, oid).ok().map(|t| (leaf, t)))
+        // The header has to agree with the ref it hangs on. h5i always writes
+        // them together, so a mismatch is a ref somebody else manufactured —
+        // and listing it under the header's id would make the list row and
+        // `read <id>` open two different conversations. A ref this build did
+        // not write is skipped, not renamed into legitimacy.
+        .filter(|(leaf, t)| *leaf == t.header.id)
+        .map(|(_, t)| summarize(&t))
         .collect();
     // Newest activity first; id breaks ties so the order is stable.
     out.sort_by(|a, b| {
@@ -985,6 +1155,14 @@ fn summarize(t: &Thread) -> ThreadSummary {
 }
 
 /// Read an attachment's payload out of a thread.
+///
+/// The bytes are checked against the digest they are filed under before they
+/// are returned. Locally the two cannot disagree — the writer hashes what it
+/// stores — but a thread tree can have arrived from a peer, and a peer is free
+/// to file whatever bytes it likes under whatever name it likes. The digest is
+/// the one thing a reader quotes ("the patch is `ab12…`"), so bytes that do
+/// not match it are a forgery of exactly that quote, and are refused rather
+/// than returned under it.
 pub fn read_attachment(
     repo: &Repository,
     thread_id: &str,
@@ -1001,7 +1179,14 @@ pub fn read_attachment(
         .get_name(&attachment_path(digest))
         .ok_or_else(|| H5iError::RecordNotFound(format!("no attachment {digest} in thread")))?;
     let blob = repo.find_blob(entry.id())?;
-    Ok(blob.content().to_vec())
+    let bytes = blob.content().to_vec();
+    if refstore::sha256_hex(&bytes) != digest {
+        return Err(H5iError::Metadata(format!(
+            "attachment {digest} does not match its content address — \
+             the bytes were filed under a digest they do not hash to"
+        )));
+    }
+    Ok(bytes)
 }
 
 /// The forum roster.
@@ -1127,7 +1312,15 @@ impl ForumPostSpool {
         }
         let mut body = self.body;
         if body.len() > MAX_BODY_BYTES {
-            body.truncate(MAX_BODY_BYTES);
+            // The record is box-written, so the boundary can land mid-character
+            // — and `String::truncate` panics off a char boundary, which would
+            // let a staged record crash the host draining it. Back up to the
+            // nearest boundary instead.
+            let mut cut = MAX_BODY_BYTES;
+            while !body.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            body.truncate(cut);
             denied.push(format!("body truncated to {MAX_BODY_BYTES} bytes"));
         }
         NewPost {
@@ -1460,20 +1653,70 @@ pub fn put_roster_entry(
 ) -> Result<(), H5iError> {
     author.require(author.role.can_govern(), "change forum membership")?;
     validate_name(&entry.agent)?;
+    // `human` is what the host renders for the person at the terminal, and a
+    // reader's whole defence against a persuasive post is knowing which side
+    // of the boundary wrote it. An agent posting under that name would carry
+    // its true role in the next column, but "human (worker)" is a line built
+    // to be misread — so the name is reserved rather than disambiguated.
+    if entry.agent == "human" && entry.role != Role::Human {
+        return Err(H5iError::Metadata(
+            "the name `human` is reserved for the person at the host terminal".into(),
+        ));
+    }
     let ts = now_ts();
     update_roster(repo, &format!("h5i forum: attach {}", entry.agent), |r| {
+        // An identity carries one box at a time, in both directions. Inserting
+        // over an *active* entry bound to a different box would silently eject
+        // that box — and, worse, re-attribute its history: every post the name
+        // made would now read as the new box's work, which is exactly the
+        // record this forum exists to keep straight. Refused, with the way out
+        // named, rather than resolved by whoever attached last.
+        // "The same box" is the path *and* the host: two machines can both
+        // hold `env/claude/auth`, and a peer's identically-pathed box must
+        // not read as an update to this one. Either side missing its origin
+        // is a pre-origin entry, compared by path alone as it always was.
+        let same_box = |existing: &RosterEntry| {
+            existing.box_id == entry.box_id
+                && match (existing.origin.as_deref(), entry.origin.as_deref()) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                }
+        };
+        if let Some(existing) = r.agents.get(&entry.agent)
+            && existing.revoked_at.is_none()
+            && !same_box(existing)
+        {
+            let holder = match (&existing.box_id, &existing.origin) {
+                (Some(b), Some(o)) => format!(
+                    "{} on {}",
+                    crate::redact::sanitize_display(b),
+                    crate::redact::sanitize_display(o)
+                ),
+                (Some(b), None) => crate::redact::sanitize_display(b),
+                (None, _) => "the human".to_string(),
+            };
+            return Err(H5iError::Metadata(format!(
+                "{} is already the identity of {holder} — revoke it first, or attach \
+                 under another name",
+                crate::redact::sanitize_display(&entry.agent),
+            )));
+        }
         // A box carries one identity at a time. Attaching it under a new name
         // retires the old entry rather than leaving two active rows pointing at
         // the same box — which is not tidiness: the tender resolves a box to its
         // participant by scanning for that box id, so a stale duplicate makes
         // which identity a box has depend on how two names happen to sort.
         // Retired, not deleted, because the posts it made are still attributed
-        // to it and a reader has to be able to look it up.
+        // to it and a reader has to be able to look it up. Scoped to this
+        // host's own box: a peer's entry that merely shares the path is
+        // somebody else's participant, and retiring it here would be a
+        // cross-machine revocation nobody asked for — one the merge's
+        // revocation-wins rule would then make permanent everywhere.
         if let Some(box_id) = entry.box_id.as_deref() {
             for other in r.agents.values_mut() {
                 if other.agent != entry.agent
-                    && other.box_id.as_deref() == Some(box_id)
                     && other.revoked_at.is_none()
+                    && other.is_box_on(box_id, entry.origin.as_deref())
                 {
                     other.revoked_at = Some(ts.clone());
                 }
@@ -1511,6 +1754,27 @@ fn update_roster<F>(repo: &Repository, message: &str, mut edit: F) -> Result<(),
 where
     F: FnMut(&mut Roster) -> Result<(), H5iError>,
 {
+    update_meta_file(repo, message, ROSTER_FILE, |raw| {
+        let mut roster: Roster = raw
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        edit(&mut roster)?;
+        Ok(serde_json::to_string_pretty(&roster)?)
+    })
+}
+
+/// Rewrite one file on the meta ref through the same compare-and-swap loop
+/// every other forum write uses. The closure sees the file as it is at this
+/// attempt's tip — absent on a fresh forum — and returns what to store.
+pub(crate) fn update_meta_file<F>(
+    repo: &Repository,
+    message: &str,
+    file: &str,
+    mut edit: F,
+) -> Result<(), H5iError>
+where
+    F: FnMut(Option<String>) -> Result<String, H5iError>,
+{
     let mut last_err: Option<git2::Error> = None;
     for attempt in 0..MAX_ATTEMPTS {
         refstore::cas_backoff(attempt);
@@ -1521,14 +1785,10 @@ where
         };
         let base_tree = parent.as_ref().and_then(|c| c.tree().ok());
 
-        let mut roster: Roster = refstore::read_blob_from_tree(repo, base_tree.as_ref(), ROSTER_FILE)
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default();
-        edit(&mut roster)?;
-        let roster_json = serde_json::to_string_pretty(&roster)?;
+        let current = refstore::read_blob_from_tree(repo, base_tree.as_ref(), file);
+        let updated = edit(current)?;
 
-        let tree_oid =
-            refstore::build_tree(repo, base_tree.as_ref(), &[(ROSTER_FILE, &roster_json)])?;
+        let tree_oid = refstore::build_tree(repo, base_tree.as_ref(), &[(file, &updated)])?;
         let tree = repo.find_tree(tree_oid)?;
         let sig = refstore::signature(repo)?;
         let parents: Vec<&git2::Commit> = parent.iter().collect();
@@ -1540,9 +1800,16 @@ where
         }
     }
     Err(H5iError::Internal(format!(
-        "forum roster could not be updated after {MAX_ATTEMPTS} attempts{}",
+        "forum meta file {file} could not be updated after {MAX_ATTEMPTS} attempts{}",
         refstore::cas_error_detail(&last_err)
     )))
+}
+
+/// Read one file off the meta ref's tip.
+pub(crate) fn read_meta_file(repo: &Repository, file: &str) -> Option<String> {
+    repo.refname_to_id(FORUM_META_REF)
+        .ok()
+        .and_then(|oid| refstore::read_file_from_commit(repo, oid, file))
 }
 
 // ── merging across clones ──────────────────────────────────────────────────
@@ -1605,12 +1872,15 @@ pub fn union_merge_thread(
     Ok(oid)
 }
 
-/// Union-merge two tips of the roster ref.
+/// Union-merge two tips of the meta ref: roster, enrollments and policy.
 ///
-/// A revocation always wins over a non-revocation, and the earlier revocation
-/// wins over a later one. Revocation is the safe direction: reconciling two
-/// clones must never resurrect a participant a human took off the forum.
-pub fn union_merge_roster(
+/// For the roster, a revocation always wins over a non-revocation, and the
+/// earlier revocation wins over a later one. Revocation is the safe direction:
+/// reconciling two clones must never resurrect a participant a human took off
+/// the forum. Enrollments and policy carry their own merge rules — see
+/// [`crate::forum_identity`] — chosen to be deterministic in either direction,
+/// because two clones that merge each other must land on the same bytes.
+pub fn union_merge_meta(
     repo: &Repository,
     local_oid: Oid,
     incoming_oid: Oid,
@@ -1636,15 +1906,33 @@ pub fn union_merge_roster(
     }
     let roster_json = serde_json::to_string_pretty(&roster)?;
 
+    let meta_file = |oid, file| refstore::read_file_from_commit(repo, oid, file);
+    let enrollments = crate::forum_identity::merge_enrollments_raw(
+        meta_file(local_oid, ENROLLMENTS_FILE).as_deref(),
+        meta_file(incoming_oid, ENROLLMENTS_FILE).as_deref(),
+    )?;
+    let policy = crate::forum_identity::merge_policy_raw(
+        meta_file(local_oid, POLICY_FILE).as_deref(),
+        meta_file(incoming_oid, POLICY_FILE).as_deref(),
+    )?;
+
+    let mut files: Vec<(&str, &str)> = vec![(ROSTER_FILE, roster_json.as_str())];
+    if let Some(e) = enrollments.as_deref() {
+        files.push((ENROLLMENTS_FILE, e));
+    }
+    if let Some(p) = policy.as_deref() {
+        files.push((POLICY_FILE, p));
+    }
+
     let base_tree = local_commit.tree().ok();
-    let tree_oid = refstore::build_tree(repo, base_tree.as_ref(), &[(ROSTER_FILE, &roster_json)])?;
+    let tree_oid = refstore::build_tree(repo, base_tree.as_ref(), &files)?;
     let tree = repo.find_tree(tree_oid)?;
     let sig = refstore::signature(repo)?;
     let oid = repo.commit(
         None,
         &sig,
         &sig,
-        "h5i forum: union-merge roster",
+        "h5i forum: union-merge meta",
         &tree,
         &[&local_commit, &incoming_commit],
     )?;
@@ -1680,7 +1968,10 @@ fn attachment_path(digest: &str) -> String {
     format!("{ATTACH_PREFIX}{digest}")
 }
 
-fn validate_digest(digest: &str) -> Result<(), H5iError> {
+/// Validate an attachment digest: 64 lowercase hex. Digests become tree entry
+/// names and inbox filenames, and a peer's post line can carry any string in
+/// the field — so anything else is refused before it is ever joined to a path.
+pub fn validate_digest(digest: &str) -> Result<(), H5iError> {
     if digest.len() == 64
         && digest
             .chars()
@@ -2057,6 +2348,58 @@ mod tests {
         assert_eq!(t.top_score(), 0);
     }
 
+    /// The dedup unit is the host origin, not the sender name.
+    ///
+    /// A sender name is free to mint — one person can open a hundred worktrees
+    /// and attach each under a fresh name — but every one of them posts through
+    /// the same host stamp. So many names on one origin are one opinion, and
+    /// the same name on two origins is two people, not one.
+    #[test]
+    fn votes_count_per_origin_not_per_sender_name() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
+        let target = append_post(
+            &repo,
+            &worker("alice", "env/a/1"),
+            &h.id,
+            post("PROPOSAL", "single-flight it"),
+        )
+        .unwrap();
+        let vote = |name: &str, box_id: &str, origin: &str| {
+            append_post(
+                &repo,
+                &worker(name, box_id).from_host(origin),
+                &h.id,
+                NewPost {
+                    kind: KIND_UPVOTE.into(),
+                    body: "+1".into(),
+                    reply_to: Some(target.id.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        };
+
+        // Worktree multiplication: five names, one machine, one vote.
+        for i in 0..5 {
+            vote(&format!("sock-{i}"), &format!("env/a/{i}"), "machine-a");
+        }
+        assert_eq!(
+            read_thread(&repo, &h.id).unwrap().score_of(&target.id),
+            1,
+            "a hundred worktrees on one host are one opinion"
+        );
+
+        // Name collision: the same agent name on another machine is somebody
+        // else, and their vote must not be folded into the first host's.
+        vote("sock-0", "env/b/1", "machine-b");
+        assert_eq!(
+            read_thread(&repo, &h.id).unwrap().score_of(&target.id),
+            2,
+            "the same name on two hosts is two participants"
+        );
+    }
+
     /// A vote is not a turn in the conversation and must not move the thread on.
     #[test]
     fn a_vote_moves_no_state_and_is_not_part_of_the_conversation() {
@@ -2193,16 +2536,17 @@ mod tests {
             policy_digest: Some("sha256:ab".into()),
             attached_at: now_ts(),
             revoked_at: None,
+            origin: None,
         };
         put_roster_entry(&repo, &human(), entry).unwrap();
         let r = read_roster(&repo);
         assert!(r.get("claude-worker").unwrap().is_active());
-        assert_eq!(r.by_box("env/claude/auth").unwrap().agent, "claude-worker");
+        assert_eq!(r.by_box("env/claude/auth", None).unwrap().agent, "claude-worker");
 
         revoke(&repo, &human(), "claude-worker").unwrap();
         let r = read_roster(&repo);
         assert!(!r.get("claude-worker").unwrap().is_active());
-        assert!(r.by_box("env/claude/auth").is_none());
+        assert!(r.by_box("env/claude/auth", None).is_none());
         assert_eq!(r.active().count(), 0);
         assert_eq!(r.agents.len(), 1, "a revoked entry is kept for attribution");
     }
@@ -2223,6 +2567,7 @@ mod tests {
             policy_digest: None,
             attached_at: now_ts(),
             revoked_at: None,
+            origin: None,
         };
         put_roster_entry(&repo, &human(), mk("worker")).unwrap();
         put_roster_entry(&repo, &human(), mk("worker2")).unwrap();
@@ -2231,7 +2576,7 @@ mod tests {
         assert!(!r.get("worker").unwrap().is_active(), "the old identity retires");
         assert!(r.get("worker2").unwrap().is_active());
         assert_eq!(r.active().count(), 1, "exactly one identity per box");
-        assert_eq!(r.by_box("env/a/w").unwrap().agent, "worker2");
+        assert_eq!(r.by_box("env/a/w", None).unwrap().agent, "worker2");
         assert_eq!(r.agents.len(), 2, "the retired entry stays for attribution");
     }
 
@@ -2239,6 +2584,174 @@ mod tests {
     fn revoking_someone_who_is_not_a_member_is_an_error() {
         let (_d, repo) = temp_repo();
         assert!(revoke(&repo, &human(), "ghost").is_err());
+    }
+
+    /// A box id is a path, and two machines can hold the same path. Once the
+    /// roster is merged, a peer's identically-pathed box must not capture,
+    /// retire, or answer for a local one — each host's binding is (path,
+    /// origin), not path alone.
+    #[test]
+    fn the_same_box_path_on_two_hosts_is_two_different_boxes() {
+        let (_d, repo) = temp_repo();
+        let entry = |name: &str, origin: &str| RosterEntry {
+            agent: name.into(),
+            box_id: Some("env/claude/auth".into()),
+            role: Role::Worker,
+            policy_digest: None,
+            attached_at: now_ts(),
+            revoked_at: None,
+            origin: Some(origin.into()),
+        };
+
+        // Host A attaches its box; host B attaches its own box, which merely
+        // shares the path. B's attach must not retire A's participant — the
+        // merge's revocation-wins rule would make that ejection permanent on
+        // every clone.
+        put_roster_entry(&repo, &human(), entry("alpha", "machine-a")).unwrap();
+        put_roster_entry(&repo, &human(), entry("beta", "machine-b")).unwrap();
+        let r = read_roster(&repo);
+        assert!(r.get("alpha").unwrap().is_active(), "A's box must survive B's attach");
+        assert!(r.get("beta").unwrap().is_active());
+
+        // Each host resolves the path to its own participant, whatever order
+        // the names happen to sort in.
+        assert_eq!(r.by_box("env/claude/auth", Some("machine-a")).unwrap().agent, "alpha");
+        assert_eq!(r.by_box("env/claude/auth", Some("machine-b")).unwrap().agent, "beta");
+
+        // And the equal path does not make B "the same box" for the purpose
+        // of taking over A's name.
+        let err = put_roster_entry(&repo, &human(), entry("alpha", "machine-b")).unwrap_err();
+        assert!(err.to_string().contains("already the identity"), "{err}");
+
+        // Re-attaching on the same host is still an ordinary update, and it
+        // still retires that host's old name for the box.
+        put_roster_entry(&repo, &human(), entry("alpha-2", "machine-a")).unwrap();
+        let r = read_roster(&repo);
+        assert!(!r.get("alpha").unwrap().is_active(), "A's old name retires");
+        assert!(r.get("beta").unwrap().is_active(), "B's box is untouched by A's rename");
+        assert_eq!(r.by_box("env/claude/auth", Some("machine-a")).unwrap().agent, "alpha-2");
+    }
+
+    /// A live identity cannot be handed to a second box: the overwrite would
+    /// eject the first box silently and re-attribute every post it ever made.
+    #[test]
+    fn an_active_identity_cannot_be_taken_by_another_box() {
+        let (_d, repo) = temp_repo();
+        let mk = |box_id: &str| RosterEntry {
+            agent: "claude-worker".into(),
+            box_id: Some(box_id.into()),
+            role: Role::Worker,
+            policy_digest: None,
+            attached_at: now_ts(),
+            revoked_at: None,
+            origin: None,
+        };
+        put_roster_entry(&repo, &human(), mk("env/a/one")).unwrap();
+        let err = put_roster_entry(&repo, &human(), mk("env/b/two")).unwrap_err();
+        assert!(err.to_string().contains("already the identity"), "{err}");
+        assert_eq!(
+            read_roster(&repo).get("claude-worker").unwrap().box_id.as_deref(),
+            Some("env/a/one"),
+            "the first box must keep its identity"
+        );
+
+        // Re-attaching the same box under its own name (a role change) is an
+        // update, not a takeover. And once the name is revoked, it is free.
+        let mut update = mk("env/a/one");
+        update.role = Role::Reviewer;
+        put_roster_entry(&repo, &human(), update).unwrap();
+        revoke(&repo, &human(), "claude-worker").unwrap();
+        put_roster_entry(&repo, &human(), mk("env/b/two")).unwrap();
+        assert_eq!(
+            read_roster(&repo).get("claude-worker").unwrap().box_id.as_deref(),
+            Some("env/b/two")
+        );
+    }
+
+    /// `human` is the host's rendering of the person, so no agent gets to wear
+    /// it: "human (worker)" is a line built to be misread.
+    #[test]
+    fn no_agent_can_be_attached_under_the_name_human() {
+        let (_d, repo) = temp_repo();
+        let entry = |role: Role| RosterEntry {
+            agent: "human".into(),
+            box_id: Some("env/a/w".into()),
+            role,
+            policy_digest: None,
+            attached_at: now_ts(),
+            revoked_at: None,
+            origin: None,
+        };
+        assert!(put_roster_entry(&repo, &human(), entry(Role::Worker)).is_err());
+        assert!(put_roster_entry(&repo, &human(), entry(Role::Observer)).is_err());
+        // The person themselves may be on the roster under it.
+        let mut me = entry(Role::Human);
+        me.box_id = None;
+        assert!(put_roster_entry(&repo, &human(), me).is_ok());
+    }
+
+    /// A thread ref whose header names a different id was not written by h5i,
+    /// and listing it under the header's id would make the list row and
+    /// `read <id>` open two different conversations.
+    #[test]
+    fn a_thread_whose_header_disagrees_with_its_ref_is_not_listed() {
+        let (_d, repo) = temp_repo();
+        let real = create_thread(&repo, &human(), "real", None, None, None).unwrap();
+
+        // Manufacture what a hostile peer could publish: the real thread's
+        // tree, hung on a ref with a different (valid-looking) id.
+        let oid = thread_tip(&repo, &real.id).unwrap();
+        let fake_id = "00000000deadbeef";
+        repo.reference(&thread_ref(fake_id), oid, false, "forged").unwrap();
+
+        let listed: Vec<String> = list_threads(&repo).into_iter().map(|t| t.header.id).collect();
+        assert_eq!(listed, vec![real.id.clone()], "the forged ref must not be listed");
+
+        // And it is refused on read too, not merely hidden from the list —
+        // otherwise `read <fake_id>` opens a thread whose header names a
+        // different id than the one that was typed.
+        let err = read_thread(&repo, fake_id).unwrap_err();
+        assert!(err.to_string().contains("forged ref"), "{err}");
+        // The real thread still reads by its own id.
+        assert_eq!(read_thread(&repo, &real.id).unwrap().header.id, real.id);
+    }
+
+    /// A ref whose leaf is not a well-formed thread id is never summarised —
+    /// readers slice `id[..8]`, so a non-hex or short id in the list would be
+    /// a panic waiting for a `forum list`.
+    #[test]
+    fn a_ref_with_a_malformed_leaf_is_not_listed() {
+        let (_d, repo) = temp_repo();
+        let real = create_thread(&repo, &human(), "real", None, None, None).unwrap();
+        let oid = thread_tip(&repo, &real.id).unwrap();
+
+        // A ref under the threads namespace whose leaf is not 16-hex, with a
+        // header that agrees with it — so only the id-shape check catches it.
+        let bad_leaf = "nothex";
+        let raw = format!("{FORUM_THREADS_PREFIX}{bad_leaf}");
+        // Give it a matching header so the leaf==header.id filter would pass.
+        let ts = now_ts();
+        let header = ThreadHeader {
+            id: bad_leaf.to_string(),
+            title: "forged".into(),
+            created_at: ts.clone(),
+            created_by: "peer".into(),
+            version: PROTOCOL_VERSION,
+            ceiling: None,
+            branch: None,
+        };
+        let header_json = serde_json::to_string(&header).unwrap();
+        let tree_oid = refstore::build_tree(&repo, None, &[(THREAD_FILE, &header_json), (POSTS_FILE, "")]).unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = refstore::signature(&repo).unwrap();
+        let _ = oid;
+        let commit = repo.commit(None, &sig, &sig, "forged", &tree, &[]).unwrap();
+        repo.reference(&raw, commit, false, "forged").unwrap();
+
+        // It must not appear, and `forum list` (which slices id[..8]) must not
+        // have anything short to slice.
+        let listed: Vec<String> = list_all_threads(&repo).into_iter().map(|t| t.header.id).collect();
+        assert_eq!(listed, vec![real.id.clone()]);
     }
 
     #[test]
@@ -2297,6 +2810,7 @@ mod tests {
             policy_digest: None,
             attached_at: now_ts(),
             revoked_at: None,
+            origin: None,
         };
         put_roster_entry(&repo, &human(), entry).unwrap();
         let unrevoked = repo.refname_to_id(FORUM_META_REF).unwrap();
@@ -2304,7 +2818,7 @@ mod tests {
         let revoked = repo.refname_to_id(FORUM_META_REF).unwrap();
 
         for (a, b) in [(revoked, unrevoked), (unrevoked, revoked)] {
-            let merged = union_merge_roster(&repo, a, b).unwrap();
+            let merged = union_merge_meta(&repo, a, b).unwrap();
             let r = read_roster_at(&repo, merged);
             assert!(
                 !r.get("claude-worker").unwrap().is_active(),
@@ -2420,6 +2934,36 @@ mod tests {
             create_thread(&repo, &human(), &format!("debug {token}"), None, None, None).unwrap();
         assert!(!header.title.contains(&token));
         assert!(!read_thread(&repo, &header.id).unwrap().header.title.contains(&token));
+    }
+
+    /// A peer can file any bytes under any `attach-<digest>` name; the digest
+    /// is the thing a reader quotes, so mismatched bytes are refused rather
+    /// than returned under it.
+    #[test]
+    fn attachment_bytes_that_do_not_match_their_digest_are_refused() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
+
+        // What a hostile clone would push: the tree entry's name claims a
+        // digest the bytes do not hash to.
+        let claimed = refstore::sha256_hex(b"what the reader was promised");
+        let tip = thread_tip(&repo, &h.id).unwrap();
+        let parent = repo.find_commit(tip).unwrap();
+        let mut builder = repo.treebuilder(parent.tree().ok().as_ref()).unwrap();
+        let forged = repo.blob(b"something else entirely").unwrap();
+        builder
+            .insert(attachment_path(&claimed), forged, 0o100644)
+            .unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let sig = refstore::signature(&repo).unwrap();
+        let new = repo.commit(None, &sig, &sig, "forged", &tree, &[&parent]).unwrap();
+        repo.reference(&thread_ref(&h.id), new, true, "forged").unwrap();
+
+        let err = read_attachment(&repo, &h.id, &claimed).unwrap_err();
+        assert!(
+            err.to_string().contains("content address"),
+            "mismatched bytes must be refused, got: {err}"
+        );
     }
 
     #[test]

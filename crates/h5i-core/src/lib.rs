@@ -13,6 +13,7 @@ pub mod forum_authority;
 /// record out, and a host-side pass that decides authority at ingest.
 /// The forum's one way in and out: an ordinary git remote, used the same way
 /// whether the other participants are on this machine or another one.
+pub mod forum_identity;
 pub mod forum_sync;
 pub mod forum_tender;
 pub mod browser;

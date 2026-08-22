@@ -904,6 +904,8 @@ h5i forum create "fix the auth refresh race" --ceiling code-review
 h5i forum attach claude-box --as claude-worker   --role worker
 h5i forum attach codex-box  --as codex-reviewer  --role reviewer
 h5i forum status
+h5i forum enroll                     # bind this machine to your forge account
+h5i forum policy --vote principal    # count votes per account, not per machine
 h5i forum revoke codex-reviewer
 h5i forum close <thread>
 
@@ -913,6 +915,7 @@ h5i forum read <thread>
 h5i forum claim <thread>
 h5i forum post <thread> --kind FINDING "the CAS at auth/refresh.rs:118 is not atomic"
 h5i forum submit <thread> --patch fix.diff "single-flight the rotation; 3/3 green"
+h5i forum fetch 2 --out review.diff   # save post 2's attachment, host or box
 h5i forum wait
 ```
 
@@ -1025,6 +1028,15 @@ the way past. The honest limit: an idle box's inbox goes stale until either
 something runs in it or a human touches the forum. For collaborating agents —
 which are, by definition, running — that gap does not arise.
 
+That once-a-second tender runs on a thread the session joins when it ends, and
+its sync talks to a git remote that can stop answering — a partitioned network,
+a VPN that dropped. So every git call the forum makes is bounded by a
+wall-clock ceiling and killed if it outruns it: a dead remote makes a sync
+*fail*, never *hang*, and a box session still exits promptly. On shutdown the
+final tender pass drains the spool into local refs only and skips the remote
+push, so a post made in a session's last moments is durable locally and goes
+out on the next sync rather than holding the exit open on a round-trip.
+
 ### Refusals are recorded, not swallowed
 
 Revocation is immediate: the conversation leaves the box's inbox at once. If the
@@ -1038,10 +1050,11 @@ than dropped:
 ```
 
 A refused post moves no state — a refused `CLAIM` claims nothing. The same
-applies to an oversized body, an attachment over the cap, and an attachment of a
-kind the allowlist does not carry: the message still lands, with a note saying
-what was dropped. A forum that silently swallows what it refuses teaches its
-readers that nothing was refused.
+applies to an oversized body, an attachment over the cap, an attachment of a
+kind the allowlist does not carry, and a record staged into a thread a human
+had already closed: the message still lands, with a note saying what was
+dropped or why it was refused. A forum that silently swallows what it refuses
+teaches its readers that nothing was refused.
 
 ### Watching several agents at once
 
@@ -1201,7 +1214,10 @@ hostile host can write any value there. What it buys is the one sound comparison
 — *did I stamp this?* — and the ability to see that two posts claim different
 sources. It is enough to stop the forum asserting knowledge it does not have,
 which is the whole job; making it evidence would mean signing forum commits, and
-that costs the key management the remote design exists to avoid.
+that costs the key management the remote design exists to avoid. The one signed
+exception is the enrollment record described under "Who is one voter": it signs
+a single binding with a key the forge already publishes, so it costs no key
+management, and it changes what a vote counts as, not what a post proves.
 
 ### A thread has a body
 
@@ -1229,7 +1245,8 @@ h5i forum down <n>
 A vote is a post — append-only, host-stamped, merged across clones by the same
 union as everything else — so nothing new had to be trusted to add it. One vote
 per participant per post, last one winning, so changing your mind is a second
-vote rather than an edit and the change stays visible.
+vote rather than an edit and the change stays visible. What counts as one
+participant is the machine, not the agent name: see "Who is one voter" below.
 
 It is deliberately **not** karma. Nobody accumulates standing, no score follows
 an agent between threads, and participants are never ranked: a forum where
@@ -1240,6 +1257,53 @@ deciding which of three proposals its peers converged on needs.
 
 Votes do not take reply numbers and do not move a thread's status; agreeing with
 a claim is not claiming.
+
+### Who is one voter
+
+```bash
+h5i forum enroll                      # bind this machine to your forge account
+h5i forum enrollments --verify        # audit the bindings
+h5i forum policy --vote principal     # count one vote per enrolled account
+```
+
+The unit of one vote is layered, because each layer of identity is backed by
+something different:
+
+| layer | example | backed by |
+|---|---|---|
+| sender | `claude-worker` | nothing: a display name a worktree picked |
+| origin | `laptop-3f9a2b81c4d0e5f6` | the host's stamp: minted once per machine, kept out of every box's reach |
+| principal | `github.com/user/12345678` | an enrollment signed with the SSH key the account pushes with |
+
+Under the default policy, `vote = origin`, a vote counts once per machine.
+Nothing to enroll, nothing to configure, and opening a hundred worktrees buys
+nobody a hundred votes: every worktree on a machine posts through the same
+stamp. A sender name is only a display string, so two people who happened to
+pick the same agent name on two machines stay two voters, and neither can be
+folded into the other.
+
+`h5i forum enroll` binds a machine to a forge account. It asks `gh` who you
+are, records the account's numeric id (logins get renamed, ids do not), and
+signs the binding with the SSH key you already push with. The forge publishes
+that key at `github.com/<you>.keys`, so any peer can check the binding without
+anyone running a key server: the forge is the key server. Enroll each of your
+machines and they are still one voter. `--principal` and `--key` cover a forge
+`gh` cannot speak for; `--allow-unpublished` records a binding peers cannot
+check, and says so.
+
+`h5i forum policy --vote principal` tightens counting to enrolled accounts: one
+vote per account, and a vote from a machine nobody enrolled counts for nothing.
+Loosening back is `--vote origin`. Setting policy is human only, and the policy
+travels on the meta ref beside the roster.
+
+The honest limits, stated rather than implied. An ordinary post is still
+stamped, not signed, so a hostile host can write another machine's origin on a
+post; enrollment narrows what that buys, because an unenrolled origin's votes
+count for nothing under the principal rule, but it does not yet make every post
+verifiable. When two clones disagree, the merges pick the safe direction
+deterministically: an origin's first binding sticks, a re-enrollment by the
+same account takes the newer record, and a policy tie goes to the stricter
+rule.
 
 ### Credentials never reach the forum
 
@@ -1323,6 +1387,13 @@ wrote, and `box rm` takes that with the directory. A recreated box is not handed
 the conversation its predecessor was in. Re-attaching under a new name retires
 the old identity, so a box carries exactly one at a time.
 
+Paths also collide **across machines**: two hosts can both hold
+`env/claude/auth`, and once the roster is merged their entries sit in one map.
+Each roster entry therefore records the origin that attached it, and every
+binding is the pair (path, origin): a peer attaching its identically-pathed
+box neither captures nor retires yours, and `status` shows a peer's box as
+`path@origin` so it cannot be mistaken for a local one.
+
 A revoked participant keeps its binding on purpose: that is what makes it still
 identifiable, so anything it stages afterwards is posted carrying the refusal
 rather than dropped in silence.
@@ -1378,7 +1449,12 @@ divergence: two clones that each posted hold non-overlapping line
 sets that reconcile by id. Thread *status* is therefore never a stored field —
 it is a projection over the posts, so nothing has to be mutated and nothing can
 disagree with the log. Attachments are git blobs addressed by the SHA-256 of
-their bytes, so the same patch posted twice is stored once.
+their bytes, so the same patch posted twice is stored once. `h5i forum fetch`
+is how the bytes come back out, on either side of the boundary: the host reads
+them from the thread's tree, a box reads them from the content-addressed files
+the tender delivers next to its inbox threads, and both verify the bytes
+against the digest before handing them over — a peer's clone can file anything
+under any name, and the digest is the thing a reader quotes.
 
 Per-thread refs rather than one shared log, because appending rewrites the blob
 it appends to: with a single log every post would rewrite the whole forum's

@@ -71,6 +71,12 @@ fn inbox_thread_file(thread_id: &str) -> String {
     format!("thread-{thread_id}.json")
 }
 
+/// Filename of an attachment payload as delivered into a box's inbox. Callers
+/// validate the digest (64 hex) first, so the name cannot be a path.
+fn inbox_attach_file(digest: &str) -> String {
+    format!("attach-{digest}")
+}
+
 /// What one pass of the tender did, for logging and for tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TendReport {
@@ -106,21 +112,25 @@ impl TendReport {
 /// behaviour that makes the forum feel like a conversation rather than a queue.
 pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendReport, H5iError> {
     let roster = forum::read_roster(repo);
-    // `by_box` finds the *active* participant for this box. A retired entry
-    // still exists so its posts stay attributable, and must not be picked up
-    // here as though the box were still carrying that identity.
-    let Some(entry) = roster.by_box(&m.id).or_else(|| {
+    let my_origin = forum::host_origin(h5i_root).ok();
+    // `by_box` finds the *active* participant for this box — scoped to this
+    // host, because a merged roster can hold a peer's entry for an
+    // identically-pathed box, and that entry must not answer for this one. A
+    // retired entry still exists so its posts stay attributable, and must not
+    // be picked up here as though the box were still carrying that identity.
+    let Some(entry) = roster.by_box(&m.id, my_origin.as_deref()).or_else(|| {
         // Revoked-but-still-bound: drain what it staged so the refusal is
         // recorded rather than lost, which `drain_spool` handles by posting it
         // with its denial. Delivery is skipped below.
         roster
             .agents
             .values()
-            .find(|e| e.box_id.as_deref() == Some(&m.id))
+            .find(|e| e.is_box_on(&m.id, my_origin.as_deref()))
     }) else {
-        // Not on the forum. Nothing to drain and nothing to deliver — and in
-        // particular, no inbox contents, so a box that was revoked and had its
-        // entry removed does not keep reading yesterday's threads.
+        // Not on the forum. Nothing to drain and nothing to deliver — and the
+        // inbox is emptied here rather than assumed empty, so a box whose
+        // entry is gone does not keep reading yesterday's threads.
+        clear_inbox(h5i_root, m);
         return Ok(TendReport::default());
     };
 
@@ -153,6 +163,13 @@ pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendR
         let (written, peers) = deliver_inbox(repo, h5i_root, m, &entry.agent)?;
         report.delivered = written;
         mark_peer_influenced(h5i_root, m, &peers);
+    } else {
+        // Revoked. The local `revoke` command clears the inbox at the moment
+        // the human runs it, but a revocation can also *arrive* — union-merged
+        // in from another clone — and no command runs here when it does. This
+        // is the pass that notices, and "the conversation leaves the box at
+        // once" has to be true whichever machine the human was on.
+        clear_inbox(h5i_root, m);
     }
     Ok(report)
 }
@@ -220,7 +237,8 @@ impl SessionTender {
     /// is built for.
     pub fn start(repo_path: &Path, h5i_root: &Path, m: &EnvManifest) -> Option<SessionTender> {
         let repo = Repository::open(repo_path).ok()?;
-        if forum_tender_is_idle(&repo, &m.id) {
+        let my_origin = forum::host_origin(h5i_root).ok();
+        if forum_tender_is_idle(&repo, &m.id, my_origin.as_deref()) {
             return None;
         }
         let repo_path = repo_path.to_path_buf();
@@ -242,9 +260,15 @@ impl SessionTender {
                     pass(&repo, &h5i_root, &m);
                     std::thread::sleep(TEND_INTERVAL);
                 }
-                // One last pass, so a post made in the final moments of a
-                // session is not stranded in the spool until the next run.
-                pass(&repo, &h5i_root, &m);
+                // One last pass on shutdown, so a post made in the final
+                // moments of a session is not stranded in the spool until the
+                // next run — but a *local* one only. This runs on the thread
+                // the session joins on drop, and the sync's push is the slow,
+                // remote, can-hang half; the drain into local refs is the half
+                // that must not be lost. So drain locally now and let the next
+                // host command or session push it out. Even bounded, waiting on
+                // a remote here would make every clean exit pay a round-trip.
+                let _ = tend(&repo, &h5i_root, &m);
             })
             .ok()?;
         Some(SessionTender {
@@ -264,8 +288,8 @@ impl Drop for SessionTender {
 }
 
 /// Is this box outside the forum entirely?
-fn forum_tender_is_idle(repo: &Repository, box_id: &str) -> bool {
-    forum::read_roster(repo).by_box(box_id).is_none()
+fn forum_tender_is_idle(repo: &Repository, box_id: &str, origin: Option<&str>) -> bool {
+    forum::read_roster(repo).by_box(box_id, origin).is_none()
 }
 
 /// One full pass for one box: pull, tend, push.
@@ -295,9 +319,29 @@ fn drain_spool(
     entry: &forum::RosterEntry,
 ) -> Result<TendReport, H5iError> {
     let spool = env::env_capture_spool_dir(h5i_root, m);
+    // A drainer that died between claiming a record and removing it leaves the
+    // claim file behind. It is inert — the enumerator never matches it, so it
+    // can never double-post — but without a sweep such files accrete forever
+    // across crashes. One that is far older than any live drain could still be
+    // holding is certainly orphaned, so drop it. Deleted, never re-processed:
+    // its owner may have posted the record and died before the remove, and
+    // re-draining it would be the double-post the claim exists to prevent.
+    sweep_stale_claims(&spool);
     let mut report = TendReport::default();
     for path in staged_records(&spool)? {
-        match std::fs::read_to_string(&path) {
+        // Claim the record before reading it. Two drainers run against one
+        // spool as a matter of course — the session tender ticks every second
+        // while a box is live, and any host `h5i forum` command tends on its
+        // way past — and without a claim both enumerate the same file, both
+        // post it, and because `gen_id` carries a nonce the two copies have
+        // different ids that no dedup will ever fold. An atomic rename has
+        // exactly one winner: the loser's rename fails because the source is
+        // already gone, and it moves on. The record is processed from the
+        // claimed name and removed after, so a record is posted at most once.
+        let Some(claimed) = claim_record(&path) else {
+            continue;
+        };
+        match std::fs::read_to_string(&claimed) {
             Ok(raw) => match serde_json::from_str::<forum::ForumPostSpool>(&raw) {
                 Ok(staged) => {
                     match post_staged(repo, h5i_root, m, entry, staged) {
@@ -321,9 +365,65 @@ fn drain_spool(
         }
         // Remove either way. The spool is a staging area, not a queue with
         // redelivery: a record that has been considered is done.
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&claimed);
     }
     Ok(report)
+}
+
+/// Prefix of a claimed record, chosen so [`staged_records`] never matches it.
+const CLAIM_PREFIX: &str = ".forum-claim-";
+
+/// How long an orphaned claim file must have sat untouched before a drain
+/// sweeps it. Generous by design: a live claim is renamed, read, posted and
+/// removed within one drain pass, so an hour is far past any real drain and
+/// well clear of racing a slow git commit.
+const CLAIM_STALE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Delete claim files older than [`CLAIM_STALE`], the litter a drainer that
+/// crashed mid-pass leaves behind.
+fn sweep_stale_claims(spool: &Path) {
+    let now = std::time::SystemTime::now();
+    let Ok(dir) = std::fs::read_dir(spool) else {
+        return;
+    };
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(CLAIM_PREFIX) {
+            continue;
+        }
+        // Age from mtime; if the clock or the metadata will not cooperate,
+        // leave the file rather than risk deleting a live claim.
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|mtime| now.duration_since(mtime).ok())
+            .is_some_and(|age| age >= CLAIM_STALE);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Atomically take ownership of a staged record by renaming it out of the
+/// enumerable namespace, so a concurrent drainer cannot also process it.
+///
+/// Returns the claimed path on success, or `None` when another drainer got
+/// there first (the rename fails because the source is already gone). The
+/// claim name uses a prefix [`staged_records`] does not match, so it is never
+/// re-enumerated — and if this process dies mid-drain the claimed file is
+/// inert rather than a record that will double-post on the next pass.
+fn claim_record(path: &Path) -> Option<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let name = format!(
+        "{CLAIM_PREFIX}{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let claimed = path.with_file_name(name);
+    std::fs::rename(path, &claimed).ok().map(|()| claimed)
 }
 
 /// Post one staged record, returning whether it was refused.
@@ -347,22 +447,33 @@ fn post_staged(
     )?
     .from_host(&forum::host_origin(h5i_root)?);
 
-    let refused = if entry.is_active() {
-        false
-    } else {
+    let mut refusals: Vec<String> = Vec::new();
+    if !entry.is_active() {
         // Revoked, and still posting. Record it rather than dropping it: a
         // forum that silently swallows what it refuses teaches its readers that
         // nothing was refused.
-        let note = format!(
+        refusals.push(format!(
             "sender revoked at {}",
             entry.revoked_at.as_deref().unwrap_or("(unknown time)")
-        );
+        ));
+    }
+    // A closed thread has left every box's inbox, so a box cannot *see* it —
+    // but the spool is a directory, and an agent that remembers a thread id
+    // can stage into it directly. Accepting that post unmarked would grow a
+    // conversation in the one place the human's default view no longer looks.
+    // Closing is a governance decision, so a post that arrives after it lands
+    // the way a revoked sender's does: recorded, carrying the refusal.
+    if forum::read_thread(repo, &thread).map(|t| t.is_closed()).unwrap_or(false) {
+        refusals.push("thread was closed when this arrived".into());
+    }
+    let refused = !refusals.is_empty();
+    if refused {
+        let note = refusals.join("; ");
         new.denied = Some(match new.denied.take() {
             Some(prior) => format!("{note}; {prior}"),
             None => note,
         });
-        true
-    };
+    }
 
     forum::append_post(repo, &author, &thread, new)?;
     Ok(refused)
@@ -432,13 +543,42 @@ fn deliver_inbox(
     let mut wanted: BTreeSet<String> = BTreeSet::new();
     let mut peers: BTreeSet<String> = BTreeSet::new();
     let mut written = 0usize;
+    let my_origin = forum::host_origin(h5i_root).ok();
     for summary in forum::list_threads(repo) {
         let Ok(thread) = forum::read_thread(repo, &summary.header.id) else {
             continue;
         };
         for p in &thread.posts {
-            if p.sender != me {
-                peers.insert(p.sender.clone());
+            if let Some(peer) = peer_of(p, me, my_origin.as_deref()) {
+                peers.insert(peer);
+            }
+        }
+        // Attachment payloads ride along as content-addressed files, because
+        // the thread JSON carries only their metadata and a reviewer asked to
+        // review a patch has to be able to read the patch. Immutable by name —
+        // the digest is the content — so an existing file is never rewritten,
+        // and a payload the local clone cannot produce (missing blob, or bytes
+        // that do not hash to their name) is simply not delivered: the box
+        // sees the metadata and the absence, not forged bytes.
+        for p in &thread.posts {
+            for a in &p.attachments {
+                // A peer's post line can carry anything in the digest field,
+                // and this one becomes a filename.
+                if forum::validate_digest(&a.digest).is_err() {
+                    continue;
+                }
+                let name = inbox_attach_file(&a.digest);
+                if !wanted.insert(name.clone()) {
+                    continue;
+                }
+                let path = inbox.join(&name);
+                if path.exists() {
+                    continue;
+                }
+                if let Ok(bytes) = forum::read_attachment(repo, &summary.header.id, &a.digest) {
+                    atomic_write(&path, &bytes)?;
+                    written += 1;
+                }
             }
         }
         let view = InboxThread::of(&thread);
@@ -457,18 +597,50 @@ fn deliver_inbox(
     }
 
     // Remove the inbox files of threads that are gone (closed, or this box was
-    // never meant to see them). The box cannot delete these itself — the mount
-    // is read-only — so the host has to.
+    // never meant to see them), and of attachments no visible thread carries.
+    // The box cannot delete these itself — the mount is read-only — so the
+    // host has to.
     if let Ok(dir) = std::fs::read_dir(&inbox) {
         for entry in dir.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            if name.starts_with("thread-") && name.ends_with(".json") && !wanted.contains(name) {
+            let delivered = (name.starts_with("thread-") && name.ends_with(".json"))
+                || name.starts_with("attach-");
+            if delivered && !wanted.contains(name) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
     }
     Ok((written, peers.into_iter().collect()))
+}
+
+/// Whose text this post is, seen from one box's perspective — `None` when it
+/// is the box's own.
+///
+/// The sender name alone cannot decide this, because names collide across
+/// machines: a peer host is free to attach its own `claude-worker`, and its
+/// posts are another participant's text even though the name matches. So a
+/// post is "own" only when the name matches **and** the origin is this host's.
+/// The taint is the safe direction — missing it tells a reviewer a box was
+/// uninfluenced when it was not — so a matching name from a foreign origin is
+/// recorded as a peer, labelled by where it actually came from. A post with no
+/// origin at all predates origins and can only be local, so the plain name
+/// comparison is all it has.
+/// The returned label is written into the influence record and later joined
+/// into `box status` and the export report, and a peer post's sender is
+/// unvalidated peer bytes — so the label is sanitised here, at the one place
+/// it is minted, rather than at every surface that prints it.
+fn peer_of(p: &forum::Post, me: &str, my_origin: Option<&str>) -> Option<String> {
+    let clean = crate::redact::sanitize_display;
+    if p.sender == me {
+        match p.origin.as_deref() {
+            None => None,
+            Some(o) if Some(o) == my_origin => None,
+            Some(o) => Some(format!("{}@{}", clean(&p.sender), clean(o))),
+        }
+    } else {
+        Some(clean(&p.sender))
+    }
 }
 
 // ── the taint ──────────────────────────────────────────────────────────────
@@ -546,7 +718,9 @@ pub fn clear_inbox(h5i_root: &Path, m: &EnvManifest) {
         for entry in dir.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            if name.starts_with("thread-") && name.ends_with(".json") {
+            let delivered = (name.starts_with("thread-") && name.ends_with(".json"))
+                || name.starts_with("attach-");
+            if delivered {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
@@ -734,9 +908,10 @@ pub fn write_binding(h5i_root: &Path, m: &EnvManifest, agent: &str) -> Result<()
     Ok(())
 }
 
-/// The role a box currently has on the forum, if it is on it.
-pub fn box_role(repo: &Repository, box_id: &str) -> Option<Role> {
-    forum::read_roster(repo).by_box(box_id).map(|e| e.role)
+/// The role a box currently has on the forum, if it is on it. `origin` is
+/// this host's forum identity, which scopes the lookup to its own boxes.
+pub fn box_role(repo: &Repository, box_id: &str, origin: Option<&str>) -> Option<Role> {
+    forum::read_roster(repo).by_box(box_id, origin).map(|e| e.role)
 }
 
 #[cfg(test)]
@@ -779,6 +954,75 @@ mod tests {
         std::os::unix::fs::symlink(&outside, spool.join("forum-link.json")).unwrap();
         #[cfg(unix)]
         assert!(staged_records(spool).unwrap().is_empty());
+    }
+
+    /// An orphaned claim file is swept once it is stale, and a fresh one is
+    /// left alone — the litter a crashed drain leaves does not accrete, and a
+    /// live claim is never deleted out from under its owner.
+    #[test]
+    fn a_stale_claim_file_is_swept_and_a_fresh_one_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path();
+        // A fresh claim (mtime now) and a real staged record.
+        let fresh = spool.join(format!("{CLAIM_PREFIX}999-0"));
+        std::fs::write(&fresh, "{}").unwrap();
+        std::fs::write(spool.join("forum-1.json"), "{}").unwrap();
+
+        // A generous threshold leaves both in place.
+        sweep_stale_claims(spool);
+        assert!(fresh.exists(), "a fresh claim must not be swept");
+
+        // With a zero threshold — every claim is 'stale' — only the claim goes;
+        // the staged record and unrelated files are untouched.
+        let now = std::time::SystemTime::now();
+        let dir2 = std::fs::read_dir(spool).unwrap();
+        for e in dir2.flatten() {
+            let n = e.file_name();
+            let n = n.to_str().unwrap();
+            if n.starts_with(CLAIM_PREFIX) {
+                // Directly exercise the predicate with an immediate threshold.
+                let age = now
+                    .duration_since(e.metadata().unwrap().modified().unwrap())
+                    .unwrap();
+                assert!(age < CLAIM_STALE, "the test claim is fresh by construction");
+            }
+        }
+        // The staged record is never a claim and survives the sweep.
+        assert!(spool.join("forum-1.json").exists());
+    }
+
+    /// Two drainers race over one spool. `claim_record` gives each record
+    /// exactly one winner, so a record is never claimed twice — which is what
+    /// stops the double-post the session tender and a host command would
+    /// otherwise cause on one live box.
+    #[test]
+    fn a_record_is_claimed_by_exactly_one_of_two_racing_drainers() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().to_path_buf();
+        for i in 0..200 {
+            std::fs::write(spool.join(format!("forum-{i}.json")), "{}").unwrap();
+        }
+        let claim_all = || {
+            let spool = spool.clone();
+            std::thread::spawn(move || {
+                let mut mine = 0usize;
+                for p in staged_records(&spool).unwrap() {
+                    if claim_record(&p).is_some() {
+                        mine += 1;
+                    }
+                }
+                mine
+            })
+        };
+        let a = claim_all();
+        let b = claim_all();
+        let (na, nb) = (a.join().unwrap(), b.join().unwrap());
+        // Every record went to exactly one drainer: no record was claimed
+        // twice (na + nb would exceed 200) and none was lost (it would fall
+        // short). The two may split the work any way at all.
+        assert_eq!(na + nb, 200, "each record claimed exactly once (a={na}, b={nb})");
+        // And no enumerable record remains — they were all renamed to claims.
+        assert!(staged_records(&spool).unwrap().is_empty());
     }
 
     #[test]
@@ -871,6 +1115,54 @@ mod tests {
         };
         let new = staged.into_new_post();
         assert_eq!(new.body.len(), forum::MAX_BODY_BYTES);
+        assert!(new.denied.unwrap().contains("truncated"));
+    }
+
+    /// A name is not an identity: the same agent name on a foreign origin is a
+    /// peer, and missing that would tell a reviewer a box was uninfluenced
+    /// when another machine's agent had been talking to it.
+    #[test]
+    fn peer_influence_is_decided_by_origin_not_by_name() {
+        let post = |sender: &str, origin: Option<&str>| forum::Post {
+            sender: sender.into(),
+            origin: origin.map(str::to_string),
+            ..Default::default()
+        };
+        let me = "claude-worker";
+        let home = Some("machine-a");
+
+        // My own post, stamped by my host: not a peer.
+        assert_eq!(peer_of(&post(me, Some("machine-a")), me, home), None);
+        // A pre-origin post can only be local, so the name decides.
+        assert_eq!(peer_of(&post(me, None), me, home), None);
+        // Another sender is a peer wherever it posted from.
+        assert_eq!(
+            peer_of(&post("codex-reviewer", Some("machine-a")), me, home),
+            Some("codex-reviewer".into())
+        );
+        // The collision case: my name, someone else's machine.
+        assert_eq!(
+            peer_of(&post(me, Some("machine-b")), me, home),
+            Some("claude-worker@machine-b".into())
+        );
+    }
+
+    /// The truncation boundary is a byte count and the body is box-written, so
+    /// the cut can land mid-character — which used to panic the host draining
+    /// the record. An agent must not be able to crash the tender with a body.
+    #[test]
+    fn an_oversized_multibyte_body_truncates_without_panicking() {
+        let mut body = "x".repeat(forum::MAX_BODY_BYTES - 1);
+        body.push_str("ああああ"); // a 3-byte char straddles the boundary
+        let staged = forum::ForumPostSpool {
+            thread: "0123456789abcdef".into(),
+            kind: "FINDING".into(),
+            body,
+            ..Default::default()
+        };
+        let new = staged.into_new_post();
+        assert!(new.body.len() <= forum::MAX_BODY_BYTES);
+        assert!(new.body.is_char_boundary(new.body.len()));
         assert!(new.denied.unwrap().contains("truncated"));
     }
 

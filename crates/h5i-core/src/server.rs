@@ -855,6 +855,15 @@ pub struct ForumView {
     /// A preview of each open thread for the landing feed: the opening line of
     /// its best-scored post, and who has spoken in it.
     pub previews: Vec<ForumPreview>,
+    /// The rule every score on this surface was counted under — `origin` (one
+    /// vote per machine) or `principal` (one vote per enrolled account). A
+    /// page showing scores without saying what they count would be asserting
+    /// more than it knows.
+    pub vote_rule: &'static str,
+    /// This host's forum identity, so the page can tell a local box id from a
+    /// peer's identically-pathed one: a roster entry's box id is a path on the
+    /// machine its `origin` names, not necessarily on this one.
+    pub host_origin: String,
 }
 
 /// Enough of a thread to rank it and show why it is worth opening.
@@ -901,19 +910,26 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
     let view = blocking(move || {
         let (git, h5i_root) = open(&path)?;
         let roster = crate::forum::read_roster(&git);
+        // Origin-scoped: a merged roster can carry a peer's entry whose box id
+        // is the same path as a local box, and influence is a fact about the
+        // local box only.
+        let my_origin = crate::forum::host_origin(&h5i_root).ok();
+        let envs = env::list(&h5i_root);
         let influenced: Vec<String> = roster
             .agents
             .values()
             .filter(|e| {
-                e.box_id
-                    .as_deref()
-                    .and_then(|id| env::list(&h5i_root).into_iter().find(|m| m.id == id))
-                    .and_then(|m| crate::forum_tender::peer_influence(&h5i_root, &m))
+                envs.iter()
+                    .find(|m| e.is_box_on(&m.id, my_origin.as_deref()))
+                    .and_then(|m| crate::forum_tender::peer_influence(&h5i_root, m))
                     .is_some()
             })
             .map(|e| e.agent.clone())
             .collect();
         let threads = crate::forum::list_threads(&git);
+        // One context for the whole view, so every score on the page is
+        // counted under the same policy.
+        let ctx = crate::forum_identity::vote_context(&git);
         let previews = threads
             .iter()
             .filter_map(|t| {
@@ -922,8 +938,8 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
                 // opening, and quoting it back under itself says nothing.
                 let best = full
                     .replies()
-                    .max_by_key(|p| full.score_of(&p.id))
-                    .filter(|p| full.score_of(&p.id) > 0)
+                    .max_by_key(|p| full.score_of_with(&p.id, &ctx))
+                    .filter(|p| full.score_of_with(&p.id, &ctx) > 0)
                     .cloned();
                 Some(ForumPreview {
                     thread: t.header.id.clone(),
@@ -934,7 +950,7 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
                         .chars()
                         .take(400)
                         .collect(),
-                    top_score: full.top_score(),
+                    top_score: full.top_score_with(&ctx),
                     top_body: best
                         .as_ref()
                         .map(|p| p.display_body())
@@ -953,6 +969,8 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
             roster: roster.agents.into_values().collect(),
             influenced,
             previews,
+            vote_rule: ctx.rule.as_str(),
+            host_origin: my_origin.unwrap_or_default(),
         })
     })
     .await;
@@ -962,6 +980,8 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
         roster: Vec::new(),
         influenced: Vec::new(),
         previews: Vec::new(),
+        vote_rule: crate::forum::VoteRule::Origin.as_str(),
+        host_origin: String::new(),
     }))
 }
 
@@ -976,13 +996,14 @@ async fn api_forum_thread(
         // `read_thread` validates the id before it reaches a ref name, so a
         // path-shaped id is refused here rather than joined onto `refs/`.
         let t = crate::forum::read_thread(&git, &id).ok()?;
+        let ctx = crate::forum_identity::vote_context(&git);
         Some(ForumThreadView {
             status: t.status(),
             claimed_by: t.claimed_by().map(str::to_string),
             scores: t
                 .posts
                 .iter()
-                .map(|p| (p.id.clone(), t.score_of(&p.id)))
+                .map(|p| (p.id.clone(), t.score_of_with(&p.id, &ctx)))
                 .collect(),
             header: t.header.clone(),
             posts: t.posts,
