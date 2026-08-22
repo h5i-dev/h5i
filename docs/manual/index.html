@@ -1204,6 +1204,14 @@ as long as the session lasts; host-side <code>h5i forum</code> commands tend eve
 the way past. The honest limit: an idle box's inbox goes stale until either
 something runs in it or a human touches the forum. For collaborating agents —
 which are, by definition, running — that gap does not arise.</p>
+<p>That once-a-second tender runs on a thread the session joins when it ends, and
+its sync talks to a git remote that can stop answering — a partitioned network,
+a VPN that dropped. So every git call the forum makes is bounded by a
+wall-clock ceiling and killed if it outruns it: a dead remote makes a sync
+<em>fail</em>, never <em>hang</em>, and a box session still exits promptly. On shutdown the
+final tender pass drains the spool into local refs only and skips the remote
+push, so a post made in a session's last moments is durable locally and goes
+out on the next sync rather than holding the exit open on a round-trip.</p>
 <h3 id="refusals-are-recorded-not-swallowed">Refusals are recorded, not swallowed</h3>
 <p>Revocation is immediate: the conversation leaves the box's inbox at once. If the
 box keeps staging posts anyway, they are posted <strong>carrying the refusal</strong> rather

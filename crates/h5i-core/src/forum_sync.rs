@@ -53,13 +53,31 @@
 //! runner makes — the worker is h5i, the host holds the key — and it is why a
 //! compromised agent cannot push to the forum even though the forum is a repo.
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use git2::Repository;
 
 use crate::forum;
 use crate::error::H5iError;
+
+/// Wall-clock ceiling on any one git invocation.
+///
+/// A fetch or push of a small forum is subsecond against a healthy remote;
+/// this is far past that, so it never trips on a slow-but-alive host. What it
+/// bounds is a *dead* one. Git has no timeout of its own for an unresponsive
+/// SSH or TCP peer, and the tender runs `sync` on a thread the session joins
+/// on shutdown — so without this ceiling a partitioned remote turns "the box
+/// exited" into "the box will not exit", and a plain `h5i forum sync` into a
+/// command that never returns. A killed git leaves no corruption: its writes
+/// are lockfile-and-rename, so a bounded push simply did not land, and the
+/// next sync retries.
+const GIT_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// How often the wait loop polls for the child while bounding it.
+const GIT_POLL: Duration = Duration::from_millis(50);
 
 /// Refs the forum owns locally. The remote side is [`Remote::namespace`].
 const LIVE: &str = "refs/h5i/forum/*";
@@ -479,8 +497,8 @@ fn is_no_matching_ref(e: &H5iError) -> bool {
 ///   a script) would have this module fetching and pushing someone else's
 ///   refs. The repository is an argument here, never ambient state.
 fn git(dir: &Path, args: &[&str]) -> Result<String, H5iError> {
-    let out = Command::new("git")
-        .env("LC_ALL", "C")
+    let mut cmd = Command::new("git");
+    cmd.env("LC_ALL", "C")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
@@ -496,23 +514,122 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, H5iError> {
         .arg("-c")
         .arg("fetch.fsckObjects=true")
         .args(args)
-        .current_dir(dir)
-        .output()
+        .current_dir(dir);
+    let label = args.first().copied().unwrap_or("");
+    run_bounded(cmd, GIT_TIMEOUT, label)
+}
+
+/// Run `cmd` to completion, or kill it and error if it outruns `timeout`.
+///
+/// The output pipes are drained on their own threads: a child that fills a
+/// pipe buffer and blocks on the write would never reach `try_wait`, so
+/// polling the exit status without reading the pipes would deadlock on exactly
+/// the hang this bound exists to prevent. A killed child leaves no corruption
+/// here — git's writes are lockfile-and-rename — so the operation simply did
+/// not land and the next sync retries.
+fn run_bounded(mut cmd: Command, timeout: Duration, label: &str) -> Result<String, H5iError> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| H5iError::Metadata(format!("could not run git: {e}")))?;
-    if !out.status.success() {
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = stdout_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = stderr_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // The remote is not answering. Kill the child and return at
+                    // once, rather than holding a session's shutdown open on a
+                    // dead peer. The reader threads are deliberately *not*
+                    // joined here: git fetch/push spawns an `ssh` grandchild
+                    // that inherits the output pipe, and killing git does not
+                    // kill ssh — so a join would block on the pipe staying open
+                    // until ssh itself gave up, which is the very wait this
+                    // bound exists to cut. The readers detach and end when the
+                    // grandchild does; their buffers are discarded.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    drop(out_reader);
+                    drop(err_reader);
+                    return Err(H5iError::Metadata(format!(
+                        "git {label} exceeded {}s against the remote and was stopped — \
+                         the remote is unreachable or not responding",
+                        timeout.as_secs()
+                    )));
+                }
+                std::thread::sleep(GIT_POLL);
+            }
+            Err(e) => return Err(H5iError::Metadata(format!("git wait failed: {e}"))),
+        }
+    };
+
+    let stdout = out_reader.join().unwrap_or_default();
+    let stderr = err_reader.join().unwrap_or_default();
+    if !status.success() {
         return Err(H5iError::Metadata(format!(
-            "git {} failed: {}",
-            args.first().copied().unwrap_or(""),
-            String::from_utf8_lossy(&out.stderr).trim()
+            "git {label} failed: {}",
+            String::from_utf8_lossy(&stderr).trim()
         )));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    Ok(String::from_utf8_lossy(&stdout).to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::forum::{Author, NewPost, Role};
+
+    /// A git that never answers is killed at the deadline rather than hanging
+    /// the caller — which is what keeps a dead remote from wedging a box
+    /// session's shutdown, since the tender's thread is joined on drop.
+    #[test]
+    fn a_hanging_git_is_bounded_not_waited_on_forever() {
+        // `sh -c 'sleep 60'` stands in for a git that has connected to a dead
+        // peer and is waiting on a socket that will never answer.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "sleep 60"]);
+        let start = Instant::now();
+        let r = run_bounded(cmd, Duration::from_millis(300), "fetch");
+        let elapsed = start.elapsed();
+        assert!(r.is_err(), "a child that outruns the timeout must error");
+        assert!(
+            r.unwrap_err().to_string().contains("unreachable or not responding"),
+            "the error should name the cause"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "it must return near the deadline, not after the child would finish: {elapsed:?}"
+        );
+    }
+
+    /// The bound does not truncate a healthy command's output.
+    #[test]
+    fn a_prompt_command_returns_its_full_output_within_the_bound() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf 'hello world'"]);
+        let out = run_bounded(cmd, Duration::from_secs(5), "test").unwrap();
+        assert_eq!(out, "hello world");
+    }
 
     fn work_repo(dir: &Path) -> Repository {
         let repo = Repository::init(dir).expect("init");

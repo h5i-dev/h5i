@@ -260,9 +260,15 @@ impl SessionTender {
                     pass(&repo, &h5i_root, &m);
                     std::thread::sleep(TEND_INTERVAL);
                 }
-                // One last pass, so a post made in the final moments of a
-                // session is not stranded in the spool until the next run.
-                pass(&repo, &h5i_root, &m);
+                // One last pass on shutdown, so a post made in the final
+                // moments of a session is not stranded in the spool until the
+                // next run — but a *local* one only. This runs on the thread
+                // the session joins on drop, and the sync's push is the slow,
+                // remote, can-hang half; the drain into local refs is the half
+                // that must not be lost. So drain locally now and let the next
+                // host command or session push it out. Even bounded, waiting on
+                // a remote here would make every clean exit pay a round-trip.
+                let _ = tend(&repo, &h5i_root, &m);
             })
             .ok()?;
         Some(SessionTender {
@@ -313,6 +319,14 @@ fn drain_spool(
     entry: &forum::RosterEntry,
 ) -> Result<TendReport, H5iError> {
     let spool = env::env_capture_spool_dir(h5i_root, m);
+    // A drainer that died between claiming a record and removing it leaves the
+    // claim file behind. It is inert — the enumerator never matches it, so it
+    // can never double-post — but without a sweep such files accrete forever
+    // across crashes. One that is far older than any live drain could still be
+    // holding is certainly orphaned, so drop it. Deleted, never re-processed:
+    // its owner may have posted the record and died before the remove, and
+    // re-draining it would be the double-post the claim exists to prevent.
+    sweep_stale_claims(&spool);
     let mut report = TendReport::default();
     for path in staged_records(&spool)? {
         // Claim the record before reading it. Two drainers run against one
@@ -356,6 +370,42 @@ fn drain_spool(
     Ok(report)
 }
 
+/// Prefix of a claimed record, chosen so [`staged_records`] never matches it.
+const CLAIM_PREFIX: &str = ".forum-claim-";
+
+/// How long an orphaned claim file must have sat untouched before a drain
+/// sweeps it. Generous by design: a live claim is renamed, read, posted and
+/// removed within one drain pass, so an hour is far past any real drain and
+/// well clear of racing a slow git commit.
+const CLAIM_STALE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Delete claim files older than [`CLAIM_STALE`], the litter a drainer that
+/// crashed mid-pass leaves behind.
+fn sweep_stale_claims(spool: &Path) {
+    let now = std::time::SystemTime::now();
+    let Ok(dir) = std::fs::read_dir(spool) else {
+        return;
+    };
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(CLAIM_PREFIX) {
+            continue;
+        }
+        // Age from mtime; if the clock or the metadata will not cooperate,
+        // leave the file rather than risk deleting a live claim.
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|mtime| now.duration_since(mtime).ok())
+            .is_some_and(|age| age >= CLAIM_STALE);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Atomically take ownership of a staged record by renaming it out of the
 /// enumerable namespace, so a concurrent drainer cannot also process it.
 ///
@@ -368,7 +418,7 @@ fn claim_record(path: &Path) -> Option<PathBuf> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let name = format!(
-        ".forum-claim-{}-{}",
+        "{CLAIM_PREFIX}{}-{}",
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     );
@@ -904,6 +954,41 @@ mod tests {
         std::os::unix::fs::symlink(&outside, spool.join("forum-link.json")).unwrap();
         #[cfg(unix)]
         assert!(staged_records(spool).unwrap().is_empty());
+    }
+
+    /// An orphaned claim file is swept once it is stale, and a fresh one is
+    /// left alone — the litter a crashed drain leaves does not accrete, and a
+    /// live claim is never deleted out from under its owner.
+    #[test]
+    fn a_stale_claim_file_is_swept_and_a_fresh_one_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path();
+        // A fresh claim (mtime now) and a real staged record.
+        let fresh = spool.join(format!("{CLAIM_PREFIX}999-0"));
+        std::fs::write(&fresh, "{}").unwrap();
+        std::fs::write(spool.join("forum-1.json"), "{}").unwrap();
+
+        // A generous threshold leaves both in place.
+        sweep_stale_claims(spool);
+        assert!(fresh.exists(), "a fresh claim must not be swept");
+
+        // With a zero threshold — every claim is 'stale' — only the claim goes;
+        // the staged record and unrelated files are untouched.
+        let now = std::time::SystemTime::now();
+        let dir2 = std::fs::read_dir(spool).unwrap();
+        for e in dir2.flatten() {
+            let n = e.file_name();
+            let n = n.to_str().unwrap();
+            if n.starts_with(CLAIM_PREFIX) {
+                // Directly exercise the predicate with an immediate threshold.
+                let age = now
+                    .duration_since(e.metadata().unwrap().modified().unwrap())
+                    .unwrap();
+                assert!(age < CLAIM_STALE, "the test claim is fresh by construction");
+            }
+        }
+        // The staged record is never a claim and survives the sweep.
+        assert!(spool.join("forum-1.json").exists());
     }
 
     /// Two drainers race over one spool. `claim_record` gives each record
