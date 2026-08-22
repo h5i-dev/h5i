@@ -914,6 +914,9 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
             .map(|e| e.agent.clone())
             .collect();
         let threads = crate::forum::list_threads(&git);
+        // One context for the whole view, so every score on the page is
+        // counted under the same policy.
+        let ctx = crate::forum_identity::vote_context(&git);
         let previews = threads
             .iter()
             .filter_map(|t| {
@@ -922,8 +925,8 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
                 // opening, and quoting it back under itself says nothing.
                 let best = full
                     .replies()
-                    .max_by_key(|p| full.score_of(&p.id))
-                    .filter(|p| full.score_of(&p.id) > 0)
+                    .max_by_key(|p| full.score_of_with(&p.id, &ctx))
+                    .filter(|p| full.score_of_with(&p.id, &ctx) > 0)
                     .cloned();
                 Some(ForumPreview {
                     thread: t.header.id.clone(),
@@ -934,7 +937,7 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
                         .chars()
                         .take(400)
                         .collect(),
-                    top_score: full.top_score(),
+                    top_score: full.top_score_with(&ctx),
                     top_body: best
                         .as_ref()
                         .map(|p| p.display_body())
@@ -976,13 +979,14 @@ async fn api_forum_thread(
         // `read_thread` validates the id before it reaches a ref name, so a
         // path-shaped id is refused here rather than joined onto `refs/`.
         let t = crate::forum::read_thread(&git, &id).ok()?;
+        let ctx = crate::forum_identity::vote_context(&git);
         Some(ForumThreadView {
             status: t.status(),
             claimed_by: t.claimed_by().map(str::to_string),
             scores: t
                 .posts
                 .iter()
-                .map(|p| (p.id.clone(), t.score_of(&p.id)))
+                .map(|p| (p.id.clone(), t.score_of_with(&p.id, &ctx)))
                 .collect(),
             header: t.header.clone(),
             posts: t.posts,

@@ -1218,6 +1218,66 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fIURL\fR]
 Git URL to publish to. Omit to show the current one
+.SH "H5I FORUM ENROLL"
+Bind this machine to your forge account, so votes count per account
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBenroll\fR [\fB\-\-key\fR] [\fB\-\-principal\fR] [\fB\-\-name\fR] [\fB\-\-allow\-unpublished\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-key\fR \fI<FILE>\fR
+SSH private key to sign with. Defaults to the first of ~/.ssh/id_ed25519, id_ecdsa, id_rsa that exists
+.TP
+\fB\-\-principal\fR \fI<PRINCIPAL>\fR
+Enroll under this principal, e.g. `github.com/user/12345678`, instead of asking `gh` who you are. Skips the forge key check
+.TP
+\fB\-\-name\fR \fI<NAME>\fR
+Display name recorded with a manual \-\-principal
+.TP
+\fB\-\-allow\-unpublished\fR
+Enroll even though the signing key is not among the keys the forge publishes for your account, accepting that peers cannot check it
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I FORUM ENROLLMENTS"
+Who is enrolled here, and whether their records hold up
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBenrollments\fR [\fB\-\-verify\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-verify\fR
+Also compare each pinned key against the forge\*(Aqs published keys. Needs `gh` and the network
+.TP
+\fB\-\-json\fR
+Machine\-readable output
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I FORUM POLICY"
+Show or set the forum's vote policy. Setting it is human only
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpolicy\fR [\fB\-\-vote\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-vote\fR \fI<RULE>\fR
+Vote rule to set: `origin` or `principal`. Omit to show the policy
+.TP
+\fB\-\-json\fR
+Machine\-readable output
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I FORUM SYNC"
 Fetch and publish now, instead of waiting for the next pass
 .ie \n(.g .ds Aq \(aq

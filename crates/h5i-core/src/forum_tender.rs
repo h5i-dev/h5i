@@ -432,13 +432,14 @@ fn deliver_inbox(
     let mut wanted: BTreeSet<String> = BTreeSet::new();
     let mut peers: BTreeSet<String> = BTreeSet::new();
     let mut written = 0usize;
+    let my_origin = forum::host_origin(h5i_root).ok();
     for summary in forum::list_threads(repo) {
         let Ok(thread) = forum::read_thread(repo, &summary.header.id) else {
             continue;
         };
         for p in &thread.posts {
-            if p.sender != me {
-                peers.insert(p.sender.clone());
+            if let Some(peer) = peer_of(p, me, my_origin.as_deref()) {
+                peers.insert(peer);
             }
         }
         let view = InboxThread::of(&thread);
@@ -469,6 +470,30 @@ fn deliver_inbox(
         }
     }
     Ok((written, peers.into_iter().collect()))
+}
+
+/// Whose text this post is, seen from one box's perspective — `None` when it
+/// is the box's own.
+///
+/// The sender name alone cannot decide this, because names collide across
+/// machines: a peer host is free to attach its own `claude-worker`, and its
+/// posts are another participant's text even though the name matches. So a
+/// post is "own" only when the name matches **and** the origin is this host's.
+/// The taint is the safe direction — missing it tells a reviewer a box was
+/// uninfluenced when it was not — so a matching name from a foreign origin is
+/// recorded as a peer, labelled by where it actually came from. A post with no
+/// origin at all predates origins and can only be local, so the plain name
+/// comparison is all it has.
+fn peer_of(p: &forum::Post, me: &str, my_origin: Option<&str>) -> Option<String> {
+    if p.sender == me {
+        match p.origin.as_deref() {
+            None => None,
+            Some(o) if Some(o) == my_origin => None,
+            Some(o) => Some(format!("{}@{}", p.sender, o)),
+        }
+    } else {
+        Some(p.sender.clone())
+    }
 }
 
 // ── the taint ──────────────────────────────────────────────────────────────
@@ -872,6 +897,35 @@ mod tests {
         let new = staged.into_new_post();
         assert_eq!(new.body.len(), forum::MAX_BODY_BYTES);
         assert!(new.denied.unwrap().contains("truncated"));
+    }
+
+    /// A name is not an identity: the same agent name on a foreign origin is a
+    /// peer, and missing that would tell a reviewer a box was uninfluenced
+    /// when another machine's agent had been talking to it.
+    #[test]
+    fn peer_influence_is_decided_by_origin_not_by_name() {
+        let post = |sender: &str, origin: Option<&str>| forum::Post {
+            sender: sender.into(),
+            origin: origin.map(str::to_string),
+            ..Default::default()
+        };
+        let me = "claude-worker";
+        let home = Some("machine-a");
+
+        // My own post, stamped by my host: not a peer.
+        assert_eq!(peer_of(&post(me, Some("machine-a")), me, home), None);
+        // A pre-origin post can only be local, so the name decides.
+        assert_eq!(peer_of(&post(me, None), me, home), None);
+        // Another sender is a peer wherever it posted from.
+        assert_eq!(
+            peer_of(&post("codex-reviewer", Some("machine-a")), me, home),
+            Some("codex-reviewer".into())
+        );
+        // The collision case: my name, someone else's machine.
+        assert_eq!(
+            peer_of(&post(me, Some("machine-b")), me, home),
+            Some("claude-worker@machine-b".into())
+        );
     }
 
     #[test]

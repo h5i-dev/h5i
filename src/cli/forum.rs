@@ -36,6 +36,7 @@ use h5i_core::forum::{
     ThreadStatus, ThreadSummary,
 };
 use h5i_core::forum_authority;
+use h5i_core::forum_identity;
 use h5i_core::forum_sync;
 use h5i_core::forum_tender;
 use h5i_core::env;
@@ -241,6 +242,57 @@ pub enum ForumCommands {
         custom_refs: bool,
     },
 
+    /// Bind this machine to your forge account, so votes count per account.
+    ///
+    /// Writes a signed record: "this account operates this host". The
+    /// signature comes from the SSH key you already push with, and the forge
+    /// already publishes that key at github.com/<you>.keys, so any peer can
+    /// check the binding without anyone running a key server. Enrolling
+    /// changes nothing by itself; it is what `policy --vote principal` counts.
+    Enroll {
+        /// SSH private key to sign with. Defaults to the first of
+        /// ~/.ssh/id_ed25519, id_ecdsa, id_rsa that exists.
+        #[arg(long, value_name = "FILE")]
+        key: Option<PathBuf>,
+        /// Enroll under this principal, e.g. `github.com/user/12345678`,
+        /// instead of asking `gh` who you are. Skips the forge key check.
+        #[arg(long)]
+        principal: Option<String>,
+        /// Display name recorded with a manual --principal.
+        #[arg(long, requires = "principal")]
+        name: Option<String>,
+        /// Enroll even though the signing key is not among the keys the forge
+        /// publishes for your account, accepting that peers cannot check it.
+        #[arg(long)]
+        allow_unpublished: bool,
+    },
+
+    /// Who is enrolled here, and whether their records hold up.
+    Enrollments {
+        /// Also compare each pinned key against the forge's published keys.
+        /// Needs `gh` and the network.
+        #[arg(long)]
+        verify: bool,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show or set the forum's vote policy. Setting it is human only.
+    ///
+    /// `origin` (the default) counts one vote per machine: nothing to enroll,
+    /// and opening more worktrees buys nobody more votes. `principal` counts
+    /// one vote per enrolled forge account, and a vote from a machine nobody
+    /// enrolled counts for nothing.
+    Policy {
+        /// Vote rule to set: `origin` or `principal`. Omit to show the policy.
+        #[arg(long, value_name = "RULE")]
+        vote: Option<String>,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Fetch and publish now, instead of waiting for the next pass.
     Sync,
 
@@ -355,10 +407,11 @@ pub fn run(action: ForumCommands) -> anyhow::Result<()> {
                 let t = forum::read_thread(repo, &id)?;
                 write_view(&view_path_host(h5i_root, &host_identity()), &id, &t.posts)?;
                 let me = forum::host_origin(h5i_root)?;
+                let ctx = forum_identity::vote_context(repo);
                 let scores = t
                     .posts
                     .iter()
-                    .map(|p| (p.id.clone(), t.score_of(&p.id)))
+                    .map(|p| (p.id.clone(), t.score_of_with(&p.id, &ctx)))
                     .collect();
                 render_thread(&t.header, t.status(), &t.posts, json, &me, &scores)
             }
@@ -373,7 +426,9 @@ pub fn run(action: ForumCommands) -> anyhow::Result<()> {
                 // inside, every post is somebody else's account of itself,
                 // including its own once the host has stamped it.
                 // The inbox view has the same posts, so the same projection
-                // applies — `Thread` is just the shape that carries it.
+                // applies — `Thread` is just the shape that carries it. Scores
+                // here use the default origin rule: the meta ref (policy,
+                // enrollments) is host state a box deliberately cannot see.
                 let full = forum::Thread {
                     header: t.header.clone(),
                     posts: t.posts.clone(),
@@ -467,6 +522,18 @@ pub fn run(action: ForumCommands) -> anyhow::Result<()> {
             branch_refs,
             custom_refs,
         ),
+        ForumCommands::Enroll {
+            key,
+            principal,
+            name,
+            allow_unpublished,
+        } => host_only(&side, "enroll this host")?.enroll(key, principal, name, allow_unpublished),
+        ForumCommands::Enrollments { verify, json } => {
+            host_only(&side, "read the forum's enrollments")?.enrollments(verify, json)
+        }
+        ForumCommands::Policy { vote, json } => {
+            host_only(&side, "read the forum's policy")?.policy(vote, json)
+        }
         ForumCommands::Sync => host_only(&side, "sync the forum")?.sync(),
         ForumCommands::Wait { timeout } => wait(&side, timeout),
         ForumCommands::Whoami => whoami(&side),
@@ -617,7 +684,10 @@ impl Host<'_> {
             anyhow::bail!(msg);
         }
 
-        forum_tender::write_binding(self.h5i_root, &m, as_name)?;
+        // Roster first, binding second: the roster write is the one that can
+        // refuse (the name may already be another box's identity), and a
+        // binding written ahead of a refusal would linger pointing at a name
+        // this box never got.
         forum::put_roster_entry(
             self.repo,
             &human_author()?,
@@ -630,6 +700,7 @@ impl Host<'_> {
                 revoked_at: None,
             },
         )?;
+        forum_tender::write_binding(self.h5i_root, &m, as_name)?;
         forum_tender::tend_all(self.repo, self.h5i_root);
 
         h5i_core::ui::UI::success(&format!(
@@ -758,6 +829,213 @@ impl Host<'_> {
         Ok(())
     }
 
+    fn enroll(
+        &self,
+        key: Option<PathBuf>,
+        principal: Option<String>,
+        name: Option<String>,
+        allow_unpublished: bool,
+    ) -> anyhow::Result<()> {
+        let origin = forum::host_origin(self.h5i_root)?;
+        // Who is enrolling. The forge is asked by default because the numeric
+        // account id is the one identifier that survives a login rename; the
+        // manual flags exist for a forge `gh` cannot speak for.
+        let (principal, display_name, login_for_keys) = match principal {
+            Some(p) => {
+                forum_identity::validate_principal(&p)?;
+                let display = name.unwrap_or_else(|| p.clone());
+                (p, display, None)
+            }
+            None => {
+                let (p, login) = forum_identity::github_principal().map_err(|e| {
+                    anyhow::anyhow!(
+                        "{e}\n  `enroll` asks gh who you are. Log in with `gh auth login`, or pass\n  \
+                         --principal github.com/user/<id> --name <login> to enroll without it."
+                    )
+                })?;
+                (p, login.clone(), Some(login))
+            }
+        };
+        let key = match key {
+            Some(k) => k,
+            None => forum_identity::default_ssh_key().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no SSH key under ~/.ssh — pass one with --key <file>.\n  \
+                     The public half must sit beside it as <file>.pub."
+                )
+            })?,
+        };
+
+        let mut e = forum_identity::Enrollment {
+            version: forum_identity::ENROLLMENT_VERSION,
+            principal: principal.clone(),
+            display_name: display_name.clone(),
+            origin: origin.clone(),
+            ssh_pubkey: String::new(),
+            enrolled_at: forum::now_ts(),
+            signature: String::new(),
+        };
+        forum_identity::sign_enrollment(&mut e, &key)?;
+
+        // The forge check is what makes the binding verifiable by a peer:
+        // the pinned key has to be one the account publishes. Refused rather
+        // than warned, because an enrollment nobody can check quietly demotes
+        // "one account, one vote" back to trust.
+        let mut published = false;
+        if let Some(login) = &login_for_keys {
+            let keys = forum_identity::github_published_keys(login).map_err(|err| {
+                anyhow::anyhow!(
+                    "could not fetch {login}'s published keys: {err}\n  \
+                     Retry with the network up, or pass --allow-unpublished to enroll anyway."
+                )
+            });
+            match keys {
+                Ok(keys) if forum_identity::published_key_matches(&keys, &e.ssh_pubkey) => {
+                    published = true;
+                }
+                Ok(_) if allow_unpublished => {}
+                Ok(_) => anyhow::bail!(
+                    "the signing key is not among the keys GitHub publishes for {login}.\n  \
+                     Publish it:   gh ssh-key add {}.pub\n  \
+                     Or enroll unverifiable anyway with --allow-unpublished.",
+                    key.display()
+                ),
+                Err(err) if allow_unpublished => {
+                    h5i_core::ui::UI::warning(&format!("{err}"));
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        forum_identity::put_enrollment(self.repo, &human_author()?, e)?;
+        h5i_core::ui::UI::success(&format!(
+            "{} is enrolled as {} ({})",
+            style(&origin).bold(),
+            style(&principal).bold(),
+            display_name
+        ));
+        if published {
+            println!("  key      published on the forge — any peer can verify this binding");
+        } else {
+            println!(
+                "  {}",
+                style(
+                    "key not confirmed against the forge: peers can check the record's \
+                     signature, not who the key belongs to"
+                )
+                .yellow()
+            );
+        }
+        println!("  votes from this machine count as that account under `policy --vote principal`");
+        println!("  publish it with `h5i forum sync`");
+        Ok(())
+    }
+
+    fn enrollments(&self, verify: bool, json: bool) -> anyhow::Result<()> {
+        let all = forum_identity::read_enrollments(self.repo);
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&all.by_origin.values().collect::<Vec<_>>())?
+            );
+            return Ok(());
+        }
+        if all.by_origin.is_empty() {
+            println!("no enrollments — bind this machine to your account with `h5i forum enroll`");
+            return Ok(());
+        }
+        for e in all.by_origin.values() {
+            let sig = match forum_identity::verify_enrollment(e) {
+                Ok(()) => style("signature ok").green().to_string(),
+                Err(_) => style("SIGNATURE BAD").red().bold().to_string(),
+            };
+            println!(
+                "  {:<28} {:<32} {}  {}",
+                h5i_core::redact::sanitize_display(&e.origin),
+                h5i_core::redact::sanitize_display(&e.principal),
+                style(short_time(&e.enrolled_at)).dim(),
+                sig
+            );
+            if verify {
+                // The login travels as the display name; a renamed account
+                // breaks this lookup, which the message says rather than hides.
+                let note = if e.principal.starts_with("github.com/") {
+                    match forum_identity::github_published_keys(&e.display_name) {
+                        Ok(keys)
+                            if forum_identity::published_key_matches(&keys, &e.ssh_pubkey) =>
+                        {
+                            style("key published by the account").green().to_string()
+                        }
+                        Ok(_) => style("key NOT among the account's published keys")
+                            .red()
+                            .to_string(),
+                        Err(err) => style(format!("forge unreachable: {err}")).yellow().to_string(),
+                    }
+                } else {
+                    style("no forge check for this principal").dim().to_string()
+                };
+                println!("      {note}");
+            }
+        }
+        println!(
+            "\n  {}",
+            style(
+                "an enrollment binds a machine to an account; what it changes is counting \
+                 under `h5i forum policy --vote principal`"
+            )
+            .dim()
+        );
+        Ok(())
+    }
+
+    fn policy(&self, vote: Option<String>, json: bool) -> anyhow::Result<()> {
+        let policy = match vote {
+            Some(rule) => {
+                let rule = forum::VoteRule::parse(&rule)?;
+                let p = forum_identity::set_vote_rule(self.repo, &human_author()?, rule)?;
+                h5i_core::ui::UI::success(&format!("vote policy is now {}", rule.as_str()));
+                p
+            }
+            None => forum_identity::read_policy(self.repo),
+        };
+        if json {
+            println!("{}", serde_json::to_string_pretty(&policy)?);
+            return Ok(());
+        }
+        match policy.vote {
+            forum::VoteRule::Origin => {
+                println!("vote     {}  (one vote per machine)", style("origin").bold());
+                println!(
+                    "  {}",
+                    style(
+                        "worktree count buys nothing; enrollment is not required. Tighten to \
+                         accounts with `h5i forum policy --vote principal`."
+                    )
+                    .dim()
+                );
+            }
+            forum::VoteRule::Principal => {
+                let enrolled = forum_identity::read_enrollments(self.repo).by_origin.len();
+                println!(
+                    "vote     {}  (one vote per enrolled account)",
+                    style("principal").bold()
+                );
+                println!(
+                    "  {}",
+                    style(format!(
+                        "{enrolled} machine(s) enrolled; a vote from an unenrolled machine \
+                         counts for nothing. Enroll with `h5i forum enroll`."
+                    ))
+                    .dim()
+                );
+            }
+        }
+        if !policy.set_at.is_empty() {
+            println!("  set      {}", style(short_time(&policy.set_at)).dim());
+        }
+        Ok(())
+    }
+
     fn sync(&self) -> anyhow::Result<()> {
         let r = forum_sync::sync(self.repo, self.h5i_root)?;
         forum_tender::tend_all(self.repo, self.h5i_root);
@@ -803,12 +1081,14 @@ impl Host<'_> {
             } else {
                 style("revoked").red()
             };
+            // The roster is union-merged from every clone, so a name or a box
+            // id here can be a peer's bytes.
             println!(
                 "  {:<20} {:<9} {:<9} {}",
-                e.agent,
+                peer_str(&e.agent),
                 e.role.as_str(),
                 state,
-                e.box_id.as_deref().unwrap_or("-")
+                peer_str(e.box_id.as_deref().unwrap_or("-"))
             );
         }
 
@@ -924,8 +1204,8 @@ fn wait(side: &Side, timeout: u64) -> anyhow::Result<()> {
                 if let Some(p) = last {
                     println!(
                         "      {} {}: {}",
-                        style(&p.kind).cyan(),
-                        p.sender,
+                        style(peer_str(&p.kind)).cyan(),
+                        peer_str(&p.sender),
                         truncate(&p.display_body(), 60)
                     );
                 }
@@ -941,11 +1221,29 @@ fn wait(side: &Side, timeout: u64) -> anyhow::Result<()> {
 
 fn whoami(side: &Side) -> anyhow::Result<()> {
     match side {
-        Side::Host { repo, .. } => {
+        Side::Host { repo, h5i_root } => {
             println!("{}  (the human on the host)", style(host_identity()).bold());
             println!("  you may create, attach, revoke, close, and apply");
             let roster = forum::read_roster(repo);
             println!("  {} participant(s) on the forum", roster.active().count());
+            if let Ok(origin) = forum::host_origin(h5i_root) {
+                println!("  origin   {}", style(&origin).dim());
+                match forum_identity::read_enrollments(repo).by_origin.get(&origin) {
+                    Some(e) => println!(
+                        "  account  {} ({})",
+                        style(&e.principal).bold(),
+                        h5i_core::redact::sanitize_display(&e.display_name)
+                    ),
+                    None => println!(
+                        "  {}",
+                        style(
+                            "not enrolled — `h5i forum enroll` binds this machine to your \
+                             forge account"
+                        )
+                        .dim()
+                    ),
+                }
+            }
         }
         Side::Boxed {
             inbox, identity, ..
@@ -984,7 +1282,7 @@ fn render_list(rows: &[ThreadSummary], json: bool, all: bool) -> anyhow::Result<
             status_style(t.status),
             truncate(&t.header.display_title(), 34),
             t.posts,
-            t.claimed_by.as_deref().unwrap_or("-"),
+            peer_str(t.claimed_by.as_deref().unwrap_or("-")),
             denial_note(t.denials)
         );
     }
@@ -1041,7 +1339,10 @@ fn render_thread(
         .collect();
     for (i, p) in shown.iter().enumerate() {
         println!();
-        let who = format!("{} ({})", p.sender, p.role);
+        // Every field on this line can have arrived from a peer's clone, so
+        // every one of them renders through the sanitiser — the same rule the
+        // body already follows. Locally-stamped posts pass through unchanged.
+        let who = format!("{} ({})", peer_str(&p.sender), peer_str(&p.role));
         let score = scores.get(p.id.as_str()).copied().unwrap_or(0);
         let score_tag = match score {
             0 => String::new(),
@@ -1051,7 +1352,7 @@ fn render_thread(
         println!(
             "{:>3}. {} {}  {}{}",
             i + 1,
-            style(&p.kind).cyan().bold(),
+            style(peer_str(&p.kind)).cyan().bold(),
             style(who).bold(),
             style(short_time(&p.ts)).dim(),
             score_tag
@@ -1099,17 +1400,19 @@ fn render_thread(
             println!(
                 "     {} {} {} ({} bytes, {})",
                 style("⧉").dim(),
-                a.kind,
-                a.name.as_deref().unwrap_or("(unnamed)"),
+                peer_str(&a.kind),
+                peer_str(a.name.as_deref().unwrap_or("(unnamed)")),
                 a.size,
-                &a.digest[..12]
+                // A local digest is 64 hex characters; a peer's is whatever
+                // bytes it wrote, so the preview must not assume the length.
+                peer_str(&a.digest.chars().take(12).collect::<String>())
             );
         }
         if !p.redactions.is_empty() {
             println!(
                 "     {} {}",
                 style("⊘ redacted before storing:").yellow(),
-                style(p.redactions.join(", ")).yellow()
+                style(peer_str(&p.redactions.join(", "))).yellow()
             );
         }
         if let Some(d) = &p.denied {
@@ -1160,11 +1463,22 @@ fn truncate(s: &str, n: usize) -> String {
 
 fn short_time(ts: &str) -> String {
     // `2026-08-20T14:02:11.123456Z` → `08-20 14:02`
-    if ts.len() >= 16 {
+    //
+    // The timestamp is a post field, and a post can have arrived from a peer:
+    // byte-slicing whatever string is there would panic on multibyte input,
+    // and echoing it raw would hand a hostile clone a terminal escape. So the
+    // slice happens only on input shaped like our own timestamps, and the
+    // fallback renders through the sanitiser like every other peer field.
+    if ts.len() >= 16 && ts.is_ascii() {
         format!("{} {}", &ts[5..10], &ts[11..16])
     } else {
-        ts.to_string()
+        h5i_core::redact::sanitize_display(ts)
     }
+}
+
+/// A peer-written name or label, made safe for one terminal line.
+fn peer_str(s: &str) -> String {
+    h5i_core::redact::sanitize_display(s)
 }
 
 fn short_digest(d: &Option<String>) -> String {
@@ -1361,4 +1675,24 @@ fn human_author_at(h5i_root: &Path) -> anyhow::Result<Author> {
 #[allow(dead_code)]
 fn host_thread(repo: &git2::Repository, id: &str) -> anyhow::Result<Thread> {
     Ok(forum::read_thread(repo, id)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A post's timestamp is a peer-writable field: slicing it at fixed byte
+    /// offsets panicked on multibyte input, and echoing it raw handed a
+    /// hostile clone a terminal escape.
+    #[test]
+    fn a_hostile_timestamp_neither_panics_nor_reaches_the_terminal_raw() {
+        assert_eq!(short_time("2026-08-20T14:02:11.123456Z"), "08-20 14:02");
+        // Multibyte at the slice boundary: the old code panicked here.
+        let multibyte = "ああああああああああああ";
+        assert!(!short_time(multibyte).is_empty());
+        // An escape sequence must not survive the fallback path.
+        let hostile = "\u{1b}]0;owned\u{7}2026-08-20T14:02:11Z";
+        assert!(!short_time(hostile).contains('\u{1b}'));
+        assert!(!peer_str("evil\u{1b}[2Jname").contains('\u{1b}'));
+    }
 }

@@ -193,12 +193,29 @@ pub fn profile_digest(p: &Profile) -> String {
 /// Compared as normalised path strings rather than canonicalised paths: a
 /// profile grant may name a directory that does not exist yet on this host, and
 /// canonicalising would turn "not created yet" into "not covered".
+///
+/// A `..` component defeats that comparison — `/work/../.ssh` string-matches
+/// under `/work` while reaching somewhere else entirely, and unlike persona
+/// sources and private paths, an fs grant is not refused for carrying one at
+/// profile load. So a path with a parent component is never covered and never
+/// covers: the check fails closed, and the violation names the path so the
+/// operator can write the plain form.
 fn covered_by(path: &str, grants: &[String]) -> bool {
+    if has_parent_component(path) {
+        return false;
+    }
     let p = normalise(path);
     grants.iter().any(|g| {
+        if has_parent_component(g) {
+            return false;
+        }
         let g = normalise(g);
         p == g || p.starts_with(&format!("{g}/"))
     })
+}
+
+fn has_parent_component(p: &str) -> bool {
+    p.split('/').any(|c| c == "..")
 }
 
 fn normalise(p: &str) -> String {
@@ -332,6 +349,27 @@ mod tests {
         c.fs_read = Vec::new();
         c.fs_write = vec!["/srv/data".into()];
         assert!(check(&b, &c).is_empty(), "anything writable is readable");
+    }
+
+    /// `/work/../.ssh` string-matches under `/work` while reaching `~/.ssh`.
+    /// A grant with a parent component must fail the check, in both roles.
+    #[test]
+    fn a_parent_component_never_covers_and_is_never_covered() {
+        let mut b = profile();
+        b.fs_write = vec!["/home/me/work/../.ssh".into()];
+        let mut c = profile();
+        c.fs_write = vec!["/home/me/work".into()];
+        let v = check(&b, &c);
+        assert_eq!(v.len(), 1, "traversal must not hide under the ceiling: {v:?}");
+        assert_eq!(v[0].dimension, "fs.write");
+
+        // And a ceiling written with `..` covers nothing, rather than covering
+        // whatever the string happens to prefix.
+        let mut b = profile();
+        b.fs_write = vec!["/home/me/work/../.ssh/keys".into()];
+        let mut c = profile();
+        c.fs_write = vec!["/home/me/work/../.ssh".into()];
+        assert_eq!(check(&b, &c).len(), 1);
     }
 
     #[test]

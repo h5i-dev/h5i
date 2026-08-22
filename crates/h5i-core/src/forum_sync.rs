@@ -205,9 +205,9 @@ pub fn set_namespace(h5i_root: &Path, branch_refs: bool) -> Result<(), H5iError>
 /// What one sync moved.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncReport {
-    /// Threads whose local tip advanced because of something fetched.
+    /// Refs whose local tip advanced because of something fetched.
     pub pulled: usize,
-    /// Threads pushed to the remote.
+    /// Refs the remote was missing and was sent.
     pub pushed: usize,
     /// Rounds spent losing a race to another writer.
     pub retries: usize,
@@ -238,9 +238,18 @@ pub fn sync_with(repo: &Repository, remote: &Remote) -> Result<SyncReport, H5iEr
 
     for attempt in 0..MAX_ATTEMPTS {
         report.pulled += pull(repo, &dir, remote)?;
+        // What the remote is missing, counted against the tips this round's
+        // fetch staged. `git push` cannot say this itself — a push where
+        // everything was already up to date succeeds exactly like one that
+        // moved something — and a report that counted attempts rather than
+        // movement kept an idle forum looking busy forever.
+        let pending = pending_push(repo);
+        if pending == 0 {
+            return Ok(report);
+        }
         match push(&dir, remote) {
-            Ok(pushed) => {
-                report.pushed += pushed;
+            Ok(()) => {
+                report.pushed += pending;
                 return Ok(report);
             }
             // A rejection here is the compare-and-swap doing its job: the
@@ -305,14 +314,29 @@ fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iErro
             // Already have exactly this.
             Ok(local_oid) if local_oid == incoming_oid => {}
             Ok(local_oid) => {
-                // Both sides moved. Union-merge rather than pick a winner: the
-                // log is append-only, so the union is the whole history and
-                // neither side loses a post.
                 if repo.graph_descendant_of(local_oid, incoming_oid).unwrap_or(false) {
                     continue; // we already contain it
                 }
+                // The remote is simply ahead: take its tip. Merging here would
+                // be *correct* — the union of a history with its own prefix —
+                // but it would mint a commit, and that commit is news to the
+                // next peer, whose own no-op merge is news back to us. Two
+                // quiet clones then trade contentless merge commits forever.
+                // Measured before this branch existed: one post followed by
+                // six idle sync round-trips left the thread ref twelve commits
+                // deep, all of them empty merges — and the resident tender
+                // syncs every second. Fast-forward is not an optimisation; it
+                // is what makes an idle forum go quiet.
+                if repo.graph_descendant_of(incoming_oid, local_oid).unwrap_or(false) {
+                    repo.reference(&local, incoming_oid, true, "h5i forum: fast-forward remote")?;
+                    moved += 1;
+                    continue;
+                }
+                // Both sides moved. Union-merge rather than pick a winner: the
+                // log is append-only, so the union is the whole history and
+                // neither side loses a post.
                 let merged = if local.starts_with("refs/h5i/forum/meta") {
-                    forum::union_merge_roster(repo, local_oid, incoming_oid)?
+                    forum::union_merge_meta(repo, local_oid, incoming_oid)?
                 } else {
                     forum::union_merge_thread(repo, local_oid, incoming_oid)?
                 };
@@ -359,8 +383,26 @@ fn incoming_pairs(repo: &Repository) -> Result<Vec<(String, String)>, H5iError> 
     Ok(out)
 }
 
+/// Local forum refs the remote does not have yet, measured against the tips
+/// the current round's fetch parked in the staging namespace. Zero means the
+/// remote already holds everything we do, and the push can be skipped.
+fn pending_push(repo: &Repository) -> usize {
+    let Ok(refs) = repo.references_glob("refs/h5i/forum/*") else {
+        return 0;
+    };
+    refs.filter_map(|r| r.ok())
+        .filter_map(|r| Some((r.name()?.to_string(), r.target()?)))
+        .filter(|(name, oid)| {
+            let Some(rest) = name.strip_prefix("refs/h5i/forum/") else {
+                return false;
+            };
+            repo.refname_to_id(&format!("{INCOMING}/live/{rest}")).ok() != Some(*oid)
+        })
+        .count()
+}
+
 /// Push the local forum. `Contended` when the remote moved under us.
-fn push(dir: &Path, remote: &Remote) -> Result<usize, SyncError> {
+fn push(dir: &Path, remote: &Remote) -> Result<(), SyncError> {
     // No `--force`: an append-only thread that has been merged onto the remote
     // tip is a fast-forward, so a rejection means someone else got there first
     // and the right answer is to merge again, never to overwrite them.
@@ -369,10 +411,10 @@ fn push(dir: &Path, remote: &Remote) -> Result<usize, SyncError> {
         dir,
         &["push", "--quiet", "--end-of-options", &remote.url, &live_spec],
     ) {
-        Ok(_) => Ok(1),
+        Ok(_) => Ok(()),
         Err(e) if is_rejected(&e) => Err(SyncError::Contended),
         // Nothing local to push is success, not failure.
-        Err(e) if is_no_matching_ref(&e) => Ok(0),
+        Err(e) if is_no_matching_ref(&e) => Ok(()),
         Err(e) => Err(SyncError::Fatal(e)),
     }
 }
@@ -605,6 +647,141 @@ mod tests {
                 "{name} resurrected a revoked participant"
             );
             assert!(r.get("carol").is_some(), "{name} lost the other addition");
+        }
+    }
+
+    /// After the forum converges, syncing moves nothing and mints nothing.
+    ///
+    /// The regression this pins down: a clone that was merely *behind* used to
+    /// union-merge instead of fast-forwarding, minting a contentless merge
+    /// commit — which the other clone then merged, minting another. One post
+    /// followed by six idle round-trips left the thread ref twelve commits
+    /// deep, growing forever at one commit per tender pass.
+    #[test]
+    fn an_idle_forum_goes_quiet_instead_of_trading_empty_merges() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_CUSTOM.to_string(),
+        };
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+
+        let h = forum::create_thread(&a, &human(), "quiet", None, None, None).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+        // One side posts; the other is now strictly behind.
+        forum::append_post(&a, &agent("alice"), &h.id, post("FINDING", "news")).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+        sync_with(&a, &remote).unwrap();
+
+        // Converged. From here, nothing may move.
+        let refname = forum::thread_ref(&h.id);
+        let tip_a = a.refname_to_id(&refname).unwrap();
+        let tip_b = b.refname_to_id(&refname).unwrap();
+        assert_eq!(tip_a, tip_b, "both clones should hold the same tip");
+        for _ in 0..3 {
+            assert!(sync_with(&a, &remote).unwrap().is_empty(), "idle sync must move nothing");
+            assert!(sync_with(&b, &remote).unwrap().is_empty(), "idle sync must move nothing");
+        }
+        assert_eq!(a.refname_to_id(&refname).unwrap(), tip_a);
+        assert_eq!(b.refname_to_id(&refname).unwrap(), tip_b);
+
+        // And the whole exchange cost what it should: the create, the post,
+        // and at most one real merge — not a commit per pass.
+        let mut walk = a.revwalk().unwrap();
+        walk.push(tip_a).unwrap();
+        let depth = walk.count();
+        assert!(depth <= 4, "an idle forum must not accrete commits, got {depth}");
+    }
+
+    /// Enrollments and the vote policy live on the meta ref, so they travel
+    /// and merge exactly the way the roster does — including through a merge
+    /// where both sides had touched their meta ref.
+    #[test]
+    fn enrollments_and_policy_travel_with_the_meta_ref() {
+        use crate::forum::VoteRule;
+        use crate::forum_identity;
+
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_CUSTOM.to_string(),
+        };
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+
+        // B enrolls its machine and tightens the vote rule.
+        forum_identity::put_enrollment(
+            &b,
+            &human(),
+            forum_identity::Enrollment {
+                version: forum_identity::ENROLLMENT_VERSION,
+                principal: "github.com/user/12345678".into(),
+                display_name: "hideakih".into(),
+                origin: "machine-b".into(),
+                ssh_pubkey: "ssh-ed25519 AAAATEST".into(),
+                enrolled_at: forum::now_ts(),
+                signature: "-----BEGIN SSH SIGNATURE-----\nx\n-----END SSH SIGNATURE-----\n"
+                    .into(),
+            },
+        )
+        .unwrap();
+        forum_identity::set_vote_rule(&b, &human(), VoteRule::Principal).unwrap();
+
+        // A, which has not heard any of that, changes its own meta ref too, so
+        // the reconciliation is a real merge rather than an adoption.
+        forum::put_roster_entry(
+            &a,
+            &human(),
+            forum::RosterEntry {
+                agent: "carol".into(),
+                box_id: None,
+                role: Role::Worker,
+                policy_digest: None,
+                attached_at: forum::now_ts(),
+                revoked_at: None,
+            },
+        )
+        .unwrap();
+
+        sync_with(&b, &remote).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+
+        for (name, repo) in [("A", &a), ("B", &b)] {
+            let e = forum_identity::read_enrollments(repo);
+            assert_eq!(
+                e.by_origin.get("machine-b").map(|e| e.principal.as_str()),
+                Some("github.com/user/12345678"),
+                "{name} lost the enrollment"
+            );
+            assert_eq!(
+                forum_identity::read_policy(repo).vote,
+                VoteRule::Principal,
+                "{name} lost the policy"
+            );
+            assert!(
+                forum::read_roster(repo).get("carol").is_some(),
+                "{name} lost the roster entry the merge crossed"
+            );
         }
     }
 
