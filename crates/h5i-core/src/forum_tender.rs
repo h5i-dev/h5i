@@ -124,9 +124,10 @@ pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendR
             .values()
             .find(|e| e.box_id.as_deref() == Some(&m.id))
     }) else {
-        // Not on the forum. Nothing to drain and nothing to deliver — and in
-        // particular, no inbox contents, so a box that was revoked and had its
-        // entry removed does not keep reading yesterday's threads.
+        // Not on the forum. Nothing to drain and nothing to deliver — and the
+        // inbox is emptied here rather than assumed empty, so a box whose
+        // entry is gone does not keep reading yesterday's threads.
+        clear_inbox(h5i_root, m);
         return Ok(TendReport::default());
     };
 
@@ -159,6 +160,13 @@ pub fn tend(repo: &Repository, h5i_root: &Path, m: &EnvManifest) -> Result<TendR
         let (written, peers) = deliver_inbox(repo, h5i_root, m, &entry.agent)?;
         report.delivered = written;
         mark_peer_influenced(h5i_root, m, &peers);
+    } else {
+        // Revoked. The local `revoke` command clears the inbox at the moment
+        // the human runs it, but a revocation can also *arrive* — union-merged
+        // in from another clone — and no command runs here when it does. This
+        // is the pass that notices, and "the conversation leaves the box at
+        // once" has to be true whichever machine the human was on.
+        clear_inbox(h5i_root, m);
     }
     Ok(report)
 }

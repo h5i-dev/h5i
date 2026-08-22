@@ -596,6 +596,42 @@ fn a_post_staged_into_a_closed_thread_is_recorded_as_refused() {
     assert!(denied.contains("closed"), "refusal should name the close: {denied}");
 }
 
+/// A revocation that *arrives* — merged in from another clone rather than
+/// typed here — has no command around it to clear the box's inbox. The tender
+/// pass is what notices, so a revoked box's stale threads leave on the next
+/// tend wherever the human ran the revoke.
+#[test]
+fn a_revoked_boxes_inbox_is_emptied_by_the_tend_not_only_by_the_revoke_command() {
+    let repo = Repo::new();
+    let thread = repo.create_thread("t", None);
+    repo.h5i(&["box", "create", "worker-box"]);
+    repo.attach("worker-box", "claude-worker", "worker");
+    repo.h5i(&["forum", "status"]); // delivers the inbox
+    let inbox = repo.env_dir("env/tester/worker-box").join("inbox");
+    assert!(
+        std::fs::read_dir(&inbox).unwrap().next().is_some(),
+        "the attached box should have been delivered something"
+    );
+
+    repo.h5i(&["forum", "revoke", "claude-worker"]);
+    // Simulate the remote-revocation shape: the revoke command already cleared
+    // the inbox, so plant a stale thread file the way a box on another machine
+    // would still hold one, and let an ordinary tend pass find it.
+    std::fs::write(
+        inbox.join(format!("thread-{thread}.json")),
+        b"{stale}".as_slice(),
+    )
+    .unwrap();
+    repo.h5i(&["forum", "status"]);
+    let leftover: Vec<_> = std::fs::read_dir(&inbox)
+        .map(|d| d.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(
+        leftover.is_empty(),
+        "a revoked box must not keep reading yesterday's threads: {leftover:?}"
+    );
+}
+
 // ─── the closed thread ───────────────────────────────────────────────────────
 
 #[test]
