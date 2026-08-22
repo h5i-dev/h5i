@@ -1072,6 +1072,7 @@ impl Host<'_> {
         let roster = forum::read_roster(self.repo);
         let threads = forum::list_threads(self.repo);
 
+        let policy = forum_identity::read_policy(self.repo);
         if json {
             // The same shape the console's `/api/forum` returns — a roster is
             // an array of entries, not a map keyed by a name that is already
@@ -1081,12 +1082,25 @@ impl Host<'_> {
                 "roster": roster.agents.values().collect::<Vec<_>>(),
                 "threads": threads,
                 "closed": forum::list_closed(self.repo),
+                "vote_rule": policy.vote.as_str(),
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
             return Ok(());
         }
 
-        println!("{}", style("participants").dim());
+        // Scores everywhere on this surface are counted under a rule, and a
+        // reader weighing them should not have to know to ask.
+        println!(
+            "{}   {}  ({})",
+            style("votes").dim(),
+            policy.vote.as_str(),
+            match policy.vote {
+                forum::VoteRule::Origin => "one vote per machine",
+                forum::VoteRule::Principal => "one vote per enrolled account",
+            }
+        );
+
+        println!("\n{}", style("participants").dim());
         if roster.agents.is_empty() {
             println!("  none — attach a box with `h5i forum attach <box> --as <name>`");
         }
@@ -1265,9 +1279,17 @@ fn fetch_attachments(side: &Side, n: usize, out: Option<PathBuf>) -> anyhow::Res
         h5i_core::ui::UI::success(&format!("wrote {} ({} bytes)", out.display(), bytes.len()));
         return Ok(());
     }
+    let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for a in &attachments {
         let bytes = load(&a.digest)?;
-        let name = safe_attachment_file_name(a.name.as_deref(), &a.digest);
+        // Two attachments on one post may sanitise to the same name (two
+        // files both called `patch.diff`); the second gets its content
+        // address as a prefix instead of being unfetchable.
+        let mut name = safe_attachment_file_name(a.name.as_deref(), &a.digest);
+        if used.contains(&name) {
+            let prefix: String = a.digest.chars().take(12).collect();
+            name = format!("{prefix}-{name}");
+        }
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1276,6 +1298,7 @@ fn fetch_attachments(side: &Side, n: usize, out: Option<PathBuf>) -> anyhow::Res
                 anyhow::anyhow!("refusing to write {name}: {e} — name a destination with --out")
             })?;
         std::io::Write::write_all(&mut file, &bytes)?;
+        used.insert(name.clone());
         h5i_core::ui::UI::success(&format!("wrote {name} ({} bytes, {})", bytes.len(), a.kind));
     }
     Ok(())

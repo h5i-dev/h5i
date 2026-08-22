@@ -855,6 +855,11 @@ pub struct ForumView {
     /// A preview of each open thread for the landing feed: the opening line of
     /// its best-scored post, and who has spoken in it.
     pub previews: Vec<ForumPreview>,
+    /// The rule every score on this surface was counted under — `origin` (one
+    /// vote per machine) or `principal` (one vote per enrolled account). A
+    /// page showing scores without saying what they count would be asserting
+    /// more than it knows.
+    pub vote_rule: &'static str,
 }
 
 /// Enough of a thread to rank it and show why it is worth opening.
@@ -956,6 +961,7 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
             roster: roster.agents.into_values().collect(),
             influenced,
             previews,
+            vote_rule: ctx.rule.as_str(),
         })
     })
     .await;
@@ -965,6 +971,7 @@ async fn api_forum(State(state): State<Arc<AppState>>) -> Json<ForumView> {
         roster: Vec::new(),
         influenced: Vec::new(),
         previews: Vec::new(),
+        vote_rule: crate::forum::VoteRule::Origin.as_str(),
     }))
 }
 

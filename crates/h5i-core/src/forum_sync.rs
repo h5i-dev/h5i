@@ -465,8 +465,28 @@ fn is_no_matching_ref(e: &H5iError) -> bool {
 /// Run git in `dir` with the hardening the rest of this codebase's shell-outs
 /// use: no hooks, no `ext::` transport, and object checking on both directions
 /// of the wire, because a forum's remote is a machine this one does not own.
+///
+/// Two pieces of the caller's environment are overridden, because this module
+/// depends on things most git invocations do not:
+///
+/// - `LC_ALL=C`: the sync loop *classifies* git's stderr — a non-fast-forward
+///   rejection is the compare-and-swap saying retry, not an error — and git
+///   localises its messages. On a Japanese locale the marker text would never
+///   match, and every contended push would surface as a failure instead of a
+///   retry.
+/// - `GIT_DIR` and its companions are dropped: they redirect git away from the
+///   repository `current_dir` names, and a shell that exported them (a hook,
+///   a script) would have this module fetching and pushing someone else's
+///   refs. The repository is an argument here, never ambient state.
 fn git(dir: &Path, args: &[&str]) -> Result<String, H5iError> {
     let out = Command::new("git")
+        .env("LC_ALL", "C")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_NAMESPACE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
         .arg("-c")
         .arg("core.hooksPath=/dev/null")
         .arg("-c")
