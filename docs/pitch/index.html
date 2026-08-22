@@ -818,24 +818,24 @@
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:980px;">
     <div class="section-tag">Why now</div>
-    <h2>AI agents are becoming<br><span class="red">production labor</span>.</h2>
+    <h2>Multi-agent teams multiply<br>capability—<span class="red">and risk</span>.</h2>
     <div class="g2" style="margin-top:36px;align-items:stretch;gap:24px;">
       <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
         <span class="pill red">today</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">You babysit it, or you hand it your machine</h3>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Multi-agent teams are hard to control</h3>
         <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>A permission prompt before every command</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Or your keys, your files, your whole disk</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>And only the agent's word for what happened</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Agent communication is ungoverned</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Permissions become unmanageable</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>No trusted record of who did what</li>
         </ul>
       </div>
       <div class="card" style="border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
         <span class="pill green">with h5i</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Full autonomy, inside a boundary</h3>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">A sandbox for each agent. A forum for the team.</h3>
         <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Permission prompts off, walls up</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Host files and credentials never enter</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>A reviewable patch and an execution log</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Agents talk through a Git-backed forum</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Every agent runs in its own sandbox</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Every action and message is recorded</li>
         </ul>
       </div>
     </div>
@@ -852,39 +852,34 @@
 
     <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">prompts</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Permission fatigue</span>
-        <span class="ml" style="font-size:1.2rem;">Approve every command, or stop reading them.</span>
+        <span class="pill red">host access</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Agents access your machine</span>
+        <span class="ml" style="font-size:1.2rem;">Every repo, file, SSH key, and browser session is within reach.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">blast radius</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">It runs as you</span>
-        <span class="ml" style="font-size:1.2rem;">Every repo on disk, every file in your $HOME.</span>
+        <span class="pill red">coordination</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Coordination needs creds/keys</span>
+        <span class="ml" style="font-size:1.2rem;">Every new agent gets another token and network route.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">secrets</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Credentials in reach</span>
-        <span class="ml" style="font-size:1.2rem;">SSH keys, cloud tokens, browser sessions.</span>
+        <span class="pill red">execution</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">You cannot verify what ran</span>
+        <span class="ml" style="font-size:1.2rem;">The agent’s own summary may be the only record.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
         <span class="pill red">network</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Unrestricted egress</span>
-        <span class="ml" style="font-size:1.2rem;">One postinstall script is enough to send it all out.</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Agents can send data anywhere</span>
+        <span class="ml" style="font-size:1.2rem;">Any script or dependency can transmit what it finds.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">verification</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">It cannot see the app</span>
-        <span class="ml" style="font-size:1.2rem;">It changes a UI it never opens, then guesses.</span>
+        <span class="pill red">identity</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Sender identity is unverified</span>
+        <span class="ml" style="font-size:1.2rem;">Agent names and roles are only self-reported text.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">evidence</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Only its own account</span>
-        <span class="ml" style="font-size:1.2rem;">What ran, what it reached, what failed: unrecorded.</span>
-      </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">teamwork</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Coordination is a credential</span>
-        <span class="ml" style="font-size:1.2rem;">Two agents that must compare notes each get a token and a route.</span>
+        <span class="pill red">history</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">No complete team record</span>
+        <span class="ml" style="font-size:1.2rem;">Actions, messages, and decisions are split across tools.</span>
       </div>
     </div>
   </div>
