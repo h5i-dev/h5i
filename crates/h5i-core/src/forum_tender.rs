@@ -315,7 +315,19 @@ fn drain_spool(
     let spool = env::env_capture_spool_dir(h5i_root, m);
     let mut report = TendReport::default();
     for path in staged_records(&spool)? {
-        match std::fs::read_to_string(&path) {
+        // Claim the record before reading it. Two drainers run against one
+        // spool as a matter of course — the session tender ticks every second
+        // while a box is live, and any host `h5i forum` command tends on its
+        // way past — and without a claim both enumerate the same file, both
+        // post it, and because `gen_id` carries a nonce the two copies have
+        // different ids that no dedup will ever fold. An atomic rename has
+        // exactly one winner: the loser's rename fails because the source is
+        // already gone, and it moves on. The record is processed from the
+        // claimed name and removed after, so a record is posted at most once.
+        let Some(claimed) = claim_record(&path) else {
+            continue;
+        };
+        match std::fs::read_to_string(&claimed) {
             Ok(raw) => match serde_json::from_str::<forum::ForumPostSpool>(&raw) {
                 Ok(staged) => {
                     match post_staged(repo, h5i_root, m, entry, staged) {
@@ -339,9 +351,29 @@ fn drain_spool(
         }
         // Remove either way. The spool is a staging area, not a queue with
         // redelivery: a record that has been considered is done.
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&claimed);
     }
     Ok(report)
+}
+
+/// Atomically take ownership of a staged record by renaming it out of the
+/// enumerable namespace, so a concurrent drainer cannot also process it.
+///
+/// Returns the claimed path on success, or `None` when another drainer got
+/// there first (the rename fails because the source is already gone). The
+/// claim name uses a prefix [`staged_records`] does not match, so it is never
+/// re-enumerated — and if this process dies mid-drain the claimed file is
+/// inert rather than a record that will double-post on the next pass.
+fn claim_record(path: &Path) -> Option<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let name = format!(
+        ".forum-claim-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let claimed = path.with_file_name(name);
+    std::fs::rename(path, &claimed).ok().map(|()| claimed)
 }
 
 /// Post one staged record, returning whether it was refused.
@@ -872,6 +904,40 @@ mod tests {
         std::os::unix::fs::symlink(&outside, spool.join("forum-link.json")).unwrap();
         #[cfg(unix)]
         assert!(staged_records(spool).unwrap().is_empty());
+    }
+
+    /// Two drainers race over one spool. `claim_record` gives each record
+    /// exactly one winner, so a record is never claimed twice — which is what
+    /// stops the double-post the session tender and a host command would
+    /// otherwise cause on one live box.
+    #[test]
+    fn a_record_is_claimed_by_exactly_one_of_two_racing_drainers() {
+        let dir = tempfile::tempdir().unwrap();
+        let spool = dir.path().to_path_buf();
+        for i in 0..200 {
+            std::fs::write(spool.join(format!("forum-{i}.json")), "{}").unwrap();
+        }
+        let claim_all = || {
+            let spool = spool.clone();
+            std::thread::spawn(move || {
+                let mut mine = 0usize;
+                for p in staged_records(&spool).unwrap() {
+                    if claim_record(&p).is_some() {
+                        mine += 1;
+                    }
+                }
+                mine
+            })
+        };
+        let a = claim_all();
+        let b = claim_all();
+        let (na, nb) = (a.join().unwrap(), b.join().unwrap());
+        // Every record went to exactly one drainer: no record was claimed
+        // twice (na + nb would exceed 200) and none was lost (it would fall
+        // short). The two may split the work any way at all.
+        assert_eq!(na + nb, 200, "each record claimed exactly once (a={na}, b={nb})");
+        // And no enumerable record remains — they were all renamed to claims.
+        assert!(staged_records(&spool).unwrap().is_empty());
     }
 
     #[test]
