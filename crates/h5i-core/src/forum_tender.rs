@@ -71,6 +71,12 @@ fn inbox_thread_file(thread_id: &str) -> String {
     format!("thread-{thread_id}.json")
 }
 
+/// Filename of an attachment payload as delivered into a box's inbox. Callers
+/// validate the digest (64 hex) first, so the name cannot be a path.
+fn inbox_attach_file(digest: &str) -> String {
+    format!("attach-{digest}")
+}
+
 /// What one pass of the tender did, for logging and for tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TendReport {
@@ -347,22 +353,33 @@ fn post_staged(
     )?
     .from_host(&forum::host_origin(h5i_root)?);
 
-    let refused = if entry.is_active() {
-        false
-    } else {
+    let mut refusals: Vec<String> = Vec::new();
+    if !entry.is_active() {
         // Revoked, and still posting. Record it rather than dropping it: a
         // forum that silently swallows what it refuses teaches its readers that
         // nothing was refused.
-        let note = format!(
+        refusals.push(format!(
             "sender revoked at {}",
             entry.revoked_at.as_deref().unwrap_or("(unknown time)")
-        );
+        ));
+    }
+    // A closed thread has left every box's inbox, so a box cannot *see* it —
+    // but the spool is a directory, and an agent that remembers a thread id
+    // can stage into it directly. Accepting that post unmarked would grow a
+    // conversation in the one place the human's default view no longer looks.
+    // Closing is a governance decision, so a post that arrives after it lands
+    // the way a revoked sender's does: recorded, carrying the refusal.
+    if forum::read_thread(repo, &thread).map(|t| t.is_closed()).unwrap_or(false) {
+        refusals.push("thread was closed when this arrived".into());
+    }
+    let refused = !refusals.is_empty();
+    if refused {
+        let note = refusals.join("; ");
         new.denied = Some(match new.denied.take() {
             Some(prior) => format!("{note}; {prior}"),
             None => note,
         });
-        true
-    };
+    }
 
     forum::append_post(repo, &author, &thread, new)?;
     Ok(refused)
@@ -442,6 +459,34 @@ fn deliver_inbox(
                 peers.insert(peer);
             }
         }
+        // Attachment payloads ride along as content-addressed files, because
+        // the thread JSON carries only their metadata and a reviewer asked to
+        // review a patch has to be able to read the patch. Immutable by name —
+        // the digest is the content — so an existing file is never rewritten,
+        // and a payload the local clone cannot produce (missing blob, or bytes
+        // that do not hash to their name) is simply not delivered: the box
+        // sees the metadata and the absence, not forged bytes.
+        for p in &thread.posts {
+            for a in &p.attachments {
+                // A peer's post line can carry anything in the digest field,
+                // and this one becomes a filename.
+                if forum::validate_digest(&a.digest).is_err() {
+                    continue;
+                }
+                let name = inbox_attach_file(&a.digest);
+                if !wanted.insert(name.clone()) {
+                    continue;
+                }
+                let path = inbox.join(&name);
+                if path.exists() {
+                    continue;
+                }
+                if let Ok(bytes) = forum::read_attachment(repo, &summary.header.id, &a.digest) {
+                    atomic_write(&path, &bytes)?;
+                    written += 1;
+                }
+            }
+        }
         let view = InboxThread::of(&thread);
         let bytes = serde_json::to_vec_pretty(&view)?;
         let name = inbox_thread_file(&summary.header.id);
@@ -458,13 +503,16 @@ fn deliver_inbox(
     }
 
     // Remove the inbox files of threads that are gone (closed, or this box was
-    // never meant to see them). The box cannot delete these itself — the mount
-    // is read-only — so the host has to.
+    // never meant to see them), and of attachments no visible thread carries.
+    // The box cannot delete these itself — the mount is read-only — so the
+    // host has to.
     if let Ok(dir) = std::fs::read_dir(&inbox) {
         for entry in dir.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            if name.starts_with("thread-") && name.ends_with(".json") && !wanted.contains(name) {
+            let delivered = (name.starts_with("thread-") && name.ends_with(".json"))
+                || name.starts_with("attach-");
+            if delivered && !wanted.contains(name) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
@@ -484,15 +532,20 @@ fn deliver_inbox(
 /// recorded as a peer, labelled by where it actually came from. A post with no
 /// origin at all predates origins and can only be local, so the plain name
 /// comparison is all it has.
+/// The returned label is written into the influence record and later joined
+/// into `box status` and the export report, and a peer post's sender is
+/// unvalidated peer bytes — so the label is sanitised here, at the one place
+/// it is minted, rather than at every surface that prints it.
 fn peer_of(p: &forum::Post, me: &str, my_origin: Option<&str>) -> Option<String> {
+    let clean = crate::redact::sanitize_display;
     if p.sender == me {
         match p.origin.as_deref() {
             None => None,
             Some(o) if Some(o) == my_origin => None,
-            Some(o) => Some(format!("{}@{}", p.sender, o)),
+            Some(o) => Some(format!("{}@{}", clean(&p.sender), clean(o))),
         }
     } else {
-        Some(p.sender.clone())
+        Some(clean(&p.sender))
     }
 }
 
@@ -571,7 +624,9 @@ pub fn clear_inbox(h5i_root: &Path, m: &EnvManifest) {
         for entry in dir.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            if name.starts_with("thread-") && name.ends_with(".json") {
+            let delivered = (name.starts_with("thread-") && name.ends_with(".json"))
+                || name.starts_with("attach-");
+            if delivered {
                 let _ = std::fs::remove_file(entry.path());
             }
         }

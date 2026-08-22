@@ -300,8 +300,16 @@ fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iErro
     match out {
         Ok(_) => {}
         // A remote with no forum yet has no matching refs, which git reports as
-        // an error on some versions. That is an empty forum, not a failure.
-        Err(e) if is_empty_remote(&e) => return Ok(0),
+        // an error on some versions. That is an empty forum, not a failure —
+        // but it also means `--prune` never ran, and the staging namespace may
+        // still mirror a *previous* remote. Left in place, those tips would
+        // tell `pending_push` the new remote already holds everything the old
+        // one did, and the push that should seed it would be skipped forever.
+        // An empty remote stages nothing, so make the staging say so.
+        Err(e) if is_empty_remote(&e) => {
+            clear_staging(repo);
+            return Ok(0);
+        }
         Err(e) => return Err(e),
     }
 
@@ -351,6 +359,23 @@ fn pull(repo: &Repository, dir: &Path, remote: &Remote) -> Result<usize, H5iErro
         }
     }
     Ok(moved)
+}
+
+/// Drop every staged incoming ref, so the staging namespace reflects a remote
+/// that has nothing rather than whichever remote was fetched last.
+fn clear_staging(repo: &Repository) {
+    let Ok(refs) = repo.references_glob(&format!("{INCOMING}/live/*")) else {
+        return;
+    };
+    let names: Vec<String> = refs
+        .filter_map(|r| r.ok())
+        .filter_map(|r| r.name().map(str::to_string))
+        .collect();
+    for name in names {
+        if let Ok(mut r) = repo.find_reference(&name) {
+            let _ = r.delete();
+        }
+    }
 }
 
 /// Map every staged incoming ref to the local ref it belongs to.
@@ -648,6 +673,49 @@ mod tests {
             );
             assert!(r.get("carol").is_some(), "{name} lost the other addition");
         }
+    }
+
+    /// An identity claimed on one clone is refused on another once the roster
+    /// has travelled: the same guard that stops a local takeover stops the
+    /// cross-machine name collision the sender-keyed design used to fold
+    /// silently into one participant.
+    #[test]
+    fn a_name_taken_on_one_clone_cannot_be_attached_on_another() {
+        let root = tempfile::tempdir().unwrap();
+        let hub = root.path().join("hub.git");
+        std::fs::create_dir_all(&hub).unwrap();
+        git(&hub, &["init", "--bare", "--quiet"]).unwrap();
+        let remote = Remote {
+            url: hub.display().to_string(),
+            is_default: false,
+            namespace: NS_CUSTOM.to_string(),
+        };
+        let a_dir = root.path().join("a");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        let a = work_repo(&a_dir);
+        let b_dir = root.path().join("b");
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let b = work_repo(&b_dir);
+
+        let entry = |box_id: &str| forum::RosterEntry {
+            agent: "claude-worker".into(),
+            box_id: Some(box_id.into()),
+            role: Role::Worker,
+            policy_digest: None,
+            attached_at: forum::now_ts(),
+            revoked_at: None,
+        };
+        forum::put_roster_entry(&a, &human(), entry("env/a/one")).unwrap();
+        sync_with(&a, &remote).unwrap();
+        sync_with(&b, &remote).unwrap();
+
+        let err = forum::put_roster_entry(&b, &human(), entry("env/b/two")).unwrap_err();
+        assert!(err.to_string().contains("already the identity"), "{err}");
+        assert_eq!(
+            forum::read_roster(&b).get("claude-worker").unwrap().box_id.as_deref(),
+            Some("env/a/one"),
+            "the travelled entry must keep its box"
+        );
     }
 
     /// After the forum converges, syncing moves nothing and mints nothing.

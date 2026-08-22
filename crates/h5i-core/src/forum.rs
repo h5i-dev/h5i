@@ -1107,6 +1107,14 @@ fn summarize(t: &Thread) -> ThreadSummary {
 }
 
 /// Read an attachment's payload out of a thread.
+///
+/// The bytes are checked against the digest they are filed under before they
+/// are returned. Locally the two cannot disagree — the writer hashes what it
+/// stores — but a thread tree can have arrived from a peer, and a peer is free
+/// to file whatever bytes it likes under whatever name it likes. The digest is
+/// the one thing a reader quotes ("the patch is `ab12…`"), so bytes that do
+/// not match it are a forgery of exactly that quote, and are refused rather
+/// than returned under it.
 pub fn read_attachment(
     repo: &Repository,
     thread_id: &str,
@@ -1123,7 +1131,14 @@ pub fn read_attachment(
         .get_name(&attachment_path(digest))
         .ok_or_else(|| H5iError::RecordNotFound(format!("no attachment {digest} in thread")))?;
     let blob = repo.find_blob(entry.id())?;
-    Ok(blob.content().to_vec())
+    let bytes = blob.content().to_vec();
+    if refstore::sha256_hex(&bytes) != digest {
+        return Err(H5iError::Metadata(format!(
+            "attachment {digest} does not match its content address — \
+             the bytes were filed under a digest they do not hash to"
+        )));
+    }
+    Ok(bytes)
 }
 
 /// The forum roster.
@@ -1874,7 +1889,10 @@ fn attachment_path(digest: &str) -> String {
     format!("{ATTACH_PREFIX}{digest}")
 }
 
-fn validate_digest(digest: &str) -> Result<(), H5iError> {
+/// Validate an attachment digest: 64 lowercase hex. Digests become tree entry
+/// names and inbox filenames, and a peer's post line can carry any string in
+/// the field — so anything else is refused before it is ever joined to a path.
+pub fn validate_digest(digest: &str) -> Result<(), H5iError> {
     if digest.len() == 64
         && digest
             .chars()
@@ -2740,6 +2758,36 @@ mod tests {
             create_thread(&repo, &human(), &format!("debug {token}"), None, None, None).unwrap();
         assert!(!header.title.contains(&token));
         assert!(!read_thread(&repo, &header.id).unwrap().header.title.contains(&token));
+    }
+
+    /// A peer can file any bytes under any `attach-<digest>` name; the digest
+    /// is the thing a reader quotes, so mismatched bytes are refused rather
+    /// than returned under it.
+    #[test]
+    fn attachment_bytes_that_do_not_match_their_digest_are_refused() {
+        let (_d, repo) = temp_repo();
+        let h = create_thread(&repo, &human(), "t", None, None, None).unwrap();
+
+        // What a hostile clone would push: the tree entry's name claims a
+        // digest the bytes do not hash to.
+        let claimed = refstore::sha256_hex(b"what the reader was promised");
+        let tip = thread_tip(&repo, &h.id).unwrap();
+        let parent = repo.find_commit(tip).unwrap();
+        let mut builder = repo.treebuilder(parent.tree().ok().as_ref()).unwrap();
+        let forged = repo.blob(b"something else entirely").unwrap();
+        builder
+            .insert(attachment_path(&claimed), forged, 0o100644)
+            .unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let sig = refstore::signature(&repo).unwrap();
+        let new = repo.commit(None, &sig, &sig, "forged", &tree, &[&parent]).unwrap();
+        repo.reference(&thread_ref(&h.id), new, true, "forged").unwrap();
+
+        let err = read_attachment(&repo, &h.id, &claimed).unwrap_err();
+        assert!(
+            err.to_string().contains("content address"),
+            "mismatched bytes must be refused, got: {err}"
+        );
     }
 
     #[test]

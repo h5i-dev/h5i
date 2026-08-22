@@ -166,6 +166,20 @@ pub enum ForumCommands {
         kind: String,
     },
 
+    /// Save the attachments of a numbered post from the last `read`.
+    ///
+    /// A submitted patch is stored content-addressed on the thread; this is
+    /// how a reader gets it back out. Files land in the current directory
+    /// under the attachment's (sanitised) name, and nothing is overwritten:
+    /// name a destination with --out to choose.
+    Fetch {
+        /// Number shown by `h5i forum read`.
+        n: usize,
+        /// Write the post's single attachment to this path instead.
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+    },
+
     /// Agree with a numbered post from the last `read`.
     ///
     /// A vote is a post, so it merges and travels like everything else here —
@@ -473,6 +487,7 @@ pub fn run(action: ForumCommands) -> anyhow::Result<()> {
                 Vec::new(),
             )
         }
+        ForumCommands::Fetch { n, out } => fetch_attachments(&side, n, out),
         ForumCommands::Up { n } => {
             let (thread, target) = resolve_reply(&side, n)?;
             submit_post(&side, &thread, forum::KIND_UPVOTE, "+1", Some(target), Vec::new())
@@ -1175,6 +1190,117 @@ fn submit_post(
             );
             Ok(())
         }
+    }
+}
+
+/// Save a post's attachments to disk, on either side of the boundary.
+///
+/// The host reads payloads from the thread's tree; a box reads them from the
+/// content-addressed `attach-<digest>` files the tender delivered next to its
+/// inbox threads. Both paths verify the bytes against the digest, and neither
+/// trusts the attachment's display name as a path: it is reduced to a safe
+/// basename, and an existing file is never overwritten without `--out`.
+fn fetch_attachments(side: &Side, n: usize, out: Option<PathBuf>) -> anyhow::Result<()> {
+    let (thread, post_id) = resolve_reply(side, n)?;
+
+    // The post's attachment list, and a way to load each payload.
+    type Loader<'a> = Box<dyn Fn(&str) -> anyhow::Result<Vec<u8>> + 'a>;
+    let load: Loader<'_>;
+    let attachments: Vec<forum::Attachment> = match side {
+        Side::Host { repo, .. } => {
+            let t = forum::read_thread(repo, &thread)?;
+            let post = t
+                .posts
+                .iter()
+                .find(|p| p.id == post_id)
+                .ok_or_else(|| anyhow::anyhow!("post {n} is gone from the thread"))?;
+            let id = thread.clone();
+            load = Box::new(move |digest| Ok(forum::read_attachment(repo, &id, digest)?));
+            post.attachments.clone()
+        }
+        Side::Boxed { inbox, .. } => {
+            let threads = forum_tender::read_inbox(inbox);
+            let t = threads
+                .iter()
+                .find(|t| t.header.id == thread)
+                .ok_or_else(|| anyhow::anyhow!("that thread is no longer in this box's inbox"))?;
+            let post = t
+                .posts
+                .iter()
+                .find(|p| p.id == post_id)
+                .ok_or_else(|| anyhow::anyhow!("post {n} is gone from the thread"))?;
+            let inbox = inbox.clone();
+            load = Box::new(move |digest| {
+                // The digest names a file, so it is validated before it is
+                // joined to a path — a peer's post line controls the field.
+                forum::validate_digest(digest)?;
+                let path = inbox.join(format!("attach-{digest}"));
+                let bytes = std::fs::read(&path).map_err(|_| {
+                    anyhow::anyhow!(
+                        "attachment {digest} was not delivered to this box — \
+                         the host's clone had no bytes matching it"
+                    )
+                })?;
+                if h5i_core::refstore::sha256_hex(&bytes) != digest {
+                    anyhow::bail!("attachment {digest} on disk does not match its digest");
+                }
+                Ok(bytes)
+            });
+            post.attachments.clone()
+        }
+    };
+
+    if attachments.is_empty() {
+        anyhow::bail!("post {n} carries no attachments");
+    }
+    if let Some(out) = out {
+        if attachments.len() != 1 {
+            anyhow::bail!(
+                "post {n} carries {} attachments — fetch without --out to save them all",
+                attachments.len()
+            );
+        }
+        let bytes = load(&attachments[0].digest)?;
+        std::fs::write(&out, &bytes)?;
+        h5i_core::ui::UI::success(&format!("wrote {} ({} bytes)", out.display(), bytes.len()));
+        return Ok(());
+    }
+    for a in &attachments {
+        let bytes = load(&a.digest)?;
+        let name = safe_attachment_file_name(a.name.as_deref(), &a.digest);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&name)
+            .map_err(|e| {
+                anyhow::anyhow!("refusing to write {name}: {e} — name a destination with --out")
+            })?;
+        std::io::Write::write_all(&mut file, &bytes)?;
+        h5i_core::ui::UI::success(&format!("wrote {name} ({} bytes, {})", bytes.len(), a.kind));
+    }
+    Ok(())
+}
+
+/// A filename for an attachment that cannot leave the current directory.
+///
+/// The display name is a peer-written string; only its final path component
+/// survives, reduced to a conservative charset, and anything empty or
+/// dot-shaped falls back to the content address.
+fn safe_attachment_file_name(name: Option<&str>, digest: &str) -> String {
+    let base = name
+        .unwrap_or("")
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("");
+    let cleaned: String = base
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        .take(64)
+        .collect();
+    if cleaned.is_empty() || cleaned.chars().all(|c| c == '.') {
+        format!("attach-{}", digest.chars().take(12).collect::<String>())
+    } else {
+        cleaned
     }
 }
 

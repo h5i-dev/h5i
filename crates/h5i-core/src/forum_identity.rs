@@ -169,9 +169,14 @@ pub fn put_enrollment(
     author.require_govern("enroll this host")?;
     forum::validate_name(&enrollment.origin)?;
     validate_principal(&enrollment.principal)?;
-    if enrollment.ssh_pubkey.trim().is_empty() || enrollment.signature.trim().is_empty() {
+    if enrollment.signature.trim().is_empty() {
         return Err(H5iError::Metadata(
-            "an enrollment must carry its public key and its signature".into(),
+            "an enrollment must carry its signature".into(),
+        ));
+    }
+    if key_blob(&enrollment.ssh_pubkey).is_none() {
+        return Err(H5iError::Metadata(
+            "an enrollment must pin an SSH public key (`<type> <base64>`)".into(),
         ));
     }
     let message = format!("h5i forum: enroll {}", enrollment.origin);
@@ -387,9 +392,18 @@ pub fn verify_enrollment(e: &Enrollment) -> Result<(), H5iError> {
 
     let dir = tempfile::tempdir()
         .map_err(|e| H5iError::Metadata(format!("cannot create a verify workspace: {e}")))?;
-    // An allowed_signers line is `<identity> <keytype> <blob>`; the principal
-    // has no whitespace (validated above), so it is safe as the identity.
-    let allowed = format!("{} {}\n", e.principal, e.ssh_pubkey.trim());
+    // An allowed_signers line is `<identity> <keytype> <blob>`. The principal
+    // has no whitespace (validated above), and the pinned key is re-parsed
+    // down to its type and blob rather than written as the bytes a peer's
+    // record happens to carry — this file has a line-oriented grammar, and a
+    // key field with a newline in it would otherwise get to write lines of it.
+    let pinned = key_blob(&e.ssh_pubkey).ok_or_else(|| {
+        H5iError::Metadata(format!(
+            "enrollment for {} pins something that is not an SSH public key",
+            crate::redact::sanitize_display(&e.origin)
+        ))
+    })?;
+    let allowed = format!("{} {pinned}\n", e.principal);
     let allowed_path = dir.path().join("allowed_signers");
     std::fs::write(&allowed_path, allowed).map_err(|err| H5iError::with_path(err, &allowed_path))?;
     let sig_path = dir.path().join("enrollment.sig");
@@ -511,7 +525,11 @@ pub fn github_published_keys(login: &str) -> Result<Vec<String>, H5iError> {
             crate::redact::sanitize_display(login)
         )));
     }
-    let raw = gh(&["api", &format!("users/{login}/keys")])?;
+    // The API pages at 30 by default, and an account with more keys than that
+    // would read as "key not published" purely because the match fell on a
+    // later page. One page of 100 is the cheap fix; an account with more SSH
+    // keys than that is not a case worth a pagination loop here.
+    let raw = gh(&["api", &format!("users/{login}/keys?per_page=100")])?;
     let v: serde_json::Value = serde_json::from_str(&raw)
         .map_err(|e| H5iError::Metadata(format!("gh returned malformed JSON: {e}")))?;
     Ok(v.as_array()

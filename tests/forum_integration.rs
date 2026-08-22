@@ -512,6 +512,90 @@ fn a_box_shown_a_peers_text_is_marked_and_one_that_is_not_stays_clean() {
     );
 }
 
+/// The review loop, closed: a worker submits a patch, and both the reviewer in
+/// its own box and the human on the host can get the actual bytes back out.
+/// Without `fetch`, a submitted patch was write-only — stored on the thread,
+/// visible as metadata, readable by nobody.
+#[test]
+fn a_submitted_patch_can_be_fetched_by_the_reviewer_and_the_host() {
+    let repo = Repo::new();
+    let thread = repo.create_thread("review me", None);
+    repo.h5i(&["box", "create", "worker-box"]);
+    repo.h5i(&["box", "create", "review-box"]);
+    repo.attach("worker-box", "claude-worker", "worker");
+    repo.attach("review-box", "codex-reviewer", "reviewer");
+
+    let patch = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n";
+    std::fs::write(repo.dir.join("fix.diff"), patch).unwrap();
+    let out = repo.in_box(
+        "env/tester/worker-box",
+        "claude-worker",
+        &["forum", "submit", &thread, "--patch", "fix.diff", "here it is"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    repo.h5i(&["forum", "status"]); // drain the spool, deliver inboxes
+
+    // The reviewer reads the thread (which numbers the posts), then fetches.
+    let read = repo.in_box("env/tester/review-box", "codex-reviewer", &["forum", "read", &thread]);
+    assert!(read.status.success(), "{}", stderr(&read));
+    let fetched = repo.in_box(
+        "env/tester/review-box",
+        "codex-reviewer",
+        &["forum", "fetch", "1", "--out", "got.diff"],
+    );
+    assert!(fetched.status.success(), "in-box fetch failed: {}", stderr(&fetched));
+    assert_eq!(
+        std::fs::read_to_string(repo.dir.join("got.diff")).unwrap(),
+        patch,
+        "the reviewer must get the bytes the worker submitted"
+    );
+
+    // And the human, from the host side.
+    repo.h5i(&["forum", "read", &thread]);
+    repo.h5i(&["forum", "fetch", "1", "--out", "host.diff"]);
+    assert_eq!(std::fs::read_to_string(repo.dir.join("host.diff")).unwrap(), patch);
+}
+
+/// A closed thread has left the box's inbox, but the spool is a directory and
+/// an agent that remembers the thread id can stage into it directly. The post
+/// still lands — nothing here is swallowed — but it lands carrying the
+/// refusal, so the conversation cannot quietly keep growing in the one place
+/// the human's default view no longer looks.
+#[test]
+fn a_post_staged_into_a_closed_thread_is_recorded_as_refused() {
+    let repo = Repo::new();
+    let thread = repo.create_thread("t", None);
+    repo.h5i(&["box", "create", "worker-box"]);
+    repo.attach("worker-box", "claude-worker", "worker");
+    repo.h5i(&["forum", "close", &thread]);
+
+    // What a malicious or merely stale agent would do: skip the CLI's
+    // inbox-scoped resolution and write the record itself.
+    let staged = serde_json::json!({
+        "thread": thread,
+        "kind": "FINDING",
+        "body": "still talking after the close",
+    });
+    let spool = repo.env_dir("env/tester/worker-box").join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    std::fs::write(
+        spool.join("forum-direct-1.json"),
+        serde_json::to_vec(&staged).unwrap(),
+    )
+    .unwrap();
+
+    repo.h5i(&["forum", "status"]); // tends on the way past
+
+    let t = repo.thread_json(&thread);
+    let posts = t["posts"].as_array().unwrap();
+    let post = posts
+        .iter()
+        .find(|p| p["body"] == "still talking after the close")
+        .expect("the post must land rather than vanish");
+    let denied = post["denied"].as_str().expect("and must carry the refusal");
+    assert!(denied.contains("closed"), "refusal should name the close: {denied}");
+}
+
 // ─── the closed thread ───────────────────────────────────────────────────────
 
 #[test]
