@@ -67,6 +67,14 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
 
+      # The console's unit tests, over the untrusted-text renderer that keeps an
+      # agent's forum words as data. Run after the build so its deps are already
+      # installed by the `npm ci` above, and before cargo so a renderer
+      # regression reads as a frontend failure rather than a downstream one.
+      - name: Test the console
+        working-directory: web
+        run: npm test
+
       # `--locked` throughout: Cargo.lock is committed and the release build
       # uses it, so a manifest change that never updated the lockfile has to
       # fail on a PR rather than surface at tag time.

@@ -346,6 +346,13 @@ h5i forum attach codex-box  --as codex-reviewer --role reviewer`}
           const shown = thread.posts.filter(
             (p) => p.kind !== "UPVOTE" && p.kind !== "DOWNVOTE",
           );
+          // Number the posts the way `h5i forum read` does — vote posts
+          // excluded, in thread order, one-based — so a `#12` an agent wrote
+          // with `reply 12` in mind points at the post it meant. Appends never
+          // renumber what came before, so a reference stays valid as the thread
+          // grows under a reader who is watching it.
+          const num = new Map(shown.map((p, i) => [p.id, i + 1]));
+          const posts = shown.length;
           // The opening post is the thread's body, not its first comment, so it
           // sits above the rule and the replies sit below it — the shape every
           // discussion surface has, and the one a reader already knows.
@@ -359,6 +366,8 @@ h5i forum attach codex-box  --as codex-reviewer --role reviewer`}
                     p={opening}
                     me={thread.origin}
                     score={thread.scores[opening.id] ?? 0}
+                    num={num.get(opening.id)}
+                    posts={posts}
                   />
                 </div>
               )}
@@ -373,6 +382,8 @@ h5i forum attach codex-box  --as codex-reviewer --role reviewer`}
                   p={p}
                   me={thread.origin}
                   score={thread.scores[p.id] ?? 0}
+                  num={num.get(p.id)}
+                  posts={posts}
                 />
               ))}
             </>
@@ -395,20 +406,32 @@ function PostRow({
   p,
   me,
   score,
+  num,
+  posts,
 }: {
   p: ForumPost;
   me: string;
   score: number;
+  /** This post's number in the thread, matching `h5i forum read`. */
+  num?: number;
+  /** How many numbered posts the thread has, so bodies can chip `#n`. */
+  posts: number;
 }) {
   const observed = !!p.origin && p.origin === me;
   return (
-    <div className={`brd-post${observed ? "" : " is-peer"}`}>
+    <div
+      className={`brd-post${observed ? "" : " is-peer"}`}
+      id={num ? `brd-post-${num}` : undefined}
+    >
       {/* Outside the fence: what *some* host stamped. For a post this host
           wrote, none of it came from the box's payload — the wire format has no
           field for any of it, so it is knowledge rather than claim. For a post
           fetched from a peer, this host observed none of it, and the lane below
           says so rather than letting the line keep looking like a fact. */}
       <div className="brd-post-meta">
+        {/* The post's number, which is what a `#n` chip elsewhere points at —
+            shown so the target of a reference is something a reader can find. */}
+        {num && <span className="brd-postnum">#{num}</span>}
         <Avatar name={p.sender} />
         <b>{p.sender}</b>
         <span className="brd-dim">{p.role}</span>
@@ -446,7 +469,7 @@ function PostRow({
           `markdown.tsx`. Formatting the text must not be the thing that lets it
           stop being text. */}
       <div className="brd-fence">
-        <Markdown text={p.body} />
+        <Markdown text={p.body} posts={posts} />
       </div>
 
       {(p.attachments ?? []).map((a) => (
@@ -606,6 +629,10 @@ function kindClass(kind: string): string {
     case "DONE":
     case "ACK":
       return "good";
+    // Cyan, the same tone a `[!FINDING]` callout wears in the body, so the kind
+    // badge and an inline finding never disagree about what the colour means.
+    case "FINDING":
+      return "finding";
     case "TASK":
       return "task";
     default:
