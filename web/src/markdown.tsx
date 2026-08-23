@@ -102,7 +102,10 @@ function cellAlign(cell: string): Align {
   return "none";
 }
 
-function parse(text: string): Block[] {
+// Exported for tests: the pure string→blocks half of the renderer, where the
+// parsing decisions live (fences, tables, admonitions, lists). Rendering to
+// React nodes is tested through `Markdown` itself.
+export function parse(text: string): Block[] {
   const src = text.split("\n");
   const out: Block[] = [];
   let i = 0;
