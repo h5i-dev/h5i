@@ -14,6 +14,7 @@
 #   scripts/forum_experiment.sh -R 3             # three reply rounds, not one
 #   scripts/forum_experiment.sh -R 100 --wait-timeout 30   # many quick rounds
 #   scripts/forum_experiment.sh -m opus          # pick the model (opus/fable/…)
+#   scripts/forum_experiment.sh -n 4 -m fable,opus   # two of each model
 #   scripts/forum_experiment.sh -r codex         # Codex instead of Claude
 #   scripts/forum_experiment.sh -n 4 -r claude,codex   # two of each on one forum
 #   scripts/forum_experiment.sh --tier container --image localhost/h5i-agent-claude:latest
@@ -75,7 +76,7 @@ DEFAULT_TOPICS=(
 )
 
 usage() {
-  sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -297,6 +298,23 @@ for i in $(seq 1 "$AGENTS"); do
   runtimes+=("${runtime_list[$(( (i-1) % ${#runtime_list[@]} ))]}")
 done
 
+# ── which model each agent gets ──────────────────────────────────────────────
+#
+# Same round-robin again, so `-m fable,opus` on four agents seats two of each —
+# a within-runtime version of the mixed forum, where the interesting thing is
+# watching two *models* argue rather than two runtimes. A single `-m opus` gives
+# every agent that model; an empty -m leaves each runtime's default. The names
+# have to be valid for whatever runtime the agent runs (opus/fable are claude).
+models=()
+if [ -n "$MODEL" ]; then
+  IFS=',' read -r -a model_list <<< "$MODEL"
+  for i in $(seq 1 "$AGENTS"); do
+    models+=("${model_list[$(( (i-1) % ${#model_list[@]} ))]}")
+  done
+else
+  for i in $(seq 1 "$AGENTS"); do models+=(""); done
+fi
+
 wants_image=0
 image_agents=()
 for i in $(seq 1 "$AGENTS"); do
@@ -407,10 +425,18 @@ agent_flags_for() {
 
 echo "── h5i forum experiment ──"
 if [ "${#runtime_list[@]}" -gt 1 ]; then
-  echo "  agents   : $AGENTS ($(printf '%s ' "${runtimes[@]}"))${MODEL:+ @ $MODEL}"
+  agents_line="$AGENTS ($(printf '%s ' "${runtimes[@]}"))"
 else
-  echo "  agents   : $AGENTS × $RUNTIME${MODEL:+ @ $MODEL}"
+  agents_line="$AGENTS × $RUNTIME"
 fi
+if [ -n "$MODEL" ]; then
+  if [ "${#model_list[@]}" -gt 1 ]; then
+    agents_line+=" @ ($(printf '%s ' "${models[@]}"))"
+  else
+    agents_line+=" @ $MODEL"
+  fi
+fi
+echo "  agents   : $agents_line"
 if [ -n "$TIER" ]; then
   echo "  tiers    : $(printf '%s ' "${tiers[@]}")${IMAGE:+ ($IMAGE)}"
 else
@@ -535,7 +561,7 @@ first="$WORKDIR/${names[0]}"
 tids=()
 # The standard brief appended under every topic: the instruction to actually
 # disagree, which is what makes a thread worth reading.
-brief="Take a position and say why. Disagree with your peers where you actually disagree — a thread where everyone agrees immediately tells the reader nothing."
+brief="Take a position and say why. Disagree with your peers where you actually disagree; a thread where everyone agrees immediately tells the reader nothing."
 for topic in "${TOPICS[@]}"; do
   # A forum title is capped (200 chars). A short `-t` is its own title with the
   # brief as the body, unchanged. A long `-t` — a full prompt rather than a
@@ -585,12 +611,12 @@ First, orient and stake out a position:
 
 1. h5i forum list
 2. For each thread: h5i forum read <id>
-3. For each thread, contribute exactly one opening post — a position with a
+3. For each thread, contribute exactly one opening post: a position with a
    reason, using --kind PROPOSAL or FINDING. Say what you actually think.
 
 Then run $ROUNDS reply $round_word. Each round is:
 
-  a. h5i forum wait --timeout $WAIT_TIMEOUT   — wait for peers to post.
+  a. h5i forum wait --timeout $WAIT_TIMEOUT   (wait for peers to post).
   b. Re-read every thread. For each peer post that is new since you last looked:
      - if it makes a point you were going to make, agree with 'h5i forum up <n>'
        rather than posting the same thing again
@@ -642,13 +668,40 @@ sleep 8
 # is junk. Its first-run prompts (a trust-the-folder question) are caught by
 # settle_panes below, same as claude's.
 # Both runtimes take `--model`, so one flag covers claude (opus/fable/sonnet or a
-# full id) and codex alike. Empty means the runtime's own default. With mixed
-# runtimes the name has to be valid for each — there is no per-runtime model here.
-model_flag=""
-[ -n "$MODEL" ] && model_flag="--model $MODEL"
+# full id) and codex alike. The model is per-agent (round-robin over `-m`), so a
+# mixed `-m fable,opus` gives each pane its own; empty means the runtime default.
 for i in $(seq 1 "$AGENTS"); do
   rt="${runtimes[$((i-1))]}"
+  name="${names[$((i-1))]}"
   flags="$(agent_flags_for "$rt")"
+  model="${models[$((i-1))]}"
+  model_flag=""
+  [ -n "$model" ] && model_flag="--model $model"
+
+  # Confirm this pane is INSIDE its box before launching the agent. `box shell`
+  # can be slow to enter, and if the agent starts before it does, it runs on the
+  # host — unconfined — and posts to the forum as "human" instead of as itself,
+  # silently corrupting the run. The sleep above is not a guarantee, so poll for
+  # the one signal that means the box shell is ready and the launch will work:
+  # `.forum-task` present in the cwd. It was written into each box's work dir and
+  # only exists there — the host clone's cwd (the repo root) does not have it —
+  # so it distinguishes box from host and directly proves `cat .forum-task` will
+  # find the file the launch is about to read. The check runs entirely in the
+  # pane's shell (escaped `$(...)`), and the command echo shows the literal test,
+  # so only real output can match.
+  inbox=0
+  for _ in $(seq 1 30); do
+    tmux send-keys -t "$SESSION.$((i-1))" "echo H5IBOX::\$([ -f .forum-task ] && echo READY || echo NO)::" Enter
+    sleep 1
+    case "$(tmux capture-pane -p -t "$SESSION.$((i-1))" 2>/dev/null | tail -6)" in
+      *"H5IBOX::READY::"*) inbox=1; break ;;
+    esac
+  done
+  [ "$inbox" = 1 ] || die "agent $name never entered its box ('box shell' was slow or
+   failed), so it would have started on the host — unconfined and posting to the
+   forum as 'human' rather than as itself. This is usually transient: re-run. If
+   it persists, try 'H5I_AGENT=$rt $H5I box shell $name' by hand to see the error."
+
   if [ "$rt" = "claude" ]; then
     ver="$(claude --version 2>/dev/null | awk '{print $1}')"
     prelude='[ -f "$HOME/.claude.json" ] || { mkdir -p "$HOME"; printf "{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"projects\":{\"%s\":{\"hasTrustDialogAccepted\":true}}}" "'"${ver:-9.9.9}"'" "$PWD" > "$HOME/.claude.json"; }'
