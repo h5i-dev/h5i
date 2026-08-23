@@ -12,6 +12,8 @@
 #   scripts/forum_experiment.sh                  # 3 agents, 3 default topics
 #   scripts/forum_experiment.sh -n 4             # four of them
 #   scripts/forum_experiment.sh -R 3             # three reply rounds, not one
+#   scripts/forum_experiment.sh -R 100 --wait-timeout 30   # many quick rounds
+#   scripts/forum_experiment.sh -m opus          # pick the model (opus/fable/…)
 #   scripts/forum_experiment.sh -r codex         # Codex instead of Claude
 #   scripts/forum_experiment.sh -n 4 -r claude,codex   # two of each on one forum
 #   scripts/forum_experiment.sh --tier container --image localhost/h5i-agent-claude:latest
@@ -47,6 +49,7 @@ set -uo pipefail
 
 AGENTS=3
 RUNTIME="claude"
+MODEL=""         # empty → each runtime's default; e.g. opus, fable, sonnet
 WORKDIR="${FORUM_EXPERIMENT_DIR:-$HOME/h5i-forum-experiment}"
 REPO_URL=""
 TIER=""
@@ -55,6 +58,7 @@ ATTACH=0
 CLEAN=0
 WANT_TRANSCRIPT=0
 ROUNDS=1
+WAIT_TIMEOUT=300 # per-round `h5i forum wait --timeout N`, seconds
 WAIT_SECS=""     # empty → derived from ROUNDS below; --wait overrides
 TOPICS=()
 
@@ -71,7 +75,7 @@ DEFAULT_TOPICS=(
 )
 
 usage() {
-  sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -79,7 +83,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -n|--agents)   AGENTS="$2"; shift 2 ;;
     -R|--rounds)   ROUNDS="$2"; shift 2 ;;
+    --wait-timeout) WAIT_TIMEOUT="$2"; shift 2 ;;  # per-round forum-wait seconds
     -r|--runtime)  RUNTIME="$2"; shift 2 ;;
+    -m|--model)    MODEL="$2"; shift 2 ;;   # opus/fable/sonnet or a full model id
     -t|--topic)    TOPICS+=("$2"); shift 2 ;;
     -d|--dir)      WORKDIR="$2"; shift 2 ;;
     --repo)        REPO_URL="$2"; shift 2 ;;
@@ -245,13 +251,19 @@ done
 
 [ "$AGENTS" -ge 2 ] 2>/dev/null || die "-n must be at least 2; a forum with one participant is a notepad"
 [ "$ROUNDS" -ge 1 ] 2>/dev/null || die "--rounds must be at least 1"
+[ "$WAIT_TIMEOUT" -ge 1 ] 2>/dev/null || die "--wait-timeout must be at least 1 (seconds)"
 
 # The live watch should outlast the discussion it is watching, or a multi-round
 # run ends with the script gone and the last rounds only readable by hand. Each
-# round is a `forum wait --timeout 300`, so scale the default with the rounds and
-# leave a margin for the opening posts and the closing summary. `--wait` still
-# wins for anyone who wants a specific window.
-[ -n "$WAIT_SECS" ] || WAIT_SECS=$(( ROUNDS * 300 + 300 ))
+# round is a `forum wait --timeout $WAIT_TIMEOUT`, so scale the default with the
+# rounds and the per-round wait, and leave a margin for the opening posts and the
+# closing summary. `--wait` still wins for anyone who wants a specific window.
+#
+# This is a ceiling, not an estimate: agents converge well before the round count
+# runs out and then either stop or spend each remaining round waiting the full
+# timeout against a quiet forum. A short --wait-timeout is what keeps a large
+# --rounds from turning into hours of empty waits.
+[ -n "$WAIT_SECS" ] || WAIT_SECS=$(( ROUNDS * WAIT_TIMEOUT + 300 ))
 
 # ── which tier each agent gets ───────────────────────────────────────────────
 #
@@ -395,9 +407,9 @@ agent_flags_for() {
 
 echo "── h5i forum experiment ──"
 if [ "${#runtime_list[@]}" -gt 1 ]; then
-  echo "  agents   : $AGENTS ($(printf '%s ' "${runtimes[@]}"))"
+  echo "  agents   : $AGENTS ($(printf '%s ' "${runtimes[@]}"))${MODEL:+ @ $MODEL}"
 else
-  echo "  agents   : $AGENTS × $RUNTIME"
+  echo "  agents   : $AGENTS × $RUNTIME${MODEL:+ @ $MODEL}"
 fi
 if [ -n "$TIER" ]; then
   echo "  tiers    : $(printf '%s ' "${tiers[@]}")${IMAGE:+ ($IMAGE)}"
@@ -405,7 +417,7 @@ else
   echo "  tiers    : auto (the strongest this host can enforce)"
 fi
 echo "  topics   : ${#TOPICS[@]}"
-echo "  rounds   : $ROUNDS reply $([ "$ROUNDS" -eq 1 ] && echo round || echo rounds) (watch ${WAIT_SECS}s)"
+echo "  rounds   : $ROUNDS reply $([ "$ROUNDS" -eq 1 ] && echo round || echo rounds) · ${WAIT_TIMEOUT}s/round wait (watch ${WAIT_SECS}s)"
 echo "  workspace: $WORKDIR"
 echo "  h5i      : $H5I ($("$H5I" --version))"
 echo
@@ -521,10 +533,25 @@ settle_panes() {
 
 first="$WORKDIR/${names[0]}"
 tids=()
+# The standard brief appended under every topic: the instruction to actually
+# disagree, which is what makes a thread worth reading.
+brief="Take a position and say why. Disagree with your peers where you actually disagree — a thread where everyone agrees immediately tells the reader nothing."
 for topic in "${TOPICS[@]}"; do
-  ( cd "$first" && "$H5I" forum create "$topic" --body \
-      "Take a position and say why. Disagree with your peers where you actually disagree — a thread where everyone agrees immediately tells the reader nothing." \
-      >/dev/null )
+  # A forum title is capped (200 chars). A short `-t` is its own title with the
+  # brief as the body, unchanged. A long `-t` — a full prompt rather than a
+  # headline — would blow the cap, so the whole prompt moves into the body where
+  # the agents read it anyway, and the title becomes a truncated lead-in. Cut at
+  # 150 to stay clear of the cap even if it is counted in bytes.
+  if [ "${#topic}" -gt 150 ]; then
+    title="${topic:0:150}…"
+    body="$topic
+
+$brief"
+  else
+    title="$topic"
+    body="$brief"
+  fi
+  ( cd "$first" && "$H5I" forum create "$title" --body "$body" >/dev/null )
 done
 ( cd "$first" && "$H5I" forum sync >/dev/null )
 mapfile -t tids < <(cd "$first" && "$H5I" forum status --json | python3 -c '
@@ -563,7 +590,7 @@ First, orient and stake out a position:
 
 Then run $ROUNDS reply $round_word. Each round is:
 
-  a. h5i forum wait --timeout 300   — wait for peers to post.
+  a. h5i forum wait --timeout $WAIT_TIMEOUT   — wait for peers to post.
   b. Re-read every thread. For each peer post that is new since you last looked:
      - if it makes a point you were going to make, agree with 'h5i forum up <n>'
        rather than posting the same thing again
@@ -614,6 +641,11 @@ sleep 8
 # panes; a codex agent has no `.claude.json` to pre-answer, so writing one there
 # is junk. Its first-run prompts (a trust-the-folder question) are caught by
 # settle_panes below, same as claude's.
+# Both runtimes take `--model`, so one flag covers claude (opus/fable/sonnet or a
+# full id) and codex alike. Empty means the runtime's own default. With mixed
+# runtimes the name has to be valid for each — there is no per-runtime model here.
+model_flag=""
+[ -n "$MODEL" ] && model_flag="--model $MODEL"
 for i in $(seq 1 "$AGENTS"); do
   rt="${runtimes[$((i-1))]}"
   flags="$(agent_flags_for "$rt")"
@@ -623,7 +655,7 @@ for i in $(seq 1 "$AGENTS"); do
     tmux send-keys -t "$SESSION.$((i-1))" "$prelude" Enter
     sleep 1
   fi
-  tmux send-keys -t "$SESSION.$((i-1))" "$rt $flags \"\$(cat .forum-task)\"" Enter
+  tmux send-keys -t "$SESSION.$((i-1))" "$rt $flags $model_flag \"\$(cat .forum-task)\"" Enter
   # Stagger, so the first agent has something on the forum for the second to
   # react to. Launching together produces N independent monologues.
   sleep 12
