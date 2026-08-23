@@ -35,6 +35,13 @@
   --brd-red-text: #ff6258; /* red as text/rule: brand and selection */
   --brd-amber: #d6a94e;
   --brd-green: #62c98c;
+  /* Two tones the palette did not have, added so the body's semantic callouts
+     and the post kinds can share one vocabulary: cyan is a finding, violet a
+     decision. Muted to sit on the near-black ground beside amber and green
+     without any of the four reading as louder than a refusal — which stays the
+     only filled red on the page. */
+  --brd-cyan: #5db8c7;
+  --brd-violet: #a68bd7;
   --brd-mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
 
   /* The type scale, sized against Reddit's — the surface people already read
@@ -294,7 +301,35 @@
 }
 .brd-kind.is-warn { color: var(--brd-amber); border-color: var(--brd-amber); }
 .brd-kind.is-good { color: var(--brd-green); border-color: var(--brd-green); }
+.brd-kind.is-finding { color: var(--brd-cyan); border-color: var(--brd-cyan); }
 .brd-kind.is-task { color: var(--brd-dim); }
+
+/* A post's number, matching `h5i forum read`. It is the thing a `#n` chip
+   points at, so it is styled as the resting state of that same chip: mono,
+   ruled, cyan, sitting first on the meta line. */
+.brd-postnum {
+  font-family: var(--brd-mono);
+  font-size: var(--brd-fs-label);
+  letter-spacing: 0.04em;
+  padding: 0 0.35rem;
+  border: 1px solid var(--brd-line2);
+  color: var(--brd-faint);
+}
+
+/* A brief mark on the post a `#n` chip jumped to, so the eye lands on it rather
+   than on wherever the smooth scroll happened to stop. Cyan hairline, gone in
+   just over a second — the same tone the reference itself wears. */
+.brd-post-flash {
+  animation: brd-post-flash 1.2s ease-out;
+}
+@keyframes brd-post-flash {
+  from {
+    box-shadow: inset 0 0 0 9999px rgba(93, 184, 199, 0.14);
+  }
+  to {
+    box-shadow: inset 0 0 0 9999px rgba(93, 184, 199, 0);
+  }
+}
 
 /* Inside the fence. Everything here is an agent's claim, and the label says so.
  * `white-space: pre-wrap` keeps a patch or a stack trace readable; React
@@ -621,6 +656,208 @@
   font-size: var(--brd-fs-meta);
   color: var(--brd-faint);
   overflow-wrap: anywhere;
+}
+
+/* ── code blocks: a bar, a copy, a collapse, and a diff mode ───────────────── */
+
+.brd-fence .md-codewrap {
+  border: 1px solid var(--brd-line2);
+  margin: 0.4rem 0;
+  background: #08080b;
+}
+/* The bar carries the language, the line count, and the two actions. Mono and
+   faint so it labels the block without competing with the code in it. */
+.brd-fence .md-code-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.2rem 0.5rem;
+  border-bottom: 1px solid var(--brd-line);
+  font-family: var(--brd-mono);
+  font-size: var(--brd-fs-label);
+  color: var(--brd-faint);
+  white-space: normal;
+}
+.brd-fence .md-code-lang {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--brd-dim);
+}
+.brd-fence .md-code-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.3rem;
+}
+.brd-fence .md-code-btn {
+  font-family: var(--brd-mono);
+  font-size: var(--brd-fs-label);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 0.4rem;
+  border: 1px solid var(--brd-line2);
+  border-radius: 0;
+  background: transparent;
+  color: var(--brd-faint);
+  cursor: pointer;
+}
+.brd-fence .md-code-btn:hover { color: var(--brd-text); }
+.brd-fence .md-code-btn:focus-visible {
+  outline: 1px solid var(--brd-red-text);
+  outline-offset: 1px;
+}
+/* The code itself keeps its own `.md-code` rule below; inside a wrapper it drops
+   the border the wrapper now carries. */
+.brd-fence .md-codewrap .md-code {
+  border: none;
+  margin: 0;
+}
+.brd-fence .md-code-more {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.25rem 0.6rem;
+  border: none;
+  border-top: 1px dashed var(--brd-line2);
+  background: transparent;
+  font-family: var(--brd-mono);
+  font-size: var(--brd-fs-label);
+  color: var(--brd-faint);
+  cursor: pointer;
+}
+.brd-fence .md-code-more:hover { color: var(--brd-text); }
+
+/* A diff colours each line by its first character. No red: on this surface red
+   is the host's voice, so a removed line is amber and the leading `-` carries
+   the meaning alongside the colour — never the colour alone. */
+.brd-fence .md-code.is-diff .md-diff {
+  display: block;
+  margin: 0 -0.6rem;
+  padding: 0 0.6rem;
+}
+.brd-fence .md-code.is-diff .md-diff.is-add {
+  color: var(--brd-green);
+  background: rgba(98, 201, 140, 0.09);
+}
+.brd-fence .md-code.is-diff .md-diff.is-del {
+  color: var(--brd-amber);
+  background: rgba(214, 169, 78, 0.09);
+}
+.brd-fence .md-code.is-diff .md-diff.is-hunk { color: var(--brd-cyan); }
+.brd-fence .md-code.is-diff .md-diff.is-file { color: var(--brd-faint); }
+
+/* ── tables ────────────────────────────────────────────────────────────────── */
+
+.brd-fence .md-tablewrap {
+  overflow-x: auto;
+  margin: 0.4rem 0;
+}
+.brd-fence .md-table {
+  border-collapse: collapse;
+  font-size: var(--brd-fs-code);
+  white-space: normal;
+}
+.brd-fence .md-table th,
+.brd-fence .md-table td {
+  border: 1px solid var(--brd-line2);
+  padding: 0.2rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+.brd-fence .md-table th {
+  font-weight: 700;
+  color: var(--brd-ink);
+  background: var(--brd-panel);
+}
+.brd-fence .md-table .is-center { text-align: center; }
+.brd-fence .md-table .is-right { text-align: right; }
+
+/* ── task lists ────────────────────────────────────────────────────────────── */
+
+.brd-fence .md-tasklist { list-style: none; padding-left: 0.2rem; }
+.brd-fence .md-taskitem { display: flex; gap: 0.4rem; align-items: baseline; }
+/* Inert: the tick is the author's claim about their own list, not a switch. */
+.brd-fence .md-check {
+  font-family: var(--brd-mono);
+  color: var(--brd-dim);
+  flex: none;
+}
+
+/* ── blockquotes ───────────────────────────────────────────────────────────── */
+
+.brd-fence .md-quote {
+  margin: 0.4rem 0;
+  padding: 0 0 0 0.7rem;
+  border-left: 2px solid var(--brd-line2);
+  color: var(--brd-dim);
+}
+.brd-fence .md-quote > :last-child { margin-bottom: 0; }
+
+/* ── admonitions: `> [!KIND]`, coloured by the shared vocabulary ───────────── */
+
+/* A callout carries its label and icon always, so colour never stands alone —
+   a monochrome terminal, a colour-blind reader, and a colour reader all see the
+   same word. The tone is a left edge and a faint wash, not a filled band: a
+   filled band on this page is a refusal and nothing else. */
+.brd-fence .md-adm {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.65rem;
+  border-left: 2px solid var(--brd-line2);
+  background: rgba(255, 255, 255, 0.02);
+}
+.brd-fence .md-adm-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--brd-mono);
+  font-size: var(--brd-fs-label);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.25rem;
+}
+.brd-fence .md-adm-icon { font-size: 12px; line-height: 1; }
+.brd-fence .md-adm-body > :last-child { margin-bottom: 0; }
+
+.brd-fence .md-adm.is-finding {
+  border-left-color: var(--brd-cyan);
+  background: rgba(93, 184, 199, 0.06);
+}
+.brd-fence .md-adm.is-finding .md-adm-head { color: var(--brd-cyan); }
+.brd-fence .md-adm.is-risk {
+  border-left-color: var(--brd-amber);
+  background: rgba(214, 169, 78, 0.06);
+}
+.brd-fence .md-adm.is-risk .md-adm-head { color: var(--brd-amber); }
+.brd-fence .md-adm.is-decision {
+  border-left-color: var(--brd-violet);
+  background: rgba(166, 139, 215, 0.06);
+}
+.brd-fence .md-adm.is-decision .md-adm-head { color: var(--brd-violet); }
+.brd-fence .md-adm.is-done {
+  border-left-color: var(--brd-green);
+  background: rgba(98, 201, 140, 0.06);
+}
+.brd-fence .md-adm.is-done .md-adm-head { color: var(--brd-green); }
+.brd-fence .md-adm.is-note .md-adm-head { color: var(--brd-dim); }
+
+/* ── post-reference chips (`#12`) ──────────────────────────────────────────── */
+
+/* Chipped only when the number names a post that exists (see markdown.tsx), so
+   this style never lands on a dead reference. Cyan, matching the resting `#n`
+   the chip jumps to. */
+.brd-fence .md-ref {
+  font-family: var(--brd-mono);
+  font-size: 0.92em;
+  padding: 0 0.3rem;
+  border: 1px solid var(--brd-line2);
+  border-radius: 0;
+  background: transparent;
+  color: var(--brd-cyan);
+  cursor: pointer;
+}
+.brd-fence .md-ref:hover { border-color: var(--brd-cyan); }
+.brd-fence .md-ref:focus-visible {
+  outline: 1px solid var(--brd-cyan);
+  outline-offset: 1px;
 }
 
 /* ── scores ───────────────────────────────────────────────────────────────── */
