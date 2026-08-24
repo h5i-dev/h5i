@@ -135,7 +135,7 @@ record for review.
 h5i box run <name> -- cargo test # one command; the exit code passes through
 ```
 
-#### Work in it interactively
+#### Work in it interactively.
 
 ```bash
 h5i box shell <name>             # an interactive confined session
