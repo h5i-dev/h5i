@@ -1,0 +1,64 @@
+{
+  "env_id": "env/claude/fix-auth",
+  "agent": "claude",
+  "profile": "review",
+  "isolation_claim": "container",
+  "policy_digest": "sha256:4f1d0c9a",
+  "base_commit": "9d1c0ff2a1b3c4d5e6f70819a2b3c4d5e6f70819",
+  "parent_branch": "main",
+  "branch": "refs/heads/h5i/env/claude/fix-auth",
+  "exported_at": "2026-08-24T09:15:02.417331Z",
+  "records": [
+    {
+      "id": "a3f1c2b48e0d7f61",
+      "timestamp": "2026-08-24T09:02:11.004512Z",
+      "env_id": "env/claude/fix-auth",
+      "source": "host-env-run",
+      "cmd": "npm install",
+      "exit_code": 1,
+      "egress": {
+        "allowed": 3,
+        "denied": 8,
+        "hosts": [
+          { "host": "api.github.com", "port": 443, "allowed": 3, "denied": 0 },
+          { "host": "registry.npmjs.org", "port": 443, "allowed": 0, "denied": 7 },
+          { "host": "telemetry.example.net", "port": 443, "allowed": 0, "denied": 1 }
+        ]
+      },
+      "raw_oid": "sha256:11aa",
+      "raw_size": 812,
+      "raw_lines": 24
+    },
+    {
+      "id": "9b04de77c1a2f0e3",
+      "timestamp": "2026-08-24T09:07:45.882140Z",
+      "env_id": "env/claude/fix-auth",
+      "source": "host-env-run",
+      "cmd": "npm test",
+      "exit_code": 1,
+      "egress": {
+        "allowed": 0,
+        "denied": 6,
+        "hosts": [
+          { "host": "registry.npmjs.org", "port": 443, "allowed": 0, "denied": 4 },
+          { "host": "203.0.113.7", "port": 8443, "allowed": 0, "denied": 1 },
+          { "host": "cache.internal.example.com", "port": 6379, "allowed": 0, "denied": 1 }
+        ]
+      },
+      "raw_oid": "sha256:22bb",
+      "raw_size": 402,
+      "raw_lines": 11
+    },
+    {
+      "id": "c7e5a90416bb2d38",
+      "timestamp": "2026-08-24T09:11:03.550901Z",
+      "env_id": "env/claude/fix-auth",
+      "source": "host-env-run",
+      "cmd": "cargo fmt --check",
+      "exit_code": 0,
+      "raw_oid": "sha256:33cc",
+      "raw_size": 12,
+      "raw_lines": 1
+    }
+  ]
+}

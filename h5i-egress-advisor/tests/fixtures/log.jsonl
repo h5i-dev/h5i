@@ -1,0 +1,3 @@
+{"id":"11aa22bb33cc44dd","timestamp":"2026-08-24T10:00:00.000001Z","env_id":"env/codex/spike","source":"host-env-run","cmd":"pip install -r requirements.txt","exit_code":1,"egress":{"allowed":0,"denied":5,"hosts":[{"host":"files.pythonhosted.org","port":443,"allowed":0,"denied":3},{"host":"pypi.org","port":443,"allowed":0,"denied":2}],"hosts_truncated":true},"raw_oid":"sha256:aa","raw_size":10,"raw_lines":1}
+{"id":"55ee66ff77aa88bb","timestamp":"2026-08-24T10:04:00.000001Z","env_id":"env/codex/spike","source":"host-env-run","cmd":"python -m pytest","exit_code":0,"egress":{"allowed":2,"denied":0,"hosts":[{"host":"pypi.org","port":443,"allowed":2,"denied":0}]},"raw_oid":"sha256:bb","raw_size":10,"raw_lines":1}
+{"id":"99cc00dd11ee22f

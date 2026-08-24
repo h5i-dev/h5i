@@ -1,0 +1,27 @@
+# Its own workspace root: the tool is meant to live in its own repository, and
+# declaring it here keeps a checkout inside another workspace (the h5i tree, say)
+# building the same way as a standalone clone.
+[workspace]
+
+[package]
+name = "h5i-egress-advisor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Turn the egress an h5i box was refused into allowlist candidates a human can decide on."
+license = "MIT"
+repository = "https://github.com/AniketR10/h5i-egress-advisor"
+readme = "README.md"
+keywords = ["h5i", "sandbox", "egress", "allowlist", "receipts"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "h5i-egress-advisor"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+strip = true
