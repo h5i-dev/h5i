@@ -16,12 +16,21 @@ call goes through `fetch`, the tools run against an in-memory filesystem.
 
 ## Try it
 
+From the crate directory, `just web` does all three steps and prints the URL:
+
+```bash
+just web
+# open the printed http://localhost:8000/web/
+```
+
+Or the same steps by hand:
+
 ```bash
 # 1. Build the module (writes ../build/h5i-agent.wasm)
 crates/h5i-wasm-harness/scripts/build-wasm.sh
 
 # 2. Serve the crate directory (module scripts and .wasm need http, not file://)
-cd crates/h5i-wasm-harness && python3 -m http.server 8000
+( cd crates/h5i-wasm-harness && python3 -m http.server 8000 )
 
 # 3. Open the page
 #    http://localhost:8000/web/

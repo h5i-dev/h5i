@@ -47,25 +47,45 @@ crates/h5i-wasm-harness/scripts/build-wasm.sh   # -> build/h5i-agent.wasm (~130 
 No `-Zbuild-std`, no nightly, no network: the core is `#![no_std]` + `alloc`
 with zero dependencies, so the stock target's prebuilt `core`/`alloc` are enough.
 
+From the crate directory this is `just build`, which adds the target for you if
+it is missing. Every step on this page has a one-word `just` recipe (run `just`
+to list them); each maps to the plain commands shown, so [`just`](https://github.com/casey/just)
+stays an optional convenience.
+
 ## Drive it
 
-The module has no imports, so any wasm runtime can embed it. It is a reactor
-with custom exports, not a WASI command, so `wasmtime run h5i-agent.wasm` does
-nothing on its own: a host calls the exports and performs the effects. Three
-worked hosts, each a small program:
+The quickest, most portable way to watch the loop run needs only a Rust
+toolchain: no browser, no Python, no network. The bundled native host runs one
+task against a scripted mock model in a throwaway directory.
+
+```bash
+just try
+# or, without just, from the workspace root:
+cargo run -p h5i-wasm-harness --bin h5i-agent -- \
+  --task "create hello.txt containing hi" \
+  --script crates/h5i-wasm-harness/demo/replies.json --workdir "$(mktemp -d)" --trace
+```
+
+That is the same agent loop compiled natively. To watch it run *as wasm*, the
+module has no imports, so any wasm runtime can embed it. It is a reactor with
+custom exports, not a WASI command, so `wasmtime run h5i-agent.wasm` does nothing
+on its own: a host calls the exports and performs the effects. Three worked
+hosts, each a small program:
 
 | Host | Runtime | Run |
 | --- | --- | --- |
-| [`web/index.html`](web/README.md) | a browser's `WebAssembly` | serve `web/`, open the page |
-| [`hosts/wasmtime_host.py`](hosts/wasmtime_host.py) | wasmtime (standalone) | `pip install wasmtime`, then `python3 hosts/wasmtime_host.py` |
-| [`web/node-demo.mjs`](web/README.md) | Node's engine | `node web/node-demo.mjs` |
+| [`web/index.html`](web/README.md) | a browser's `WebAssembly` | `just web`, open the printed URL |
+| [`hosts/wasmtime_host.py`](hosts/wasmtime_host.py) | wasmtime (standalone) | `just wasmtime` (needs `pip install wasmtime`) |
+| [`web/node-demo.mjs`](web/README.md) | Node's engine | `just node` |
 
 The browser page starts in an offline scripted demo and can point at a live
 OpenAI-compatible endpoint:
 
 ```bash
+just web            # build, serve, and print the page URL
+# or, without just:
 crates/h5i-wasm-harness/scripts/build-wasm.sh
-cd crates/h5i-wasm-harness && python3 -m http.server 8000
+( cd crates/h5i-wasm-harness && python3 -m http.server 8000 )
 # open http://localhost:8000/web/
 ```
 
@@ -73,7 +93,7 @@ Or drive it from a standalone runtime with no browser and no Node.
 `hosts/wasmtime_host.py` is an interactive REPL:
 
 ```console
-$ pip install wasmtime && crates/h5i-wasm-harness/scripts/build-wasm.sh
+$ just wasmtime     # or: pip install wasmtime && scripts/build-wasm.sh
 $ python3 crates/h5i-wasm-harness/hosts/wasmtime_host.py
 h5i-agent — the loop runs under wasmtime 48.0.0 on this machine.
 » create hello.txt containing hi

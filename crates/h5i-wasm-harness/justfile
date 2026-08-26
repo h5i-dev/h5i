@@ -1,0 +1,47 @@
+# Task runner for h5i-wasm-harness. Run `just` (no args) to list recipes.
+#
+# `just` is a convenience layer, not a requirement: every recipe maps to plain
+# commands you can also run by hand (they are in the README). Install just with
+# `cargo install just`, `brew install just`, or your package manager.
+#
+# Recipes run from this directory (the crate root), so paths always resolve the
+# same way no matter where you invoke `just` from.
+
+# List the available recipes.
+default:
+    @just --list --unsorted
+
+# Run one task with only a Rust toolchain: no browser, Python, or network.
+try:
+    cargo run -q -p h5i-wasm-harness --bin h5i-agent -- \
+        --task "create hello.txt containing hi" \
+        --script demo/replies.json --workdir "$(mktemp -d)" --trace
+
+# Build build/h5i-agent.wasm (~130 KB), adding the wasm target if missing.
+build:
+    rustup target add wasm32-unknown-unknown
+    ./scripts/build-wasm.sh
+
+# Build the module, serve the crate over HTTP, and print the page URL.
+web port="8000": build
+    @echo ""
+    @echo "  open  ->  http://localhost:{{port}}/web/"
+    @echo ""
+    python3 -m http.server {{port}}
+
+# Drive the module under wasmtime, no browser (needs: pip install wasmtime).
+wasmtime: build
+    @python3 -c "import wasmtime" 2>/dev/null || { echo "missing: pip install wasmtime" >&2; exit 1; }
+    python3 hosts/wasmtime_host.py
+
+# Run the built module end to end through the JS host under Node (a self-check).
+node: build
+    node web/node-demo.mjs
+
+# Run the crate's Rust test suite.
+test:
+    cargo test -p h5i-wasm-harness
+
+# Install the native `h5i-agent` binary onto your PATH.
+install:
+    cargo install --path .
