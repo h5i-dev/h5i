@@ -24,8 +24,29 @@ the native `i5h` host below, unchanged.
 
 ## Run it (native, `i5h`)
 
-The mock model is a JSON array of chat-completions response envelopes, replayed
-in order — the shape of mini-swe-agent's `DeterministicModel`.
+`i5h` needs a model source. Point it at a real OpenAI-compatible local server
+with `--model-url http://127.0.0.1:8080/v1/chat/completions` (http:// only — no
+TLS without dependencies; meant for llama.cpp / Ollama on localhost), or replay
+a scripted mock — a JSON array of chat-completions response envelopes, in order,
+the shape of mini-swe-agent's `DeterministicModel`.
+
+**Interactive (the default):** with no `--task`, `i5h` is a REPL. Type a task
+per line and the agent runs it, **keeping the conversation across turns**;
+Ctrl-D or `exit` quits.
+
+```bash
+mkdir -p /tmp/ws
+cargo run -p h5i-wasm-harness --bin i5h -- \
+  --model-url http://127.0.0.1:8080/v1/chat/completions --workdir /tmp/ws
+# » create hello.txt containing hi
+# created hello.txt
+# » now read it back
+# the file says hi
+```
+
+**One-shot:** pass `--task` for a single scriptable run (exit non-zero on
+failure). Add `--trace` for `[model call]` / `[tool]` lines on stderr, or
+`--dump` to print the deterministic transcript instead of the final message.
 
 ```bash
 cat > /tmp/replies.json <<'JSON'
@@ -38,17 +59,16 @@ cat > /tmp/replies.json <<'JSON'
 ]
 JSON
 
-mkdir -p /tmp/ws
 cargo run -p h5i-wasm-harness --bin i5h -- \
   --task "create hello.txt containing hi" \
   --script /tmp/replies.json --workdir /tmp/ws --trace
 cat /tmp/ws/hello.txt   # -> hi
 ```
 
-Point it at a real OpenAI-compatible local server instead of the script with
-`--model-url http://127.0.0.1:8080/v1/chat/completions` (http:// only — no TLS
-without dependencies; meant for llama.cpp / Ollama on localhost). Add `--dump`
-to print the deterministic transcript instead of the final message.
+Multi-turn works because the core exposes `Agent::resume(task)`, which appends a
+user turn and keeps the whole history; the interactive host calls it after each
+`Done`. It's an ordinary batch REPL, not a full TUI — no streaming render or
+transcript view yet (see limitations).
 
 ## Build the WebAssembly module
 
@@ -77,9 +97,9 @@ Covers the JSON codec (roundtrip, adversarial vectors: deep nesting, lone
 surrogates, number overflow, control chars), the agent loop (full write→done
 trace, buffered-sequential parallel calls, recoverable invalid calls with a
 format-error cap, retry only on 429/5xx/transport, step limit, call-id-mismatch
-fatal), the boundary roundtrip, and the real-FS tools with path confinement.
-`tests/session.rs` drives a full scripted session through the exact `init`/
-`step`/`dump` string interface the wasm module exposes.
+fatal, multi-turn `resume`), the boundary roundtrip, and the real-FS tools with
+path confinement. `tests/session.rs` drives a full scripted session through the
+exact `init`/`step`/`dump` string interface the wasm module exposes.
 
 ## What it borrows
 
@@ -99,7 +119,10 @@ fatal), the boundary roundtrip, and the real-FS tools with path confinement.
 
 ## Current limitations
 
-- One agent session per module instance (static state); re-instantiate to reset.
+- The `i5h` REPL is batch, not a TUI: it prints each turn's final message; no
+  streaming render, no transcript view, no per-step approval yet.
+- One wasm agent session per module instance (static state); re-instantiate to
+  reset. `Agent::resume` (native multi-turn) is not yet on the wasm ABI.
 - The wasm bump allocator never frees; a long session grows memory monotonically.
 - Model interface is OpenAI-compatible chat-completions only; no streaming, no
   cost accounting, no history compaction.

@@ -5,7 +5,11 @@
 //! runs byte-identical logic behind the six-symbol ABI; this binary is what you
 //! run at a terminal.
 //!
-//! Modes:
+//! Default mode is interactive: type a task per line and the agent runs it,
+//! keeping the conversation across turns. Pass `--task` for a one-shot,
+//! scriptable run instead.
+//!
+//! Model source (required either way):
 //!   --script replies.json   scripted mock model (a JSON array of
 //!                           chat-completions response envelopes, replayed in
 //!                           order — the shape of mini-swe-agent's
@@ -14,7 +18,7 @@
 //!                           (no TLS without dependencies; meant for
 //!                           llama.cpp / Ollama on localhost)
 
-use std::io::{Read, Write as IoWrite};
+use std::io::{self, Read, Write as IoWrite};
 use std::path::{Path, PathBuf};
 
 use h5i_wasm_harness::agent::{Agent, Config, Effect, Event};
@@ -23,16 +27,21 @@ use h5i_wasm_harness::proto;
 
 mod tools;
 
+const TOOL_NAMES: [&str; 3] = ["read_file", "write_file", "list_dir"];
+
 fn usage() -> ! {
     eprintln!(
-        "usage: i5h --task \"...\" (--script replies.json | --model-url URL) \\\n\
-         \x20        [--workdir DIR] [--max-steps N] [--workspace-note \"...\"] [--dump] [--trace]"
+        "usage: i5h (--script replies.json | --model-url URL) [--task \"...\"] \\\n\
+         \x20        [--workdir DIR] [--max-steps N] [--workspace-note \"...\"] [--dump] [--trace]\n\
+         \n\
+         With no --task, i5h is interactive: type a task per line; the agent keeps\n\
+         the conversation across turns. Ctrl-D or 'exit' quits."
     );
     std::process::exit(2);
 }
 
 struct Args {
-    task: String,
+    task: Option<String>,
     script: Option<PathBuf>,
     model_url: Option<String>,
     api_key: Option<String>,
@@ -45,7 +54,7 @@ struct Args {
 
 fn parse_args() -> Args {
     let mut args = Args {
-        task: String::new(),
+        task: None,
         script: None,
         model_url: None,
         api_key: None,
@@ -59,7 +68,7 @@ fn parse_args() -> Args {
     while let Some(arg) = it.next() {
         let val = |it: &mut dyn Iterator<Item = String>| it.next().unwrap_or_else(|| usage());
         match arg.as_str() {
-            "--task" => args.task = val(&mut it),
+            "--task" => args.task = Some(val(&mut it)),
             "--script" => args.script = Some(PathBuf::from(val(&mut it))),
             "--model-url" => args.model_url = Some(val(&mut it)),
             "--api-key" => args.api_key = Some(val(&mut it)),
@@ -68,10 +77,11 @@ fn parse_args() -> Args {
             "--workspace-note" => args.note = val(&mut it),
             "--dump" => args.dump = true,
             "--trace" => args.trace = true,
+            "-h" | "--help" => usage(),
             _ => usage(),
         }
     }
-    if args.task.is_empty() || (args.script.is_none() && args.model_url.is_none()) {
+    if args.script.is_none() && args.model_url.is_none() {
         usage();
     }
     args
@@ -187,44 +197,30 @@ impl ModelHost for HttpModel {
     }
 }
 
-fn main() {
-    let args = parse_args();
-    std::fs::create_dir_all(&args.workdir).expect("workdir creatable");
-    let workdir = args.workdir.canonicalize().expect("workdir resolvable");
-
-    let mut model: Box<dyn ModelHost> = match (&args.script, &args.model_url) {
-        (Some(path), _) => Box::new(ScriptedModel::load(path)),
-        (None, Some(url)) => {
-            Box::new(HttpModel { url: url.clone(), api_key: args.api_key.clone() })
-        }
-        _ => usage(),
-    };
-
-    let tool_names: Vec<String> =
-        ["read_file", "write_file", "list_dir"].iter().map(|s| s.to_string()).collect();
-    let (mut agent, mut effect) = Agent::start(
-        &args.task,
-        &tool_names,
-        &args.note,
-        Config { model: "host-configured".into(), max_steps: args.max_steps },
-    )
-    .expect("valid start parameters");
-
-    let done = loop {
+/// Run the agent from `first` to its `Done`, performing every effect against
+/// the real filesystem / the model. Returns the final (status, result).
+fn drive(
+    agent: &mut Agent,
+    mut effect: Effect,
+    model: &mut dyn ModelHost,
+    workdir: &Path,
+    trace: bool,
+) -> (String, String) {
+    loop {
         match effect {
-            Effect::Done { status, result } => break (status, result),
+            Effect::Done { status, result } => return (status, result),
             Effect::CallModel { ref request } => {
-                if args.trace {
+                if trace {
                     eprintln!("[model call]");
                 }
                 let event = model.call(request);
                 effect = agent.handle(event);
             }
             Effect::RunTool { ref call_id, ref name, args: ref tool_args } => {
-                if args.trace {
+                if trace {
                     eprintln!("[tool] {} {}", name, tool_args.dump());
                 }
-                let (ok, output) = match tools::run(&workdir, name, tool_args) {
+                let (ok, output) = match tools::run(workdir, name, tool_args) {
                     Ok(out) => (true, out),
                     Err(e) => (false, e),
                 };
@@ -232,15 +228,104 @@ fn main() {
                 effect = agent.handle(event);
             }
         }
-    };
+    }
+}
 
+fn tool_names() -> Vec<String> {
+    TOOL_NAMES.iter().map(|s| s.to_string()).collect()
+}
+
+/// One-shot: run a single task and exit non-zero if it did not succeed.
+fn run_once(args: &Args, model: &mut dyn ModelHost, workdir: &Path, task: &str) {
+    let (mut agent, first) = Agent::start(
+        task,
+        &tool_names(),
+        &args.note,
+        Config { model: "host-configured".into(), max_steps: args.max_steps },
+    )
+    .expect("valid start parameters");
+    let (status, result) = drive(&mut agent, first, model, workdir, args.trace);
     if args.dump {
         println!("{}", proto::dump_json(&agent));
     } else {
-        println!("status: {}", done.0);
-        println!("{}", done.1);
+        println!("status: {}", status);
+        println!("{}", result);
     }
-    if done.0 != "success" {
+    if status != "success" {
         std::process::exit(1);
+    }
+}
+
+/// Interactive REPL: read a task per line, run it, keep the conversation.
+fn run_interactive(args: &Args, model: &mut dyn ModelHost, workdir: &Path) {
+    eprintln!("i5h — interactive agent. workspace: {}", workdir.display());
+    eprintln!("type a task and press enter; Ctrl-D or 'exit' to quit.");
+    let stdin = io::stdin();
+    let mut agent: Option<Agent> = None;
+    loop {
+        eprint!("\n\u{bb} ");
+        let _ = io::stderr().flush();
+        let mut line = String::new();
+        match stdin.read_line(&mut line) {
+            Ok(0) => {
+                eprintln!();
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("input error: {}", e);
+                break;
+            }
+        }
+        let task = line.trim();
+        if task.is_empty() {
+            continue;
+        }
+        if matches!(task, "exit" | "quit" | ":q") {
+            break;
+        }
+
+        // First task starts the agent; later ones continue the conversation.
+        let first = if let Some(a) = agent.as_mut() {
+            a.resume(task)
+        } else {
+            let (a, e) = Agent::start(
+                task,
+                &tool_names(),
+                &args.note,
+                Config { model: "host-configured".into(), max_steps: args.max_steps },
+            )
+            .expect("valid start parameters");
+            agent = Some(a);
+            e
+        };
+
+        let ag = agent.as_mut().expect("agent initialized above");
+        let (status, result) = drive(ag, first, model, workdir, args.trace);
+        if args.dump {
+            println!("{}", proto::dump_json(ag));
+        } else {
+            if status != "success" {
+                eprintln!("[{}]", status);
+            }
+            println!("{}", result);
+        }
+    }
+}
+
+fn main() {
+    let args = parse_args();
+    std::fs::create_dir_all(&args.workdir).expect("workdir creatable");
+    let workdir = args.workdir.canonicalize().expect("workdir resolvable");
+
+    let mut model: Box<dyn ModelHost> = match (&args.script, &args.model_url) {
+        (Some(path), _) => Box::new(ScriptedModel::load(path)),
+        (None, Some(url)) => Box::new(HttpModel { url: url.clone(), api_key: args.api_key.clone() }),
+        _ => usage(),
+    };
+
+    match &args.task {
+        Some(task) => run_once(&args, model.as_mut(), &workdir, task),
+        None => run_interactive(&args, model.as_mut(), &workdir),
     }
 }

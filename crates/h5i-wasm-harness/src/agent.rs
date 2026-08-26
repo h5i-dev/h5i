@@ -174,6 +174,22 @@ impl Agent {
         self.steps
     }
 
+    /// Continue the conversation with a new user turn, keeping the whole
+    /// message history (and the system prompt, tools and workspace note from
+    /// `start`). This is what an interactive host calls after a `Done`: the
+    /// per-turn budgets reset so each user turn gets a fresh step allowance,
+    /// but the model still sees everything that came before. Returns the first
+    /// effect of the new turn, exactly like `start`.
+    pub fn resume(&mut self, task: &str) -> Effect {
+        self.messages.push(Msg::User { content: task.to_string() });
+        self.steps = 0;
+        self.consecutive_format_errors = 0;
+        self.consecutive_model_failures = 0;
+        self.pending_calls.clear();
+        self.in_flight = None;
+        self.call_model()
+    }
+
     pub fn handle(&mut self, event: Event) -> Effect {
         match (self.state, event) {
             (State::Finished, _) => {
@@ -732,5 +748,28 @@ mod tests {
     #[test]
     fn rejects_unknown_declared_tool() {
         assert!(Agent::start("t", &names(&["teleport"]), "w", Config::default()).is_err());
+    }
+
+    #[test]
+    fn resume_continues_the_same_conversation() {
+        let (mut agent, _) = start();
+        // First turn runs to completion.
+        let effect = agent.handle(envelope("first task done", &[]));
+        assert!(matches!(effect, Effect::Done { ref status, .. } if status == "success"));
+        let before = agent.messages().len();
+
+        // A second user turn keeps the history and re-enters the loop.
+        let effect = agent.resume("now do the second thing");
+        let Effect::CallModel { request } = effect else { panic!("resume should call the model") };
+        assert_eq!(agent.messages().len(), before + 1);
+        assert!(matches!(agent.messages().last().unwrap(),
+            Msg::User { content } if content == "now do the second thing"));
+        // The model sees the whole prior conversation, including the first reply.
+        assert!(request.contains("first task done"));
+        assert!(request.contains("now do the second thing"));
+
+        // And the second turn drives to its own Done.
+        let effect = agent.handle(envelope("second task done", &[]));
+        assert!(matches!(effect, Effect::Done { ref status, .. } if status == "success"));
     }
 }
