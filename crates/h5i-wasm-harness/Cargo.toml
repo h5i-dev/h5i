@@ -1,0 +1,19 @@
+[package]
+name = "h5i-wasm-harness"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal sans-io coding-agent loop that runs both natively (the `h5i-agent` host) and as WebAssembly. Zero dependencies."
+
+# Zero dependencies, deliberately: the library is `#![no_std] + alloc` so it
+# compiles to `wasm32-unknown-unknown` from the target's prebuilt core/alloc
+# with no `-Zbuild-std`, no nightly, and nothing from crates.io. A `serde` here
+# would drag that whole toolchain back in. The JSON codec is `src/json.rs`.
+[dependencies]
+
+# The wasm module is a cdylib, but that crate-type is NOT declared here on
+# purpose: a `#![no_std]` cdylib built for the host has no allocator or panic
+# handler (both are wasm32-only) and would fail to link a `.so`, breaking a
+# plain `cargo build --workspace`. `scripts/build-wasm.sh` passes
+# `--crate-type cdylib` for the wasm target only, where the allocator exists.
+[lib]
+name = "h5i_wasm_harness"

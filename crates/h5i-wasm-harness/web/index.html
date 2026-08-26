@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>h5i-agent — WebAssembly</title>
+<style>
+  :root {
+    /* Aligned with the `h5i ui` console (web/src/theme.css): near-black ground,
+       greyscale ramp, red as the lone accent. */
+    --bg:#08080b; --fg:#f4f4f6; --dim:#a4a4ae; --faint:#7d7d86; --prompt:#ff6258;
+    --tool:#62c98c; --model:#f4f4f6; --err:#ff6258; --bar:#0e0e12;
+    --border:#232329; --border-strong:#3a3a45; --field:#141419;
+    --accent-bg:rgba(224,36,27,0.16);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.6 ui-monospace, "SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    display: flex; flex-direction: column;
+  }
+  #bar {
+    background: var(--bar); border-bottom: 1px solid var(--border);
+    padding: 7px 14px; color: var(--dim); font-size: 12.5px; display: flex; gap: 10px;
+    flex-wrap: wrap; align-items: center;
+  }
+  #bar b { color: var(--fg); font-weight: 600; }
+  #bar .k { color: var(--prompt); }
+  /* Classic chat/terminal layout: the transcript scrolls above, and the command
+     input is a prominent rounded field pinned at the bottom with margin, so it
+     floats off the bottom edge (like Claude Code / Codex). */
+  #inputline {
+    display: flex; align-items: center; gap: 8px;
+    margin: 8px 14px 4px; padding: 11px 14px;
+    background: var(--field); border: 1px solid var(--border-strong); border-radius: 10px;
+    box-shadow: 0 2px 14px rgba(0,0,0,.35);
+    transition: border-color .12s, box-shadow .12s;
+  }
+  #inputline:focus-within {
+    border-color: var(--prompt);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+  #glyph { color: var(--prompt); font-size: 16px; }
+  #input {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: var(--fg); font: inherit; font-size: 15px; caret-color: var(--prompt);
+  }
+  #input::placeholder { color: var(--dim); }
+  #input:disabled { opacity: .6; }
+  /* A status line under the input, the way Claude Code / Codex show the model. */
+  #foot {
+    display: flex; gap: 12px; align-items: center;
+    margin: 12px 16px 14px; color: var(--faint); font-size: 12px;
+  }
+  #foot b { color: var(--fg); font-weight: 600; }
+  #foot .hint { margin-left: auto; }
+  #foot .link {
+    background: none; border: none; color: var(--prompt); cursor: pointer;
+    font: inherit; padding: 0; text-decoration: underline;
+  }
+  #screen {
+    flex: 1; overflow-y: auto; padding: 14px 16px 6px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #screen .prompt { color: var(--prompt); }
+  #screen .user   { color: var(--fg); }
+  #screen .model  { color: var(--model); }
+  #screen .tool   { color: var(--tool); }
+  #screen .muted  { color: var(--dim); }
+  #screen .err    { color: var(--err); }
+</style>
+</head>
+<body>
+  <div id="bar"><b>h5i-agent</b> <span>the loop runs as <span class="k">WebAssembly</span> in this page</span></div>
+  <div id="screen"></div>
+  <div id="inputline">
+    <span id="glyph">»</span>
+    <input id="input" autocomplete="off" autocapitalize="off" spellcheck="false"
+           placeholder="type a task, or /help" autofocus />
+  </div>
+  <div id="foot">
+    <span>model <b id="model">mock</b></span>
+    <span>workspace <b id="ws">memory</b></span>
+    <button id="open" class="link" type="button">open folder…</button>
+    <span class="hint">⏎ send · /help</span>
+  </div>
+
+<script type="module">
+import { Agent, runTask, memoryTools, fsApiTools, scriptedModel, streamingFetchModel, assistant } from './host.mjs';
+
+const screen = document.getElementById('screen');
+const input = document.getElementById('input');
+const glyph = document.getElementById('glyph');
+const modelLabel = document.getElementById('model');
+const modeLabel = document.getElementById('mode');
+const wsLabel = document.getElementById('ws');
+
+const TOOL_NAMES = ['read_file', 'write_file', 'list_dir'];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let wasmBytes = null;        // fetched once, re-instantiated per session
+let agent = null;            // live-mode session (persists across turns)
+let firstTurn = true;
+let vfs = memoryTools();     // in-memory workspace, shared across turns
+let mode = 'mock';           // 'mock' | 'live'
+let liveUrl = '', liveKey = '';
+const history = [];
+let hpos = 0;
+
+function echo(text, cls) {
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text;
+  screen.appendChild(span);
+  screen.scrollTop = screen.scrollHeight;
+}
+const line = (text, cls) => echo(text + '\n', cls);
+
+// A spinner in the prompt slot while a turn runs.
+let spin = null;
+function setBusy(on) {
+  input.disabled = on;
+  if (on) {
+    const frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
+    let i = 0;
+    glyph.textContent = frames[0];
+    spin = setInterval(() => { glyph.textContent = frames[i++ % frames.length]; }, 80);
+  } else {
+    clearInterval(spin); spin = null;
+    glyph.textContent = '»';
+    input.focus();
+  }
+}
+
+async function loadWasm() {
+  if (!wasmBytes) {
+    const r = await fetch('../build/h5i-agent.wasm');
+    if (!r.ok) throw new Error('h5i-agent.wasm not found — run scripts/build-wasm.sh first');
+    wasmBytes = await r.arrayBuffer();
+  }
+  return Agent.fromBytes(wasmBytes.slice(0));
+}
+
+// Offline scripted demo: a fixed write→read→done script, typed out for feel.
+function mockModel() {
+  const base = scriptedModel([
+    assistant('', [['c1', 'write_file', JSON.stringify({ path: 'hello.txt', content: 'hi' })]]),
+    assistant('', [['c2', 'read_file', JSON.stringify({ path: 'hello.txt' })]]),
+    assistant('Done. hello.txt contains "hi".'),
+  ]);
+  return async (request) => {
+    const ev = await base(request);
+    if (ev.model_reply) {
+      const content = JSON.parse(ev.model_reply.body).choices[0].message.content || '';
+      for (const ch of content) { echo(ch, 'model'); await sleep(9); }
+      if (content) echo('\n', 'model');
+    }
+    return ev;
+  };
+}
+
+async function runTool(name, args) {
+  const r = await vfs.run(name, args);
+  line(`⚙ ${name} ${JSON.stringify(args)}`, 'tool');
+  let out = r.output.length > 400 ? r.output.slice(0, 400) + '…' : r.output;
+  if (!out.trim()) out = '(no output)';
+  line('  ' + out.replace(/\n/g, '\n  '), r.ok ? 'muted' : 'err');
+  return r;
+}
+
+async function runTurn(task) {
+  const model = mode === 'live'
+    ? streamingFetchModel(liveUrl, { apiKey: liveKey || undefined, onToken: (t) => echo(t, 'model') })
+    : mockModel();
+  const note = vfs.label ? `a local folder: ${vfs.label}` : 'browser in-memory VFS';
+
+  let params, fresh;
+  if (mode === 'live') {
+    if (!agent) { agent = await loadWasm(); firstTurn = true; }
+    params = firstTurn ? { task, tools: TOOL_NAMES, workspace_note: note, max_steps: 12 } : { task };
+    fresh = firstTurn; firstTurn = false;
+  } else {
+    agent = await loadWasm();               // mock: fresh session, fixed script
+    params = { task, tools: TOOL_NAMES, workspace_note: note, max_steps: 12 };
+    fresh = true;
+  }
+
+  const done = await runTask(agent, params, { model, runTool, fresh });
+  echo('\n');
+  if (done.status !== 'success') line(`[${done.status}] ${done.result}`, 'err');
+}
+
+const HELP = [
+  'commands:',
+  '  /model <url> [key]   use a live OpenAI-compatible endpoint (streams)',
+  '  /mock                offline scripted demo (default)',
+  '  /open                pick a real local folder (Chromium) — tools then hit real files',
+  '  /files               list the workspace',
+  '  /reset               new conversation (an in-memory workspace is cleared)',
+  '  /clear               clear the screen',
+  'notes: the browser enforces CORS on a live endpoint; the agent logic runs in the .wasm.',
+].join('\n');
+
+async function openFolder() {
+  if (!window.showDirectoryPicker) {
+    return line('this browser has no File System Access API — use Chromium/Edge, or stay in memory.', 'err');
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    vfs = fsApiTools(handle);
+    agent = null; firstTurn = true;          // fresh conversation on the new workspace
+    wsLabel.textContent = handle.name;
+    line(`opened folder “${handle.name}” — read_file / write_file / list_dir now hit real files.`, 'muted');
+  } catch { /* user cancelled the picker */ }
+}
+
+async function command(text) {
+  const [cmd, ...rest] = text.slice(1).split(/\s+/);
+  if (cmd === 'help') return line(HELP, 'muted');
+  if (cmd === 'clear') { screen.innerHTML = ''; return; }
+  if (cmd === 'open') return openFolder();
+  if (cmd === 'files') {
+    if (vfs.files) {
+      const files = [...vfs.files.keys()].sort();
+      return line(files.length ? files.join('\n') : '(empty)', 'muted');
+    }
+    const r = await vfs.run('list_dir', { path: '' });
+    return line(r.output.trim() || '(empty)', r.ok ? 'muted' : 'err');
+  }
+  if (cmd === 'reset') {
+    const wasMemory = !!vfs.files;
+    agent = null; firstTurn = true;
+    if (wasMemory) vfs = memoryTools();
+    return line('reset: new conversation' + (wasMemory ? ', empty workspace' : ` (folder ${wsLabel.textContent} kept)`), 'muted');
+  }
+  if (cmd === 'mock') {
+    mode = 'mock'; agent = null; firstTurn = true;
+    modelLabel.textContent = 'mock'; modeLabel.textContent = 'offline scripted demo';
+    return line('offline scripted demo (the typed task is illustrative here)', 'muted');
+  }
+  if (cmd === 'model') {
+    if (!rest[0]) return line('usage: /model <url> [key]', 'err');
+    mode = 'live'; liveUrl = rest[0]; liveKey = rest[1] || '';
+    agent = null; firstTurn = true;
+    try { modelLabel.textContent = new URL(liveUrl).host; } catch { modelLabel.textContent = 'live'; }
+    modeLabel.textContent = 'live · streaming';
+    return line(`live endpoint: ${liveUrl}`, 'muted');
+  }
+  line(`unknown command: /${cmd}  (try /help)`, 'err');
+}
+
+async function handle(text) {
+  if (!text) return;
+  history.push(text); hpos = history.length;
+  if (text.startsWith('/')) { await command(text); return; }
+
+  echo('» ', 'prompt'); line(text, 'user');
+  setBusy(true);
+  try { await runTurn(text); }
+  catch (e) { line(String(e && e.message || e), 'err'); }
+  finally { setBusy(false); }
+}
+
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const text = input.value.trim();
+    input.value = '';
+    handle(text);
+  } else if (e.key === 'ArrowUp') {
+    if (hpos > 0) { hpos--; input.value = history[hpos] || ''; }
+    e.preventDefault();
+  } else if (e.key === 'ArrowDown') {
+    if (hpos < history.length) { hpos++; input.value = history[hpos] || ''; }
+    e.preventDefault();
+  }
+});
+
+// Refocus the input on click, but never while the user is selecting text:
+// pulling focus into the input collapses the page selection and breaks copy.
+document.addEventListener('mouseup', () => {
+  if (window.getSelection && String(window.getSelection())) return;
+  input.focus();
+});
+
+document.getElementById('open').onclick = openFolder;
+
+line('h5i-agent — the agent loop, compiled to WebAssembly, running in this page.', 'muted');
+line('type a task. /model <url> for a live model, /open for a real folder, /help for more.', 'muted');
+echo('\n');
+</script>
+</body>
+</html>
