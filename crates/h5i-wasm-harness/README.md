@@ -1,6 +1,6 @@
-<h1 align="center">h5i-wasm-harness</h1>
+<h1 align="center">h5i-agent</h1>
 
-<p align="center"><strong>A minimal coding-agent loop that runs in a browser, in WASI, and natively, from one no_std core with zero dependencies.</strong></p>
+<p align="center"><strong>A minimal coding-agent harness that runs as WebAssembly.</strong></p>
 
 <p align="center">
   <a href="https://github.com/h5i-dev/h5i/blob/main/LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/github/license/h5i-dev/h5i?color=blue"></a>
@@ -8,78 +8,62 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-The module does no I/O. It **emits an effect** (call the model, run a tool, or
-finish) and the host performs it and feeds the result back. That inversion is
-the design: the same `.wasm` (no imports) loads under a browser's
-`WebAssembly.instantiate` and under any WASI runtime, and the native `h5i-agent`
-binary runs the same logic. The model call and the tools live in the host, next
-to the browser's `fetch` and a real filesystem.
+The agent is a WebAssembly module. It has no imports and does no I/O: it **emits
+an effect** (call the model, run a tool, or finish) and a host performs it and
+feeds the result back. One `h5i-agent.wasm` (about 130 KB) runs in a browser, in
+a standalone wasm runtime, or embedded in your own program, all running the same
+logic. A native CLI is included as a ready-made host.
 
 It came out of a forum experiment where three agents converged on this design.
 
-## Install
-
-```bash
-cargo install --path crates/h5i-wasm-harness   # installs the `h5i-agent` binary
-```
-
-That puts `h5i-agent` on your `PATH`; the examples below call it directly. To
-put the agent *inside* a browser or WASI host instead of running the CLI, see
-[Embed it as wasm](#embed-it-as-wasm).
-
 ## Highlights
 
-- **One binary, three environments.** [The boundary](#the-boundary) is a few
-  effects crossing as JSON, so the same core is a browser module, a WASI module,
-  and a native host, with no `#[cfg]` forks in the loop.
+- **Runs as WebAssembly.** About 130 KB, zero imports, loads with plain
+  `WebAssembly.instantiate` in a browser or any wasm runtime.
 - **Zero dependencies.** `#![no_std]` + `alloc` and a [hand-rolled JSON
-  codec](src/json.rs), so the [wasm build](#embed-it-as-wasm) needs no
+  codec](src/json.rs), so the [wasm build](#build-the-module) needs no
   `-Zbuild-std`, no nightly, and nothing from crates.io.
 - **Seven exports, no imports.** [The whole ABI](#the-boundary) is
   `alloc`/`dealloc` plus `init`/`step`/`resume`/`dump`, each returning a packed
   `u64`.
-- [**Multi-turn.**](#run-it) `agent_resume` keeps the conversation, so the REPL
-  is multi-turn by default.
-- [**Live streaming.**](#run-it) `h5i-agent` renders tokens as they arrive; the
-  core itself stays non-streaming.
-- [**Native tool-calling.**](#test-against-a-real-model) OpenAI chat-completions
-  with real `tool_calls`, not a text protocol; verified against a live Gemini model.
+- **Bring your own host.** [Worked examples](#drive-it) for a browser, wasmtime,
+  Node, and the included native CLI. Each calls the exports and performs the
+  effects.
+- [**Multi-turn, streaming, native tool-calling.**](#run-it-from-a-terminal)
+  `agent_resume` keeps the conversation, tokens render live, and the model
+  speaks OpenAI chat-completions with real `tool_calls`, verified against a live
+  Gemini model.
 
-## Run it
-
-`h5i-agent` needs a model source: a real `--model-url http://…` (http:// only,
-for a local llama.cpp / Ollama server), or a scripted mock, which is a JSON
-array of chat-completions envelopes replayed in order.
-
-#### Interactive (the default)
-
-With no `--task`, `h5i-agent` is a REPL. Type a task per line and it runs it,
-keeping the conversation across turns. With a real `--model-url`, tokens render
-live as the response streams. Ctrl-D or `exit` quits.
-
-```console
-$ h5i-agent --model-url http://127.0.0.1:8080/v1/chat/completions
-» create hello.txt containing hi
-created hello.txt
-» now read it back
-the file says hi
-```
-
-#### One-shot
-
-Pass `--task` for a single scriptable run; it exits non-zero on failure.
-`--trace` prints `[model call]` / `[tool]` lines on stderr, `--dump` prints the
-deterministic transcript, `--no-stream` sends one blocking request.
+## Build the module
 
 ```bash
-cat > replies.json <<'JSON'
-[ {"choices":[{"message":{"role":"assistant","content":null,
-    "tool_calls":[{"id":"c1","type":"function","function":{"name":"write_file",
-      "arguments":"{\"path\":\"hello.txt\",\"content\":\"hi\"}"}}]}}]},
-  {"choices":[{"message":{"role":"assistant","content":"created hello.txt"}}]} ]
-JSON
+rustup target add wasm32-unknown-unknown        # one time
+crates/h5i-wasm-harness/scripts/build-wasm.sh   # -> build/h5i-agent.wasm (~130 KB)
+```
 
-h5i-agent --task "create hello.txt containing hi" --script replies.json --workdir /tmp/ws --trace
+No `-Zbuild-std`, no nightly, no network: the core is `#![no_std]` + `alloc`
+with zero dependencies, so the stock target's prebuilt `core`/`alloc` are enough.
+
+## Drive it
+
+The module has no imports, so any wasm runtime can embed it. It is a reactor
+with custom exports, not a WASI command, so `wasmtime run h5i-agent.wasm` does
+nothing on its own: a host calls the exports and performs the effects. Three
+worked hosts, each a small program:
+
+| Host | Runtime | Run |
+| --- | --- | --- |
+| [`web/index.html`](web/README.md) | a browser's `WebAssembly` | serve `web/`, open the page |
+| [`hosts/wasmtime_host.py`](hosts/wasmtime_host.py) | wasmtime (standalone) | `pip install wasmtime`, then `python3 hosts/wasmtime_host.py` |
+| [`web/node-demo.mjs`](web/README.md) | Node's engine | `node web/node-demo.mjs` |
+
+The browser page starts in an offline scripted demo and can point at a live
+OpenAI-compatible endpoint:
+
+```bash
+crates/h5i-wasm-harness/scripts/build-wasm.sh
+cd crates/h5i-wasm-harness && python3 -m http.server 8000
+# open http://localhost:8000/web/
 ```
 
 ## The boundary
@@ -114,65 +98,63 @@ Across the wasm edge that exchange is seven exports and no imports:
 The host calls `alloc(n)`, writes JSON there, and calls an export with
 `(ptr, len)`. Every export returns a packed `u64 = (ptr << 32) | len` pointing at
 guest-owned JSON valid until the next call, which the host copies out. A browser
-reads that `u64` with `BigInt` shifts; a WASI host reads linear memory directly.
-Streaming stays a host concern, since the module always takes one complete
-envelope.
+reads that `u64` with `BigInt` shifts; wasmtime and Node read linear memory
+directly. Streaming stays a host concern, since the module always takes one
+complete envelope.
 
-## Embed it as wasm
+## Run it from a terminal
 
-`h5i-agent` (the CLI) is the agent running as its own host. The wasm build is
-the other half: the agent **core** compiled as a **guest** for you to embed in a
-browser page or a WASI runtime, which then performs its effects. It is not a
-binary you run on its own; without a host it does nothing.
-
-```bash
-rustup target add wasm32-unknown-unknown        # one time
-crates/h5i-wasm-harness/scripts/build-wasm.sh   # -> build/h5i-agent.wasm (~130 KB)
-```
-
-No `-Zbuild-std`, no nightly, no network: the core is `#![no_std]` + `alloc`
-with zero dependencies, so the stock target's prebuilt `core`/`alloc` are
-enough.
-
-The module has zero imports, so any wasm runtime can embed it. Worked hosts:
-
-| Host | Runtime | Run |
-| --- | --- | --- |
-| [`web/index.html`](web/README.md) | a browser's `WebAssembly` | serve `web/`, open the page |
-| [`web/node-demo.mjs`](web/README.md) | Node's engine | `node web/node-demo.mjs` |
-| [`hosts/wasmtime_host.py`](hosts/wasmtime_host.py) | wasmtime (standalone) | `pip install wasmtime` then `python3 hosts/wasmtime_host.py` |
-
-Each is a small program that calls the exports and performs the effects.
-`wasmtime run h5i-agent.wasm` on its own does nothing: the module is a reactor
-with custom exports, not a WASI command with a `_start`.
-
-## Run it in the browser
-
-The module has no imports, so a browser loads it with plain
-`WebAssembly.instantiate` and drives the loop from JavaScript: the model call
-goes through `fetch`, the tools run against an in-memory filesystem.
-[`web/`](web/README.md) has the whole host: `host.mjs` (the loop plus helpers,
-about 120 lines, no bundler, no dependencies) and `index.html` (a page that runs
-it).
+Secondary to the wasm module, but the quickest way to try the agent: a native
+`h5i-agent` binary that bundles the core with a host (a real filesystem and an
+HTTP model), so you can run it without embedding anything.
 
 ```bash
-crates/h5i-wasm-harness/scripts/build-wasm.sh          # build the module
-cd crates/h5i-wasm-harness && python3 -m http.server 8000
-# open http://localhost:8000/web/  — starts in an offline scripted demo
+cargo install --path crates/h5i-wasm-harness   # installs the `h5i-agent` binary
 ```
 
-The same `host.mjs` runs under Node, so `node web/node-demo.mjs` exercises the
-module end-to-end without a browser (the `WebAssembly` API is identical).
+It needs a model source: a real `--model-url http://…` (http:// only, for a
+local llama.cpp / Ollama server), or a scripted mock, which is a JSON array of
+chat-completions envelopes replayed in order.
+
+#### Interactive (the default)
+
+With no `--task`, `h5i-agent` is a REPL. Type a task per line and it runs it,
+keeping the conversation across turns. With a real `--model-url`, tokens render
+live as the response streams. Ctrl-D or `exit` quits.
+
+```console
+$ h5i-agent --model-url http://127.0.0.1:8080/v1/chat/completions
+» create hello.txt containing hi
+created hello.txt
+» now read it back
+the file says hi
+```
+
+#### One-shot
+
+Pass `--task` for a single scriptable run; it exits non-zero on failure.
+`--trace` prints `[model call]` / `[tool]` lines on stderr, `--dump` prints the
+deterministic transcript, `--no-stream` sends one blocking request.
+
+```bash
+cat > replies.json <<'JSON'
+[ {"choices":[{"message":{"role":"assistant","content":null,
+    "tool_calls":[{"id":"c1","type":"function","function":{"name":"write_file",
+      "arguments":"{\"path\":\"hello.txt\",\"content\":\"hi\"}"}}]}}]},
+  {"choices":[{"message":{"role":"assistant","content":"created hello.txt"}}]} ]
+JSON
+
+h5i-agent --task "create hello.txt containing hi" --script replies.json --workdir /tmp/ws --trace
+```
 
 ## Test against a real model
 
-`h5i-agent` is http-only and dependency-free, so a small local proxy bridges it
-to a hosted provider over HTTPS with auth. [`adapters/`](adapters/README.md) has
-one for **Google Gemini via Vertex AI**: it mints an OAuth token from a
-service-account key and forwards to Vertex's OpenAI-compatible endpoint,
-streaming back, with no format translation and tool-calling included. No
-credential lives in this repo; the proxy reads a key from a gitignored path at
-runtime.
+`h5i-agent` is http-only, so a small local proxy bridges it to a hosted provider
+over HTTPS with auth. [`adapters/`](adapters/README.md) has one for **Google
+Gemini via Vertex AI**: it mints an OAuth token from a service-account key and
+forwards to Vertex's OpenAI-compatible endpoint, streaming back, with no format
+translation and tool-calling included. No credential lives in this repo; the
+proxy reads a key from a gitignored path at runtime.
 
 ```bash
 python3 crates/h5i-wasm-harness/adapters/vertex_openai_proxy.py --port 8137 &
@@ -192,8 +174,9 @@ full write-then-done trace, buffered-sequential parallel calls, recoverable
 invalid calls with a format-error cap, retry only on 429/5xx/transport, the step
 limit, a fatal call-id mismatch, and multi-turn `resume`), the
 `init`/`step`/`resume`/`dump` boundary, the streaming reassembly, and the
-real-filesystem tools with path confinement. `tests/session.rs` drives a full
-scripted session through the same string interface the wasm module exposes.
+real-filesystem tools with path confinement. The host examples double as
+end-to-end checks: `node web/node-demo.mjs` and `python3 hosts/wasmtime_host.py`
+run the built module through a full session.
 
 ## License
 
