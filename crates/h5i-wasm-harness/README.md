@@ -132,7 +132,19 @@ crates/h5i-wasm-harness/scripts/build-wasm.sh   # -> build/h5i-agent.wasm (~130 
 
 No `-Zbuild-std`, no nightly, no network: the core is `#![no_std]` + `alloc`
 with zero dependencies, so the stock target's prebuilt `core`/`alloc` are
-enough. [Run it in the browser](#run-it-in-the-browser) is a worked host.
+enough.
+
+The module has zero imports, so any wasm runtime can embed it. Worked hosts:
+
+| Host | Runtime | Run |
+| --- | --- | --- |
+| [`web/index.html`](web/README.md) | a browser's `WebAssembly` | serve `web/`, open the page |
+| [`web/node-demo.mjs`](web/README.md) | Node's engine | `node web/node-demo.mjs` |
+| [`hosts/wasmtime_host.py`](hosts/wasmtime_host.py) | wasmtime (standalone) | `pip install wasmtime` then `python3 hosts/wasmtime_host.py` |
+
+Each is a small program that calls the exports and performs the effects.
+`wasmtime run h5i-agent.wasm` on its own does nothing: the module is a reactor
+with custom exports, not a WASI command with a `_start`.
 
 ## Run it in the browser
 
