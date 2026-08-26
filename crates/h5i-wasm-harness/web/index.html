@@ -24,11 +24,12 @@
   }
   #bar b { color: var(--fg); font-weight: 600; }
   #bar .k { color: var(--prompt); }
-  /* The command input sits up top as a prominent field, not a thin bar at the
-     very bottom, so it is the first thing that draws the eye. */
+  /* Classic chat/terminal layout: the transcript scrolls above, and the command
+     input is a prominent rounded field pinned at the bottom with margin, so it
+     floats off the bottom edge (like Claude Code / Codex). */
   #inputline {
     display: flex; align-items: center; gap: 8px;
-    margin: 14px 14px 6px; padding: 11px 14px;
+    margin: 8px 14px 16px; padding: 11px 14px;
     background: var(--field); border: 1px solid #2b3550; border-radius: 10px;
     box-shadow: 0 2px 14px rgba(0,0,0,.35);
     transition: border-color .12s, box-shadow .12s;
@@ -45,7 +46,7 @@
   #input::placeholder { color: var(--dim); }
   #input:disabled { opacity: .6; }
   #screen {
-    flex: 1; overflow-y: auto; padding: 6px 16px 16px;
+    flex: 1; overflow-y: auto; padding: 14px 16px 6px;
     white-space: pre-wrap; word-break: break-word;
   }
   #screen .prompt { color: var(--prompt); }
@@ -59,12 +60,12 @@
 <body>
   <div id="bar"><b>h5i-agent</b> <span>the loop runs as <span class="k">WebAssembly</span> in this page</span>
     <span style="margin-left:auto">model: <b id="model">mock</b></span></div>
+  <div id="screen"></div>
   <div id="inputline">
     <span id="glyph">»</span>
     <input id="input" autocomplete="off" autocapitalize="off" spellcheck="false"
            placeholder="type a task, or /help" autofocus />
   </div>
-  <div id="screen"></div>
 
 <script type="module">
 import { Agent, runTask, memoryTools, scriptedModel, streamingFetchModel, assistant } from './host.mjs';
