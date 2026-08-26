@@ -16,7 +16,9 @@
 //!                           DeterministicModel, models/test_models.py)
 //!   --model-url http://...  real OpenAI-compatible endpoint, http:// only
 //!                           (no TLS without dependencies; meant for
-//!                           llama.cpp / Ollama on localhost)
+//!                           llama.cpp / Ollama on localhost). Responses stream
+//!                           by default (tokens render live); --no-stream falls
+//!                           back to a single blocking request.
 
 use std::io::{self, Read, Write as IoWrite};
 use std::path::{Path, PathBuf};
@@ -25,6 +27,7 @@ use h5i_wasm_harness::agent::{Agent, Config, Effect, Event};
 use h5i_wasm_harness::json::Value;
 use h5i_wasm_harness::proto;
 
+mod stream;
 mod tools;
 
 const TOOL_NAMES: [&str; 3] = ["read_file", "write_file", "list_dir"];
@@ -32,10 +35,12 @@ const TOOL_NAMES: [&str; 3] = ["read_file", "write_file", "list_dir"];
 fn usage() -> ! {
     eprintln!(
         "usage: i5h (--script replies.json | --model-url URL) [--task \"...\"] \\\n\
-         \x20        [--workdir DIR] [--max-steps N] [--workspace-note \"...\"] [--dump] [--trace]\n\
+         \x20        [--workdir DIR] [--max-steps N] [--workspace-note \"...\"] \\\n\
+         \x20        [--no-stream] [--dump] [--trace]\n\
          \n\
          With no --task, i5h is interactive: type a task per line; the agent keeps\n\
-         the conversation across turns. Ctrl-D or 'exit' quits."
+         the conversation across turns. Ctrl-D or 'exit' quits.\n\
+         With --model-url, responses stream and tokens render live unless --no-stream."
     );
     std::process::exit(2);
 }
@@ -48,6 +53,7 @@ struct Args {
     workdir: PathBuf,
     max_steps: u32,
     note: String,
+    no_stream: bool,
     dump: bool,
     trace: bool,
 }
@@ -61,6 +67,7 @@ fn parse_args() -> Args {
         workdir: PathBuf::from("."),
         max_steps: 20,
         note: String::from("a real directory on disk; changes persist"),
+        no_stream: false,
         dump: false,
         trace: false,
     };
@@ -75,6 +82,7 @@ fn parse_args() -> Args {
             "--workdir" => args.workdir = PathBuf::from(val(&mut it)),
             "--max-steps" => args.max_steps = val(&mut it).parse().unwrap_or_else(|_| usage()),
             "--workspace-note" => args.note = val(&mut it),
+            "--no-stream" => args.no_stream = true,
             "--dump" => args.dump = true,
             "--trace" => args.trace = true,
             "-h" | "--help" => usage(),
@@ -120,13 +128,17 @@ impl ModelHost for ScriptedModel {
 
 /// Minimal HTTP/1.1 POST over TcpStream. http:// only — good enough for the
 /// llama.cpp / Ollama localhost workflow, and keeps the binary dependency-free.
+/// Streams by default (tokens render live); `stream = false` blocks for the
+/// whole response.
 struct HttpModel {
     url: String,
     api_key: Option<String>,
+    stream: bool,
 }
 
 impl HttpModel {
-    fn post(&self, body: &str) -> Result<(u32, String), String> {
+    /// Resolve (host:port header value, path, connect address).
+    fn target(&self) -> Result<(String, String, String), String> {
         let rest = self
             .url
             .strip_prefix("http://")
@@ -140,6 +152,11 @@ impl HttpModel {
         } else {
             format!("{}:80", host_port)
         };
+        Ok((host_port.to_string(), path.to_string(), addr))
+    }
+
+    fn send(&self, body: &str) -> Result<std::net::TcpStream, String> {
+        let (host_port, path, addr) = self.target()?;
         let mut stream =
             std::net::TcpStream::connect(&addr).map_err(|e| format!("connect {}: {}", addr, e))?;
         let auth = match &self.api_key {
@@ -151,6 +168,12 @@ impl HttpModel {
             path, host_port, auth, body.len(), body
         );
         stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(stream)
+    }
+
+    /// Non-streaming: read the whole response, return (status, body).
+    fn post(&self, body: &str) -> Result<(u32, String), String> {
+        let mut stream = self.send(body)?;
         let mut response = Vec::new();
         stream.read_to_end(&mut response).map_err(|e| e.to_string())?;
         let text = String::from_utf8_lossy(&response);
@@ -160,36 +183,110 @@ impl HttpModel {
             .and_then(|s| s.parse().ok())
             .ok_or("malformed HTTP response")?;
         let body_start = text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(text.len());
+        let head = &text[..body_start];
         let mut payload = text[body_start..].to_string();
-        // Un-chunk if needed (llama.cpp answers chunked on HTTP/1.1).
-        if text[..body_start].to_ascii_lowercase().contains("transfer-encoding: chunked") {
-            payload = dechunk(&payload);
+        if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+            payload = stream::decode_chunked(payload.as_bytes());
         }
         Ok((status, payload))
     }
-}
 
-fn dechunk(chunked: &str) -> String {
-    let mut out = String::new();
-    let mut rest = chunked;
-    while let Some(nl) = rest.find("\r\n") {
-        let Ok(size) = usize::from_str_radix(rest[..nl].trim(), 16) else { break };
-        if size == 0 {
-            break;
+    /// Streaming: request `stream: true`, render content tokens live, and
+    /// reassemble the single envelope the core expects. Returns (status,
+    /// envelope) for 2xx, or (status, error-body) otherwise.
+    fn post_stream(&self, body: &str) -> Result<(u32, String), String> {
+        // Ask the endpoint to stream, without disturbing anything the core set.
+        let streamed = match h5i_wasm_harness::json::parse(body) {
+            Ok(Value::Obj(mut pairs)) => {
+                pairs.retain(|(k, _)| k != "stream");
+                pairs.push(("stream".to_string(), Value::Bool(true)));
+                Value::Obj(pairs).dump()
+            }
+            _ => body.to_string(),
+        };
+        let mut conn = self.send(&streamed)?;
+
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 4096];
+        let mut headers_done = false;
+        let mut status = 0u32;
+        let mut chunked = false;
+        let mut is_2xx = false;
+        let mut body_start = 0usize;
+        let mut asm = stream::Assembler::new();
+        let mut fed = 0usize;
+        let mut done = false;
+
+        loop {
+            let n = conn.read(&mut buf).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            raw.extend_from_slice(&buf[..n]);
+            if !headers_done {
+                if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&raw[..pos]).to_ascii_lowercase();
+                    status = String::from_utf8_lossy(&raw[..pos])
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .ok_or("malformed HTTP response")?;
+                    chunked = head.contains("transfer-encoding: chunked");
+                    is_2xx = (200..300).contains(&status);
+                    body_start = pos + 4;
+                    headers_done = true;
+                } else {
+                    continue;
+                }
+            }
+            if is_2xx {
+                let body_bytes = &raw[body_start..];
+                let decoded = if chunked {
+                    stream::decode_chunked(body_bytes)
+                } else {
+                    String::from_utf8_lossy(body_bytes).into_owned()
+                };
+                let events = stream::split_sse(&decoded);
+                while fed < events.len() {
+                    let ev = events[fed].clone();
+                    fed += 1;
+                    if ev == "[DONE]" {
+                        done = true;
+                        break;
+                    }
+                    asm.push(&ev, &mut |c| {
+                        let mut so = io::stdout();
+                        let _ = so.write_all(c.as_bytes());
+                        let _ = so.flush();
+                    });
+                }
+                if done {
+                    break;
+                }
+            }
         }
-        let start = nl + 2;
-        if start + size > rest.len() {
-            break;
+
+        if is_2xx {
+            if asm.rendered_content() {
+                println!(); // end the streamed line
+            }
+            Ok((status, asm.into_envelope()))
+        } else {
+            let body_bytes = &raw[body_start..];
+            let decoded = if chunked {
+                stream::decode_chunked(body_bytes)
+            } else {
+                String::from_utf8_lossy(body_bytes).into_owned()
+            };
+            Ok((status, decoded))
         }
-        out.push_str(&rest[start..start + size]);
-        rest = rest[start + size..].trim_start_matches("\r\n");
     }
-    out
 }
 
 impl ModelHost for HttpModel {
     fn call(&mut self, request: &str) -> Event {
-        match self.post(request) {
+        let result = if self.stream { self.post_stream(request) } else { self.post(request) };
+        match result {
             Ok((status, body)) if (200..300).contains(&status) => Event::ModelReply { body },
             Ok((status, body)) => Event::ModelFailed { status, body },
             Err(e) => Event::ModelFailed { status: 0, body: e },
@@ -236,7 +333,9 @@ fn tool_names() -> Vec<String> {
 }
 
 /// One-shot: run a single task and exit non-zero if it did not succeed.
-fn run_once(args: &Args, model: &mut dyn ModelHost, workdir: &Path, task: &str) {
+/// When `streaming`, the answer was already rendered live, so only failures and
+/// `--dump` add to stdout.
+fn run_once(args: &Args, model: &mut dyn ModelHost, workdir: &Path, task: &str, streaming: bool) {
     let (mut agent, first) = Agent::start(
         task,
         &tool_names(),
@@ -247,6 +346,11 @@ fn run_once(args: &Args, model: &mut dyn ModelHost, workdir: &Path, task: &str) 
     let (status, result) = drive(&mut agent, first, model, workdir, args.trace);
     if args.dump {
         println!("{}", proto::dump_json(&agent));
+    } else if streaming {
+        if status != "success" {
+            println!("status: {}", status);
+            println!("{}", result);
+        }
     } else {
         println!("status: {}", status);
         println!("{}", result);
@@ -257,7 +361,7 @@ fn run_once(args: &Args, model: &mut dyn ModelHost, workdir: &Path, task: &str) 
 }
 
 /// Interactive REPL: read a task per line, run it, keep the conversation.
-fn run_interactive(args: &Args, model: &mut dyn ModelHost, workdir: &Path) {
+fn run_interactive(args: &Args, model: &mut dyn ModelHost, workdir: &Path, streaming: bool) {
     eprintln!("i5h — interactive agent. workspace: {}", workdir.display());
     eprintln!("type a task and press enter; Ctrl-D or 'exit' to quit.");
     let stdin = io::stdin();
@@ -304,6 +408,12 @@ fn run_interactive(args: &Args, model: &mut dyn ModelHost, workdir: &Path) {
         let (status, result) = drive(ag, first, model, workdir, args.trace);
         if args.dump {
             println!("{}", proto::dump_json(ag));
+        } else if streaming {
+            // The answer already streamed live; surface only failures.
+            if status != "success" {
+                eprintln!("[{}]", status);
+                println!("{}", result);
+            }
         } else {
             if status != "success" {
                 eprintln!("[{}]", status);
@@ -318,14 +428,20 @@ fn main() {
     std::fs::create_dir_all(&args.workdir).expect("workdir creatable");
     let workdir = args.workdir.canonicalize().expect("workdir resolvable");
 
+    // The scripted mock never streams; a real endpoint streams unless opted out.
+    let streaming = args.model_url.is_some() && !args.no_stream;
     let mut model: Box<dyn ModelHost> = match (&args.script, &args.model_url) {
         (Some(path), _) => Box::new(ScriptedModel::load(path)),
-        (None, Some(url)) => Box::new(HttpModel { url: url.clone(), api_key: args.api_key.clone() }),
+        (None, Some(url)) => Box::new(HttpModel {
+            url: url.clone(),
+            api_key: args.api_key.clone(),
+            stream: streaming,
+        }),
         _ => usage(),
     };
 
     match &args.task {
-        Some(task) => run_once(&args, model.as_mut(), &workdir, task),
-        None => run_interactive(&args, model.as_mut(), &workdir),
+        Some(task) => run_once(&args, model.as_mut(), &workdir, task, streaming),
+        None => run_interactive(&args, model.as_mut(), &workdir, streaming),
     }
 }

@@ -10,6 +10,8 @@
 //!                                   the ABI outlives the allocator choice
 //!   agent_init(ptr, len) -> u64     init JSON in; first effect JSON out
 //!   agent_step(ptr, len) -> u64     event JSON in; next effect JSON out
+//!   agent_resume(ptr, len) -> u64   {"task": str} in; first effect of a new
+//!                                   turn out, keeping the conversation
 //!   agent_dump() -> u64             deterministic transcript JSON out
 //!
 //! Return convention: (ptr << 32) | len of guest-owned UTF-8 JSON, valid until
@@ -126,6 +128,18 @@ pub extern "C" fn agent_step(ptr: i32, len: i32) -> u64 {
     match unsafe { AGENT.as_mut() } {
         Some(agent) => ret(proto::step_json(agent, &input)),
         None => ret(proto::fatal_json("agent_step before agent_init")),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn agent_resume(ptr: i32, len: i32) -> u64 {
+    let input = match unsafe { take_input(ptr as *mut u8, len as usize) } {
+        Ok(s) => s,
+        Err(()) => return ret(proto::fatal_json("resume input is not UTF-8")),
+    };
+    match unsafe { AGENT.as_mut() } {
+        Some(agent) => ret(proto::resume_json(agent, &input)),
+        None => ret(proto::fatal_json("agent_resume before agent_init")),
     }
 }
 

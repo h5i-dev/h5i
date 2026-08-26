@@ -34,4 +34,4 @@ fi
 BUILT="$TARGET_DIR/$TARGET/release/h5i_wasm_harness.wasm"
 cp "$BUILT" "$OUT/h5i_wasm_harness.wasm"
 ls -la "$OUT/h5i_wasm_harness.wasm"
-echo "exports: memory, alloc, dealloc, agent_init, agent_step, agent_dump (no imports)"
+echo "exports: memory, alloc, dealloc, agent_init, agent_step, agent_resume, agent_dump (no imports)"

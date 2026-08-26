@@ -67,8 +67,9 @@ cat /tmp/ws/hello.txt   # -> hi
 
 Multi-turn works because the core exposes `Agent::resume(task)`, which appends a
 user turn and keeps the whole history; the interactive host calls it after each
-`Done`. It's an ordinary batch REPL, not a full TUI — no streaming render or
-transcript view yet (see limitations).
+`Done`. With a real `--model-url`, tokens **render live** as the response
+streams (`--no-stream` falls back to one blocking request). It's still not a full
+TUI — no transcript view or per-step approval yet (see limitations).
 
 ## Build the WebAssembly module
 
@@ -79,13 +80,17 @@ crates/h5i-wasm-harness/scripts/build-wasm.sh   # -> build/h5i_wasm_harness.wasm
 
 No `-Zbuild-std`, no nightly, no network: because the core is `#![no_std]` +
 `alloc` with zero dependencies, the stock target's prebuilt `core`/`alloc` are
-enough. The module has **no imports** and exactly six exports. The ABI: the host
-calls `alloc(n)`, writes UTF-8 JSON into the module's memory, calls an export
-with `(ptr, len)`; every export returns a packed `u64` = `(ptr << 32) | len`
-pointing at guest-owned JSON valid until the next call, which the host copies
-out. A browser reads that `u64` with `BigInt` shifts; a WASI host reads linear
-memory directly. (No JS glue is bundled — the boundary is small enough to write
-in a few lines against whatever runtime you have.)
+enough. The module has **no imports** and seven exports: `memory`, `alloc`,
+`dealloc`, `agent_init`, `agent_step`, `agent_resume` (continue the conversation
+with a new user turn), and `agent_dump`. The ABI: the host calls `alloc(n)`,
+writes UTF-8 JSON into the module's memory, calls an export with `(ptr, len)`;
+every export returns a packed `u64` = `(ptr << 32) | len` pointing at
+guest-owned JSON valid until the next call, which the host copies out. A browser
+reads that `u64` with `BigInt` shifts; a WASI host reads linear memory directly.
+(No JS glue is bundled — the boundary is small enough to write in a few lines
+against whatever runtime you have. Note that response *streaming* is a host
+concern: the module always takes one complete envelope, so a browser host does
+the `fetch`/SSE and reassembly, exactly as `i5h` does.)
 
 ## Tests
 
@@ -97,9 +102,11 @@ Covers the JSON codec (roundtrip, adversarial vectors: deep nesting, lone
 surrogates, number overflow, control chars), the agent loop (full write→done
 trace, buffered-sequential parallel calls, recoverable invalid calls with a
 format-error cap, retry only on 429/5xx/transport, step limit, call-id-mismatch
-fatal, multi-turn `resume`), the boundary roundtrip, and the real-FS tools with
-path confinement. `tests/session.rs` drives a full scripted session through the
-exact `init`/`step`/`dump` string interface the wasm module exposes.
+fatal, multi-turn `resume`), the boundary roundtrip (including `agent_resume`),
+the streaming reassembly (chunk decode, SSE split, delta merge into one
+envelope), and the real-FS tools with path confinement. `tests/session.rs`
+drives a full scripted session through the exact `init`/`step`/`dump` string
+interface the wasm module exposes.
 
 ## What it borrows
 
@@ -119,13 +126,14 @@ exact `init`/`step`/`dump` string interface the wasm module exposes.
 
 ## Current limitations
 
-- The `i5h` REPL is batch, not a TUI: it prints each turn's final message; no
-  streaming render, no transcript view, no per-step approval yet.
+- The `i5h` REPL renders streamed content live but is not a full TUI: no
+  transcript view, no per-step approval, and tool output is not reflowed.
 - One wasm agent session per module instance (static state); re-instantiate to
-  reset. `Agent::resume` (native multi-turn) is not yet on the wasm ABI.
+  reset. (Multi-turn within a session works via `agent_resume`.)
 - The wasm bump allocator never frees; a long session grows memory monotonically.
-- Model interface is OpenAI-compatible chat-completions only; no streaming, no
-  cost accounting, no history compaction.
+- Model interface is OpenAI-compatible chat-completions only; streaming is
+  reassembled host-side into one envelope (the core stays non-streaming), and
+  there is no cost accounting or history compaction.
 - Tools are `read_file` / `write_file` / `list_dir`. `bash` is in the schema but
   no bundled host declares it (there is no shell in a browser or WASI p1).
 - The `i5h` HTTP client is `http://` only (no TLS without a dependency) — fine

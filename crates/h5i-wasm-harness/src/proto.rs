@@ -142,6 +142,20 @@ pub fn step_json(agent: &mut Agent, input: &str) -> String {
     }
 }
 
+/// Continue the conversation with a new user turn (input `{"task": str}`),
+/// returning the first effect of that turn. The counterpart to `step_json` for
+/// multi-turn hosts; keeps the whole message history.
+pub fn resume_json(agent: &mut Agent, input: &str) -> String {
+    let value = match parse(input) {
+        Ok(v) => v,
+        Err(e) => return fatal_json(&e),
+    };
+    match value.get("task").and_then(Value::as_str) {
+        Some(task) => effect_to_json(&agent.resume(task)),
+        None => fatal_json("resume input must be {\"task\": string}"),
+    }
+}
+
 /// Deterministic transcript: no timestamps, no floats-from-clock, insertion-
 /// ordered objects only — required so native and wasm runs can be diffed
 /// byte-for-byte in the equivalence test.
@@ -204,5 +218,24 @@ mod tests {
         )
         .unwrap();
         assert!(step_json(&mut agent, "not json").contains("\"fatal\""));
+    }
+
+    #[test]
+    fn resume_boundary() {
+        let (mut agent, _) = init_from_json(
+            r#"{"task": "first", "tools": ["read_file"], "workspace_note": "w"}"#,
+        )
+        .unwrap();
+        // Finish the first turn (assistant reply with no tool calls).
+        let out = step_json(
+            &mut agent,
+            r#"{"model_reply": {"body": "{\"choices\":[{\"message\":{\"content\":\"done\"}}]}"}}"#,
+        );
+        assert!(out.contains("\"done\""));
+        // A second turn over the boundary re-enters the loop.
+        let out = resume_json(&mut agent, r#"{"task": "second"}"#);
+        assert!(out.contains("\"call_model\""));
+        // Malformed resume input is a fatal effect, not a trap.
+        assert!(resume_json(&mut agent, r#"{"nope": 1}"#).contains("\"fatal\""));
     }
 }
