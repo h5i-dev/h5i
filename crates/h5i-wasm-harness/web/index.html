@@ -148,6 +148,7 @@ function mockModel() {
     if (ev.model_reply) {
       const content = JSON.parse(ev.model_reply.body).choices[0].message.content || '';
       for (const ch of content) { echo(ch, 'model'); await sleep(9); }
+      if (content) echo('\n', 'model');
     }
     return ev;
   };

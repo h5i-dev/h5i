@@ -171,6 +171,8 @@ def mock_model():
         if "model_reply" in ev:
             content = json.loads(ev["model_reply"]["body"])["choices"][0]["message"].get("content") or ""
             typewriter(content)
+            if content:
+                print()  # end the model's line
         return ev
 
     return call
@@ -222,6 +224,9 @@ def streaming_model(url, api_key=None):
                 fn = tc.get("function") or {}
                 slot["name"] += fn.get("name") or ""
                 slot["args"] += fn.get("arguments") or ""
+        if content:
+            sys.stdout.write("\n")  # end the streamed line
+            sys.stdout.flush()
         message = {"role": "assistant", "content": content}
         if tools:
             message["tool_calls"] = [

@@ -205,6 +205,7 @@ export function streamingFetchModel(url, { apiKey, onToken } = {}) {
         }
       }
     }
+    if (content && onToken) onToken('\n'); // end the streamed line
     const message = { role: 'assistant', content };
     if (tools.length) {
       message.tool_calls = tools.map((t) => ({
