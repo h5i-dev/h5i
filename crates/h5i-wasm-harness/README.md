@@ -71,6 +71,11 @@ user turn and keeps the whole history; the interactive host calls it after each
 streams (`--no-stream` falls back to one blocking request). It's still not a full
 TUI — no transcript view or per-step approval yet (see limitations).
 
+To drive it with a real hosted model (Gemini/Vertex, OpenAI, …) despite the
+http-only client, run one of the small local proxies in [`adapters/`](adapters/README.md):
+they terminate `i5h`'s plain http and forward to the provider over HTTPS+auth.
+No credential lives in this repo — the proxies read a key from a gitignored path.
+
 ## Build the WebAssembly module
 
 ```bash
