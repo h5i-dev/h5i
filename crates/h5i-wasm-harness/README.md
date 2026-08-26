@@ -65,16 +65,23 @@ cd crates/h5i-wasm-harness && python3 -m http.server 8000
 # open http://localhost:8000/web/
 ```
 
-Or drive it from a standalone runtime with no browser and no Node:
+Or drive it from a standalone runtime with no browser and no Node.
+`hosts/wasmtime_host.py` is an interactive REPL:
 
 ```console
 $ pip install wasmtime && crates/h5i-wasm-harness/scripts/build-wasm.sh
 $ python3 crates/h5i-wasm-harness/hosts/wasmtime_host.py
-runtime: wasmtime 48.0.0
-effects: call_model -> run_tool -> call_model -> run_tool -> call_model -> done
-status : success
-OK — h5i-agent.wasm ran under wasmtime on this machine (incl. resume).
+h5i-agent — the loop runs under wasmtime 48.0.0 on this machine.
+» create hello.txt containing hi
+⚙ write_file {"path": "hello.txt", "content": "hi"}
+  wrote 2 bytes to hello.txt
+⚙ read_file {"path": "hello.txt"}
+  hi
+Done. hello.txt contains "hi".
 ```
+
+Add `--model-url URL` for a live endpoint (tokens stream), or `--demo` for a
+non-interactive self-check.
 
 ## The boundary
 
@@ -185,8 +192,8 @@ invalid calls with a format-error cap, retry only on 429/5xx/transport, the step
 limit, a fatal call-id mismatch, and multi-turn `resume`), the
 `init`/`step`/`resume`/`dump` boundary, the streaming reassembly, and the
 real-filesystem tools with path confinement. The host examples double as
-end-to-end checks: `node web/node-demo.mjs` and `python3 hosts/wasmtime_host.py`
-run the built module through a full session.
+end-to-end checks: `node web/node-demo.mjs` and `python3 hosts/wasmtime_host.py
+--demo` run the built module through a full session.
 
 ## License
 

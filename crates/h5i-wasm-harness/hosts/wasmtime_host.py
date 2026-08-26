@@ -2,20 +2,27 @@
 """Run h5i-agent.wasm on this machine with wasmtime: no browser, no Node.
 
 The module is a reactor with zero imports, so any wasm runtime can embed it and
-call its exports. This mirrors web/node-demo.mjs against a purpose-built wasm
-engine (wasmtime, from the Bytecode Alliance): instantiate the module, drive the
-agent loop with a scripted mock model and an in-memory filesystem, decode the
-packed-u64 returns, and assert the outcome. The agent's logic runs inside the
-wasm; this host only performs effects and marshals JSON.
+call its exports. This is a terminal REPL over that module, driven by the same
+loop web/index.html uses: instantiate the wasm, take a task, stream the model
+output, run tools against an in-memory filesystem, and keep the conversation.
+The agent's logic runs inside the wasm; this host only performs effects and
+marshals JSON.
 
     pip install wasmtime
-    crates/h5i-wasm-harness/scripts/build-wasm.sh          # writes ../build/h5i-agent.wasm
-    python3 crates/h5i-wasm-harness/hosts/wasmtime_host.py
+    crates/h5i-wasm-harness/scripts/build-wasm.sh       # writes ../build/h5i-agent.wasm
+
+    python3 hosts/wasmtime_host.py                      # interactive, offline scripted model
+    python3 hosts/wasmtime_host.py --model-url URL      # interactive, a live endpoint (streams)
+    python3 hosts/wasmtime_host.py --demo               # non-interactive self-check (asserts)
 """
 
+import argparse
 import json
 import os
 import sys
+import time
+import urllib.error
+import urllib.request
 from importlib.metadata import PackageNotFoundError, version
 
 import wasmtime
@@ -27,6 +34,11 @@ except PackageNotFoundError:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WASM = os.path.normpath(os.path.join(HERE, "..", "build", "h5i-agent.wasm"))
+
+# ANSI colors, only when stdout is a terminal.
+_TTY = sys.stdout.isatty()
+def _c(code): return (lambda s: f"\033[{code}m{s}\033[0m") if _TTY else (lambda s: s)
+BLUE, GREEN, DIM, RED, BOLD = _c("34"), _c("32"), _c("2"), _c("31"), _c("1")
 
 
 class Agent:
@@ -52,11 +64,8 @@ class Agent:
         return ptr, len(data)
 
     def _read_packed(self, packed):
-        # Exports return i64; the module packs (ptr << 32) | len. Mask to u64
-        # in case the runtime hands back a signed value.
         packed &= (1 << 64) - 1
         ptr, length = packed >> 32, packed & 0xFFFFFFFF
-        # Re-read memory each call: the bump allocator may have grown it.
         return bytes(self.mem.read(self.store, ptr, ptr + length)).decode("utf-8")
 
     def _call(self, fn, payload):
@@ -136,7 +145,154 @@ def run_task(agent, params, model, run_tool, fresh=True, on_effect=None):
             return {"status": "protocol_error", "result": f"unknown effect: {effect}"}
 
 
-def main():
+# ---- terminal REPL ----
+
+TOOL_NAMES = ["read_file", "write_file", "list_dir"]
+
+
+def typewriter(text, delay=0.008):
+    for ch in text:
+        sys.stdout.write(ch)
+        sys.stdout.flush()
+        if delay:
+            time.sleep(delay)
+
+
+def mock_model():
+    """Offline scripted demo: a fixed write->read->done script, typed out."""
+    base = scripted_model([
+        assistant("", [("c1", "write_file", json.dumps({"path": "hello.txt", "content": "hi"}))]),
+        assistant("", [("c2", "read_file", json.dumps({"path": "hello.txt"}))]),
+        assistant('Done. hello.txt contains "hi".'),
+    ])
+
+    def call(request):
+        ev = base(request)
+        if "model_reply" in ev:
+            content = json.loads(ev["model_reply"]["body"])["choices"][0]["message"].get("content") or ""
+            typewriter(content)
+        return ev
+
+    return call
+
+
+def streaming_model(url, api_key=None):
+    """A live OpenAI-compatible endpoint over urllib; renders content live."""
+
+    def call(request):
+        body = json.loads(request)
+        body["stream"] = True
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+        try:
+            resp = urllib.request.urlopen(req, timeout=180)
+        except urllib.error.HTTPError as e:
+            return {"model_failed": {"status": e.code, "body": e.read().decode("utf-8", "replace")}}
+        except Exception as e:  # noqa: BLE001
+            return {"model_failed": {"status": 0, "body": str(e)}}
+
+        content, tools = "", []
+        for raw in resp:  # the response iterates by line
+            line = raw.decode("utf-8", "replace").rstrip("\r\n")
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                j = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            delta = (j.get("choices") or [{}])[0].get("delta") or {}
+            piece = delta.get("content")
+            if piece:
+                content += piece
+                sys.stdout.write(piece)
+                sys.stdout.flush()
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                slot = next((t for t in tools if t["index"] == idx), None)
+                if slot is None:
+                    slot = {"index": idx, "id": "", "name": "", "args": ""}
+                    tools.append(slot)
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                slot["name"] += fn.get("name") or ""
+                slot["args"] += fn.get("arguments") or ""
+        message = {"role": "assistant", "content": content}
+        if tools:
+            message["tool_calls"] = [
+                {"id": t["id"], "type": "function", "function": {"name": t["name"], "arguments": t["args"]}}
+                for t in tools
+            ]
+        return {"model_reply": {"body": json.dumps({"choices": [{"message": message}]})}}
+
+    return call
+
+
+def make_run_tool(vfs_run):
+    def rt(name, args):
+        ok, output = vfs_run(name, args)
+        print(GREEN(f"\n⚙ {name} {json.dumps(args)}"))
+        shown = output if len(output) <= 400 else output[:400] + "…"
+        print(DIM("  " + shown.replace("\n", "\n  ")))
+        return ok, output
+
+    return rt
+
+
+def repl(model_url=None, api_key=None):
+    if not os.path.exists(WASM):
+        sys.exit(f"{WASM} not found — run scripts/build-wasm.sh first")
+
+    live = bool(model_url)
+    vfs_run, files = memory_tools()
+    run_tool = make_run_tool(vfs_run)
+    agent, first = None, True
+
+    print(BOLD("h5i-agent") + DIM(f" — the loop runs under wasmtime {WASMTIME_VERSION} on this machine."))
+    if live:
+        print(DIM(f"live endpoint: {model_url}"))
+    else:
+        print(DIM("offline scripted demo (the typed task is illustrative). "))
+    print(DIM("type a task and press enter; Ctrl-D or 'exit' to quit.\n"))
+
+    while True:
+        try:
+            task = input(BLUE("» ")).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not task:
+            continue
+        if task in ("exit", "quit", ":q"):
+            break
+
+        if live:
+            model = streaming_model(model_url, api_key)
+            if agent is None:
+                agent = Agent(WASM)
+                first = True
+            params = ({"task": task, "tools": TOOL_NAMES, "workspace_note": "wasmtime VFS",
+                       "max_steps": 12} if first else {"task": task})
+            fresh, first = first, False
+        else:
+            model = mock_model()
+            agent = Agent(WASM)  # fresh session, fixed script
+            params = {"task": task, "tools": TOOL_NAMES, "workspace_note": "wasmtime VFS", "max_steps": 12}
+            fresh = True
+
+        done = run_task(agent, params, model, run_tool, fresh=fresh)
+        print()
+        if done["status"] != "success":
+            print(RED(f"[{done['status']}] {done['result']}"))
+
+
+def demo():
+    """Non-interactive self-check: run a scripted session and assert the outcome."""
     if not os.path.exists(WASM):
         sys.exit(f"{WASM} not found — run scripts/build-wasm.sh first")
 
@@ -152,8 +308,7 @@ def main():
     done = run_task(
         agent,
         {"task": "create hello.txt with hi, then read it back",
-         "tools": ["read_file", "write_file", "list_dir"],
-         "workspace_note": "wasmtime in-memory VFS", "max_steps": 10},
+         "tools": TOOL_NAMES, "workspace_note": "wasmtime in-memory VFS", "max_steps": 10},
         model, run_tool, on_effect=lambda e: trace.append(next(iter(e))),
     )
 
@@ -168,7 +323,6 @@ def main():
     dump = agent.dump()
     assert sum(1 for m in dump["messages"] if m["role"] == "tool") == 2, "two tool results"
 
-    # Multi-turn on the same instance via agent_resume.
     done2 = run_task(
         agent, {"task": "list the files"},
         scripted_model([assistant("there is one file: hello.txt")]),
@@ -178,6 +332,18 @@ def main():
     assert len(agent.dump()["messages"]) > len(dump["messages"]), "resume kept the history"
 
     print("\nOK — h5i-agent.wasm ran under wasmtime on this machine (incl. resume).")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Run h5i-agent.wasm under wasmtime.")
+    ap.add_argument("--model-url", help="a live OpenAI-compatible endpoint (interactive)")
+    ap.add_argument("--api-key", help="bearer token for --model-url")
+    ap.add_argument("--demo", action="store_true", help="non-interactive scripted self-check")
+    args = ap.parse_args()
+    if args.demo:
+        demo()
+    else:
+        repl(args.model_url, args.api_key)
 
 
 if __name__ == "__main__":
