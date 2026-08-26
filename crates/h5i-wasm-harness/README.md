@@ -66,6 +66,17 @@ cd crates/h5i-wasm-harness && python3 -m http.server 8000
 # open http://localhost:8000/web/
 ```
 
+Or drive it from a standalone runtime with no browser and no Node:
+
+```console
+$ pip install wasmtime && crates/h5i-wasm-harness/scripts/build-wasm.sh
+$ python3 crates/h5i-wasm-harness/hosts/wasmtime_host.py
+runtime: wasmtime 48.0.0
+effects: call_model -> run_tool -> call_model -> run_tool -> call_model -> done
+status : success
+OK — h5i-agent.wasm ran under wasmtime on this machine (incl. resume).
+```
+
 ## The boundary
 
 The core is a sans-io state machine. It never opens a socket or touches a file.
