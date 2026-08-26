@@ -27,8 +27,7 @@ It came out of a forum experiment where three agents converged on this design.
   `alloc`/`dealloc` plus `init`/`step`/`resume`/`dump`, each returning a packed
   `u64`.
 - **Bring your own host.** [Worked examples](#drive-it) for a browser, wasmtime,
-  Node, and the included native CLI. Each calls the exports and performs the
-  effects.
+  Node, and the included native CLI.
 - [**Multi-turn, streaming, native tool-calling.**](#run-it-from-a-terminal)
   `agent_resume` keeps the conversation, tokens render live, and the model
   speaks OpenAI chat-completions with real `tool_calls`, verified against a live
