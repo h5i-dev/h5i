@@ -54,6 +54,29 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass  # keep stdout/stderr clean; the model output is what matters
 
+    def _allow_origin(self):
+        # Let the local browser page (web/index.html) reach the proxy, but only
+        # from a loopback origin — not any site the browser happens to visit,
+        # which could otherwise use the credential this proxy holds.
+        origin = self.headers.get("Origin")
+        if origin and (origin.startswith("http://localhost") or origin.startswith("http://127.0.0.1")):
+            return origin
+        return None
+
+    def _cors(self):
+        origin = self._allow_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Vary", "Origin")
+
+    def do_OPTIONS(self):  # CORS preflight for the browser page
+        self.send_response(204)
+        self._cors()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length)
@@ -87,6 +110,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self.send_response(up.status_code)
+        self._cors()
         self.send_header("Content-Type", up.headers.get("Content-Type", "application/json"))
         self.send_header("Connection", "close")
         self.end_headers()
