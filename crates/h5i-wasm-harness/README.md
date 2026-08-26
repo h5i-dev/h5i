@@ -11,13 +11,13 @@
 The module does no I/O. It **emits an effect** — call the model, run a tool, or
 finish — and the host performs it and feeds the result back. That inversion is
 the whole design: the same `.wasm` (no imports) loads under a browser's
-`WebAssembly.instantiate` and under any WASI runtime, and the native `i5h`
+`WebAssembly.instantiate` and under any WASI runtime, and the native `h5i-agent`
 binary runs byte-identical logic. The model call and the tools live in the host,
 where the browser's `fetch` and a real filesystem already are.
 
 ```bash
 # talk to a local OpenAI-compatible model server; type a task, watch it work
-cargo run -p h5i-wasm-harness --bin i5h -- \
+cargo run -p h5i-wasm-harness --bin h5i-agent -- \
   --model-url http://127.0.0.1:8080/v1/chat/completions --workdir /tmp/ws
 # » create hello.txt containing hi, then read it back
 ```
@@ -35,9 +35,9 @@ this crate is that converged prototype, ported into the workspace.
   `-Zbuild-std`, no nightly, and nothing from crates.io.
 - **Seven exports, no imports.** [The whole ABI](#the-boundary) is
   `alloc`/`dealloc` plus `init`/`step`/`resume`/`dump`, each a packed `u64`.
-- [**Multi-turn.**](#run-it) `agent_resume` keeps the conversation; the `i5h`
+- [**Multi-turn.**](#run-it) `agent_resume` keeps the conversation; the `h5i-agent`
   REPL is multi-turn by default.
-- [**Live streaming, host-side.**](#run-it) `i5h` renders tokens as they arrive;
+- [**Live streaming, host-side.**](#run-it) `h5i-agent` renders tokens as they arrive;
   the core itself stays non-streaming and never sees a partial response.
 - [**Real tool-calling.**](#test-against-a-real-model) OpenAI chat-completions
   with native `tool_calls` — verified end-to-end against a live Gemini model.
@@ -46,7 +46,7 @@ this crate is that converged prototype, ported into the workspace.
 
 ## Run it
 
-`i5h` is the native host. It needs a model source: a real
+`h5i-agent` is the native host. It needs a model source: a real
 `--model-url http://…` (http:// only — no TLS without a dependency; meant for
 llama.cpp / Ollama on localhost), or a scripted mock — a JSON array of
 chat-completions envelopes replayed in order, the shape of mini-swe-agent's
@@ -54,12 +54,12 @@ chat-completions envelopes replayed in order, the shape of mini-swe-agent's
 
 #### Interactive (the default)
 
-With no `--task`, `i5h` is a REPL: type a task per line, and the agent runs it
+With no `--task`, `h5i-agent` is a REPL: type a task per line, and the agent runs it
 **keeping the conversation across turns**. With a real `--model-url`, tokens
 **render live** as the response streams. Ctrl-D or `exit` quits.
 
 ```console
-$ cargo run -p h5i-wasm-harness --bin i5h -- --model-url http://127.0.0.1:8080/v1/chat/completions
+$ cargo run -p h5i-wasm-harness --bin h5i-agent -- --model-url http://127.0.0.1:8080/v1/chat/completions
 » create hello.txt containing hi
 created hello.txt
 » now read it back
@@ -80,7 +80,7 @@ cat > replies.json <<'JSON'
   {"choices":[{"message":{"role":"assistant","content":"created hello.txt"}}]} ]
 JSON
 
-cargo run -p h5i-wasm-harness --bin i5h -- \
+cargo run -p h5i-wasm-harness --bin h5i-agent -- \
   --task "create hello.txt containing hi" \
   --script replies.json --workdir /tmp/ws --trace
 ```
@@ -121,7 +121,7 @@ guest-owned JSON valid until the next call, which the host copies out. A browser
 reads that `u64` with `BigInt` shifts; a WASI host reads linear memory directly.
 Response *streaming* is a host concern — the module always takes one complete
 envelope — so a browser host does the `fetch`/SSE and reassembly, exactly as
-`i5h` does.
+`h5i-agent` does.
 
 ## Build the wasm module
 
@@ -153,7 +153,7 @@ module end-to-end without a browser (identical `WebAssembly` API).
 
 ## Test against a real model
 
-`i5h` is http-only and dependency-free, so a small local proxy bridges it to a
+`h5i-agent` is http-only and dependency-free, so a small local proxy bridges it to a
 hosted provider over HTTPS+auth. [`adapters/`](adapters/README.md) has one for
 **Google Gemini via Vertex AI**: it mints an OAuth token from a service-account
 key and forwards to Vertex's OpenAI-compatible endpoint, streaming back — no
@@ -162,7 +162,7 @@ proxy reads a key from a gitignored path at runtime.
 
 ```bash
 python3 crates/h5i-wasm-harness/adapters/vertex_openai_proxy.py --port 8137 &
-cargo run -p h5i-wasm-harness --bin i5h -- \
+cargo run -p h5i-wasm-harness --bin h5i-agent -- \
   --model-url http://127.0.0.1:8137/v1/chat/completions \
   --task "create note.txt containing hi, then read it back" --workdir /tmp/ws --trace
 ```
@@ -199,7 +199,7 @@ structured and there is no shell in a browser.
 
 ## What it cannot do
 
-- **Not a full TUI.** The `i5h` REPL renders streamed content live, but there is
+- **Not a full TUI.** The `h5i-agent` REPL renders streamed content live, but there is
   no transcript view, no per-step approval, and tool output is not reflowed.
 - **One wasm session per module instance** (static state); re-instantiate to
   reset. Multi-turn *within* a session works via `agent_resume`.
@@ -210,7 +210,7 @@ structured and there is no shell in a browser.
   compaction, no Anthropic Messages shape yet.
 - **Tools are `read_file` / `write_file` / `list_dir`.** `bash` is in the schema
   but no bundled host declares it — there is no shell in a browser or WASI p1.
-- **`i5h`'s HTTP client is `http://` only** (no TLS without a dependency) — fine
+- **`h5i-agent`'s HTTP client is `http://` only** (no TLS without a dependency) — fine
   for a localhost model server or the proxy above, not for hosted APIs directly.
 
 ## License

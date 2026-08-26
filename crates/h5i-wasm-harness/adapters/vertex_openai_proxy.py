@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Local OpenAI-compatible → Vertex AI proxy, so `i5h` can be tested against a
+"""Local OpenAI-compatible → Vertex AI proxy, so `h5i-agent` can be tested against a
 real Gemini model.
 
-`i5h` speaks OpenAI `chat/completions` over plain http and deliberately cannot
+`h5i-agent` speaks OpenAI `chat/completions` over plain http and deliberately cannot
 do TLS or OAuth (zero dependencies). This proxy terminates that http locally,
 mints a short-lived Google OAuth access token from a service-account key, and
 forwards each request to Vertex AI's *OpenAI-compatible* endpoint over HTTPS,
@@ -19,9 +19,9 @@ venv):
     VERTEX_SA_JSON=crates/h5i-wasm-harness/.secrets/vertex-sa.json \
     /path/to/python crates/h5i-wasm-harness/adapters/vertex_openai_proxy.py --port 8137
 
-Then point i5h at it (plain http, streams live):
+Then point h5i-agent at it (plain http, streams live):
 
-    cargo run -p h5i-wasm-harness --bin i5h -- \
+    cargo run -p h5i-wasm-harness --bin h5i-agent -- \
       --model-url http://127.0.0.1:8137/v1/chat/completions \
       --task "create hello.txt containing hi" --workdir /tmp/ws --trace
 """
@@ -48,7 +48,7 @@ def bearer(creds):
 
 class Handler(BaseHTTPRequestHandler):
     # HTTP/1.0 so the connection closes at end-of-response, which is exactly the
-    # `Connection: close` + read-to-close shape i5h's http client expects.
+    # `Connection: close` + read-to-close shape h5i-agent's http client expects.
     protocol_version = "HTTP/1.0"
 
     def log_message(self, *_args):
@@ -63,7 +63,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(400, "invalid JSON body")
             return
 
-        # i5h fills model with a placeholder; force the real Vertex model id.
+        # h5i-agent fills model with a placeholder; force the real Vertex model id.
         body["model"] = self.server.model
         streaming = bool(body.get("stream"))
 

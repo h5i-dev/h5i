@@ -2,7 +2,7 @@
 name = "h5i-wasm-harness"
 version = "0.1.0"
 edition = "2024"
-description = "Minimal sans-io coding-agent loop that runs both natively (the `i5h` host) and as WebAssembly. Zero dependencies."
+description = "Minimal sans-io coding-agent loop that runs both natively (the `h5i-agent` host) and as WebAssembly. Zero dependencies."
 
 # Zero dependencies, deliberately: the library is `#![no_std] + alloc` so it
 # compiles to `wasm32-unknown-unknown` from the target's prebuilt core/alloc

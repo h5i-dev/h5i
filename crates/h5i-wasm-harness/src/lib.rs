@@ -3,7 +3,7 @@
 //!
 //! The library is `#![no_std] + alloc` with zero dependencies, so the exact
 //! same core compiles three ways from one source: natively for `cargo test`
-//! and the `i5h` host binary, and to `wasm32-unknown-unknown` as a `cdylib`
+//! and the `h5i-agent` host binary, and to `wasm32-unknown-unknown` as a `cdylib`
 //! that any `WebAssembly.instantiate` (browser / Node) or WASI runtime can
 //! load. All I/O — the model HTTP call and every tool run — is delegated to
 //! the embedding host through `Effect` / `Event` values; the module itself
@@ -19,7 +19,7 @@
 //!   `init` / `step` / `dump` contract shared by every host.
 //! - `wasm` (wasm32 only) — the pinned six-symbol ABI over the above.
 //!
-//! The `i5h` binary (`src/bin/i5h.rs`) is the native host: a real filesystem,
+//! The `h5i-agent` binary (`src/bin/h5i-agent.rs`) is the native host: a real filesystem,
 //! a scripted mock model, and an optional plain-HTTP local model.
 
 #![no_std]

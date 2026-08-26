@@ -45,7 +45,7 @@ node crates/h5i-wasm-harness/web/node-demo.mjs
 A browser enforces CORS, so a live endpoint must send permissive CORS headers.
 A local `llama.cpp` / Ollama server usually does; a hosted API does not, and
 neither does the Vertex/Gemini proxy in [`../adapters/`](../adapters/README.md)
-as written (it is meant for the `i5h` CLI). To use a real hosted model from the
+as written (it is meant for the `h5i-agent` CLI). To use a real hosted model from the
 page, front it with a proxy that adds `Access-Control-Allow-Origin`. The module
 itself never makes a request — all networking is the host's, so this is purely a
 host-side concern.

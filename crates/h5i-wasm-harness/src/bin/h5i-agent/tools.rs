@@ -1,4 +1,4 @@
-//! Real-FS tool executors for the `i5h` host. Semantics and output wording are
+//! Real-FS tool executors for the `h5i-agent` host. Semantics and output wording are
 //! the reference the wasm hosts must match — an equivalence check diffs full
 //! transcript dumps of the same scripted session run natively and as wasm.
 //!
@@ -75,7 +75,7 @@ mod tests {
     use super::*;
 
     fn tmpdir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("i5h-tools-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("h5i-agent-tools-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

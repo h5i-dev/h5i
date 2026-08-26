@@ -1,4 +1,4 @@
-//! `i5h`: the native host for the `h5i-wasm-harness` agent core. It drives the
+//! `h5i-agent`: the native host for the `h5i-wasm-harness` agent core. It drives the
 //! same sans-io state machine (compiled natively rather than to wasm) against a
 //! real directory, playing the "WASI-style" host role: real filesystem, an
 //! optional plain-HTTP local model. The wasm module (`scripts/build-wasm.sh`)
@@ -34,11 +34,11 @@ const TOOL_NAMES: [&str; 3] = ["read_file", "write_file", "list_dir"];
 
 fn usage() -> ! {
     eprintln!(
-        "usage: i5h (--script replies.json | --model-url URL) [--task \"...\"] \\\n\
+        "usage: h5i-agent (--script replies.json | --model-url URL) [--task \"...\"] \\\n\
          \x20        [--workdir DIR] [--max-steps N] [--workspace-note \"...\"] \\\n\
          \x20        [--no-stream] [--dump] [--trace]\n\
          \n\
-         With no --task, i5h is interactive: type a task per line; the agent keeps\n\
+         With no --task, h5i-agent is interactive: type a task per line; the agent keeps\n\
          the conversation across turns. Ctrl-D or 'exit' quits.\n\
          With --model-url, responses stream and tokens render live unless --no-stream."
     );
@@ -362,7 +362,7 @@ fn run_once(args: &Args, model: &mut dyn ModelHost, workdir: &Path, task: &str, 
 
 /// Interactive REPL: read a task per line, run it, keep the conversation.
 fn run_interactive(args: &Args, model: &mut dyn ModelHost, workdir: &Path, streaming: bool) {
-    eprintln!("i5h — interactive agent. workspace: {}", workdir.display());
+    eprintln!("h5i-agent — interactive agent. workspace: {}", workdir.display());
     eprintln!("type a task and press enter; Ctrl-D or 'exit' to quit.");
     let stdin = io::stdin();
     let mut agent: Option<Agent> = None;

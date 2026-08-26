@@ -1,4 +1,4 @@
-//! Streaming reassembly for the `i5h` HTTP model: turn an OpenAI-style
+//! Streaming reassembly for the `h5i-agent` HTTP model: turn an OpenAI-style
 //! `chat.completions` SSE stream back into the single non-streaming envelope
 //! the sans-io core expects, while handing content deltas to a callback so the
 //! host can render tokens live. Streaming is purely a host concern — the wasm

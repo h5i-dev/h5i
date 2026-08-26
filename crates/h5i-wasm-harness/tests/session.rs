@@ -54,7 +54,7 @@ fn tool_finished_event(call_id: &str, ok: bool, output: &str) -> String {
     .dump()
 }
 
-/// In-memory tool executor, mirroring the `i5h` host's semantics.
+/// In-memory tool executor, mirroring the `h5i-agent` host's semantics.
 fn run_tool(vfs: &mut BTreeMap<String, String>, name: &str, args: &Value) -> (bool, String) {
     let path = args.get("path").and_then(Value::as_str).unwrap_or("").to_string();
     match name {

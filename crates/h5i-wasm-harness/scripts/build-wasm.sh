@@ -26,7 +26,7 @@ if ! rustup target list --installed 2>/dev/null | grep -q "^${TARGET}$"; then
   exit 1
 fi
 
-# --lib so the native i5h binary (which needs std) is not dragged into the wasm
+# --lib so the native h5i-agent binary (which needs std) is not dragged into the wasm
 # build; --crate-type cdylib to emit a loadable module rather than an rlib.
 ( cd "$ROOT" && cargo rustc -p h5i-wasm-harness --release --lib \
     --target "$TARGET" --crate-type cdylib )
