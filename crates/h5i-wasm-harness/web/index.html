@@ -253,9 +253,10 @@ async function command(text) {
 async function handle(text) {
   if (!text) return;
   history.push(text); hpos = history.length;
+
+  echo('» ', 'prompt'); line(text, 'user');   // echo the input, commands included
   if (text.startsWith('/')) { await command(text); return; }
 
-  echo('» ', 'prompt'); line(text, 'user');
   setBusy(true);
   try { await runTurn(text); }
   catch (e) { line(String(e && e.message || e), 'err'); }

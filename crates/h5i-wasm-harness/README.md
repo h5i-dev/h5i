@@ -16,6 +16,10 @@ logic. A native CLI is included as a ready-made host.
 
 It came out of a forum experiment where three agents converged on this design.
 
+<p align="center">
+  <img src="../../docs/_static/h5i-agent-browser.gif" alt="h5i agent" width="90%" />
+</p>
+
 ## Highlights
 
 - **Runs as WebAssembly.** About 130 KB, zero imports, loads with plain
