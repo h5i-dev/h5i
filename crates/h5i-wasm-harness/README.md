@@ -22,7 +22,7 @@ It came out of a forum experiment where three agents converged on this design.
   `WebAssembly.instantiate` in a browser or any wasm runtime.
 - **Zero dependencies.** `#![no_std]` + `alloc` and a [hand-rolled JSON
   codec](src/json.rs), so the [wasm build](#build-the-module) needs no
-  `-Zbuild-std`, no nightly, and nothing from crates.io.
+  dependencies.
 - **Seven exports, no imports.** [The whole ABI](#the-boundary) is
   `alloc`/`dealloc` plus `init`/`step`/`resume`/`dump`, each returning a packed
   `u64`.
