@@ -22,7 +22,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -314,18 +313,24 @@ def make_run_tool(vfs_run):
     return rt
 
 
-def repl(model_url=None, api_key=None, use_bash=False):
+def repl(model_url=None, api_key=None, use_bash=False, workdir=None):
     if not os.path.exists(WASM):
         sys.exit(f"{WASM} not found — run scripts/build-wasm.sh first")
 
     live = bool(model_url)
-    if use_bash:
-        root = tempfile.mkdtemp(prefix="h5i-agent-")
+    # Real files (and bash) whenever a workspace is in play; an in-memory VFS
+    # only for the plain default. No silent temp dir — use the cwd unless told.
+    on_disk = use_bash or workdir is not None
+    if on_disk:
+        root = os.path.abspath(workdir or ".")
+        os.makedirs(root, exist_ok=True)
         tool_run = disk_tools(root)
-        tools = TOOL_NAMES + ["bash"]
+        tools = TOOL_NAMES + (["bash"] if use_bash else [])
+        note = "a real directory on disk; changes persist" + ("; bash available" if use_bash else "")
     else:
         tool_run, _ = memory_tools()
         tools = TOOL_NAMES
+        note = "in-memory VFS"
     run_tool = make_run_tool(tool_run)
     agent, first = None, True
 
@@ -334,9 +339,11 @@ def repl(model_url=None, api_key=None, use_bash=False):
         print(DIM(f"live endpoint: {model_url}"))
     else:
         print(DIM("offline scripted demo (the typed task is illustrative). "))
+    if on_disk:
+        print(DIM(f"workspace: {root}"))
     if use_bash:
-        print(RED(f"bash tool ENABLED — the model can run shell commands in {root}"))
-        print(RED("this is a real shell (cwd, not a jail); run only models you trust."))
+        print(RED("bash tool ENABLED — the model can run real shell commands in the "
+                  "workspace (a shell, not a sandbox); run only models you trust."))
     print(DIM("type a task and press enter; Ctrl-D or 'exit' to quit.\n"))
 
     while True:
@@ -350,7 +357,6 @@ def repl(model_url=None, api_key=None, use_bash=False):
         if task in ("exit", "quit", ":q"):
             break
 
-        note = "a real temp directory; bash available" if use_bash else "wasmtime in-memory VFS"
         if live:
             model = streaming_model(model_url, api_key)
             if agent is None:
@@ -420,12 +426,14 @@ def main():
     ap.add_argument("--api-key", help="bearer token for --model-url")
     ap.add_argument("--demo", action="store_true", help="non-interactive scripted self-check")
     ap.add_argument("--bash", action="store_true",
-                    help="enable a bash tool over a real temp dir (a shell, not a sandbox)")
+                    help="enable a bash tool (a real shell in the workspace, not a sandbox)")
+    ap.add_argument("--workdir",
+                    help="run the file tools against this real directory (default: cwd, and implied by --bash)")
     args = ap.parse_args()
     if args.demo:
         demo()
     else:
-        repl(args.model_url, args.api_key, use_bash=args.bash)
+        repl(args.model_url, args.api_key, use_bash=args.bash, workdir=args.workdir)
 
 
 if __name__ == "__main__":

@@ -66,6 +66,23 @@ pub fn run(workdir: &Path, name: &str, args: &Value) -> Result<String, String> {
             names.sort();
             Ok(names.join("\n"))
         }
+        "bash" => {
+            // Only reachable when --bash declared the tool. cwd is the workdir,
+            // which is a working directory, not a jail — real confinement is the
+            // h5i sandbox's job.
+            let out = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(str_arg(args, "command"))
+                .current_dir(workdir)
+                .output()
+                .map_err(|e| format!("failed to run bash: {}", e))?;
+            let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&out.stderr));
+            if text.trim().is_empty() {
+                text = format!("(no output, exit {})", out.status.code().unwrap_or(-1));
+            }
+            if out.status.success() { Ok(text) } else { Err(text) }
+        }
         _ => Err(format!("host has no executor for tool: {}", name)),
     }
 }

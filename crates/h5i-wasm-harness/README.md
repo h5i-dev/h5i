@@ -80,8 +80,8 @@ h5i-agent — the loop runs under wasmtime 48.0.0 on this machine.
 Done. hello.txt contains "hi".
 ```
 
-Add `--model-url URL` for a live endpoint (tokens stream), or `--demo` for a
-non-interactive self-check.
+Add `--model-url URL` for a live endpoint (tokens stream), `--bash` for a shell
+tool over the current directory, or `--demo` for a non-interactive self-check.
 
 ## The boundary
 
@@ -151,7 +151,8 @@ the file says hi
 
 Pass `--task` for a single scriptable run; it exits non-zero on failure.
 `--trace` prints `[model call]` / `[tool]` lines on stderr, `--dump` prints the
-deterministic transcript, `--no-stream` sends one blocking request.
+deterministic transcript, `--no-stream` sends one blocking request, and `--bash`
+adds a shell tool that runs in `--workdir` (a real shell, not a sandbox).
 
 ```bash
 cat > replies.json <<'JSON'

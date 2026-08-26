@@ -36,7 +36,7 @@ fn usage() -> ! {
     eprintln!(
         "usage: h5i-agent (--script replies.json | --model-url URL) [--task \"...\"] \\\n\
          \x20        [--workdir DIR] [--max-steps N] [--workspace-note \"...\"] \\\n\
-         \x20        [--no-stream] [--dump] [--trace]\n\
+         \x20        [--no-stream] [--bash] [--dump] [--trace]\n\
          \n\
          With no --task, h5i-agent is interactive: type a task per line; the agent keeps\n\
          the conversation across turns. Ctrl-D or 'exit' quits.\n\
@@ -54,6 +54,7 @@ struct Args {
     max_steps: u32,
     note: String,
     no_stream: bool,
+    bash: bool,
     dump: bool,
     trace: bool,
 }
@@ -68,6 +69,7 @@ fn parse_args() -> Args {
         max_steps: 20,
         note: String::from("a real directory on disk; changes persist"),
         no_stream: false,
+        bash: false,
         dump: false,
         trace: false,
     };
@@ -83,6 +85,7 @@ fn parse_args() -> Args {
             "--max-steps" => args.max_steps = val(&mut it).parse().unwrap_or_else(|_| usage()),
             "--workspace-note" => args.note = val(&mut it),
             "--no-stream" => args.no_stream = true,
+            "--bash" => args.bash = true,
             "--dump" => args.dump = true,
             "--trace" => args.trace = true,
             "-h" | "--help" => usage(),
@@ -328,8 +331,12 @@ fn drive(
     }
 }
 
-fn tool_names() -> Vec<String> {
-    TOOL_NAMES.iter().map(|s| s.to_string()).collect()
+fn tool_names(bash: bool) -> Vec<String> {
+    let mut names: Vec<String> = TOOL_NAMES.iter().map(|s| s.to_string()).collect();
+    if bash {
+        names.push("bash".to_string());
+    }
+    names
 }
 
 /// One-shot: run a single task and exit non-zero if it did not succeed.
@@ -338,7 +345,7 @@ fn tool_names() -> Vec<String> {
 fn run_once(args: &Args, model: &mut dyn ModelHost, workdir: &Path, task: &str, streaming: bool) {
     let (mut agent, first) = Agent::start(
         task,
-        &tool_names(),
+        &tool_names(args.bash),
         &args.note,
         Config { model: "host-configured".into(), max_steps: args.max_steps },
     )
@@ -395,7 +402,7 @@ fn run_interactive(args: &Args, model: &mut dyn ModelHost, workdir: &Path, strea
         } else {
             let (a, e) = Agent::start(
                 task,
-                &tool_names(),
+                &tool_names(args.bash),
                 &args.note,
                 Config { model: "host-configured".into(), max_steps: args.max_steps },
             )
@@ -427,6 +434,13 @@ fn main() {
     let args = parse_args();
     std::fs::create_dir_all(&args.workdir).expect("workdir creatable");
     let workdir = args.workdir.canonicalize().expect("workdir resolvable");
+
+    if args.bash {
+        eprintln!(
+            "bash tool ENABLED — the model can run shell commands in {} (a real shell, not a sandbox)",
+            workdir.display()
+        );
+    }
 
     // The scripted mock never streams; a real endpoint streams unless opted out.
     let streaming = args.model_url.is_some() && !args.no_stream;
