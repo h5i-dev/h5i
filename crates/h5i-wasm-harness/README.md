@@ -24,8 +24,8 @@ cargo install --path crates/h5i-wasm-harness   # installs the `h5i-agent` binary
 ```
 
 That puts `h5i-agent` on your `PATH`; the examples below call it directly. To
-build the WebAssembly module instead of the CLI, see [Build the wasm
-module](#build-the-wasm-module).
+put the agent *inside* a browser or WASI host instead of running the CLI, see
+[Embed it as wasm](#embed-it-as-wasm).
 
 ## Highlights
 
@@ -33,7 +33,7 @@ module](#build-the-wasm-module).
   effects crossing as JSON, so the same core is a browser module, a WASI module,
   and a native host, with no `#[cfg]` forks in the loop.
 - **Zero dependencies.** `#![no_std]` + `alloc` and a [hand-rolled JSON
-  codec](src/json.rs), so the [wasm build](#build-the-wasm-module) needs no
+  codec](src/json.rs), so the [wasm build](#embed-it-as-wasm) needs no
   `-Zbuild-std`, no nightly, and nothing from crates.io.
 - **Seven exports, no imports.** [The whole ABI](#the-boundary) is
   `alloc`/`dealloc` plus `init`/`step`/`resume`/`dump`, each returning a packed
@@ -118,16 +118,21 @@ reads that `u64` with `BigInt` shifts; a WASI host reads linear memory directly.
 Streaming stays a host concern, since the module always takes one complete
 envelope.
 
-## Build the wasm module
+## Embed it as wasm
+
+`h5i-agent` (the CLI) is the agent running as its own host. The wasm build is
+the other half: the agent **core** compiled as a **guest** for you to embed in a
+browser page or a WASI runtime, which then performs its effects. It is not a
+binary you run on its own; without a host it does nothing.
 
 ```bash
 rustup target add wasm32-unknown-unknown        # one time
-crates/h5i-wasm-harness/scripts/build-wasm.sh   # -> build/h5i_wasm_harness.wasm (~130 KB)
+crates/h5i-wasm-harness/scripts/build-wasm.sh   # -> build/h5i-agent.wasm (~130 KB)
 ```
 
 No `-Zbuild-std`, no nightly, no network: the core is `#![no_std]` + `alloc`
 with zero dependencies, so the stock target's prebuilt `core`/`alloc` are
-enough.
+enough. [Run it in the browser](#run-it-in-the-browser) is a worked host.
 
 ## Run it in the browser
 

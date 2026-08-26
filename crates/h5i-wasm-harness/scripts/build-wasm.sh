@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Build the agent as a wasm32 module: crates/h5i-wasm-harness/build/h5i_wasm_harness.wasm
+# Build the agent core as a wasm32 guest module: crates/h5i-wasm-harness/build/h5i-agent.wasm
+#
+# This is the *guest*, not the CLI: no_std, no I/O, just the loop behind the
+# seven-export ABI. A host (a browser page, a WASI runtime) performs its effects.
 #
 # The library is #![no_std] + alloc with zero dependencies, so the stock
-# wasm32-unknown-unknown target (prebuilt core + alloc) is all that's needed —
+# wasm32-unknown-unknown target (prebuilt core + alloc) is all that's needed:
 # no -Zbuild-std, no nightly, no crates.io. The cdylib crate-type is requested
 # here rather than in Cargo.toml because a #![no_std] cdylib built for the host
 # has no allocator/panic handler and would break `cargo build --workspace`.
@@ -31,7 +34,9 @@ fi
 ( cd "$ROOT" && cargo rustc -p h5i-wasm-harness --release --lib \
     --target "$TARGET" --crate-type cdylib )
 
+# Cargo names the artifact after the lib (h5i_wasm_harness); publish it under
+# the agent's name so the browser/WASI host loads `h5i-agent.wasm`.
 BUILT="$TARGET_DIR/$TARGET/release/h5i_wasm_harness.wasm"
-cp "$BUILT" "$OUT/h5i_wasm_harness.wasm"
-ls -la "$OUT/h5i_wasm_harness.wasm"
+cp "$BUILT" "$OUT/h5i-agent.wasm"
+ls -la "$OUT/h5i-agent.wasm"
 echo "exports: memory, alloc, dealloc, agent_init, agent_step, agent_resume, agent_dump (no imports)"

@@ -15,7 +15,7 @@ call goes through `fetch`, the tools run against an in-memory filesystem.
 ## Try it
 
 ```bash
-# 1. Build the module (writes ../build/h5i_wasm_harness.wasm)
+# 1. Build the module (writes ../build/h5i-agent.wasm)
 crates/h5i-wasm-harness/scripts/build-wasm.sh
 
 # 2. Serve the crate directory (module scripts and .wasm need http, not file://)

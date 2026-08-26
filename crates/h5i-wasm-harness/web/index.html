@@ -107,8 +107,8 @@ function renderFiles(files) {
 
 async function loadWasm() {
   if (!wasmBytes) {
-    const r = await fetch('../build/h5i_wasm_harness.wasm');
-    if (!r.ok) throw new Error('h5i_wasm_harness.wasm not found — run scripts/build-wasm.sh first');
+    const r = await fetch('../build/h5i-agent.wasm');
+    if (!r.ok) throw new Error('h5i-agent.wasm not found — run scripts/build-wasm.sh first');
     wasmBytes = await r.arrayBuffer();
   }
   return Agent.fromBytes(wasmBytes.slice(0)); // fresh instance per run

@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import { Agent, runTask, memoryTools, scriptedModel, assistant } from './host.mjs';
 
-const wasmPath = fileURLToPath(new URL('../build/h5i_wasm_harness.wasm', import.meta.url));
+const wasmPath = fileURLToPath(new URL('../build/h5i-agent.wasm', import.meta.url));
 const bytes = await readFile(wasmPath);
 const agent = await Agent.fromBytes(bytes);
 
