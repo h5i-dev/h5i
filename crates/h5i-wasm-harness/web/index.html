@@ -246,7 +246,12 @@ input.addEventListener('keydown', (e) => {
   }
 });
 
-document.addEventListener('click', () => input.focus());
+// Refocus the input on click, but never while the user is selecting text:
+// pulling focus into the input collapses the page selection and breaks copy.
+document.addEventListener('mouseup', () => {
+  if (window.getSelection && String(window.getSelection())) return;
+  input.focus();
+});
 
 line('h5i-agent — the agent loop, compiled to WebAssembly, running in this page.', 'muted');
 line('type a task and press enter. offline scripted demo until you /model <url>. /help for more.', 'muted');
