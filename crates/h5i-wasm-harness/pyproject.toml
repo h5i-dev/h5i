@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "h5i-agent"
+version = "0.1.0"
+description = "Run the h5i-agent WebAssembly coding-agent harness from the command line."
+requires-python = ">=3.8"
+license = "Apache-2.0"
+authors = [{ name = "h5i" }]
+keywords = ["webassembly", "wasm", "coding-agent", "llm", "agent"]
+
+# `h5i-agent web` needs nothing beyond the standard library. The wasmtime host
+# is an opt-in extra so a plain install stays dependency-free:
+#   pip install 'h5i-agent[wasmtime]'
+[project.optional-dependencies]
+wasmtime = ["wasmtime"]
+
+[project.scripts]
+h5i-agent = "h5i_agent.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/h5i-dev/h5i"
+Source = "https://github.com/h5i-dev/h5i/tree/main/crates/h5i-wasm-harness"
+
+# The bundled assets (the wasm module and the browser page) are staged into
+# h5i_agent/_assets/ by scripts/build-wheel.sh just before the build. They are
+# git-ignored (generated), so `artifacts` tells hatchling to include them in the
+# wheel anyway.
+[tool.hatch.build.targets.wheel]
+packages = ["h5i_agent"]
+artifacts = ["h5i_agent/_assets/*"]

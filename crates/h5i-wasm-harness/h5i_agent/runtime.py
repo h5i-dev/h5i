@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Run h5i-agent.wasm on this machine with wasmtime: no browser, no Node.
+"""`h5i-agent wasmtime`: run h5i-agent.wasm under wasmtime, no browser, no Node.
 
 The module is a reactor with zero imports, so any wasm runtime can embed it and
 call its exports. This is a terminal REPL over that module, driven by the same
@@ -8,13 +7,10 @@ output, run tools against an in-memory filesystem, and keep the conversation.
 The agent's logic runs inside the wasm; this host only performs effects and
 marshals JSON.
 
-    pip install wasmtime
-    crates/h5i-wasm-harness/scripts/build-wasm.sh       # writes ../build/h5i-agent.wasm
-
-    python3 hosts/wasmtime_host.py                      # interactive, offline scripted model
-    python3 hosts/wasmtime_host.py --model-url URL      # interactive, a live endpoint (streams)
-    python3 hosts/wasmtime_host.py --model-url URL --bash   # ...with a real workspace + bash tool
-    python3 hosts/wasmtime_host.py --demo               # non-interactive self-check (asserts)
+    h5i-agent wasmtime                      # interactive, offline scripted model
+    h5i-agent wasmtime --model-url URL      # interactive, a live endpoint (streams)
+    h5i-agent wasmtime --model-url URL --bash   # ...with a real workspace + bash tool
+    h5i-agent wasmtime --demo               # non-interactive self-check (asserts)
 """
 
 import argparse
@@ -29,13 +25,12 @@ from importlib.metadata import PackageNotFoundError, version
 
 import wasmtime
 
+from . import _assets
+
 try:
     WASMTIME_VERSION = version("wasmtime")
 except PackageNotFoundError:
     WASMTIME_VERSION = "?"
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-WASM = os.path.normpath(os.path.join(HERE, "..", "build", "h5i-agent.wasm"))
 
 # ANSI colors, only when stdout is a terminal.
 _TTY = sys.stdout.isatty()
@@ -314,8 +309,7 @@ def make_run_tool(vfs_run):
 
 
 def repl(model_url=None, api_key=None, use_bash=False, workdir=None):
-    if not os.path.exists(WASM):
-        sys.exit(f"{WASM} not found — run scripts/build-wasm.sh first")
+    wasm = _assets.path("h5i-agent.wasm")
 
     live = bool(model_url)
     # Real files (and bash) whenever a workspace is in play; an in-memory VFS
@@ -360,14 +354,14 @@ def repl(model_url=None, api_key=None, use_bash=False, workdir=None):
         if live:
             model = streaming_model(model_url, api_key)
             if agent is None:
-                agent = Agent(WASM)
+                agent = Agent(wasm)
                 first = True
             params = ({"task": task, "tools": tools, "workspace_note": note,
                        "max_steps": 12} if first else {"task": task})
             fresh, first = first, False
         else:
             model = mock_model()
-            agent = Agent(WASM)  # fresh session, fixed script
+            agent = Agent(wasm)  # fresh session, fixed script
             params = {"task": task, "tools": tools, "workspace_note": note, "max_steps": 12}
             fresh = True
 
@@ -379,10 +373,9 @@ def repl(model_url=None, api_key=None, use_bash=False, workdir=None):
 
 def demo():
     """Non-interactive self-check: run a scripted session and assert the outcome."""
-    if not os.path.exists(WASM):
-        sys.exit(f"{WASM} not found — run scripts/build-wasm.sh first")
+    wasm = _assets.path("h5i-agent.wasm")
 
-    agent = Agent(WASM)
+    agent = Agent(wasm)
     run_tool, files = memory_tools()
     model = scripted_model([
         assistant("", [("c1", "write_file", json.dumps({"path": "hello.txt", "content": "hi"}))]),
@@ -420,8 +413,9 @@ def demo():
     print("\nOK — h5i-agent.wasm ran under wasmtime on this machine (incl. resume).")
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Run h5i-agent.wasm under wasmtime.")
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="h5i-agent wasmtime",
+                                 description="Run h5i-agent.wasm under wasmtime.")
     ap.add_argument("--model-url", help="a live OpenAI-compatible endpoint (interactive)")
     ap.add_argument("--api-key", help="bearer token for --model-url")
     ap.add_argument("--demo", action="store_true", help="non-interactive scripted self-check")
@@ -429,7 +423,7 @@ def main():
                     help="enable a bash tool (a real shell in the workspace, not a sandbox)")
     ap.add_argument("--workdir",
                     help="run the file tools against this real directory (default: cwd, and implied by --bash)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.demo:
         demo()
     else:
