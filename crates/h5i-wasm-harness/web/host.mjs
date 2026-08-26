@@ -147,6 +147,74 @@ export function fetchModel(url, { apiKey } = {}) {
   };
 }
 
+// A real model over fetch that STREAMS: it asks the endpoint for SSE, calls
+// `onToken` for each content delta (so a terminal can render live), and
+// reassembles the one envelope the module expects. Mirrors the CLI's stream.rs.
+export function streamingFetchModel(url, { apiKey, onToken } = {}) {
+  return async (request) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    let body = request;
+    try {
+      const o = JSON.parse(request);
+      o.stream = true;
+      body = JSON.stringify(o);
+    } catch { /* send as-is */ }
+
+    let resp;
+    try {
+      resp = await fetch(url, { method: 'POST', headers, body });
+    } catch (e) {
+      return { model_failed: { status: 0, body: String(e) } };
+    }
+    if (!resp.ok || !resp.body) {
+      return { model_failed: { status: resp.status, body: await resp.text().catch(() => '') } };
+    }
+
+    const reader = resp.body.getReader();
+    let buf = '';
+    let content = '';
+    const tools = [];
+    let done = false;
+    while (!done) {
+      const { value, done: rd } = await reader.read();
+      if (rd) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const event = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        for (const raw of event.split('\n')) {
+          const line = raw.replace(/\r$/, '');
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (data === '[DONE]') { done = true; break; }
+          let j;
+          try { j = JSON.parse(data); } catch { continue; }
+          const delta = j.choices && j.choices[0] && j.choices[0].delta;
+          if (!delta) continue;
+          if (delta.content) { content += delta.content; onToken?.(delta.content); }
+          for (const tc of delta.tool_calls || []) {
+            const idx = tc.index ?? 0;
+            let slot = tools.find((t) => t.index === idx);
+            if (!slot) { slot = { index: idx, id: '', name: '', args: '' }; tools.push(slot); }
+            if (tc.id) slot.id = tc.id;
+            if (tc.function?.name) slot.name += tc.function.name;
+            if (tc.function?.arguments) slot.args += tc.function.arguments;
+          }
+        }
+      }
+    }
+    const message = { role: 'assistant', content };
+    if (tools.length) {
+      message.tool_calls = tools.map((t) => ({
+        id: t.id, type: 'function', function: { name: t.name, arguments: t.args },
+      }));
+    }
+    return { model_reply: { body: JSON.stringify({ choices: [{ message }] }) } };
+  };
+}
+
 /** Build the assistant envelope helpers used to script the mock. */
 export function assistant(content, toolCalls = []) {
   const message = { role: 'assistant', content };

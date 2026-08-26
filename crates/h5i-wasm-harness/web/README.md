@@ -1,15 +1,17 @@
 # Running the harness in a browser
 
-The `.wasm` module has no imports, so a browser can load it with plain
-`WebAssembly.instantiate` and drive the agent loop from JavaScript — the model
+The `.wasm` module has no imports, so a browser loads it with plain
+`WebAssembly.instantiate` and drives the agent loop from JavaScript: the model
 call goes through `fetch`, the tools run against an in-memory filesystem.
 
 - **`host.mjs`** — the host loop, environment-agnostic. It decodes the module's
   `(ptr << 32) | len` return convention, dispatches `Effect`s, and ships helpers
-  (an in-memory FS, a scripted mock model, a `fetch`-based real model). The same
-  file runs under Node and in the browser.
-- **`index.html`** — a small page that uses `host.mjs`: a task box, a live view
-  of model calls / tool calls / the final answer, and the in-memory workspace.
+  (an in-memory FS, a scripted mock model, and `fetch`-based real models, one of
+  which streams SSE and renders tokens live). The same file runs under Node and
+  in the browser.
+- **`index.html`** — a terminal-style REPL over `host.mjs`: a prompt, streaming
+  output, tool calls as terminal lines, and slash commands (`/model <url>`,
+  `/mock`, `/files`, `/reset`, `/clear`, `/help`). Multi-turn by default.
 - **`node-demo.mjs`** — the same loop under Node, as a check.
 
 ## Try it
@@ -25,9 +27,10 @@ cd crates/h5i-wasm-harness && python3 -m http.server 8000
 #    http://localhost:8000/web/
 ```
 
-It opens in **Mock** mode: an offline scripted model that writes `hello.txt` and
-reads it back, so you can watch the whole loop run with no network. Switch to
-**Live endpoint** to point it at an OpenAI-compatible URL.
+It opens in an offline **mock** mode: a scripted model that writes `hello.txt`
+and reads it back, so you can watch the whole loop run with no network. Type
+`/model http://localhost:8080/v1/chat/completions` to point it at a live
+OpenAI-compatible endpoint, and tokens stream in live.
 
 ## Verify without a browser
 
@@ -54,7 +57,7 @@ host-side concern.
 
 - `host.mjs` re-views `memory.buffer` before every access because the module's
   bump allocator can call `memory.grow`, which detaches the old `ArrayBuffer`.
-- Each **Run** instantiates a fresh module (the allocator never frees). For a
-  persistent multi-turn chat, keep one instance and call `agent.resume(task)` —
-  `node-demo.mjs` shows both.
+- In live mode the page keeps one instance and calls `agent.resume(task)` for
+  each turn (a real conversation); mock mode instantiates a fresh module per
+  submit, since the allocator never frees. `node-demo.mjs` shows both paths.
 - No bundler, no dependencies: two files and the `.wasm`.
