@@ -1,6 +1,6 @@
-# Adapters — testing `h5i-agent` against real models
+# Adapters — testing `h5i-agent-native` against real models
 
-`h5i-agent` speaks OpenAI `chat/completions` over **plain http** and deliberately has
+`h5i-agent-native` speaks OpenAI `chat/completions` over **plain http** and deliberately has
 no TLS or auth (zero dependencies). These small local proxies bridge that to a
 real provider so you can drive the harness with a live model.
 
@@ -21,8 +21,8 @@ Needs a Python with `google-auth` and `requests`.
 VERTEX_SA_JSON=crates/h5i-wasm-harness/.secrets/vertex-sa.json \
   python3 crates/h5i-wasm-harness/adapters/vertex_openai_proxy.py --port 8137
 
-# 3. Point h5i-agent at it — plain http, streams live, real tool-calling:
-cargo run -p h5i-wasm-harness --bin h5i-agent -- \
+# 3. Point h5i-agent-native at it, plain http, streams live, real tool-calling:
+cargo run -p h5i-wasm-harness --bin h5i-agent-native -- \
   --model-url http://127.0.0.1:8137/v1/chat/completions \
   --task "create note.txt containing hi, then read it back" \
   --workdir /tmp/ws --trace

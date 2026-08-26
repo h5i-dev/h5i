@@ -16,15 +16,22 @@ call goes through `fetch`, the tools run against an in-memory filesystem.
 
 ## Try it
 
+The installed CLI serves this page and opens it for you (it fetches the module
+and lays out the files, so nothing here needs a repo checkout):
+
 ```bash
-# 1. Build the module (writes ../build/h5i-agent.wasm)
+h5i-agent web
+# serves http://localhost:8000/web/ and opens it; --port to change, --no-open to skip.
+```
+
+From a source checkout you can serve it by hand instead. The page fetches
+`../build/h5i-agent.wasm` relative to `/web/`, so build the module and serve the
+crate root (module scripts and the `.wasm` need http, not `file://`):
+
+```bash
 crates/h5i-wasm-harness/scripts/build-wasm.sh
-
-# 2. Serve the crate directory (module scripts and .wasm need http, not file://)
-cd crates/h5i-wasm-harness && python3 -m http.server 8000
-
-# 3. Open the page
-#    http://localhost:8000/web/
+( cd crates/h5i-wasm-harness && python3 -m http.server 8000 )
+# open http://localhost:8000/web/
 ```
 
 It opens in an offline **mock** mode: a scripted model that writes `hello.txt`

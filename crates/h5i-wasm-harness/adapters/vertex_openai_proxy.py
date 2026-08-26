@@ -19,9 +19,9 @@ venv):
     VERTEX_SA_JSON=crates/h5i-wasm-harness/.secrets/vertex-sa.json \
     /path/to/python crates/h5i-wasm-harness/adapters/vertex_openai_proxy.py --port 8137
 
-Then point h5i-agent at it (plain http, streams live):
+Then point h5i-agent-native at it (plain http, streams live):
 
-    cargo run -p h5i-wasm-harness --bin h5i-agent -- \
+    cargo run -p h5i-wasm-harness --bin h5i-agent-native -- \
       --model-url http://127.0.0.1:8137/v1/chat/completions \
       --task "create hello.txt containing hi" --workdir /tmp/ws --trace
 """

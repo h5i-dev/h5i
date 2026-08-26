@@ -327,3 +327,44 @@ jobs:
             `cargo install --git https://github.com/${{ github.repository }}`
 
             Each archive is accompanied by a `.sha256` checksum file.
+
+  # The `h5i-agent` Python wheel: the WebAssembly harness as an installable CLI
+  # (`pip install <the wheel>` then `h5i-agent web` / `h5i-agent wasmtime`). It
+  # bundles the wasm module and the browser page, so it is platform-independent
+  # (one py3-none-any wheel, not a per-target build) and is attached out of band
+  # rather than threaded through the target matrix and its strict asset guard.
+  wheel:
+    name: Build and attach the h5i-agent wheel
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (wasm target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel
+        working-directory: crates/h5i-wasm-harness
+        run: |
+          python -m pip install --upgrade build
+          ./scripts/build-wheel.sh
+
+      # Additive upload onto the release the previous job created, so the strict
+      # 16-asset guard never has to account for these files. --clobber keeps a
+      # re-run idempotent.
+      - name: Attach to the release
+        working-directory: crates/h5i-wasm-harness/dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for f in h5i_agent-*.whl; do sha256sum "$f" > "$f.sha256"; done
+          gh release upload "${{ github.ref_name }}" \
+            h5i_agent-*.whl h5i_agent-*.whl.sha256 \
+            --repo "${{ github.repository }}" --clobber
