@@ -2051,6 +2051,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "h5i-wasm-harness"
+version = "0.1.0"
+
+[[package]]
 name = "harfrust"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

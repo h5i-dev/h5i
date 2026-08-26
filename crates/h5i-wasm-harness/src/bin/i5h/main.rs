@@ -1,0 +1,246 @@
+//! `i5h`: the native host for the `h5i-wasm-harness` agent core. It drives the
+//! same sans-io state machine (compiled natively rather than to wasm) against a
+//! real directory, playing the "WASI-style" host role: real filesystem, an
+//! optional plain-HTTP local model. The wasm module (`scripts/build-wasm.sh`)
+//! runs byte-identical logic behind the six-symbol ABI; this binary is what you
+//! run at a terminal.
+//!
+//! Modes:
+//!   --script replies.json   scripted mock model (a JSON array of
+//!                           chat-completions response envelopes, replayed in
+//!                           order — the shape of mini-swe-agent's
+//!                           DeterministicModel, models/test_models.py)
+//!   --model-url http://...  real OpenAI-compatible endpoint, http:// only
+//!                           (no TLS without dependencies; meant for
+//!                           llama.cpp / Ollama on localhost)
+
+use std::io::{Read, Write as IoWrite};
+use std::path::{Path, PathBuf};
+
+use h5i_wasm_harness::agent::{Agent, Config, Effect, Event};
+use h5i_wasm_harness::json::Value;
+use h5i_wasm_harness::proto;
+
+mod tools;
+
+fn usage() -> ! {
+    eprintln!(
+        "usage: i5h --task \"...\" (--script replies.json | --model-url URL) \\\n\
+         \x20        [--workdir DIR] [--max-steps N] [--workspace-note \"...\"] [--dump] [--trace]"
+    );
+    std::process::exit(2);
+}
+
+struct Args {
+    task: String,
+    script: Option<PathBuf>,
+    model_url: Option<String>,
+    api_key: Option<String>,
+    workdir: PathBuf,
+    max_steps: u32,
+    note: String,
+    dump: bool,
+    trace: bool,
+}
+
+fn parse_args() -> Args {
+    let mut args = Args {
+        task: String::new(),
+        script: None,
+        model_url: None,
+        api_key: None,
+        workdir: PathBuf::from("."),
+        max_steps: 20,
+        note: String::from("a real directory on disk; changes persist"),
+        dump: false,
+        trace: false,
+    };
+    let mut it = std::env::args().skip(1);
+    while let Some(arg) = it.next() {
+        let val = |it: &mut dyn Iterator<Item = String>| it.next().unwrap_or_else(|| usage());
+        match arg.as_str() {
+            "--task" => args.task = val(&mut it),
+            "--script" => args.script = Some(PathBuf::from(val(&mut it))),
+            "--model-url" => args.model_url = Some(val(&mut it)),
+            "--api-key" => args.api_key = Some(val(&mut it)),
+            "--workdir" => args.workdir = PathBuf::from(val(&mut it)),
+            "--max-steps" => args.max_steps = val(&mut it).parse().unwrap_or_else(|_| usage()),
+            "--workspace-note" => args.note = val(&mut it),
+            "--dump" => args.dump = true,
+            "--trace" => args.trace = true,
+            _ => usage(),
+        }
+    }
+    if args.task.is_empty() || (args.script.is_none() && args.model_url.is_none()) {
+        usage();
+    }
+    args
+}
+
+trait ModelHost {
+    fn call(&mut self, request: &str) -> Event;
+}
+
+/// Replays canned response envelopes in order.
+struct ScriptedModel {
+    replies: Vec<Value>,
+    next: usize,
+}
+
+impl ScriptedModel {
+    fn load(path: &Path) -> Self {
+        let text = std::fs::read_to_string(path).expect("script file readable");
+        let parsed = h5i_wasm_harness::json::parse(&text).expect("script file is valid JSON");
+        let Value::Arr(replies) = parsed else { panic!("script must be a JSON array") };
+        ScriptedModel { replies, next: 0 }
+    }
+}
+
+impl ModelHost for ScriptedModel {
+    fn call(&mut self, _request: &str) -> Event {
+        match self.replies.get(self.next) {
+            Some(reply) => {
+                self.next += 1;
+                Event::ModelReply { body: reply.dump() }
+            }
+            None => Event::ModelFailed { status: 400, body: "mock script exhausted".into() },
+        }
+    }
+}
+
+/// Minimal HTTP/1.1 POST over TcpStream. http:// only — good enough for the
+/// llama.cpp / Ollama localhost workflow, and keeps the binary dependency-free.
+struct HttpModel {
+    url: String,
+    api_key: Option<String>,
+}
+
+impl HttpModel {
+    fn post(&self, body: &str) -> Result<(u32, String), String> {
+        let rest = self
+            .url
+            .strip_prefix("http://")
+            .ok_or("only http:// URLs are supported (use a local model server)")?;
+        let (host_port, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, "/"),
+        };
+        let addr = if host_port.contains(':') {
+            host_port.to_string()
+        } else {
+            format!("{}:80", host_port)
+        };
+        let mut stream =
+            std::net::TcpStream::connect(&addr).map_err(|e| format!("connect {}: {}", addr, e))?;
+        let auth = match &self.api_key {
+            Some(key) => format!("Authorization: Bearer {}\r\n", key),
+            None => String::new(),
+        };
+        let request = format!(
+            "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+            path, host_port, auth, body.len(), body
+        );
+        stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&response);
+        let status: u32 = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .ok_or("malformed HTTP response")?;
+        let body_start = text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(text.len());
+        let mut payload = text[body_start..].to_string();
+        // Un-chunk if needed (llama.cpp answers chunked on HTTP/1.1).
+        if text[..body_start].to_ascii_lowercase().contains("transfer-encoding: chunked") {
+            payload = dechunk(&payload);
+        }
+        Ok((status, payload))
+    }
+}
+
+fn dechunk(chunked: &str) -> String {
+    let mut out = String::new();
+    let mut rest = chunked;
+    while let Some(nl) = rest.find("\r\n") {
+        let Ok(size) = usize::from_str_radix(rest[..nl].trim(), 16) else { break };
+        if size == 0 {
+            break;
+        }
+        let start = nl + 2;
+        if start + size > rest.len() {
+            break;
+        }
+        out.push_str(&rest[start..start + size]);
+        rest = rest[start + size..].trim_start_matches("\r\n");
+    }
+    out
+}
+
+impl ModelHost for HttpModel {
+    fn call(&mut self, request: &str) -> Event {
+        match self.post(request) {
+            Ok((status, body)) if (200..300).contains(&status) => Event::ModelReply { body },
+            Ok((status, body)) => Event::ModelFailed { status, body },
+            Err(e) => Event::ModelFailed { status: 0, body: e },
+        }
+    }
+}
+
+fn main() {
+    let args = parse_args();
+    std::fs::create_dir_all(&args.workdir).expect("workdir creatable");
+    let workdir = args.workdir.canonicalize().expect("workdir resolvable");
+
+    let mut model: Box<dyn ModelHost> = match (&args.script, &args.model_url) {
+        (Some(path), _) => Box::new(ScriptedModel::load(path)),
+        (None, Some(url)) => {
+            Box::new(HttpModel { url: url.clone(), api_key: args.api_key.clone() })
+        }
+        _ => usage(),
+    };
+
+    let tool_names: Vec<String> =
+        ["read_file", "write_file", "list_dir"].iter().map(|s| s.to_string()).collect();
+    let (mut agent, mut effect) = Agent::start(
+        &args.task,
+        &tool_names,
+        &args.note,
+        Config { model: "host-configured".into(), max_steps: args.max_steps },
+    )
+    .expect("valid start parameters");
+
+    let done = loop {
+        match effect {
+            Effect::Done { status, result } => break (status, result),
+            Effect::CallModel { ref request } => {
+                if args.trace {
+                    eprintln!("[model call]");
+                }
+                let event = model.call(request);
+                effect = agent.handle(event);
+            }
+            Effect::RunTool { ref call_id, ref name, args: ref tool_args } => {
+                if args.trace {
+                    eprintln!("[tool] {} {}", name, tool_args.dump());
+                }
+                let (ok, output) = match tools::run(&workdir, name, tool_args) {
+                    Ok(out) => (true, out),
+                    Err(e) => (false, e),
+                };
+                let event = Event::ToolFinished { call_id: call_id.clone(), ok, output };
+                effect = agent.handle(event);
+            }
+        }
+    };
+
+    if args.dump {
+        println!("{}", proto::dump_json(&agent));
+    } else {
+        println!("status: {}", done.0);
+        println!("{}", done.1);
+    }
+    if done.0 != "success" {
+        std::process::exit(1);
+    }
+}
