@@ -11,7 +11,7 @@ call goes through `fetch`, the tools run against an in-memory filesystem.
   in the browser.
 - **`index.html`** — a terminal-style REPL over `host.mjs`: a prompt, streaming
   output, tool calls as terminal lines, and slash commands (`/model <url>`,
-  `/mock`, `/files`, `/reset`, `/clear`, `/help`). Multi-turn by default.
+  `/mock`, `/open`, `/files`, `/reset`, `/clear`, `/help`). Multi-turn by default.
 - **`node-demo.mjs`** — the same loop under Node, as a check.
 
 ## Try it
@@ -62,3 +62,17 @@ all networking is the host's, so this is purely a host-side concern.
   each turn (a real conversation); mock mode instantiates a fresh module per
   submit, since the allocator never frees. `node-demo.mjs` shows both paths.
 - No bundler, no dependencies: two files and the `.wasm`.
+
+## Workspace: memory or a real folder
+
+By default the file tools (`read_file` / `write_file` / `list_dir`) run against
+an **in-memory** map that lives only in the tab and is cleared on reload. Nothing
+touches your disk.
+
+Type **`/open`** (or the "open folder…" button) to pick a real local directory
+via the **File System Access API** (Chromium/Edge). After you grant it, the same
+three tools operate on that actual folder — the browser's sanctioned equivalent
+of the CLI's `--workdir`. Paths stay confined to the chosen directory (absolute
+paths and `..` escapes are rejected). Firefox/Safari have no such API, so they
+stay in-memory. There is still no `bash` in the browser — there is no shell to
+give it.

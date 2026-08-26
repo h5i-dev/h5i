@@ -114,6 +114,62 @@ export function memoryTools(initial = {}) {
   return { run, files };
 }
 
+// ---- real local files via the File System Access API (Chromium/Edge) ----
+// Every operation is scoped to the directory handle the user picked; paths are
+// still confined to it (absolute paths and `..` escapes are rejected).
+export function fsApiTools(dirHandle) {
+  const split = (raw) => {
+    if (raw.startsWith('/')) throw new Error(`absolute paths are not allowed: ${raw}`);
+    const parts = [];
+    for (const p of raw.split('/')) {
+      if (p === '' || p === '.') continue;
+      if (p === '..') {
+        if (!parts.length) throw new Error(`path escapes the workspace: ${raw}`);
+        parts.pop();
+      } else parts.push(p);
+    }
+    return parts;
+  };
+  const dirFor = async (parts, create) => {
+    let h = dirHandle;
+    for (const p of parts) h = await h.getDirectoryHandle(p, { create });
+    return h;
+  };
+  const run = async (name, args) => {
+    try {
+      const parts = split(args.path ?? '');
+      if (name === 'read_file') {
+        const dir = await dirFor(parts.slice(0, -1), false);
+        const fh = await dir.getFileHandle(parts[parts.length - 1], { create: false });
+        return { ok: true, output: await (await fh.getFile()).text() };
+      }
+      if (name === 'write_file') {
+        if (!parts.length) return { ok: false, output: 'empty path' };
+        const dir = await dirFor(parts.slice(0, -1), true);
+        const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+        const w = await fh.createWritable();
+        const content = args.content ?? '';
+        await w.write(content);
+        await w.close();
+        return { ok: true, output: `wrote ${content.length} bytes to ${parts.join('/')}` };
+      }
+      if (name === 'list_dir') {
+        const dir = await dirFor(parts, false);
+        const names = [];
+        for await (const [nm, h] of dir.entries()) {
+          names.push(nm + (h.kind === 'directory' ? '/' : ''));
+        }
+        names.sort();
+        return { ok: true, output: names.join('\n') };
+      }
+      return { ok: false, output: `no executor for ${name}` };
+    } catch (e) {
+      return { ok: false, output: String(e && e.message || e) };
+    }
+  };
+  return { run, label: dirHandle.name };
+}
+
 // ---- a scripted mock model (offline, no network / CORS) ----
 // Replays canned chat-completions envelopes in order, like the CLI's --script.
 
