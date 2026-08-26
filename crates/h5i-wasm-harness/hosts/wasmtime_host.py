@@ -13,13 +13,16 @@ marshals JSON.
 
     python3 hosts/wasmtime_host.py                      # interactive, offline scripted model
     python3 hosts/wasmtime_host.py --model-url URL      # interactive, a live endpoint (streams)
+    python3 hosts/wasmtime_host.py --model-url URL --bash   # ...with a real workspace + bash tool
     python3 hosts/wasmtime_host.py --demo               # non-interactive self-check (asserts)
 """
 
 import argparse
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -101,6 +104,67 @@ def memory_tools(initial=None):
         return False, f"no executor for {name}"
 
     return run, files
+
+
+def disk_tools(root):
+    """Real-filesystem tools rooted at `root`, plus a `bash` tool. read/write/
+    list are path-confined the same way the CLI's tools.rs is (absolute paths
+    and traversal that escapes the root are rejected). `bash` runs with cwd set
+    to the root; note that is a working directory, not a jail (see the banner
+    warning) — real confinement is what the h5i sandbox is for."""
+
+    def resolve(raw):
+        if raw.startswith("/"):
+            raise ValueError(f"absolute paths are not allowed: {raw}")
+        parts = []
+        for part in raw.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if not parts:
+                    raise ValueError(f"path escapes the workspace: {raw}")
+                parts.pop()
+            else:
+                parts.append(part)
+        return (os.path.join(root, *parts) if parts else root), "/".join(parts)
+
+    def run(name, args):
+        try:
+            if name == "read_file":
+                path, _ = resolve(args.get("path", ""))
+                with open(path, encoding="utf-8") as f:
+                    return True, f.read()
+            if name == "write_file":
+                path, rel = resolve(args.get("path", ""))
+                if not rel:
+                    return False, "empty path"
+                os.makedirs(os.path.dirname(path) or root, exist_ok=True)
+                content = args.get("content", "")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                return True, f"wrote {len(content)} bytes to {rel}"
+            if name == "list_dir":
+                path, _ = resolve(args.get("path", ""))
+                out = [e + ("/" if os.path.isdir(os.path.join(path, e)) else "")
+                       for e in sorted(os.listdir(path))]
+                return True, "\n".join(out)
+            if name == "bash":
+                try:
+                    res = subprocess.run(
+                        ["bash", "-c", args.get("command", "")], cwd=root,
+                        capture_output=True, text=True, timeout=30,
+                    )
+                except subprocess.TimeoutExpired:
+                    return False, "command timed out after 30s"
+                out = res.stdout + res.stderr
+                return res.returncode == 0, out if out.strip() else f"(no output, exit {res.returncode})"
+            return False, f"no executor for {name}"
+        except FileNotFoundError:
+            return False, "no such file or directory"
+        except (ValueError, OSError) as e:
+            return False, str(e)
+
+    return run
 
 
 def scripted_model(envelopes):
@@ -250,13 +314,19 @@ def make_run_tool(vfs_run):
     return rt
 
 
-def repl(model_url=None, api_key=None):
+def repl(model_url=None, api_key=None, use_bash=False):
     if not os.path.exists(WASM):
         sys.exit(f"{WASM} not found — run scripts/build-wasm.sh first")
 
     live = bool(model_url)
-    vfs_run, files = memory_tools()
-    run_tool = make_run_tool(vfs_run)
+    if use_bash:
+        root = tempfile.mkdtemp(prefix="h5i-agent-")
+        tool_run = disk_tools(root)
+        tools = TOOL_NAMES + ["bash"]
+    else:
+        tool_run, _ = memory_tools()
+        tools = TOOL_NAMES
+    run_tool = make_run_tool(tool_run)
     agent, first = None, True
 
     print(BOLD("h5i-agent") + DIM(f" — the loop runs under wasmtime {WASMTIME_VERSION} on this machine."))
@@ -264,6 +334,9 @@ def repl(model_url=None, api_key=None):
         print(DIM(f"live endpoint: {model_url}"))
     else:
         print(DIM("offline scripted demo (the typed task is illustrative). "))
+    if use_bash:
+        print(RED(f"bash tool ENABLED — the model can run shell commands in {root}"))
+        print(RED("this is a real shell (cwd, not a jail); run only models you trust."))
     print(DIM("type a task and press enter; Ctrl-D or 'exit' to quit.\n"))
 
     while True:
@@ -277,18 +350,19 @@ def repl(model_url=None, api_key=None):
         if task in ("exit", "quit", ":q"):
             break
 
+        note = "a real temp directory; bash available" if use_bash else "wasmtime in-memory VFS"
         if live:
             model = streaming_model(model_url, api_key)
             if agent is None:
                 agent = Agent(WASM)
                 first = True
-            params = ({"task": task, "tools": TOOL_NAMES, "workspace_note": "wasmtime VFS",
+            params = ({"task": task, "tools": tools, "workspace_note": note,
                        "max_steps": 12} if first else {"task": task})
             fresh, first = first, False
         else:
             model = mock_model()
             agent = Agent(WASM)  # fresh session, fixed script
-            params = {"task": task, "tools": TOOL_NAMES, "workspace_note": "wasmtime VFS", "max_steps": 12}
+            params = {"task": task, "tools": tools, "workspace_note": note, "max_steps": 12}
             fresh = True
 
         done = run_task(agent, params, model, run_tool, fresh=fresh)
@@ -345,11 +419,13 @@ def main():
     ap.add_argument("--model-url", help="a live OpenAI-compatible endpoint (interactive)")
     ap.add_argument("--api-key", help="bearer token for --model-url")
     ap.add_argument("--demo", action="store_true", help="non-interactive scripted self-check")
+    ap.add_argument("--bash", action="store_true",
+                    help="enable a bash tool over a real temp dir (a shell, not a sandbox)")
     args = ap.parse_args()
     if args.demo:
         demo()
     else:
-        repl(args.model_url, args.api_key)
+        repl(args.model_url, args.api_key, use_bash=args.bash)
 
 
 if __name__ == "__main__":
