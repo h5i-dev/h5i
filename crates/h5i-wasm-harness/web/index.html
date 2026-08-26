@@ -156,7 +156,8 @@ function mockModel() {
 function runTool(name, args) {
   const r = vfs.run(name, args);
   line(`⚙ ${name} ${JSON.stringify(args)}`, 'tool');
-  const out = r.output.length > 400 ? r.output.slice(0, 400) + '…' : r.output;
+  let out = r.output.length > 400 ? r.output.slice(0, 400) + '…' : r.output;
+  if (!out.trim()) out = '(no output)';
   line('  ' + out.replace(/\n/g, '\n  '), r.ok ? 'muted' : 'err');
   return r;
 }

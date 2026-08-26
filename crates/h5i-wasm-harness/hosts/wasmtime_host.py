@@ -238,6 +238,7 @@ def make_run_tool(vfs_run):
         ok, output = vfs_run(name, args)
         print(GREEN(f"\n⚙ {name} {json.dumps(args)}"))
         shown = output if len(output) <= 400 else output[:400] + "…"
+        shown = shown if shown.strip() else "(no output)"
         print(DIM("  " + shown.replace("\n", "\n  ")))
         return ok, output
 
