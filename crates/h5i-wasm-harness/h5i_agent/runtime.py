@@ -7,9 +7,9 @@ output, run tools against an in-memory filesystem, and keep the conversation.
 The agent's logic runs inside the wasm; this host only performs effects and
 marshals JSON.
 
-    h5i-agent wasmtime                      # interactive, offline scripted model
+    h5i-agent wasmtime                      # interactive; a bash tool over the cwd is on by default
     h5i-agent wasmtime --model-url URL      # interactive, a live endpoint (streams)
-    h5i-agent wasmtime --model-url URL --bash   # ...with a real workspace + bash tool
+    h5i-agent wasmtime --no-bash            # disable the bash tool (in-memory workspace)
     h5i-agent wasmtime --demo               # non-interactive self-check (asserts)
 """
 
@@ -308,7 +308,7 @@ def make_run_tool(vfs_run):
     return rt
 
 
-def repl(model_url=None, api_key=None, use_bash=False, workdir=None):
+def repl(model_url=None, api_key=None, use_bash=True, workdir=None):
     wasm = _assets.path("h5i-agent.wasm")
 
     live = bool(model_url)
@@ -419,8 +419,10 @@ def main(argv=None):
     ap.add_argument("--model-url", help="a live OpenAI-compatible endpoint (interactive)")
     ap.add_argument("--api-key", help="bearer token for --model-url")
     ap.add_argument("--demo", action="store_true", help="non-interactive scripted self-check")
-    ap.add_argument("--bash", action="store_true",
-                    help="enable a bash tool (a real shell in the workspace, not a sandbox)")
+    ap.add_argument("--bash", dest="bash", action="store_true", default=True,
+                    help="enable the bash tool (default on; a real shell in the workspace, not a sandbox)")
+    ap.add_argument("--no-bash", dest="bash", action="store_false",
+                    help="disable the bash tool")
     ap.add_argument("--workdir",
                     help="run the file tools against this real directory (default: cwd, and implied by --bash)")
     args = ap.parse_args(argv)

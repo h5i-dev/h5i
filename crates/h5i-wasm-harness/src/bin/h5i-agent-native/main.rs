@@ -36,7 +36,7 @@ fn usage() -> ! {
     eprintln!(
         "usage: h5i-agent-native (--script replies.json | --model-url URL) [--task \"...\"] \\\n\
          \x20        [--workdir DIR] [--max-steps N] [--workspace-note \"...\"] \\\n\
-         \x20        [--no-stream] [--bash] [--dump] [--trace]\n\
+         \x20        [--no-stream] [--no-bash] [--dump] [--trace]\n\
          \n\
          With no --task, h5i-agent-native is interactive: type a task per line; the agent keeps\n\
          the conversation across turns. Ctrl-D or 'exit' quits.\n\
@@ -69,7 +69,7 @@ fn parse_args() -> Args {
         max_steps: 20,
         note: String::from("a real directory on disk; changes persist"),
         no_stream: false,
-        bash: false,
+        bash: true,
         dump: false,
         trace: false,
     };
@@ -86,6 +86,7 @@ fn parse_args() -> Args {
             "--workspace-note" => args.note = val(&mut it),
             "--no-stream" => args.no_stream = true,
             "--bash" => args.bash = true,
+            "--no-bash" => args.bash = false,
             "--dump" => args.dump = true,
             "--trace" => args.trace = true,
             "-h" | "--help" => usage(),
