@@ -6,15 +6,18 @@
 <title>h5i-agent — WebAssembly</title>
 <style>
   :root {
-    --bg:#0b0e14; --fg:#c9d1d9; --dim:#7c8698; --prompt:#7aa2f7;
-    --tool:#9ece6a; --model:#e6edf3; --err:#f7768e; --bar:#11151f; --border:#1c2230;
-    --field:#0d1220;
+    /* Aligned with the `h5i ui` console (web/src/theme.css): near-black ground,
+       greyscale ramp, red as the lone accent. */
+    --bg:#08080b; --fg:#f4f4f6; --dim:#a4a4ae; --faint:#7d7d86; --prompt:#ff6258;
+    --tool:#62c98c; --model:#f4f4f6; --err:#ff6258; --bar:#0e0e12;
+    --border:#232329; --border-strong:#3a3a45; --field:#141419;
+    --accent-bg:rgba(224,36,27,0.16);
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg); color: var(--fg);
-    font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font: 15px/1.6 ui-monospace, "SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace;
     display: flex; flex-direction: column;
   }
   #bar {
@@ -30,13 +33,13 @@
   #inputline {
     display: flex; align-items: center; gap: 8px;
     margin: 8px 14px 4px; padding: 11px 14px;
-    background: var(--field); border: 1px solid #2b3550; border-radius: 10px;
+    background: var(--field); border: 1px solid var(--border-strong); border-radius: 10px;
     box-shadow: 0 2px 14px rgba(0,0,0,.35);
     transition: border-color .12s, box-shadow .12s;
   }
   #inputline:focus-within {
     border-color: var(--prompt);
-    box-shadow: 0 0 0 3px rgba(122,162,247,.18);
+    box-shadow: 0 0 0 3px var(--accent-bg);
   }
   #glyph { color: var(--prompt); font-size: 16px; }
   #input {
@@ -48,7 +51,7 @@
   /* A status line under the input, the way Claude Code / Codex show the model. */
   #foot {
     display: flex; gap: 12px; align-items: center;
-    margin: 12px 16px 14px; color: var(--dim); font-size: 12px;
+    margin: 12px 16px 14px; color: var(--faint); font-size: 12px;
   }
   #foot b { color: var(--fg); font-weight: 600; }
   #foot .hint { margin-left: auto; }
