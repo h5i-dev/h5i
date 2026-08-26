@@ -132,8 +132,24 @@ crates/h5i-wasm-harness/scripts/build-wasm.sh   # -> build/h5i_wasm_harness.wasm
 
 No `-Zbuild-std`, no nightly, no network: the core is `#![no_std]` + `alloc`
 with zero dependencies, so the stock target's prebuilt `core`/`alloc` are
-enough. (No JS glue is bundled — the boundary above is small enough to write in
-a few lines against whatever runtime you have.)
+enough.
+
+## Run it in the browser
+
+The module has no imports, so a browser loads it with plain
+`WebAssembly.instantiate` and drives the loop from JavaScript — the model call
+goes through `fetch`, the tools run against an in-memory filesystem.
+[`web/`](web/README.md) has the whole host: `host.mjs` (the loop + helpers, ~120
+lines, no bundler, no dependencies) and `index.html` (a page that runs it).
+
+```bash
+crates/h5i-wasm-harness/scripts/build-wasm.sh          # build the module
+cd crates/h5i-wasm-harness && python3 -m http.server 8000
+# open http://localhost:8000/web/  — starts in an offline scripted demo
+```
+
+The same `host.mjs` runs under Node, so `node web/node-demo.mjs` proves the
+module end-to-end without a browser (identical `WebAssembly` API).
 
 ## Test against a real model
 

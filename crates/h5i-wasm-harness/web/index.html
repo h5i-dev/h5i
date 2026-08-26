@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>h5i-wasm-harness — in the browser</title>
+<style>
+  :root { color-scheme: light dark; --bg:#0f1115; --panel:#171a21; --fg:#e6e6e6; --muted:#8a93a2;
+          --accent:#7aa2f7; --tool:#9ece6a; --model:#e0af68; --err:#f7768e; --border:#242832; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 ui-sans-serif,system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:18px 22px; border-bottom:1px solid var(--border); }
+  h1 { margin:0; font-size:19px; } h1 small { color:var(--muted); font-weight:400; font-size:13px; }
+  main { display:grid; grid-template-columns: 1fr 320px; gap:0; height:calc(100vh - 62px); }
+  @media (max-width:800px){ main{ grid-template-columns:1fr; height:auto; } }
+  .col { padding:16px 22px; overflow:auto; }
+  .side { border-left:1px solid var(--border); background:var(--panel); }
+  label { display:block; font-size:12px; color:var(--muted); margin:12px 0 4px; }
+  input,textarea,select,button { font:inherit; color:var(--fg); background:#0c0e13; border:1px solid var(--border);
+          border-radius:8px; padding:8px 10px; width:100%; }
+  textarea { resize:vertical; min-height:56px; }
+  button { background:var(--accent); color:#0b0d12; border:none; font-weight:600; cursor:pointer; width:auto; padding:9px 18px; }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:10px; align-items:center; margin-top:12px; }
+  .log { margin-top:8px; }
+  .ev { padding:7px 10px; border-radius:8px; margin:6px 0; border:1px solid var(--border); background:#0c0e13; white-space:pre-wrap; word-break:break-word; }
+  .ev.model { border-left:3px solid var(--model); }
+  .ev.tool  { border-left:3px solid var(--tool); }
+  .ev.done  { border-left:3px solid var(--accent); }
+  .ev.err   { border-left:3px solid var(--err); color:var(--err); }
+  .tag { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; }
+  .file { border:1px solid var(--border); border-radius:8px; margin:8px 0; overflow:hidden; }
+  .file .name { background:#0c0e13; padding:6px 10px; font-family:ui-monospace,monospace; font-size:12px; color:var(--tool); }
+  .file pre { margin:0; padding:8px 10px; overflow:auto; }
+  .hint { color:var(--muted); font-size:12px; margin-top:6px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>h5i-wasm-harness <small>— the agent loop, running as WebAssembly in your browser</small></h1>
+</header>
+<main>
+  <section class="col">
+    <label>Model</label>
+    <select id="mode">
+      <option value="mock">Mock (offline demo — scripted, no network)</option>
+      <option value="live">Live endpoint (OpenAI-compatible URL)</option>
+    </select>
+
+    <div id="liveCfg" class="hidden">
+      <label>Endpoint URL</label>
+      <input id="url" value="http://localhost:8080/v1/chat/completions" />
+      <label>API key (optional)</label>
+      <input id="key" type="password" placeholder="left blank for a local server" />
+      <div class="hint">The browser enforces CORS: the endpoint must return permissive CORS headers.
+        A local llama.cpp / Ollama, or a proxy that adds them, works.</div>
+    </div>
+
+    <label>Task</label>
+    <textarea id="task">Create hello.txt containing "hi", then read it back to confirm.</textarea>
+
+    <div class="row">
+      <button id="run">Run</button>
+      <span id="status" class="tag"></span>
+    </div>
+
+    <div class="log" id="log"></div>
+  </section>
+
+  <aside class="col side">
+    <div class="tag">workspace (in-memory)</div>
+    <div id="files"></div>
+    <div class="hint" id="filesEmpty">no files yet</div>
+  </aside>
+</main>
+
+<script type="module">
+import { Agent, runTask, memoryTools, scriptedModel, fetchModel, assistant } from './host.mjs';
+
+const $ = (id) => document.getElementById(id);
+const log = $('log'), filesEl = $('files');
+let wasmBytes = null;
+
+$('mode').onchange = () => $('liveCfg').classList.toggle('hidden', $('mode').value !== 'live');
+
+function line(cls, tag, body) {
+  const el = document.createElement('div');
+  el.className = 'ev ' + cls;
+  el.innerHTML = `<span class="tag">${tag}</span>\n` + body;
+  log.appendChild(el);
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+function renderFiles(files) {
+  filesEl.innerHTML = '';
+  $('filesEmpty').style.display = files.size ? 'none' : '';
+  for (const [name, content] of [...files].sort()) {
+    const f = document.createElement('div');
+    f.className = 'file';
+    f.innerHTML = `<div class="name">${name}</div><pre></pre>`;
+    f.querySelector('pre').textContent = content;
+    filesEl.appendChild(f);
+  }
+}
+
+async function loadWasm() {
+  if (!wasmBytes) {
+    const r = await fetch('../build/h5i_wasm_harness.wasm');
+    if (!r.ok) throw new Error('h5i_wasm_harness.wasm not found — run scripts/build-wasm.sh first');
+    wasmBytes = await r.arrayBuffer();
+  }
+  return Agent.fromBytes(wasmBytes.slice(0)); // fresh instance per run
+}
+
+// The offline demo is task-agnostic (a fixed script), so it always shows the
+// full loop: write a file, read it back, finish.
+function mockModel() {
+  return scriptedModel([
+    assistant('', [['c1', 'write_file', JSON.stringify({ path: 'hello.txt', content: 'hi' })]]),
+    assistant('', [['c2', 'read_file', JSON.stringify({ path: 'hello.txt' })]]),
+    assistant('Done. hello.txt contains "hi".'),
+  ]);
+}
+
+$('run').onclick = async () => {
+  $('run').disabled = true;
+  log.innerHTML = '';
+  $('status').textContent = 'running…';
+  const tools = memoryTools();
+  try {
+    const agent = await loadWasm();
+    const mode = $('mode').value;
+    const model = mode === 'live'
+      ? fetchModel($('url').value.trim(), { apiKey: $('key').value.trim() || undefined })
+      : mockModel();
+    if (mode === 'mock') line('tag', 'note', 'offline scripted demo — the typed task is ignored in Mock mode');
+
+    const runTool = (name, args) => {
+      const r = tools.run(name, args);
+      line('tool', 'tool · ' + name, JSON.stringify(args) + '\n→ ' + (r.ok ? '' : 'ERROR: ') + r.output);
+      renderFiles(tools.files);
+      return r;
+    };
+
+    const done = await runTask(
+      agent,
+      { task: $('task').value, tools: ['read_file', 'write_file', 'list_dir'],
+        workspace_note: 'browser in-memory VFS', max_steps: 12 },
+      {
+        model: async (req) => { line('model', 'model call', 'requesting a completion…'); return model(req); },
+        runTool,
+      },
+    );
+    line(done.status === 'success' ? 'done' : 'err', 'done · ' + done.status, done.result);
+    $('status').textContent = done.status;
+  } catch (e) {
+    line('err', 'error', String(e && e.message || e));
+    $('status').textContent = 'error';
+  } finally {
+    $('run').disabled = false;
+  }
+};
+</script>
+</body>
+</html>
