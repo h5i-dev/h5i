@@ -217,6 +217,13 @@ pub struct Broker {
     /// it refuses any non-loopback address while one is set, rather than
     /// stepping around the allowlist that proxy enforces.
     proxied: bool,
+    /// What this page may still spend on the network.
+    ///
+    /// Per navigation, reset by the factory when the agent moves. See
+    /// [`crate::budget`] for why the ceiling bounds a page rather than a
+    /// session: a loop is untrusted code the engine cannot otherwise stop, and
+    /// an agent navigating is the principal exercising its own authority.
+    budget: crate::budget::Budget,
     /// Addresses already approved, and the client's only source of them.
     ///
     /// `None` when an egress proxy is configured: the proxy resolves the name
@@ -274,6 +281,7 @@ impl Broker {
             policy,
             sink,
             client,
+            budget: crate::budget::Budget::default(),
             pinned,
             seq: AtomicU64::new(0),
             jar: crate::cookies::Jar::new(),
@@ -283,6 +291,17 @@ impl Broker {
 
     pub fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// What this page has spent, and what it may.
+    pub fn budget(&self) -> &crate::budget::Budget {
+        &self.budget
+    }
+
+    /// Replace the limits. For a caller that wants a tighter page than the
+    /// default, and for tests that want a reachable one.
+    pub fn set_budget_limits(&mut self, limits: crate::budget::Limits) {
+        self.budget = crate::budget::Budget::new(limits);
     }
 
     /// Ask a server, before the real request, whether it will accept one.
@@ -682,6 +701,21 @@ impl Broker {
                 cors_plan = Some(plan);
             }
 
+            // 1d. What this page has left to spend. Every limit before this
+            //     one is *per request* — a size cap, a redirect count, a
+            //     timeout — and none of them bounds a page that makes many.
+            //     A refusal here is recorded like any other, because "the page
+            //     ran out of allowance" is exactly what a reader of the log
+            //     needs to see rather than a request that silently stopped.
+            if let Err(over) = self.budget.claim_request() {
+                let record = RequestRecord::request(seq, initiator, &method, current.as_str())
+                    .denied(&over.0);
+                if let Err(e) = self.record_pair(&record) {
+                    return FetchOutcome::failed(current, format!("receipt sink refused: {e}"));
+                }
+                return FetchOutcome::failed_at(current, over.0, Some(seq));
+            }
+
             // 2. The decision record, before any bytes move. If this cannot be
             //    written, the fetch does not happen — this is the fail-closed
             //    guarantee, and it is why `Sink::append` returns a Result.
@@ -932,9 +966,22 @@ impl Broker {
                         outcome_record.wire_bytes = Some(wire);
                         outcome_record.content_encoding = encoding.clone();
                     }
+                    // What this one cost, against the page's allowance. Both
+                    // sizes, because a compressed response costs the wire
+                    // little and the page's memory a great deal.
+                    self.budget.record(
+                        wire,
+                        decoded.len() as u64,
+                        std::time::Duration::from_millis(elapsed),
+                    );
                     Ok(decoded)
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    // A failed read still cost the time it took.
+                    self.budget
+                        .record(0, 0, std::time::Duration::from_millis(elapsed));
+                    Err(e)
+                }
             };
 
             return match body {
@@ -1462,6 +1509,100 @@ mod cookie_wire_tests {
     use crate::receipt::MemorySink;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
+
+    /// A server that answers anything, forever, so a runaway page has
+    /// somewhere to run away to.
+    fn always_answers(hits: usize) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                }
+                let body = "ok";
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// The gap the budget fills. Every limit before it was *per request* — a
+    /// size cap, a redirect count, a timeout — and none of them bounds a page
+    /// that makes many. Recording a runaway is not the same as stopping one.
+    #[test]
+    fn a_page_that_keeps_asking_is_eventually_refused() {
+        let port = always_answers(20);
+        let sink = Arc::new(MemorySink::new());
+        let mut broker = Broker::new(Policy::new(), sink.clone(), None).expect("broker");
+        broker.set_budget_limits(crate::budget::Limits {
+            max_requests: 3,
+            ..Default::default()
+        });
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+        for at in 1..=3 {
+            let outcome = broker.fetch_from(&url, Initiator::Subresource, None);
+            assert!(outcome.error.is_none(), "request {at}: {outcome:?}");
+        }
+        let refused = broker.fetch_from(&url, Initiator::Subresource, None);
+        let why = refused.error.expect("the fourth is over budget");
+        assert!(why.contains("budget-exceeded"), "{why}");
+
+        // And it is *recorded* as a denial, because "the page ran out of
+        // allowance" is exactly what a reader of the log needs to see.
+        let denied = sink
+            .records()
+            .into_iter()
+            .filter(|r| !r.allowed)
+            .filter(|r| {
+                r.denied_reason
+                    .as_deref()
+                    .is_some_and(|why| why.contains("budget-exceeded"))
+            })
+            .count();
+        assert!(denied >= 1, "the refusal must be in the log");
+    }
+
+    /// A fresh page is a fresh decision by the agent, so it gets a fresh
+    /// allowance. The budget bounds untrusted page code, not the principal.
+    #[test]
+    fn navigating_gives_the_next_page_its_own_allowance() {
+        let port = always_answers(20);
+        let sink = Arc::new(MemorySink::new());
+        let mut broker = Broker::new(Policy::new(), sink, None).expect("broker");
+        broker.set_budget_limits(crate::budget::Limits {
+            max_requests: 2,
+            ..Default::default()
+        });
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+        for _ in 0..2 {
+            assert!(broker.fetch_from(&url, Initiator::Subresource, None).error.is_none());
+        }
+        assert!(broker.fetch_from(&url, Initiator::Subresource, None).error.is_some());
+
+        broker.budget().reset();
+        assert!(
+            broker.fetch_from(&url, Initiator::Subresource, None).error.is_none(),
+            "a navigation restores the allowance"
+        );
+    }
 
     /// A server that compresses when asked, and reports what it was asked for.
     fn gzip_server(body: &'static [u8], hits: usize) -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {

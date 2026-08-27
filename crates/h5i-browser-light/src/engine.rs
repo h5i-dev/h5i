@@ -38,6 +38,21 @@ pub struct PageOptions {
     /// a change to what an untrusted page can do inside the box rather than a
     /// rendering preference (ROADMAP §12.5).
     pub script: bool,
+    /// How long one navigation may take, first byte to last.
+    ///
+    /// The bound the per-phase budgets could not give. A request timeout bounds
+    /// a request, the script-phase budget bounds the script, and a page that
+    /// spends thirty seconds on the network *and* twenty in its script is
+    /// inside every one of them while taking the better part of a minute.
+    ///
+    /// This is the cheap half of "make JavaScript stoppable": it does not kill
+    /// a single runaway job — Boa's cancellation is checked between jobs, and
+    /// only a separate process could interrupt one — but it bounds everything
+    /// that *is* interruptible under one number, and it does so without
+    /// splitting the engine in half. `Page` holds an `Rc<RefCell<BaseDocument>>`
+    /// and is pinned to its thread; moving script into a killable worker means
+    /// moving the document with it.
+    pub navigation_budget: std::time::Duration,
 }
 
 impl Default for PageOptions {
@@ -48,6 +63,9 @@ impl Default for PageOptions {
             scale: 1.0,
             max_snapshot_lines: 500,
             script: false,
+            // Above what a slow real page takes and far below what a stuck one
+            // would, which is the shape every ceiling in this engine has.
+            navigation_budget: std::time::Duration::from_secs(45),
         }
     }
 }
@@ -159,6 +177,19 @@ pub struct Page {
     /// flipping it is a threat-model decision rather than a feature flag
     /// (ROADMAP §12.5).
     script: Option<crate::script::Script>,
+    /// What this page's load cost, against what it was allowed.
+    ///
+    /// Recorded on the page rather than read from the broker at snapshot time,
+    /// because the broker's counters belong to whatever page is loading *now*
+    /// and a snapshot of an earlier page would read the wrong ones.
+    budget_spent: Option<(crate::budget::Spent, crate::budget::Limits)>,
+    /// How long this navigation has left.
+    ///
+    /// Armed when the page began loading, not when the script phase starts, so
+    /// the time already spent on the network counts against it. That is the
+    /// point: the per-phase budgets each bound their own step, and a page that
+    /// is inside every one of them can still take the better part of a minute.
+    deadline: crate::budget::Deadline,
     /// Whether `run_scripts` was called, regardless of whether it built a realm.
     ///
     /// A page with no script elements never gets one, so `script.is_some()`
@@ -477,6 +508,10 @@ impl Page {
             encoding: encoding_rs::UTF_8,
             doc: Rc::new(RefCell::new(doc)),
             url: base_url.clone(),
+            // Armed here rather than at the script phase, so the fetching and
+            // parsing already done count against it.
+            deadline: crate::budget::Deadline::new(options.navigation_budget),
+            budget_spent: None,
             options,
             pending_navigation,
             script: None,
@@ -632,6 +667,10 @@ impl Page {
             });
 
         let phase_started = std::time::Instant::now();
+        // Whichever runs out first. The script phase has its own ceiling, and
+        // the navigation has one over the whole load; a page that spent thirty
+        // seconds fetching does not then get a fresh twenty to run in.
+        let phase_budget = SCRIPT_PHASE_BUDGET.min(self.deadline.remaining());
         let mut skipped = 0usize;
         // The origin every `src` below is fetched on behalf of. Cloned once so
         // the loops do not have to hold a borrow of `self` across the calls
@@ -639,7 +678,7 @@ impl Page {
         let document = self.url.clone();
 
         for (index, (node, source)) in classic.into_iter().enumerate() {
-            if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
+            if phase_started.elapsed() >= phase_budget {
                 skipped += 1;
                 continue;
             }
@@ -713,11 +752,11 @@ impl Page {
         // budget and then the job budget cost the sum of the two — lit.dev took
         // 46 seconds against a 20-second intent. What is left of the phase is
         // what settling gets.
-        let left = SCRIPT_PHASE_BUDGET.saturating_sub(phase_started.elapsed());
+        let left = phase_budget.saturating_sub(phase_started.elapsed());
         script.set_job_budget(left.max(std::time::Duration::from_secs(1)));
 
         for (_, source) in modules {
-            if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
+            if phase_started.elapsed() >= phase_budget {
                 skipped += 1;
                 continue;
             }
@@ -1109,6 +1148,37 @@ impl Page {
             ));
         }
 
+        // What this page spent, when it spent enough to matter.
+        //
+        // Said rather than left in the request log, because a page that ran out
+        // of allowance is a page whose reading is *incomplete* — the same class
+        // of fact as "this page had not finished". An agent that is not told
+        // reads a half-loaded page as the whole one.
+        if let Some((spent, limits)) = &self.budget_spent {
+            if spent.requests > limits.max_requests {
+                snapshot.notes.push(format!(
+                    "this page asked for more than {} requests in one navigation and the \
+                     rest were refused. What follows was read from what it managed to load; \
+                     the request log names which were denied.",
+                    limits.max_requests
+                ));
+            } else if spent.wire_bytes > limits.max_wire_bytes
+                || spent.decoded_bytes > limits.max_decoded_bytes
+            {
+                snapshot.notes.push(format!(
+                    "this page pulled {} bytes ({} decoded) and passed its budget for one \
+                     navigation, so later requests were refused.",
+                    spent.wire_bytes, spent.decoded_bytes
+                ));
+            } else if spent.network_time > limits.max_network_time {
+                snapshot.notes.push(format!(
+                    "this page spent {}ms waiting on the network, past its budget for one \
+                     navigation, so later requests were refused.",
+                    spent.network_time.as_millis()
+                ));
+            }
+        }
+
         // Two different facts, one line. `cut_off` says the reading stopped
         // before the page did. `periodic_timers` says the page finished what it
         // owed and is still running a loop that re-arms itself, which makes two
@@ -1445,6 +1515,7 @@ impl PageFactory {
     /// Load whatever a form asked for, through the same broker as everything
     /// else. A refused submission is an error the agent reads, not a blank page.
     pub fn open_submission(&self, submission: &Submission) -> Result<Page, H5iError> {
+        self.begin_navigation();
         let outcome = self.broker.send_from(
             &submission.url,
             Initiator::Navigation,
@@ -1520,6 +1591,11 @@ impl PageFactory {
         if self.options.script {
             page.run_scripts(self.broker.clone())?;
         }
+        // After everything, so subresources and script fetches are counted.
+        page.budget_spent = Some((
+            self.broker.budget().spent(),
+            self.broker.budget().limits().clone(),
+        ));
         Ok(())
     }
 
@@ -1541,7 +1617,22 @@ impl PageFactory {
         self.options.script
     }
 
+    /// A navigation is starting.
+    ///
+    /// The page's network allowance resets here, at the top of every path that
+    /// builds one. A fresh page is a fresh decision by the agent, and the
+    /// budget exists to bound untrusted page code rather than the principal
+    /// driving the engine (see [`crate::budget`]).
+    ///
+    /// Before the navigation's own request, deliberately: resetting afterwards
+    /// would give the page that just spent its allowance a clean slate for the
+    /// subresources it is about to ask for.
+    fn begin_navigation(&self) {
+        self.broker.budget().reset();
+    }
+
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
+        self.begin_navigation();
         // Leaving an origin drops its cookies — in `finish`, against the origin
         // actually loaded rather than the one asked for. See
         // `cookies::Jar::retain_origin` for why that bound exists and what it
@@ -1559,6 +1650,7 @@ impl PageFactory {
     /// The same as [`PageFactory::from_html`], but from bytes whose encoding is
     /// not yet known — so the document gets to say what it is written in.
     pub fn from_bytes(&self, bytes: &[u8], content_type: Option<&str>, base_url: &Url) -> Page {
+        self.begin_navigation();
         self.finish_reporting(Page::from_bytes(
             bytes,
             content_type,
@@ -1570,6 +1662,7 @@ impl PageFactory {
     }
 
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
+        self.begin_navigation();
         self.finish_reporting(Page::from_html(
             html,
             base_url,

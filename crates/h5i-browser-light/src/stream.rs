@@ -1030,6 +1030,15 @@ fn control_verb_inner(
                 // whatever is driving it expected, without anyone having to
                 // file a report.
                 "unknown_verbs": session.unknown_verbs,
+                // What the page currently loaded spent on the network, and
+                // against what. An agent that hit a budget should be able to
+                // see how close it came rather than inferring it from a
+                // refusal in the request log.
+                "budget": {
+                    "spent": session.factory.broker().budget().spent(),
+                    "max_requests": session.factory.broker().budget().limits().max_requests,
+                    "max_wire_bytes": session.factory.broker().budget().limits().max_wire_bytes,
+                },
             }),
             false,
         ),

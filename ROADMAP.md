@@ -6779,6 +6779,47 @@ a page of binary: a wrong answer that looks like a broken site.
 Two of §B16.10's three remain: the preload scanner with parallel subresources
 and HTTP/2 (item 3), and the per-navigation font reload (item 2).
 
+### B17.5 A navigation deadline and a per-page network budget
+
+Two bounds this engine did not have, and the reason it did not is the same for
+both: **every limit here was per request.** A response size cap, a redirect
+count, a per-request timeout — each bounds one request, and none of them bounds
+a page that makes many. A script fetching in a loop, each request individually
+well-behaved, could keep the engine busy indefinitely, and the receipts would
+faithfully record every one of ten thousand of them. Recording a runaway is not
+the same as bounding it.
+
+**Per navigation, not per session, and the distinction is about who is
+spending.** A page fetching in a loop is untrusted code the engine cannot
+otherwise stop. An agent navigating twenty times is the principal exercising its
+own authority, and bounding that would be this engine deciding how much work its
+own operator may ask for. So the counters reset when the agent navigates: a
+fresh page is a fresh decision. A session-wide ceiling on top is coherent and is
+not built, because the failure it prevents is a failure of the thing *driving*
+the engine rather than of a page inside it.
+
+Exceeding is a refusal, not a teardown. The next request is denied and recorded
+as denied with `budget-exceeded`; the page sees a failed fetch, which pages
+handle; and the snapshot carries a note, because a page that ran out of
+allowance is a page whose reading is **incomplete** — the same class of fact as
+"this page had not finished", and an agent that is not told reads a half-loaded
+page as the whole one.
+
+**The navigation deadline is the cheap half of "make JavaScript stoppable".**
+The expensive half — a killable worker process — was considered and not built:
+`Page` holds an `Rc<RefCell<BaseDocument>>` and is pinned to its thread, so
+moving script into a separate process means moving the document with it and
+splitting the engine in two. That is a large architectural change for a bounded
+liveness gap, and inside a box there is already a supervisor. What the deadline
+buys instead is that every phase which *is* interruptible now shares one number:
+a page that spends thirty seconds on the network does not then get a fresh
+twenty to run its script in, which it did before.
+
+It does not bound a single runaway job. Boa checks its cancellation token
+between jobs and `LOOP_ITERATION_LIMIT` guards a loop; a job that is neither is
+still beyond reach, and saying so is better than implying the deadline covers
+it.
+
 ---
 
 # Formal verification: a Lean model beside the Rust

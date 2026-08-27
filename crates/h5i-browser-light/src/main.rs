@@ -522,10 +522,39 @@ struct NetArgs {
     /// How many redirect hops to follow. Every hop is policy-checked.
     #[arg(long, default_value_t = 5)]
     max_redirects: usize,
+
+    /// How many requests one page may make before the rest are refused.
+    ///
+    /// Every other limit here is per *request*: a size cap, a redirect count, a
+    /// timeout. None of them bounds a page that makes many, and a script in a
+    /// loop is exactly that. Resets when the agent navigates, because a fresh
+    /// page is a fresh decision by the agent and the ceiling exists to bound
+    /// untrusted page code rather than the principal driving the engine.
+    #[arg(long, default_value_t = 500, value_name = "N")]
+    max_requests: u64,
+
+    /// How many bytes one page may pull across the wire, in total.
+    #[arg(long, default_value_t = 64 * 1024 * 1024, value_name = "BYTES")]
+    max_wire_bytes: u64,
+
+    /// How many seconds one page may spend waiting on the network, summed.
+    ///
+    /// Not a per-request timeout: a hundred requests each well inside the
+    /// 30-second limit are together minutes an agent is waiting.
+    #[arg(long, default_value_t = 60, value_name = "SECONDS")]
+    max_network_seconds: u64,
 }
 
 #[derive(Args, Clone)]
 struct ViewArgs {
+    /// How long one navigation may take, first byte to last.
+    ///
+    /// The bound the per-phase budgets could not give. A request timeout bounds
+    /// a request and the script-phase budget bounds the script; a page inside
+    /// both can still take the better part of a minute.
+    #[arg(long, default_value_t = 45, value_name = "SECONDS")]
+    navigation_seconds: u64,
+
     #[arg(long, default_value_t = 1280)]
     width: u32,
 
@@ -640,7 +669,17 @@ fn run() -> Result<(), H5iError> {
 fn factory_for(net: &NetArgs, view: &ViewArgs) -> Result<(Arc<MemorySink>, PageFactory), H5iError> {
     let policy = build_policy(net);
     let (display, sink) = build_sinks(net)?;
-    let broker = Arc::new(Broker::new(policy, sink, proxy_of(net).as_deref())?);
+    let mut broker = Broker::new(policy, sink, proxy_of(net).as_deref())?;
+    broker.set_budget_limits(h5i_browser_light::budget::Limits {
+        max_requests: net.max_requests,
+        max_wire_bytes: net.max_wire_bytes,
+        // The decoded ceiling follows the wire one rather than being its own
+        // flag: it exists to bound what compression expands into, so tying it
+        // to the wire limit keeps the two from being set inconsistently.
+        max_decoded_bytes: net.max_wire_bytes.saturating_mul(4),
+        max_network_time: std::time::Duration::from_secs(net.max_network_seconds),
+    });
+    let broker = Arc::new(broker);
     let font_setup = load_fonts(view);
     if font_setup.is_empty() {
         eprintln!("h5i-browser-light: no fonts registered; text will not be drawn.");
@@ -656,6 +695,7 @@ fn factory_for(net: &NetArgs, view: &ViewArgs) -> Result<(Arc<MemorySink>, PageF
             scale: view.scale,
             max_snapshot_lines: view.max_snapshot_lines,
             script: view.script,
+            navigation_budget: std::time::Duration::from_secs(view.navigation_seconds),
         },
     );
     Ok((display, factory))
