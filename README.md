@@ -69,9 +69,9 @@ curl -fsSL https://h5i.dev/install.sh | sh
 The agent-facing interface is a skill, and the binary carries it:
 
 ```bash
-h5i skill install                # writes it where your runtime looks
-h5i skill show policy            # or just read a page
-npx skills add h5i-dev/h5i       # if you do not have the binary yet
+npx skills add h5i-dev/h5i         # if you do not have the binary yet
+# h5i skill install                # writes it where your runtime looks
+# h5i skill show policy            # or just read a page
 ```
 
 Two optional runtimes add stronger sandbox tiers: rootless
