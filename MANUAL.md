@@ -272,6 +272,34 @@ with the agent inside the box structurally cannot be.
 that does both is `microvm`. `h5i browser open --in` says which of these applies
 to your box before it starts anything, rather than timing out.
 
+### Opening a session from inside a box
+
+An agent already in a box does not need `--in`, and cannot use it: `--in` means
+"put this session in a box I am outside of", which is what lets it promise an
+enforced takeover and a lane the engine did not claim for itself. From inside,
+neither is true, so it is refused with the reason rather than silently doing
+something weaker.
+
+Open it without the flag. It runs beside the agent, in the same box, and the
+record says exactly that:
+
+```
+placed   : this machine, which is box env/human/web (its policy is not readable from in here)
+requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
+```
+
+Two things are deliberate in those lines. The box is **named**, because a
+session there is not uncontained and saying "no containment beyond the engine"
+would understate what is true — the same class of error as overstating it, in
+the direction that happens to be safe. And nothing is claimed about what the box
+enforces, because the policy is host-side and sealed: from in there, h5i cannot
+read its own boundary.
+
+The control channel inside a box is a Unix socket rather than a loopback port.
+Not a preference either: a box's netns may have no usable loopback at all
+(`net.mode = deny` leaves nothing to dial), and every `h5i box run` gets a fresh
+one, so a port bound in one is unreachable from the next.
+
 ### `audit`: the whole session, in one timeline
 
 `requests` is the network layer on its own, and it is the verb to reach for in a
@@ -392,11 +420,17 @@ different:
 
 ### Where sessions live
 
-`$H5I_BROWSER_HOME`, else `$XDG_STATE_HOME/h5i/browser`, else
-`~/.local/state/h5i/browser`. Deliberately **not** under a git repository: every
-other noun in h5i stores its state under the enclosing repo because every other
-noun is about a repo, and a browser is not. `h5i browser open` in an empty
-directory is the ordinary case.
+`$H5I_BROWSER_HOME`, else the box's own `/tmp` when h5i is running inside one,
+else `$XDG_STATE_HOME/h5i/browser`, else `~/.local/state/h5i/browser`.
+
+Deliberately **not** under a git repository: every other noun in h5i stores its
+state under the enclosing repo because every other noun is about a repo, and a
+browser is not. `h5i browser open` in an empty directory is the ordinary case.
+
+The box case is not a preference. Inside a box `$HOME` is the host's path over a
+sealed overlay and `~/.local/state` is not writable, so a session there would
+fail to start; the box's `/tmp` is private to it and lives exactly as long as
+its sessions can.
 
 The default session is per registry, so two agents sharing a `$HOME` share it.
 Give each its own with `$H5I_BROWSER_HOME`, or give each session a

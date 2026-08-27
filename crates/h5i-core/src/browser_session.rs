@@ -249,9 +249,41 @@ impl State {
     }
 }
 
+/// How a verb reaches the engine.
+///
+/// Two, because neither works everywhere. A loopback port is the simple case
+/// and needs no path short enough to be a socket address. A Unix socket is the
+/// only thing that works **anywhere a network namespace is in play**: a box's
+/// netns may have no usable loopback at all (`net.mode = deny` leaves nothing
+/// to dial), and every `h5i box run` gets a fresh one, so a port bound in one
+/// is unreachable from the next. A path survives both, because the box's
+/// filesystem is one filesystem across every run in it.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Channel {
+    /// A file holding a loopback port number.
+    #[default]
+    Port,
+    /// A Unix domain socket.
+    Socket,
+}
+
+impl Channel {
+    /// The flag the engine's CLI takes for this channel.
+    pub fn flag(self) -> &'static str {
+        match self {
+            Channel::Port => "--control-file",
+            Channel::Socket => "--control-socket",
+        }
+    }
+}
+
 /// How to reach the engine, when it is reachable at all.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Control {
+    /// Which of the two channels [`Control::file`] names.
+    #[serde(default)]
+    pub channel: Channel,
     /// Where the engine listens, **as the engine sees it**.
     ///
     /// Two different things behind one field, because a caller only ever hands
@@ -311,6 +343,22 @@ pub struct Session {
     pub ended_at: Option<String>,
     /// One line on how it ended, for the states that have something to say.
     pub end_reason: Option<String>,
+    /// The box **h5i itself was running inside** when this session was opened,
+    /// if any.
+    ///
+    /// Different from `placement`, and the difference is who is describing
+    /// what. `Placement::Box` means h5i, from outside, put the session in a box
+    /// it can see the policy of and carries every verb into. This means h5i was
+    /// *already* in a box and opened a session beside itself.
+    ///
+    /// Mechanically the second is a host session: same namespace, same
+    /// loopback, same registry, and the verbs go straight to the engine. What
+    /// it is not is uncontained, and a record that said "no containment beyond
+    /// the engine" there would be understating what is true. So the box is
+    /// named — and nothing more is claimed about it, because from inside, the
+    /// policy is sealed and h5i cannot read what its own boundary enforces.
+    #[serde(default)]
+    pub enclosing_box: Option<String>,
     pub control: Control,
     /// Where this machine can read the session's own logs, when it can.
     #[serde(default)]
@@ -332,6 +380,21 @@ pub struct Logs {
 }
 
 impl Session {
+    /// Where this session ran, in one clause, with nothing claimed that cannot
+    /// be checked from wherever h5i was standing.
+    pub fn where_it_ran(&self) -> String {
+        match (&self.placement, &self.enclosing_box) {
+            (Placement::Box { name }, _) => format!("in box `{name}`"),
+            // h5i was in the box too. Name it; claim nothing about it.
+            (Placement::Host, Some(id)) => {
+                format!("on this machine, which is box `{id}` — its policy is not readable here")
+            }
+            (Placement::Host, None) => {
+                "on this machine, no containment beyond the engine".to_string()
+            }
+        }
+    }
+
     /// The lane a placement can honestly claim.
     ///
     /// **Being in a box is not enough.** A box whose policy lets the engine
@@ -390,6 +453,17 @@ impl Session {
 pub fn root() -> Result<PathBuf, H5iError> {
     if let Some(explicit) = std::env::var_os("H5I_BROWSER_HOME") {
         return Ok(PathBuf::from(explicit));
+    }
+    // Inside a box, the state directory is not a choice. `$HOME` there is the
+    // host's path over a sealed overlay: `~/.local/state` is not writable, and a
+    // session that cannot write its registry cannot start at all. What *is*
+    // writable is the box's own `/tmp`, which is private to the box and lives
+    // exactly as long as it does — which is also how long its sessions can.
+    //
+    // `temp_dir` rather than a literal `/tmp`, because it follows the redirect
+    // the box was given rather than assuming what it was.
+    if crate::env::in_env_box() {
+        return Ok(std::env::temp_dir().join("h5i").join("browser"));
     }
     if let Some(state) = std::env::var_os("XDG_STATE_HOME") {
         let state = PathBuf::from(state);
@@ -1071,14 +1145,7 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
         &session.started_at,
         ev::Draft::host(ev::EventKind::Lifecycle {
             state: "opened".into(),
-            reason: Some(format!(
-                "{} — {}",
-                session.url,
-                match &session.placement {
-                    Placement::Host => "on this machine, no containment beyond the engine".into(),
-                    Placement::Box { name } => format!("in box `{name}`"),
-                }
-            )),
+            reason: Some(format!("{} — {}", session.url, session.where_it_ran())),
         }),
     ));
 
@@ -1242,6 +1309,7 @@ mod tests {
             state: State::Live,
             ended_at: None,
             end_reason: None,
+            enclosing_box: None,
             control: Control::default(),
             logs: Logs::default(),
         }
@@ -1583,6 +1651,87 @@ mod tests {
             };
             assert_eq!(event.lane, expected, "{:?} is in the wrong lane", event.kind);
         }
+    }
+
+    /// A session opened from inside a box is mechanically a host session and is
+    /// **not** uncontained. Saying "no containment beyond the engine" there
+    /// would understate what is true, which is the same class of error as
+    /// overstating it — just in the direction that happens to be safe.
+    #[test]
+    fn a_session_opened_from_inside_a_box_names_the_box_it_is_in() {
+        let mut inside = session("br_inside", Placement::Host);
+        inside.enclosing_box = Some("env/human/web".into());
+        let said = inside.where_it_ran();
+        assert!(said.contains("env/human/web"), "{said}");
+        assert!(
+            !said.contains("no containment"),
+            "understating a box is still describing it wrong: {said}"
+        );
+        // And nothing is claimed about what that box enforces, because from in
+        // there the policy is sealed.
+        assert!(said.contains("not readable here"), "{said}");
+        assert_eq!(
+            Session::lane_for(&inside.placement, false),
+            Lane::EngineClaimed
+        );
+    }
+
+    /// The channel is recorded rather than re-derived. A verb that guessed the
+    /// address would be a second place that has to agree with the first, and
+    /// the two failures it produces — a port nothing is listening on, a socket
+    /// path that is not there — both look like a session that is not running.
+    #[test]
+    fn the_channel_travels_with_the_record() {
+        assert_eq!(Channel::Port.flag(), "--control-file");
+        assert_eq!(Channel::Socket.flag(), "--control-socket");
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = new_id(root).unwrap();
+        let mut s = session(&id, Placement::Host);
+        s.control.channel = Channel::Socket;
+        s.control.file = Some(dir(root, &id).join("control.sock"));
+        write(root, &s).unwrap();
+
+        let back = read(root, &id).unwrap();
+        assert_eq!(back.control.channel, Channel::Socket);
+        assert_eq!(back.control.file, s.control.file);
+    }
+
+    /// A record written before the channel existed still loads, and loads as
+    /// the channel those sessions actually used.
+    #[test]
+    fn a_record_without_a_channel_reads_as_a_port() {
+        let raw = r#"{"id":"br_old","engine":"h5i-light","placement":{"kind":"host"},
+            "lane":"engine-claimed","url":"https://example.com/","started_at":"2026-01-01T00:00:00Z",
+            "expires_at":null,"storage":"ephemeral","policy_digest":"sha256:x","restored_from":null,
+            "state":"closed","ended_at":null,"end_reason":null,
+            "control":{"file":null,"witness":null,"pid":null}}"#;
+        let session: Session = serde_json::from_str(raw).expect("an older record still loads");
+        assert_eq!(session.control.channel, Channel::Port);
+        assert_eq!(session.enclosing_box, None);
+    }
+
+    #[test]
+    fn a_session_on_a_bare_host_still_says_it_is_uncontained() {
+        let outside = session("br_outside", Placement::Host);
+        assert!(outside.enclosing_box.is_none());
+        assert!(outside.where_it_ran().contains("no containment"));
+    }
+
+    /// `--in` and "I am already in a box" are different facts, and the record
+    /// keeps them apart: one is h5i placing a session somewhere it can see the
+    /// policy of, the other is h5i already being there.
+    #[test]
+    fn placed_in_a_box_and_opened_inside_one_are_not_the_same_row() {
+        let placed = session(
+            "br_placed",
+            Placement::Box {
+                name: "web".into(),
+            },
+        );
+        assert!(placed.where_it_ran().contains("in box `web`"));
+        assert!(placed.enclosing_box.is_none());
     }
 
     #[test]

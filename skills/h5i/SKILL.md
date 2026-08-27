@@ -132,6 +132,11 @@ See [references/browser.md](references/browser.md) for the whole surface.
 - **Inside**: you already have the whole worktree. Work normally. Some things
   are denied on purpose (see "When something is denied").
 
+Browsing works from inside, and needs no flag. `h5i browser open <url>` runs the
+session beside you in this box, and the record names the box rather than calling
+itself uncontained. Do **not** reach for `--in`: it means "put this session in a
+box I am outside of", and from in here it is refused with the reason.
+
 ### Make one, and use it
 
 ```bash

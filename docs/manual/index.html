@@ -154,6 +154,7 @@
 <a class="t3" href="#open-navigates-a-session-that-is-already-there">open navigates a session that is already there</a>
 <a class="t3" href="#what-is-true-by-default">What is true by default</a>
 <a class="t3" href="#--in-box-the-same-session-inside-a-box">--in &lt;box&gt;: the same session, inside a box</a>
+<a class="t3" href="#opening-a-session-from-inside-a-box">Opening a session from inside a box</a>
 <a class="t3" href="#audit-the-whole-session-in-one-timeline">audit: the whole session, in one timeline</a>
 <a class="t3" href="#sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</a>
 <a class="t3" href="#everything-a-session-returns-is-untrusted">Everything a session returns is untrusted</a>
@@ -492,6 +493,27 @@ with the agent inside the box structurally cannot be.</p>
 <code>container</code>, and those two cannot hold a service yet, so on Linux today the tier
 that does both is <code>microvm</code>. <code>h5i browser open --in</code> says which of these applies
 to your box before it starts anything, rather than timing out.</p>
+<h3 id="opening-a-session-from-inside-a-box">Opening a session from inside a box</h3>
+<p>An agent already in a box does not need <code>--in</code>, and cannot use it: <code>--in</code> means
+"put this session in a box I am outside of", which is what lets it promise an
+enforced takeover and a lane the engine did not claim for itself. From inside,
+neither is true, so it is refused with the reason rather than silently doing
+something weaker.</p>
+<p>Open it without the flag. It runs beside the agent, in the same box, and the
+record says exactly that:</p>
+<pre><code>placed   : this machine, which is box env/human/web (its policy is not readable from in here)
+requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
+</code></pre>
+<p>Two things are deliberate in those lines. The box is <strong>named</strong>, because a
+session there is not uncontained and saying "no containment beyond the engine"
+would understate what is true — the same class of error as overstating it, in
+the direction that happens to be safe. And nothing is claimed about what the box
+enforces, because the policy is host-side and sealed: from in there, h5i cannot
+read its own boundary.</p>
+<p>The control channel inside a box is a Unix socket rather than a loopback port.
+Not a preference either: a box's netns may have no usable loopback at all
+(<code>net.mode = deny</code> leaves nothing to dial), and every <code>h5i box run</code> gets a fresh
+one, so a port bound in one is unreachable from the next.</p>
 <h3 id="audit-the-whole-session-in-one-timeline"><code>audit</code>: the whole session, in one timeline</h3>
 <p><code>requests</code> is the network layer on its own, and it is the verb to reach for in a
 loop. <code>h5i browser audit</code> is the one to read afterwards: what the agent asked
@@ -615,11 +637,15 @@ different:</p>
   agent that drives the engine binary directly is not stopped by it.</li>
 </ul>
 <h3 id="where-sessions-live">Where sessions live</h3>
-<p><code>$H5I_BROWSER_HOME</code>, else <code>$XDG_STATE_HOME/h5i/browser</code>, else
-<code>~/.local/state/h5i/browser</code>. Deliberately <strong>not</strong> under a git repository: every
-other noun in h5i stores its state under the enclosing repo because every other
-noun is about a repo, and a browser is not. <code>h5i browser open</code> in an empty
-directory is the ordinary case.</p>
+<p><code>$H5I_BROWSER_HOME</code>, else the box's own <code>/tmp</code> when h5i is running inside one,
+else <code>$XDG_STATE_HOME/h5i/browser</code>, else <code>~/.local/state/h5i/browser</code>.</p>
+<p>Deliberately <strong>not</strong> under a git repository: every other noun in h5i stores its
+state under the enclosing repo because every other noun is about a repo, and a
+browser is not. <code>h5i browser open</code> in an empty directory is the ordinary case.</p>
+<p>The box case is not a preference. Inside a box <code>$HOME</code> is the host's path over a
+sealed overlay and <code>~/.local/state</code> is not writable, so a session there would
+fail to start; the box's <code>/tmp</code> is private to it and lives exactly as long as
+its sessions can.</p>
 <p>The default session is per registry, so two agents sharing a <code>$HOME</code> share it.
 Give each its own with <code>$H5I_BROWSER_HOME</code>, or give each session a
 <code>--session &lt;name&gt;</code>.</p>

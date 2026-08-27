@@ -683,6 +683,27 @@ fn start(
     opts: StartOptions,
     json: bool,
 ) -> anyhow::Result<()> {
+    // The box h5i is standing in, if it is standing in one. Read once, here,
+    // rather than at each use: the three markers are the host's, and a process
+    // does not move between boxes while it runs.
+    let enclosing_box = h5i_core::env::in_env_box()
+        .then(|| std::env::var(h5i_core::env::H5I_ENV_ID_VAR).ok())
+        .flatten();
+
+    if let (Some(target), Some(here)) = (&opts.in_box, &enclosing_box) {
+        // `--in` means "put this session in a box I am outside of", and that is
+        // the whole reason it can promise an enforced takeover and a lane the
+        // engine did not claim for itself. From in here neither is true, and a
+        // box inside a box is not a thing this product has.
+        anyhow::bail!(
+            "`--in {target}` cannot run from inside a box. This process is already in \
+             `{here}`.\n\n  \
+             Open the session without `--in`: it runs beside you, in this box, and its \
+             record says so. To place a session in a box from outside one, run \
+             `h5i browser open --in {target}` on the host."
+        );
+    }
+
     let placement = match &opts.in_box {
         None => bs::Placement::Host,
         Some(name) => bs::Placement::Box { name: name.clone() },
@@ -702,7 +723,7 @@ fn start(
     let dir = bs::dir(root, &id);
 
     let mut spawned = match &placement {
-        bs::Placement::Host => spawn_on_host(&dir, &opts)?,
+        bs::Placement::Host => spawn_on_host(&dir, &opts, enclosing_box.is_some())?,
         bs::Placement::Box { name } => spawn_in_box(name, &dir, &opts)?,
     };
     let lane = bs::Session::lane_for(&placement, spawned.boundary_enforced);
@@ -732,7 +753,9 @@ fn start(
         state: bs::State::Live,
         ended_at: None,
         end_reason: None,
+        enclosing_box,
         control: bs::Control {
+            channel: spawned.channel,
             file: Some(spawned.control_in_engine_view.clone()),
             witness: spawned.control_on_host.clone(),
             pid: spawned.pid,
@@ -783,6 +806,8 @@ fn start(
 
 /// What a spawn produced, in both views of the filesystem it has to be seen in.
 struct Spawned {
+    /// Which channel the engine is listening on.
+    channel: bs::Channel,
     /// Ask whether the engine is still on its way up. `Some(reason)` means it
     /// is not, and the reason is what the user is told.
     ///
@@ -816,15 +841,31 @@ struct Spawned {
     stop: Box<dyn FnOnce()>,
 }
 
-fn spawn_on_host(dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
-    let control = dir.join(bs::CONTROL_FILE);
+fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Result<Spawned> {
+    // A port on a bare host, a socket inside a box.
+    //
+    // The port is the simpler channel and the session directory can be
+    // anywhere, which matters: a socket address is capped near 100 bytes and a
+    // registry under a long temp path would exceed it. Inside a box a port is
+    // not merely awkward, it does not work — the netns may have no usable
+    // loopback at all, and `net.mode = deny` leaves nothing to dial. The
+    // registry inside a box lives under the box's own tmp, which is short.
+    let channel = if in_a_box {
+        bs::Channel::Socket
+    } else {
+        bs::Channel::Port
+    };
+    let control = match channel {
+        bs::Channel::Port => dir.join(bs::CONTROL_FILE),
+        bs::Channel::Socket => dir.join(bs::CONTROL_FILE).with_extension("sock"),
+    };
     let mut argv: Vec<String> = vec![
         ENGINE_SUBCOMMAND.into(),
         "serve".into(),
         opts.url.clone(),
         "--stream-file".into(),
         dir.join(bs::STREAM_FILE).display().to_string(),
-        "--control-file".into(),
+        channel.flag().into(),
         control.display().to_string(),
         "--receipts".into(),
         dir.join(bs::RECEIPTS_FILE).display().to_string(),
@@ -855,6 +896,7 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
     let pid = child.id();
 
     Ok(Spawned {
+        channel,
         alive: Box::new(move || match child.try_wait() {
             Ok(Some(status)) => Some(format!("the browser engine exited ({status})")),
             Ok(None) => None,
@@ -1114,6 +1156,7 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         // `$H5I_BROWSER_STREAM_FILE`, which the box's environment sets.
         control_in_engine_view: control_in_box,
         control_on_host,
+        channel: bs::Channel::Socket,
         policy_digest: manifest.policy_digest.clone(),
         // The box's own logs, as this machine sees them. `None` on a tier whose
         // /tmp lives in an image, and an audit then says `unavailable` rather
@@ -1354,17 +1397,16 @@ fn refusal(answer: &Value) -> String {
 fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Result<Value> {
     let output = match &session.placement {
         bs::Placement::Host => {
-            // A port file, not a socket. On the host the engine and the verb
-            // share a network namespace, so the simpler channel works and the
-            // session directory can sit anywhere — including a path longer than
-            // `sockaddr_un` would accept.
-            let control = dir.join(bs::CONTROL_FILE);
+            // Whatever the start recorded, not a second derivation of it: two
+            // places that have to agree about an address are two places that
+            // can stop agreeing.
+            let control = session.control.file.clone().unwrap_or(dir.join(bs::CONTROL_FILE));
             let mut command = Command::new(engine_binary()?);
             command
                 .arg(ENGINE_SUBCOMMAND)
                 .arg("session")
                 .args(&argv)
-                .arg("--control-file")
+                .arg(session.control.channel.flag())
                 .arg(&control)
                 .arg("--json");
             command.output()?
@@ -1389,7 +1431,7 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
                 .arg(ENGINE_SUBCOMMAND)
                 .arg("session")
                 .args(&argv)
-                .arg("--control-socket")
+                .arg(session.control.channel.flag())
                 .arg(&control)
                 .arg("--json");
             command.output()?
@@ -1535,14 +1577,19 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
 
 fn print_summary(session: &bs::Session) {
     println!("  url      : {}", session.url);
-    match &session.placement {
-        bs::Placement::Host => println!(
+    match (&session.placement, &session.enclosing_box) {
+        (bs::Placement::Box { name }, _) => {
+            println!("  placed   : in box {}", style(name).cyan())
+        }
+        (bs::Placement::Host, Some(id)) => println!(
+            "  placed   : {}, which is box {} (its policy is not readable from in here)",
+            style("this machine").dim(),
+            style(id).cyan()
+        ),
+        (bs::Placement::Host, None) => println!(
             "  placed   : {} (no containment beyond the engine)",
             style("this machine").dim()
         ),
-        bs::Placement::Box { name } => {
-            println!("  placed   : in box {}", style(name).cyan())
-        }
     }
     // The honest half of the product, printed every time rather than claimed
     // once in a README: what this session's network record actually is.
