@@ -226,44 +226,73 @@ status line:
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 ```
 
-### `read`: one page, no session, the strongest tier
+### `read`: one page, no session
 
 ```bash
-h5i browser read https://example.com --allow example.com
-h5i browser read url1 url2 url3 --allow example.com --json
+h5i browser read https://example.com
+h5i browser read url1 url2 url3 --json
 ```
 
 ```
-confined : supervised (egress enforced at the boundary: example.com)
+confined : process (files and environment; the origin allowlist is the engine's)
 ```
 
 For the shape a crawl has: fetch, read, move on. No cookies carried between
 verbs, no `@ref` to click, nothing resident afterwards — and `h5i browser list`
 shows nothing when it is done.
 
-**A read gets an egress allowlist a session cannot**, and the reason is the
-difference between the two rather than a preference. A session is resident by
-design (`snapshot` then `click @e3` needs the page to still be there), and the
+**There is no `--allow` here, and the omission is the design.** The engine is
+fail-closed, so something has to name the origins; making you name a URL and
+then name its origin again is ceremony that teaches nothing. So the targets
+grant themselves, and only themselves. A page that pulls a script from a
+third-party CDN, or redirects to another host, is still refused and still says
+so in the log — which is the part a wider default would have given away.
+
+Several targets share one browser — one connection pool, one cookie jar and one
+font set across the batch — and a page that fails does not stop the ones after
+it. `--json` returns the page, its request log, and what was holding the engine
+together, which is what a crawl wants and what no other headless browser can
+hand over completely.
+
+#### `--in <box>`: an allowlist a tier enforces
+
+An allowlist that is not simply "what I asked for" belongs in a file, not in
+arguments. Write it in `.h5i/env.toml`:
+
+```toml
+[profile.docs]
+isolation = "supervised"
+
+[profile.docs.net]
+mode   = "host"
+egress = ["docs.rs", "*.rust-lang.org"]
+```
+
+```bash
+h5i browser read https://docs.rs/serde --in docs --json
+```
+
+```
+confined : box docs, policy 6bca3b30c268
+```
+
+The read runs inside that box, through the same `box run` you would type
+yourself: the tier resolves the pinned policy, enforces egress at a network
+namespace boundary **outside the engine**, and writes a receipt. The digest on
+the line is the policy that was actually enforced, which is the thing an
+allowlist assembled from command-line arguments could never hand back.
+
+**A read can have this and a session cannot**, and the reason is the difference
+between the two rather than a preference. A session is resident by design
+(`snapshot` then `click @e3` needs the page to still be there), and the
 supervised tier cannot hold a resident process yet: its seccomp-notify gate is
 served by a thread inside the `h5i` process that started the run, so when that
 command exits the gate has no server and every filtered syscall blocks. A read
 runs to completion inside that command, which is the shape that tier already
 has.
 
-So the allowlist gets **two independent enforcers**: the engine's, fail-closed
-and inside the thing being described, and the tier's, at a network namespace
-boundary outside it.
-
-Several targets share one browser — one connection pool, one cookie jar and one
-font set across the batch — and a page that fails does not stop the ones after
-it. `--json` returns the page and its request log together, which is what a
-crawl wants and what no other headless browser can hand over completely.
-
-A read aimed at `localhost` drops to the process tier and says so. Under
-`supervised` the loopback is the sandbox's own, and the dev server it was aimed
-at is on this machine's; the tier follows the target rather than the strongest
-name. At the process tier the origin allowlist is the engine's alone, and the
-line says that too.
+Aim a read at `localhost` and use no box: under a tier with its own network
+namespace the loopback is the sandbox's, not the one your dev server is on.
 
 ### The default sandbox
 

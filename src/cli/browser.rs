@@ -195,10 +195,19 @@ pub enum BrowserCommands {
         #[arg(required = true, num_args = 1..)]
         targets: Vec<String>,
 
-        /// Grant an origin. Repeatable. Enforced twice: by the engine before
-        /// the wire, and by the tier at its own boundary.
-        #[arg(long = "allow", value_name = "ORIGIN")]
-        allow: Vec<String>,
+        /// Read inside this box.
+        ///
+        /// The box's profile is where a strict egress allowlist belongs, pinned
+        /// in `.h5i/env.toml` and digested, and a box at the supervised tier
+        /// enforces it at a network namespace boundary outside the engine — the
+        /// one thing a session cannot have, because that tier cannot hold a
+        /// resident process and a read does not need it to.
+        ///
+        /// Without this, the read runs here under the same built-in sandbox a
+        /// session gets: its files and its environment, and the origin
+        /// allowlist is the engine's alone.
+        #[arg(long = "in", value_name = "BOX")]
+        in_box: Option<String>,
 
         /// Print the page's prose instead of its outline.
         #[arg(long)]
@@ -677,12 +686,12 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         ),
         BrowserCommands::Read {
             targets,
-            allow,
+            in_box,
             text,
             script,
             no_sandbox,
             json,
-        } => read(targets, allow, text, script, no_sandbox, json),
+        } => read(targets, in_box, text, script, no_sandbox, json),
         BrowserCommands::List { all, json } => list(&root, all, json),
         BrowserCommands::Status { session, json } => status(&root, session.as_deref(), json),
         BrowserCommands::Close { session, all, json } => close(&root, session.as_deref(), all, json),
@@ -1239,6 +1248,8 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
         session_dir: dir,
         reads: &reads,
         secrets: &opts.secrets,
+        // A session is resident and is bounded by `--expires-in`, not a signal.
+        wall_secs: 0,
     };
     let confined = if opts.no_sandbox {
         None
@@ -1652,6 +1663,12 @@ fn shell_join(argv: &[String]) -> String {
 /// that can run `h5i` at all can run it.
 const ENGINE_SUBCOMMAND: &str = "__engine";
 
+/// The outer bound on a confined read, in seconds.
+///
+/// Generous on purpose. The engine already bounds each navigation; this only
+/// catches the case where it stops making progress at all.
+const READ_WALL_SECS: u64 = 300;
+
 /// How to invoke h5i inside a box.
 ///
 /// Bare `h5i`, not a path: a box's `PATH` is the thing that knows where the
@@ -1948,151 +1965,224 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
 
 /// One page, or a batch, with nothing left behind.
 ///
-/// Runs `h5i __engine open` to completion under the strongest tier this host
-/// will give a run — which for a read is a real one, because there is no
-/// resident process to strand when the command exits.
+/// Two placements, and neither invents a policy. `--in <box>` carries the read
+/// into a box, so the tier's egress comes from that box's pinned
+/// `.h5i/env.toml` and the run lands in the box's own receipt with the policy
+/// digest that was enforced. Without it the read runs here under the same
+/// built-in sandbox a session gets.
+///
+/// There is no `--allow` here, and that is deliberate twice over. The engine is
+/// fail-closed, so *something* has to name the origins — but naming a URL and
+/// then naming its origin again is ceremony that teaches nothing, so the
+/// targets grant themselves and nothing else: a page that pulls a script from
+/// a third-party CDN, or redirects off-origin, is still refused and still says
+/// so in the request log. And an allowlist wider than "what I asked for"
+/// belongs in `.h5i/env.toml`, reached through `--in`, where a tier enforces it
+/// and a digest pins it. An earlier version took the allowlist as arguments;
+/// that was a second way to say what `.h5i/env.toml` already says, and a policy
+/// assembled from arguments is one nothing can be verified against.
 fn read(
     targets: Vec<String>,
-    allow: Vec<String>,
+    in_box: Option<String>,
     text: bool,
     script: bool,
     no_sandbox: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    use h5i_core::browser_sandbox::Outcome;
-
-    let engine = engine_binary()?;
-    // A scratch directory is `$WORK`: the read writes its request log there and
-    // nothing survives the call. A read that left state behind would be a
-    // session with the word "read" on it.
-    let scratch = tempfile::tempdir()?;
-    let receipts = scratch.path().join("requests.jsonl");
-
-    let mut argv: Vec<String> = vec![
-        engine.display().to_string(),
-        ENGINE_SUBCOMMAND.into(),
-        "open".into(),
-    ];
-    argv.extend(targets.iter().cloned());
-    argv.push("--receipts".into());
-    argv.push(receipts.display().to_string());
-    for origin in &allow {
-        argv.push("--allow".into());
-        argv.push(origin.clone());
+    let mut engine_args: Vec<String> = vec![ENGINE_SUBCOMMAND.into(), "open".into()];
+    engine_args.extend(targets.iter().cloned());
+    for origin in origins_of(&targets) {
+        engine_args.push("--allow".into());
+        engine_args.push(origin);
     }
     if text {
-        argv.push("--text".into());
+        engine_args.push("--text".into());
     }
     if script {
-        argv.push("--script".into());
+        engine_args.push("--script".into());
     }
     if json {
-        argv.push("--json".into());
+        engine_args.push("--json".into());
     }
 
-    let confinement = if no_sandbox {
-        Outcome::Unavailable("read with --no-sandbox".into())
-    } else {
-        // Does any target point at this machine? Under supervised it would
-        // reach the sandbox's loopback instead, and find nothing.
-        let loopback = targets.iter().any(|t| {
-            let t = t.to_ascii_lowercase();
-            t.contains("//localhost") || t.contains("//127.") || t.contains("//[::1]")
-        });
-        h5i_core::browser_sandbox::resolve_for_read(std::slice::from_ref(&engine), &allow, loopback)
+    if let Some(name) = &in_box {
+        return read_in_box(name, &engine_args, json);
+    }
+    read_here(&engine_args, no_sandbox, json)
+}
+
+/// The origins the caller named, by naming the URLs.
+///
+/// The targets are handed back verbatim: the engine's `--allow` already accepts
+/// a full URL and normalizes it with the same code that later checks a request,
+/// so there is nothing to parse here and no second notion of "origin" to drift
+/// from the first. A local file path normalizes to no entry at all, which is
+/// right — a page opened from disk needs no grant.
+///
+/// Deduplicated so a batch produces a stable argv.
+fn origins_of(targets: &[String]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for t in targets {
+        if !seen.contains(t) {
+            seen.push(t.clone());
+        }
+    }
+    seen
+}
+
+/// Carry the read into a box, through the same `box run` a person would type.
+///
+/// Nothing here re-implements the tier: `box run` already resolves the box's
+/// pinned policy, dispatches to the backend it names, and writes a receipt. A
+/// read is run-to-completion, which is why it fits a tier a session does not.
+fn read_in_box(name: &str, engine_args: &[String], json: bool) -> anyhow::Result<()> {
+    // `box run --json` rather than its streamed output: the envelope carries the
+    // **policy digest that was enforced**, which is the reason to read inside a
+    // box at all and the thing a hand-built policy could never hand back. It
+    // also keeps `box run`'s own framing out of the middle of a page.
+    let out = Command::new(std::env::current_exe()?)
+        .arg("box")
+        .arg("run")
+        .arg("--json")
+        .arg(name)
+        .arg("--")
+        .arg(h5i_in_box())
+        .args(engine_args)
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let envelope: Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+        anyhow::anyhow!(
+            "could not read the box's answer ({e}): {}",
+            bs::scrub_text(&String::from_utf8_lossy(&out.stderr))
+        )
+    })?;
+
+    let digest = envelope["policy_digest"].as_str().unwrap_or("unknown");
+    let exit = envelope["exit_code"].as_i64().unwrap_or(1);
+    let body = envelope["output"].as_str().unwrap_or_default();
+    let confinement = serde_json::json!({"kind": "box", "box": name, "policy_digest": digest});
+
+    // A receipt has one output field, so `box run` folded the two streams into
+    // it behind a banner. Unfold them: the page belongs on stdout and the
+    // request log on stderr, the same as a read that ran here, and a caller
+    // parsing `--json` should not have to find the JSON inside a transcript.
+    let (out, err) = match body.split_once(h5i_core::env::STDERR_BANNER) {
+        Some((out, err)) => (out, err),
+        None => (body, ""),
     };
 
-    let outcome = match &confinement {
-        Outcome::Confined(c) => {
-            let mut argv = argv.clone();
+    if !json {
+        println!("  confined : box {name}, policy {digest}");
+        println!();
+    }
+    relay(out.as_bytes(), err.as_bytes(), json, confinement);
+    if exit != 0 {
+        std::process::exit(exit as i32);
+    }
+    Ok(())
+}
+
+/// Read on this machine, under the session sandbox.
+fn read_here(engine_args: &[String], no_sandbox: bool, json: bool) -> anyhow::Result<()> {
+    let engine = engine_binary()?;
+    // A scratch directory is `$WORK`: a read that left state behind would be a
+    // session with the word "read" on it.
+    let scratch = tempfile::tempdir()?;
+
+    let wants = h5i_core::browser_sandbox::Wants {
+        session_dir: scratch.path(),
+        reads: std::slice::from_ref(&engine),
+        secrets: &[],
+        // A backstop, not a policy: the engine's per-navigation budgets are what
+        // actually bound a fetch. Leaving this at a session's `0` would hand
+        // `sandbox::run` a deadline that has already passed.
+        wall_secs: READ_WALL_SECS,
+    };
+    let confined = if no_sandbox {
+        None
+    } else {
+        h5i_core::browser_sandbox::resolve_for(&wants)?
+    };
+
+    let out = match &confined {
+        Some(c) => {
+            let mut argv = vec![engine.display().to_string()];
+            argv.extend(engine_args.iter().cloned());
             for dir in &c.fonts {
                 argv.push("--font-dir".into());
                 argv.push(dir.display().to_string());
             }
-            h5i_core::sandbox::run(&c.policy, scratch.path(), &argv)?
+            let outcome = h5i_core::sandbox::run(&c.policy, scratch.path(), &argv)?;
+            (outcome.stdout, outcome.stderr, outcome.exit_code)
         }
-        Outcome::Unavailable(_) => {
-            let out = Command::new(&argv[0]).args(&argv[1..]).output()?;
-            h5i_core::sandbox::ExecOutcome {
-                stdout: out.stdout,
-                stderr: out.stderr,
-                exit_code: out.status.code(),
-                timed_out: false,
-                wall_ms: 0,
-                cpu_ms: 0,
-                max_rss_kb: Some(0),
-                egress: None,
-            }
+        None => {
+            let out = Command::new(&engine).args(engine_args).output()?;
+            (out.stdout, out.stderr, out.status.code())
         }
     };
 
-    // What confined it, said before the page, because it is the part a reader
-    // cannot recover from the output.
-    let held = match &confinement {
-        Outcome::Confined(c) => {
-            let tier = c.policy.claim.as_str();
-            match (
-                c.policy.profile.net_egress.is_empty(),
-                c.policy.profile.net_mode,
-            ) {
-                (false, _) => format!(
-                    "{tier} (egress enforced at the boundary: {})",
-                    c.policy.profile.net_egress.join(", ")
-                ),
-                (true, h5i_core::sandbox::NetMode::Deny) => {
-                    format!("{tier} (network denied at the boundary)")
-                }
-                // The tier holds the files and the environment; the allowlist is
-                // the engine's alone here, and saying otherwise would sell a
-                // second enforcer that is not there.
-                (true, _) => format!(
-                    "{tier} (files and environment; the origin allowlist is the engine's alone)"
-                ),
-            }
-        }
-        Outcome::Unavailable(why) => format!("unconfined — {why}"),
+    let confinement = match &confined {
+        Some(_) => serde_json::json!({"kind": "process"}),
+        None => serde_json::json!({"kind": "none"}),
     };
     if !json {
-        println!("  confined : {held}");
+        println!(
+            "  confined : {}",
+            match &confined {
+                Some(_) => "process (files and environment; the origin allowlist is the engine's)",
+                None => "nothing — `--in <box>` is where a tier-enforced allowlist comes from",
+            }
+        );
         println!();
     }
+    relay(&out.0, &out.1, json, confinement);
+    if out.2 != Some(0) {
+        std::process::exit(out.2.unwrap_or(1));
+    }
+    Ok(())
+}
 
-    let mut body: Value = match serde_json::from_slice(&outcome.stdout) {
+/// Print what the engine said, scrubbed. Everything here was composed by a page.
+/// Print what the engine produced, with what held it attached.
+///
+/// `confinement` is carried *into* the JSON rather than printed beside it: a
+/// machine reading a read has no other way to learn what was holding the
+/// engine, and a request log without the thing that was containing the requests
+/// is half a receipt. In text mode it is a line above the page, for the reader.
+fn relay(stdout: &[u8], stderr: &[u8], json: bool, confinement: Value) {
+    let mut body: Value = match serde_json::from_slice(stdout) {
         Ok(v) => v,
-        Err(_) => Value::String(String::from_utf8_lossy(&outcome.stdout).to_string()),
+        Err(_) => Value::String(String::from_utf8_lossy(stdout).to_string()),
     };
     bs::scrub(&mut body);
     if json {
-        let log = std::fs::read_to_string(&receipts).unwrap_or_default();
-        let mut requests: Vec<Value> = log
-            .lines()
-            .filter_map(|l| serde_json::from_str(l).ok())
-            .collect();
-        for row in &mut requests {
-            bs::scrub(row);
-        }
+        // An object gains a field; anything else — a `--text` read, or a box's
+        // merged output — becomes one, so the key is in the same place either way.
+        let answer = match body {
+            Value::Object(mut map) => {
+                map.insert("confinement".into(), confinement);
+                Value::Object(map)
+            }
+            other => serde_json::json!({"confinement": confinement, "read": other}),
+        };
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "confinement": held,
-                "read": body,
-                "requests": requests,
-            }))?
+            serde_json::to_string_pretty(&answer).unwrap_or_else(|_| answer.to_string())
         );
     } else {
         match body.as_str() {
             Some(t) => println!("{t}"),
-            None => println!("{}", serde_json::to_string_pretty(&body)?),
-        }
-        let stderr = bs::scrub_text(&String::from_utf8_lossy(&outcome.stderr));
-        if !stderr.trim().is_empty() {
-            eprintln!("{}", stderr.trim());
+            None => println!(
+                "{}",
+                serde_json::to_string_pretty(&body).unwrap_or_else(|_| body.to_string())
+            ),
         }
     }
-    if outcome.exit_code != Some(0) {
-        std::process::exit(outcome.exit_code.unwrap_or(1));
+    let err = bs::scrub_text(&String::from_utf8_lossy(stderr));
+    if !err.trim().is_empty() {
+        eprintln!("{}", err.trim());
     }
-    Ok(())
 }
 
 fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {

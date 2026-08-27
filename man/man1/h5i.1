@@ -1438,13 +1438,17 @@ Read one page, or a batch of them, and leave no session behind
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBread\fR [\fB\-\-allow\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
+\fBread\fR [\fB\-\-in\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
-\fB\-\-allow\fR \fI<ORIGIN>\fR
-Grant an origin. Repeatable. Enforced twice: by the engine before the wire, and by the tier at its own boundary
+\fB\-\-in\fR \fI<BOX>\fR
+Read inside this box.
+
+The box\*(Aqs profile is where a strict egress allowlist belongs, pinned in `.h5i/env.toml` and digested, and a box at the supervised tier enforces it at a network namespace boundary outside the engine \(em the one thing a session cannot have, because that tier cannot hold a resident process and a read does not need it to.
+
+Without this, the read runs here under the same built\-in sandbox a session gets: its files and its environment, and the origin allowlist is the engine\*(Aqs alone.
 .TP
 \fB\-\-text\fR
 Print the page\*(Aqs prose instead of its outline

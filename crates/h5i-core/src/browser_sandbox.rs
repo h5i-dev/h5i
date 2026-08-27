@@ -145,6 +145,15 @@ pub struct Wants<'a> {
     /// reads every secret on the machine. Here it reads the ones that were
     /// named, and a placeholder for anything else resolves to nothing.
     pub secrets: &'a [String],
+    /// The wall-clock bound, in seconds, or `0` for none.
+    ///
+    /// The two callers want opposite things and the encoding is a trap worth
+    /// naming: [`sandbox::spawn_background`] applies no clock at all, so a
+    /// resident session passes `0` and is bounded by `--expires-in` instead.
+    /// [`sandbox::run`] passes the value straight to a deadline, where `0` is
+    /// a deadline that has *already passed* — a run-to-completion read that
+    /// left this at `0` would be killed before it fetched anything.
+    pub wall_secs: u64,
 }
 
 /// Build the confinement for a session, or say why this host cannot.
@@ -245,6 +254,11 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     // which is a browser that cannot browse; the origin policy is the engine's
     // own and stays there.
     p.net_mode = NetMode::Host;
+    // ...and a browser that cannot resolve a name is the same browser. See
+    // `resolver_grants`.
+    for path in resolver_grants() {
+        p.fs_read.push(path.display().to_string());
+    }
 
     // **Not** an exec denial, because there is none to make here. `tools` gates
     // the *initial* command and an empty list means no restriction at all;
@@ -269,11 +283,42 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     // fetches and decodes; this bounds what the process can do with it when a
     // page is not playing along.
     p.mem_bytes = Some(2 * 1024 * 1024 * 1024);
-    // No wall-clock kill: a session is resident by design and outlives the
-    // command that opened it. `--expires-in` is the caller's way to bound it,
-    // and it is recorded as an ending rather than enforced by a signal here.
-    p.wall_secs = 0;
+    // The caller's, because the two shapes disagree: a resident session must
+    // not be killed on a clock (`--expires-in` bounds it, and is recorded as an
+    // ending rather than delivered as a signal), while a read that runs to
+    // completion needs a real one. See `Wants::wall_secs`.
+    p.wall_secs = wants.wall_secs;
     p
+}
+
+/// The resolver's configuration, when it does not live where it appears to.
+///
+/// `/etc` is granted to every confined profile, so on most hosts this finds
+/// nothing and returns empty. But `/etc/resolv.conf` is a symlink on more
+/// machines than one would like — WSL points it at `/mnt/wsl/resolv.conf`,
+/// `resolvconf` and `systemd-resolved` at somewhere under `/run` — and a
+/// Landlock grant follows the link to a path the domain never granted.
+///
+/// The failure that causes is worth spelling out, because it is the reason this
+/// function exists rather than a line in the default grants: `getaddrinfo`
+/// returns "Temporary failure in name resolution", every fetch is refused
+/// before it reaches the wire, and the message reads like the network is down
+/// rather than like the sandbox denied one file. A default sandbox that turns
+/// every public URL into a DNS error is a default nobody would keep.
+///
+/// Only the browser's profile, not [`sandbox::Profile::builtin`]'s defaults: a
+/// policy's digest is taken over its serialization, so widening the defaults
+/// would change the digest of every box already pinned on disk.
+fn resolver_grants() -> Vec<PathBuf> {
+    let conf = Path::new("/etc/resolv.conf");
+    match conf.canonicalize() {
+        // Already inside `/etc`, which is granted. Nothing to add.
+        Ok(real) if real == conf => Vec::new(),
+        Ok(real) => vec![real],
+        // No resolver config at all, or an unreadable one. Not this function's
+        // problem to report: the engine's own error will say what failed.
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Why this host cannot confine a session, in one line for the summary.
@@ -298,85 +343,6 @@ pub fn unavailable_reason(caps: &HostCaps) -> String {
     }
 }
 
-/// The confinement for a **stateless read**: one page, or a batch of them, with
-/// no session left behind.
-///
-/// This is the one browser shape that can have the strongest tier the host
-/// offers, and the reason is the whole difference between the two. A session is
-/// resident by design — `snapshot` then `click @e3` needs the page to still be
-/// there — and the supervised tier cannot hold a resident process today: its
-/// seccomp-notify gate is served by a thread inside the `h5i` process that
-/// started the run, so when that command exits the gate has no server and every
-/// filtered syscall blocks. A read runs to completion inside that same command,
-/// which is exactly the shape `supervisor::run` already has.
-///
-/// So a read gets an egress allowlist **enforced outside the engine**, at the
-/// box tier's own boundary, which no session on this platform can have yet.
-/// `origins` becomes `net.egress`; empty means the tier denies the network
-/// outright, which is right for a local file and wrong for anything else.
-pub fn resolve_for_read(reads: &[PathBuf], origins: &[String], loopback: bool) -> Outcome {
-    let fonts = font_dirs();
-    // Strongest first, with one exception that is not a weakness: **supervised
-    // puts the read in its own network namespace, so `localhost` is the
-    // sandbox's own loopback and not the host's.** A read aimed at a dev server
-    // on this machine would find nothing there. That is the tier working, and
-    // it makes it the wrong tier for that target, so the choice follows what is
-    // being read rather than a preference for the strongest name.
-    //
-    // Supervised is otherwise first. It is fail-closed on admission and refuses
-    // on a host missing any part of the stack, which is most of the reason a
-    // *session* could not default to it; a read can try and fall back, because
-    // there is no resident process to strand.
-    let tiers: &[IsolationClaim] = if loopback {
-        &[IsolationClaim::Process]
-    } else {
-        &[IsolationClaim::Supervised, IsolationClaim::Process]
-    };
-    for &claim in tiers {
-        let mut p = Profile::builtin("browser-read", claim);
-        p.fs_write = vec![
-            "$WORK".to_string(),
-            "/dev/null".to_string(),
-            "/dev/zero".to_string(),
-        ];
-        p.fs_read.push("$WORK".to_string());
-        for dir in reads.iter().chain(fonts.iter()) {
-            p.fs_read.push(dir.display().to_string());
-        }
-        // The allowlist goes to the tier only where the tier can enforce it.
-        // `process` cannot — it has `deny` and `host` and nothing between — and
-        // handing it one makes the policy unresolvable, which would drop the
-        // read to unconfined over a list the engine was going to enforce
-        // anyway. So the second enforcer engages where it exists and the read
-        // says which it got.
-        let tier_enforces_egress = claim >= IsolationClaim::Supervised;
-        p.net_egress = if tier_enforces_egress {
-            origins.to_vec()
-        } else {
-            Vec::new()
-        };
-        p.net_mode = if origins.is_empty() {
-            NetMode::Deny
-        } else {
-            NetMode::Host
-        };
-        p.mem_bytes = Some(2 * 1024 * 1024 * 1024);
-
-        let caps = sandbox::probe_host_for(claim);
-        let Ok(policy) = sandbox::resolve(&p, &caps) else {
-            continue;
-        };
-        if sandbox::verify_exec(&policy).is_ok() {
-            return Outcome::Confined(Box::new(Confined {
-                policy,
-                fonts,
-                dropped_fonts: Vec::new(),
-            }));
-        }
-    }
-    Outcome::Unavailable(unavailable_reason(&caps()))
-}
-
 /// The host's capabilities, for a caller that wants to explain a fallback.
 pub fn caps() -> HostCaps {
     sandbox::probe_host_for(IsolationClaim::Process)
@@ -391,6 +357,7 @@ mod tests {
             session_dir: dir,
             reads: &[],
             secrets: &[],
+            wall_secs: 0,
         }
     }
 
@@ -449,6 +416,7 @@ mod tests {
                 session_dir: tmp.path(),
                 reads: &[],
                 secrets: &named,
+                wall_secs: 0,
             },
             &[],
         );
@@ -470,6 +438,36 @@ mod tests {
     fn a_session_is_not_killed_on_a_wall_clock() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(profile_for(&wants(tmp.path()), &[]).wall_secs, 0);
+    }
+
+    /// The grant is the *canonical* path, because the link target is what
+    /// Landlock checks. On a host where `/etc/resolv.conf` is a real file there
+    /// is nothing to grant and the list is empty; either way the profile must
+    /// not end up naming the symlink itself, which is already covered by
+    /// `/etc` and would not have helped.
+    #[test]
+    fn the_resolver_is_granted_where_it_actually_lives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let reads = profile_for(&wants(tmp.path()), &[]).fs_read;
+        for grant in resolver_grants() {
+            let grant = grant.display().to_string();
+            assert_ne!(grant, "/etc/resolv.conf");
+            assert!(reads.contains(&grant), "profile is missing the resolver grant {grant}");
+        }
+    }
+
+    /// The other half of the same trap: a read asks for a bound and must get
+    /// the one it asked for, because `sandbox::run` treats `0` as expired.
+    #[test]
+    fn a_read_gets_the_clock_it_asked_for() {
+        let tmp = tempfile::tempdir().unwrap();
+        let w = Wants {
+            session_dir: tmp.path(),
+            reads: &[],
+            secrets: &[],
+            wall_secs: 300,
+        };
+        assert_eq!(profile_for(&w, &[]).wall_secs, 300);
     }
 
     /// A font directory must never decide whether there is a sandbox. The

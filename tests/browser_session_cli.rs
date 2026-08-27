@@ -71,6 +71,11 @@ impl Site {
             // it is printed into.
             "/hostile" => "<html><body><h1>start\u{1b}[2K\u{1b}[1Aoverwritten</h1></body></html>"
                 .to_string(),
+            // A subresource on an origin the caller never named. Reachable only
+            // if the allowlist means more than "what I asked for".
+            "/third-party" => "<html><body><h1>third party</h1>\
+                  <img src=\"https://cdn.example.invalid/x.png\"><p>body</p></body></html>"
+                .to_string(),
             _ => "<html><head><title>t</title></head><body><h1>hello</h1>\
                   <p>a <a href=\"https://example.com/next\">link</a></p></body></html>"
                 .to_string(),
@@ -622,7 +627,8 @@ fn a_read_leaves_no_session() {
         return skip("no h5i binary to drive");
     };
     let url = fx.site.base.clone();
-    let out = fx.run(&["browser", "read", &url, "--allow", "127.0.0.1", "--text"]);
+    // No `--allow`: naming the URL is what grants it.
+    let out = fx.run(&["browser", "read", &url, "--text"]);
     assert!(
         out.status.success(),
         "read failed: {}",
@@ -639,22 +645,35 @@ fn a_read_leaves_no_session() {
     assert!(listed.is_empty(), "a read left a session behind: {listed:?}");
 }
 
-/// A read of a loopback target must not be put in a network namespace of its
-/// own: `localhost` there is the sandbox's, and the dev server it was aimed at
-/// is on this machine's. The tier follows the target.
+/// A read grants the targets it was given, and only those.
+///
+/// The first half is why there is no `--allow`: a URL the caller typed is a URL
+/// the caller asked for, and making them say it twice teaches nothing. The
+/// second half is why that is not a wide default: the page's off-origin
+/// subresource is still refused, and still says so in the log, which is the
+/// part that would have been given away by an allowlist meaning "and whatever
+/// this page pulls in".
 #[test]
-fn a_loopback_read_gets_a_tier_that_can_reach_it() {
+fn a_read_grants_its_targets_and_nothing_else() {
     let Some(fx) = Fixture::new() else {
         return skip("no h5i binary to drive");
     };
-    let url = fx.site.base.clone();
-    let out = fx.run(&["browser", "read", &url, "--allow", "127.0.0.1", "--text"]);
-    let text = String::from_utf8_lossy(&out.stdout);
+    let url = format!("{}/third-party", fx.site.base);
+    let out = fx.run(&["browser", "read", &url, "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let requests = answer["requests"].as_array().expect("a request log");
+
     assert!(
-        !text.contains("confined : supervised"),
-        "a loopback read was put behind its own netns, where the server is not: {text}"
+        requests
+            .iter()
+            .any(|r| r["allowed"] == true && r["url"].as_str().is_some_and(|u| u.starts_with(&url))),
+        "the target was not reachable without `--allow`: {answer}"
     );
-    assert!(text.contains("hello"), "and it still read the page: {text}");
+    assert!(
+        requests.iter().any(|r| r["allowed"] == false),
+        "an off-origin subresource was not refused: {answer}"
+    );
 }
 
 /// The request log comes back with the page, machine-readable, which is what a
@@ -665,10 +684,13 @@ fn a_read_returns_its_request_log() {
         return skip("no h5i binary to drive");
     };
     let url = fx.site.base.clone();
-    let out = fx.run(&["browser", "read", &url, "--allow", "127.0.0.1", "--json"]);
+    let out = fx.run(&["browser", "read", &url, "--json"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(answer["confinement"].is_string(), "{answer}");
+    // What held the engine travels with the log, not beside it: a request log
+    // whose reader cannot tell whether anything was containing the requests is
+    // half a receipt.
+    assert!(answer["confinement"]["kind"].is_string(), "{answer}");
     let requests = answer["requests"].as_array().expect("a request log");
     assert!(
         requests.iter().any(|r| r["url"].as_str().is_some_and(|u| u.starts_with(&url))),

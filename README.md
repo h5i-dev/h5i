@@ -47,7 +47,7 @@ h5i browser requests                    # what it asked for, and what was refuse
 h5i browser audit                       # the whole session: verbs, fetches, handovers, ending
 h5i browser close
 
-h5i browser read https://example.com --allow example.com   # or: one page, no session
+h5i browser read https://example.com          # or: one page, no session
 ```
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
@@ -202,29 +202,38 @@ h5i browser release    # hands it back; the agent must re-snapshot first
 h5i box view docs      # watch the page, in a loopback-only forward
 ```
 
-#### Reading without a session, under the strongest tier
+#### Reading without a session
 
 For a crawl, a session is not what you want: no cookies to carry, nothing to
 click, nothing to leave running.
 
 ```bash
-h5i browser read https://example.com --allow example.com
-h5i browser read url1 url2 url3 --allow example.com --json   # one browser, one jar
+h5i browser read https://example.com
+h5i browser read url1 url2 url3 --json   # one browser, one jar
 ```
 
 ```
-confined : supervised (egress enforced at the boundary: example.com)
+confined : process (files and environment; the origin allowlist is the engine's)
 ```
 
-**A read gets an egress allowlist a session cannot.** The tier that enforces
-egress cannot hold a resident process yet, and a session is resident by design —
-`snapshot` then `click @e3` needs the page to still be there. A read runs to
-completion, so it can have the boundary. `--json` returns the page and its
-request log together.
+**Naming the URL is what grants it.** There is no allowlist flag: the pages you
+asked for are reachable, and nothing else is. A script from a third-party CDN,
+or a redirect off-origin, is refused and appears in the request log as refused.
 
-A read aimed at `localhost` drops to the process tier and says so: under
-`supervised` the loopback is the sandbox's own, and the dev server it was aimed
-at is on this machine's.
+When you want an allowlist wider or stricter than that, write it in
+`.h5i/env.toml` and read inside the box, where a tier enforces it and a digest
+pins it:
+
+```bash
+h5i browser read https://example.com --in docs
+```
+
+```
+confined : box docs, policy 6bca3b30c268
+```
+
+`--json` returns the page, its request log, and what was holding the engine,
+together.
 
 <p align="center">
   <img src="./docs/_static/sandboxed-browser-ui.png" alt="Watching a sandboxed browser session from the host" width="99%" />
