@@ -112,6 +112,17 @@ pub struct CorsAsk {
     pub credentials: Credentials,
 }
 
+/// The whole request log, in the three numbers a windowed read still needs.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LogSummary {
+    /// Every record, both phases, over the life of the session.
+    pub total: usize,
+    /// Requests the policy refused.
+    pub denied: usize,
+    /// The cursor to pass back as `since`.
+    pub highest: Option<u64>,
+}
+
 /// What a page has spent, and what it was allowed.
 ///
 /// A reading rather than a live handle. `budget()` used to hand back a
@@ -166,6 +177,43 @@ pub trait Broker: Send + Sync {
     /// mark a verb takes before it runs.
     fn high_water(&self) -> Option<u64> {
         self.records().iter().map(|r| r.seq).max()
+    }
+
+    /// The records after `mark`, which is what a reader polling for what
+    /// changed actually wants.
+    ///
+    /// Separate from [`Self::records`] because this crosses a process boundary:
+    /// answering "what happened since sequence 4000" by shipping four thousand
+    /// records and throwing them away is the shape the `since` cursor exists to
+    /// avoid, and it would grow with the session rather than with the answer.
+    fn records_since(&self, mark: Option<u64>) -> Vec<RequestRecord> {
+        self.records()
+            .into_iter()
+            .filter(|r| mark.is_none_or(|floor| r.seq > floor))
+            .collect()
+    }
+
+    /// The whole log in three numbers.
+    ///
+    /// The counts a windowed read still has to report: "nothing was refused" is
+    /// a claim about the session rather than about the window, and an agent
+    /// that only ever asks for windows should still be able to make it. Three
+    /// numbers rather than the log they are derived from, for the same reason
+    /// [`Self::records_since`] exists.
+    fn log_summary(&self) -> LogSummary {
+        let records = self.records();
+        LogSummary {
+            total: records.len(),
+            denied: records
+                .iter()
+                .filter(|r| r.phase == crate::receipt::Phase::Request && !r.allowed)
+                .count(),
+            // The highest sequence, not the last appended: numbers are taken
+            // before the append and a socket's reader thread appends
+            // concurrently with the page's own fetches, so append order and
+            // sequence order can differ.
+            highest: records.iter().map(|r| r.seq).max(),
+        }
     }
 
     /// Sequence numbers recorded after `mark`, deduplicated and in order.

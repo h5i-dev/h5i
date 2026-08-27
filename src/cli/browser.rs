@@ -1311,14 +1311,33 @@ fn spawn_on_host(
     // refuses `inject = file` off the workspace tier, which is what keeps the
     // guard's unlink-on-drop from mattering to a session that outlives this
     // command.
-    let brokered = h5i_core::secrets_broker::broker(
-        &h5i_core::browser_sandbox::grants_for(&secrets),
-        &secret_dir(root),
-        false,
-        false,
-        &h5i_core::secrets_broker::fingerprint_key(root)?,
-    )
-    .map_err(unresolved_credential)?;
+    //
+    // Skipped entirely when nothing was named, which is not the same as
+    // brokering an empty list: `fingerprint_key` mints a key file on first use,
+    // and a session that named no credential should not leave one behind in
+    // everybody's state directory for a comparison it will never make.
+    //
+    // The guard is held for the rest of this function on purpose. It is what
+    // would unlink a file-injected secret, and letting it drop before the child
+    // is spawned would be the bug that shape of grant is refused here to avoid.
+    let brokered = if secrets.is_empty() {
+        None
+    } else {
+        Some(
+            h5i_core::secrets_broker::broker(
+                &h5i_core::browser_sandbox::grants_for(&secrets),
+                &secret_dir(root),
+                false,
+                false,
+                &h5i_core::secrets_broker::fingerprint_key(root)?,
+            )
+            .map_err(unresolved_credential)?,
+        )
+    };
+    let granted: Vec<(String, String)> = brokered
+        .as_ref()
+        .map(|b| b.env.clone())
+        .unwrap_or_default();
 
     // Inside the sandbox the environment is cleared, so the engine's own
     // `$HOME`-based font discovery finds nothing. The grant and the search path
@@ -1355,7 +1374,7 @@ fn spawn_on_host(
             // nothing here inherits by accident: `--secret` is a policy
             // statement rather than a shell habit, and this is where the
             // statement is made good.
-            let mut injected = brokered.env.clone();
+            let mut injected = granted.clone();
             // The engine's own single-process switch, which is here because a
             // debugging hatch that silently does nothing in the default
             // arrangement is worse than no hatch: it is documented as running
@@ -1387,7 +1406,7 @@ fn spawn_on_host(
             // is none to buy on this path, and the summary line says so — it is
             // that `--secret` means one thing in both shapes: named, resolved,
             // and refused if it is not there.
-            command.envs(brokered.env.clone());
+            command.envs(granted.clone());
             detach(&mut command);
             let child = command
                 .spawn()

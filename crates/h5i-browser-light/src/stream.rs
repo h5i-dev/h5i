@@ -1072,6 +1072,21 @@ fn put_strings(value: Value, redacted: &mut impl Iterator<Item = String>) -> Val
     }
 }
 
+/// What the page currently loaded spent on the network, and against what.
+///
+/// One reading rather than three. `Broker::budget` is a call across a process
+/// boundary now, and asking three times for three fields of one answer also
+/// meant the three could come from three different moments while a page was
+/// still fetching.
+fn budget_of(session: &Session) -> Value {
+    let allowance = session.factory.broker().budget();
+    json!({
+        "spent": allowance.spent,
+        "max_requests": allowance.limits.max_requests,
+        "max_wire_bytes": allowance.limits.max_wire_bytes,
+    })
+}
+
 /// Handle one control request against the resident page.
 ///
 /// Returns the reply and whether the page moved, because the caller is the only
@@ -1198,11 +1213,7 @@ fn control_verb_inner(
                 // against what. An agent that hit a budget should be able to
                 // see how close it came rather than inferring it from a
                 // refusal in the request log.
-                "budget": {
-                    "spent": session.factory.broker().budget().spent,
-                    "max_requests": session.factory.broker().budget().limits.max_requests,
-                    "max_wire_bytes": session.factory.broker().budget().limits.max_wire_bytes,
-                },
+                "budget": budget_of(session),
             }),
             false,
         ),
@@ -1690,37 +1701,28 @@ fn control_verb_inner(
         // the network — it is the decision record the broker wrote before the
         // bytes moved. If it is not here, it did not happen.
         Verb::Requests => {
-            let all = session.factory.broker().records();
-
             // `since` lets an agent ask what happened after its last look, the
             // same shape `snapshot --delta` has and for the same reason: the
             // whole log re-read after every click is the wrong size for a loop.
+            //
+            // Asked *of the broker* as a window rather than filtered here. The
+            // log lives in another process now, and reading it whole to hand
+            // back a tail would put the thing the cursor exists to avoid back
+            // on the wire, where it would grow with the session instead of with
+            // the answer.
             let since = request.get("since").and_then(Value::as_u64);
-            let rows: Vec<&crate::receipt::RequestRecord> = all
-                .iter()
-                .filter(|r| since.is_none_or(|floor| r.seq > floor))
-                .collect();
-
-            // Counted over the *whole* log rather than the window, because
-            // "nothing was refused" is a claim about the session and an agent
-            // that only ever asks for windows should still be able to make it.
-            let denied = all
-                .iter()
-                .filter(|r| r.phase == crate::receipt::Phase::Request && !r.allowed)
-                .count();
+            let rows = session.factory.broker().records_since(since);
+            // The counts are over the *whole* log rather than the window,
+            // because "nothing was refused" is a claim about the session and an
+            // agent that only ever asks for windows should still be able to
+            // make it. Three numbers, not the log they came from.
+            let summary = session.factory.broker().log_summary();
 
             let text = rows
                 .iter()
                 .map(|r| r.render())
                 .collect::<Vec<_>>()
                 .join("\n");
-            // The highest seq, not the last appended. Sequence numbers are
-            // taken before the append, and a socket reader thread appends
-            // concurrently with the page's own fetches — so append order and
-            // seq order can differ, and `last()` would either re-show a row or
-            // skip one permanently. A hole in a log this verb documents as
-            // complete by construction is the worst of the two.
-            let highest = all.iter().map(|r| r.seq).max();
 
             (
                 json!({
@@ -1728,11 +1730,15 @@ fn control_verb_inner(
                     "requests": rows,
                     // The cursor to pass back as `since`. Named rather than
                     // left to be derived from the last row, which is absent
-                    // when the window is empty.
-                    "cursor": highest,
+                    // when the window is empty. The highest sequence, not the
+                    // last appended: numbers are taken before the append and a
+                    // socket's reader thread appends concurrently with the
+                    // page's own fetches, so `last()` would either re-show a
+                    // row or skip one permanently.
+                    "cursor": summary.highest,
                     "shown": rows.len(),
-                    "total": all.len(),
-                    "denied": denied,
+                    "total": summary.total,
+                    "denied": summary.denied,
                     "text": text,
                 }),
                 false,

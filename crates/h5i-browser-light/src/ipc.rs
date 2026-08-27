@@ -53,7 +53,7 @@ use h5i_error::H5iError;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::broker::{Allowance, Broker, Channel, Fetch};
+use crate::broker::{Allowance, Broker, Channel, Fetch, LogSummary};
 use crate::net::{FetchOutcome, LocalBroker};
 use crate::receipt::RequestRecord;
 use crate::secrets::Resolved;
@@ -66,13 +66,21 @@ use crate::wsclient::Event;
 /// broker that went away wakes everybody at once.
 type Waiting = Arc<Mutex<HashMap<u64, SyncSender<(Said, Vec<u8>)>>>>;
 
-/// The largest header or body one message may carry.
+/// The largest body one message may carry.
 ///
-/// A ceiling on what either half can make the other allocate. Response bodies
-/// are already capped far below this by the page budget
-/// (`--max-wire-bytes`), so this is the backstop for a message that got past
-/// that or was never subject to it, not the working limit.
-const MAX_FRAME: usize = 256 * 1024 * 1024;
+/// A ceiling on what either half can make the other allocate. It is the page's
+/// decoded-bytes ceiling (`crate::budget::Limits::max_decoded_bytes`) rather
+/// than a number of its own, because the largest legitimate blob is exactly one
+/// response body and that is what bounds one.
+const MAX_BLOB: usize = 256 * 1024 * 1024;
+
+/// The largest header one message may carry.
+///
+/// Smaller than the blob, and separate from it, because a header is JSON about
+/// a request rather than the request's bytes. Not *small*: `Said::Records`
+/// carries a long session's whole log and `Ask::RedactAll` carries every string
+/// in a snapshot reply. This is the ceiling on those, not their working size.
+const MAX_HEADER: usize = 64 * 1024 * 1024;
 
 /// What the renderer asks for. One variant per operation on
 /// [`crate::broker::Broker`], and nothing that is not one.
@@ -81,6 +89,10 @@ enum Ask {
     /// The request body travels in the blob, never in this.
     Send(Fetch),
     Records,
+    RecordsSince {
+        mark: Option<u64>,
+    },
+    LogSummary,
     HighWater,
     Since {
         mark: Option<u64>,
@@ -142,6 +154,7 @@ enum Said {
     /// The response body travels in the blob.
     Outcome(FetchOutcome),
     Records(Vec<RequestRecord>),
+    Summary(LogSummary),
     Seqs(Vec<u64>),
     Mark(Option<u64>),
     Budget(Allowance),
@@ -180,9 +193,17 @@ fn read_frame(input: &mut impl Read) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
     input.read_exact(&mut prefix)?;
     let header_len = u32::from_be_bytes(prefix[..4].try_into().unwrap()) as usize;
     let blob_len = u32::from_be_bytes(prefix[4..].try_into().unwrap()) as usize;
-    if header_len > MAX_FRAME || blob_len > MAX_FRAME {
+    // Checked before either buffer is allocated: the length is the other side's
+    // to write, and reserving what it claims before reading what it sends is
+    // how a number becomes an allocation.
+    if header_len > MAX_HEADER {
         return Err(std::io::Error::other(format!(
-            "a message of {header_len}+{blob_len} bytes is over the {MAX_FRAME}-byte ceiling"
+            "a {header_len}-byte message header is over the {MAX_HEADER}-byte ceiling"
+        )));
+    }
+    if blob_len > MAX_BLOB {
+        return Err(std::io::Error::other(format!(
+            "a {blob_len}-byte message body is over the {MAX_BLOB}-byte ceiling"
         )));
     }
     let mut header = vec![0u8; header_len];
@@ -209,6 +230,19 @@ pub struct BrokerClient {
     next: AtomicU64,
     waiting: Waiting,
     gone: Arc<AtomicBool>,
+    /// Whether this session has any credential at all, asked once.
+    ///
+    /// Redaction runs over every string in every control reply, and with no
+    /// secrets configured it is provably a no-op — `Secrets::redact` iterates
+    /// the values it holds, and there are none. Without this that no-op cost
+    /// two copies of a whole snapshot reply across the socket, on every verb,
+    /// for the overwhelmingly common session that named no credential.
+    ///
+    /// Cached because it cannot change: the broker reads `H5I_SECRET_*` once,
+    /// when it is built, and offers no operation that would add one. That is
+    /// the same property `stream.rs` used to rely on when it read the
+    /// environment once at startup so a later `setenv` could not widen it.
+    has_secrets: std::sync::OnceLock<bool>,
 }
 
 impl BrokerClient {
@@ -232,6 +266,7 @@ impl BrokerClient {
             next: AtomicU64::new(0),
             waiting: waiting.clone(),
             gone: gone.clone(),
+            has_secrets: std::sync::OnceLock::new(),
         });
 
         let _ = std::thread::Builder::new()
@@ -275,6 +310,13 @@ impl BrokerClient {
         // hand fd 0 to whatever opened a file next.
         let stdin = std::io::stdin();
         let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(stdin.as_raw_fd()) };
+        // Is this actually the broker? `--brokered` is hidden and nobody types
+        // it, but somebody will, and adopting a terminal as the protocol means
+        // the first fetch blocks on a read from the keyboard with no
+        // explanation. `local_addr` is the cheapest question that distinguishes
+        // a socket from everything else — it answers `ENOTSOCK` for a tty, a
+        // pipe or a file.
+        let is_socket = socket.local_addr().is_ok();
         let reader = socket.try_clone().map_err(|e| {
             H5iError::Metadata(format!("the broker socket could not be cloned: {e}"))
         })?;
@@ -284,6 +326,15 @@ impl BrokerClient {
         let writer = reader.try_clone().map_err(|e| {
             H5iError::Metadata(format!("the broker socket could not be cloned: {e}"))
         })?;
+        if !is_socket {
+            return Err(H5iError::Metadata(
+                "this process was started as the renderer half of the engine, but its standard \
+                 input is not a broker. `--brokered` is not an interface: it is how the broker \
+                 starts the renderer, and the two halves are spawned together by \
+                 `h5i browser open`. Run that instead."
+                    .to_string(),
+            ));
+        }
         Ok(Self::over(Box::new(reader), Box::new(writer), true))
     }
 
@@ -293,12 +344,22 @@ impl BrokerClient {
     /// refusal its own signature can express, because "the broker is gone" is
     /// not a state any of them can render around.
     fn ask(&self, ask: Ask, blob: &[u8]) -> Option<(Said, Vec<u8>)> {
-        if self.gone.load(Ordering::SeqCst) {
-            return None;
-        }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = sync_channel(1);
-        self.waiting.lock().ok()?.insert(id, tx);
+        {
+            // Registered and checked under one lock, in that order, against the
+            // reply thread's `store(gone)` then `clear()`. Checking first and
+            // registering after leaves a window where the broker ends between
+            // the two: the entry lands in a map nobody will look at again, the
+            // write into a closed socket's buffer succeeds, and the caller
+            // waits for an answer that cannot come. The renderer exits on that
+            // path so it was survivable there and nowhere else.
+            let mut waiting = self.waiting.lock().ok()?;
+            if self.gone.load(Ordering::SeqCst) {
+                return None;
+            }
+            waiting.insert(id, tx);
+        }
 
         let header = serde_json::to_vec(&Question { id, ask }).ok()?;
         let written = {
@@ -374,6 +435,24 @@ impl Broker for BrokerClient {
         match self.said(Ask::Records) {
             Some(Said::Records(records)) => records,
             _ => Vec::new(),
+        }
+    }
+
+    fn records_since(&self, mark: Option<u64>) -> Vec<RequestRecord> {
+        match self.said(Ask::RecordsSince { mark }) {
+            Some(Said::Records(records)) => records,
+            _ => Vec::new(),
+        }
+    }
+
+    fn log_summary(&self) -> LogSummary {
+        match self.said(Ask::LogSummary) {
+            Some(Said::Summary(summary)) => summary,
+            _ => LogSummary {
+                total: 0,
+                denied: 0,
+                highest: None,
+            },
         }
     }
 
@@ -481,6 +560,9 @@ impl Broker for BrokerClient {
     }
 
     fn redact(&self, text: &str) -> String {
+        if !self.holds_a_secret() {
+            return text.to_string();
+        }
         match self.said(Ask::Redact {
             text: text.to_string(),
         }) {
@@ -490,6 +572,9 @@ impl Broker for BrokerClient {
     }
 
     fn redact_all(&self, texts: &[String]) -> Vec<String> {
+        if !self.holds_a_secret() {
+            return texts.to_vec();
+        }
         match self.said(Ask::RedactAll {
             texts: texts.to_vec(),
         }) {
@@ -503,6 +588,27 @@ impl Broker for BrokerClient {
 }
 
 impl BrokerClient {
+    /// Whether anything would be redacted, asked once and remembered.
+    ///
+    /// Fails *towards* asking: a broker that cannot answer is treated as
+    /// holding one, so an unanswered question costs a round trip rather than a
+    /// skipped redaction. It is also not cached in that case — `set` is only
+    /// reached on a real answer — so a transient failure does not turn
+    /// redaction off for the rest of the session.
+    fn holds_a_secret(&self) -> bool {
+        if let Some(known) = self.has_secrets.get() {
+            return *known;
+        }
+        match self.said(Ask::SecretNames) {
+            Some(Said::Texts(names)) => {
+                let any = !names.is_empty();
+                let _ = self.has_secrets.set(any);
+                any
+            }
+            _ => true,
+        }
+    }
+
     /// Open one of the two kinds of connection. Both answer the same shape, so
     /// there is one place that turns an id into a handle.
     fn channel(&self, ask: Ask) -> Result<Arc<dyn Channel>, String> {
@@ -548,40 +654,56 @@ fn serve_over(
     mut reader: Box<dyn Read + Send>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
 ) {
-    let mut workers: Vec<std::thread::JoinHandle<()>> = Vec::new();
     while let Ok((header, blob)) = read_frame(&mut reader) {
         let Ok(question) = serde_json::from_slice::<Question>(&header) else {
             break;
         };
         if slow(&question.ask) {
             let hand = (desk.clone(), writer.clone());
-            match std::thread::Builder::new()
+            if let Err(e) = std::thread::Builder::new()
                 .name("h5i-broker-call".to_string())
                 .spawn(move || answer(&hand.0, question, blob, &hand.1))
             {
-                Ok(worker) => workers.push(worker),
                 // Out of threads is not a reason to leave the renderer waiting
                 // for an answer that will never come. The question is gone with
-                // the closure, so the renderer is told that rather than left to
-                // time out on a message nobody will reply to.
-                Err(e) => eprintln!(
-                    "h5i-browser-light: the broker could not start a worker thread: {e}"
-                ),
+                // the closure, so this is said rather than left to look like a
+                // message nobody replied to.
+                eprintln!("h5i-browser-light: the broker could not start a worker thread: {e}");
             }
-            workers.retain(|w| !w.is_finished());
         } else {
             answer(&desk, question, blob, &writer);
         }
     }
+
+    // The read loop ended, which means the renderer is gone. From here the
+    // broker's only remaining job is to reap it and exit with its status, and
+    // **nothing in this function may block that.**
+    //
     // A renderer that has gone away takes its connections with it: nothing can
     // drain them, and a socket nobody reads is a server left talking to itself.
-    if let Ok(mut channels) = desk.channels.lock() {
-        for (_, channel) in channels.drain() {
-            channel.close();
-        }
-    }
-    for worker in workers {
-        let _ = worker.join();
+    // So they are closed — on a thread of their own, and nobody waits for it.
+    // `Socket::close` takes the same lock a `send` holds, and a send into a
+    // peer that has stopped reading blocks for as long as the peer likes; doing
+    // this inline would hand a hostile server the ability to keep a session's
+    // process alive after its renderer had exited. The same is why the workers
+    // are not joined: one of them may be inside exactly that send.
+    //
+    // Nothing is lost by not waiting. The close frame is politeness; the
+    // process is about to exit, and exit closes every socket the kernel holds
+    // for it.
+    let leaving: Vec<Arc<dyn Channel>> = desk
+        .channels
+        .lock()
+        .map(|mut channels| channels.drain().map(|(_, channel)| channel).collect())
+        .unwrap_or_default();
+    if !leaving.is_empty() {
+        let _ = std::thread::Builder::new()
+            .name("h5i-broker-closing".to_string())
+            .spawn(move || {
+                for channel in leaving {
+                    channel.close();
+                }
+            });
     }
 }
 
@@ -618,6 +740,8 @@ fn answer(
             Said::Outcome(outcome)
         }
         Ask::Records => Said::Records(broker.records()),
+        Ask::RecordsSince { mark } => Said::Records(broker.records_since(mark)),
+        Ask::LogSummary => Said::Summary(broker.log_summary()),
         Ask::HighWater => Said::Mark(broker.high_water()),
         Ask::Since { mark } => Said::Seqs(broker.since(mark)),
         Ask::Budget => Said::Budget(broker.budget()),
@@ -780,6 +904,19 @@ mod tests {
     /// stream socket is too, and what a protocol that read one message per
     /// `read` would get away with here and fail on under load.
     fn paired() -> (Arc<BrokerClient>, Arc<LocalBroker>, std::thread::JoinHandle<()>) {
+        let (client, broker, _desk, served) = paired_with_desk();
+        (client, broker, served)
+    }
+
+    /// The same, plus the broker's own table of open connections, for the
+    /// tests that are about what the *broker* is left holding.
+    #[allow(clippy::type_complexity)]
+    fn paired_with_desk() -> (
+        Arc<BrokerClient>,
+        Arc<LocalBroker>,
+        Arc<Desk>,
+        std::thread::JoinHandle<()>,
+    ) {
         let (to_broker_r, to_broker_w) = std::io::pipe().expect("pipe");
         let (to_client_r, to_client_w) = std::io::pipe().expect("pipe");
 
@@ -790,6 +927,7 @@ mod tests {
             channels: Mutex::new(HashMap::new()),
             next_channel: AtomicU64::new(0),
         });
+        let kept = desk.clone();
         let served = std::thread::spawn(move || {
             let writer: Arc<Mutex<Box<dyn Write + Send>>> =
                 Arc::new(Mutex::new(Box::new(to_client_w)));
@@ -797,7 +935,7 @@ mod tests {
         });
 
         let client = BrokerClient::over(Box::new(to_client_r), Box::new(to_broker_w), false);
-        (client, broker, served)
+        (client, broker, kept, served)
     }
 
     #[test]
@@ -876,6 +1014,117 @@ mod tests {
         assert!(outcome.body.is_empty());
     }
 
+    /// A writer that accepts everything and sends it nowhere, so a call can be
+    /// parked on its answer without the transport failing first. The failure
+    /// under test is the *absence* of an answer, not a broken pipe.
+    struct Discard;
+    impl Write for Discard {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_call_already_waiting_when_the_broker_ends_is_woken() {
+        // The half of "does not hang" that a check on entry cannot cover: this
+        // caller was already parked when the broker went away. It is woken by
+        // the reply thread dropping every waiting sender, and if that stopped
+        // happening the renderer would sit on an answer that cannot come — with
+        // no timeout anywhere in this protocol to rescue it.
+        let (reader, writer) = std::io::pipe().expect("pipe");
+        let client = BrokerClient::over(Box::new(reader), Box::new(Discard), false);
+
+        let asking = {
+            let client = client.clone();
+            std::thread::spawn(move || {
+                let url = Url::parse("https://docs.test/").expect("url");
+                client.send(&Fetch::get(&url, Initiator::Navigation))
+            })
+        };
+
+        // Wait until the call is registered, so the broker ends *after* it
+        // parked rather than before it started.
+        for _ in 0..200 {
+            if client.waiting.lock().map(|w| !w.is_empty()).unwrap_or(false) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            client.waiting.lock().map(|w| !w.is_empty()).unwrap_or(false),
+            "the call never registered, so this proves nothing"
+        );
+
+        // The broker ends.
+        drop(writer);
+
+        let outcome = asking.join().expect("the caller returned");
+        assert!(!outcome.is_ok(), "{outcome:?}");
+    }
+
+    #[test]
+    fn a_call_started_after_the_broker_ended_refuses_at_once() {
+        let (reader, writer) = std::io::pipe().expect("pipe");
+        let client = BrokerClient::over(Box::new(reader), Box::new(Discard), false);
+        drop(writer);
+        // The reply thread has to notice before this means anything.
+        for _ in 0..200 {
+            if client.gone.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(client.gone.load(Ordering::SeqCst), "the reply thread never saw the end");
+
+        // Registration and the `gone` check share a lock, so this cannot land
+        // in a map that has already been cleared. The transport would accept
+        // the write — `Discard` always does, and so does a socket whose peer
+        // has gone but whose buffer has room — so nothing else would catch it.
+        let url = Url::parse("https://docs.test/").expect("url");
+        let outcome = client.send(&Fetch::get(&url, Initiator::Navigation));
+        assert!(!outcome.is_ok(), "{outcome:?}");
+        assert!(
+            client.waiting.lock().map(|w| w.is_empty()).unwrap_or(false),
+            "a refused call left an entry behind"
+        );
+    }
+
+    #[test]
+    fn dropping_the_pages_handle_closes_the_brokers_socket() {
+        // In one process this was ownership: the page's map held the only
+        // `Socket` a caller could reach, and dropping it shut the connection
+        // down. Across the boundary the socket belongs to the broker and the
+        // page holds an id, so the same property has to be *sent* — which is
+        // what `RemoteChannel::drop` does. Without it a page that navigated
+        // away would leave the broker holding an open socket, reading frames
+        // and receipting them, for a document that no longer exists.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = crate::ws::accept(&mut stream);
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+        });
+
+        let (client, _broker, desk, _served) = paired_with_desk();
+        let url = Url::parse(&format!("ws://127.0.0.1:{port}/hmr")).expect("url");
+        let channel = client.open_socket(&url, None).expect("the socket opened");
+        assert_eq!(desk.channels.lock().unwrap().len(), 1);
+
+        // No `close()`. Just the page letting go of it, which is what a
+        // navigation does.
+        drop(channel);
+        assert!(
+            desk.channels.lock().unwrap().is_empty(),
+            "the broker is still holding a socket for a page that dropped it"
+        );
+        let _ = server.join();
+    }
+
     #[test]
     fn a_connection_the_renderer_invented_is_not_one_it_holds() {
         let (client, _broker, _served) = paired();
@@ -943,6 +1192,61 @@ mod tests {
         assert!(methods.iter().any(|m| m == "WS-OPEN"), "{methods:?}");
         assert!(methods.iter().any(|m| m == "WS-RECV"), "{methods:?}");
         assert!(methods.iter().any(|m| m == "WS-SEND"), "{methods:?}");
+    }
+
+    #[test]
+    fn a_windowed_read_of_the_log_stays_a_window() {
+        use crate::receipt::Sink as _;
+        let (client, broker, _served) = paired();
+        for seq in 0..6u64 {
+            broker
+                .log()
+                .append(&RequestRecord::request(
+                    seq,
+                    Initiator::Navigation,
+                    "GET",
+                    "https://docs.test/",
+                ))
+                .expect("appended");
+        }
+
+        // The window is what crosses, and the counts still describe the whole
+        // log: an agent that only ever asks for windows must still be able to
+        // say "nothing was refused in this session".
+        let tail = client.records_since(Some(3));
+        assert_eq!(tail.len(), 2, "{tail:?}");
+        assert!(tail.iter().all(|r| r.seq > 3));
+
+        let summary = client.log_summary();
+        assert_eq!(summary.total, 6);
+        assert_eq!(summary.highest, Some(5));
+        assert_eq!(summary.denied, 0);
+
+        // And a denial is counted from the far side, where the decision was
+        // made rather than where it is displayed.
+        let url = Url::parse("https://denied.test/").expect("url");
+        client.send(&Fetch::get(&url, Initiator::Navigation));
+        assert_eq!(client.log_summary().denied, 1);
+    }
+
+    #[test]
+    fn redaction_with_nothing_to_redact_costs_nothing() {
+        let (client, _broker, _served) = paired();
+        // The common session names no credential, and redaction over it is a
+        // no-op that used to cost two copies of every control reply across the
+        // socket. The answer has to still be correct, and it has to be reached
+        // without asking.
+        let texts = vec!["nothing secret here".to_string(), "nor here".to_string()];
+        assert_eq!(client.redact_all(&texts), texts);
+
+        let before = client.next.load(Ordering::SeqCst);
+        assert_eq!(client.redact_all(&texts), texts);
+        assert_eq!(client.redact("still nothing"), "still nothing");
+        assert_eq!(
+            client.next.load(Ordering::SeqCst),
+            before,
+            "a second redaction asked the broker again"
+        );
     }
 
     #[test]
