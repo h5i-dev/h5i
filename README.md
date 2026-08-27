@@ -117,16 +117,10 @@ h5i browser status             # placement, policy digest, who saw the network
 h5i browser list               # every session on this machine, and which is default
 ```
 
-### 2.2. The sandbox, and how to write your own
+### 2.2. The configurable sandbox
 
-A session is **already sandboxed**: files and environment, on a process tier,
-with nothing to turn on. `--no-sandbox` turns it off. Everything below is how to
-say something more specific than the default.
-
-#### Write it in `.h5i/env.toml`
-
-The same file and the same vocabulary a box uses. Fine-grained filesystem,
-environment, resources, egress and tier:
+While h5i browser runs in a light-weight sandbox by default, we can further specify
+fine-grained configuration in `.h5i/env.toml`.
 
 ```toml
 [profile.reading]
@@ -154,7 +148,7 @@ h5i box --profile reading --name docs
 h5i browser open https://docs.rs/ --in docs
 ```
 
-### 2.3. A box holds more than a browser
+### 2.3. A sandbox holds more than a browser
 
 The top rung of that ladder is a whole environment. It can hold the code, the
 toolchain, the dev server and the agent itself, which is what you want when the
