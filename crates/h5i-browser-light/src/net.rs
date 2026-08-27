@@ -47,6 +47,13 @@ pub const USER_AGENT: &str = concat!(
 /// should get the same answer the page's script would give.
 pub const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
 
+/// What this engine will accept compressed, and can decode.
+///
+/// Kept beside the decoder deliberately: a header that advertises an encoding
+/// `decode_capped` does not handle is a promise the engine cannot keep, and the
+/// failure would be a page of binary rather than an error.
+const ACCEPT_ENCODING: &str = "gzip, br, deflate";
+
 /// What this engine will take, by what asked for it.
 ///
 /// Not cosmetic: crates.io answered **404** to a request with no `Accept` at
@@ -82,6 +89,14 @@ pub struct FetchOutcome {
     pub body: Vec<u8>,
     pub status: Option<u16>,
     pub error: Option<String>,
+    /// Set when this was a cross-origin `no-cors` request.
+    ///
+    /// The body and headers are already empty and the status is already zero,
+    /// which is what an opaque response *is*. The flag exists so the caller can
+    /// say so rather than presenting a page with an empty 0 that looks like a
+    /// failure — a page checking `response.type === "opaque"` is doing the
+    /// right thing and should get the right answer.
+    pub opaque: bool,
 }
 
 impl FetchOutcome {
@@ -104,6 +119,7 @@ impl FetchOutcome {
             body: Vec::new(),
             status: None,
             error: Some(error),
+            opaque: false,
         }
     }
 
@@ -113,6 +129,77 @@ impl FetchOutcome {
 }
 
 /// Policy plus receipts plus a client, in that order of importance.
+/// Addresses this broker has already checked, keyed by host.
+///
+/// The other half of [`Policy::check_address`], and the half that makes the
+/// check mean something. Resolving a name to decide about it and then letting
+/// the HTTP client resolve it again leaves a window between the two: the second
+/// answer is what the bytes go to, and nothing checked it. That window is the
+/// whole of DNS rebinding.
+///
+/// So the checked addresses are *pinned*. The client is built with this as its
+/// resolver, and it answers from what the broker already decided about rather
+/// than asking the network a second time. A name that is not in the map has not
+/// been through the policy, and the answer is a refusal rather than a lookup —
+/// fail closed, in the one place where failing open would mean connecting
+/// somewhere nobody approved.
+///
+/// Lightpanda does this at curl's open-socket callback, which sees the resolved
+/// `sockaddr` and can refuse it there. reqwest exposes no such hook; a pinning
+/// resolver reaches the same place from the other side.
+#[derive(Default)]
+struct Pinned {
+    by_host: std::sync::Mutex<std::collections::HashMap<String, Vec<std::net::SocketAddr>>>,
+}
+
+impl Pinned {
+    /// Remember the addresses a host was approved for.
+    fn set(&self, host: &str, addrs: Vec<std::net::SocketAddr>) {
+        if let Ok(mut map) = self.by_host.lock() {
+            map.insert(host.to_ascii_lowercase(), addrs);
+        }
+    }
+
+    fn get(&self, host: &str) -> Option<Vec<std::net::SocketAddr>> {
+        self.by_host.lock().ok()?.get(&host.to_ascii_lowercase()).cloned()
+    }
+}
+
+impl reqwest::dns::Resolve for Pinned {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let found = self.get(name.as_str());
+        Box::pin(std::future::ready(match found {
+            Some(addrs) => {
+                let iter: reqwest::dns::Addrs = Box::new(addrs.into_iter());
+                Ok(iter)
+            }
+            // Not an error worth dressing up: every request this client makes
+            // goes through the broker, which pins before it sends. Arriving
+            // here means something reached the wire without a decision, and
+            // connecting anyway is the one outcome that must not happen.
+            None => Err(format!(
+                "`{}` was not resolved through the policy, so this engine will not connect \
+                 to it",
+                name.as_str()
+            )
+            .into()),
+        }))
+    }
+}
+
+/// What a script request needs the broker to know about its origin.
+///
+/// Only script requests carry one. A navigation has no document behind it, and
+/// the absence of this is what says so.
+struct CorsContext {
+    /// `None` for a document with an opaque origin — a `file:` page, say —
+    /// which is same-origin with nothing and so may read nothing cross-origin.
+    document: Option<crate::cors::Origin>,
+    headers: Vec<(String, String)>,
+    mode: crate::cors::Mode,
+    credentials: crate::cors::Credentials,
+}
+
 pub struct Broker {
     policy: Policy,
     sink: Arc<dyn Sink>,
@@ -130,6 +217,20 @@ pub struct Broker {
     /// it refuses any non-loopback address while one is set, rather than
     /// stepping around the allowlist that proxy enforces.
     proxied: bool,
+    /// What this page may still spend on the network.
+    ///
+    /// Per navigation, reset by the factory when the agent moves. See
+    /// [`crate::budget`] for why the ceiling bounds a page rather than a
+    /// session: a loop is untrusted code the engine cannot otherwise stop, and
+    /// an agent navigating is the principal exercising its own authority.
+    budget: crate::budget::Budget,
+    /// Addresses already approved, and the client's only source of them.
+    ///
+    /// `None` when an egress proxy is configured: the proxy resolves the name
+    /// itself and this engine never sees an address, so pinning one would be a
+    /// claim it cannot support. The proxy is the enforcement point there, which
+    /// is the same division of labour the socket client already follows.
+    pinned: Option<Arc<Pinned>>,
 }
 
 impl Broker {
@@ -160,6 +261,18 @@ impl Broker {
             builder = builder.proxy(proxy);
         }
 
+        // With a proxy in the path the name is resolved at the far end and this
+        // engine never sees an address, so there is nothing to pin and the
+        // proxy is the enforcement point. Without one, every connection goes to
+        // an address this broker has already decided about.
+        let pinned = if proxied {
+            None
+        } else {
+            let pinned = Arc::new(Pinned::default());
+            builder = builder.dns_resolver(pinned.clone());
+            Some(pinned)
+        };
+
         let client = builder
             .build()
             .map_err(|e| H5iError::Metadata(format!("failed to build the http client: {e}")))?;
@@ -168,6 +281,8 @@ impl Broker {
             policy,
             sink,
             client,
+            budget: crate::budget::Budget::default(),
+            pinned,
             seq: AtomicU64::new(0),
             jar: crate::cookies::Jar::new(),
             proxied,
@@ -176,6 +291,168 @@ impl Broker {
 
     pub fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// What this page has spent, and what it may.
+    pub fn budget(&self) -> &crate::budget::Budget {
+        &self.budget
+    }
+
+    /// Replace the limits. For a caller that wants a tighter page than the
+    /// default, and for tests that want a reachable one.
+    pub fn set_budget_limits(&mut self, limits: crate::budget::Limits) {
+        self.budget = crate::budget::Budget::new(limits);
+    }
+
+    /// Ask a server, before the real request, whether it will accept one.
+    ///
+    /// A request in its own right and treated as one: policy-checked and
+    /// receipted like everything else, so it appears in the log rather than
+    /// arriving from nowhere. A caller reading two requests where the page made
+    /// one is reading the truth — the preflight really did happen, and it
+    /// really did cost a round trip.
+    ///
+    /// Not cached. `Access-Control-Max-Age` would make this cheaper and is one
+    /// more piece of state that can be wrong; when a corpus page makes the cost
+    /// real it can be added, with the receipts showing what was reused.
+    fn preflight(
+        &self,
+        url: &Url,
+        ask: &crate::cors::Preflight,
+        document: Option<&Url>,
+    ) -> Result<(), String> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+
+        // The same allowlist as any other request. A preflight is a request to
+        // the origin being asked about, so it is subject to the same grant.
+        if let Some(reason) = self.policy.check_from(url, document).reason() {
+            let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str())
+                .denied(reason);
+            let _ = self.record_pair(&record);
+            return Err(format!("the preflight was denied by policy: {reason}"));
+        }
+        if let Err(reason) = self.pin_addresses(url) {
+            let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str())
+                .denied(&reason);
+            let _ = self.record_pair(&record);
+            return Err(format!("the preflight was denied by policy: {reason}"));
+        }
+
+        let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str());
+        if let Err(e) = self.sink.append(&record) {
+            return Err(format!(
+                "refusing to preflight: the receipt could not be written: {e}"
+            ));
+        }
+
+        let started = Instant::now();
+        let mut request = self
+            .client
+            .request(reqwest::Method::OPTIONS, url.clone())
+            .header("origin", ask.origin.clone())
+            .header("access-control-request-method", ask.method.clone());
+        if !ask.headers.is_empty() {
+            request = request.header("access-control-request-headers", ask.headers.join(", "));
+        }
+        // Never. A preflight is a question about whether a credentialed request
+        // would be allowed, and sending the credential to ask would defeat the
+        // asking.
+        let response = request.send();
+        let elapsed = started.elapsed().as_millis() as u64;
+
+        let response = match response {
+            Ok(response) => response,
+            Err(e) => {
+                let mut outcome = record.response();
+                outcome.duration_ms = Some(elapsed);
+                outcome.error = Some(e.to_string());
+                let _ = self.sink.append(&outcome);
+                return Err(format!("the preflight could not be sent: {e}"));
+            }
+        };
+
+        let status = response.status();
+        let header = |name: &str| -> Option<String> {
+            response
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let acao = header("access-control-allow-origin");
+        let acac = header("access-control-allow-credentials");
+        let methods = header("access-control-allow-methods");
+        let headers = header("access-control-allow-headers");
+
+        let mut outcome = record.response();
+        outcome.status = Some(status.as_u16());
+        outcome.duration_ms = Some(elapsed);
+        let _ = self.sink.append(&outcome);
+
+        if !status.is_success() {
+            return Err(format!(
+                "the preflight was answered with {}, so the request was not made.",
+                status.as_u16()
+            ));
+        }
+
+        crate::cors::check_preflight(
+            ask,
+            acao.as_deref(),
+            acac.as_deref(),
+            methods.as_deref(),
+            headers.as_deref(),
+        )
+    }
+
+    /// Resolve a URL's host, check every address it answers with, and pin the
+    /// result for the connection that follows.
+    ///
+    /// `Ok(())` when there is nothing to do — a proxy in the path, or a URL
+    /// with no host — so the caller has one branch rather than three.
+    ///
+    /// **Every** address is checked, not the first. A name that answers with
+    /// one public address and one loopback address is refused: which one gets
+    /// connected to is the client's choice among them, and approving a set
+    /// while objecting to a member of it would leave the outcome to chance.
+    fn pin_addresses(&self, url: &Url) -> Result<(), String> {
+        let Some(pinned) = self.pinned.as_ref() else {
+            // A proxy resolves the name at the far end; there is no address
+            // here to check, and none to pin.
+            return Ok(());
+        };
+        if !matches!(url.scheme(), "http" | "https") {
+            return Ok(());
+        }
+        let Some(host) = url.host_str() else {
+            return Ok(());
+        };
+
+        let port = url
+            .port_or_known_default()
+            .unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
+        // IPv6 arrives from `host_str` with its brackets, which the resolver
+        // does not want.
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+
+        use std::net::ToSocketAddrs;
+        let resolved: Vec<std::net::SocketAddr> = match (bare, port).to_socket_addrs() {
+            Ok(addrs) => addrs.collect(),
+            Err(e) => return Err(format!("`{host}` could not be resolved: {e}")),
+        };
+        if resolved.is_empty() {
+            return Err(format!("`{host}` resolved to no addresses"));
+        }
+        for addr in &resolved {
+            if let Some(reason) = self.policy.check_address(url, addr.ip()).reason() {
+                return Err(reason.to_string());
+            }
+        }
+        pinned.set(host, resolved);
+        Ok(())
     }
 
     /// The session's jar, for the things that may legitimately touch it:
@@ -245,7 +522,66 @@ impl Broker {
         content_type: Option<&str>,
         document: Option<&Url>,
     ) -> FetchOutcome {
+        // No origin context: the agent asked for this by name, so there is no
+        // document whose boundary could be crossed. See `cors::plan`.
+        self.send_with_cors(url, initiator, method, body, content_type, document, None)
+    }
+
+    /// The same send, subject to the same-origin policy.
+    ///
+    /// Separate entry rather than a flag, because the two callers are asking
+    /// different questions. A navigation is the *agent* exercising its own
+    /// authority over a URL it named; a `fetch` is a *page* exercising an
+    /// authority it has to be granted. Answering both through one door with no
+    /// argument between them is how the second was going unasked.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_script(
+        &self,
+        url: &Url,
+        method: &str,
+        body: &[u8],
+        content_type: Option<&str>,
+        document: &Url,
+        headers: &[(String, String)],
+        mode: crate::cors::Mode,
+        credentials: crate::cors::Credentials,
+    ) -> FetchOutcome {
+        let context = CorsContext {
+            document: crate::cors::Origin::of(document),
+            headers: headers.to_vec(),
+            mode,
+            credentials,
+        };
+        self.send_with_cors(
+            url,
+            Initiator::Subresource,
+            method,
+            body,
+            content_type,
+            Some(document),
+            Some(&context),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_with_cors(
+        &self,
+        url: &Url,
+        initiator: Initiator,
+        method: &str,
+        body: &[u8],
+        content_type: Option<&str>,
+        document: Option<&Url>,
+        cors: Option<&CorsContext>,
+    ) -> FetchOutcome {
         let mut current = url.clone();
+        // What a caller may see of the answer. Recomputed per hop, because a
+        // redirect can change the origin the answer comes from.
+        let mut cors_exposure = crate::cors::Exposure::Full;
+        // Set once a redirect has crossed an origin, which makes the request's
+        // own origin opaque from there on: a server must not be able to launder
+        // a cross-origin read by bouncing it somewhere that says `*`.
+        let mut origin_tainted = false;
         // What originally asked, kept separate from the per-hop initiator: a
         // redirect chain that began as a navigation is still asking for a
         // document, and a subresource that redirects is still a subresource.
@@ -286,6 +622,100 @@ impl Broker {
                 return FetchOutcome::failed_at(current, message, Some(seq));
             }
 
+            // 1b. Where that name actually goes. The check above decided about
+            //     a *name*; this decides about the address behind it and pins
+            //     the answer, so the bytes cannot reach somewhere the decision
+            //     never saw. Recorded as a denial like any other, because "the
+            //     name was allowed and the address was not" is exactly what a
+            //     reader of the log would want to find.
+            if let Err(reason) = self.pin_addresses(&current) {
+                let record = RequestRecord::request(seq, initiator, &method, current.as_str())
+                    .denied(&reason);
+                if let Err(e) = self.record_pair(&record) {
+                    return FetchOutcome::failed(current, format!("receipt sink refused: {e}"));
+                }
+                return FetchOutcome::failed_at(
+                    current,
+                    format!("denied by policy: {reason}"),
+                    Some(seq),
+                );
+            }
+
+            // 1c. The same-origin policy. The checks above decided whether
+            //     this engine may *connect*; this decides whether the document
+            //     that asked may *read the answer*, which is a different
+            //     question and was going unasked. See `crate::cors`.
+            let mut cors_plan: Option<crate::cors::Plan> = None;
+            if let Some(context) = cors {
+                // Tainted by a cross-origin redirect, or a document with no
+                // origin of its own: both are opaque, and an opaque requester
+                // is same-origin with nothing. Distinct from `Agent`, which is
+                // also origin-less and is the *opposite* case — see
+                // `cors::Requester`.
+                let requester = match (origin_tainted, context.document.as_ref()) {
+                    (false, Some(origin)) => crate::cors::Requester::Document(origin),
+                    _ => crate::cors::Requester::Opaque,
+                };
+                let plan = crate::cors::plan(
+                    requester,
+                    &current,
+                    &method,
+                    &context.headers,
+                    context.mode,
+                    context.credentials,
+                );
+
+                if let crate::cors::Plan::Blocked(why) = &plan {
+                    let record =
+                        RequestRecord::request(seq, initiator, &method, current.as_str())
+                            .denied(why);
+                    if let Err(e) = self.record_pair(&record) {
+                        return FetchOutcome::failed(
+                            current,
+                            format!("receipt sink refused: {e}"),
+                        );
+                    }
+                    return FetchOutcome::failed_at(
+                        current,
+                        format!("blocked by the same-origin policy: {why}"),
+                        Some(seq),
+                    );
+                }
+
+                // A request that is not simple asks permission first, and the
+                // preflight is a request like any other: policy-checked and
+                // receipted, so it appears in the log rather than arriving
+                // from nowhere.
+                if let crate::cors::Plan::Send {
+                    preflight: Some(ask),
+                    ..
+                } = &plan
+                    && let Err(why) = self.preflight(&current, ask, document)
+                {
+                    return FetchOutcome::failed_at(
+                        current,
+                        format!("blocked by the same-origin policy: {why}"),
+                        Some(seq),
+                    );
+                }
+                cors_plan = Some(plan);
+            }
+
+            // 1d. What this page has left to spend. Every limit before this
+            //     one is *per request* — a size cap, a redirect count, a
+            //     timeout — and none of them bounds a page that makes many.
+            //     A refusal here is recorded like any other, because "the page
+            //     ran out of allowance" is exactly what a reader of the log
+            //     needs to see rather than a request that silently stopped.
+            if let Err(over) = self.budget.claim_request() {
+                let record = RequestRecord::request(seq, initiator, &method, current.as_str())
+                    .denied(&over.0);
+                if let Err(e) = self.record_pair(&record) {
+                    return FetchOutcome::failed(current, format!("receipt sink refused: {e}"));
+                }
+                return FetchOutcome::failed_at(current, over.0, Some(seq));
+            }
+
             // 2. The decision record, before any bytes move. If this cannot be
             //    written, the fetch does not happen — this is the fail-closed
             //    guarantee, and it is why `Sink::append` returns a Result.
@@ -307,17 +737,44 @@ impl Broker {
                 .client
                 .request(verb, current.clone())
                 .header(reqwest::header::ACCEPT, accept_for(asked_as))
-                .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE);
+                .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
+                .header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
             if !body.is_empty() {
                 if let Some(kind) = content_type {
                     request = request.header(reqwest::header::CONTENT_TYPE, kind);
                 }
                 request = request.body(body.clone());
             }
+            // Cookies, and whether this request may carry them at all.
+            //
+            // The gate is the whole point of the credentials mode: a
+            // cross-origin `fetch` defaults to sending none, so a script on one
+            // allowlisted origin cannot read another origin's pages *as the
+            // logged-in user*. Before this the jar was attached to every
+            // request unconditionally, which is what turned the missing
+            // same-origin policy from an unauthenticated cross-origin read into
+            // an authenticated one.
+            let may_send_cookies = match &cors_plan {
+                Some(crate::cors::Plan::Send { send_cookies, .. }) => *send_cookies,
+                // No CORS context: the agent asked, and its own requests carry
+                // its own session.
+                _ => true,
+            };
             let mut cookies_sent = 0;
-            if let Some((header, count)) = self.jar.header_for(&current) {
+            if may_send_cookies
+                && let Some((header, count)) = self.jar.header_for(&current)
+            {
                 request = request.header(reqwest::header::COOKIE, header);
                 cookies_sent = count;
+            }
+            // Cross-origin requests announce themselves, which is how a server
+            // knows to answer the CORS question at all.
+            if let Some(crate::cors::Plan::Send {
+                origin_header: Some(origin),
+                ..
+            }) = &cors_plan
+            {
+                request = request.header("origin", origin.clone());
             }
             let response = request.send();
             let elapsed = started.elapsed().as_millis() as u64;
@@ -374,6 +831,16 @@ impl Broker {
 
                 match location {
                     Some(next) if hop < self.policy.max_redirects() => {
+                        // A redirect that crosses an origin makes the request's
+                        // own origin opaque from here on, so a server cannot
+                        // launder a cross-origin read by bouncing it somewhere
+                        // that answers `*`. Checked against the *previous* hop,
+                        // because that is the boundary being crossed.
+                        if cors.is_some()
+                            && crate::cors::Origin::of(&next) != crate::cors::Origin::of(&current)
+                        {
+                            origin_tainted = true;
+                        }
                         current = next;
                         initiator = Initiator::Redirect;
                         // 303 always, and 301/302 by universal practice, turn
@@ -401,24 +868,141 @@ impl Broker {
                 }
             }
 
-            let body = self.read_capped(response);
+            // The answer to the question the `Origin` header asked. A response
+            // that does not name this origin back is not handed to the caller —
+            // which is the entire point, and the reason the body is not even
+            // read below when this fails.
+            if let Some(crate::cors::Plan::Send {
+                check_response: true,
+                send_cookies,
+                ..
+            }) = &cors_plan
+            {
+                let header = |name: &str| -> Option<&str> {
+                    headers
+                        .iter()
+                        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                        .map(|(_, value)| value.as_str())
+                };
+                let origin = match &cors_plan {
+                    Some(crate::cors::Plan::Send {
+                        origin_header: Some(origin),
+                        ..
+                    }) => origin.clone(),
+                    _ => "null".to_string(),
+                };
+                if let Err(why) = crate::cors::check_response(
+                    header("access-control-allow-origin"),
+                    header("access-control-allow-credentials"),
+                    &origin,
+                    *send_cookies,
+                ) {
+                    let mut refused = record.response();
+                    refused.status = Some(status.as_u16());
+                    refused.duration_ms = Some(elapsed);
+                    refused.cookies_sent = Some(cookies_sent);
+                    refused.cookies_stored = Some(cookies_stored);
+                    refused.error = Some(format!("blocked by the same-origin policy: {why}"));
+                    let _ = self.sink.append(&refused);
+                    return FetchOutcome::failed_at(
+                        current,
+                        format!("blocked by the same-origin policy: {why}"),
+                        Some(seq),
+                    );
+                }
+                // Allowed. What of the headers the caller may see is the
+                // server's to widen, and `*` does not widen a credentialed
+                // response.
+                cors_exposure = crate::cors::exposure_from(
+                    header("access-control-expose-headers"),
+                    *send_cookies,
+                );
+            } else if let Some(crate::cors::Plan::Send {
+                exposure: crate::cors::Exposure::Opaque,
+                ..
+            }) = &cors_plan
+            {
+                cors_exposure = crate::cors::Exposure::Opaque;
+            }
+
+            // What crossed the wire, before `reqwest` decodes it. Read from
+            // the response's own headers rather than measured, because the
+            // decoding happens inside the client and the compressed bytes are
+            // gone by the time a body is in hand.
+            //
+            // `Content-Length` is the *compressed* length when the body is
+            // encoded, which is exactly the number wanted here. Absent under
+            // chunked transfer, and absent is the honest answer: recording the
+            // decoded size under `wire_bytes` would be a guess wearing a
+            // measurement's name.
+            let encoding = headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-encoding"))
+                .map(|(_, value)| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty() && value != "identity");
+
+            // Read compressed, then decode. Both sizes are *measured* rather
+            // than read off a header, so they are right under chunked transfer
+            // and cannot be lied about by a `Content-Length` that disagrees
+            // with the body.
+            let body = self.read_capped(response).and_then(|raw| {
+                let wire = raw.len() as u64;
+                match &encoding {
+                    None => Ok((raw, wire, false)),
+                    Some(encoding) => self
+                        .decode_capped(&raw, encoding)
+                        .map(|decoded| (decoded, wire, true)),
+                }
+            });
+
             let mut outcome_record = record.response();
             outcome_record.status = Some(status.as_u16());
             outcome_record.duration_ms = Some(elapsed);
             outcome_record.cookies_sent = Some(cookies_sent);
             outcome_record.cookies_stored = Some(cookies_stored);
+            let body = match body {
+                Ok((decoded, wire, was_encoded)) => {
+                    if was_encoded {
+                        outcome_record.wire_bytes = Some(wire);
+                        outcome_record.content_encoding = encoding.clone();
+                    }
+                    // What this one cost, against the page's allowance. Both
+                    // sizes, because a compressed response costs the wire
+                    // little and the page's memory a great deal.
+                    self.budget.record(
+                        wire,
+                        decoded.len() as u64,
+                        std::time::Duration::from_millis(elapsed),
+                    );
+                    Ok(decoded)
+                }
+                Err(e) => {
+                    // A failed read still cost the time it took.
+                    self.budget
+                        .record(0, 0, std::time::Duration::from_millis(elapsed));
+                    Err(e)
+                }
+            };
 
             return match body {
                 Ok(body) => {
                     outcome_record.bytes = Some(body.len() as u64);
                     let _ = self.sink.append(&outcome_record);
+                    // What the caller may see of this. Same-origin sees
+                    // everything; a cross-origin CORS response is filtered to
+                    // the safelist plus whatever the server exposed; a no-cors
+                    // response is opaque, which is the whole reason it was
+                    // allowed to be sent without asking.
+                    let exposure = cors_exposure.clone();
+                    let opaque = matches!(exposure, crate::cors::Exposure::Opaque);
                     FetchOutcome {
                         seq: Some(seq),
-                        headers,
+                        headers: crate::cors::filter_headers(&headers, &exposure),
                         final_url: current,
-                        body,
-                        status: Some(status.as_u16()),
+                        body: if opaque { Vec::new() } else { body },
+                        status: if opaque { Some(0) } else { Some(status.as_u16()) },
                         error: None,
+                        opaque,
                     }
                 }
                 Err(e) => {
@@ -437,6 +1021,68 @@ impl Broker {
 
     /// Read at most `max_response_bytes`, so one hostile response cannot
     /// become this process's memory ceiling.
+    /// Decode a compressed body, under the same cap the raw read was under.
+    ///
+    /// **The cap is the point, not the decoding.** A response small enough to
+    /// pass `read_capped` can decompress into something enormous — a few
+    /// kilobytes of zeroes is gigabytes of zeroes — and a browser that decoded
+    /// without a limit would let any allowed origin exhaust the box's memory
+    /// with one response. The limit is the same
+    /// [`Policy::max_response_bytes`] the wire read uses, applied to what comes
+    /// out rather than only to what went in.
+    ///
+    /// An encoding this engine does not have is an error rather than a body
+    /// passed through undecoded: handing compressed bytes to the HTML parser
+    /// would render a page of binary, which is a wrong answer that looks like a
+    /// broken site.
+    fn decode_capped(&self, raw: &[u8], encoding: &str) -> Result<Vec<u8>, H5iError> {
+        use std::io::Read;
+        let cap = self.policy.max_response_bytes();
+
+        // Only the last encoding is handled, which is all any server sends.
+        // A stacked `gzip, br` is refused by name rather than half-decoded.
+        let name = encoding.rsplit(',').next().unwrap_or(encoding).trim();
+        let mut out = Vec::new();
+        let read = match name {
+            "gzip" | "x-gzip" => flate2::read::GzDecoder::new(raw)
+                .take(cap + 1)
+                .read_to_end(&mut out),
+            // `deflate` is specified as zlib and sent as raw by enough servers
+            // that a browser has to try both. The bare form is the fallback,
+            // which is what every other engine does here.
+            "deflate" => flate2::read::ZlibDecoder::new(raw)
+                .take(cap + 1)
+                .read_to_end(&mut out)
+                .or_else(|_| {
+                    out.clear();
+                    flate2::read::DeflateDecoder::new(raw)
+                        .take(cap + 1)
+                        .read_to_end(&mut out)
+                }),
+            "br" => brotli::Decompressor::new(raw, 4096)
+                .take(cap + 1)
+                .read_to_end(&mut out),
+            other => {
+                return Err(H5iError::Metadata(format!(
+                    "the response is `{other}`-encoded, which this engine cannot decode. It \
+                     asked for {ACCEPT_ENCODING}."
+                )))
+            }
+        };
+        read.map_err(|e| {
+            H5iError::Metadata(format!("the {name} response could not be decoded: {e}"))
+        })?;
+
+        if out.len() as u64 > cap {
+            return Err(H5iError::Metadata(format!(
+                "the response decompresses past the {cap} byte cap, so it was not read. A \
+                 small response that expands without limit is how a page exhausts the \
+                 memory of whatever is reading it."
+            )));
+        }
+        Ok(out)
+    }
+
     fn read_capped(&self, response: reqwest::blocking::Response) -> Result<Vec<u8>, H5iError> {
         use std::io::Read;
 
@@ -480,6 +1126,17 @@ impl Broker {
             let record =
                 RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str())
                     .denied(reason);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(format!("denied by policy: {reason}"));
+        }
+
+        // And where that name goes, on the same rule as every other request.
+        if let Err(reason) = self.pin_addresses(url) {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str())
+                    .denied(&reason);
             if let Err(e) = self.record_pair(&record) {
                 return Err(format!("receipt sink refused: {e}"));
             }
@@ -555,6 +1212,17 @@ impl Broker {
             let record =
                 RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
                     .denied(reason);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(format!("denied by policy: {reason}"));
+        }
+
+        // And where that name goes, on the same rule as every other request.
+        if let Err(reason) = self.pin_addresses(url) {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
+                    .denied(&reason);
             if let Err(e) = self.record_pair(&record) {
                 return Err(format!("receipt sink refused: {e}"));
             }
@@ -841,6 +1509,563 @@ mod cookie_wire_tests {
     use crate::receipt::MemorySink;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
+
+    /// A server that answers anything, forever, so a runaway page has
+    /// somewhere to run away to.
+    fn always_answers(hits: usize) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                }
+                let body = "ok";
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// The gap the budget fills. Every limit before it was *per request* — a
+    /// size cap, a redirect count, a timeout — and none of them bounds a page
+    /// that makes many. Recording a runaway is not the same as stopping one.
+    #[test]
+    fn a_page_that_keeps_asking_is_eventually_refused() {
+        let port = always_answers(20);
+        let sink = Arc::new(MemorySink::new());
+        let mut broker = Broker::new(Policy::new(), sink.clone(), None).expect("broker");
+        broker.set_budget_limits(crate::budget::Limits {
+            max_requests: 3,
+            ..Default::default()
+        });
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+        for at in 1..=3 {
+            let outcome = broker.fetch_from(&url, Initiator::Subresource, None);
+            assert!(outcome.error.is_none(), "request {at}: {outcome:?}");
+        }
+        let refused = broker.fetch_from(&url, Initiator::Subresource, None);
+        let why = refused.error.expect("the fourth is over budget");
+        assert!(why.contains("budget-exceeded"), "{why}");
+
+        // And it is *recorded* as a denial, because "the page ran out of
+        // allowance" is exactly what a reader of the log needs to see.
+        let denied = sink
+            .records()
+            .into_iter()
+            .filter(|r| !r.allowed)
+            .filter(|r| {
+                r.denied_reason
+                    .as_deref()
+                    .is_some_and(|why| why.contains("budget-exceeded"))
+            })
+            .count();
+        assert!(denied >= 1, "the refusal must be in the log");
+    }
+
+    /// A fresh page is a fresh decision by the agent, so it gets a fresh
+    /// allowance. The budget bounds untrusted page code, not the principal.
+    #[test]
+    fn navigating_gives_the_next_page_its_own_allowance() {
+        let port = always_answers(20);
+        let sink = Arc::new(MemorySink::new());
+        let mut broker = Broker::new(Policy::new(), sink, None).expect("broker");
+        broker.set_budget_limits(crate::budget::Limits {
+            max_requests: 2,
+            ..Default::default()
+        });
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+        for _ in 0..2 {
+            assert!(broker.fetch_from(&url, Initiator::Subresource, None).error.is_none());
+        }
+        assert!(broker.fetch_from(&url, Initiator::Subresource, None).error.is_some());
+
+        broker.budget().reset();
+        assert!(
+            broker.fetch_from(&url, Initiator::Subresource, None).error.is_none(),
+            "a navigation restores the allowance"
+        );
+    }
+
+    /// A server that compresses when asked, and reports what it was asked for.
+    fn gzip_server(body: &'static [u8], hits: usize) -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
+        use flate2::write::GzEncoder;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let record = seen.clone();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let mut accept = String::new();
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                    let lower = header.to_ascii_lowercase();
+                    if let Some(rest) = lower.strip_prefix("accept-encoding:") {
+                        accept = rest.trim().to_string();
+                    }
+                }
+                record.lock().unwrap().push(accept.clone());
+
+                let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
+                encoder.write_all(body).unwrap();
+                let payload = encoder.finish().unwrap();
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\
+                     Content-Encoding: gzip\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n",
+                    payload.len()
+                );
+                let _ = stream.write_all(&payload);
+                let _ = stream.flush();
+            }
+        });
+        (port, seen)
+    }
+
+    /// The capability that was absent, and the measurement that goes with it.
+    ///
+    /// Both sizes are *measured* rather than read off a header, which is why
+    /// this engine decodes its own bodies: `reqwest` will do it transparently
+    /// and strips `Content-Encoding` and `Content-Length` on the way, so the
+    /// number that says what the request actually cost is gone before anything
+    /// can record it.
+    #[test]
+    fn a_compressed_response_is_decoded_and_both_sizes_are_recorded() {
+        const BODY: &[u8] = b"<html><body>compressible filler compressible filler                               compressible filler compressible filler</body></html>";
+        let (port, seen) = gzip_server(BODY, 1);
+        let sink = Arc::new(MemorySink::new());
+        let broker =
+            Broker::new(Policy::new(), sink.clone(), None).expect("broker");
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+        let outcome = broker.fetch_from(&url, Initiator::Navigation, None);
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(outcome.body, BODY, "the body must arrive decoded");
+
+        // The engine asked for what it can decode, and nothing else.
+        assert_eq!(seen.lock().unwrap()[0], "gzip, br, deflate");
+
+        let response = sink
+            .records()
+            .into_iter()
+            .find(|r| r.phase == crate::receipt::Phase::Response)
+            .expect("a response record");
+        assert_eq!(response.bytes, Some(BODY.len() as u64), "what the page got");
+        let wire = response.wire_bytes.expect("what the wire carried");
+        assert!(
+            wire < BODY.len() as u64,
+            "the compressed size should be smaller: {wire} vs {}",
+            BODY.len()
+        );
+        assert_eq!(response.content_encoding.as_deref(), Some("gzip"));
+
+        // And the line a person reads carries both, because "184 KB" and
+        // "43 KB on the wire" answer different questions.
+        let line = response.render();
+        assert!(line.contains("on the wire"), "{line}");
+        assert!(line.contains("gzip"), "{line}");
+    }
+
+    /// The reason the decoding is capped as well as the reading. A few
+    /// kilobytes of zeroes is gigabytes of zeroes, and a browser that decoded
+    /// without a limit would let any allowed origin exhaust the box's memory
+    /// with one response.
+    #[test]
+    fn a_response_that_decompresses_past_the_cap_is_refused() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = Broker::new(
+            Policy::new().set_max_response_bytes(64 * 1024),
+            sink,
+            None,
+        )
+        .expect("broker");
+
+        // 4 MiB of zeroes compresses to a few kilobytes: small enough to pass
+        // the wire cap, far past the decoded one.
+        let bomb = vec![0u8; 4 * 1024 * 1024];
+        let mut encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(&bomb).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(compressed.len() < 64 * 1024, "the bomb must pass the wire cap");
+
+        let refused = broker.decode_capped(&compressed, "gzip");
+        let why = refused.expect_err("a decompression bomb must be refused");
+        assert!(
+            why.to_string().contains("decompresses past"),
+            "the refusal should name what happened: {why}"
+        );
+    }
+
+    /// An encoding this engine cannot decode is an error, not a body passed
+    /// through: handing compressed bytes to the HTML parser would render a page
+    /// of binary, which is a wrong answer that looks like a broken site.
+    #[test]
+    fn an_encoding_this_engine_did_not_ask_for_is_an_error() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = Broker::new(Policy::new(), sink, None).expect("broker");
+        let why = broker
+            .decode_capped(b"whatever", "exotic-zip")
+            .expect_err("an unknown encoding is an error");
+        assert!(why.to_string().contains("exotic-zip"), "{why}");
+    }
+
+    #[test]
+    fn every_encoding_this_engine_advertises_round_trips() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = Broker::new(Policy::new(), sink, None).expect("broker");
+        let body = b"round trip me".repeat(50);
+
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&body).unwrap();
+        assert_eq!(broker.decode_capped(&gz.finish().unwrap(), "gzip").unwrap(), body);
+
+        let mut zl = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        zl.write_all(&body).unwrap();
+        assert_eq!(
+            broker.decode_capped(&zl.finish().unwrap(), "deflate").unwrap(),
+            body
+        );
+
+        // Raw deflate too: the spec says zlib and enough servers send bare that
+        // a browser has to try both.
+        let mut raw = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        raw.write_all(&body).unwrap();
+        assert_eq!(
+            broker.decode_capped(&raw.finish().unwrap(), "deflate").unwrap(),
+            body
+        );
+
+        let mut br = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut br, 4096, 5, 22);
+            writer.write_all(&body).unwrap();
+        }
+        assert_eq!(broker.decode_capped(&br, "br").unwrap(), body);
+    }
+
+    /// Serves a page that says who asked and echoes the cookie it saw, with
+    /// whatever CORS headers the test wants.
+    fn cors_server(
+        allow: Option<&'static str>,
+        allow_credentials: bool,
+        hits: usize,
+    ) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let record = seen.clone();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let method = line.split_whitespace().next().unwrap_or("").to_string();
+                let mut origin = String::new();
+                let mut cookie = String::new();
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                    let lower = header.to_ascii_lowercase();
+                    if let Some(rest) = lower.strip_prefix("origin:") {
+                        origin = rest.trim().to_string();
+                    }
+                    if let Some(rest) = lower.strip_prefix("cookie:") {
+                        cookie = rest.trim().to_string();
+                    }
+                }
+                record
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} origin={origin} cookie={cookie}"));
+
+                let body = "SECRET-BODY";
+                let mut head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
+                     X-Private: nope\r\nConnection: close\r\n",
+                    body.len()
+                );
+                if let Some(allow) = allow {
+                    head.push_str(&format!("Access-Control-Allow-Origin: {allow}\r\n"));
+                    head.push_str("Access-Control-Allow-Methods: DELETE\r\n");
+                    head.push_str("Access-Control-Allow-Headers: x-token\r\n");
+                }
+                if allow_credentials {
+                    head.push_str("Access-Control-Allow-Credentials: true\r\n");
+                }
+                let mut stream = stream;
+                let _ = write!(stream, "{head}\r\n{body}");
+                let _ = stream.flush();
+            }
+        });
+        (port, seen)
+    }
+
+    fn cors_broker() -> (Arc<Broker>, Arc<MemorySink>) {
+        let sink = Arc::new(MemorySink::new());
+        let broker = Arc::new(
+            Broker::new(Policy::new(), sink.clone(), None).expect("broker"),
+        );
+        (broker, sink)
+    }
+
+    /// The hole. Loopback is reachable by default (it is the dev server), so
+    /// two pages on it are two *origins* — different ports — that the allowlist
+    /// both permits. Before the same-origin policy, a script on one could read
+    /// the other's body.
+    #[test]
+    fn a_cross_origin_read_is_refused_unless_the_server_allows_it() {
+        let (port, seen) = cors_server(None, false, 1);
+        let (broker, _sink) = cors_broker();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/secret")).unwrap();
+
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+
+        assert!(
+            outcome.error.is_some(),
+            "a cross-origin body must not be handed over: {outcome:?}"
+        );
+        assert!(
+            outcome.error.as_deref().unwrap().contains("same-origin policy"),
+            "{outcome:?}"
+        );
+        assert!(
+            outcome.body.is_empty(),
+            "the body must not even be read: {outcome:?}"
+        );
+        // The request *was* made and announced itself, which is what lets a
+        // server answer the question at all.
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].contains("origin=http://127.0.0.1:1"), "{seen:?}");
+    }
+
+    /// And the other half: a server that names us back gets read.
+    #[test]
+    fn a_cross_origin_read_the_server_allows_goes_through() {
+        let (port, _seen) = cors_server(Some("*"), false, 1);
+        let (broker, _sink) = cors_broker();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/open")).unwrap();
+
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(String::from_utf8_lossy(&outcome.body), "SECRET-BODY");
+        // Headers are filtered to the safelist: the server exposed nothing.
+        assert!(
+            !outcome.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("x-private")),
+            "an unexposed header leaked: {:?}",
+            outcome.headers
+        );
+        assert!(
+            outcome.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-type")),
+            "the safelist should still be visible: {:?}",
+            outcome.headers
+        );
+    }
+
+    /// The consequence of ROADMAP §B16's cookie work, and the reason this
+    /// module was written before any further capability: with `Domain` cookies
+    /// and no same-origin policy, a cross-origin read is an *authenticated*
+    /// one. The default credentials mode is what stops it.
+    #[test]
+    fn a_cross_origin_request_does_not_carry_the_session_by_default() {
+        let (port, seen) = cors_server(Some("*"), false, 1);
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/x")).unwrap();
+        // A session cookie for the target origin, as a login would have left.
+        broker.jar().store(&target, ["sid=s3cr3t; Path=/"]);
+
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen[0].contains("cookie="),
+            "the server should have been asked: {seen:?}"
+        );
+        assert!(
+            !seen[0].contains("s3cr3t"),
+            "a cross-origin fetch must not carry the session by default: {seen:?}"
+        );
+    }
+
+    /// A same-origin request is unaffected by any of it, which is what keeps
+    /// ordinary pages working.
+    #[test]
+    fn a_same_origin_request_still_carries_its_session_and_reads_everything() {
+        let (port, seen) = cors_server(None, false, 1);
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/api")).unwrap();
+        broker.jar().store(&target, ["sid=s3cr3t; Path=/"]);
+
+        let document = Url::parse(&format!("http://127.0.0.1:{port}/page")).unwrap();
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(String::from_utf8_lossy(&outcome.body), "SECRET-BODY");
+        assert!(
+            outcome.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("x-private")),
+            "same-origin sees every header: {:?}",
+            outcome.headers
+        );
+
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].contains("s3cr3t"), "{seen:?}");
+        // No `Origin` header at all: that is how a server tells a same-origin
+        // request from a cross-origin one, and sending one would ask a
+        // question that has no business being asked.
+        assert!(
+            !seen[0].contains("origin=http"),
+            "same-origin must send no Origin header: {seen:?}"
+        );
+    }
+
+    /// A non-simple request asks first, and the preflight is a real request:
+    /// policy-checked and receipted, so it appears in the log rather than
+    /// arriving from nowhere.
+    #[test]
+    fn a_non_simple_request_preflights_and_the_preflight_is_receipted() {
+        // Two hits: the OPTIONS, then the DELETE.
+        let (port, seen) = cors_server(Some("*"), false, 2);
+        let (broker, sink) = cors_broker();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/item")).unwrap();
+
+        let outcome = broker.send_script(
+            &target,
+            "DELETE",
+            &[],
+            None,
+            &document,
+            &[("x-token".to_string(), "abc".to_string())],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "one preflight, one request: {seen:?}");
+        assert!(seen[0].starts_with("OPTIONS"), "{seen:?}");
+        assert!(seen[1].starts_with("DELETE"), "{seen:?}");
+
+        // And both are in the log. A preflight that did not appear would be a
+        // request this engine made and did not record.
+        let options = sink
+            .records()
+            .into_iter()
+            .filter(|r| r.method == "OPTIONS")
+            .count();
+        assert!(options >= 1, "the preflight must be receipted");
+    }
+
+    /// A server that refuses at preflight time refuses before the real
+    /// request is made, which is the round trip a preflight buys.
+    #[test]
+    fn a_refused_preflight_stops_the_request_before_it_is_made() {
+        let (port, seen) = cors_server(None, false, 1);
+        let (broker, _sink) = cors_broker();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/item")).unwrap();
+
+        let outcome = broker.send_script(
+            &target,
+            "DELETE",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_some(), "{outcome:?}");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "only the preflight was sent: {seen:?}");
+        assert!(seen[0].starts_with("OPTIONS"), "{seen:?}");
+    }
+
+    /// A request the *agent* made is unrestricted, which is what keeps
+    /// `navigate` and the read verbs working exactly as they did.
+    #[test]
+    fn an_agent_request_is_not_subject_to_the_same_origin_policy() {
+        let (port, _seen) = cors_server(None, false, 1);
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/anything")).unwrap();
+
+        let outcome = broker.fetch_from(&target, Initiator::Navigation, None);
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(String::from_utf8_lossy(&outcome.body), "SECRET-BODY");
+    }
 
     /// A server that sets a cookie, then reports what came back.
     fn login_server() -> (u16, std::thread::JoinHandle<()>) {

@@ -174,9 +174,11 @@ refuses every read until they end it. It does not withhold frames, and
 frame is receipted**, not just the handshake. A dev server's hot-reload channel is
 the case they are for.
 
-`wss://` is not built, and a remote `ws://` is refused while an egress proxy is
-configured, because a raw socket would not go through it. A page holding a live
-connection is the one page here that is not deterministic, and `snapshot` reports
+`ws://` and `wss://` both work: the socket owns its transport, so TLS needs
+nothing from the HTTP client. A remote socket of either kind is refused while an
+egress proxy is configured, because a raw socket would not go through it and
+that objection was never about encryption. A page holding a live connection is
+the one page here that is not deterministic, and `snapshot` reports
 `open_sockets` when that is true.
 
 #### When a verb refuses
@@ -206,8 +208,8 @@ browser whose entire network activity is in a log you can read.
 - **JavaScript is opt-in and limited.** Off unless `serve` is given `--script`. A
   page that renders only via script comes back empty, which is a routing signal:
   ask `capabilities` rather than guessing.
-- **No iframes, no file uploads, no `wss://`.** Each refused by name with the
-  reason rather than failing obscurely.
+- **No iframes and no file uploads.** Each refused by name with the reason
+  rather than failing obscurely.
 - **Not the fastest or the most conformant.** It is an interpreter, roughly 1.3x
   Chromium's wall time on real pages. Speed was never the claim.
 

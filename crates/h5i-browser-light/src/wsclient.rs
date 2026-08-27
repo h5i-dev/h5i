@@ -11,13 +11,22 @@
 //!
 //! ## What is built, and what is refused by name
 //!
-//! **`ws://` only.** `wss://` needs a raw TLS stream, which `reqwest` does not
-//! hand out, so it would mean taking `rustls` and a root store as direct
-//! dependencies. It is refused with the reason rather than failing obscurely.
-//! For the case above this costs nothing: a dev server's HMR socket is `ws://`.
+//! **`ws://` and `wss://`.** The refusal that used to stand here said `wss://`
+//! "needs a raw TLS stream, which the HTTP client here does not expose". That
+//! was true of `reqwest` and had been quietly generalised into a property of
+//! the engine, which it never was: a socket that **owns its transport** needs
+//! nothing from the HTTP client. Lightpanda gets `wss://` for free for exactly
+//! this reason — its socket is a curl handle, and curl carries the TLS. Here
+//! the socket carries `rustls` directly, and both crates were already in the
+//! tree through `reqwest`'s own TLS.
+//!
+//! The policy path is untouched: check, receipt, *then* dial, and every frame
+//! receipted after that. TLS changes what the bytes travel through, not who
+//! decided they could.
 //!
 //! **Loopback only, whenever an egress proxy is configured.** This is the
-//! important one. A WebSocket is a raw `TcpStream`, so it does not go through
+//! important one, and it is unchanged by TLS: the refusal was never about
+//! encryption. A WebSocket is a raw socket, so it does not go through
 //! the proxy that `reqwest` was configured with — and inside a box that proxy is
 //! how the sandbox's own allowlist stays in the path. Rather than quietly open a
 //! hole in it, a non-loopback socket is refused whenever `$H5I_EGRESS_PROXY` is
@@ -49,6 +58,151 @@ use url::Url;
 
 use crate::net::Broker;
 use crate::ws::{self, Incoming};
+
+/// The bytes underneath a socket, plain or encrypted.
+///
+/// One type so that everything above it — the handshake, the frame reader, the
+/// masked writer — is written once rather than twice. The difference between
+/// `ws://` and `wss://` should be a field, not a parallel code path, because a
+/// parallel path is where the two drift and only one of them keeps getting the
+/// receipt rule right.
+///
+/// ## Why the TLS side holds a lock
+///
+/// A plain `TcpStream` can be `try_clone`d, so the reader thread and the writer
+/// each get their own handle and never contend. A TLS *connection* is one piece
+/// of state — sequence numbers, keys, the record buffer — and cannot be split
+/// that way, so both sides share it under a mutex.
+///
+/// That would deadlock on its own: the reader blocks in `read`, holding the
+/// lock, and a `send` waits behind it forever. The fix is the read timeout set
+/// in [`Socket::open`] for TLS sockets. The reader wakes every so often, finds
+/// nothing, drops the lock, and goes round again — so a writer always gets in
+/// within one timeout. The cost is a wakeup a few times a second on an idle
+/// socket, which is what a lock-free design would have spent on a second
+/// connection.
+struct Wire {
+    sock: TcpStream,
+    /// `None` for `ws://`. Shared with the reader thread for `wss://`.
+    tls: Option<Arc<Mutex<rustls::ClientConnection>>>,
+}
+
+/// How long a TLS read waits before releasing the connection lock.
+///
+/// Short enough that a `send` never feels it, long enough not to spin. Only
+/// TLS sockets set a read timeout at all: a plain socket has two independent
+/// handles and needs none.
+const TLS_READ_SLICE: std::time::Duration = std::time::Duration::from_millis(100);
+
+impl Wire {
+    fn plain(sock: TcpStream) -> Self {
+        Self { sock, tls: None }
+    }
+
+    fn tls(sock: TcpStream, conn: rustls::ClientConnection) -> Self {
+        Self {
+            sock,
+            tls: Some(Arc::new(Mutex::new(conn))),
+        }
+    }
+
+    fn is_tls(&self) -> bool {
+        self.tls.is_some()
+    }
+
+    /// A second handle on the same connection, for the reader thread.
+    fn try_clone(&self) -> std::io::Result<Wire> {
+        Ok(Wire {
+            sock: self.sock.try_clone()?,
+            tls: self.tls.clone(),
+        })
+    }
+
+    /// Write, and make sure it has actually left.
+    ///
+    /// `&self` rather than `&mut self` because both halves of the socket hold
+    /// one of these, and a frame written from the page's thread must not need
+    /// exclusive ownership of the connection.
+    fn write_all(&self, data: &[u8]) -> std::io::Result<()> {
+        match &self.tls {
+            None => {
+                let mut sock = &self.sock;
+                sock.write_all(data)?;
+                sock.flush()
+            }
+            Some(conn) => {
+                let mut conn = conn
+                    .lock()
+                    .map_err(|_| std::io::Error::other("the tls connection lock is poisoned"))?;
+                let mut sock = &self.sock;
+                let mut stream = rustls::Stream::new(&mut *conn, &mut sock);
+                stream.write_all(data)?;
+                stream.flush()
+            }
+        }
+    }
+
+    fn shutdown(&self) {
+        let _ = self.sock.shutdown(std::net::Shutdown::Both);
+    }
+
+    fn set_read_timeout(&self, timeout: Option<std::time::Duration>) {
+        let _ = self.sock.set_read_timeout(timeout);
+    }
+}
+
+impl std::io::Read for Wire {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let Some(conn) = self.tls.clone() else {
+            return (&self.sock).read(buf);
+        };
+        loop {
+            {
+                let mut conn = conn
+                    .lock()
+                    .map_err(|_| std::io::Error::other("the tls connection lock is poisoned"))?;
+                let mut sock = &self.sock;
+                let mut stream = rustls::Stream::new(&mut *conn, &mut sock);
+                match stream.read(buf) {
+                    Ok(read) => return Ok(read),
+                    // The slice expired with nothing to show for it. The lock
+                    // is dropped here, which is the whole point of the timeout,
+                    // and then we ask again.
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            std::thread::yield_now();
+        }
+    }
+}
+
+/// The trust store, built once.
+///
+/// Mozilla's roots, compiled in, for the same reason the public suffix list is
+/// compiled in: a decision about who to trust should not depend on the network
+/// being reachable or on a file the box may not have. A host with no system
+/// certificate store still opens a `wss://` correctly.
+fn tls_config() -> Arc<rustls::ClientConfig> {
+    use std::sync::OnceLock;
+    static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let roots = rustls::RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            };
+            Arc::new(
+                rustls::ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            )
+        })
+        .clone()
+}
 
 /// Longest a handshake may take.
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -90,7 +244,7 @@ pub enum Event {
 /// One open socket.
 pub struct Socket {
     /// The write half. `None` once closed.
-    out: Mutex<Option<TcpStream>>,
+    out: Mutex<Option<Wire>>,
     rx: Mutex<Receiver<Event>>,
     /// The receipt sequence the handshake was recorded under, so frames can be
     /// attributed to the connection that carried them.
@@ -107,16 +261,11 @@ impl Socket {
     /// connect, the same order [`Broker::send_from`] uses and for the same
     /// reason: no receipt, no connection.
     pub fn open(broker: Arc<Broker>, url: &Url, document: Option<&Url>) -> Result<Socket, String> {
-        if url.scheme() == "wss" {
-            return Err(format!(
-                "`wss://` is not built in this engine, so {url} cannot be opened. It needs a raw \
-                 TLS stream, which the HTTP client here does not expose. `ws://` works, which \
-                 covers a dev server's hot-reload channel — the case this engine is for."
-            ));
-        }
-        if url.scheme() != "ws" {
-            return Err(format!("{url} is not a WebSocket address"));
-        }
+        let secure = match url.scheme() {
+            "ws" => false,
+            "wss" => true,
+            _ => return Err(format!("{url} is not a WebSocket address")),
+        };
 
         let loopback = is_loopback(url);
         if !loopback && broker.has_proxy() {
@@ -132,13 +281,24 @@ impl Socket {
         let seq = broker.authorise_socket(url, document)?;
 
         let host = url.host_str().ok_or_else(|| format!("{url} has no host"))?;
-        let port = url.port().unwrap_or(80);
-        let stream = TcpStream::connect((host, port)).map_err(|e| {
+        let port = url.port().unwrap_or(if secure { 443 } else { 80 });
+        let sock = TcpStream::connect((host, port)).map_err(|e| {
             format!("could not reach {host}:{port}: {e}")
         })?;
-        stream
-            .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        sock.set_read_timeout(Some(HANDSHAKE_TIMEOUT))
             .map_err(|e| e.to_string())?;
+
+        let stream = if secure {
+            // The name is checked against the certificate, so an address in the
+            // URL is refused here rather than connected to without validation.
+            let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
+                .map_err(|_| format!("`{host}` is not a name a certificate can be checked against"))?;
+            let conn = rustls::ClientConnection::new(tls_config(), server_name)
+                .map_err(|e| format!("could not start TLS with {host}: {e}"))?;
+            Wire::tls(sock, conn)
+        } else {
+            Wire::plain(sock)
+        };
 
         // One reader for the handshake *and* the frames that follow it.
         //
@@ -153,7 +313,14 @@ impl Socket {
         // Reads have no deadline once the handshake is done: a socket that is
         // quiet is not a socket that is broken, and a dev server's HMR channel
         // is quiet almost all the time.
-        let _ = stream.set_read_timeout(None);
+        //
+        // Except on TLS, where the timeout is not a deadline but the mechanism
+        // that lets a writer take the connection lock. See [`Wire`].
+        stream.set_read_timeout(if stream.is_tls() {
+            Some(TLS_READ_SLICE)
+        } else {
+            None
+        });
 
         let (tx, rx) = std::sync::mpsc::sync_channel(MAX_QUEUED);
         // Queued before the reader starts, so `open` reaches the page ahead of
@@ -187,8 +354,8 @@ impl Socket {
             .record_socket_frame(&self.url, Direction::Send, text.len() as u64)
             .map_err(|e| format!("refusing to send: the receipt could not be written: {e}"))?;
 
-        let mut guard = self.out.lock().map_err(|_| "socket lock poisoned")?;
-        let Some(stream) = guard.as_mut() else {
+        let guard = self.out.lock().map_err(|_| "socket lock poisoned")?;
+        let Some(stream) = guard.as_ref() else {
             return Err("this socket is closed".to_string());
         };
         send_masked(stream, 0x1, text.as_bytes()).map_err(|e| e.to_string())
@@ -216,10 +383,10 @@ impl Socket {
             *closed = true;
         }
         if let Ok(mut guard) = self.out.lock()
-            && let Some(stream) = guard.as_mut()
+            && let Some(stream) = guard.as_ref()
         {
             let _ = send_masked(stream, 0x8, &[]);
-            let _ = stream.shutdown(std::net::Shutdown::Both);
+            stream.shutdown();
             *guard = None;
         }
     }
@@ -269,7 +436,7 @@ impl Direction {
 
 /// Read frames until the socket ends, receipting each one.
 fn read_loop(
-    mut reader: BufReader<TcpStream>,
+    mut reader: BufReader<Wire>,
     tx: SyncSender<Event>,
     broker: Arc<Broker>,
     url: Url,
@@ -311,12 +478,12 @@ fn read_loop(
 /// Takes the reader and gives it back, because whatever it buffered past the
 /// headers is the beginning of the frame stream and must not be dropped.
 fn handshake(
-    mut reader: BufReader<TcpStream>,
-    stream: &TcpStream,
+    mut reader: BufReader<Wire>,
+    stream: &Wire,
     url: &Url,
     host: &str,
     port: u16,
-) -> Result<BufReader<TcpStream>, String> {
+) -> Result<BufReader<Wire>, String> {
     let mut key_bytes = [0u8; 16];
     getrandom::getrandom(&mut key_bytes)
         .map_err(|e| format!("could not generate a handshake key: {e}"))?;
@@ -336,11 +503,9 @@ fn handshake(
          \r\n"
     );
 
-    let mut writer = stream.try_clone().map_err(|e| e.to_string())?;
-    writer
+    stream
         .write_all(request.as_bytes())
         .map_err(|e| format!("could not send the handshake: {e}"))?;
-    writer.flush().map_err(|e| e.to_string())?;
 
     let mut status = String::new();
     reader
@@ -389,7 +554,7 @@ fn handshake(
 /// which is what RFC 6455 §5.1 requires of a server and forbids of a client. So
 /// the direction that had no implementation is here, and the read direction is
 /// shared: `ws::read_message` already branches on the MASK bit.
-fn send_masked(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> Result<(), H5iError> {
+fn send_masked(stream: &Wire, opcode: u8, payload: &[u8]) -> Result<(), H5iError> {
     let mut header: Vec<u8> = Vec::with_capacity(14);
     header.push(0x80 | opcode);
 
@@ -415,9 +580,14 @@ fn send_masked(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> Result<(),
         .map(|(i, byte)| byte ^ mask[i % 4])
         .collect();
 
-    stream.write_all(&header).map_err(H5iError::Io)?;
-    stream.write_all(&masked).map_err(H5iError::Io)?;
-    stream.flush().map_err(H5iError::Io)?;
+    // One write, not two. On a plain socket the difference is only a syscall;
+    // on TLS each write is its own record, so splitting the header from the
+    // payload would put every frame on the wire as two records and hand a
+    // passive observer the frame boundaries for free.
+    let mut frame = Vec::with_capacity(header.len() + masked.len());
+    frame.extend_from_slice(&header);
+    frame.extend_from_slice(&masked);
+    stream.write_all(&frame).map_err(H5iError::Io)?;
     Ok(())
 }
 
@@ -462,8 +632,12 @@ mod tests {
         }
     }
 
+    /// `wss://` is a scheme this engine has, so it must fail on *policy* like
+    /// any other address rather than on the scheme itself. The refusal that
+    /// used to stand here was a capability gap dressed as an architectural
+    /// property; what is left is the allowlist doing its job.
     #[test]
-    fn wss_is_refused_by_name_rather_than_failing_obscurely() {
+    fn wss_is_a_scheme_this_engine_has_and_is_judged_by_the_allowlist() {
         let broker = Arc::new(
             crate::net::Broker::new(
                 crate::policy::Policy::new(),
@@ -475,14 +649,58 @@ mod tests {
         let url = Url::parse("wss://example.com/socket").unwrap();
         let error = match Socket::open(broker, &url, None) {
             Err(error) => error,
-            Ok(_) => panic!("wss should not have opened"),
+            Ok(_) => panic!("an empty allowlist should have refused this"),
         };
-        assert!(error.contains("wss://"), "{error}");
-        assert!(error.contains("not built"), "{error}");
         assert!(
-            error.contains("ws://"),
-            "it should say what does work: {error}"
+            error.contains("denied by policy"),
+            "the refusal should be the allowlist, not the scheme: {error}"
         );
+        assert!(
+            !error.contains("not built"),
+            "`wss://` is built now: {error}"
+        );
+    }
+
+    /// The scheme check still refuses what is genuinely not a socket address,
+    /// and says which schemes are.
+    #[test]
+    fn a_non_socket_scheme_is_still_refused() {
+        let broker = Arc::new(
+            crate::net::Broker::new(
+                crate::policy::Policy::new(),
+                Arc::new(crate::receipt::MemorySink::new()),
+                None,
+            )
+            .expect("broker"),
+        );
+        let url = Url::parse("https://example.com/socket").unwrap();
+        let error = match Socket::open(broker, &url, None) {
+            Err(error) => error,
+            Ok(_) => panic!("https is not a WebSocket address"),
+        };
+        assert!(error.contains("not a WebSocket address"), "{error}");
+    }
+
+    /// TLS changes the transport, not the containment rule. A remote socket
+    /// behind an egress proxy is refused whether or not it is encrypted,
+    /// because the objection was always that a raw socket does not go through
+    /// the proxy.
+    #[test]
+    fn tls_does_not_buy_a_way_past_the_proxy_rule() {
+        let broker = Arc::new(
+            crate::net::Broker::new(
+                crate::policy::Policy::new().allow_all_of(&["example.com".to_string()]),
+                Arc::new(crate::receipt::MemorySink::new()),
+                Some("http://127.0.0.1:9"),
+            )
+            .expect("broker"),
+        );
+        let url = Url::parse("wss://example.com/socket").unwrap();
+        let error = match Socket::open(broker, &url, None) {
+            Err(error) => error,
+            Ok(_) => panic!("a remote socket behind a proxy should be refused"),
+        };
+        assert!(error.contains("egress proxy"), "{error}");
     }
 
     #[test]
@@ -529,8 +747,8 @@ mod tests {
             ws::read_message(&mut reader).expect("a readable message")
         });
 
-        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-        send_masked(&mut client, 0x1, b"hello socket").expect("send");
+        let client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        send_masked(&Wire::plain(client), 0x1, b"hello socket").expect("send");
 
         match server.join().expect("joined") {
             Incoming::Text(text) => assert_eq!(text, "hello socket"),
@@ -551,8 +769,8 @@ mod tests {
             ws::read_message(&mut reader).expect("a readable message")
         });
 
-        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-        send_masked(&mut client, 0x1, payload.as_bytes()).expect("send");
+        let client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        send_masked(&Wire::plain(client), 0x1, payload.as_bytes()).expect("send");
 
         match server.join().expect("joined") {
             Incoming::Text(text) => assert_eq!(text, expected),

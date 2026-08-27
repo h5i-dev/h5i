@@ -39,6 +39,48 @@ fn arg_id(args: &[JsValue], index: usize, context: &mut Context) -> JsResult<usi
     Ok(args.get_or_undefined(index).to_number(context)? as usize)
 }
 
+/// Read a JS array of `[name, value]` pairs.
+///
+/// The shape `Headers` already iterates in, so the prelude hands over what it
+/// has rather than a second representation that could disagree with the first.
+fn string_pairs(args: &[JsValue], index: usize, context: &mut Context) -> Vec<(String, String)> {
+    let Some(object) = args.get(index).and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    let Ok(array) = boa_engine::object::builtins::JsArray::from_object(object.clone()) else {
+        return Vec::new();
+    };
+    let length = array.length(context).unwrap_or(0);
+    let mut out = Vec::new();
+    for at in 0..length {
+        let Ok(entry) = array.get(at, context) else {
+            continue;
+        };
+        let Some(entry) = entry.as_object() else {
+            continue;
+        };
+        let Ok(pair) = boa_engine::object::builtins::JsArray::from_object(entry.clone()) else {
+            continue;
+        };
+        let name = pair
+            .get(0u64, context)
+            .ok()
+            .and_then(|v| v.to_string(context).ok())
+            .map(|v| v.to_std_string_escaped())
+            .unwrap_or_default();
+        let value = pair
+            .get(1u64, context)
+            .ok()
+            .and_then(|v| v.to_string(context).ok())
+            .map(|v| v.to_std_string_escaped())
+            .unwrap_or_default();
+        if !name.is_empty() {
+            out.push((name, value));
+        }
+    }
+    out
+}
+
 fn id_value(id: Option<usize>) -> JsValue {
     match id {
         Some(id) => JsValue::from(id as f64),
@@ -73,7 +115,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("setValue", 2, set_value),
         ("log", 2, log),
         ("unsupported", 1, unsupported),
-        ("fetchStart", 3, fetch_start),
+        ("fetchStart", 6, fetch_start),
         ("fetchDrain", 0, fetch_drain),
         ("fetchPending", 0, fetch_pending),
         ("userAgent", 0, user_agent),
@@ -86,6 +128,9 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("innerHtml", 1, inner_html),
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
+        ("canvasOp", 3, canvas_op),
+        ("canvasSize", 4, canvas_size),
+        ("canvasPng", 1, canvas_png),
         ("computedStyle", 2, computed_style),
         ("supportsCss", 2, supports_css),
         ("validSelector", 1, valid_selector),
@@ -917,6 +962,14 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let target = arg_string(args, 0, context)?;
     let method = arg_string(args, 1, context).unwrap_or_else(|_| "GET".to_string());
     let body = arg_string(args, 2, context).unwrap_or_default();
+    // The rest of the request's origin story: what the page set, and how it
+    // asked to treat the boundary. Defaults match `fetch`'s own — `cors` mode,
+    // `same-origin` credentials — so a page that says nothing gets the
+    // behaviour a browser gives it rather than the widest one available.
+    let mode = crate::cors::Mode::parse(&arg_string(args, 3, context).unwrap_or_default());
+    let credentials =
+        crate::cors::Credentials::parse(&arg_string(args, 4, context).unwrap_or_default());
+    let headers = string_pairs(args, 5, context);
     let host = host(context)?;
 
     let resolved = match host.base.join(&target) {
@@ -937,9 +990,22 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         crate::script::host::FetchSlot::Queued {
             url: resolved,
             method,
-            content_type: (!body.is_empty())
-                .then(|| "application/x-www-form-urlencoded".to_string()),
+            // Whatever the page set, or the default `fetch` applies to a body.
+            // Read from the headers rather than assumed, because the value
+            // decides whether the request preflights: `application/json` is
+            // deliberately not on the CORS safelist.
+            content_type: headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+                .map(|(_, value)| value.clone())
+                .or_else(|| {
+                    (!body.is_empty())
+                        .then(|| "application/x-www-form-urlencoded".to_string())
+                }),
             body: body.into_bytes(),
+            headers,
+            mode,
+            credentials,
         },
     );
     Ok(JsValue::from(id as f64))
@@ -975,6 +1041,9 @@ fn fetch_drain(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsR
                 method,
                 body,
                 content_type,
+                headers,
+                mode,
+                credentials,
             }) = pending.remove(&id)
             else {
                 continue;
@@ -993,13 +1062,18 @@ fn fetch_drain(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsR
             let spawned = std::thread::Builder::new()
                 .name(format!("h5i-fetch-{id}"))
                 .spawn(move || {
-                    let outcome = broker.send_from(
+                    // `send_script`, not `send_from`: a page exercises an
+                    // authority it has to be granted, and the broker has to be
+                    // told whose authority it is before it can decide.
+                    let outcome = broker.send_script(
                         &url,
-                        crate::receipt::Initiator::Subresource,
                         &method,
                         &body,
                         content_type.as_deref(),
-                        Some(&document),
+                        &document,
+                        &headers,
+                        mode,
+                        credentials,
                     );
                     // A closed receiver means the realm went away; there is
                     // nobody left to tell.
@@ -1111,6 +1185,10 @@ fn reply_value(
         headers.push(pair, context)?;
     }
     reply.set(js_string!("headers"), headers, false, context)?;
+    // So a page can tell an opaque response from a failed one. Both have no
+    // body and no headers; only one of them means "the request was made and
+    // you may not read the answer".
+    reply.set(js_string!("opaque"), outcome.opaque, false, context)?;
     Ok(reply.into())
 }
 
@@ -1291,6 +1369,222 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         y: y.clamp(0.0, max) as f64,
     });
     Ok(JsValue::undefined())
+}
+
+/// One entry point for every canvas drawing call.
+///
+/// A dispatcher rather than thirty primitives, because the whole surface takes
+/// the same shape — a node id, an operation name, and a list of numbers or
+/// strings — and thirty near-identical `fn`s would be thirty places for the
+/// argument handling to drift. The prelude's `CanvasRenderingContext2D` is what
+/// gives it the spec's shape; this is the part that has to touch Rust.
+///
+/// Returns `true` when the operation was performed and `false` when it was not
+/// understood, which is what the prelude turns into an `unsupported()` entry.
+/// **That return value is the honesty rule of this whole feature**: a canvas
+/// call that quietly does nothing is the silent stub ROADMAP §B8.4 refuses, and
+/// the only thing standing between this module and that failure is that an
+/// unknown operation says so instead of returning `undefined`.
+fn canvas_op(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let op = arg_string(args, 1, context)?;
+
+    // The numeric arguments, in order. A string argument (a colour, a cap) is
+    // read separately below, so this stays one shape.
+    let mut numbers: Vec<f64> = Vec::new();
+    let mut text = String::new();
+    if let Some(list) = args.get(2)
+        && let Some(object) = list.as_object()
+        && let Ok(array) = boa_engine::object::builtins::JsArray::from_object(object.clone())
+    {
+        let length = array.length(context).unwrap_or(0);
+        for at in 0..length {
+            let value = array.get(at, context)?;
+            if value.is_string() {
+                text = value.to_string(context)?.to_std_string_escaped();
+            } else {
+                numbers.push(value.to_number(context)?);
+            }
+        }
+    }
+
+    let host = host(context)?;
+    let mut canvases = host.canvases.borrow_mut();
+    let Some(canvas) = canvases.get_mut(id) else {
+        // No surface for this node: the caller never asked for a context.
+        return Ok(JsValue::from(false));
+    };
+
+    let n = |at: usize| -> f64 { numbers.get(at).copied().unwrap_or(0.0) };
+    let handled = match op.as_str() {
+        "save" => {
+            canvas.save();
+            true
+        }
+        "restore" => {
+            canvas.restore();
+            true
+        }
+        "fillStyle" => canvas.set_fill_style(&text),
+        "strokeStyle" => canvas.set_stroke_style(&text),
+        "lineWidth" => {
+            canvas.set_line_width(n(0));
+            true
+        }
+        "globalAlpha" => {
+            canvas.set_global_alpha(n(0));
+            true
+        }
+        "lineCap" => {
+            canvas.set_line_cap(&text);
+            true
+        }
+        "lineJoin" => {
+            canvas.set_line_join(&text);
+            true
+        }
+        "translate" => {
+            canvas.translate(n(0), n(1));
+            true
+        }
+        "scale" => {
+            canvas.scale(n(0), n(1));
+            true
+        }
+        "rotate" => {
+            canvas.rotate(n(0));
+            true
+        }
+        "transform" => {
+            canvas.transform(n(0), n(1), n(2), n(3), n(4), n(5));
+            true
+        }
+        "setTransform" => {
+            canvas.set_transform(n(0), n(1), n(2), n(3), n(4), n(5));
+            true
+        }
+        "resetTransform" => {
+            canvas.reset_transform();
+            true
+        }
+        "beginPath" => {
+            canvas.begin_path();
+            true
+        }
+        "closePath" => {
+            canvas.close_path();
+            true
+        }
+        "moveTo" => {
+            canvas.move_to(n(0), n(1));
+            true
+        }
+        "lineTo" => {
+            canvas.line_to(n(0), n(1));
+            true
+        }
+        "quadraticCurveTo" => {
+            canvas.quad_to(n(0), n(1), n(2), n(3));
+            true
+        }
+        "bezierCurveTo" => {
+            canvas.curve_to(n(0), n(1), n(2), n(3), n(4), n(5));
+            true
+        }
+        "rect" => {
+            canvas.rect(n(0), n(1), n(2), n(3));
+            true
+        }
+        "arc" => {
+            canvas.arc(n(0), n(1), n(2), n(3), n(4), n(5) != 0.0);
+            true
+        }
+        "fill" => {
+            if !text.is_empty() {
+                canvas.set_fill_rule(&text);
+            }
+            canvas.fill();
+            true
+        }
+        "stroke" => {
+            canvas.stroke();
+            true
+        }
+        "fillRect" => {
+            canvas.fill_rect(n(0), n(1), n(2), n(3));
+            true
+        }
+        "strokeRect" => {
+            canvas.stroke_rect(n(0), n(1), n(2), n(3));
+            true
+        }
+        "clearRect" => {
+            canvas.clear_rect(n(0), n(1), n(2), n(3));
+            true
+        }
+        // Everything else is genuinely not built. Answering `false` is what
+        // puts its name in front of the agent instead of leaving a blank
+        // canvas to be explained.
+        _ => false,
+    };
+
+    if handled {
+        // A drawn canvas has to reach the page, and the page is laid out from
+        // the tree. Marking the document dirty is what gets the surface
+        // composited on the next resolve.
+        *host.dirty.borrow_mut() = true;
+    }
+    Ok(JsValue::from(handled))
+}
+
+/// Create or resize the surface behind a `<canvas>`, and report its size.
+///
+/// Called two ways, and the fourth argument is the difference between them.
+/// `getContext` wants the surface it already has and must not wipe it.
+/// The `width`/`height` setters must **always** reset the bitmap, even when
+/// the value is unchanged — `canvas.width = canvas.width` is the idiomatic
+/// erase and it works precisely because assigning the same number still
+/// clears. Sizing on inequality looked right and made that idiom a no-op.
+///
+/// Returns `[width, height]`, which is what the element reports back, so a page
+/// that asks for an absurd size is told what it actually got rather than being
+/// allowed to believe the number it asked for.
+fn canvas_size(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let width = args.get_or_undefined(1).to_number(context)? as u32;
+    let height = args.get_or_undefined(2).to_number(context)? as u32;
+    let reset = args.get_or_undefined(3).to_boolean();
+
+    let host = host(context)?;
+    let mut canvases = host.canvases.borrow_mut();
+    let canvas = canvases.get_or_create(id, width, height);
+    if reset {
+        canvas.resize(width, height);
+    }
+    let size = (canvas.width(), canvas.height());
+
+    let array = boa_engine::object::builtins::JsArray::new(context)?;
+    array.push(JsValue::from(size.0 as f64), context)?;
+    array.push(JsValue::from(size.1 as f64), context)?;
+    Ok(array.into())
+}
+
+/// The surface as a `data:` URL, for `toDataURL`.
+fn canvas_png(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let canvases = host.canvases.borrow();
+    let Some(canvas) = canvases.get(id) else {
+        return Ok(JsValue::null());
+    };
+    let Some(png) = canvas.to_png() else {
+        return Ok(JsValue::null());
+    };
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+    Ok(JsValue::from(js_string!(format!(
+        "data:image/png;base64,{encoded}"
+    ))))
 }
 
 fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

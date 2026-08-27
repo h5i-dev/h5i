@@ -2110,27 +2110,237 @@
                "embed", "frame", "applet", "slot"], "name", "name");
     reflectOn(["button", "param", "data"], "value", "value");
 
-    // Canvas asks for a drawing context and is told, honestly, that there
-    // is not one.
+    // Canvas 2D, drawn for real. See `src/canvas.rs`.
     //
-    // `null` is not a stub and not the `missingApi` lie: it is what a browser
-    // returns for a context type it cannot provide, and the spec says so. The
-    // difference matters. With the method *absent*, a page calling
-    // `canvas.getContext("2d")` dies on "not a function" and its fallback
-    // branch never runs. With it present and answering null, the page learns
-    // canvas is unavailable and takes the branch it wrote for exactly this.
+    // This used to answer `null`, on the argument that a context object which
+    // accepts `fillRect` and paints nothing is a lie the page cannot detect —
+    // which was right, and is exactly what both reference engines ship. The
+    // answer was never "fake it better"; it was that this engine owns a
+    // rasteriser (`blitz-paint` over `vello_cpu`) and can therefore do the
+    // thing itself, which is cheaper here than in an engine with no pixels at
+    // all.
     //
-    // What would be a lie is a context object that accepts `fillRect` and
-    // draws nothing — the page would believe it had painted. That is why there
-    // is no such object here, and why implementing 2D properly is a subsystem
-    // decision (§11.5.8) rather than something to fake on the way past.
+    // The honesty rule survives intact and moves down one level. Every call
+    // below routes through `api.canvasOp`, which returns **false** for an
+    // operation that is not built, and a false answer is reported through the
+    // same `unsupported()` channel as any other missing Web API. So a page
+    // that calls `fillText` still gets its name in front of the agent —
+    // `note: this page used Web APIs this engine does not have
+    // (CanvasRenderingContext2D.fillText x12)` — rather than a blank canvas
+    // with no explanation.
     //
-    // The ask is still recorded, so canvas keeps its place on the demand list
-    // instead of disappearing the moment it stopped throwing.
+    // Not built, and reported by name when asked for: text, gradients,
+    // patterns, shadows, `drawImage`, `clip`, and the `ImageData` operations.
+    class CanvasRenderingContext2D {
+      constructor(canvas) {
+        this.canvas = canvas;
+        this._node = canvas._id;
+        // Mirrored on the JS side because the spec requires reading them back,
+        // and a getter that asked Rust for each would be a round trip per
+        // property read in a draw loop.
+        this._fillStyle = "#000000";
+        this._strokeStyle = "#000000";
+        this._lineWidth = 1;
+        this._globalAlpha = 1;
+        this._lineCap = "butt";
+        this._lineJoin = "miter";
+      }
+
+      // Every drawing call, under one door. `false` back means the engine does
+      // not have this one, and saying so is the whole point.
+      _op(name, args) {
+        if (api.canvasOp(this._node, name, args || []) === false) {
+          api.unsupported(`CanvasRenderingContext2D.${name}`);
+          return false;
+        }
+        return true;
+      }
+
+      get fillStyle() { return this._fillStyle; }
+      set fillStyle(value) {
+        // A colour this engine cannot parse is *reported*, and the previous
+        // one stands — which is the spec's rule for an invalid value and also
+        // keeps a gradient object from being read as if it were a colour.
+        if (this._op("fillStyle", [String(value)])) this._fillStyle = String(value);
+      }
+
+      get strokeStyle() { return this._strokeStyle; }
+      set strokeStyle(value) {
+        if (this._op("strokeStyle", [String(value)])) this._strokeStyle = String(value);
+      }
+
+      get lineWidth() { return this._lineWidth; }
+      set lineWidth(value) {
+        this._lineWidth = Number(value);
+        this._op("lineWidth", [Number(value)]);
+      }
+
+      get globalAlpha() { return this._globalAlpha; }
+      set globalAlpha(value) {
+        this._globalAlpha = Number(value);
+        this._op("globalAlpha", [Number(value)]);
+      }
+
+      get lineCap() { return this._lineCap; }
+      set lineCap(value) {
+        this._lineCap = String(value);
+        this._op("lineCap", [String(value)]);
+      }
+
+      get lineJoin() { return this._lineJoin; }
+      set lineJoin(value) {
+        this._lineJoin = String(value);
+        this._op("lineJoin", [String(value)]);
+      }
+
+      save() { this._op("save", []); }
+      restore() { this._op("restore", []); }
+
+      translate(x, y) { this._op("translate", [+x, +y]); }
+      scale(x, y) { this._op("scale", [+x, +y]); }
+      rotate(a) { this._op("rotate", [+a]); }
+      transform(a, b, c, d, e, f) { this._op("transform", [+a, +b, +c, +d, +e, +f]); }
+      setTransform(a, b, c, d, e, f) { this._op("setTransform", [+a, +b, +c, +d, +e, +f]); }
+      resetTransform() { this._op("resetTransform", []); }
+
+      beginPath() { this._op("beginPath", []); }
+      closePath() { this._op("closePath", []); }
+      moveTo(x, y) { this._op("moveTo", [+x, +y]); }
+      lineTo(x, y) { this._op("lineTo", [+x, +y]); }
+      quadraticCurveTo(cx, cy, x, y) { this._op("quadraticCurveTo", [+cx, +cy, +x, +y]); }
+      bezierCurveTo(a, b, c, d, e, f) { this._op("bezierCurveTo", [+a, +b, +c, +d, +e, +f]); }
+      rect(x, y, w, h) { this._op("rect", [+x, +y, +w, +h]); }
+      arc(x, y, r, s, e, ccw) { this._op("arc", [+x, +y, +r, +s, +e, ccw ? 1 : 0]); }
+
+      fill(rule) { this._op("fill", rule ? [String(rule)] : []); }
+      stroke() { this._op("stroke", []); }
+      fillRect(x, y, w, h) { this._op("fillRect", [+x, +y, +w, +h]); }
+      strokeRect(x, y, w, h) { this._op("strokeRect", [+x, +y, +w, +h]); }
+      clearRect(x, y, w, h) { this._op("clearRect", [+x, +y, +w, +h]); }
+    }
+
+    // The operations this engine does not have, present and reporting.
+    //
+    // Absent would be worse here than anywhere else in the prelude, and it is
+    // the one place the usual rule inverts. Canvas drawing is *incremental*: a
+    // page issues thirty calls in a row, and if the fourth throws
+    // "fillText is not a function" the remaining twenty-six never run, so a
+    // page that would have rendered most of its chart renders none of it — and
+    // the agent gets a blank canvas plus a stack trace about the wrong thing.
+    //
+    // Present-and-reporting keeps the rest of the drawing, and puts the real
+    // answer where an agent will read it: `note: this page used Web APIs this
+    // engine does not have (CanvasRenderingContext2D.fillText x12)`. That is
+    // the routing signal §B8.4 exists for, and it is only available because
+    // `api.canvasOp` answers `false` for what it does not know rather than
+    // quietly returning.
+    //
+    // These are *not* silent stubs. A silent stub returns `undefined` and says
+    // nothing; every one of these names itself the first time it is called.
+    for (const name of [
+      "fillText", "strokeText", "drawImage", "clip", "setLineDash",
+      "ellipse", "arcTo", "roundRect", "putImageData", "createImageData",
+    ]) {
+      CanvasRenderingContext2D.prototype[name] = function (...args) {
+        this._op(name, args.filter((a) => typeof a === "number"));
+      };
+    }
+
+    // The value-returning half. Reported the same way, and answering `null`
+    // rather than a plausible number: a `measureText` that claims a width this
+    // engine never measured is the wrong-answer-that-looks-right this whole
+    // engine is built to refuse, and a page that lays out against it would be
+    // laying out against fiction.
+    for (const name of [
+      "measureText", "createLinearGradient", "createRadialGradient",
+      "createConicGradient", "createPattern", "getImageData", "getLineDash",
+      "isPointInPath", "isPointInStroke",
+    ]) {
+      CanvasRenderingContext2D.prototype[name] = function () {
+        api.unsupported(`CanvasRenderingContext2D.${name}`);
+        return null;
+      };
+    }
+
+    // Properties that configure something unbuilt. Settable, so assignment
+    // does not throw and the surrounding code runs, and named on the way past.
+    for (const name of [
+      "font", "textAlign", "textBaseline", "shadowBlur", "shadowColor",
+      "shadowOffsetX", "shadowOffsetY", "globalCompositeOperation",
+      "imageSmoothingEnabled", "filter", "miterLimit", "direction",
+    ]) {
+      Object.defineProperty(CanvasRenderingContext2D.prototype, name, {
+        configurable: true,
+        get() { return this[`_${name}`]; },
+        set(value) {
+          this[`_${name}`] = value;
+          api.unsupported(`CanvasRenderingContext2D.${name}`);
+        },
+      });
+    }
+    globalThis.CanvasRenderingContext2D = CanvasRenderingContext2D;
+
     on(["canvas"], "getContext", {
       value: function (kind) {
-        api.unsupported(`canvas.getContext(${String(kind)})`);
-        return null;
+        const wanted = String(kind).toLowerCase();
+        if (wanted !== "2d") {
+          // WebGL and the rest are genuinely absent, and `null` is what a
+          // browser returns for a context it cannot provide — so a page's own
+          // fallback branch runs, which is the behaviour the previous comment
+          // here was right about and which still applies to everything but 2D.
+          api.unsupported(`canvas.getContext(${String(kind)})`);
+          return null;
+        }
+        if (!this._context2d) {
+          // The surface is created at the element's current size, which is
+          // what `width`/`height` reflect.
+          const w = this.width || 300;
+          const h = this.height || 150;
+          // No reset: the surface, if one exists, is the page's and must
+          // survive a second `getContext` call.
+          api.canvasSize(this._id, w, h, false);
+          this._context2d = new CanvasRenderingContext2D(this);
+        }
+        return this._context2d;
+      },
+      writable: true,
+    });
+
+    // `canvas.width = canvas.width` is the idiomatic erase, so the setters go
+    // through to the surface rather than only to the attribute.
+    for (const side of ["width", "height"]) {
+      on(["canvas"], side, {
+        get() {
+          const raw = this.getAttribute(side);
+          const parsed = raw === null ? null : parseInt(raw, 10);
+          return Number.isFinite(parsed) ? parsed : (side === "width" ? 300 : 150);
+        },
+        set(value) {
+          const next = Math.max(0, parseInt(value, 10) || 0);
+          this.setAttribute(side, String(next));
+          if (this._context2d) {
+            // Always a reset, even when the number did not change: that is
+            // what makes `canvas.width = canvas.width` the erase every page
+            // uses it as.
+            api.canvasSize(this._id, this.width, this.height, true);
+          }
+        },
+      });
+    }
+
+    on(["canvas"], "toDataURL", {
+      value: function (type) {
+        if (type && String(type).toLowerCase() !== "image/png") {
+          // Named rather than silently answering a PNG under a JPEG's name,
+          // which would be a plausible wrong answer of exactly the kind this
+          // engine refuses.
+          api.unsupported(`canvas.toDataURL(${String(type)})`);
+        }
+        const url = api.canvasPng(this._id);
+        // A canvas nobody drew on has no surface; a 1x1 transparent PNG is
+        // what a browser gives back, and inventing one here would be less
+        // honest than saying the canvas is empty.
+        return url === null ? "data:," : url;
       },
       writable: true,
     });
@@ -2613,6 +2823,13 @@
       this.headers = new Headers(i.headers);
       this.body = i.body ?? null;
       this.signal = i.signal || null;
+      // The two that decide what happens at an origin boundary. Defaults are
+      // the spec's — `cors` and `same-origin` — so a page that says nothing
+      // gets what a browser gives it: the request may cross, and it does not
+      // take the session with it.
+      this.mode = i.mode || (input instanceof Request ? input.mode : "cors");
+      this.credentials =
+        i.credentials || (input instanceof Request ? input.credentials : "same-origin");
     }
   }
 
@@ -3916,18 +4133,39 @@
   const timers = new Map();
   let clock = 0;
 
+  // How long a chain of timers that arm each other goes on holding the page
+  // open. A loop that re-arms itself from inside its own callback — an
+  // animation frame, a poller, a progress tick — is not on its way to
+  // finishing, so counting it as outstanding work means the page can never be
+  // described as anything but busy, and every read of it rides the settle
+  // budget to the end before saying so.
+  //
+  // Past this depth the timers still fire; they stop *counting*. The page is
+  // then reported as running periodic work rather than as unfinished, which is
+  // a different fact and the one an agent can act on.
+  const NESTING_LIMIT = 10;
+  let timerDepth = 0;
+
   function setTimeout(fn, delay, ...args) {
     const id = nextTimer++;
-    timers.set(id, { fn, due: clock + Math.max(0, delay | 0), args, every: null });
+    timers.set(id, {
+      fn, due: clock + Math.max(0, delay | 0), args, every: null, depth: timerDepth + 1,
+    });
     return id;
   }
   function setInterval(fn, delay, ...args) {
     const id = nextTimer++;
     const every = Math.max(1, delay | 0);
-    timers.set(id, { fn, due: clock + every, args, every });
+    timers.set(id, { fn, due: clock + every, args, every, depth: timerDepth + 1 });
     return id;
   }
   function clearTimeout(id) { timers.delete(id); }
+
+  // A timer is *blocking* while the page still owes it: one-shot, and not so
+  // deep in a self-arming chain that it has stopped converging.
+  function timerBlocks(timer) {
+    return timer.every === null && timer.depth < NESTING_LIMIT;
+  }
 
   // Returns the number of callbacks run. The host calls this until it returns
   // zero, advancing its own clock, which is what makes a timer chain settle
@@ -3939,20 +4177,32 @@
       if (timer.due > clock) continue;
       if (timer.every === null) timers.delete(id);
       else timer.due = clock + timer.every;
+      // Anything this callback arms inherits its depth, which is what makes a
+      // self-arming chain measurable at all. Restored in `finally` so a timer
+      // that throws does not leave every later one counted as nested.
+      const outer = timerDepth;
+      timerDepth = timer.depth;
       try { timer.fn(...timer.args); } catch (error) {
         console.error("timer threw: " + withStack(error));
+      } finally {
+        timerDepth = outer;
       }
       ran++;
     }
     return ran;
   };
 
-  // Only one-shot timers count as work outstanding. An interval is perpetual by
-  // definition, so waiting for the queue to drain would mean a page with a
-  // polling loop — a clock, a carousel, an autosave — could never be described
-  // as settled, and every snapshot of it would carry a "still busy" note that
-  // told an agent nothing. Intervals still fire while the clock advances; they
-  // just do not hold the page open.
+  // Only *converging* timers count as work outstanding. An interval is
+  // perpetual by definition, so waiting for the queue to drain would mean a
+  // page with a polling loop — a clock, a carousel, an autosave — could never
+  // be described as settled, and every snapshot of it would carry a "still
+  // busy" note that told an agent nothing.
+  //
+  // A one-shot that re-arms itself is the same thing wearing a different hat,
+  // and it took `NESTING_LIMIT` to see that: `requestAnimationFrame` is a
+  // `setTimeout` here, so an animation loop presented as a fresh one-shot every
+  // frame and rode the whole settle budget before reporting "still busy". Both
+  // kinds still fire while the clock advances; neither holds the page open.
   // ── websockets ─────────────────────────────────────────────────────────
   //
   // Real, or absent. The rule at the top of the "absent, not stubbed" section
@@ -4173,8 +4423,20 @@
 
   globalThis.__h5iPendingTimers = function () {
     let pending = 0;
-    for (const timer of timers.values()) if (timer.every === null) pending++;
+    for (const timer of timers.values()) if (timerBlocks(timer)) pending++;
     return pending;
+  };
+
+  /// Timers that are armed but no longer hold the page open: intervals, and
+  /// one-shots deep enough in a self-arming chain to have stopped converging.
+  ///
+  /// Reported rather than hidden. "Nothing is left to run" and "the only thing
+  /// left is a loop that will never stop" are different answers, and a caller
+  /// that waited for an element deserves to know which one it got.
+  globalThis.__h5iPeriodicTimers = function () {
+    let periodic = 0;
+    for (const timer of timers.values()) if (!timerBlocks(timer)) periodic++;
+    return periodic;
   };
 
   /// When the earliest waiting timer is due, or -1 if none is.
@@ -5279,7 +5541,16 @@
     // that two calls to `fetch` overlap: the old binding did the round trip
     // inline, so a page that fanned out ten requests paid for them in series
     // and every SPA waterfall was ours rather than the site's.
-    const id = api.fetchStart(request.url, request.method, body);
+    // The origin story travels with the request. The host decides what may be
+    // sent and what may be read from it; this side only reports what the page
+    // asked for, because a page that could choose its own answer to those
+    // questions would not be subject to a policy at all.
+    const headerPairs = [];
+    for (const [name, value] of request.headers) headerPairs.push([name, value]);
+    const id = api.fetchStart(
+      request.url, request.method, body,
+      request.mode, request.credentials, headerPairs,
+    );
     return new Promise((resolve, reject) => {
       pendingFetches.set(id, { resolve, reject, request, signal });
     });
@@ -5294,6 +5565,10 @@
     const response = {
       ok: res.ok,
       status: res.status,
+      // What a page checks to find out it was handed an opaque response
+      // rather than a failed one. Reported rather than left to be inferred
+      // from an empty body with status 0, which reads as a network error.
+      type: res.opaque ? "opaque" : "basic",
       statusText: res.status === 200 ? "OK" : "",
       url: res.url,
       redirected: res.url !== request.url,

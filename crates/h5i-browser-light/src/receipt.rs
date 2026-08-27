@@ -78,8 +78,26 @@ pub struct RequestRecord {
     pub denied_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<u16>,
+    /// The body's size *after* decoding, which is what the page received.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
+    /// What actually crossed the wire, when that is a different number.
+    ///
+    /// Recorded separately rather than replacing `bytes`, because the two
+    /// answer different questions and a log that reported one under the other's
+    /// name would be wrong for whichever reader wanted the other. "How much did
+    /// this cost the network" and "how much did the page get" diverge by a
+    /// factor of three to five once compression is negotiated, and an export
+    /// that conflated them would make a compressed fetch look like a smaller
+    /// page rather than a cheaper one.
+    ///
+    /// `None` when the response was not encoded, so an uncompressed request
+    /// records one number and not the same number twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_bytes: Option<u64>,
+    /// How the body was encoded on the wire, when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_encoding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,6 +126,8 @@ impl RequestRecord {
             denied_reason: None,
             status: None,
             bytes: None,
+            wire_bytes: None,
+            content_encoding: None,
             duration_ms: None,
             error: None,
             cookies_sent: None,
@@ -143,7 +163,17 @@ impl RequestRecord {
             (Some(status), None) => {
                 let bytes = self.bytes.unwrap_or(0);
                 let ms = self.duration_ms.unwrap_or(0);
-                format!("{status:>6} {} {} ({bytes} bytes, {ms}ms)", self.method, self.url)
+                // Both numbers when they differ, because "184 KB" and "43 KB
+                // on the wire" are two facts a reader wants and one line that
+                // showed either alone would be answering the other's question.
+                let size = match (self.wire_bytes, self.content_encoding.as_deref()) {
+                    (Some(wire), Some(encoding)) => {
+                        format!("{bytes} bytes, {wire} on the wire {encoding}")
+                    }
+                    (None, Some(encoding)) => format!("{bytes} bytes {encoding}"),
+                    _ => format!("{bytes} bytes"),
+                };
+                format!("{status:>6} {} {} ({size}, {ms}ms)", self.method, self.url)
             }
             (None, None) => format!("       {} {}", self.method, self.url),
         }

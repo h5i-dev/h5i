@@ -38,6 +38,21 @@ pub struct PageOptions {
     /// a change to what an untrusted page can do inside the box rather than a
     /// rendering preference (ROADMAP §12.5).
     pub script: bool,
+    /// How long one navigation may take, first byte to last.
+    ///
+    /// The bound the per-phase budgets could not give. A request timeout bounds
+    /// a request, the script-phase budget bounds the script, and a page that
+    /// spends thirty seconds on the network *and* twenty in its script is
+    /// inside every one of them while taking the better part of a minute.
+    ///
+    /// This is the cheap half of "make JavaScript stoppable": it does not kill
+    /// a single runaway job — Boa's cancellation is checked between jobs, and
+    /// only a separate process could interrupt one — but it bounds everything
+    /// that *is* interruptible under one number, and it does so without
+    /// splitting the engine in half. `Page` holds an `Rc<RefCell<BaseDocument>>`
+    /// and is pinned to its thread; moving script into a killable worker means
+    /// moving the document with it.
+    pub navigation_budget: std::time::Duration,
 }
 
 impl Default for PageOptions {
@@ -48,8 +63,24 @@ impl Default for PageOptions {
             scale: 1.0,
             max_snapshot_lines: 500,
             script: false,
+            // Above what a slow real page takes and far below what a stuck one
+            // would, which is the shape every ceiling in this engine has.
+            navigation_budget: std::time::Duration::from_secs(45),
         }
     }
+}
+
+/// What [`Page::select_option`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectOutcome {
+    /// Set. Carries the value the form will submit, which is what a recording
+    /// should hold — the text is what the agent read, and the two differ on
+    /// most real forms.
+    Chosen(String),
+    /// It is a `<select>`, and nothing in it matched by value or by text.
+    NoSuchOption,
+    /// It was never a `<select>`.
+    NotASelect,
 }
 
 /// A request a form asked for, caught on its way to the network.
@@ -159,6 +190,19 @@ pub struct Page {
     /// flipping it is a threat-model decision rather than a feature flag
     /// (ROADMAP §12.5).
     script: Option<crate::script::Script>,
+    /// What this page's load cost, against what it was allowed.
+    ///
+    /// Recorded on the page rather than read from the broker at snapshot time,
+    /// because the broker's counters belong to whatever page is loading *now*
+    /// and a snapshot of an earlier page would read the wrong ones.
+    budget_spent: Option<(crate::budget::Spent, crate::budget::Limits)>,
+    /// How long this navigation has left.
+    ///
+    /// Armed when the page began loading, not when the script phase starts, so
+    /// the time already spent on the network counts against it. That is the
+    /// point: the per-phase budgets each bound their own step, and a page that
+    /// is inside every one of them can still take the better part of a minute.
+    deadline: crate::budget::Deadline,
     /// Whether `run_scripts` was called, regardless of whether it built a realm.
     ///
     /// A page with no script elements never gets one, so `script.is_some()`
@@ -330,6 +374,21 @@ impl Page {
     }
 
     /// Parse markup into a document. Separated so it can be attempted twice.
+    /// One rule this engine adds to the user-agent stylesheet.
+    ///
+    /// A `<canvas>` is a replaced element: browsers lay it out at its own
+    /// width and height even though its `display` is `inline`. Blitz's default
+    /// sheet gives it no such treatment, so an inline canvas measured zero by
+    /// zero, and a surface composited onto a zero-sized box paints nothing —
+    /// the drawing worked, the pixels existed, and the page was blank.
+    ///
+    /// `inline-block` is the closest shape Blitz will size correctly, and it
+    /// keeps a canvas flowing inline with the text around it, which is where
+    /// pages put them. Added as a *user-agent* rule so a page's own stylesheet
+    /// still overrides it, which is what makes this a default rather than a
+    /// decision taken away from the document.
+    const CANVAS_UA_CSS: &'static str = "canvas { display: inline-block; }";
+
     fn parse(
         html: &str,
         base_url: &Url,
@@ -362,6 +421,15 @@ impl Page {
             },
         )
         .into_inner()
+    }
+
+    /// Apply this engine's own additions to the user-agent stylesheet.
+    ///
+    /// One rule today ([`Page::CANVAS_UA_CSS`]). Kept as a step of its own so
+    /// the next one has an obvious home, and so it runs on every path that
+    /// builds a document rather than on whichever one somebody remembered.
+    fn apply_ua_stylesheet(doc: &mut BaseDocument) {
+        doc.add_user_agent_stylesheet(Self::CANVAS_UA_CSS);
     }
 
     pub fn from_html(
@@ -423,6 +491,7 @@ impl Page {
             },
         };
 
+        Self::apply_ua_stylesheet(&mut doc);
         seed_checkbox_state(&mut doc);
 
         // Twice, deliberately. The broker is synchronous, so subresources have
@@ -452,6 +521,10 @@ impl Page {
             encoding: encoding_rs::UTF_8,
             doc: Rc::new(RefCell::new(doc)),
             url: base_url.clone(),
+            // Armed here rather than at the script phase, so the fetching and
+            // parsing already done count against it.
+            deadline: crate::budget::Deadline::new(options.navigation_budget),
+            budget_spent: None,
             options,
             pending_navigation,
             script: None,
@@ -578,6 +651,7 @@ impl Page {
                 timers_run: 0,
                 cut_off: false,
                 pending_timers: 0,
+                periodic_timers: 0,
             });
             return Ok(());
         }
@@ -606,6 +680,10 @@ impl Page {
             });
 
         let phase_started = std::time::Instant::now();
+        // Whichever runs out first. The script phase has its own ceiling, and
+        // the navigation has one over the whole load; a page that spent thirty
+        // seconds fetching does not then get a fresh twenty to run in.
+        let phase_budget = SCRIPT_PHASE_BUDGET.min(self.deadline.remaining());
         let mut skipped = 0usize;
         // The origin every `src` below is fetched on behalf of. Cloned once so
         // the loops do not have to hold a borrow of `self` across the calls
@@ -613,7 +691,7 @@ impl Page {
         let document = self.url.clone();
 
         for (index, (node, source)) in classic.into_iter().enumerate() {
-            if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
+            if phase_started.elapsed() >= phase_budget {
                 skipped += 1;
                 continue;
             }
@@ -687,11 +765,11 @@ impl Page {
         // budget and then the job budget cost the sum of the two — lit.dev took
         // 46 seconds against a 20-second intent. What is left of the phase is
         // what settling gets.
-        let left = SCRIPT_PHASE_BUDGET.saturating_sub(phase_started.elapsed());
+        let left = phase_budget.saturating_sub(phase_started.elapsed());
         script.set_job_budget(left.max(std::time::Duration::from_secs(1)));
 
         for (_, source) in modules {
-            if phase_started.elapsed() >= SCRIPT_PHASE_BUDGET {
+            if phase_started.elapsed() >= phase_budget {
                 skipped += 1;
                 continue;
             }
@@ -771,6 +849,12 @@ impl Page {
         self.settled = Some(settled);
         self.script = Some(script);
         self.ran_scripts = true;
+        // A canvas drawn during the script phase reaches the page here. The
+        // realm has to be installed on `self` first, because the surfaces live
+        // on its host — so this cannot move above the line before it.
+        if self.composite_canvases() {
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        }
         Ok(())
     }
 
@@ -791,7 +875,8 @@ impl Page {
         let dirty = script.take_dirty();
         let requests = script.take_requests();
         self.settled = Some(settled);
-        if dirty {
+        let painted = self.composite_canvases();
+        if dirty || painted {
             self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
         }
         Some(requests)
@@ -840,6 +925,7 @@ impl Page {
                     timers_run: 0,
                     cut_off: false,
                     pending_timers: 0,
+                    periodic_timers: 0,
                 },
                 end: if met {
                     crate::script::WaitEnd::Met
@@ -874,10 +960,105 @@ impl Page {
     fn after_script(&mut self, settled: crate::script::Settled) -> bool {
         let dirty = self.script.as_mut().map(|s| s.take_dirty()).unwrap_or(false);
         self.settled = Some(settled);
-        if dirty {
+        // Canvas surfaces reach the page here, before layout rather than after:
+        // attaching the pixels sets the element's intrinsic size, which the
+        // layout pass then has to see.
+        let painted = self.composite_canvases();
+        if dirty || painted {
             self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
         }
-        dirty
+        dirty || painted
+    }
+
+    /// Hand every drawn canvas surface to the document as raster image data.
+    ///
+    /// `blitz-paint` draws `raster_image_data()` for *any* element, not only
+    /// `<img>`, which is what lets a canvas composite into the page with no
+    /// changes to the paint path and no GPU surface. Blitz's own
+    /// `CanvasData` is the other route and is not usable here: it carries a
+    /// `custom_paint_source_id` for an external renderer, and this engine's
+    /// canvas *is* a CPU buffer.
+    ///
+    /// Returns whether anything changed, so a page with no canvas pays nothing
+    /// and a page whose canvas has not been drawn on since the last pass pays
+    /// nothing either.
+    fn composite_canvases(&mut self) -> bool {
+        let Some(script) = self.script.as_ref() else {
+            return false;
+        };
+        let host = script.host();
+        if host.canvases.borrow().is_empty() {
+            return false;
+        }
+
+        let mut canvases = host.canvases.borrow_mut();
+        let dirty = canvases.dirty();
+        if dirty.is_empty() {
+            return false;
+        }
+
+        let doc = self.doc.clone();
+        let mut doc = doc.borrow_mut();
+        let mut painted = false;
+        for node_id in dirty {
+            let Some(canvas) = canvases.get_mut(node_id) else {
+                continue;
+            };
+            let (width, height) = (canvas.width(), canvas.height());
+            // The paint path expects straight-alpha RGBA; the surface is
+            // premultiplied, which is how the rasteriser writes it. Getting
+            // this backwards darkens every semi-transparent pixel — the kind
+            // of wrong that looks plausible until it is beside a browser.
+            let mut straight = Vec::with_capacity(canvas.pixels().len());
+            for pixel in canvas.pixels().as_chunks::<4>().0 {
+                let alpha = pixel[3];
+                if alpha == 0 {
+                    straight.extend_from_slice(&[0, 0, 0, 0]);
+                    continue;
+                }
+                let un = |channel: u8| -> u8 {
+                    ((channel as u32 * 255 + alpha as u32 / 2) / alpha as u32).min(255) as u8
+                };
+                straight.extend_from_slice(&[un(pixel[0]), un(pixel[1]), un(pixel[2]), alpha]);
+            }
+
+            let Some(node) = doc.get_node_mut(node_id) else {
+                continue;
+            };
+            let Some(element) = node.element_data_mut() else {
+                continue;
+            };
+            element.special_data = blitz_dom::node::SpecialElementData::Image(Box::new(
+                blitz_dom::node::ImageData::Raster(blitz_dom::node::RasterImageData::new(
+                    width,
+                    height,
+                    std::sync::Arc::new(straight),
+                )),
+            ));
+            canvas.mark_composited();
+            painted = true;
+        }
+        painted
+    }
+
+    /// Fire one key event at a node, if this page has a realm to fire it into.
+    ///
+    /// Silent when there is none, which is the same shape `dispatch_event`
+    /// takes: a page with no script cannot be listening, so there is nothing
+    /// the absence could be hiding.
+    fn dispatch_key(&mut self, node_id: usize, kind: &str, key: &str) {
+        let Some(script) = self.script.as_mut() else {
+            return;
+        };
+        let _ = script.dispatch_key(node_id, kind, key);
+        let settled = script.settle();
+        let dirty = script.take_dirty();
+        let _ = script.take_requests();
+        self.settled = Some(settled);
+        let painted = self.composite_canvases();
+        if dirty || painted {
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        }
     }
 
     /// How many sockets this page holds open.
@@ -1000,8 +1181,46 @@ impl Page {
             ));
         }
 
+        // What this page spent, when it spent enough to matter.
+        //
+        // Said rather than left in the request log, because a page that ran out
+        // of allowance is a page whose reading is *incomplete* — the same class
+        // of fact as "this page had not finished". An agent that is not told
+        // reads a half-loaded page as the whole one.
+        if let Some((spent, limits)) = &self.budget_spent {
+            if spent.requests > limits.max_requests {
+                snapshot.notes.push(format!(
+                    "this page asked for more than {} requests in one navigation and the \
+                     rest were refused. What follows was read from what it managed to load; \
+                     the request log names which were denied.",
+                    limits.max_requests
+                ));
+            } else if spent.wire_bytes > limits.max_wire_bytes
+                || spent.decoded_bytes > limits.max_decoded_bytes
+            {
+                snapshot.notes.push(format!(
+                    "this page pulled {} bytes ({} decoded) and passed its budget for one \
+                     navigation, so later requests were refused.",
+                    spent.wire_bytes, spent.decoded_bytes
+                ));
+            } else if spent.network_time > limits.max_network_time {
+                snapshot.notes.push(format!(
+                    "this page spent {}ms waiting on the network, past its budget for one \
+                     navigation, so later requests were refused.",
+                    spent.network_time.as_millis()
+                ));
+            }
+        }
+
+        // Two different facts, one line. `cut_off` says the reading stopped
+        // before the page did. `periodic_timers` says the page finished what it
+        // owed and is still running a loop that re-arms itself, which makes two
+        // reads of it disagree without the agent having acted — the same caveat
+        // `open_sockets` carries, and it belongs in the outline for the same
+        // reason. Silence here would leave an agent unable to tell a page that
+        // is animating from one that is done.
         if let Some(settled) = &self.settled
-            && settled.cut_off
+            && (settled.cut_off || settled.periodic_timers > 0)
         {
             snapshot.notes.push(settled.render());
         }
@@ -1072,6 +1291,206 @@ impl Page {
     /// Returns `false` when the node is not something that takes text, so the
     /// caller can say which of "no such ref" and "that is a link, not a field"
     /// happened.
+    /// Set a checkbox or radio to a state, rather than toggling it.
+    ///
+    /// **The reason this exists beside `click` is replay.** A click on a
+    /// checkbox is a *toggle*: run it twice and you are back where you started,
+    /// so a recorded session that clicks one reaches a different state
+    /// depending on what the page happened to be serving. Setting a state is
+    /// idempotent, which is what a script replayed tomorrow needs.
+    ///
+    /// Returns `None` when the node is not something this can act on, so the
+    /// caller can say *which* wrong kind of thing it was rather than reporting
+    /// a generic failure.
+    pub fn set_checked(&mut self, node_id: usize, checked: bool) -> Option<bool> {
+        let was = {
+            let doc = self.doc.borrow();
+            let element = doc.get_node(node_id)?.element_data()?;
+            if element.name.local != local_name!("input") {
+                return None;
+            }
+            let kind = element.attr(local_name!("type")).unwrap_or("text");
+            if !(kind.eq_ignore_ascii_case("checkbox") || kind.eq_ignore_ascii_case("radio")) {
+                return None;
+            }
+            matches!(element.special_data, SpecialElementData::CheckboxInput(true))
+        };
+
+        if was == checked {
+            // Already there. Reported as a no-op rather than dispatched, or a
+            // replay would fire a `change` the original run never fired.
+            return Some(false);
+        }
+
+        {
+            let mut doc = self.doc.borrow_mut();
+            // A radio turns its group off, which is what makes the group a
+            // group. Done here rather than left to the page, because nothing
+            // else in this engine implements the exclusivity and a form
+            // submitted with two of a group checked is a wrong answer.
+            if checked {
+                let name = doc
+                    .get_node(node_id)
+                    .and_then(|node| node.element_data())
+                    .filter(|el| {
+                        el.attr(local_name!("type"))
+                            .is_some_and(|k| k.eq_ignore_ascii_case("radio"))
+                    })
+                    .and_then(|el| el.attr(local_name!("name")))
+                    .map(str::to_string);
+                if let Some(name) = name {
+                    let siblings: Vec<usize> = doc
+                        .tree()
+                        .iter()
+                        .filter_map(|(id, node)| {
+                            if id == node_id {
+                                return None;
+                            }
+                            let el = node.data.downcast_element()?;
+                            let is_radio = el
+                                .attr(local_name!("type"))
+                                .is_some_and(|k| k.eq_ignore_ascii_case("radio"));
+                            let same_group =
+                                el.attr(local_name!("name")).is_some_and(|n| n == name);
+                            (is_radio && same_group).then_some(id)
+                        })
+                        .collect();
+                    for id in siblings {
+                        if let Some(el) = doc
+                            .get_node_mut(id)
+                            .and_then(|node| node.data.downcast_element_mut())
+                        {
+                            el.special_data = SpecialElementData::CheckboxInput(false);
+                        }
+                    }
+                }
+            }
+
+            let element = doc
+                .get_node_mut(node_id)
+                .and_then(|node| node.data.downcast_element_mut())?;
+            element.special_data = SpecialElementData::CheckboxInput(checked);
+            // `:checked` is a real selector and the cascade has to see it.
+            let _ = guard_layout(|| doc.resolve(0.0));
+        }
+
+        // The pair a *user* edit fires, in the order a page expects. A page
+        // that enables its submit button on `change` needs this or the button
+        // stays disabled through a replay that looks like it worked.
+        self.dispatch_event(node_id, "input");
+        self.dispatch_event(node_id, "change");
+        Some(true)
+    }
+
+    /// Choose an option in a `<select>`, by its value or its visible text.
+    ///
+    /// Both, because an agent reading a snapshot sees the *text* and a
+    /// recorded script should carry the *value*: the first is what a model has
+    /// in hand and the second is what survives a re-render. Value is tried
+    /// first, so a page whose option text happens to match another option's
+    /// value behaves predictably.
+    ///
+    /// The three outcomes are kept apart because they are three different
+    /// mistakes: it worked, it is a `<select>` and nothing in it matched
+    /// (the caller's to fix from a fresh reading), or it was never a `<select>`
+    /// (the caller aimed at the wrong element). One message for all three would
+    /// send two of them looking in the wrong place.
+    pub fn select_option(&mut self, node_id: usize, wanted: &str) -> SelectOutcome {
+        let options: Vec<(usize, String, String)> = {
+            let doc = self.doc.borrow();
+            let element = doc.get_node(node_id).and_then(|node| node.element_data());
+            let Some(element) = element else {
+                return SelectOutcome::NotASelect;
+            };
+            if element.name.local != local_name!("select") {
+                return SelectOutcome::NotASelect;
+            }
+            let mut found = Vec::new();
+            let mut stack: Vec<usize> = doc.get_node(node_id).map(|n| n.children.clone()).unwrap_or_default();
+            stack.reverse();
+            while let Some(id) = stack.pop() {
+                let Some(child) = doc.get_node(id) else { continue };
+                if child.data.is_element_with_tag_name(&local_name!("option")) {
+                    let text = crate::snapshot::collapse(&child.text_content());
+                    let value = child
+                        .element_data()
+                        .and_then(|el| el.attr(local_name!("value")))
+                        .map(str::to_string)
+                        // An option with no `value` submits its text, which is
+                        // the rule a form actually follows.
+                        .unwrap_or_else(|| text.clone());
+                    found.push((id, value, text));
+                }
+                let mut kids = child.children.clone();
+                kids.reverse();
+                stack.extend(kids);
+            }
+            found
+        };
+
+        let chosen = options
+            .iter()
+            .find(|(_, value, _)| value == wanted)
+            .or_else(|| options.iter().find(|(_, _, text)| text == wanted))
+            .cloned();
+        let Some((chosen_id, value, _)) = chosen else {
+            return SelectOutcome::NoSuchOption;
+        };
+
+        {
+            let mut doc = self.doc.borrow_mut();
+            // Exactly one selected, which is what a single `<select>` means
+            // and what `snapshot` reads back to name the control.
+            for (id, _, _) in &options {
+                if let Some(el) = doc
+                    .get_node_mut(*id)
+                    .and_then(|node| node.data.downcast_element_mut())
+                {
+                    if *id == chosen_id {
+                        el.attrs.push(blitz_dom::node::Attribute {
+                            name: blitz_dom::QualName::new(
+                                None,
+                                blitz_dom::ns!(),
+                                local_name!("selected"),
+                            ),
+                            value: "selected".into(),
+                        });
+                    } else {
+                        el.attrs.retain(|a| a.name.local != local_name!("selected"));
+                    }
+                }
+            }
+            let _ = guard_layout(|| doc.resolve(0.0));
+        }
+
+        self.dispatch_event(node_id, "input");
+        self.dispatch_event(node_id, "change");
+        SelectOutcome::Chosen(value)
+    }
+
+    /// Send a key to whatever has focus, or to a named element.
+    ///
+    /// Not typing: this is `Enter` to submit, `Escape` to dismiss, `Tab` to
+    /// move on — the keys that *do* something rather than the ones that enter
+    /// text. `type` covers the second and this covers the first, and merging
+    /// them would mean a verb whose meaning depended on its argument.
+    pub fn press(&mut self, node_id: usize, key: &str) -> bool {
+        {
+            let mut doc = self.doc.borrow_mut();
+            if doc.get_node(node_id).is_none() {
+                return false;
+            }
+            doc.set_focus_to(node_id);
+        }
+        // A real key is three events, and a page may be listening for any of
+        // them: `keydown` is where `preventDefault` belongs, `keypress` is
+        // where legacy code lives, `keyup` is where a debounce ends.
+        for kind in ["keydown", "keypress", "keyup"] {
+            self.dispatch_key(node_id, kind, key);
+        }
+        true
+    }
+
     pub fn type_into(&mut self, node_id: usize, text: &str) -> bool {
         let mut doc = self.doc.borrow_mut();
         let takes_text = doc
@@ -1329,6 +1748,7 @@ impl PageFactory {
     /// Load whatever a form asked for, through the same broker as everything
     /// else. A refused submission is an error the agent reads, not a blank page.
     pub fn open_submission(&self, submission: &Submission) -> Result<Page, H5iError> {
+        self.begin_navigation();
         let outcome = self.broker.send_from(
             &submission.url,
             Initiator::Navigation,
@@ -1404,6 +1824,11 @@ impl PageFactory {
         if self.options.script {
             page.run_scripts(self.broker.clone())?;
         }
+        // After everything, so subresources and script fetches are counted.
+        page.budget_spent = Some((
+            self.broker.budget().spent(),
+            self.broker.budget().limits().clone(),
+        ));
         Ok(())
     }
 
@@ -1425,7 +1850,22 @@ impl PageFactory {
         self.options.script
     }
 
+    /// A navigation is starting.
+    ///
+    /// The page's network allowance resets here, at the top of every path that
+    /// builds one. A fresh page is a fresh decision by the agent, and the
+    /// budget exists to bound untrusted page code rather than the principal
+    /// driving the engine (see [`crate::budget`]).
+    ///
+    /// Before the navigation's own request, deliberately: resetting afterwards
+    /// would give the page that just spent its allowance a clean slate for the
+    /// subresources it is about to ask for.
+    fn begin_navigation(&self) {
+        self.broker.budget().reset();
+    }
+
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
+        self.begin_navigation();
         // Leaving an origin drops its cookies — in `finish`, against the origin
         // actually loaded rather than the one asked for. See
         // `cookies::Jar::retain_origin` for why that bound exists and what it
@@ -1443,6 +1883,7 @@ impl PageFactory {
     /// The same as [`PageFactory::from_html`], but from bytes whose encoding is
     /// not yet known — so the document gets to say what it is written in.
     pub fn from_bytes(&self, bytes: &[u8], content_type: Option<&str>, base_url: &Url) -> Page {
+        self.begin_navigation();
         self.finish_reporting(Page::from_bytes(
             bytes,
             content_type,
@@ -1454,6 +1895,7 @@ impl PageFactory {
     }
 
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
+        self.begin_navigation();
         self.finish_reporting(Page::from_html(
             html,
             base_url,
@@ -1886,8 +2328,22 @@ mod tests {
         assert!(rendered.contains("paragraph \"See the guide for more.\""), "{rendered}");
         // ...and the link is addressable underneath it rather than lost in it.
         assert!(rendered.contains("link \"guide\" [ref=e1]"), "{rendered}");
-        // An empty input is named by its placeholder, not left anonymous.
-        assert!(rendered.contains("textbox \"you@example.com\""), "{rendered}");
+        // Named by its `<label>`, which beats the placeholder: that is the
+        // order the accessible-name computation specifies, and it is the
+        // better handle — "Email" is what a person sees the field called, and
+        // the placeholder is example text that a redesign will change.
+        assert!(rendered.contains("textbox \"Email\""), "{rendered}");
+        // The placeholder is still the fallback where there is no label.
+        let bare = page_from(
+            r#"<!doctype html><body><input type="email" placeholder="you@example.com"></body>"#,
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+        );
+        assert!(
+            bare.snapshot().render().contains("textbox \"you@example.com\""),
+            "{}",
+            bare.snapshot().render()
+        );
         // The hidden CSRF field is not something to act on, and its value is
         // not something to put in front of a model.
         assert!(!rendered.contains("secret-token"), "{rendered}");
@@ -2248,6 +2704,83 @@ mod input_tests {
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
         let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
         factory.from_html(html, &Url::parse("https://site.example/page").unwrap())
+    }
+
+    /// A wrapper that has swallowed a block of structure used to report one
+    /// run-on line — `TitleBody textRead more`, three pieces of the page with
+    /// no separator — and then suppress those pieces as prose it claimed to
+    /// have already said. It had said them all at once, unreadably, and the
+    /// structure an outline exists to show was gone.
+    #[test]
+    fn a_list_item_does_not_swallow_the_block_inside_it() {
+        let page = page_with(
+            "<html><body><ul><li>\
+               <h3>Widget</h3>\
+               <p>A thing that widgets.</p>\
+               <a href=\"/buy\">Buy now</a>\
+             </li></ul></body></html>",
+        );
+        let rendered = page.snapshot().render();
+
+        assert!(
+            !rendered.contains("WidgetA thing"),
+            "the wrapper ran the block together:\n{rendered}"
+        );
+        for piece in ["Widget", "A thing that widgets.", "Buy now"] {
+            assert!(
+                rendered.contains(piece),
+                "{piece:?} was suppressed as prose the wrapper never said:\n{rendered}"
+            );
+        }
+        // And each piece appears once, not once inside the wrapper's line and
+        // again on its own.
+        assert_eq!(
+            rendered.matches("A thing that widgets.").count(),
+            1,
+            "duplicated:\n{rendered}"
+        );
+    }
+
+    /// The other side of the same rule, and the reason it is scoped to *block*
+    /// descendants. Prose with a link in it is read well by the existing rule,
+    /// and a heading wrapping a single link is a shape where the wrapper's name
+    /// is the only thing carrying the heading level. Neither may change.
+    #[test]
+    fn prose_with_a_link_and_a_heading_around_one_are_unchanged() {
+        let page = page_with(
+            "<html><body>\
+               <p>Please <a href=\"/here\">read this</a> first.</p>\
+               <h2><a href=\"/sec\">Section two</a></h2>\
+             </body></html>",
+        );
+        let rendered = page.snapshot().render();
+        assert!(
+            rendered.contains("Please read this first."),
+            "the paragraph lost its own sentence:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Section two"),
+            "the heading lost its name:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("heading2"),
+            "the heading level went missing:\n{rendered}"
+        );
+    }
+
+    /// A table cell is the same shape as a list item and was wrong the same way.
+    #[test]
+    fn a_table_cell_does_not_swallow_the_block_inside_it() {
+        let page = page_with(
+            "<html><body><table><tr><td>\
+               <p>First</p><p>Second</p>\
+             </td></tr></table></body></html>",
+        );
+        let rendered = page.snapshot().render();
+        assert!(
+            !rendered.contains("FirstSecond"),
+            "the cell ran its paragraphs together:\n{rendered}"
+        );
     }
 
     fn ref_node(page: &Page, name: &str) -> usize {

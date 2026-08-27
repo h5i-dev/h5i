@@ -75,8 +75,15 @@ struct Cli {
 enum Command {
     /// Load a page, then report what it says and what it tried to reach.
     Open {
-        /// A URL, or a path to a local HTML file.
-        target: String,
+        /// One or more URLs, or paths to local HTML files.
+        ///
+        /// Several share one browser: one connection pool, one cookie jar and
+        /// one font set across the batch, so a run over twenty pages does not
+        /// re-read the font files twenty times or throw away every keep-alive
+        /// connection between them. They are read in order, and a page that
+        /// fails does not stop the ones after it.
+        #[arg(required = true, num_args = 1..)]
+        targets: Vec<String>,
 
         #[command(flatten)]
         net: NetArgs,
@@ -160,6 +167,32 @@ enum Command {
     #[command(subcommand)]
     Session(SessionVerb),
 
+    /// Run a recorded script against the session a `serve` is holding open.
+    ///
+    /// No model, no tokens. The script is a list of steps made of verified CSS
+    /// selectors, produced by `session script --save`, and this sends each one
+    /// through the same control channel an agent would use — so the policy, the
+    /// receipts and the action log all see a replay exactly as they see a live
+    /// session.
+    ///
+    /// A replay on this engine visits the same states in the same order,
+    /// because the settle runs on a virtual clock rather than a wall clock. A
+    /// recording, the request log it produced, and a replay that lands
+    /// identically are a browser session that can be re-executed and diffed.
+    Replay {
+        /// The script, as written by `session script --save`.
+        script: PathBuf,
+        /// Keep going after a step fails, and report how many did.
+        ///
+        /// Off by default: a replay is a sequence, and a step that acts on a
+        /// page the previous step failed to reach is acting somewhere the
+        /// script never described.
+        #[arg(long)]
+        keep_going: bool,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// Report what this engine can and cannot do, as JSON.
     ///
     /// h5i reads this to decide what to route here rather than inferring it
@@ -196,6 +229,15 @@ enum SessionVerb {
         /// and the reply says which it is.
         #[arg(long)]
         delta: bool,
+        /// Go here first, then read.
+        ///
+        /// One round trip instead of `navigate` followed by this verb, which
+        /// costs an agent a whole turn through a model to read a reply it only
+        /// uses to send the next request. Relative to the current page, like
+        /// `navigate`. The reply carries the URL it ended up on, so a redirect
+        /// is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -241,17 +283,72 @@ enum SessionVerb {
     },
     /// Put text into a field, replacing what was there.
     Type {
-        /// `e3` or `@e3`, from a `snapshot`.
-        reference: String,
-        /// The text to put in it.
-        text: String,
+        /// `e3` or `@e3` from a `snapshot`, then the text.
+        ///
+        /// With `--selector`, pass the text alone: the selector is the handle.
+        ///
+        /// Both positionals are optional to clap and checked in code, because
+        /// clap refuses an optional positional before a required one — and
+        /// with `--selector` the ref is genuinely absent. The check gives a
+        /// better message than clap's would anyway: it can say which of the
+        /// two forms was half-used.
+        #[arg(value_name = "REF|TEXT")]
+        reference: Option<String>,
+        #[arg(value_name = "TEXT")]
+        text: Option<String>,
+        /// A CSS selector instead of a `@ref`, which is what a `snapshot`'s
+        /// `refs` carry beside each one.
+        ///
+        /// The durable handle. A `@ref` is a position in the reading that
+        /// minted it and is checked against that reading; a selector names
+        /// whatever it matches now, which is what makes it survive a
+        /// navigation and what makes a recorded session replayable.
+        ///
+        /// No `conflicts_with` here, unlike `click` and `submit`: with a
+        /// selector the remaining positional carries the *text*, so the two
+        /// are used together rather than instead of each other.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
     /// Submit the form containing a `@ref`.
     Submit {
         /// Any `@ref` inside the form — the submit button, or a field.
-        reference: String,
+        reference: Option<String>,
+        /// A CSS selector instead, which is what a `snapshot`'s `refs` carry
+        /// beside each `@ref`.
+        ///
+        /// The durable handle. A `@ref` is a position in the reading that
+        /// minted it and is checked against that reading; a selector names
+        /// whatever it matches now, which is what makes it survive a
+        /// navigation and what makes a recorded session replayable.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -262,6 +359,10 @@ enum SessionVerb {
     /// waiting for — so that comes back immediately rather than after a budget
     /// spent proving it.
     WaitFor {
+        // No `--role` here, unlike the action verbs. Their `--selector` names
+        // *a handle on one element*; this one is a **condition** — "wait until
+        // something matches" — and the two happen to share a spelling. A role
+        // locator here would read as the first and behave as the second.
         /// A CSS selector that must match at least one element.
         #[arg(long, value_name = "CSS")]
         selector: Option<String>,
@@ -296,6 +397,15 @@ enum SessionVerb {
     Extract {
         /// The schema, as JSON.
         schema: String,
+        /// Go here first, then read.
+        ///
+        /// One round trip instead of `navigate` followed by this verb, which
+        /// costs an agent a whole turn through a model to read a reply it only
+        /// uses to send the next request. Relative to the current page, like
+        /// `navigate`. The reply carries the URL it ended up on, so a redirect
+        /// is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -305,6 +415,193 @@ enum SessionVerb {
         /// Stop after this many bytes. Truncation is always announced.
         #[arg(long, value_name = "BYTES")]
         max_bytes: Option<usize>,
+        /// Go here first, then read.
+        ///
+        /// One round trip instead of `navigate` followed by this verb, which
+        /// costs an agent a whole turn through a model to read a reply it only
+        /// uses to send the next request. Relative to the current page, like
+        /// `navigate`. The reply carries the URL it ended up on, so a redirect
+        /// is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// What this session did, as something that can be run again.
+    ///
+    /// Made of verified CSS selectors rather than `@ref` ordinals, because an
+    /// ordinal names a position in the reading that minted it and a replay
+    /// happens against a later page. Steps whose element had no verifiable
+    /// selector are dropped and counted rather than written down wrongly.
+    ///
+    /// Reads are not in it: a replay exists to reach a state, and a snapshot
+    /// changes nothing. `type` records the placeholder it was given, never a
+    /// resolved credential.
+    Script {
+        /// Write the steps here as JSON, for `replay`.
+        #[arg(long, value_name = "PATH")]
+        save: Option<PathBuf>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Set a checkbox or radio to a state, rather than toggling it.
+    ///
+    /// Prefer this to `click` on a checkbox. A click *toggles*, so a recorded
+    /// session that clicks one reaches a different state depending on what the
+    /// page was serving; setting a state is idempotent and replays to the same
+    /// place. Fires `input` and `change` like a real edit, and turns off the
+    /// rest of a radio group.
+    SetChecked {
+        /// `e3` or `@e3` from a `snapshot`, then `true` or `false`.
+        ///
+        /// With `--selector`, pass the state alone.
+        #[arg(value_name = "REF|STATE")]
+        reference: Option<String>,
+        #[arg(value_name = "STATE")]
+        checked: Option<String>,
+        /// A CSS selector instead of a `@ref`.
+        ///
+        /// No `conflicts_with`, unlike `click` and `submit`: with a selector
+        /// the remaining positional carries the *value*, so the two are used
+        /// together rather than instead of each other.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Choose an option in a `<select>`, by its value or the text it shows.
+    ///
+    /// Value first, then text: an agent reading a snapshot has the text, and a
+    /// recorded script should carry the value, because that is what the form
+    /// submits and what survives a re-render.
+    Select {
+        /// `e3` or `@e3` from a `snapshot`, then the option.
+        ///
+        /// With `--selector`, pass the option alone.
+        #[arg(value_name = "REF|OPTION")]
+        reference: Option<String>,
+        #[arg(value_name = "OPTION")]
+        option: Option<String>,
+        /// A CSS selector instead of a `@ref`.
+        ///
+        /// No `conflicts_with`, unlike `click` and `submit`: with a selector
+        /// the remaining positional carries the *value*, so the two are used
+        /// together rather than instead of each other.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Send a key that does something: Enter, Escape, Tab, ArrowDown.
+    ///
+    /// Not typing. `type` enters text; this sends the keys a page *listens*
+    /// for, and merging them would make one verb whose meaning depended on its
+    /// argument. Fires keydown, keypress and keyup, because a page may be
+    /// waiting on any of the three.
+    Press {
+        /// `e3` or `@e3` from a `snapshot`, then the key.
+        ///
+        /// With `--selector`, pass the key alone. Spelled as
+        /// `KeyboardEvent.key` spells it: `Enter`, `Escape`, `Tab`.
+        #[arg(value_name = "REF|KEY")]
+        reference: Option<String>,
+        #[arg(value_name = "KEY")]
+        key: Option<String>,
+        /// A CSS selector instead of a `@ref`.
+        ///
+        /// No `conflicts_with`, unlike `click` and `submit`: with a selector
+        /// the remaining positional carries the *value*, so the two are used
+        /// together rather than instead of each other.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Locate elements by role and name, the way the outline names them.
+    ///
+    /// The handle an agent already has. A snapshot line reads
+    /// `- button "Sign in" [ref=e3]`, and `find --role button --name "Sign in"`
+    /// addresses the same element in the same words — through the same
+    /// computation that printed them, so the two cannot disagree.
+    ///
+    /// More stable than a CSS selector against generated markup, where the
+    /// class names change on every build and the button is still called
+    /// "Sign in". Each match comes back with a verified selector, so a `find`
+    /// is directly actionable.
+    ///
+    /// Nothing matching is a *result*, not an error.
+    Find {
+        /// `button`, `link`, `textbox`, `checkbox`, `radio`, `combobox`,
+        /// `image`, `heading`, `paragraph`, `listitem`, `cell`.
+        #[arg(long, value_name = "ROLE")]
+        role: String,
+        /// The accessible name, matched exactly after collapsing whitespace.
+        ///
+        /// Exact rather than a substring: `--name Save` matching "Save as
+        /// draft" and "Discard without saving" would hand back three elements
+        /// where one was asked for.
+        #[arg(long, value_name = "TEXT")]
+        name: Option<String>,
+        /// Go here first, then look.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// What the page publishes about itself: JSON-LD, OpenGraph, `<meta>`.
+    ///
+    /// The cheapest read there is. An outline is the page's content and costs
+    /// hundreds of lines; this is a few hundred bytes the page already wrote
+    /// down for the purpose, and it is the one read where the answer is the
+    /// page's own words rather than something inferred from them.
+    ///
+    /// A page with no metadata is a result, not an error.
+    Structured {
+        /// Go here first, then read.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -340,7 +637,28 @@ enum SessionVerb {
     /// Follow a `@ref` from the last snapshot.
     Click {
         /// `e3` or `@e3`, from a `snapshot`.
-        reference: String,
+        reference: Option<String>,
+        /// A CSS selector instead, which is what a `snapshot`'s `refs` carry
+        /// beside each `@ref`.
+        ///
+        /// The durable handle. A `@ref` is a position in the reading that
+        /// minted it and is checked against that reading; a selector names
+        /// whatever it matches now, which is what makes it survive a
+        /// navigation and what makes a recorded session replayable.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -396,10 +714,39 @@ struct NetArgs {
     /// How many redirect hops to follow. Every hop is policy-checked.
     #[arg(long, default_value_t = 5)]
     max_redirects: usize,
+
+    /// How many requests one page may make before the rest are refused.
+    ///
+    /// Every other limit here is per *request*: a size cap, a redirect count, a
+    /// timeout. None of them bounds a page that makes many, and a script in a
+    /// loop is exactly that. Resets when the agent navigates, because a fresh
+    /// page is a fresh decision by the agent and the ceiling exists to bound
+    /// untrusted page code rather than the principal driving the engine.
+    #[arg(long, default_value_t = 500, value_name = "N")]
+    max_requests: u64,
+
+    /// How many bytes one page may pull across the wire, in total.
+    #[arg(long, default_value_t = 64 * 1024 * 1024, value_name = "BYTES")]
+    max_wire_bytes: u64,
+
+    /// How many seconds one page may spend waiting on the network, summed.
+    ///
+    /// Not a per-request timeout: a hundred requests each well inside the
+    /// 30-second limit are together minutes an agent is waiting.
+    #[arg(long, default_value_t = 60, value_name = "SECONDS")]
+    max_network_seconds: u64,
 }
 
 #[derive(Args, Clone)]
 struct ViewArgs {
+    /// How long one navigation may take, first byte to last.
+    ///
+    /// The bound the per-phase budgets could not give. A request timeout bounds
+    /// a request and the script-phase budget bounds the script; a page inside
+    /// both can still take the better part of a minute.
+    #[arg(long, default_value_t = 45, value_name = "SECONDS")]
+    navigation_seconds: u64,
+
     #[arg(long, default_value_t = 1280)]
     width: u32,
 
@@ -487,14 +834,15 @@ where
         }
         Command::Doctor { net } => doctor(&net),
         Command::Session(verb) => session(verb),
+        Command::Replay { script, keep_going, at } => replay(&script, keep_going, &at),
         Command::Open {
-            target,
+            targets,
             net,
             view,
             screenshot,
             text,
             json,
-        } => open(&target, &net, &view, screenshot, text, json),
+        } => open(&targets, &net, &view, screenshot, text, json),
         Command::Serve {
             target,
             net,
@@ -522,14 +870,27 @@ where
 }
 
 /// Build the factory and load the first page, shared by `open` and `serve`.
-fn load(
-    target: &str,
-    net: &NetArgs,
-    view: &ViewArgs,
-) -> Result<(Arc<MemorySink>, PageFactory, Page), H5iError> {
+/// Everything a page needs, built once.
+///
+/// Split from [`load`] so a batch of pages shares one of these. The broker
+/// carries the connection pool and the cookie jar, and the factory carries the
+/// font set — all three are per-*session* facts, and building them per page
+/// meant a run over twenty URLs re-read the font files twenty times and threw
+/// away every keep-alive connection between them.
+fn factory_for(net: &NetArgs, view: &ViewArgs) -> Result<(Arc<MemorySink>, PageFactory), H5iError> {
     let policy = build_policy(net);
     let (display, sink) = build_sinks(net)?;
-    let broker = Arc::new(Broker::new(policy, sink, proxy_of(net).as_deref())?);
+    let mut broker = Broker::new(policy, sink, proxy_of(net).as_deref())?;
+    broker.set_budget_limits(crate::budget::Limits {
+        max_requests: net.max_requests,
+        max_wire_bytes: net.max_wire_bytes,
+        // The decoded ceiling follows the wire one rather than being its own
+        // flag: it exists to bound what compression expands into, so tying it
+        // to the wire limit keeps the two from being set inconsistently.
+        max_decoded_bytes: net.max_wire_bytes.saturating_mul(4),
+        max_network_time: std::time::Duration::from_secs(net.max_network_seconds),
+    });
+    let broker = Arc::new(broker);
     let font_setup = load_fonts(view);
     if font_setup.is_empty() {
         eprintln!("h5i-browser-light: no fonts registered; text will not be drawn.");
@@ -545,10 +906,15 @@ fn load(
             scale: view.scale,
             max_snapshot_lines: view.max_snapshot_lines,
             script: view.script,
+            navigation_budget: std::time::Duration::from_secs(view.navigation_seconds),
         },
     );
+    Ok((display, factory))
+}
 
-    let page = match parse_target(target)? {
+/// One page, through a factory that already exists.
+fn open_target(factory: &PageFactory, target: &str) -> Result<Page, H5iError> {
+    Ok(match parse_target(target)? {
         Target::Remote(url) => factory.open(&url)?,
         Target::Local(path) => {
             // Bytes rather than `read_to_string`, so a local file gets the same
@@ -558,8 +924,16 @@ fn load(
             let bytes = std::fs::read(&path).map_err(|e| H5iError::with_path(e, &path))?;
             factory.from_bytes(&bytes, None, &local_base(&path)?)
         }
-    };
+    })
+}
 
+fn load(
+    target: &str,
+    net: &NetArgs,
+    view: &ViewArgs,
+) -> Result<(Arc<MemorySink>, PageFactory, Page), H5iError> {
+    let (display, factory) = factory_for(net, view)?;
+    let page = open_target(&factory, target)?;
     Ok((display, factory, page))
 }
 
@@ -621,6 +995,105 @@ fn serve(
 
 
 /// Drive the resident session.
+/// Send a recorded script's steps through the control channel, in order.
+///
+/// Deliberately not a second execution engine. Every step is an ordinary verb
+/// request, so a replay is subject to the same policy checks, produces the same
+/// receipts, and lands in the same action log as the session it was recorded
+/// from. A replay that could bypass any of those would be a way to do things
+/// the audited path refuses.
+fn replay(script: &Path, keep_going: bool, at: &SessionArgs) -> Result<(), H5iError> {
+    let text = std::fs::read_to_string(script).map_err(|e| H5iError::with_path(e, script))?;
+    let recording: crate::replay::Recording = serde_json::from_str(&text)
+        .map_err(|e| H5iError::Metadata(format!("{} is not a script: {e}", script.display())))?;
+
+    if recording.dropped > 0 {
+        // Said before anything runs, not after. Whoever is about to trust this
+        // replay should know it is not the whole session.
+        eprintln!(
+            "note: this script is missing {} action(s) from the session it was recorded \
+             from — no durable selector could be verified for them",
+            recording.dropped
+        );
+    }
+
+    let port = session_port(at)?;
+    let mut ran = 0usize;
+    let mut failed = 0usize;
+
+    for (at_step, step) in recording.steps.iter().enumerate() {
+        let reply = crate::stream::ask(port, &step.request())?;
+        let ok = reply.get("ok").and_then(serde_json::Value::as_bool) == Some(true);
+        if ok {
+            ran += 1;
+            if !at_json(at) {
+                println!("{:>3}. {}", at_step + 1, step.render());
+            }
+            continue;
+        }
+
+        failed += 1;
+        let reason = reply
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("the session refused, without saying why");
+        eprintln!("{:>3}. {} — FAILED: {reason}", at_step + 1, step.render());
+        if !keep_going {
+            // A sequence, not a set. Carrying on would act on a page the
+            // previous step failed to reach.
+            return Err(H5iError::Metadata(format!(
+                "step {} of {} failed: {reason}. The replay stopped there; pass \
+                 --keep-going to run the rest anyway.",
+                at_step + 1,
+                recording.steps.len()
+            )));
+        }
+    }
+
+    if failed > 0 {
+        return Err(H5iError::Metadata(format!(
+            "{ran} of {} step(s) replayed; {failed} failed",
+            recording.steps.len()
+        )));
+    }
+    eprintln!("replayed {ran} step(s)");
+    Ok(())
+}
+
+/// Whether this invocation asked for machine output.
+fn at_json(at: &SessionArgs) -> bool {
+    at.json
+}
+
+/// Resolve the "`@ref` and a value, or `--selector` and the value" shape.
+///
+/// Both positionals are optional to clap and checked here, because clap refuses
+/// an optional positional before a required one — and with `--selector` the ref
+/// is genuinely absent. The check gives a better message than clap's would
+/// anyway: it can say which of the two forms was half-used, and name the value
+/// the verb was actually after.
+///
+/// One function rather than four copies, because four copies is where the four
+/// error messages drift apart.
+fn two_positionals(
+    verb: &str,
+    what: &str,
+    selector: &Option<String>,
+    first: &Option<String>,
+    second: &Option<String>,
+) -> Result<(Option<String>, String), H5iError> {
+    match (selector.is_some(), first, second) {
+        (true, Some(value), None) => Ok((None, value.clone())),
+        (true, _, Some(_)) => Err(H5iError::Metadata(format!(
+            "with `--selector`, pass only {what}: the selector is the handle."
+        ))),
+        (false, Some(reference), Some(value)) => Ok((Some(reference.clone()), value.clone())),
+        _ => Err(H5iError::Metadata(format!(
+            "`{verb}` needs a `@ref` and {what}, or `--selector <css>` and {what}."
+        ))),
+    }
+}
+
 fn session(verb: SessionVerb) -> Result<(), H5iError> {
     // Every name comes from `Verb`, so the CLI cannot ask for a verb the session
     // does not have. This used to be eight string literals that happened to
@@ -628,9 +1101,9 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
     use crate::verbs::Verb;
     let (at, request) = match &verb {
         SessionVerb::Status { at } => (at, serde_json::json!({"verb": Verb::Status.name()})),
-        SessionVerb::Snapshot { delta, at } => (
+        SessionVerb::Snapshot { delta, url, at } => (
             at,
-            serde_json::json!({"verb": Verb::Snapshot.name(), "delta": delta}),
+            serde_json::json!({"verb": Verb::Snapshot.name(), "delta": delta, "url": url}),
         ),
         SessionVerb::Login { off, on: _, at } => (
             at,
@@ -644,17 +1117,34 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             at,
             serde_json::json!({"verb": Verb::Scroll.name(), "by": by}),
         ),
-        SessionVerb::Type { reference, text, at } => (
+        SessionVerb::Type { reference, text, selector, role, name, at } => {
+            let (reference, text) =
+                two_positionals("type", "the text", selector, reference, text)?;
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Type.name(),
+                    "ref": reference,
+                    "selector": selector,
+                    "role": role,
+                    "name": name,
+                    "text": text,
+                }),
+            )
+        }
+        SessionVerb::Submit { reference, selector, role, name, at } => (
             at,
-            serde_json::json!({"verb": Verb::Type.name(), "ref": reference, "text": text}),
+            serde_json::json!({
+                "verb": Verb::Submit.name(), "ref": reference, "selector": selector,
+                "role": role, "name": name,
+            }),
         ),
-        SessionVerb::Submit { reference, at } => (
+        SessionVerb::Click { reference, selector, role, name, at } => (
             at,
-            serde_json::json!({"verb": Verb::Submit.name(), "ref": reference}),
-        ),
-        SessionVerb::Click { reference, at } => (
-            at,
-            serde_json::json!({"verb": Verb::Click.name(), "ref": reference}),
+            serde_json::json!({
+                "verb": Verb::Click.name(), "ref": reference, "selector": selector,
+                "role": role, "name": name,
+            }),
         ),
         SessionVerb::Requests { since, at } => (
             at,
@@ -676,7 +1166,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             at,
             serde_json::json!({"verb": Verb::WaitForScript.name(), "expr": expr}),
         ),
-        SessionVerb::Extract { schema, at } => {
+        SessionVerb::Extract { schema, url, at } => {
             // Parsed here so a typo is a message from the CLI rather than a
             // refusal from the far end of a socket.
             let parsed: serde_json::Value = serde_json::from_str(schema).map_err(|e| {
@@ -684,14 +1174,91 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             })?;
             (
                 at,
-                serde_json::json!({"verb": Verb::Extract.name(), "schema": parsed}),
+                serde_json::json!({
+                    "verb": Verb::Extract.name(), "schema": parsed, "url": url,
+                }),
             )
         }
-        SessionVerb::Markdown { max_bytes, at } => (
+        SessionVerb::Markdown { max_bytes, url, at } => (
             at,
-            serde_json::json!({"verb": Verb::Markdown.name(), "max_bytes": max_bytes}),
+            serde_json::json!({
+                "verb": Verb::Markdown.name(), "max_bytes": max_bytes, "url": url,
+            }),
         ),
         SessionVerb::Env { at } => (at, serde_json::json!({"verb": Verb::Env.name()})),
+        SessionVerb::SetChecked { reference, checked, selector, role, name, at } => {
+            let (reference, state) =
+                two_positionals("set-checked", "`true` or `false`", selector, reference, checked)?;
+            // Parsed here rather than by clap, because the positional had to be
+            // a string for the reasons `two_positionals` explains — and a
+            // typo'd state should say what it should have been rather than
+            // silently meaning `false`.
+            let checked = match state.trim().to_ascii_lowercase().as_str() {
+                "true" | "yes" | "on" | "1" => true,
+                "false" | "no" | "off" | "0" => false,
+                other => {
+                    return Err(H5iError::Metadata(format!(
+                        "`{other}` is not a state. `set-checked` takes `true` or `false`: it \
+                         sets a state rather than toggling one, which is what makes it \
+                         replayable."
+                    )))
+                }
+            };
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::SetChecked.name(),
+                    "ref": reference,
+                    "selector": selector,
+                    "role": role,
+                    "name": name,
+                    "checked": checked,
+                }),
+            )
+        }
+        SessionVerb::Select { reference, option, selector, role, name, at } => {
+            let (reference, option) =
+                two_positionals("select", "the option", selector, reference, option)?;
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Select.name(),
+                    "ref": reference,
+                    "selector": selector,
+                    "role": role,
+                    "name": name,
+                    "option": option,
+                }),
+            )
+        }
+        SessionVerb::Press { reference, key, selector, role, name, at } => {
+            let (reference, key) =
+                two_positionals("press", "the key", selector, reference, key)?;
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Press.name(),
+                    "ref": reference,
+                    "selector": selector,
+                    "role": role,
+                    "name": name,
+                    "key": key,
+                }),
+            )
+        }
+        SessionVerb::Find { role, name, url, at } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::Find.name(), "role": role, "name": name, "url": url,
+            }),
+        ),
+        SessionVerb::Structured { url, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Structured.name(), "url": url}),
+        ),
+        SessionVerb::Script { save: _, at } => {
+            (at, serde_json::json!({"verb": Verb::Script.name()}))
+        }
     };
 
     // The socket wins when there is one. It is only ever set deliberately —
@@ -715,6 +1282,37 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("the session refused, without saying why");
         return Err(H5iError::Metadata(text.to_string()));
+    }
+
+    // A recording asked to be kept. Written as the step list rather than the
+    // rendered form, because `replay` reads this back and a comment is not a
+    // step.
+    if let SessionVerb::Script { save: Some(path), .. } = &verb {
+        let steps = reply.get("steps").cloned().unwrap_or(serde_json::json!([]));
+        let document = serde_json::json!({
+            "start_url": reply.get("start_url").cloned().unwrap_or(serde_json::Value::Null),
+            "steps": steps,
+            "dropped": reply.get("dropped").cloned().unwrap_or(serde_json::json!(0)),
+        });
+        let text = serde_json::to_string_pretty(&document)
+            .map_err(|e| H5iError::Metadata(format!("could not write the script: {e}")))?;
+        std::fs::write(path, text).map_err(|e| H5iError::with_path(e, path))?;
+        let dropped = reply.get("dropped").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let count = reply
+            .get("steps")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        eprintln!("wrote {count} step(s) to {}", path.display());
+        if dropped > 0 {
+            // Never silent. A script shorter than the session it came from is
+            // the fact the person about to run it most needs.
+            eprintln!(
+                "note: {dropped} action(s) are not in it — no durable selector could be \
+                 verified for what they acted on"
+            );
+        }
+        return Ok(());
     }
 
     // The snapshot is the whole point of the verb; everything else is a line.
@@ -1048,14 +1646,110 @@ fn doctor(net: &NetArgs) -> Result<(), H5iError> {
 }
 
 fn open(
-    target: &str,
+    targets: &[String],
     net: &NetArgs,
     view: &ViewArgs,
     screenshot: Option<PathBuf>,
     as_text: bool,
     as_json: bool,
 ) -> Result<(), H5iError> {
-    let (display, _factory, mut page) = load(target, net, view)?;
+    // One screenshot path cannot name several images, and picking one page to
+    // apply it to would be an arbitrary choice made silently. Refused with the
+    // reason instead.
+    if targets.len() > 1 && screenshot.is_some() {
+        return Err(H5iError::Metadata(
+            "`--screenshot` names one file, so it cannot be used with several targets. \
+             Open them one at a time, or drop the flag."
+                .to_string(),
+        ));
+    }
+
+    let (display, factory) = factory_for(net, view)?;
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut failures = 0usize;
+
+    for (at, target) in targets.iter().enumerate() {
+        // Where this page's own records start. The sink is shared across the
+        // batch — that sharing is the point — so a per-page view has to be cut
+        // out of it rather than read whole, or every page after the first would
+        // report the requests of the ones before it.
+        let seen_before = display.records().len();
+
+        let page = match open_target(&factory, target) {
+            Ok(page) => page,
+            // A page that fails does not stop the ones after it: a batch read
+            // is worth having precisely when some of it is going to fail, and
+            // stopping would throw away the pages that worked.
+            Err(error) => {
+                failures += 1;
+                if as_json {
+                    results.push(serde_json::json!({
+                        "url": target,
+                        "ok": false,
+                        "error": error.to_string(),
+                    }));
+                } else {
+                    eprintln!("{target}: {error}");
+                }
+                continue;
+            }
+        };
+
+        if targets.len() > 1 && !as_json && at > 0 {
+            println!();
+        }
+        let page_records = display.records().split_off(seen_before);
+        match one_page(
+            page,
+            page_records,
+            screenshot.clone(),
+            as_text,
+            as_json,
+            targets.len() > 1,
+        ) {
+            Ok(Some(payload)) => results.push(payload),
+            Ok(None) => {}
+            Err(error) => {
+                failures += 1;
+                eprintln!("{target}: {error}");
+            }
+        }
+    }
+
+    if as_json {
+        if targets.len() == 1 {
+            // One target keeps the shape it always had, so nothing driving
+            // this has to learn a new envelope to read one page.
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&results.into_iter().next().unwrap_or_default())?
+            );
+        } else {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "results": results }))?
+            );
+        }
+    }
+
+    if failures > 0 {
+        return Err(H5iError::Metadata(format!(
+            "{failures} of {} page(s) could not be read",
+            targets.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Read one page and report it. Returns the JSON payload when asked for one.
+fn one_page(
+    mut page: Page,
+    records: Vec<crate::receipt::RequestRecord>,
+    screenshot: Option<PathBuf>,
+    as_text: bool,
+    as_json: bool,
+    label: bool,
+) -> Result<Option<serde_json::Value>, H5iError> {
     let snapshot = page.snapshot();
 
     let screenshot_bytes = match &screenshot {
@@ -1066,8 +1760,6 @@ fn open(
         }
         None => None,
     };
-
-    let records = display.records();
 
     if as_json {
         let payload = serde_json::json!({
@@ -1106,10 +1798,14 @@ fn open(
                 "bytes": len,
             })),
         });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
-        return Ok(());
+        return Ok(Some(payload));
     }
 
+    // Which page this is, when there is more than one. Without it a batch of
+    // outlines runs together and the second page looks like more of the first.
+    if label {
+        println!("=== {}", snapshot.url);
+    }
     if as_text {
         println!("{}", page.text());
     } else {
@@ -1131,7 +1827,7 @@ fn open(
     if let Some((path, len)) = screenshot_bytes {
         eprintln!("\nscreenshot: {} ({len} bytes)", path.display());
     }
-    Ok(())
+    Ok(None)
 }
 
 #[derive(Debug)]
@@ -1407,6 +2103,25 @@ mod tests {
             vec!["h5i-browser-light", "session", "navigate", "/docs"],
             vec!["h5i-browser-light", "session", "click", "@e3"],
             vec!["h5i-browser-light", "session", "click", "e3", "--port", "9000"],
+            // Both handles, on every verb that takes one. `type` is the awkward
+            // shape: with `--selector` the remaining positional is the *text*,
+            // so the two do not conflict there and do on the others.
+            vec!["h5i-browser-light", "session", "type", "@e1", "alice"],
+            vec!["h5i-browser-light", "session", "type", "--selector", "#user", "alice"],
+            vec!["h5i-browser-light", "session", "submit", "@e2"],
+            vec!["h5i-browser-light", "session", "submit", "--selector", "#go"],
+            vec!["h5i-browser-light", "session", "click", "--selector", "a.next"],
+            vec!["h5i-browser-light", "session", "structured"],
+            vec!["h5i-browser-light", "session", "markdown", "--url", "https://x.test/"],
+            vec!["h5i-browser-light", "session", "script", "--save", "/tmp/s.json"],
+            vec!["h5i-browser-light", "replay", "/tmp/s.json"],
+            vec!["h5i-browser-light", "open", "a.html", "b.html"],
+            vec!["h5i-browser-light", "session", "set-checked", "@e1", "true"],
+            vec!["h5i-browser-light", "session", "set-checked", "--selector", "#opt", "false"],
+            vec!["h5i-browser-light", "session", "select", "@e2", "Express"],
+            vec!["h5i-browser-light", "session", "select", "--selector", "#ship", "Express"],
+            vec!["h5i-browser-light", "session", "press", "@e3", "Enter"],
+            vec!["h5i-browser-light", "session", "press", "--selector", "#q", "Escape"],
         ] {
             Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?} should parse: {e}"));
         }
@@ -1426,6 +2141,34 @@ mod tests {
             .is_err(),
             "--port and --control-file must not be given together"
         );
+
+        // A selector *replaces* the ref on the verbs whose positional is the
+        // ref, so naming both is a request whose author did not know which one
+        // they meant.
+        for argv in [
+            vec!["h5i-browser-light", "session", "click", "@e1", "--selector", "#go"],
+            vec!["h5i-browser-light", "session", "submit", "@e1", "--selector", "#go"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&argv).is_err(),
+                "{argv:?} names the same element twice and should be refused"
+            );
+        }
+    }
+
+    /// clap asserts its own invariants at parser-construction time, and one of
+    /// them is that an optional positional may not precede a required one.
+    /// Teaching `type` a `--selector` made its ref optional while its text was
+    /// still required, so **every** `session type` invocation panicked before
+    /// parsing anything — in a debug build, which is what the tests run.
+    ///
+    /// Nothing caught it: the verb tests drive `control_verb` directly, and the
+    /// parse test above happened not to list `type`. This builds the whole
+    /// command tree, which is what runs clap's assertions.
+    #[test]
+    fn the_command_tree_satisfies_claps_own_invariants() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
     }
 
     #[test]
