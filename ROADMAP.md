@@ -7034,8 +7034,20 @@ hit "Save as draft" and "Discard without saving".
 
 ## B18. The broker/renderer split, proposed 2026-08-27
 
-Status: **proposed.** Nothing here is built. §B18.6 is the measured seam, which
-is the part worth trusting; the rest is a design that has not met a compiler.
+Status: **steps 1 and 2 built, 2026-08-27. Step 3 is not.** `h5i browser open`
+runs two processes now: a broker holding the policy, the wire, the receipts, the
+jar, the budget and the secrets, and a renderer holding the DOM, the cascade,
+the decoders and the script realm and none of the rest. The seam is
+`broker::Broker`; the transport is `ipc`; the renderer's environment is scrubbed
+of `H5I_SECRET_*`. Nothing user-visible changed and there is no new subcommand.
+
+**What is still true after step 2, and must keep being said.** The renderer
+holds no socket *of the engine's* — and it is not yet stopped from opening one
+of its own, because its network namespace is still the broker's. So a
+compromised parser cannot read the jar, edit the allowlist, silence the sink or
+enumerate the secrets, and it *can* still connect somewhere and not be in the
+log. The receipt claim upgrades at step 3, not here. §B18.8 is why step 3 is not
+a line in `profile_for`.
 
 The default session sandbox landed first (`h5i-core::browser_sandbox`), and it
 sharpened the case for this rather than replacing it. That sandbox contains what
@@ -7086,7 +7098,7 @@ no socket, its profile can move from `net.mode = host` to `deny` — an empty
 network namespace — which is a one-line change to `browser_sandbox::profile_for`
 and the whole reason this ordering is right.
 
-### B18.3 The four cases the table does not settle
+### B18.3 The cases the table does not settle
 
 **Cookies: the gain is narrower than it first looks.** The obvious claim — "the
 renderer would see only the non-HttpOnly subset" — is already true where it
@@ -7110,6 +7122,35 @@ credential that was not typed: today a compromised engine reads all of
 mean injecting at the HTTP layer rather than the DOM layer, which works for a
 form post and not for JS-driven auth. That is the boundary, and it belongs in
 the docs the day this ships.
+
+> **Corrected 2026-08-27, on building it.** "It reads the ones actually used" is
+> not what step 2 delivers, and the docs say the accurate thing instead.
+> `substitute` is an *operation*, so a compromised renderer can resolve every
+> name `secret_names` returns rather than only the one it was told to type. The
+> narrowing is real and it is about the **set**, not the count: the renderer's
+> environment holds no `H5I_SECRET_*` at all, so it reaches what this session
+> was granted and not what the machine has — which unconfined is everything.
+> "The ones actually used" becomes true when the control channel moves to the
+> broker (the §B18.2 table), because only then does the broker know which field
+> is being typed into. Until that, claiming it would be the kind of sentence
+> this section exists to refuse.
+
+**The asker's origin is the renderer's word.** Found on building it, and it
+belongs beside the other four. Half of this engine's policy reasons about *who
+is asking*: the loopback rule refuses a page from the open web reaching the
+box's dev server, and the same-origin check decides whether the document that
+asked may read the answer. Both take the asking document as an argument, and
+after the split that argument arrives from the renderer. A renderer that claims
+"the agent named this URL" gets the answer the agent would have got.
+
+This is not a regression — the same code chose the origin before the split,
+because it was the same code — and it is not fixed by the split either. It is
+the shape of a real tightening: the broker knows every document it has served,
+so it could refuse to attribute a request to one it never answered with. That
+narrows an invented origin to a previously-served one, which is worth having
+and is not what step 2 built. Until then, "the broker decides" is exactly true
+of the allowlist and the address, and true of the origin rules only for a
+renderer that is telling the truth about which page it is on.
 
 **`@ref` resolution stays in the renderer.** Handles are Blitz node ids and live
 with the DOM. The broker keeps the *record* of what it served, for the audit. A
@@ -7196,27 +7237,129 @@ It was not taken, for two reasons:
   half that parses the page holds no socket and can be given a profile written
   for a process that only parses.
 
-So this is a §B18.7 step 3 concern, not a patch: when the renderer becomes its
-own process, its profile is authored rather than inherited, and `default_fs_read`
-stops being the thing that decides what a hostile page can read. Until then the
-honest statement — the one the CLI already makes — is that the default sandbox
-contains the engine's *writes* and its environment, not its reads.
+So this is a §B18.7 step 3 concern, not a patch: when the renderer's profile is
+*authored* rather than inherited, `default_fs_read` stops being the thing that
+decides what a hostile page can read. Until then the honest statement — the one
+the CLI already makes — is that the default sandbox contains the engine's
+*writes* and its environment, not its reads.
+
+**Updated 2026-08-27, after step 2.** The renderer is its own process now and
+this paragraph is still true, because the renderer's profile is *inherited* and
+not authored: it is the Landlock domain the broker was already in, which
+`execve` carries across unchanged. Becoming a separate process was necessary
+and, on its own, not sufficient — see §B18.8 for why the authoring has to happen
+outside both halves.
 
 ### B18.7 Order
 
-1. **The seam, still one process.** Put the broker behind a trait and make the
-   renderer call it through that. `jar()` becomes operations. Refactoring, with
-   the existing tests as the harness, and nothing user-visible changes.
-2. **Two processes.** The trait's implementation becomes an IPC client;
-   `h5i browser open` spawns the broker, the broker spawns the renderer
-   confined. Both are internal: `h5i browser open` is unchanged, and there is no
-   subcommand or concept for either half — the same conclusion §"The id is not
-   the interface" reached about session ids, applied to processes.
+1. **The seam, still one process.** ✅ Built. `broker::Broker` is the named set
+   of operations; `net::LocalBroker` is the implementation that does the work
+   here. `jar()` became `document_cookie` / `store_cookie` / `keep_only_origin`,
+   which is where the `HttpOnly` split now lives. `budget()` returned a live
+   `&Budget` and returns an `Allowance` — a reading — because there is nothing
+   to borrow across a process. The two streams became one `Channel` trait with
+   `send` / `drain` / `close`, which is exactly the surface `dom_api.rs` was
+   already using.
+2. **Two processes.** ✅ Built. `ipc::BrokerClient` implements the trait over a
+   socket; `cli::become_broker` builds the broker, spawns the renderer, serves
+   until it exits, and exits with its status. Both halves are internal:
+   `h5i browser open` is unchanged and there is no subcommand for either — the
+   same conclusion §"The id is not the interface" reached about session ids,
+   applied to processes.
 3. **Tighten the renderer's profile** to `net.mode = deny`, and add the third
-   lane value with the tests that keep it apart from `host-observed`.
+   lane value with the tests that keep it apart from `host-observed`. Not built,
+   and not for want of a line: see §B18.8.
 
-Step 1 is worth doing whether or not step 2 follows: a broker reachable only
+Step 1 was worth doing whether or not step 2 followed: a broker reachable only
 through a named set of operations is a broker whose surface is written down.
+
+#### What step 2 turned out to cost, and to buy
+
+- **The renderer is spawned by the broker re-execing itself** with a hidden
+  `--brokered` flag and the socket as its standard input. An inherited
+  descriptor rather than a port (nothing on the machine can connect to it) or a
+  path (nothing to clean up). The child's argv is the parent's, unchanged: two
+  halves that parsed different command lines would be two engines that could
+  disagree about what was asked for.
+- **The confinement came for free**, and this was the pleasant surprise. The
+  session sandbox already grants read on the engine's own binary — a confined
+  `execve` needs it — so the broker can start the renderer from inside it, and
+  Landlock's domain is inherited and cannot be relaxed. The renderer is
+  confined exactly as the single process was, with no change to
+  `browser_sandbox` at all.
+- **A dead broker takes the renderer with it.** The reply thread sees EOF and
+  the renderer stops, because a renderer that cannot fetch or receipt and whose
+  parent is gone is not a browser. Verified by killing the broker of a resident
+  session: no orphan, and `h5i browser close` still reads the record.
+- **Secrets are the measurable gain today.** `H5I_SECRET_*` is removed from the
+  renderer's environment, along with the receipts path, the proxy and the
+  allowlist. Substitution is a broker operation, so an intact renderer receives
+  the value for the field it was told to fill and holds no other — and a
+  compromised one reaches what this session was *granted* rather than what the
+  machine holds, which is the narrowing that is actually delivered. See the
+  correction in §B18.3: "the ones actually used" waits on the control channel
+  moving, and until then saying it would be a sentence this file exists to
+  refuse.
+
+  Measuring it turned up that the claim had never been true in the other
+  direction either: `--secret NAME` set `profile.secrets` and nothing consumed
+  it, so under the default sandbox a named credential never reached the engine
+  at all and `h5i browser env` answered "no credentials" for one it had been
+  told to carry. `browser_sandbox` now declares `secret_grants` beside the name
+  list and `h5i browser` brokers them through `secrets_broker` like any other
+  run, on both the confined and the unconfined path — fail-closed is a property
+  of the promise, not of the sandbox. `--secret` with `--in` is refused rather
+  than ignored: a box declares its grants in `.h5i/env.toml`, and `spawn_in_box`
+  never read the flag.
+- **Redaction had to become a batch.** It runs over every string in every
+  control reply; one round trip per string would have made it the most expensive
+  thing the control channel does. `redact_all` is the operation, and the default
+  implementation is still the loop.
+- **The control channel did not move**, and the table in §B18.2 still says it
+  should. It is renderer-side for now, which means the reply an agent reads is
+  written by the untrusted half. That is a smaller hole than it sounds — the
+  renderer holds the terminal either way — and it is the next thing to move
+  after step 3.
+
+### B18.8 Why step 3 is not one line in `profile_for`
+
+The plan said `net.mode = deny` for the renderer was "a one-line change to
+`browser_sandbox::profile_for`". It is not, and the reason is worth writing down
+before somebody spends an afternoon on it.
+
+The renderer is spawned **by the broker**, and the broker is already inside the
+sandbox. Applying a second, tighter confinement from there needs a new network
+namespace, and `unshare` and `setns` are both on this codebase's own seccomp
+deny-list (`seccomp_deny_program`). The broker cannot make a namespace it is
+denied the syscall for. Landlock could be stacked — domains nest — but the
+network cannot.
+
+So the confinement has to be authored **outside** both halves, and there are two
+shapes:
+
+- **`h5i browser` creates the socket pair and spawns both.** It is unconfined,
+  so it can resolve two policies and start two children — the broker with
+  `net.mode = host`, the renderer with `Deny` and a profile written for a
+  process that only parses (no `/tmp`, no resolver grants, no `/etc` beyond what
+  a font needs). It costs the broker its `wait()` on the renderer, which becomes
+  an EOF instead — the split already treats EOF as the renderer exiting, so the
+  code is there.
+- **A launcher handed to the broker.** `h5i-browser-light` gains a trait, and
+  `h5i __engine` — which links `h5i-core` — registers an implementation that
+  execs the renderer confined. The crate graph allows it (nothing depends on
+  `h5i-browser-light` but the binary), and it keeps "the broker spawns the
+  renderer" literally true. It does not solve the syscall problem: the launcher
+  runs in the broker, and the broker is the process seccomp is filtering.
+
+The first is the one that works. The second is the one that reads better, and
+would only work if the broker were left unconfined — which is the wrong trade,
+because the broker parses server bytes too (TLS records, headers, gzip and
+brotli streams) and wants a sandbox of its own.
+
+Recording this because the honest version of the current state is *"the renderer
+is confined exactly as much as the whole engine was, and no more"* — the split
+moved what a compromised parser can **reach in memory**, not yet what it can
+**reach on the network**.
 
 ---
 

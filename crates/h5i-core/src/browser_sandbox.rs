@@ -48,7 +48,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::H5iError;
-use crate::sandbox::{self, HostCaps, IsolationClaim, NetMode, Profile, ResolvedPolicy};
+use crate::sandbox::{
+    self, HostCaps, IsolationClaim, NetMode, Profile, ResolvedPolicy, SecretGrant,
+};
 
 /// What is holding the engine, as the record states it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -144,6 +146,11 @@ pub struct Wants<'a> {
     /// sandbox the engine inherits the whole environment, so a compromised one
     /// reads every secret on the machine. Here it reads the ones that were
     /// named, and a placeholder for anything else resolves to nothing.
+    ///
+    /// Full variable names, `H5I_SECRET_` prefix included. The caller
+    /// normalizes, because the prefix is not decoration: it is the namespace
+    /// the engine substitutes from, and it has to survive all the way to the
+    /// variable the child actually reads. See [`profile_for`].
     pub secrets: &'a [String],
     /// The wall-clock bound, in seconds, or `0` for none.
     ///
@@ -278,6 +285,28 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     p.max_procs = Some(64);
 
     p.secrets = wants.secrets.to_vec();
+    // ...and the grants that deliver them, which is a separate field and was
+    // the bug: a profile that declares `secrets` and no `secret_grants` names a
+    // credential nothing fills, and `h5i browser env` answered "no credentials"
+    // for a session started with `--secret`.
+    //
+    // A box gets both from `merge_secret_grants` when its `env.toml` is loaded.
+    // A session has no `env.toml` — it has no repository at all — so the grants
+    // are assembled here, from the same list, and the broker resolves them at
+    // spawn time like any other run's.
+    //
+    // The grant's **name is the variable the child will see**, so it keeps the
+    // `H5I_SECRET_` prefix: `inject = env` injects `(name, value)`, and the
+    // engine substitutes from exactly that namespace. A grant named `ACME_PASS`
+    // would arrive as `ACME_PASS` and `$H5I_SECRET_ACME_PASS` would resolve to
+    // nothing — the failure this exists to end.
+    //
+    // `inject` is left at its default of `env`, which is the only one reachable
+    // here: `broker` refuses `inject = file` off the workspace tier, and a
+    // session is process tier. That refusal is load-bearing rather than
+    // incidental — a file-injected secret is unlinked when the `Brokered` guard
+    // drops, and `h5i browser open` returns while the session keeps running.
+    p.secret_grants = grants_for(wants.secrets);
 
     // A page can allocate. The budgets in the engine bound what one navigation
     // fetches and decodes; this bounds what the process can do with it when a
@@ -289,6 +318,25 @@ fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     // completion needs a real one. See `Wants::wall_secs`.
     p.wall_secs = wants.wall_secs;
     p
+}
+
+/// The grants a list of `H5I_SECRET_*` names resolves to.
+///
+/// One formula, two readers: [`profile_for`] declares these on the profile, and
+/// the caller brokers them at spawn time. A session that runs unconfined has no
+/// profile to read them off — the host could not confine, or the caller said
+/// not to — and deriving them a second way there is how the two would come to
+/// disagree about which credential a session was promised.
+pub fn grants_for(names: &[String]) -> Vec<SecretGrant> {
+    names
+        .iter()
+        .map(|name| SecretGrant {
+            name: name.clone(),
+            source: Some(format!("env:{name}")),
+            inject: None,
+            ttl: None,
+        })
+        .collect()
 }
 
 /// The resolver's configuration, when it does not live where it appears to.
@@ -421,6 +469,17 @@ mod tests {
             &[],
         );
         assert_eq!(p.secrets, named);
+
+        // The name list is what a reader sees; the grants are what deliver.
+        // Declaring the first without the second is a session that reports the
+        // credential as granted and hands the engine nothing.
+        assert_eq!(p.secret_grants.len(), 1);
+        assert_eq!(p.secret_grants[0].name, "H5I_SECRET_ACME");
+        assert_eq!(p.secret_grants[0].source_or_default(), "env:H5I_SECRET_ACME");
+        // `env`, and it has to be: the engine reads variables, and `file` is
+        // refused off the workspace tier anyway.
+        assert_eq!(p.secret_grants[0].inject_or_default(), "env");
+        assert!(profile_for(&wants(tmp.path()), &[]).secret_grants.is_empty());
     }
 
     /// The sandbox contains the consequences, not the connection. If this ever

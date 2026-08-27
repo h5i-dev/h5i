@@ -2145,7 +2145,7 @@ fn viewport(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResu
 /// the DOM.
 fn read_cookies(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let host = host(context)?;
-    Ok(js_string!(host.broker.jar().document_cookie(&host.base)).into())
+    Ok(js_string!(host.broker.document_cookie(&host.base)).into())
 }
 
 /// `document.cookie = "..."`: store one cookie as the current document.
@@ -2154,7 +2154,7 @@ fn write_cookie(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let host = host(context)?;
     // Not `store`: see `Jar::store_from_script`. Script may not overwrite an
     // `HttpOnly` cookie, nor set one.
-    let stored = host.broker.jar().store_from_script(&host.base, &header);
+    let stored = host.broker.store_cookie(&host.base, &header);
     Ok(JsValue::from(stored as f64))
 }
 
@@ -2205,13 +2205,11 @@ fn socket_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         boa_engine::JsNativeError::syntax().with_message(format!("`{raw}` is not a URL: {e}"))
     })?;
 
-    match crate::wsclient::Socket::open(host.broker.clone(), &url, Some(&host.base)) {
+    match host.broker.open_socket(&url, Some(&host.base)) {
         Ok(socket) => {
             let id = host.next_socket.get();
             host.next_socket.set(id + 1);
-            host.sockets
-                .borrow_mut()
-                .insert(id, std::sync::Arc::new(socket));
+            host.sockets.borrow_mut().insert(id, socket);
             Ok(JsValue::from(id as f64))
         }
         // A refusal is an answer the page can see, the same as a refused fetch.
@@ -2276,13 +2274,11 @@ fn sse_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         boa_engine::JsNativeError::syntax().with_message(format!("`{raw}` is not a URL: {e}"))
     })?;
 
-    match crate::sse::EventStream::open(host.broker.clone(), &url, Some(&host.base)) {
+    match host.broker.open_event_stream(&url, Some(&host.base)) {
         Ok(stream) => {
             let id = host.next_socket.get();
             host.next_socket.set(id + 1);
-            host.streams
-                .borrow_mut()
-                .insert(id, std::sync::Arc::new(stream));
+            host.streams.borrow_mut().insert(id, stream);
             Ok(JsValue::from(id as f64))
         }
         Err(error) => Err(boa_engine::JsNativeError::error().with_message(error).into()),

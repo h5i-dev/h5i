@@ -45,7 +45,6 @@ use std::net::{TcpListener, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
 use std::thread;
 
 use base64::Engine as _;
@@ -116,13 +115,6 @@ pub struct ServeOptions {
     /// Serve one viewer and exit, which is what the tests and a one-shot
     /// demo want.
     pub once: bool,
-    /// The in-memory half of the receipt sink, so the session can answer
-    /// `requests` without reading back the file it just wrote.
-    ///
-    /// This is the same sink the fail-closed rule runs through, not a copy kept
-    /// alongside it: what the verb reports is what the broker recorded, or the
-    /// fetch did not happen.
-    pub requests: Arc<crate::receipt::MemorySink>,
 }
 
 impl Default for ServeOptions {
@@ -135,7 +127,6 @@ impl Default for ServeOptions {
             control_socket: None,
             action_log: None,
             once: false,
-            requests: Arc::new(crate::receipt::MemorySink::new()),
         }
     }
 }
@@ -203,20 +194,6 @@ struct Session {
     /// answers about one thing.
     last_snapshot: Option<crate::snapshot::Snapshot>,
 
-    /// Credentials this session may substitute on the way to the page.
-    ///
-    /// Read once at startup so a later `setenv` cannot widen what the agent can
-    /// reach. See [`crate::secrets`] for why the namespace is narrower than
-    /// `H5I_*`.
-    secrets: crate::secrets::Secrets,
-
-    /// The request log, live.
-    ///
-    /// See [`ServeOptions::requests`]. Held rather than reached through the
-    /// broker because `Sink` is deliberately a one-method trait — `append` and
-    /// nothing else — and widening it to be readable would weaken the thing
-    /// that makes the guarantee simple to state.
-    requests: Arc<crate::receipt::MemorySink>,
 
     /// The refs this session last handed to a control client.
     ///
@@ -426,8 +403,6 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         served_refs: None,
         unknown_verbs: std::collections::BTreeMap::new(),
         recording: crate::replay::Recording::default(),
-        requests: options.requests.clone(),
-        secrets: crate::secrets::Secrets::from_env(),
         login: false,
     };
     run_session(session, rx, options.once);
@@ -984,7 +959,7 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         if reply.get("ok").and_then(Value::as_bool) == Some(true) {
             record_step(session, request, &reply);
         }
-        return (redact_reply(&session.secrets, reply), changed);
+        return (redact_reply(session.factory.broker().as_ref(), reply), changed);
     };
 
     let seq = match log.begin(verb, target.as_deref()) {
@@ -1006,7 +981,7 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     // it belongs to this verb's window — which is the join a reviewer needs and
     // the thing the old implementation got exactly backwards (see
     // `ActionRecord::requests`).
-    let mark = session.requests.high_water();
+    let mark = session.factory.broker().high_water();
 
     let (answer, changed) = control_verb(session, request);
 
@@ -1016,7 +991,7 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     }
     let url = answer.get("url").and_then(Value::as_str);
     let error = answer.get("error").and_then(Value::as_str);
-    let caused = session.requests.since(mark);
+    let caused = session.factory.broker().since(mark);
     if let Some(log) = &session.actions {
         log.finish(
             seq,
@@ -1032,7 +1007,7 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     }
     // Redacted after the action log is written, so the log keeps the engine's
     // own account and only what leaves for the agent is scrubbed.
-    (redact_reply(&session.secrets, answer), changed)
+    (redact_reply(session.factory.broker().as_ref(), answer), changed)
 }
 
 /// Put credential placeholders back into anything on its way out.
@@ -1050,23 +1025,66 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 ///
 /// The cost is a string scan per reply against a handful of values, on a path
 /// that has already done a policy check and a layout pass.
-fn redact_reply(secrets: &crate::secrets::Secrets, value: Value) -> Value {
+fn redact_reply(broker: &dyn crate::broker::Broker, value: Value) -> Value {
+    // One pass to collect, one call, one pass to put back. The middle step is
+    // the reason for the shape: redaction happens where the values are, which
+    // after the split is another process, and a round trip per string in a
+    // snapshot reply would cost more than the snapshot did.
+    let mut texts: Vec<String> = Vec::new();
+    collect_strings(&value, &mut texts);
+    if texts.is_empty() {
+        return value;
+    }
+    let mut redacted = broker.redact_all(&texts).into_iter();
+    put_strings(value, &mut redacted)
+}
+
+fn collect_strings(value: &Value, out: &mut Vec<String>) {
     match value {
-        Value::String(text) => Value::String(secrets.redact(&text)),
+        Value::String(text) => out.push(text.clone()),
+        Value::Array(items) => items.iter().for_each(|item| collect_strings(item, out)),
+        // Values, not keys: a field *name* is this engine's own vocabulary, and
+        // a secret that happened to look like one would be a stranger thing
+        // than a leak.
+        Value::Object(fields) => fields.values().for_each(|item| collect_strings(item, out)),
+        _ => {}
+    }
+}
+
+/// The same traversal, in the same order, putting each answer back where its
+/// question came from.
+fn put_strings(value: Value, redacted: &mut impl Iterator<Item = String>) -> Value {
+    match value {
+        Value::String(text) => Value::String(redacted.next().unwrap_or(text)),
         Value::Array(items) => Value::Array(
             items
                 .into_iter()
-                .map(|item| redact_reply(secrets, item))
+                .map(|item| put_strings(item, redacted))
                 .collect(),
         ),
         Value::Object(fields) => Value::Object(
             fields
                 .into_iter()
-                .map(|(name, item)| (name, redact_reply(secrets, item)))
+                .map(|(name, item)| (name, put_strings(item, redacted)))
                 .collect(),
         ),
         other => other,
     }
+}
+
+/// What the page currently loaded spent on the network, and against what.
+///
+/// One reading rather than three. `Broker::budget` is a call across a process
+/// boundary now, and asking three times for three fields of one answer also
+/// meant the three could come from three different moments while a page was
+/// still fetching.
+fn budget_of(session: &Session) -> Value {
+    let allowance = session.factory.broker().budget();
+    json!({
+        "spent": allowance.spent,
+        "max_requests": allowance.limits.max_requests,
+        "max_wire_bytes": allowance.limits.max_wire_bytes,
+    })
 }
 
 /// Handle one control request against the resident page.
@@ -1182,7 +1200,7 @@ fn control_verb_inner(
                 // without being able to read the credential that makes it so,
                 // which is what keeps a stolen snapshot worth less than a
                 // stolen jar.
-                "cookies": session.factory.broker().jar().len(),
+                "cookies": session.factory.broker().cookie_count(),
                 "login": session.login,
                 "open_sockets": session.page.open_sockets(),
                 // What was asked for and does not exist. Empty on almost every
@@ -1195,11 +1213,7 @@ fn control_verb_inner(
                 // against what. An agent that hit a budget should be able to
                 // see how close it came rather than inferring it from a
                 // refusal in the request log.
-                "budget": {
-                    "spent": session.factory.broker().budget().spent(),
-                    "max_requests": session.factory.broker().budget().limits().max_requests,
-                    "max_wire_bytes": session.factory.broker().budget().limits().max_wire_bytes,
-                },
+                "budget": budget_of(session),
             }),
             false,
         ),
@@ -1228,7 +1242,7 @@ fn control_verb_inner(
                 json!({
                     "ok": true,
                     "login": on,
-                    "cookies": session.factory.broker().jar().len(),
+                    "cookies": session.factory.broker().cookie_count(),
                     "message": if on {
                         "login mode is on: the page is no longer readable by the agent, and the \
                          live view is yours. Type the credential there, then end this mode."
@@ -1393,7 +1407,7 @@ fn control_verb_inner(
             // The one place a credential is resolved, guarded by the predicate
             // rather than by this call site remembering to ask.
             let resolved = if Verb::Type.substitutes_secrets() {
-                session.secrets.substitute(text)
+                session.factory.broker().substitute(text)
             } else {
                 crate::secrets::Resolved {
                     text: text.to_string(),
@@ -1687,37 +1701,28 @@ fn control_verb_inner(
         // the network — it is the decision record the broker wrote before the
         // bytes moved. If it is not here, it did not happen.
         Verb::Requests => {
-            let all = session.requests.records();
-
             // `since` lets an agent ask what happened after its last look, the
             // same shape `snapshot --delta` has and for the same reason: the
             // whole log re-read after every click is the wrong size for a loop.
+            //
+            // Asked *of the broker* as a window rather than filtered here. The
+            // log lives in another process now, and reading it whole to hand
+            // back a tail would put the thing the cursor exists to avoid back
+            // on the wire, where it would grow with the session instead of with
+            // the answer.
             let since = request.get("since").and_then(Value::as_u64);
-            let rows: Vec<&crate::receipt::RequestRecord> = all
-                .iter()
-                .filter(|r| since.is_none_or(|floor| r.seq > floor))
-                .collect();
-
-            // Counted over the *whole* log rather than the window, because
-            // "nothing was refused" is a claim about the session and an agent
-            // that only ever asks for windows should still be able to make it.
-            let denied = all
-                .iter()
-                .filter(|r| r.phase == crate::receipt::Phase::Request && !r.allowed)
-                .count();
+            let rows = session.factory.broker().records_since(since);
+            // The counts are over the *whole* log rather than the window,
+            // because "nothing was refused" is a claim about the session and an
+            // agent that only ever asks for windows should still be able to
+            // make it. Three numbers, not the log they came from.
+            let summary = session.factory.broker().log_summary();
 
             let text = rows
                 .iter()
                 .map(|r| r.render())
                 .collect::<Vec<_>>()
                 .join("\n");
-            // The highest seq, not the last appended. Sequence numbers are
-            // taken before the append, and a socket reader thread appends
-            // concurrently with the page's own fetches — so append order and
-            // seq order can differ, and `last()` would either re-show a row or
-            // skip one permanently. A hole in a log this verb documents as
-            // complete by construction is the worst of the two.
-            let highest = all.iter().map(|r| r.seq).max();
 
             (
                 json!({
@@ -1725,11 +1730,15 @@ fn control_verb_inner(
                     "requests": rows,
                     // The cursor to pass back as `since`. Named rather than
                     // left to be derived from the last row, which is absent
-                    // when the window is empty.
-                    "cursor": highest,
+                    // when the window is empty. The highest sequence, not the
+                    // last appended: numbers are taken before the append and a
+                    // socket's reader thread appends concurrently with the
+                    // page's own fetches, so `last()` would either re-show a
+                    // row or skip one permanently.
+                    "cursor": summary.highest,
                     "shown": rows.len(),
-                    "total": all.len(),
-                    "denied": denied,
+                    "total": summary.total,
+                    "denied": summary.denied,
                     "text": text,
                 }),
                 false,
@@ -2014,7 +2023,7 @@ fn control_verb_inner(
         }
 
         Verb::Env => {
-            let names = session.secrets.names();
+            let names = session.factory.broker().secret_names();
             (
                 json!({
                     "ok": true,
@@ -2414,15 +2423,34 @@ fn scroll_for_key(key: &str, viewport_height: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::Broker;
     use crate::policy::Policy;
     use crate::receipt::MemorySink;
     use std::sync::Arc;
 
     fn session_with(html: &str) -> Session {
+        session_and_broker(html, crate::secrets::Secrets::default()).0
+    }
+
+    /// The same session, plus the broker underneath it.
+    ///
+    /// A session holds a `dyn Broker` and can only ask it things; a test that
+    /// wants to *put* something in the log, or to name a credential the broker
+    /// will substitute, needs the local one. Building it here rather than
+    /// reaching for it through the session is the point: after the split there
+    /// is no way back from the renderer's side, and a test that pretended
+    /// otherwise would be testing a shape the product does not have.
+    fn session_and_broker(
+        html: &str,
+        secrets: crate::secrets::Secrets,
+    ) -> (Session, Arc<crate::net::LocalBroker>) {
         let requests = Arc::new(MemorySink::new());
-        let broker =
-            Arc::new(Broker::new(Policy::new(), requests.clone(), None).expect("broker"));
+        let broker = crate::net::LocalBroker::with_secrets(
+            Policy::new(),
+            requests.clone(),
+            None,
+            secrets,
+        )
+        .expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
         let sources = fonts.sources.clone();
         let options = crate::engine::PageOptions {
@@ -2430,9 +2458,9 @@ mod tests {
             height: 200,
             ..Default::default()
         };
-        let factory = PageFactory::new(broker, sources, options);
+        let factory = PageFactory::new(broker.clone(), sources, options);
         let page = factory.from_html(html, &Url::parse("https://example.com/").unwrap());
-        Session {
+        let session = Session {
             factory,
             page,
             quality: 70,
@@ -2441,11 +2469,10 @@ mod tests {
             last_snapshot: None,
             served_refs: None,
             unknown_verbs: std::collections::BTreeMap::new(),
-        recording: crate::replay::Recording::default(),
-            requests,
-            secrets: crate::secrets::Secrets::default(),
+            recording: crate::replay::Recording::default(),
             login: false,
-        }
+        };
+        (session, broker)
     }
 
     /// Serves one page per connection, so a fused navigation has somewhere to
@@ -3164,9 +3191,8 @@ mod tests {
     /// A session whose page runs its own scripts, for the verbs that behave
     /// differently once script is present.
     fn scripted_session_with(html: &str) -> Session {
-        let requests = Arc::new(MemorySink::new());
-        let broker =
-            Arc::new(Broker::new(Policy::new(), requests.clone(), None).expect("broker"));
+        let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let options = crate::engine::PageOptions {
             width: 400,
@@ -3185,9 +3211,7 @@ mod tests {
             last_snapshot: None,
             served_refs: None,
             unknown_verbs: std::collections::BTreeMap::new(),
-        recording: crate::replay::Recording::default(),
-            requests,
-            secrets: crate::secrets::Secrets::default(),
+            recording: crate::replay::Recording::default(),
             login: false,
         }
     }
@@ -3549,13 +3573,14 @@ mod tests {
         // been reading the exact opposite of what happened.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("actions.jsonl");
-        let mut session = session_with(tall_page());
+        let (mut session, broker) =
+            session_and_broker(tall_page(), crate::secrets::Secrets::default());
         session.actions = Some(ActionLog::create(&path).expect("log"));
 
         // Put something in the request log that this verb plainly did not do.
         use crate::receipt::Sink as _;
-        session
-            .requests
+        broker
+            .log()
             .append(&crate::receipt::RequestRecord::request(
                 7,
                 crate::receipt::Initiator::Navigation,
@@ -3581,14 +3606,15 @@ mod tests {
     fn a_verb_carries_the_receipts_written_while_it_ran() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("actions.jsonl");
-        let mut session = session_with(tall_page());
+        let (mut session, broker) =
+            session_and_broker(tall_page(), crate::secrets::Secrets::default());
         session.actions = Some(ActionLog::create(&path).expect("log"));
 
         // One receipt from before the verb, one from during it. Only the second
         // belongs to the window.
         use crate::receipt::Sink as _;
-        session
-            .requests
+        broker
+            .log()
             .append(&crate::receipt::RequestRecord::request(
                 1,
                 crate::receipt::Initiator::Navigation,
@@ -3597,10 +3623,10 @@ mod tests {
             ))
             .expect("appended");
 
-        let mark = session.requests.high_water();
+        let mark = session.factory.broker().high_water();
         assert_eq!(mark, Some(1));
-        session
-            .requests
+        broker
+            .log()
             .append(&crate::receipt::RequestRecord::request(
                 2,
                 crate::receipt::Initiator::Navigation,
@@ -3610,13 +3636,13 @@ mod tests {
             .expect("appended");
 
         assert_eq!(
-            session.requests.since(mark),
+            session.factory.broker().since(mark),
             vec![2],
             "the window starts at the mark, not at the beginning of the session"
         );
         // A request and its response share a number, so the pair is one entry.
-        session
-            .requests
+        broker
+            .log()
             .append(&crate::receipt::RequestRecord::request(
                 2,
                 crate::receipt::Initiator::Navigation,
@@ -3624,7 +3650,7 @@ mod tests {
                 "https://example.com/during",
             ))
             .expect("appended");
-        assert_eq!(session.requests.since(mark), vec![2]);
+        assert_eq!(session.factory.broker().since(mark), vec![2]);
     }
 
     #[test]
@@ -3866,12 +3892,11 @@ mod tests {
     fn a_credential_reaches_the_field_and_never_the_reply() {
         // The whole claim, in one test. The agent names a credential, the value
         // lands in the page, and nothing the agent can read ever holds it.
-        let mut session = session_with(
+        let (mut session, _broker) = session_and_broker(
             "<html><body><form action='/in' method='post'>\
              <input name='pass' type='password'></form></body></html>",
+            crate::secrets::Secrets::from_pairs(&[("H5I_SECRET_ACME_PASS", "hunter2")]),
         );
-        session.secrets =
-            crate::secrets::Secrets::from_pairs(&[("H5I_SECRET_ACME_PASS", "hunter2")]);
 
         let refs = serve_refs(&mut session);
         let (reply, changed) = control_verb(
@@ -3918,11 +3943,10 @@ mod tests {
         // validation message, a title — puts the value in the DOM, and the next
         // snapshot would hand it to the agent the indirection exists to keep it
         // from.
-        let mut session = session_with(
+        let (session, _broker) = session_and_broker(
             "<html><body><p id='echo'>nothing yet</p></body></html>",
+            crate::secrets::Secrets::from_pairs(&[("H5I_SECRET_ACME", "hunter2-secret")]),
         );
-        session.secrets =
-            crate::secrets::Secrets::from_pairs(&[("H5I_SECRET_ACME", "hunter2-secret")]);
 
         // Stand in for the page having reflected it: put the value where a
         // read verb will find it.
@@ -3933,7 +3957,7 @@ mod tests {
             assert!(node.is_some(), "the fixture needs the node");
         }
         let reply = redact_reply(
-            &session.secrets,
+            session.factory.broker().as_ref(),
             json!({
                 "ok": true,
                 "text": "the form said hunter2-secret back",
@@ -3953,11 +3977,13 @@ mod tests {
 
     #[test]
     fn env_lists_names_and_the_engine_has_no_verb_that_returns_a_value() {
-        let mut session = session_with("<html><body><p>hi</p></body></html>");
-        session.secrets = crate::secrets::Secrets::from_pairs(&[
-            ("H5I_SECRET_A", "aaaa-secret"),
-            ("H5I_SECRET_B", "bbbb-secret"),
-        ]);
+        let (mut session, _broker) = session_and_broker(
+            "<html><body><p>hi</p></body></html>",
+            crate::secrets::Secrets::from_pairs(&[
+                ("H5I_SECRET_A", "aaaa-secret"),
+                ("H5I_SECRET_B", "bbbb-secret"),
+            ]),
+        );
 
         let (reply, changed) = control_verb(&mut session, &json!({"verb": "env"}));
         assert_eq!(reply["ok"], true, "{reply:?}");
@@ -4414,11 +4440,12 @@ mod delta_and_login_tests {
     use super::*;
 
     fn page_session(html: &str) -> Session {
-        let requests = std::sync::Arc::new(crate::receipt::MemorySink::new());
-        let broker = std::sync::Arc::new(
-            crate::net::Broker::new(crate::policy::Policy::new(), requests.clone(), None)
-                .expect("broker"),
-        );
+        let broker = crate::net::LocalBroker::new(
+            crate::policy::Policy::new(),
+            std::sync::Arc::new(crate::receipt::MemorySink::new()),
+            None,
+        )
+        .expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let factory = crate::engine::PageFactory::new(
             broker,
@@ -4436,9 +4463,7 @@ mod delta_and_login_tests {
             last_snapshot: None,
             served_refs: None,
             unknown_verbs: std::collections::BTreeMap::new(),
-        recording: crate::replay::Recording::default(),
-            requests,
-            secrets: crate::secrets::Secrets::default(),
+            recording: crate::replay::Recording::default(),
             login: false,
         }
     }

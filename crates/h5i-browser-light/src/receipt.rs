@@ -2,7 +2,7 @@
 //!
 //! A record is written *before* the wire and again after it. The first write
 //! is what makes the fail-closed claim true rather than aspirational: if the
-//! sink refuses the decision record, [`crate::net::Broker`] refuses the fetch,
+//! sink refuses the decision record, [`crate::net::LocalBroker`] refuses the fetch,
 //! so there is no path from "the engine made a request" to "nobody recorded
 //! it". The second write carries the outcome (status, bytes, duration), which
 //! is the part a human actually reads.
@@ -223,6 +223,20 @@ impl Sink for JsonlSink {
         // has not recorded anything if the process dies mid-request.
         writeln!(file, "{line}").map_err(H5iError::Io)?;
         file.flush().map_err(H5iError::Io)?;
+        Ok(())
+    }
+}
+
+/// A sink that accepts everything and keeps nothing.
+///
+/// Not the same as having no sink. The broker always has one, and the
+/// fail-closed rule is about what happens when a sink *refuses* — this one
+/// never does. It is what a session without `--receipts` writes to: the
+/// broker's own in-memory log is still kept, and still printed at the end.
+pub struct NullSink;
+
+impl Sink for NullSink {
+    fn append(&self, _record: &RequestRecord) -> Result<(), H5iError> {
         Ok(())
     }
 }

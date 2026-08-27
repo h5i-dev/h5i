@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use h5i_browser_light::engine::{PageFactory, PageOptions};
-use h5i_browser_light::net::Broker;
+use h5i_browser_light::net::LocalBroker;
 use h5i_browser_light::policy::Policy;
 use h5i_browser_light::receipt::MemorySink;
 
@@ -46,10 +46,9 @@ fn document_with_script(rows: usize) -> String {
     html
 }
 
-fn factory(script: bool) -> (PageFactory, Arc<Broker>) {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+fn factory(script: bool) -> (PageFactory, Arc<LocalBroker>) {
+    let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+        .expect("broker");
     let fonts = h5i_browser_light::fonts::load(
         &[],
         &h5i_browser_light::fonts::default_font_dirs(),

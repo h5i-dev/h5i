@@ -103,7 +103,7 @@ impl Origin {
 }
 
 /// How a request treats the origin boundary. The `mode` of `fetch`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Mode {
     /// Refuse to cross it at all.
     SameOrigin,
@@ -125,7 +125,7 @@ impl Mode {
 }
 
 /// Whether cookies ride along. The `credentials` of `fetch`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Credentials {
     Omit,
     /// Cookies for a same-origin request only. The default, and the reason a

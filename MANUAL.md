@@ -343,7 +343,25 @@ Two consequences worth knowing before they surprise you:
 
 - **Secrets are not inherited.** Unconfined, the engine reads the whole
   environment, so a compromised one reads every `H5I_SECRET_*` on the machine.
-  Confined it reads none unless named: `h5i browser open <url> --secret ACME_PASS`.
+  Confined it reads none unless named:
+
+        H5I_SECRET_ACME_PASS=... h5i browser open https://acme.test --secret ACME_PASS
+        h5i browser type @e2 '$H5I_SECRET_ACME_PASS'
+
+    `--secret ACME_PASS` and `--secret H5I_SECRET_ACME_PASS` name the same
+    credential. The value is resolved from the environment the command is
+    started in, once, and delivered to that session alone. It lands in the
+    session's broker process, not in the renderer that parses the page.
+
+    Fail-closed: a credential that cannot be resolved refuses the session,
+    rather than starting one that will decline the first `type` that needs it.
+    The same in both shapes, because a host that cannot confine still has to
+    answer `--secret` the same way.
+
+    Not for `--in`. A session placed in a box gets its credentials from that
+    box's policy, declared in `.h5i/env.toml` under the profile it was created
+    with. `--secret` with `--in` is refused rather than ignored.
+
 - **Personal fonts are visible, and nothing else under `$HOME` is.** `~/.fonts`
   and `~/.local/share/fonts` are granted read-only, because a font someone
   installed is not the page's font: the ones a page supplies arrive over
@@ -364,6 +382,55 @@ Two consequences worth knowing before they surprise you:
 the session runs unconfined **and says which**, on the placement line and in the
 record. A sandbox nobody can see is indistinguishable from one that was never
 applied.
+
+### Two processes: the broker and the renderer
+
+A session is two processes, and neither is a command you type. The one h5i
+starts is the **broker**: it holds the allowlist, the HTTP client, the receipt
+sink, the cookie jar, the per-page budget and the credentials. It starts the
+**renderer**, which parses the HTML, runs the cascade, decodes the images and
+fonts, runs the page's script and draws the frame. The renderer holds none of
+the things in that first list. It asks; the broker decides and records.
+
+```
+$ ps -o pid,ppid,args
+  55509  36242  h5i __engine serve https://example.com ...
+  55511  55509  h5i __engine --brokered serve https://example.com ...
+```
+
+The reason is that a browser's parsers are where a stranger's bytes are read. A
+bug in Blitz, Stylo, an image decoder or Boa used to be a bug in the process
+that also held the policy, the jar and every `H5I_SECRET_*` in the environment.
+Now it is a bug in a process whose environment has none of them, and whose only
+route to the network is to ask something else, which writes a receipt first.
+
+**What this buys, exactly:**
+
+- Credentials named with `--secret` are in the broker's environment and not in
+  the renderer's. A page-bound `type` resolves through the broker, so an intact
+  renderer receives the value for the field it was told to fill and no other.
+  A compromised one can ask the broker to resolve any credential **this session
+  was granted**, which is the narrowing the split actually buys: it cannot
+  reach one the session was not granted, and unconfined that would have been
+  every `H5I_SECRET_*` on the machine. Narrowing it further needs the control
+  channel to move to the broker, which is not built.
+- The receipts path, the egress proxy and the allowlist are likewise absent
+  from the renderer.
+- The cookie jar is not in the renderer's memory. Script sees the non-`HttpOnly`
+  subset because it asks for it, which is the same answer it always got, from a
+  place a parser bug cannot reach past.
+- When the renderer dies the broker knows, with a status. When the broker dies
+  the renderer stops, because a renderer that cannot receipt is not a browser.
+
+**What it does not buy yet.** The renderer is in the broker's network namespace,
+so it can still open a socket of its own. The split moved what a compromised
+parser can reach *in memory*. The request log becomes evidence against a
+compromised parser only when the renderer's own profile denies the network,
+which is ROADMAP §B18.7 step 3 and is not built.
+
+`H5I_BROWSER_NO_SPLIT=1` runs the engine as one process, the way it ran before.
+It is there for comparing the two shapes, and for a host where spawning is the
+problem. A spawn that fails falls back to one process on its own, and says so.
 
 ### `--in <box>`: the same session, inside a box
 

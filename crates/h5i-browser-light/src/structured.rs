@@ -253,15 +253,12 @@ fn fence_json(value: serde_json::Value) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::engine::{PageFactory, PageOptions};
-    use crate::net::Broker;
     use crate::policy::Policy;
     use crate::receipt::MemorySink;
     use std::sync::Arc;
 
     fn structured_of(html: &str) -> Structured {
-        let broker = Arc::new(
-            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-        );
+        let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
         let page = factory.from_html(

@@ -155,6 +155,7 @@
 <a class="t3" href="#what-is-true-by-default">What is true by default</a>
 <a class="t3" href="#read-one-page-no-session">read: one page, no session</a>
 <a class="t3" href="#the-default-sandbox">The default sandbox</a>
+<a class="t3" href="#two-processes-the-broker-and-the-renderer">Two processes: the broker and the renderer</a>
 <a class="t3" href="#--in-box-the-same-session-inside-a-box">--in &lt;box&gt;: the same session, inside a box</a>
 <a class="t3" href="#opening-a-session-from-inside-a-box">Opening a session from inside a box</a>
 <a class="t3" href="#reading-and-acting-beyond-snapshot-and-click">Reading and acting, beyond snapshot and click</a>
@@ -547,9 +548,25 @@ log. Containing the network, and earning <code>host-observed</code>, needs a bou
 outside the engine: <code>--in</code>, below.</p>
 <p>Two consequences worth knowing before they surprise you:</p>
 <ul>
-<li><strong>Secrets are not inherited.</strong> Unconfined, the engine reads the whole
+<li>
+<p><strong>Secrets are not inherited.</strong> Unconfined, the engine reads the whole
   environment, so a compromised one reads every <code>H5I_SECRET_*</code> on the machine.
-  Confined it reads none unless named: <code>h5i browser open &lt;url&gt; --secret ACME_PASS</code>.</li>
+  Confined it reads none unless named:</p>
+<pre><code>H5I_SECRET_ACME_PASS=... h5i browser open https://acme.test --secret ACME_PASS
+h5i browser type @e2 '$H5I_SECRET_ACME_PASS'
+</code></pre>
+<p><code>--secret ACME_PASS</code> and <code>--secret H5I_SECRET_ACME_PASS</code> name the same
+credential. The value is resolved from the environment the command is
+started in, once, and delivered to that session alone. It lands in the
+session's broker process, not in the renderer that parses the page.</p>
+<p>Fail-closed: a credential that cannot be resolved refuses the session,
+rather than starting one that will decline the first <code>type</code> that needs it.
+The same in both shapes, because a host that cannot confine still has to
+answer <code>--secret</code> the same way.</p>
+<p>Not for <code>--in</code>. A session placed in a box gets its credentials from that
+box's policy, declared in <code>.h5i/env.toml</code> under the profile it was created
+with. <code>--secret</code> with <code>--in</code> is refused rather than ignored.</p>
+</li>
 <li>
 <p><strong>Personal fonts are visible, and nothing else under <code>$HOME</code> is.</strong> <code>~/.fonts</code>
   and <code>~/.local/share/fonts</code> are granted read-only, because a font someone
@@ -571,6 +588,48 @@ a session runs unconfined.</p>
 the session runs unconfined <strong>and says which</strong>, on the placement line and in the
 record. A sandbox nobody can see is indistinguishable from one that was never
 applied.</p>
+<h3 id="two-processes-the-broker-and-the-renderer">Two processes: the broker and the renderer</h3>
+<p>A session is two processes, and neither is a command you type. The one h5i
+starts is the <strong>broker</strong>: it holds the allowlist, the HTTP client, the receipt
+sink, the cookie jar, the per-page budget and the credentials. It starts the
+<strong>renderer</strong>, which parses the HTML, runs the cascade, decodes the images and
+fonts, runs the page's script and draws the frame. The renderer holds none of
+the things in that first list. It asks; the broker decides and records.</p>
+<pre><code>$ ps -o pid,ppid,args
+  55509  36242  h5i __engine serve https://example.com ...
+  55511  55509  h5i __engine --brokered serve https://example.com ...
+</code></pre>
+<p>The reason is that a browser's parsers are where a stranger's bytes are read. A
+bug in Blitz, Stylo, an image decoder or Boa used to be a bug in the process
+that also held the policy, the jar and every <code>H5I_SECRET_*</code> in the environment.
+Now it is a bug in a process whose environment has none of them, and whose only
+route to the network is to ask something else, which writes a receipt first.</p>
+<p><strong>What this buys, exactly:</strong></p>
+<ul>
+<li>Credentials named with <code>--secret</code> are in the broker's environment and not in
+  the renderer's. A page-bound <code>type</code> resolves through the broker, so an intact
+  renderer receives the value for the field it was told to fill and no other.
+  A compromised one can ask the broker to resolve any credential <strong>this session
+  was granted</strong>, which is the narrowing the split actually buys: it cannot
+  reach one the session was not granted, and unconfined that would have been
+  every <code>H5I_SECRET_*</code> on the machine. Narrowing it further needs the control
+  channel to move to the broker, which is not built.</li>
+<li>The receipts path, the egress proxy and the allowlist are likewise absent
+  from the renderer.</li>
+<li>The cookie jar is not in the renderer's memory. Script sees the non-<code>HttpOnly</code>
+  subset because it asks for it, which is the same answer it always got, from a
+  place a parser bug cannot reach past.</li>
+<li>When the renderer dies the broker knows, with a status. When the broker dies
+  the renderer stops, because a renderer that cannot receipt is not a browser.</li>
+</ul>
+<p><strong>What it does not buy yet.</strong> The renderer is in the broker's network namespace,
+so it can still open a socket of its own. The split moved what a compromised
+parser can reach <em>in memory</em>. The request log becomes evidence against a
+compromised parser only when the renderer's own profile denies the network,
+which is ROADMAP §B18.7 step 3 and is not built.</p>
+<p><code>H5I_BROWSER_NO_SPLIT=1</code> runs the engine as one process, the way it ran before.
+It is there for comparing the two shapes, and for a host where spawning is the
+problem. A spawn that fails falls back to one process on its own, and says so.</p>
 <h3 id="--in-box-the-same-session-inside-a-box"><code>--in &lt;box&gt;</code>: the same session, inside a box</h3>
 <pre><code class="language-bash">h5i box --profile browser --engine h5i --name web
 h5i browser open https://example.com --in web

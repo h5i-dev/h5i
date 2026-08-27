@@ -57,7 +57,7 @@ vello_cpu = { version = "=0.0.9", default-features = false, features = ["png"] }
 parley = { version = "0.10", default-features = false, features = ["std"] }
 
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-url = "2.5"
+url = { version = "2.5", features = ["serde"] }
 
 # The operating system's own CSPRNG, for `crypto.getRandomValues`. A browser
 # promises unpredictability there; a seeded generator wearing the name would be

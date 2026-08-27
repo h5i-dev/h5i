@@ -76,6 +76,10 @@ impl Site {
             "/third-party" => "<html><body><h1>third party</h1>\
                   <img src=\"https://cdn.example.invalid/x.png\"><p>body</p></body></html>"
                 .to_string(),
+            // Something to type a credential into.
+            "/login" => "<html><body><form action=\"/in\" method=\"post\">\
+                  <input name=\"pass\" type=\"password\"></form></body></html>"
+                .to_string(),
             _ => "<html><head><title>t</title></head><body><h1>hello</h1>\
                   <p>a <a href=\"https://example.com/next\">link</a></p></body></html>"
                 .to_string(),
@@ -104,11 +108,19 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new(h5i())
-            .args(args)
-            .env("H5I_BROWSER_HOME", self.home.path())
-            .output()
-            .expect("h5i runs")
+        self.run_with(args, &[])
+    }
+
+    /// The same, with variables set in the environment the command is started
+    /// from. That environment is where `--secret` resolves a credential, so a
+    /// test of the credential path has to control it rather than inherit it.
+    fn run_with(&self, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+        let mut command = Command::new(h5i());
+        command.args(args).env("H5I_BROWSER_HOME", self.home.path());
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        command.output().expect("h5i runs")
     }
 
     /// The session's allowlist has to name the test server, because the engine
@@ -717,4 +729,102 @@ fn page_text_reaches_the_terminal_without_its_escape_sequences() {
     let text = String::from_utf8_lossy(&snapshot.stdout);
     assert!(!text.contains('\u{1b}'), "an escape reached the terminal");
     let _ = fx.run(&["browser", "close"]);
+}
+
+/// A credential named with `--secret` reaches the session, and its value does
+/// not reach anything the agent reads.
+///
+/// The whole point of the flag, and it was doing none of it: the profile named
+/// the credential and nothing delivered it, so a confined session answered "no
+/// credentials" for one it had been told to carry. Driven through the binary
+/// because the failure lived in the seam between the CLI, the profile and the
+/// spawn, which is exactly the part a library test does not cross.
+#[test]
+fn a_named_credential_reaches_a_confined_session_and_never_a_reply() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = format!("{}/login", fx.site.base);
+    let opened = fx.run_with(
+        &[
+            "browser", "open", &url, "--allow", "127.0.0.1", "--secret", "ACME_PASS", "--json",
+        ],
+        &[("H5I_SECRET_ACME_PASS", "hunter2-from-the-test")],
+    );
+    assert!(
+        opened.status.success(),
+        "open failed: {}",
+        String::from_utf8_lossy(&opened.stderr)
+    );
+
+    // The name, from the session's own answer. Never the value: there is no
+    // verb in this engine that returns one. `--json` because the human form
+    // prints the count and the advice, and the names are the field.
+    let listed = fx.run(&["browser", "env", "--json"]);
+    let text = String::from_utf8_lossy(&listed.stdout);
+    assert!(text.contains("H5I_SECRET_ACME_PASS"), "{text}");
+    assert!(!text.contains("hunter2-from-the-test"), "a value was printed: {text}");
+
+    // And it substitutes on the way into the field, reported by placeholder.
+    // The snapshot first, because a ref is something the session served rather
+    // than something a caller may invent.
+    assert!(fx.run(&["browser", "snapshot"]).status.success());
+    let typed = fx.run(&["browser", "type", "@e1", "$H5I_SECRET_ACME_PASS"]);
+    let reply = String::from_utf8_lossy(&typed.stdout);
+    assert!(typed.status.success(), "{}", String::from_utf8_lossy(&typed.stderr));
+    assert!(reply.contains("H5I_SECRET_ACME_PASS"), "{reply}");
+    assert!(!reply.contains("hunter2-from-the-test"), "the value came back: {reply}");
+
+    let _ = fx.run(&["browser", "close"]);
+}
+
+/// A credential that cannot be resolved stops the session before it exists.
+///
+/// Fail-closed, and the reason it matters here: the alternative is a session
+/// that starts fine and refuses the credential at the moment an agent is
+/// halfway through a login, which is the least recoverable place to learn it.
+#[test]
+fn a_credential_that_is_not_set_refuses_the_session_rather_than_starting_one() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    let out = fx.run(&[
+        "browser", "open", &url, "--allow", "127.0.0.1", "--secret", "NOT_SET_ANYWHERE",
+    ]);
+    assert!(
+        !out.status.success(),
+        "a missing credential started a session\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let why = String::from_utf8_lossy(&out.stderr);
+    assert!(why.contains("H5I_SECRET_NOT_SET_ANYWHERE"), "{why}");
+
+    // And nothing was left behind: `browser status` has no session to report.
+    let after = fx.run(&["browser", "status"]);
+    assert!(
+        !after.status.success()
+            || !String::from_utf8_lossy(&after.stdout).contains("NOT_SET_ANYWHERE"),
+        "a failed start left a session"
+    );
+}
+
+/// `--secret` and `--in` are two ways to say one thing, and a box already has
+/// the better one. Refused rather than ignored: this flag was silently dropped
+/// on the way to a box, so a session ran without the credential it was told to
+/// carry and said nothing about it.
+#[test]
+fn a_secret_flag_on_a_boxed_session_is_refused_and_names_env_toml() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    let out = fx.run(&[
+        "browser", "open", &url, "--in", "web", "--secret", "ACME_PASS",
+    ]);
+    assert!(!out.status.success());
+    let why = String::from_utf8_lossy(&out.stderr);
+    assert!(why.contains("env.toml"), "the refusal names where to put it: {why}");
+    assert!(why.contains("secrets"), "{why}");
 }

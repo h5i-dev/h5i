@@ -269,14 +269,12 @@ mod tests {
     use super::*;
 
     fn page(html: &str) -> crate::engine::Page {
-        let broker = std::sync::Arc::new(
-            crate::net::Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 crate::policy::Policy::new(),
                 std::sync::Arc::new(crate::receipt::MemorySink::new()),
                 None,
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let factory = crate::engine::PageFactory::new(
             broker,

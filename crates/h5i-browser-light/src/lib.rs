@@ -11,9 +11,15 @@
 //!
 //! What that buys, concretely:
 //!
-//! - **Fail-closed by construction.** [`net::Broker`] appends the decision
+//! - **Fail-closed by construction.** [`net::LocalBroker`] appends the decision
 //!   before the wire and the outcome after it. A sink that refuses to record
 //!   is a sink that refuses to fetch (see [`receipt::Sink`]).
+//! - **The recorder is not in the parsers' process.** The engine runs as two:
+//!   a broker holding the policy, the wire, the receipts, the jar and the
+//!   secrets, and a renderer holding the DOM, the cascade, the decoders and the
+//!   script realm. [`broker::Broker`] is the seam between them and [`ipc`] is
+//!   the transport. A bug in Blitz, Stylo, an image decoder or Boa is a bug in
+//!   the half that holds none of the above.
 //! - **Every hop is a decision.** Redirects are followed manually and each hop
 //!   is policy-checked and receipted, so an allowed origin cannot bounce a
 //!   request to a denied one.
@@ -30,6 +36,7 @@
 //! keeps Chromium for the agent's own dev server, and docs-grade pages are this
 //! engine's compatibility bar.
 
+pub mod broker;
 pub mod cli;
 pub mod encoding;
 pub mod canvas;
@@ -40,6 +47,7 @@ pub mod engine;
 pub mod extract;
 pub mod fonts;
 pub mod markdown;
+pub mod ipc;
 pub mod net;
 pub mod policy;
 pub mod receipt;
@@ -55,6 +63,7 @@ pub mod verbs;
 pub mod ws;
 pub mod wsclient;
 
+pub use broker::Broker;
 pub use engine::{Page, PageFactory, PageOptions};
 pub use policy::{Policy, Verdict};
 pub use receipt::{JsonlSink, MemorySink, RequestRecord, Sink};

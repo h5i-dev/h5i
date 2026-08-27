@@ -1,7 +1,7 @@
 //! The broker: the only way bytes enter this engine.
 //!
 //! Every fetch — the page itself, every stylesheet, every image, every
-//! redirect hop — goes through [`Broker::fetch`], which does the same three
+//! redirect hop — goes through [`crate::broker::Broker::send`], which does the same three
 //! things in the same order: check policy, record the decision, then use the
 //! wire. There is no second path, which is what lets the receipt be the
 //! network rather than a report about it.
@@ -71,7 +71,7 @@ fn accept_for(initiator: Initiator) -> &'static str {
 
 /// What a fetch produced. A denied or failed fetch is still an outcome, with
 /// an empty body and a reason — never an absence.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FetchOutcome {
     /// The receipt sequence number this request was recorded under.
     ///
@@ -86,6 +86,10 @@ pub struct FetchOutcome {
     /// rather than unsupported.
     pub headers: Vec<(String, String)>,
     pub final_url: Url,
+    /// Carried beside the message rather than inside it when this crosses a
+    /// process boundary: a page's images are megabytes, and base64 in JSON
+    /// would pay a third again for the privilege of being unreadable.
+    #[serde(skip)]
     pub body: Vec<u8>,
     pub status: Option<u16>,
     pub error: Option<String>,
@@ -200,9 +204,37 @@ struct CorsContext {
     credentials: crate::cors::Credentials,
 }
 
-pub struct Broker {
+pub struct LocalBroker {
+    /// A handle to itself, for the two operations that hand out something with
+    /// a life of its own.
+    ///
+    /// A WebSocket's reader thread receipts every frame for as long as the
+    /// connection is open, so it holds the broker rather than borrowing it —
+    /// and [`crate::broker::Broker::open_socket`] takes `&self`, because a
+    /// trait method that took `Arc<Self>` could not be called through
+    /// `dyn Broker`. `Arc::new_cyclic` closes that: the broker is built already
+    /// knowing the handle it will be reached through.
+    me: std::sync::Weak<LocalBroker>,
     policy: Policy,
     sink: Arc<dyn Sink>,
+    /// Every record, kept in memory as well as sent to the sink.
+    ///
+    /// The engine's own copy, and the only one a renderer can ask for. It is
+    /// here rather than threaded in beside the sink because the record-keeper
+    /// and the thing being asked "what did you record" have to be the same
+    /// component, or the answer is somebody's report about it.
+    log: Arc<crate::receipt::MemorySink>,
+    /// Credentials the agent may use and may not read.
+    ///
+    /// **Read here and nowhere else.** This is the process that holds
+    /// `H5I_SECRET_*`; the renderer's environment is scrubbed of them, so a
+    /// compromised parser reads the values that were substituted into a field
+    /// it was told to fill and no others.
+    ///
+    /// Read once, when the broker is built, so a later `setenv` cannot widen
+    /// what the session can reach. See [`crate::secrets`] for why the namespace
+    /// is narrower than `H5I_*`.
+    secrets: crate::secrets::Secrets,
     client: reqwest::blocking::Client,
     seq: AtomicU64,
     /// The session's cookies. Attached here rather than by the HTTP client so
@@ -233,14 +265,61 @@ pub struct Broker {
     pinned: Option<Arc<Pinned>>,
 }
 
-impl Broker {
+impl LocalBroker {
     /// Build a broker.
     ///
     /// `proxy` is h5i's egress proxy (`H5I_EGRESS_PROXY`). It is not required —
     /// the engine is useful on a bare host — but inside a box it is how the
     /// sandbox's own allowlist stays in the path. Loopback bypasses it, because
     /// the dev server is not egress.
-    pub fn new(policy: Policy, sink: Arc<dyn Sink>, proxy: Option<&str>) -> Result<Self, H5iError> {
+    pub fn new(
+        policy: Policy,
+        sink: Arc<dyn Sink>,
+        proxy: Option<&str>,
+    ) -> Result<Arc<Self>, H5iError> {
+        Self::build(
+            policy,
+            sink,
+            proxy,
+            crate::budget::Limits::default(),
+            crate::secrets::Secrets::from_env(),
+        )
+    }
+
+    /// The same, with the credentials named rather than read from the
+    /// environment. For a caller that resolves them somewhere else, and for
+    /// tests, which must not depend on what is exported around them.
+    pub fn with_secrets(
+        policy: Policy,
+        sink: Arc<dyn Sink>,
+        proxy: Option<&str>,
+        secrets: crate::secrets::Secrets,
+    ) -> Result<Arc<Self>, H5iError> {
+        Self::build(policy, sink, proxy, crate::budget::Limits::default(), secrets)
+    }
+
+    /// The same, with the page ceiling the caller wants.
+    ///
+    /// Separate from [`Self::new`] because the limits have to be in place
+    /// before the broker is shared: it is handed out as an `Arc` — a socket's
+    /// reader thread holds one for the life of the connection — and there is no
+    /// later moment at which it can be borrowed mutably.
+    pub fn with_limits(
+        policy: Policy,
+        sink: Arc<dyn Sink>,
+        proxy: Option<&str>,
+        limits: crate::budget::Limits,
+    ) -> Result<Arc<Self>, H5iError> {
+        Self::build(policy, sink, proxy, limits, crate::secrets::Secrets::from_env())
+    }
+
+    fn build(
+        policy: Policy,
+        sink: Arc<dyn Sink>,
+        proxy: Option<&str>,
+        limits: crate::budget::Limits,
+        secrets: crate::secrets::Secrets,
+    ) -> Result<Arc<Self>, H5iError> {
         let mut builder = reqwest::blocking::Client::builder()
             // Redirects are followed by hand so each hop is a policy decision
             // and a receipt line. Letting the client follow them would hide
@@ -277,32 +356,53 @@ impl Broker {
             .build()
             .map_err(|e| H5iError::Metadata(format!("failed to build the http client: {e}")))?;
 
-        Ok(Self {
+        Ok(Arc::new_cyclic(|me| Self {
+            me: me.clone(),
             policy,
             sink,
+            log: Arc::new(crate::receipt::MemorySink::new()),
+            secrets,
             client,
-            budget: crate::budget::Budget::default(),
+            budget: crate::budget::Budget::new(limits),
             pinned,
             seq: AtomicU64::new(0),
             jar: crate::cookies::Jar::new(),
             proxied,
-        })
+        }))
+    }
+
+    /// This broker's own copy of the record, for the broker process's use.
+    ///
+    /// Not on [`crate::broker::Broker`], which offers `records()` — a reading,
+    /// not the sink. Appending is not something a renderer gets to ask for:
+    /// the whole claim is that the log is written by the component that made
+    /// the decision.
+    pub fn log(&self) -> &crate::receipt::MemorySink {
+        &self.log
+    }
+
+    /// Append to the sink, and to this broker's own copy.
+    ///
+    /// One method rather than two calls at thirty sites, and the order matters:
+    /// the sink is the one that can refuse, and a refusal is what stops the
+    /// request. The in-memory copy never fails, so writing it first cannot
+    /// change whether a fetch happens.
+    fn append(&self, record: &RequestRecord) -> Result<(), H5iError> {
+        let _ = self.log.append(record);
+        self.sink.append(record)
     }
 
     pub fn policy(&self) -> &Policy {
         &self.policy
     }
 
-    /// What this page has spent, and what it may.
-    pub fn budget(&self) -> &crate::budget::Budget {
+    /// What this page has spent, and what it may. The live object, for the
+    /// broker's own use; [`crate::broker::Broker::budget`] hands callers a
+    /// reading of it instead.
+    pub fn spending(&self) -> &crate::budget::Budget {
         &self.budget
     }
 
-    /// Replace the limits. For a caller that wants a tighter page than the
-    /// default, and for tests that want a reachable one.
-    pub fn set_budget_limits(&mut self, limits: crate::budget::Limits) {
-        self.budget = crate::budget::Budget::new(limits);
-    }
 
     /// Ask a server, before the real request, whether it will accept one.
     ///
@@ -339,7 +439,7 @@ impl Broker {
         }
 
         let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str());
-        if let Err(e) = self.sink.append(&record) {
+        if let Err(e) = self.append(&record) {
             return Err(format!(
                 "refusing to preflight: the receipt could not be written: {e}"
             ));
@@ -366,7 +466,7 @@ impl Broker {
                 let mut outcome = record.response();
                 outcome.duration_ms = Some(elapsed);
                 outcome.error = Some(e.to_string());
-                let _ = self.sink.append(&outcome);
+                let _ = self.append(&outcome);
                 return Err(format!("the preflight could not be sent: {e}"));
             }
         };
@@ -387,7 +487,7 @@ impl Broker {
         let mut outcome = record.response();
         outcome.status = Some(status.as_u16());
         outcome.duration_ms = Some(elapsed);
-        let _ = self.sink.append(&outcome);
+        let _ = self.append(&outcome);
 
         if !status.is_success() {
             return Err(format!(
@@ -455,114 +555,21 @@ impl Broker {
         Ok(())
     }
 
-    /// The session's jar, for the things that may legitimately touch it:
-    /// counting it, and clearing it. There is deliberately no accessor that
-    /// returns a cookie's value.
+    /// The session's jar, for the broker's own use.
+    ///
+    /// Not on [`crate::broker::Broker`], and that is the point of §B18.6's
+    /// hardest case: this returns a live reference, which cannot cross a
+    /// process boundary and, in one process, put the session in reach of the
+    /// parsers. Callers get three operations instead — `document_cookie`,
+    /// `store_cookie`, `keep_only_origin` — each of which enforces `HttpOnly`
+    /// and origin scoping on the way through.
     pub fn jar(&self) -> &crate::cookies::Jar {
         &self.jar
     }
 
-    /// Fetch a URL, following redirects by hand and checking policy on each hop.
-    ///
-    /// No document, so the loopback rule treats this as the agent naming a URL.
-    /// Anything a *page* reaches for — a subresource, a script `src`, a form's
-    /// action — must use [`Self::fetch_from`] instead, or it is trusted like an
-    /// instruction the agent typed.
-    pub fn fetch(&self, url: &Url, initiator: Initiator) -> FetchOutcome {
-        self.send(url, initiator, "GET", &[], None)
-    }
-
-    /// [`Self::fetch`] for something a *document* asked for, so the policy can
-    /// tell a page reaching for loopback from the agent naming it. See
-    /// [`Policy::check_from`].
-    pub fn fetch_from(
-        &self,
-        url: &Url,
-        initiator: Initiator,
-        document: Option<&Url>,
-    ) -> FetchOutcome {
-        self.send_from(url, initiator, "GET", &[], None, document)
-    }
-
-    /// Send a request that may carry a body — what a form submission needs.
-    ///
-    /// One function rather than a second path beside [`Self::fetch`], because
-    /// every guarantee this broker makes lives in that loop: the policy check,
-    /// the record before the wire, the hand-followed redirects. A POST that
-    /// took a shortcut around it would be the one request in the engine with no
-    /// receipt, which is precisely the hole the whole design exists to close.
-    ///
-    /// The redirect rule is the browser's, and it is a security rule rather
-    /// than a convenience: a 301/302/303 turns a POST into a GET and drops the
-    /// body, so a form's credentials are not replayed to wherever a server
-    /// points next. 307/308 preserve the method, and each hop is still checked
-    /// against the allowlist like any other.
-    pub fn send(
-        &self,
-        url: &Url,
-        initiator: Initiator,
-        method: &str,
-        body: &[u8],
-        content_type: Option<&str>,
-    ) -> FetchOutcome {
-        self.send_from(url, initiator, method, body, content_type, None)
-    }
-
-    /// Send a request a *document* made, so the policy can reason about origin.
-    ///
-    /// The document is threaded through rather than stored on the broker because
-    /// one broker serves a whole session and the page underneath it changes.
-    #[allow(clippy::too_many_arguments)]
-    pub fn send_from(
-        &self,
-        url: &Url,
-        initiator: Initiator,
-        method: &str,
-        body: &[u8],
-        content_type: Option<&str>,
-        document: Option<&Url>,
-    ) -> FetchOutcome {
-        // No origin context: the agent asked for this by name, so there is no
-        // document whose boundary could be crossed. See `cors::plan`.
-        self.send_with_cors(url, initiator, method, body, content_type, document, None)
-    }
-
-    /// The same send, subject to the same-origin policy.
-    ///
-    /// Separate entry rather than a flag, because the two callers are asking
-    /// different questions. A navigation is the *agent* exercising its own
-    /// authority over a URL it named; a `fetch` is a *page* exercising an
-    /// authority it has to be granted. Answering both through one door with no
-    /// argument between them is how the second was going unasked.
-    #[allow(clippy::too_many_arguments)]
-    pub fn send_script(
-        &self,
-        url: &Url,
-        method: &str,
-        body: &[u8],
-        content_type: Option<&str>,
-        document: &Url,
-        headers: &[(String, String)],
-        mode: crate::cors::Mode,
-        credentials: crate::cors::Credentials,
-    ) -> FetchOutcome {
-        let context = CorsContext {
-            document: crate::cors::Origin::of(document),
-            headers: headers.to_vec(),
-            mode,
-            credentials,
-        };
-        self.send_with_cors(
-            url,
-            Initiator::Subresource,
-            method,
-            body,
-            content_type,
-            Some(document),
-            Some(&context),
-        )
-    }
-
+    /// The four public entry points are [`crate::broker::Broker`]'s, and they
+    /// all arrive here: check policy, record the decision, then use the wire,
+    /// following redirects by hand so every hop is a decision of its own.
     #[allow(clippy::too_many_arguments)]
     fn send_with_cors(
         &self,
@@ -720,7 +727,7 @@ impl Broker {
             //    written, the fetch does not happen — this is the fail-closed
             //    guarantee, and it is why `Sink::append` returns a Result.
             let record = RequestRecord::request(seq, initiator, &method, current.as_str());
-            if let Err(e) = self.sink.append(&record) {
+            if let Err(e) = self.append(&record) {
                 return FetchOutcome::failed(
                     current,
                     format!("refusing to fetch: the receipt could not be written: {e}"),
@@ -786,7 +793,7 @@ impl Broker {
                     outcome_record.duration_ms = Some(elapsed);
                     outcome_record.cookies_sent = Some(cookies_sent);
                     outcome_record.error = Some(e.to_string());
-                    let _ = self.sink.append(&outcome_record);
+                    let _ = self.append(&outcome_record);
                     return FetchOutcome::failed_at(current, e.to_string(), Some(seq));
                 }
             };
@@ -827,7 +834,7 @@ impl Broker {
                 if location.is_none() {
                     outcome_record.error = Some("redirect without a usable Location".to_string());
                 }
-                let _ = self.sink.append(&outcome_record);
+                let _ = self.append(&outcome_record);
 
                 match location {
                     Some(next) if hop < self.policy.max_redirects() => {
@@ -903,7 +910,7 @@ impl Broker {
                     refused.cookies_sent = Some(cookies_sent);
                     refused.cookies_stored = Some(cookies_stored);
                     refused.error = Some(format!("blocked by the same-origin policy: {why}"));
-                    let _ = self.sink.append(&refused);
+                    let _ = self.append(&refused);
                     return FetchOutcome::failed_at(
                         current,
                         format!("blocked by the same-origin policy: {why}"),
@@ -987,7 +994,7 @@ impl Broker {
             return match body {
                 Ok(body) => {
                     outcome_record.bytes = Some(body.len() as u64);
-                    let _ = self.sink.append(&outcome_record);
+                    let _ = self.append(&outcome_record);
                     // What the caller may see of this. Same-origin sees
                     // everything; a cross-origin CORS response is filtered to
                     // the safelist plus whatever the server exposed; a no-cors
@@ -1007,7 +1014,7 @@ impl Broker {
                 }
                 Err(e) => {
                     outcome_record.error = Some(e.to_string());
-                    let _ = self.sink.append(&outcome_record);
+                    let _ = self.append(&outcome_record);
                     FetchOutcome::failed_at(current, e.to_string(), Some(seq))
                 }
             };
@@ -1112,7 +1119,7 @@ impl Broker {
 
     /// Authorise a long-lived connection and record the decision.
     ///
-    /// The front half of [`Broker::send_from`] — policy, then the record,
+    /// The front half of [`crate::broker::Broker::send_from`] — policy, then the record,
     /// *then* the caller may dial — for a connection that has no single body to
     /// read and so cannot use the rest of that loop. Returns the sequence the
     /// handshake was recorded under.
@@ -1144,7 +1151,7 @@ impl Broker {
         }
 
         let record = RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str());
-        if let Err(e) = self.sink.append(&record) {
+        if let Err(e) = self.append(&record) {
             return Err(format!(
                 "refusing to connect: the receipt could not be written: {e}"
             ));
@@ -1179,20 +1186,23 @@ impl Broker {
             direction.as_method(),
             url.as_str(),
         );
-        self.sink.append(&record)?;
+        self.append(&record)?;
         let mut outcome = record.response();
         outcome.bytes = Some(bytes);
         // No status. 101 is the WebSocket upgrade's, and stamping it on every
         // frame said "switching protocols" four hundred times on one
         // connection — and said it on event streams, which never switched
         // anything. A frame is not an exchange with a status of its own.
-        self.sink.append(&outcome)
+        self.append(&outcome)
     }
 
     /// Authorise and begin an event stream, handing back the open response.
     ///
+    /// The half that touches the wire. [`crate::broker::Broker::open_event_stream`]
+    /// is the operation callers reach for; this is what it is built on.
+    ///
     /// The second exit from the receipt path, and the reason it exists:
-    /// [`Broker::send_from`] reads a whole body before it returns and writes
+    /// [`crate::broker::Broker::send_from`] reads a whole body before it returns and writes
     /// one response record with a final byte count. An event stream never
     /// completes, so it would hit the response cap or the client timeout and be
     /// reported as an error.
@@ -1200,7 +1210,7 @@ impl Broker {
     /// The front half is identical — policy, then the decision record, *then*
     /// the wire — because that is the half the fail-closed rule lives in, and
     /// two copies of it would be two rules.
-    pub fn open_event_stream(
+    pub fn begin_event_stream(
         &self,
         url: &Url,
         document: Option<&Url>,
@@ -1230,7 +1240,7 @@ impl Broker {
         }
 
         let record = RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str());
-        if let Err(e) = self.sink.append(&record) {
+        if let Err(e) = self.append(&record) {
             return Err(format!(
                 "refusing to connect: the receipt could not be written: {e}"
             ));
@@ -1262,7 +1272,7 @@ impl Broker {
                 // what flows after it is receipted per event.
                 let mut outcome = record.response();
                 outcome.status = Some(response.status().as_u16());
-                if let Err(e) = self.sink.append(&outcome) {
+                if let Err(e) = self.append(&outcome) {
                     return Err(format!(
                         "refusing to stream: the receipt could not be written: {e}"
                     ));
@@ -1272,7 +1282,7 @@ impl Broker {
             Err(error) => {
                 let mut outcome = record.response();
                 outcome.error = Some(error.to_string());
-                let _ = self.sink.append(&outcome);
+                let _ = self.append(&outcome);
                 Err(format!("could not open the event stream: {error}"))
             }
         }
@@ -1280,14 +1290,95 @@ impl Broker {
 
     /// Write both phases for a request that never reaches the wire.
     fn record_pair(&self, record: &RequestRecord) -> Result<(), H5iError> {
-        self.sink.append(record)?;
-        self.sink.append(&record.response())
+        self.append(record)?;
+        self.append(&record.response())
+    }
+}
+
+impl crate::broker::Broker for LocalBroker {
+    fn send(&self, fetch: &crate::broker::Fetch) -> FetchOutcome {
+        let context = fetch.cors.as_ref().map(|ask| CorsContext {
+            document: crate::cors::Origin::of(&ask.document),
+            headers: ask.headers.clone(),
+            mode: ask.mode,
+            credentials: ask.credentials,
+        });
+        self.send_with_cors(
+            &fetch.url,
+            fetch.initiator,
+            &fetch.method,
+            &fetch.body,
+            fetch.content_type.as_deref(),
+            fetch.document.as_ref(),
+            context.as_ref(),
+        )
+    }
+
+    fn records(&self) -> Vec<RequestRecord> {
+        self.log.records()
+    }
+
+    fn budget(&self) -> crate::broker::Allowance {
+        crate::broker::Allowance {
+            spent: self.budget.spent(),
+            limits: self.budget.limits().clone(),
+        }
+    }
+
+    fn reset_budget(&self) {
+        self.budget.reset();
+    }
+
+    fn cookie_count(&self) -> usize {
+        self.jar.len()
+    }
+
+    fn document_cookie(&self, url: &Url) -> String {
+        self.jar.document_cookie(url)
+    }
+
+    fn store_cookie(&self, url: &Url, header: &str) -> usize {
+        self.jar.store_from_script(url, header)
+    }
+
+    fn keep_only_origin(&self, origin: &Url) -> bool {
+        self.jar.retain_origin(origin)
+    }
+
+    fn open_socket(
+        &self,
+        url: &Url,
+        document: Option<&Url>,
+    ) -> Result<Arc<dyn crate::broker::Channel>, String> {
+        let me = self.me.upgrade().ok_or("the broker is no longer running")?;
+        Ok(Arc::new(crate::wsclient::Socket::open(me, url, document)?))
+    }
+
+    fn open_event_stream(
+        &self,
+        url: &Url,
+        document: Option<&Url>,
+    ) -> Result<Arc<dyn crate::broker::Channel>, String> {
+        let me = self.me.upgrade().ok_or("the broker is no longer running")?;
+        Ok(Arc::new(crate::sse::EventStream::open(me, url, document)?))
+    }
+
+    fn secret_names(&self) -> Vec<String> {
+        self.secrets.names().into_iter().map(str::to_string).collect()
+    }
+
+    fn substitute(&self, text: &str) -> crate::secrets::Resolved {
+        self.secrets.substitute(text)
+    }
+
+    fn redact(&self, text: &str) -> String {
+        self.secrets.redact(text)
     }
 }
 
 /// Adapts the broker to Blitz's [`NetProvider`].
 pub struct BrokerNet {
-    broker: Arc<Broker>,
+    broker: Arc<dyn crate::broker::Broker>,
     /// The document whose subresources these are.
     ///
     /// Load-bearing, not bookkeeping. Every image, stylesheet and font on the
@@ -1300,7 +1391,7 @@ pub struct BrokerNet {
 }
 
 impl BrokerNet {
-    pub fn new(broker: Arc<Broker>, document: Option<Url>) -> Self {
+    pub fn new(broker: Arc<dyn crate::broker::Broker>, document: Option<Url>) -> Self {
         Self { broker, document }
     }
 }
@@ -1322,11 +1413,12 @@ impl NetProvider for BrokerNet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::broker::Broker;
     use crate::receipt::{MemorySink, Phase};
     use std::sync::atomic::AtomicBool;
 
-    fn broker_with(policy: Policy, sink: Arc<dyn Sink>) -> Arc<Broker> {
-        Arc::new(Broker::new(policy, sink, None).expect("broker builds"))
+    fn broker_with(policy: Policy, sink: Arc<dyn Sink>) -> Arc<LocalBroker> {
+        LocalBroker::new(policy, sink, None).expect("broker builds")
     }
 
     fn url(s: &str) -> Url {
@@ -1498,7 +1590,7 @@ mod tests {
     #[test]
     fn a_bad_proxy_url_is_refused_at_construction_not_at_first_fetch() {
         let sink = Arc::new(MemorySink::new());
-        let result = Broker::new(Policy::new(), sink, Some("not a url"));
+        let result = LocalBroker::new(Policy::new(), sink, Some("not a url"));
         assert!(result.is_err(), "a malformed proxy must fail loudly, early");
     }
 }
@@ -1506,6 +1598,7 @@ mod tests {
 #[cfg(test)]
 mod cookie_wire_tests {
     use super::*;
+    use crate::broker::Broker;
     use crate::receipt::MemorySink;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
@@ -1549,11 +1642,16 @@ mod cookie_wire_tests {
     fn a_page_that_keeps_asking_is_eventually_refused() {
         let port = always_answers(20);
         let sink = Arc::new(MemorySink::new());
-        let mut broker = Broker::new(Policy::new(), sink.clone(), None).expect("broker");
-        broker.set_budget_limits(crate::budget::Limits {
-            max_requests: 3,
-            ..Default::default()
-        });
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink.clone(),
+            None,
+            crate::budget::Limits {
+                max_requests: 3,
+                ..Default::default()
+            },
+        )
+        .expect("broker");
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
         for at in 1..=3 {
@@ -1585,11 +1683,16 @@ mod cookie_wire_tests {
     fn navigating_gives_the_next_page_its_own_allowance() {
         let port = always_answers(20);
         let sink = Arc::new(MemorySink::new());
-        let mut broker = Broker::new(Policy::new(), sink, None).expect("broker");
-        broker.set_budget_limits(crate::budget::Limits {
-            max_requests: 2,
-            ..Default::default()
-        });
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            sink,
+            None,
+            crate::budget::Limits {
+                max_requests: 2,
+                ..Default::default()
+            },
+        )
+        .expect("broker");
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
         for _ in 0..2 {
@@ -1597,7 +1700,7 @@ mod cookie_wire_tests {
         }
         assert!(broker.fetch_from(&url, Initiator::Subresource, None).error.is_some());
 
-        broker.budget().reset();
+        broker.reset_budget();
         assert!(
             broker.fetch_from(&url, Initiator::Subresource, None).error.is_none(),
             "a navigation restores the allowance"
@@ -1663,7 +1766,7 @@ mod cookie_wire_tests {
         let (port, seen) = gzip_server(BODY, 1);
         let sink = Arc::new(MemorySink::new());
         let broker =
-            Broker::new(Policy::new(), sink.clone(), None).expect("broker");
+            LocalBroker::new(Policy::new(), sink.clone(), None).expect("broker");
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
         let outcome = broker.fetch_from(&url, Initiator::Navigation, None);
@@ -1701,7 +1804,7 @@ mod cookie_wire_tests {
     #[test]
     fn a_response_that_decompresses_past_the_cap_is_refused() {
         let sink = Arc::new(MemorySink::new());
-        let broker = Broker::new(
+        let broker = LocalBroker::new(
             Policy::new().set_max_response_bytes(64 * 1024),
             sink,
             None,
@@ -1731,7 +1834,7 @@ mod cookie_wire_tests {
     #[test]
     fn an_encoding_this_engine_did_not_ask_for_is_an_error() {
         let sink = Arc::new(MemorySink::new());
-        let broker = Broker::new(Policy::new(), sink, None).expect("broker");
+        let broker = LocalBroker::new(Policy::new(), sink, None).expect("broker");
         let why = broker
             .decode_capped(b"whatever", "exotic-zip")
             .expect_err("an unknown encoding is an error");
@@ -1741,7 +1844,7 @@ mod cookie_wire_tests {
     #[test]
     fn every_encoding_this_engine_advertises_round_trips() {
         let sink = Arc::new(MemorySink::new());
-        let broker = Broker::new(Policy::new(), sink, None).expect("broker");
+        let broker = LocalBroker::new(Policy::new(), sink, None).expect("broker");
         let body = b"round trip me".repeat(50);
 
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -1834,11 +1937,9 @@ mod cookie_wire_tests {
         (port, seen)
     }
 
-    fn cors_broker() -> (Arc<Broker>, Arc<MemorySink>) {
+    fn cors_broker() -> (Arc<LocalBroker>, Arc<MemorySink>) {
         let sink = Arc::new(MemorySink::new());
-        let broker = Arc::new(
-            Broker::new(Policy::new(), sink.clone(), None).expect("broker"),
-        );
+        let broker = LocalBroker::new(Policy::new(), sink.clone(), None).expect("broker");
         (broker, sink)
     }
 
@@ -2175,15 +2276,16 @@ Connection: close
         // not re-sent to wherever that server points next.
         for status in [301u16, 302, 303] {
             let (port, server) = redirecting_server(status);
-            let broker = Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+            let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
             let target = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
 
-            let outcome = broker.send(
+            let outcome = broker.send_from(
                 &target,
                 Initiator::Navigation,
                 "POST",
                 b"password=hunter2",
                 Some("application/x-www-form-urlencoded"),
+                None,
             );
             assert!(outcome.is_ok(), "{status}: {:?}", outcome.error);
 
@@ -2198,15 +2300,16 @@ Connection: close
     #[test]
     fn a_307_keeps_the_method_because_the_server_asked_for_that_explicitly() {
         let (port, server) = redirecting_server(307);
-        let broker = Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
         let target = Url::parse(&format!("http://127.0.0.1:{port}/login")).unwrap();
 
-        broker.send(
+        broker.send_from(
             &target,
             Initiator::Navigation,
             "POST",
             b"password=hunter2",
             Some("application/x-www-form-urlencoded"),
+            None,
         );
 
         let followed = server.join().unwrap();
@@ -2217,7 +2320,7 @@ Connection: close
     fn a_session_survives_between_requests_and_never_reaches_the_log() {
         let (port, server) = login_server();
         let sink = Arc::new(MemorySink::new());
-        let broker = Broker::new(Policy::new(), sink.clone(), None).unwrap();
+        let broker = LocalBroker::new(Policy::new(), sink.clone(), None).unwrap();
 
         // Loopback is reachable without an allowlist entry, which is what lets
         // this test exercise the wire without inventing a policy.

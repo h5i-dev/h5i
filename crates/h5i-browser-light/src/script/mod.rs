@@ -366,7 +366,7 @@ impl Script {
     /// Build a realm over `dom`, install the primitives and run the prelude.
     pub fn new(
         dom: Dom,
-        broker: std::sync::Arc<crate::net::Broker>,
+        broker: std::sync::Arc<dyn crate::broker::Broker>,
         base: &url::Url,
     ) -> Result<Self, String> {
         let url = base.to_string();

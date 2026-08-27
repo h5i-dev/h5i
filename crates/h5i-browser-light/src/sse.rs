@@ -8,13 +8,13 @@
 //!
 //! ## Why it needed a second exit from the broker
 //!
-//! [`crate::net::Broker::send_from`] reads a whole body before it returns
+//! [`crate::broker::Broker::send_from`] reads a whole body before it returns
 //! (`read_capped`), and writes one response record with a final byte count.
 //! That is the right shape for a document and the wrong shape for a stream: an
 //! event stream never completes, so it would hit the response cap or the
 //! client timeout, whichever came first, and be reported as an error.
 //!
-//! So there is a second path — [`crate::net::Broker::open_event_stream`] —
+//! So there is a second path — [`crate::net::LocalBroker::begin_event_stream`] —
 //! which shares the front half exactly (policy, then the decision record,
 //! *then* the wire) and hands back the response to be read incrementally.
 //! Sharing the front half is the point: a stream is authorised and receipted by
@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 
 use url::Url;
 
-use crate::net::Broker;
+use crate::net::LocalBroker;
 use crate::wsclient::{Direction, Event};
 
 /// Cap on one event's data, so a server cannot grow this without bound.
@@ -51,7 +51,7 @@ pub struct EventStream {
 
 impl EventStream {
     /// Open one, or say why not.
-    pub fn open(broker: Arc<Broker>, url: &Url, document: Option<&Url>) -> Result<Self, String> {
+    pub fn open(broker: Arc<LocalBroker>, url: &Url, document: Option<&Url>) -> Result<Self, String> {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(format!(
                 "{url} is not an event-stream address: `EventSource` takes http or https."
@@ -60,7 +60,7 @@ impl EventStream {
 
         // Policy, then the record, then the wire — the same order and the same
         // code as every other request here.
-        let response = broker.open_event_stream(url, document)?;
+        let response = broker.begin_event_stream(url, document)?;
 
         let (tx, rx) = std::sync::mpsc::sync_channel(MAX_QUEUED);
         let _ = tx.send(Event::Open);
@@ -122,6 +122,23 @@ impl EventStream {
     }
 }
 
+/// An event stream is read-only, and says so rather than quietly dropping what
+/// a page tried to send. `EventSource` has no `send` in any browser; a page
+/// calling one is a page with a bug, and an error is what tells it so.
+impl crate::broker::Channel for EventStream {
+    fn send(&self, _text: &str) -> Result<(), String> {
+        Err("an event stream is read-only: there is nothing to send on".to_string())
+    }
+
+    fn drain(&self) -> Vec<Event> {
+        EventStream::drain(self)
+    }
+
+    fn close(&self) {
+        EventStream::close(self)
+    }
+}
+
 impl Drop for EventStream {
     fn drop(&mut self) {
         self.close();
@@ -139,7 +156,7 @@ impl Drop for EventStream {
 fn read_loop(
     response: reqwest::blocking::Response,
     tx: SyncSender<Event>,
-    broker: Arc<Broker>,
+    broker: Arc<LocalBroker>,
     url: Url,
     stop: Arc<std::sync::atomic::AtomicBool>,
 ) {
@@ -302,10 +319,8 @@ mod tests {
         (port, handle)
     }
 
-    fn broker_with(sink: Arc<crate::receipt::MemorySink>) -> Arc<Broker> {
-        Arc::new(
-            Broker::new(crate::policy::Policy::new(), sink, None).expect("broker"),
-        )
+    fn broker_with(sink: Arc<crate::receipt::MemorySink>) -> Arc<LocalBroker> {
+        LocalBroker::new(crate::policy::Policy::new(), sink, None).expect("broker")
     }
 
     #[test]
