@@ -28,10 +28,6 @@ h5i browser audit                       # the whole session: verbs, fetches, han
 h5i browser close
 ```
 
-That runs here, on your machine, like any other headless browser. Add `--in` and
-the same session runs inside a sandbox, with the same verbs and the same
-answers, and the network record gains a second witness outside the browser.
-
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
 
 <p align="center">
