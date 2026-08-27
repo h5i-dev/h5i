@@ -790,9 +790,8 @@ impl ControlStream for UnixStream {
 pub fn ask_unix(path: &Path, request: &Value) -> Result<Value, H5iError> {
     let stream = UnixStream::connect(path).map_err(|e| {
         H5iError::Metadata(format!(
-            "no session answering on {} ({e}). Start one with \
-             `h5i-browser-light serve <url> --control-socket {}`.",
-            path.display(),
+            "no session answering on {} ({e}). Open one with `h5i browser open <url>`; \
+             inside a box that is the channel it uses.",
             path.display()
         ))
     })?;
@@ -815,8 +814,8 @@ pub fn read_port_file(path: &Path) -> Result<u16, H5iError> {
 pub fn ask(port: u16, request: &Value) -> Result<Value, H5iError> {
     let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|e| {
         H5iError::Metadata(format!(
-            "no session answering on 127.0.0.1:{port} ({e}). Start one with \
-             `h5i-browser-light serve <url>`."
+            "no session answering on 127.0.0.1:{port} ({e}). Open one with \
+             `h5i browser open <url>`."
         ))
     })?;
     exchange(stream, request)

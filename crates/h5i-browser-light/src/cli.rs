@@ -1484,9 +1484,9 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
     // not a suspicious one.
     if !path.exists() {
         return Err(H5iError::Metadata(format!(
-            "no session is listening ({} does not exist). Start one with \
-             `h5i-browser-light serve <url>` — it holds a page open for these verbs to \
-             drive — or point at a running one with --control-file or --port.",
+            "no session is listening ({} does not exist). Open one with \
+             `h5i browser open <url>` — it holds a page open for these verbs to drive — \
+             or point at a running one with --control-file, --control-socket or --port.",
             path.display()
         )));
     }

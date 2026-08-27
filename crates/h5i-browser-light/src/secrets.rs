@@ -11,10 +11,10 @@
 //! moment when the secret is on screen or in a reply.
 //!
 //! ```text
-//! $ H5I_SECRET_ACME_PASSWORD=hunter2 h5i-browser-light serve https://acme.test/
-//! $ h5i-browser-light session env
+//! $ H5I_SECRET_ACME_PASSWORD=hunter2 h5i browser open https://acme.test/
+//! $ h5i browser env
 //! H5I_SECRET_ACME_PASSWORD          # the name. never the value
-//! $ h5i-browser-light session type @e2 '$H5I_SECRET_ACME_PASSWORD'
+//! $ h5i browser type @e2 '$H5I_SECRET_ACME_PASSWORD'
 //! {"ok":true,"ref":"@e2","used":["H5I_SECRET_ACME_PASSWORD"]}
 //! ```
 //!
