@@ -373,6 +373,21 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         Some(path) => Some(bind_control_socket(path)?),
         None => None,
     };
+    // And refused where there are none, rather than stored and ignored. A
+    // session that accepted `--control-socket` and bound nothing would answer
+    // on a port while every verb waited on a path — enforcement absent and
+    // nothing saying so, which is the shape of failure this file exists to
+    // avoid.
+    #[cfg(not(unix))]
+    if let Some(path) = &options.control_socket {
+        return Err(H5iError::Metadata(format!(
+            "a Unix control socket ({}) is not available on this platform. \
+             The socket exists for a session inside an h5i box, where every run gets its own \
+             network namespace and a port cannot be reached from the next one; there are no \
+             boxes here, so the loopback control port is the channel.",
+            path.display()
+        )));
+    }
 
     eprintln!("h5i-browser-light: live view on 127.0.0.1:{port}");
     eprintln!("h5i-browser-light: session control on 127.0.0.1:{control_port}");

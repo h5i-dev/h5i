@@ -137,7 +137,7 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         control_file: Option<PathBuf>,
 
-        /// Also take control connections on a Unix socket here.
+        /// Also take control connections on a Unix socket here. **Unix only.**
         ///
         /// For a session inside an h5i box. Every `h5i box run` gets its own
         /// network namespace, so a verb carried in afterwards has a loopback of
@@ -676,7 +676,7 @@ struct SessionArgs {
     #[arg(long, conflicts_with = "control_file")]
     port: Option<u16>,
 
-    /// The session's Unix control socket, when it has one.
+    /// The session's Unix control socket, when it has one. **Unix only.**
     ///
     /// Preferred over a port whenever it is set, because the arrangement that
     /// needs it — a session in a box — is the one where a port cannot work.
@@ -1325,7 +1325,19 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
     // by a flag or by h5i inside a box — and in a box it is the only channel
     // that reaches the session at all.
     let reply = match session_socket(at) {
+        #[cfg(unix)]
         Some(path) => crate::stream::ask_unix(&path, &request)?,
+        // Refused rather than quietly falling back to the port. A caller who
+        // named a socket named it for a reason, and answering from somewhere
+        // else is worse than not answering.
+        #[cfg(not(unix))]
+        Some(path) => {
+            return Err(H5iError::Metadata(format!(
+                "a Unix control socket ({}) is not available on this platform. \
+                 Pass `--control-file` or `--port` instead.",
+                path.display()
+            )))
+        }
         None => crate::stream::ask(session_port(at)?, &request)?,
     };
 
