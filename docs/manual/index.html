@@ -158,7 +158,7 @@
 <a class="t3" href="#h5i-box-export">h5i box export</a>
 <a class="t3" href="#h5i-box-cache">h5i box cache</a>
 <a class="t3" href="#h5i-box-view">h5i box view</a>
-<a class="t3" href="#the-engine-on-its-own">The engine, on its own</a>
+<a class="t3" href="#the-engine-underneath">The engine, underneath</a>
 <a class="t3" href="#inspecting-what-happened">Inspecting what happened</a>
 <a class="t3" href="#lifecycle">Lifecycle</a>
 <a class="t3" href="#h5i-box-allow">h5i box allow</a>
@@ -633,35 +633,29 @@ Both are recorded in the receipt, under the same lane the browser viewer uses.</
 h5i sends a press and a release together: typing works exactly, and holding a
 key down does not. Clicks are placed at the resolution of a terminal cell, which
 is fine for a form and coarse for a dense canvas.</p>
-<h3 id="the-engine-on-its-own">The engine, on its own</h3>
-<p>The engine ships as a second binary, <code>h5i-browser-light</code>, and runs with no h5i
-anywhere. <code>h5i browser</code> is the front door and the one an agent should use; the
-engine's own CLI is what is underneath, and it is there for the case where you
-want the browser and nothing else:</p>
-<pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh -s -- --browser-only
-
-h5i-browser-light serve https://docs.rs/ --allow docs.rs &amp;
-h5i-browser-light session snapshot
-h5i-browser-light skill install          # teach an agent to drive it
+<h3 id="the-engine-underneath">The engine, underneath</h3>
+<p>The engine is part of the <code>h5i</code> binary. <code>h5i browser</code> runs it as a <strong>separate
+process</strong> and speaks a protocol to it, the way it always has; what changed is
+that it execs itself to get there instead of a second file.</p>
+<p>It used to ship as <code>h5i-browser-light</code> beside <code>h5i</code>, and two files bought three
+problems. The default install left <code>h5i browser open</code> with nothing to render a
+page. Two halves of one protocol could drift apart with no handshake between
+them. And a box could <em>read</em> the engine without being allowed to <code>exec</code> it,
+because Landlock makes <code>~/.cargo/bin</code> readable and not executable, so
+<code>command -v</code> found it and <code>exec</code> refused it.</p>
+<p>The engine's own CLI is still reachable, hidden, for the cases that want it
+directly:</p>
+<pre><code class="language-bash">h5i __engine --help
+h5i __engine open https://docs.rs/ --allow docs.rs   # one-shot render, then exit
+h5i __engine doctor                                  # what fonts it found
+h5i __engine skill install                           # the engine's own skill
 </code></pre>
-<p><code>install.sh</code> installs both binaries. <code>--browser-only</code> gives you the engine
-without h5i, and <code>--no-browser</code> the other way round.</p>
-<p>Take the narrow one deliberately. <code>h5i browser</code> is the surface that knows about
-session names, placement, the control lock and the audit; the engine's own CLI
-is what sits under it, and reaching past the front door means giving all of
-that up.</p>
-<p>Two verbs the size of a page makes worth having, on both CLIs:</p>
-<pre><code class="language-bash">h5i browser snapshot &lt;session&gt; --delta   # only what changed since the last read
-h5i browser login &lt;session&gt;              # hand the page to the human
-</code></pre>
-<p><code>--delta</code> matters because re-reading three hundred lines after every click is
-the wrong shape for an agent loop. <code>login</code> closes the page to the agent while a
-person types a credential into the live view: the session it establishes stays
-in the jar afterwards, and the agent can see <em>that</em> it is logged in without ever
-reading the cookie that says so.</p>
-<p>What the engine gives you without a box is a browser whose whole network
-activity is in a log you can read. What a box adds is that the agent cannot go
-around it.</p>
+<p>Take it deliberately. <code>h5i browser</code> is the surface that knows about session
+names, placement, the control lock and the audit; <code>__engine</code> is what sits under
+it, and reaching past the front door means giving all of that up. It is hidden
+from <code>--help</code> for that reason and documented here for the same one.</p>
+<p>What the engine gives you with no box is a browser whose whole network activity
+is in a log you can read. What a box adds is that the agent cannot go around it.</p>
 <h3 id="inspecting-what-happened">Inspecting what happened</h3>
 <pre><code class="language-bash">h5i box probe                       # what this host can enforce at all
 h5i box capabilities &lt;name&gt; --json  # what this box actually got
@@ -1950,11 +1944,11 @@ anything else. What it reads is an outline with <code>@ref</code> handles, not p
   Canvas, WebSockets, Workers and IndexedDB are absent. For a page it cannot
   read, the answer is <code>--engine chromium</code>.</li>
 </ul>
-<p>Driven directly it has its own CLI (<code>h5i-browser-light --help</code>), which is what
-<code>h5i browser</code> sits in front of. See <a href="#the-engine-on-its-own">The engine, on its
-own</a>.</p>
+<p>Driven directly it has its own CLI (<code>h5i __engine --help</code>), which is what
+<code>h5i browser</code> sits in front of. See <a href="#the-engine-underneath">The engine,
+underneath</a>.</p>
 <p>Fonts are found by walking the system font directories at startup, not linked in
-at build time, so <code>h5i-browser-light doctor</code> reports what it found and
+at build time, so <code>h5i __engine doctor</code> reports what it found and
 <code>--font-file</code> names one directly. The scan keeps a budget of two dozen files, and
 what it spends them on is a preference order: the regular text faces first, then
 an emoji face, then weight and slant variants. Emoji sit ahead of the variants

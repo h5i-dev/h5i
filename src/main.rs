@@ -106,6 +106,7 @@ enum Commands {
     /// session inside a box, which changes nothing an agent types and changes
     /// who saw the network: the box's egress enforcement is h5i's, at a
     /// boundary outside the engine.
+    #[cfg(feature = "browser")]
     Browser {
         #[command(subcommand)]
         action: cli::browser::BrowserCommands,
@@ -354,6 +355,7 @@ fn main() -> anyhow::Result<()> {
             let argv = std::iter::once(std::ffi::OsString::from("h5i __engine")).chain(args);
             h5i_browser_light::cli::main(argv);
         }
+        #[cfg(feature = "browser")]
         Commands::Browser { action } => cli::browser::run(action)?,
         #[cfg(feature = "share")]
         Commands::Join {

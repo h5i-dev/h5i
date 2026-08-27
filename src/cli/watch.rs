@@ -345,6 +345,7 @@ mod tests {
         ViewerEvent {
             id: 7,
             observed_at: "2026-08-19T09:14:02.123456Z".to_string(),
+            claimed_at: None,
             lane,
             grade,
             caused_by: None,

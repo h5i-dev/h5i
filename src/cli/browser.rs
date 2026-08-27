@@ -915,11 +915,38 @@ fn preflight_box(
         );
     }
 
-    // There used to be a second check here: can the box actually *execute* the
-    // engine? A box can read `~/.cargo/bin` under Landlock and not run from it,
-    // so `command -v` found the binary and `exec` refused it. The engine is
-    // `h5i` now, and a box that could not run `h5i` could not have run this
-    // preflight either, so the question answers itself.
+    // 2. The box's h5i has to be one that carries an engine.
+    //
+    //    A weaker check than the one this replaced, and a more useful one. The
+    //    old check asked whether a *second binary* could be executed at all,
+    //    because Landlock makes `~/.cargo/bin` readable and not executable and
+    //    `command -v` could not tell. That cannot happen now. What can is a box
+    //    running an older or `--no-default-features` h5i, which has no
+    //    `__engine` — and the failure looks identical from outside either way:
+    //    the session never advertises.
+    let probe = Command::new(std::env::current_exe()?)
+        .arg("box")
+        .arg("run")
+        .arg(name)
+        .arg("--")
+        .arg("sh")
+        .arg("-c")
+        .arg(format!(
+            "{} {ENGINE_SUBCOMMAND} capabilities >/dev/null 2>&1",
+            h5i_in_box()
+        ))
+        .output()?;
+    if !probe.status.success() {
+        anyhow::bail!(
+            "the `{}` inside box `{name}` has no browser engine in it.\n\n  \
+             The engine is part of the h5i binary, so the box needs an h5i new enough to \
+             carry one, built with the `browser` feature. Check what it has:\n    \
+             h5i box run {name} -- {} --version\n\n  \
+             Set $H5I_IN_BOX to point at a different one inside the box.",
+            h5i_in_box(),
+            h5i_in_box()
+        );
+    }
     Ok(())
 }
 
@@ -994,7 +1021,7 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
     }
 
     let mut argv: Vec<String> = vec![
-        H5I_IN_BOX.into(),
+        h5i_in_box(),
         ENGINE_SUBCOMMAND.into(),
         "serve".into(),
         opts.url.clone(),
@@ -1143,11 +1170,18 @@ fn shell_join(argv: &[String]) -> String {
 /// that can run `h5i` at all can run it.
 const ENGINE_SUBCOMMAND: &str = "__engine";
 
-/// How to invoke the engine inside a box.
+/// How to invoke h5i inside a box.
 ///
 /// Bare `h5i`, not a path: a box's `PATH` is the thing that knows where the
 /// system install is, and it is already the binary `h5i box run` executes.
-const H5I_IN_BOX: &str = "h5i";
+///
+/// `$H5I_IN_BOX` overrides it, for the two cases where the name is not enough:
+/// a box whose h5i is somewhere its `PATH` does not cover, and a working copy
+/// newer than the system install, which is the ordinary state of anyone
+/// developing h5i itself.
+fn h5i_in_box() -> String {
+    std::env::var("H5I_IN_BOX").unwrap_or_else(|_| "h5i".to_string())
+}
 
 fn net_args(opts: &StartOptions) -> Vec<String> {
     let mut argv = Vec::new();
@@ -1351,7 +1385,7 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
                 .arg("--json")
                 .arg(name)
                 .arg("--")
-                .arg(H5I_IN_BOX)
+                .arg(h5i_in_box())
                 .arg(ENGINE_SUBCOMMAND)
                 .arg("session")
                 .args(&argv)
