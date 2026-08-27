@@ -153,6 +153,7 @@
 <a class="t3" href="#the-id-is-internal">The id is internal</a>
 <a class="t3" href="#open-navigates-a-session-that-is-already-there">open navigates a session that is already there</a>
 <a class="t3" href="#what-is-true-by-default">What is true by default</a>
+<a class="t3" href="#read-one-page-no-session-the-strongest-tier">read: one page, no session, the strongest tier</a>
 <a class="t3" href="#the-default-sandbox">The default sandbox</a>
 <a class="t3" href="#--in-box-the-same-session-inside-a-box">--in &lt;box&gt;: the same session, inside a box</a>
 <a class="t3" href="#opening-a-session-from-inside-a-box">Opening a session from inside a box</a>
@@ -458,6 +459,35 @@ whether or not there is a box.</p>
 status line:</p>
 <pre><code>requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 </code></pre>
+<h3 id="read-one-page-no-session-the-strongest-tier"><code>read</code>: one page, no session, the strongest tier</h3>
+<pre><code class="language-bash">h5i browser read https://example.com --allow example.com
+h5i browser read url1 url2 url3 --allow example.com --json
+</code></pre>
+<pre><code>confined : supervised (egress enforced at the boundary: example.com)
+</code></pre>
+<p>For the shape a crawl has: fetch, read, move on. No cookies carried between
+verbs, no <code>@ref</code> to click, nothing resident afterwards — and <code>h5i browser list</code>
+shows nothing when it is done.</p>
+<p><strong>A read gets an egress allowlist a session cannot</strong>, and the reason is the
+difference between the two rather than a preference. A session is resident by
+design (<code>snapshot</code> then <code>click @e3</code> needs the page to still be there), and the
+supervised tier cannot hold a resident process yet: its seccomp-notify gate is
+served by a thread inside the <code>h5i</code> process that started the run, so when that
+command exits the gate has no server and every filtered syscall blocks. A read
+runs to completion inside that command, which is the shape that tier already
+has.</p>
+<p>So the allowlist gets <strong>two independent enforcers</strong>: the engine's, fail-closed
+and inside the thing being described, and the tier's, at a network namespace
+boundary outside it.</p>
+<p>Several targets share one browser — one connection pool, one cookie jar and one
+font set across the batch — and a page that fails does not stop the ones after
+it. <code>--json</code> returns the page and its request log together, which is what a
+crawl wants and what no other headless browser can hand over completely.</p>
+<p>A read aimed at <code>localhost</code> drops to the process tier and says so. Under
+<code>supervised</code> the loopback is the sandbox's own, and the dev server it was aimed
+at is on this machine's; the tier follows the target rather than the strongest
+name. At the process tier the origin allowlist is the engine's alone, and the
+line says that too.</p>
 <h3 id="the-default-sandbox">The default sandbox</h3>
 <p>A session on this machine runs in a <strong>process-tier sandbox</strong>: the same Landlock
 filesystem scoping, seccomp filter and rlimits <code>isolation = process</code> applies,

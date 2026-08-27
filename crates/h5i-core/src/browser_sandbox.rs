@@ -152,6 +152,15 @@ pub struct Wants<'a> {
 /// `Err` is reserved for a policy that could not be resolved at all. A host that
 /// simply lacks the kernel features answers `Ok(None)` with a reason, because
 /// that is not a failure of the request — it is an answer about the machine.
+/// What came of asking for confinement.
+pub enum Outcome {
+    /// A policy that resolved and ran.
+    Confined(Box<Confined>),
+    /// It did not, and this is why. A reason rather than a bare `None`: whoever
+    /// asked has to be able to say what they got instead.
+    Unavailable(String),
+}
+
 pub fn resolve_for(wants: &Wants<'_>) -> Result<Option<Confined>, H5iError> {
     let caps = sandbox::probe_host_for(IsolationClaim::Process);
     let all = font_dirs();
@@ -287,6 +296,85 @@ pub fn unavailable_reason(caps: &HostCaps) -> String {
     } else {
         format!("this host has no {}", missing.join(", "))
     }
+}
+
+/// The confinement for a **stateless read**: one page, or a batch of them, with
+/// no session left behind.
+///
+/// This is the one browser shape that can have the strongest tier the host
+/// offers, and the reason is the whole difference between the two. A session is
+/// resident by design — `snapshot` then `click @e3` needs the page to still be
+/// there — and the supervised tier cannot hold a resident process today: its
+/// seccomp-notify gate is served by a thread inside the `h5i` process that
+/// started the run, so when that command exits the gate has no server and every
+/// filtered syscall blocks. A read runs to completion inside that same command,
+/// which is exactly the shape `supervisor::run` already has.
+///
+/// So a read gets an egress allowlist **enforced outside the engine**, at the
+/// box tier's own boundary, which no session on this platform can have yet.
+/// `origins` becomes `net.egress`; empty means the tier denies the network
+/// outright, which is right for a local file and wrong for anything else.
+pub fn resolve_for_read(reads: &[PathBuf], origins: &[String], loopback: bool) -> Outcome {
+    let fonts = font_dirs();
+    // Strongest first, with one exception that is not a weakness: **supervised
+    // puts the read in its own network namespace, so `localhost` is the
+    // sandbox's own loopback and not the host's.** A read aimed at a dev server
+    // on this machine would find nothing there. That is the tier working, and
+    // it makes it the wrong tier for that target, so the choice follows what is
+    // being read rather than a preference for the strongest name.
+    //
+    // Supervised is otherwise first. It is fail-closed on admission and refuses
+    // on a host missing any part of the stack, which is most of the reason a
+    // *session* could not default to it; a read can try and fall back, because
+    // there is no resident process to strand.
+    let tiers: &[IsolationClaim] = if loopback {
+        &[IsolationClaim::Process]
+    } else {
+        &[IsolationClaim::Supervised, IsolationClaim::Process]
+    };
+    for &claim in tiers {
+        let mut p = Profile::builtin("browser-read", claim);
+        p.fs_write = vec![
+            "$WORK".to_string(),
+            "/dev/null".to_string(),
+            "/dev/zero".to_string(),
+        ];
+        p.fs_read.push("$WORK".to_string());
+        for dir in reads.iter().chain(fonts.iter()) {
+            p.fs_read.push(dir.display().to_string());
+        }
+        // The allowlist goes to the tier only where the tier can enforce it.
+        // `process` cannot — it has `deny` and `host` and nothing between — and
+        // handing it one makes the policy unresolvable, which would drop the
+        // read to unconfined over a list the engine was going to enforce
+        // anyway. So the second enforcer engages where it exists and the read
+        // says which it got.
+        let tier_enforces_egress = claim >= IsolationClaim::Supervised;
+        p.net_egress = if tier_enforces_egress {
+            origins.to_vec()
+        } else {
+            Vec::new()
+        };
+        p.net_mode = if origins.is_empty() {
+            NetMode::Deny
+        } else {
+            NetMode::Host
+        };
+        p.mem_bytes = Some(2 * 1024 * 1024 * 1024);
+
+        let caps = sandbox::probe_host_for(claim);
+        let Ok(policy) = sandbox::resolve(&p, &caps) else {
+            continue;
+        };
+        if sandbox::verify_exec(&policy).is_ok() {
+            return Outcome::Confined(Box::new(Confined {
+                policy,
+                fonts,
+                dropped_fonts: Vec::new(),
+            }));
+        }
+    }
+    Outcome::Unavailable(unavailable_reason(&caps()))
 }
 
 /// The host's capabilities, for a caller that wants to explain a fallback.

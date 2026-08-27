@@ -614,6 +614,68 @@ fn the_sandbox_does_not_break_reading_or_recording() {
     let _ = fx.run(&["browser", "close"]);
 }
 
+/// A read leaves nothing behind. That is the whole difference from a session,
+/// and it is what lets a read have a tier a session cannot.
+#[test]
+fn a_read_leaves_no_session() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    let out = fx.run(&["browser", "read", &url, "--allow", "127.0.0.1", "--text"]);
+    assert!(
+        out.status.success(),
+        "read failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("hello"), "{text}");
+    // It says what held it, before the page, because that is the part a reader
+    // cannot recover from the output.
+    assert!(text.contains("confined :"), "{text}");
+
+    let listed = fx.run(&["browser", "list", "--all", "--json"]);
+    let listed: Vec<serde_json::Value> = serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(listed.is_empty(), "a read left a session behind: {listed:?}");
+}
+
+/// A read of a loopback target must not be put in a network namespace of its
+/// own: `localhost` there is the sandbox's, and the dev server it was aimed at
+/// is on this machine's. The tier follows the target.
+#[test]
+fn a_loopback_read_gets_a_tier_that_can_reach_it() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    let out = fx.run(&["browser", "read", &url, "--allow", "127.0.0.1", "--text"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !text.contains("confined : supervised"),
+        "a loopback read was put behind its own netns, where the server is not: {text}"
+    );
+    assert!(text.contains("hello"), "and it still read the page: {text}");
+}
+
+/// The request log comes back with the page, machine-readable, which is what a
+/// crawl needs and what no other headless browser can hand over completely.
+#[test]
+fn a_read_returns_its_request_log() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    let out = fx.run(&["browser", "read", &url, "--allow", "127.0.0.1", "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(answer["confinement"].is_string(), "{answer}");
+    let requests = answer["requests"].as_array().expect("a request log");
+    assert!(
+        requests.iter().any(|r| r["url"].as_str().is_some_and(|u| u.starts_with(&url))),
+        "the page's own fetch is not in the log: {answer}"
+    );
+}
+
 /// A page with a hostile heading cannot repaint the terminal it is printed
 /// into. The engine carried the bytes; h5i is the last thing between them and a
 /// person's screen.

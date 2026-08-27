@@ -1433,6 +1433,36 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIURL\fR>
 A URL, or a path to a local HTML file
+.SH "H5I BROWSER READ"
+Read one page, or a batch of them, and leave no session behind
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBread\fR [\fB\-\-allow\fR] [\fB\-\-text\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITARGETS\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-allow\fR \fI<ORIGIN>\fR
+Grant an origin. Repeatable. Enforced twice: by the engine before the wire, and by the tier at its own boundary
+.TP
+\fB\-\-text\fR
+Print the page\*(Aqs prose instead of its outline
+.TP
+\fB\-\-script\fR
+Run the page\*(Aqs own JavaScript
+.TP
+\fB\-\-no\-sandbox\fR
+Read unconfined
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fITARGETS\fR>
+URLs, or paths to local HTML files
 .SH "H5I BROWSER LIST"
 List the browser sessions on this machine
 .ie \n(.g .ds Aq \(aq

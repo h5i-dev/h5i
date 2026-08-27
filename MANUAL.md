@@ -226,6 +226,45 @@ status line:
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 ```
 
+### `read`: one page, no session, the strongest tier
+
+```bash
+h5i browser read https://example.com --allow example.com
+h5i browser read url1 url2 url3 --allow example.com --json
+```
+
+```
+confined : supervised (egress enforced at the boundary: example.com)
+```
+
+For the shape a crawl has: fetch, read, move on. No cookies carried between
+verbs, no `@ref` to click, nothing resident afterwards — and `h5i browser list`
+shows nothing when it is done.
+
+**A read gets an egress allowlist a session cannot**, and the reason is the
+difference between the two rather than a preference. A session is resident by
+design (`snapshot` then `click @e3` needs the page to still be there), and the
+supervised tier cannot hold a resident process yet: its seccomp-notify gate is
+served by a thread inside the `h5i` process that started the run, so when that
+command exits the gate has no server and every filtered syscall blocks. A read
+runs to completion inside that command, which is the shape that tier already
+has.
+
+So the allowlist gets **two independent enforcers**: the engine's, fail-closed
+and inside the thing being described, and the tier's, at a network namespace
+boundary outside it.
+
+Several targets share one browser — one connection pool, one cookie jar and one
+font set across the batch — and a page that fails does not stop the ones after
+it. `--json` returns the page and its request log together, which is what a
+crawl wants and what no other headless browser can hand over completely.
+
+A read aimed at `localhost` drops to the process tier and says so. Under
+`supervised` the loopback is the sandbox's own, and the dev server it was aimed
+at is on this machine's; the tier follows the target rather than the strongest
+name. At the process tier the origin allowlist is the engine's alone, and the
+line says that too.
+
 ### The default sandbox
 
 A session on this machine runs in a **process-tier sandbox**: the same Landlock

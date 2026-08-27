@@ -46,6 +46,8 @@ h5i browser click @e3
 h5i browser requests                    # what it asked for, and what was refused
 h5i browser audit                       # the whole session: verbs, fetches, handovers, ending
 h5i browser close
+
+h5i browser read https://example.com --allow example.com   # or: one page, no session
 ```
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
@@ -135,68 +137,52 @@ h5i browser status             # placement, policy digest, who saw the network
 h5i browser list               # every session on this machine, and which is default
 ```
 
-### 2.2. Sandboxing, as a ladder
+### 2.2. The sandbox, and how to write your own
 
-A session is **already sandboxed**. There is nothing to turn on, and the rungs
-above and below it are one flag each.
+A session is **already sandboxed**: files and environment, on a process tier,
+with nothing to turn on. `--no-sandbox` turns it off. Everything below is how to
+say something more specific than the default.
 
-| | what holds the engine | the request lane |
-| --- | --- | --- |
-| `--no-sandbox` | nothing | `engine-claimed` |
-| **default** | a process-tier sandbox: its files and its environment | `engine-claimed` |
-| `--in <box>` | a box whose tier enforces egress at its own boundary | `host-observed` |
+#### Write it in `.h5i/env.toml`
 
-#### The default
+The same file and the same vocabulary a box uses. Fine-grained filesystem,
+environment, resources, egress and tier:
+
+```toml
+[profile.reading]
+isolation = "supervised"          # workspace | process | supervised | container | microvm
+
+[profile.reading.net]
+mode   = "host"
+egress = ["docs.rs", "static.crates.io"]   # everything else is refused
+
+[profile.reading.fs]
+read  = ["/usr", "/etc"]          # replaces the defaults, so grant what it needs
+write = []
+
+[profile.reading.resources]
+mem   = "512M"
+procs = 64
+
+secrets = ["ACME_PASS"]           # the only $H5I_SECRET_* it may substitute
+```
+
+Give it to a browser session through a box:
 
 ```bash
-h5i browser open https://example.com
+h5i box --profile reading --name docs
+h5i browser open https://docs.rs/ --in docs
 ```
 
-```
-placed   : on this machine, in a process-tier sandbox (its files and its environment; not its network)
-```
+`h5i box probe` says which tiers your host can actually run. An unsatisfiable
+one is refused, never quietly downgraded.
 
-The same Landlock filesystem scoping, seccomp filter and rlimits that
-`isolation = process` applies, built from a profile rather than a repository.
-No box, no worktree, no manifest: putting a git operation in front of "read this
-page" would be the wrong product.
+#### `--in <box>` changes what the session may claim
 
-It contains what a compromised engine could **do**. It may write only its own
-session directory, reads nothing under `$HOME` except the font directories, and
-starts with an empty environment, so secrets are named rather than inherited:
-
-```bash
-h5i browser open https://example.com --secret ACME_PASS
-```
-
-It does not contain what a compromised engine could **reach**. A browser needs
-the network, so the host's reachability stays, loopback included; the policy
-deciding *which* origins is the engine's own, and a compromised engine is past
-it. It also does not forbid starting a program, and does not pretend to: what
-makes that survivable is that Landlock's domain is inherited across `execve`,
-so a shell the engine starts reads and writes exactly what the engine could.
-
-**It does not upgrade the request lane.** A process-tier sandbox corroborates no
-part of the log, so the session is still `engine-claimed`. Reading a sandbox as
-evidence is the one mistake this product refuses.
-
-Some hosts cannot confine at all: no Landlock, an AppArmor profile, a CI
-container, macOS, Windows. There the session runs unconfined and **says which**,
-on that line and in the record. A sandbox nobody can see is indistinguishable
-from one that was never applied.
-
-#### `--in <box>`: the rung that changes the claim
-
-```bash
-h5i box --profile browser --engine h5i --name web
-h5i browser open https://example.com --in web
-h5i browser snapshot                            # identical verb, identical answer
-```
-
-Nothing you type changes. What changes is **who saw the network**. The box
-enforces its egress allowlist at its own boundary, outside the browser being
-described, so the lane is upgraded from the engine's own account to an outside
-observation:
+Nothing you type changes. What changes is **who saw the network**: the box
+enforces its egress at its own boundary, outside the browser being described, so
+the request lane is upgraded from the engine's own account to an outside
+observation.
 
 ```
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
@@ -213,8 +199,32 @@ from the host, so pausing the agent is a boundary rather than a request.
 ```bash
 h5i browser take       # a human takes control; the agent pauses
 h5i browser release    # hands it back; the agent must re-snapshot first
-h5i box view web       # watch the page, in a loopback-only forward
+h5i box view docs      # watch the page, in a loopback-only forward
 ```
+
+#### Reading without a session, under the strongest tier
+
+For a crawl, a session is not what you want: no cookies to carry, nothing to
+click, nothing to leave running.
+
+```bash
+h5i browser read https://example.com --allow example.com
+h5i browser read url1 url2 url3 --allow example.com --json   # one browser, one jar
+```
+
+```
+confined : supervised (egress enforced at the boundary: example.com)
+```
+
+**A read gets an egress allowlist a session cannot.** The tier that enforces
+egress cannot hold a resident process yet, and a session is resident by design —
+`snapshot` then `click @e3` needs the page to still be there. A read runs to
+completion, so it can have the boundary. `--json` returns the page and its
+request log together.
+
+A read aimed at `localhost` drops to the process tier and says so: under
+`supervised` the loopback is the sandbox's own, and the dev server it was aimed
+at is on this machine's.
 
 <p align="center">
   <img src="./docs/_static/sandboxed-browser-ui.png" alt="Watching a sandboxed browser session from the host" width="99%" />

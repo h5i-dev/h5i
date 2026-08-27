@@ -176,6 +176,46 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Read one page, or a batch of them, and leave no session behind.
+    ///
+    /// For the shape a crawl actually has: fetch, read, move on. No cookies
+    /// carried between verbs, no `@ref` to click, nothing resident afterwards.
+    ///
+    /// **This is the only browser shape that can have an egress allowlist
+    /// enforced outside the engine.** A session is resident by design, and the
+    /// tier that enforces egress cannot hold a resident process yet; a read runs
+    /// to completion inside this command, which is the shape that tier already
+    /// has. The confinement it got is printed with the result.
+    ///
+    /// Several targets share one browser: one connection pool, one cookie jar
+    /// and one font set across the batch, and a page that fails does not stop
+    /// the ones after it.
+    Read {
+        /// URLs, or paths to local HTML files.
+        #[arg(required = true, num_args = 1..)]
+        targets: Vec<String>,
+
+        /// Grant an origin. Repeatable. Enforced twice: by the engine before
+        /// the wire, and by the tier at its own boundary.
+        #[arg(long = "allow", value_name = "ORIGIN")]
+        allow: Vec<String>,
+
+        /// Print the page's prose instead of its outline.
+        #[arg(long)]
+        text: bool,
+
+        /// Run the page's own JavaScript.
+        #[arg(long)]
+        script: bool,
+
+        /// Read unconfined.
+        #[arg(long)]
+        no_sandbox: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
+
     /// List the browser sessions on this machine.
     List {
         /// Include sessions that have ended. They are kept: the record of how a
@@ -635,6 +675,14 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             },
             json,
         ),
+        BrowserCommands::Read {
+            targets,
+            allow,
+            text,
+            script,
+            no_sandbox,
+            json,
+        } => read(targets, allow, text, script, no_sandbox, json),
         BrowserCommands::List { all, json } => list(&root, all, json),
         BrowserCommands::Status { session, json } => status(&root, session.as_deref(), json),
         BrowserCommands::Close { session, all, json } => close(&root, session.as_deref(), all, json),
@@ -1896,6 +1944,155 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
         });
     }
     Ok(parsed)
+}
+
+/// One page, or a batch, with nothing left behind.
+///
+/// Runs `h5i __engine open` to completion under the strongest tier this host
+/// will give a run — which for a read is a real one, because there is no
+/// resident process to strand when the command exits.
+fn read(
+    targets: Vec<String>,
+    allow: Vec<String>,
+    text: bool,
+    script: bool,
+    no_sandbox: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    use h5i_core::browser_sandbox::Outcome;
+
+    let engine = engine_binary()?;
+    // A scratch directory is `$WORK`: the read writes its request log there and
+    // nothing survives the call. A read that left state behind would be a
+    // session with the word "read" on it.
+    let scratch = tempfile::tempdir()?;
+    let receipts = scratch.path().join("requests.jsonl");
+
+    let mut argv: Vec<String> = vec![
+        engine.display().to_string(),
+        ENGINE_SUBCOMMAND.into(),
+        "open".into(),
+    ];
+    argv.extend(targets.iter().cloned());
+    argv.push("--receipts".into());
+    argv.push(receipts.display().to_string());
+    for origin in &allow {
+        argv.push("--allow".into());
+        argv.push(origin.clone());
+    }
+    if text {
+        argv.push("--text".into());
+    }
+    if script {
+        argv.push("--script".into());
+    }
+    if json {
+        argv.push("--json".into());
+    }
+
+    let confinement = if no_sandbox {
+        Outcome::Unavailable("read with --no-sandbox".into())
+    } else {
+        // Does any target point at this machine? Under supervised it would
+        // reach the sandbox's loopback instead, and find nothing.
+        let loopback = targets.iter().any(|t| {
+            let t = t.to_ascii_lowercase();
+            t.contains("//localhost") || t.contains("//127.") || t.contains("//[::1]")
+        });
+        h5i_core::browser_sandbox::resolve_for_read(std::slice::from_ref(&engine), &allow, loopback)
+    };
+
+    let outcome = match &confinement {
+        Outcome::Confined(c) => {
+            let mut argv = argv.clone();
+            for dir in &c.fonts {
+                argv.push("--font-dir".into());
+                argv.push(dir.display().to_string());
+            }
+            h5i_core::sandbox::run(&c.policy, scratch.path(), &argv)?
+        }
+        Outcome::Unavailable(_) => {
+            let out = Command::new(&argv[0]).args(&argv[1..]).output()?;
+            h5i_core::sandbox::ExecOutcome {
+                stdout: out.stdout,
+                stderr: out.stderr,
+                exit_code: out.status.code(),
+                timed_out: false,
+                wall_ms: 0,
+                cpu_ms: 0,
+                max_rss_kb: Some(0),
+                egress: None,
+            }
+        }
+    };
+
+    // What confined it, said before the page, because it is the part a reader
+    // cannot recover from the output.
+    let held = match &confinement {
+        Outcome::Confined(c) => {
+            let tier = c.policy.claim.as_str();
+            match (
+                c.policy.profile.net_egress.is_empty(),
+                c.policy.profile.net_mode,
+            ) {
+                (false, _) => format!(
+                    "{tier} (egress enforced at the boundary: {})",
+                    c.policy.profile.net_egress.join(", ")
+                ),
+                (true, h5i_core::sandbox::NetMode::Deny) => {
+                    format!("{tier} (network denied at the boundary)")
+                }
+                // The tier holds the files and the environment; the allowlist is
+                // the engine's alone here, and saying otherwise would sell a
+                // second enforcer that is not there.
+                (true, _) => format!(
+                    "{tier} (files and environment; the origin allowlist is the engine's alone)"
+                ),
+            }
+        }
+        Outcome::Unavailable(why) => format!("unconfined — {why}"),
+    };
+    if !json {
+        println!("  confined : {held}");
+        println!();
+    }
+
+    let mut body: Value = match serde_json::from_slice(&outcome.stdout) {
+        Ok(v) => v,
+        Err(_) => Value::String(String::from_utf8_lossy(&outcome.stdout).to_string()),
+    };
+    bs::scrub(&mut body);
+    if json {
+        let log = std::fs::read_to_string(&receipts).unwrap_or_default();
+        let mut requests: Vec<Value> = log
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        for row in &mut requests {
+            bs::scrub(row);
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "confinement": held,
+                "read": body,
+                "requests": requests,
+            }))?
+        );
+    } else {
+        match body.as_str() {
+            Some(t) => println!("{t}"),
+            None => println!("{}", serde_json::to_string_pretty(&body)?),
+        }
+        let stderr = bs::scrub_text(&String::from_utf8_lossy(&outcome.stderr));
+        if !stderr.trim().is_empty() {
+            eprintln!("{}", stderr.trim());
+        }
+    }
+    if outcome.exit_code != Some(0) {
+        std::process::exit(outcome.exit_code.unwrap_or(1));
+    }
+    Ok(())
 }
 
 fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {
