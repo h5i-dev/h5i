@@ -1897,6 +1897,7 @@ dependencies = [
  "console",
  "fastrand",
  "git2",
+ "h5i-browser-light",
  "h5i-core",
  "h5i-runner",
  "h5i-share",

@@ -4,13 +4,16 @@ version = "0.1.0"
 edition = "2024"
 description = "h5i browser light: a lightweight visual browser engine for coding agents, where every request is policy-checked and receipted before it reaches the wire."
 
-# The engine is a standalone binary by design (ROADMAP 7.1/M10): h5i launches
-# it as a process and speaks a protocol to it, rather than linking it. The
-# library half exists so the binary and the tests share one implementation,
-# not so another crate can link past the process boundary.
-[[bin]]
-name = "h5i-browser-light"
-path = "src/main.rs"
+# A library only. The engine used to ship as its own binary beside `h5i`; it is
+# now reached through `h5i __engine`, which `h5i browser` execs.
+#
+# The design rule that used to live here — "not so another crate can link past
+# the process boundary" — was protecting the *process* boundary, and self-exec
+# keeps that exactly: `h5i browser` still runs the engine as a separate process
+# and speaks a protocol to it. What went away is the second file, which bought
+# an install whose default left the headline command broken, a version skew
+# between two halves of one protocol, and a box that could read the engine
+# without being allowed to exec it.
 
 [dependencies]
 h5i-error = { path = "../h5i-error" }

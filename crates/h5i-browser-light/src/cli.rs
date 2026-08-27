@@ -1,21 +1,32 @@
-//! `h5i-browser-light` — the engine's command line.
+//! The engine's command line.
 //!
-//! Standalone on purpose (ROADMAP 7.1 step 3): it runs on a bare host with no
-//! h5i anywhere, which is how someone tries it, and h5i drives the same binary
-//! as a process rather than linking it. One honesty rule travels with that:
-//! outside a box there is no egress proxy and no receipt store, so what runs
-//! here is a light browser with a request log — the containment claims belong
-//! to the box, and this binary does not imply them.
+//! **Reached through `h5i __engine`, not through a second binary.** The engine
+//! used to ship as `h5i-browser-light` alongside `h5i`, because it was a second
+//! product somebody might want on its own. It is now the renderer behind
+//! `h5i browser`, and two files bought three problems: an install that left the
+//! headline command broken by default, a version skew between two halves of one
+//! protocol with no handshake between them, and a box that could *read* the
+//! engine without being allowed to `exec` it.
+//!
+//! The process boundary that mattered is untouched. `h5i browser` still runs
+//! the engine as a separate process and speaks a protocol to it; it execs
+//! itself to get there instead of a second file. What was separate was the
+//! file, not the process.
+//!
+//! One honesty rule travels with running it directly: outside a box there is no
+//! egress proxy and no receipt store, so what runs here is a light browser with
+//! a request log — the containment claims belong to the box, and this entry
+//! point does not imply them.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand};
-use h5i_browser_light::engine::{Page, PageFactory, PageOptions};
-use h5i_browser_light::net::Broker;
-use h5i_browser_light::policy::Policy;
-use h5i_browser_light::receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
-use h5i_browser_light::{fonts, Capabilities};
+use crate::engine::{Page, PageFactory, PageOptions};
+use crate::net::Broker;
+use crate::policy::Policy;
+use crate::receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
+use crate::{fonts, Capabilities};
 use h5i_error::H5iError;
 use url::Url;
 
@@ -51,7 +62,7 @@ const ACTIONS_VAR: &str = "H5I_BROWSER_ACTIONS";
 
 #[derive(Parser)]
 #[command(
-    name = "h5i-browser-light",
+    name = "h5i __engine",
     version,
     about = "A lightweight visual browser for coding agents: every request is policy-checked and receipted before it reaches the wire."
 )]
@@ -464,15 +475,33 @@ impl Sink for TeeSink {
     }
 }
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("h5i-browser-light: {error}");
-        std::process::exit(1);
+/// Run the engine's CLI over `args`, which must include the program name.
+///
+/// Exits the process on failure rather than returning, because the caller is a
+/// `main` whose only remaining job would be to do the same thing. The prefix on
+/// the error names the engine, not h5i: a page that failed to load is the
+/// engine's answer, and attributing it to the caller would send someone looking
+/// in the wrong place.
+pub fn main<I, T>(args: I) -> !
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    match run(args) {
+        Ok(()) => std::process::exit(0),
+        Err(error) => {
+            eprintln!("h5i browser engine: {error}");
+            std::process::exit(1);
+        }
     }
 }
 
-fn run() -> Result<(), H5iError> {
-    match Cli::parse().command {
+fn run<I, T>(args: I) -> Result<(), H5iError>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    match Cli::parse_from(args).command {
         Command::Capabilities { script } => {
             // Reported for the configuration asked about, because what h5i
             // routes on is whether *this* invocation runs script.
@@ -601,10 +630,10 @@ fn serve(
         make_private_dir(parent)?;
     }
     let action_log = action_log.or_else(|| std::env::var(ACTIONS_VAR).ok().map(PathBuf::from));
-    h5i_browser_light::stream::serve(
+    crate::stream::serve(
         factory,
         page,
-        h5i_browser_light::stream::ServeOptions {
+        crate::stream::ServeOptions {
             addr,
             quality,
             stream_file,
@@ -623,20 +652,20 @@ fn skill(action: SkillCommands) -> Result<(), H5iError> {
         SkillCommands::Install { target } => {
             let target = match target {
                 Some(path) => path,
-                None => h5i_browser_light::skill::default_target()?,
+                None => crate::skill::default_target()?,
             };
-            let written = h5i_browser_light::skill::install(&target)?;
+            let written = crate::skill::install(&target)?;
             println!(
                 "installed the {} skill ({} page(s), v{}) -> {}",
-                h5i_browser_light::skill::NAME,
+                crate::skill::NAME,
                 written.len(),
                 env!("CARGO_PKG_VERSION"),
                 target.display()
             );
         }
-        SkillCommands::Show => print!("{}", h5i_browser_light::skill::page(None)?),
+        SkillCommands::Show => print!("{}", crate::skill::page(None)?),
         SkillCommands::Path => {
-            println!("{}", h5i_browser_light::skill::default_target()?.display())
+            println!("{}", crate::skill::default_target()?.display())
         }
     }
     Ok(())
@@ -647,7 +676,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
     // Every name comes from `Verb`, so the CLI cannot ask for a verb the session
     // does not have. This used to be eight string literals that happened to
     // match eight others in `stream.rs`, with nothing enforcing the agreement.
-    use h5i_browser_light::verbs::Verb;
+    use crate::verbs::Verb;
     let (at, request) = match &verb {
         SessionVerb::Status { at } => (at, serde_json::json!({"verb": Verb::Status.name()})),
         SessionVerb::Snapshot { delta, at } => (
@@ -720,8 +749,8 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
     // by a flag or by h5i inside a box — and in a box it is the only channel
     // that reaches the session at all.
     let reply = match session_socket(at) {
-        Some(path) => h5i_browser_light::stream::ask_unix(&path, &request)?,
-        None => h5i_browser_light::stream::ask(session_port(at)?, &request)?,
+        Some(path) => crate::stream::ask_unix(&path, &request)?,
+        None => crate::stream::ask(session_port(at)?, &request)?,
     };
 
     if at.json {
@@ -855,7 +884,7 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
             path.display()
         )));
     }
-    h5i_browser_light::stream::read_port_file(&path)
+    crate::stream::read_port_file(&path)
 }
 
 /// Where a session advertises itself when nothing else says.
@@ -1144,7 +1173,7 @@ fn open(
         eprintln!("\nrequests:");
         for record in records
             .iter()
-            .filter(|r| r.phase == h5i_browser_light::receipt::Phase::Response)
+            .filter(|r| r.phase == crate::receipt::Phase::Response)
         {
             eprintln!("  {}", record.render());
         }

@@ -73,6 +73,22 @@ enum Commands {
         open: bool,
     },
 
+    /// The rendering engine's own command line.
+    ///
+    /// Hidden because it is not the interface: `h5i browser` is, and it is what
+    /// knows about session names, placement, the control lock and the audit.
+    /// This is what `h5i browser` execs itself as to render a page, and it is
+    /// documented so that anyone who genuinely wants the engine on its own —
+    /// a one-shot render, the font `doctor`, the engine's own skill — can
+    /// reach it without a second binary to install.
+    #[command(name = "__engine", hide = true, disable_help_flag = true)]
+    #[cfg(feature = "browser")]
+    Engine {
+        /// Everything after `__engine`, handed to the engine unchanged.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
+
     /// Browser sessions: open one, drive it, close it.
     ///
     /// A session holds the page, the cookie jar, the request log and the policy
@@ -330,6 +346,14 @@ fn main() -> anyhow::Result<()> {
         Commands::Forum { action } => cli::forum::run(action)?,
         #[cfg(feature = "web")]
         Commands::Ui { port, open } => cli::ui::run(port, open)?,
+        #[cfg(feature = "browser")]
+        Commands::Engine { args } => {
+            // Never returns: the engine's CLI owns the exit code, and a page
+            // that failed to load has to be able to say so with a status the
+            // caller can read.
+            let argv = std::iter::once(std::ffi::OsString::from("h5i __engine")).chain(args);
+            h5i_browser_light::cli::main(argv);
+        }
         Commands::Browser { action } => cli::browser::run(action)?,
         #[cfg(feature = "share")]
         Commands::Join {
