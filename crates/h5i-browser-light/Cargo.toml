@@ -147,6 +147,29 @@ psl = "2.1.226"
 # code to the build.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "1.0"
+# Compression, decoded here rather than by the HTTP client.
+#
+# The engine had never sent an `Accept-Encoding` header at all, so every
+# document, stylesheet and bundle it fetched arrived identity-encoded — three
+# to five times its compressed size, an omission the receipts question never
+# caught because a receipt recorded that bytes moved and not that three times
+# too many did.
+#
+# `reqwest` will negotiate and decode transparently, and that was tried first.
+# It **strips `Content-Encoding` and `Content-Length` after decoding**, so the
+# compressed size — the number that says what the request actually cost — is
+# gone by the time a body is in hand. An engine whose whole claim is that its
+# request log is the truth rather than an observation of it cannot delegate the
+# measurement to a layer that then hides it. That is the CONNECT-gate blindness
+# this engine exists to remove, in miniature.
+#
+# So the client asks for encodings, and this crate decodes them: `wire_bytes` is
+# *measured*, not read off a header, so it is right under chunked transfer too;
+# and the decoded size is capped as well as the compressed one, which is what
+# stops a small response decompressing into an enormous one. Both crates are
+# pure Rust (flate2 on miniz_oxide), so the hermetic build is unchanged.
+flate2 = "1.1.9"
+brotli = { version = "8.0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3.8"

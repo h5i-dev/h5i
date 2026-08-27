@@ -6742,6 +6742,43 @@ before. The same-origin policy constrains *pages*, not the agent driving them,
 and conflating the two would have broken every verb in the engine to fix a hole
 in one of them.
 
+### B17.4 Compression, and why the engine decodes it itself
+
+§B16.10 item 1, out of order and without its measurement gate, because it is
+not a speculative optimisation: the engine had never sent an `Accept-Encoding`
+header at all, so every document, stylesheet and bundle it had ever fetched
+arrived identity-encoded. That is an absent capability, not a guess about where
+time goes, and §B15.12a's rule was written for the second.
+
+**`reqwest` will negotiate and decode transparently, and that was tried first.**
+It strips `Content-Encoding` and `Content-Length` after decoding — correctly,
+since neither describes the body any more — and with them goes the compressed
+size, which is the number that says what the request actually cost. An engine
+whose claim is that its request log *is* the network rather than an observation
+of it cannot delegate that measurement to a layer that then discards it. It is
+the CONNECT-gate blindness this engine exists to remove, in miniature.
+
+So the client advertises encodings and this crate decodes them. Both sizes are
+measured rather than read off a header, so they are right under chunked
+transfer and cannot be contradicted by a `Content-Length` that disagrees with
+the body:
+
+    200 GET http://…/ (12426 bytes, 114 on the wire gzip, 2ms)
+
+**And the decoded size is capped, not only the wire size.** A few kilobytes of
+zeroes is gigabytes of zeroes; a browser that decoded without a limit would let
+any allowed origin exhaust the box's memory with one response. Doing the
+decoding here is what makes that cap possible at all — under transparent
+decompression the expansion happens inside the client, past any limit this
+engine could impose.
+
+An encoding the engine cannot decode is an error rather than a body passed
+through undecoded, because handing compressed bytes to the HTML parser renders
+a page of binary: a wrong answer that looks like a broken site.
+
+Two of §B16.10's three remain: the preload scanner with parallel subresources
+and HTTP/2 (item 3), and the per-navigation font reload (item 2).
+
 ---
 
 # Formal verification: a Lean model beside the Rust

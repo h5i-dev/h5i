@@ -47,6 +47,13 @@ pub const USER_AGENT: &str = concat!(
 /// should get the same answer the page's script would give.
 pub const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
 
+/// What this engine will accept compressed, and can decode.
+///
+/// Kept beside the decoder deliberately: a header that advertises an encoding
+/// `decode_capped` does not handle is a promise the engine cannot keep, and the
+/// failure would be a page of binary rather than an error.
+const ACCEPT_ENCODING: &str = "gzip, br, deflate";
+
 /// What this engine will take, by what asked for it.
 ///
 /// Not cosmetic: crates.io answered **404** to a request with no `Accept` at
@@ -696,7 +703,8 @@ impl Broker {
                 .client
                 .request(verb, current.clone())
                 .header(reqwest::header::ACCEPT, accept_for(asked_as))
-                .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE);
+                .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
+                .header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
             if !body.is_empty() {
                 if let Some(kind) = content_type {
                     request = request.header(reqwest::header::CONTENT_TYPE, kind);
@@ -883,12 +891,51 @@ impl Broker {
                 cors_exposure = crate::cors::Exposure::Opaque;
             }
 
-            let body = self.read_capped(response);
+            // What crossed the wire, before `reqwest` decodes it. Read from
+            // the response's own headers rather than measured, because the
+            // decoding happens inside the client and the compressed bytes are
+            // gone by the time a body is in hand.
+            //
+            // `Content-Length` is the *compressed* length when the body is
+            // encoded, which is exactly the number wanted here. Absent under
+            // chunked transfer, and absent is the honest answer: recording the
+            // decoded size under `wire_bytes` would be a guess wearing a
+            // measurement's name.
+            let encoding = headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-encoding"))
+                .map(|(_, value)| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty() && value != "identity");
+
+            // Read compressed, then decode. Both sizes are *measured* rather
+            // than read off a header, so they are right under chunked transfer
+            // and cannot be lied about by a `Content-Length` that disagrees
+            // with the body.
+            let body = self.read_capped(response).and_then(|raw| {
+                let wire = raw.len() as u64;
+                match &encoding {
+                    None => Ok((raw, wire, false)),
+                    Some(encoding) => self
+                        .decode_capped(&raw, encoding)
+                        .map(|decoded| (decoded, wire, true)),
+                }
+            });
+
             let mut outcome_record = record.response();
             outcome_record.status = Some(status.as_u16());
             outcome_record.duration_ms = Some(elapsed);
             outcome_record.cookies_sent = Some(cookies_sent);
             outcome_record.cookies_stored = Some(cookies_stored);
+            let body = match body {
+                Ok((decoded, wire, was_encoded)) => {
+                    if was_encoded {
+                        outcome_record.wire_bytes = Some(wire);
+                        outcome_record.content_encoding = encoding.clone();
+                    }
+                    Ok(decoded)
+                }
+                Err(e) => Err(e),
+            };
 
             return match body {
                 Ok(body) => {
@@ -927,6 +974,68 @@ impl Broker {
 
     /// Read at most `max_response_bytes`, so one hostile response cannot
     /// become this process's memory ceiling.
+    /// Decode a compressed body, under the same cap the raw read was under.
+    ///
+    /// **The cap is the point, not the decoding.** A response small enough to
+    /// pass `read_capped` can decompress into something enormous — a few
+    /// kilobytes of zeroes is gigabytes of zeroes — and a browser that decoded
+    /// without a limit would let any allowed origin exhaust the box's memory
+    /// with one response. The limit is the same
+    /// [`Policy::max_response_bytes`] the wire read uses, applied to what comes
+    /// out rather than only to what went in.
+    ///
+    /// An encoding this engine does not have is an error rather than a body
+    /// passed through undecoded: handing compressed bytes to the HTML parser
+    /// would render a page of binary, which is a wrong answer that looks like a
+    /// broken site.
+    fn decode_capped(&self, raw: &[u8], encoding: &str) -> Result<Vec<u8>, H5iError> {
+        use std::io::Read;
+        let cap = self.policy.max_response_bytes();
+
+        // Only the last encoding is handled, which is all any server sends.
+        // A stacked `gzip, br` is refused by name rather than half-decoded.
+        let name = encoding.rsplit(',').next().unwrap_or(encoding).trim();
+        let mut out = Vec::new();
+        let read = match name {
+            "gzip" | "x-gzip" => flate2::read::GzDecoder::new(raw)
+                .take(cap + 1)
+                .read_to_end(&mut out),
+            // `deflate` is specified as zlib and sent as raw by enough servers
+            // that a browser has to try both. The bare form is the fallback,
+            // which is what every other engine does here.
+            "deflate" => flate2::read::ZlibDecoder::new(raw)
+                .take(cap + 1)
+                .read_to_end(&mut out)
+                .or_else(|_| {
+                    out.clear();
+                    flate2::read::DeflateDecoder::new(raw)
+                        .take(cap + 1)
+                        .read_to_end(&mut out)
+                }),
+            "br" => brotli::Decompressor::new(raw, 4096)
+                .take(cap + 1)
+                .read_to_end(&mut out),
+            other => {
+                return Err(H5iError::Metadata(format!(
+                    "the response is `{other}`-encoded, which this engine cannot decode. It \
+                     asked for {ACCEPT_ENCODING}."
+                )))
+            }
+        };
+        read.map_err(|e| {
+            H5iError::Metadata(format!("the {name} response could not be decoded: {e}"))
+        })?;
+
+        if out.len() as u64 > cap {
+            return Err(H5iError::Metadata(format!(
+                "the response decompresses past the {cap} byte cap, so it was not read. A \
+                 small response that expands without limit is how a page exhausts the \
+                 memory of whatever is reading it."
+            )));
+        }
+        Ok(out)
+    }
+
     fn read_capped(&self, response: reqwest::blocking::Response) -> Result<Vec<u8>, H5iError> {
         use std::io::Read;
 
@@ -1353,6 +1462,174 @@ mod cookie_wire_tests {
     use crate::receipt::MemorySink;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
+
+    /// A server that compresses when asked, and reports what it was asked for.
+    fn gzip_server(body: &'static [u8], hits: usize) -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
+        use flate2::write::GzEncoder;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let record = seen.clone();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let mut accept = String::new();
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                    let lower = header.to_ascii_lowercase();
+                    if let Some(rest) = lower.strip_prefix("accept-encoding:") {
+                        accept = rest.trim().to_string();
+                    }
+                }
+                record.lock().unwrap().push(accept.clone());
+
+                let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
+                encoder.write_all(body).unwrap();
+                let payload = encoder.finish().unwrap();
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\
+                     Content-Encoding: gzip\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n",
+                    payload.len()
+                );
+                let _ = stream.write_all(&payload);
+                let _ = stream.flush();
+            }
+        });
+        (port, seen)
+    }
+
+    /// The capability that was absent, and the measurement that goes with it.
+    ///
+    /// Both sizes are *measured* rather than read off a header, which is why
+    /// this engine decodes its own bodies: `reqwest` will do it transparently
+    /// and strips `Content-Encoding` and `Content-Length` on the way, so the
+    /// number that says what the request actually cost is gone before anything
+    /// can record it.
+    #[test]
+    fn a_compressed_response_is_decoded_and_both_sizes_are_recorded() {
+        const BODY: &[u8] = b"<html><body>compressible filler compressible filler                               compressible filler compressible filler</body></html>";
+        let (port, seen) = gzip_server(BODY, 1);
+        let sink = Arc::new(MemorySink::new());
+        let broker =
+            Broker::new(Policy::new(), sink.clone(), None).expect("broker");
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+
+        let outcome = broker.fetch_from(&url, Initiator::Navigation, None);
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(outcome.body, BODY, "the body must arrive decoded");
+
+        // The engine asked for what it can decode, and nothing else.
+        assert_eq!(seen.lock().unwrap()[0], "gzip, br, deflate");
+
+        let response = sink
+            .records()
+            .into_iter()
+            .find(|r| r.phase == crate::receipt::Phase::Response)
+            .expect("a response record");
+        assert_eq!(response.bytes, Some(BODY.len() as u64), "what the page got");
+        let wire = response.wire_bytes.expect("what the wire carried");
+        assert!(
+            wire < BODY.len() as u64,
+            "the compressed size should be smaller: {wire} vs {}",
+            BODY.len()
+        );
+        assert_eq!(response.content_encoding.as_deref(), Some("gzip"));
+
+        // And the line a person reads carries both, because "184 KB" and
+        // "43 KB on the wire" answer different questions.
+        let line = response.render();
+        assert!(line.contains("on the wire"), "{line}");
+        assert!(line.contains("gzip"), "{line}");
+    }
+
+    /// The reason the decoding is capped as well as the reading. A few
+    /// kilobytes of zeroes is gigabytes of zeroes, and a browser that decoded
+    /// without a limit would let any allowed origin exhaust the box's memory
+    /// with one response.
+    #[test]
+    fn a_response_that_decompresses_past_the_cap_is_refused() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = Broker::new(
+            Policy::new().set_max_response_bytes(64 * 1024),
+            sink,
+            None,
+        )
+        .expect("broker");
+
+        // 4 MiB of zeroes compresses to a few kilobytes: small enough to pass
+        // the wire cap, far past the decoded one.
+        let bomb = vec![0u8; 4 * 1024 * 1024];
+        let mut encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(&bomb).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(compressed.len() < 64 * 1024, "the bomb must pass the wire cap");
+
+        let refused = broker.decode_capped(&compressed, "gzip");
+        let why = refused.expect_err("a decompression bomb must be refused");
+        assert!(
+            why.to_string().contains("decompresses past"),
+            "the refusal should name what happened: {why}"
+        );
+    }
+
+    /// An encoding this engine cannot decode is an error, not a body passed
+    /// through: handing compressed bytes to the HTML parser would render a page
+    /// of binary, which is a wrong answer that looks like a broken site.
+    #[test]
+    fn an_encoding_this_engine_did_not_ask_for_is_an_error() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = Broker::new(Policy::new(), sink, None).expect("broker");
+        let why = broker
+            .decode_capped(b"whatever", "exotic-zip")
+            .expect_err("an unknown encoding is an error");
+        assert!(why.to_string().contains("exotic-zip"), "{why}");
+    }
+
+    #[test]
+    fn every_encoding_this_engine_advertises_round_trips() {
+        let sink = Arc::new(MemorySink::new());
+        let broker = Broker::new(Policy::new(), sink, None).expect("broker");
+        let body = b"round trip me".repeat(50);
+
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&body).unwrap();
+        assert_eq!(broker.decode_capped(&gz.finish().unwrap(), "gzip").unwrap(), body);
+
+        let mut zl = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        zl.write_all(&body).unwrap();
+        assert_eq!(
+            broker.decode_capped(&zl.finish().unwrap(), "deflate").unwrap(),
+            body
+        );
+
+        // Raw deflate too: the spec says zlib and enough servers send bare that
+        // a browser has to try both.
+        let mut raw = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        raw.write_all(&body).unwrap();
+        assert_eq!(
+            broker.decode_capped(&raw.finish().unwrap(), "deflate").unwrap(),
+            body
+        );
+
+        let mut br = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut br, 4096, 5, 22);
+            writer.write_all(&body).unwrap();
+        }
+        assert_eq!(broker.decode_capped(&br, "br").unwrap(), body);
+    }
 
     /// Serves a page that says who asked and echoes the cookie it saw, with
     /// whatever CORS headers the test wants.
