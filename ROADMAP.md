@@ -7098,7 +7098,7 @@ no socket, its profile can move from `net.mode = host` to `deny` — an empty
 network namespace — which is a one-line change to `browser_sandbox::profile_for`
 and the whole reason this ordering is right.
 
-### B18.3 The four cases the table does not settle
+### B18.3 The cases the table does not settle
 
 **Cookies: the gain is narrower than it first looks.** The obvious claim — "the
 renderer would see only the non-HttpOnly subset" — is already true where it
@@ -7122,6 +7122,35 @@ credential that was not typed: today a compromised engine reads all of
 mean injecting at the HTTP layer rather than the DOM layer, which works for a
 form post and not for JS-driven auth. That is the boundary, and it belongs in
 the docs the day this ships.
+
+> **Corrected 2026-08-27, on building it.** "It reads the ones actually used" is
+> not what step 2 delivers, and the docs say the accurate thing instead.
+> `substitute` is an *operation*, so a compromised renderer can resolve every
+> name `secret_names` returns rather than only the one it was told to type. The
+> narrowing is real and it is about the **set**, not the count: the renderer's
+> environment holds no `H5I_SECRET_*` at all, so it reaches what this session
+> was granted and not what the machine has — which unconfined is everything.
+> "The ones actually used" becomes true when the control channel moves to the
+> broker (the §B18.2 table), because only then does the broker know which field
+> is being typed into. Until that, claiming it would be the kind of sentence
+> this section exists to refuse.
+
+**The asker's origin is the renderer's word.** Found on building it, and it
+belongs beside the other four. Half of this engine's policy reasons about *who
+is asking*: the loopback rule refuses a page from the open web reaching the
+box's dev server, and the same-origin check decides whether the document that
+asked may read the answer. Both take the asking document as an argument, and
+after the split that argument arrives from the renderer. A renderer that claims
+"the agent named this URL" gets the answer the agent would have got.
+
+This is not a regression — the same code chose the origin before the split,
+because it was the same code — and it is not fixed by the split either. It is
+the shape of a real tightening: the broker knows every document it has served,
+so it could refuse to attribute a request to one it never answered with. That
+narrows an invented origin to a previously-served one, which is worth having
+and is not what step 2 built. Until then, "the broker decides" is exactly true
+of the allowlist and the address, and true of the origin rules only for a
+renderer that is telling the truth about which page it is on.
 
 **`@ref` resolution stays in the renderer.** Handles are Blitz node ids and live
 with the DOM. The broker keeps the *record* of what it served, for the audit. A
@@ -7264,9 +7293,13 @@ through a named set of operations is a broker whose surface is written down.
   session: no orphan, and `h5i browser close` still reads the record.
 - **Secrets are the measurable gain today.** `H5I_SECRET_*` is removed from the
   renderer's environment, along with the receipts path, the proxy and the
-  allowlist. Substitution is a broker operation, so the renderer receives the
-  value for the field it was told to fill and holds no other. That is the bound
-  §B18.3 promised, and it is now the code rather than the plan.
+  allowlist. Substitution is a broker operation, so an intact renderer receives
+  the value for the field it was told to fill and holds no other — and a
+  compromised one reaches what this session was *granted* rather than what the
+  machine holds, which is the narrowing that is actually delivered. See the
+  correction in §B18.3: "the ones actually used" waits on the control channel
+  moving, and until then saying it would be a sentence this file exists to
+  refuse.
 
   Measuring it turned up that the claim had never been true in the other
   direction either: `--secret NAME` set `profile.secrets` and nothing consumed

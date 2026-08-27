@@ -20,16 +20,35 @@
 //! # What a hostile renderer can do here
 //!
 //! Everything this protocol allows, in any order, with any arguments — so what
-//! it allows is the whole of the security argument. It can ask for a URL and be
-//! refused. It can ask what is in the log. It can ask for a cookie header it is
-//! already entitled to (`document.cookie`'s non-`HttpOnly` subset). It cannot
-//! edit the policy, silence the sink, read an `HttpOnly` cookie, enumerate a
-//! secret's value, or reach the network without a receipt being written first,
-//! because none of those is a message.
+//! it allows is the whole of the security argument, and it is worth writing
+//! down in both directions rather than only the flattering one.
 //!
-//! What it *can* still do is lie about what it renders, which is why the split
-//! is described as moving the recorder out of reach rather than as making the
-//! renderer trustworthy.
+//! **What it cannot do**, because none of these is a message: edit the policy,
+//! silence the receipt sink, read an `HttpOnly` cookie, reach the network
+//! without a decision record being written first, or touch a credential this
+//! session was not granted.
+//!
+//! **What it can do**, and this is the part that is easy to oversell away:
+//!
+//! * **Claim any origin as the asker.** `Fetch::document` is the renderer's to
+//!   fill in, and it is what the origin-sensitive half of the policy reasons
+//!   about — the loopback rule, the same-origin check. A renderer that says
+//!   "the agent named this URL" gets the answer the agent would have got. This
+//!   is not new: the same code chose the origin before the split, because it
+//!   was the same process. It is also not fixed by the split, and the tighter
+//!   version — the broker refusing to attribute a request to a document it
+//!   never served — is not built.
+//! * **Ask for any credential this session was granted.** `substitute` is an
+//!   operation, so a renderer can resolve every name `secret_names` returns
+//!   rather than only the one it was told to type. What the split narrows is
+//!   the *set*: the renderer's environment holds none of them, so it reaches
+//!   what this session was granted and not every `H5I_SECRET_*` on the machine
+//!   — which unconfined is all of them. Narrowing it to "the one being typed"
+//!   needs the control channel on this side of the boundary, which is §B18.2's
+//!   table and is not built.
+//! * **Lie about what it renders.** It holds the terminal and the frame. The
+//!   split moves the recorder out of its reach; it does not make the renderer
+//!   trustworthy, and no arrangement of processes could.
 //!
 //! # Framing
 //!
@@ -707,11 +726,21 @@ fn serve_over(
     }
 }
 
-/// Whether answering this means waiting on the network.
+/// Whether answering this can block, and so needs a thread of its own.
+///
+/// The wire, in every form it takes here. `ChannelClose` is on the list for a
+/// reason that is easy to miss: closing a socket sends a close frame and takes
+/// the same lock a `send` holds, so a peer that has stopped reading can stall
+/// it — and answered on the reading thread, that would stop the broker serving
+/// *anything* until the peer relented.
 fn slow(ask: &Ask) -> bool {
     matches!(
         ask,
-        Ask::Send(_) | Ask::OpenSocket { .. } | Ask::OpenEventStream { .. } | Ask::ChannelSend { .. }
+        Ask::Send(_)
+            | Ask::OpenSocket { .. }
+            | Ask::OpenEventStream { .. }
+            | Ask::ChannelSend { .. }
+            | Ask::ChannelClose { .. }
     )
 }
 
@@ -1192,6 +1221,76 @@ mod tests {
         assert!(methods.iter().any(|m| m == "WS-OPEN"), "{methods:?}");
         assert!(methods.iter().any(|m| m == "WS-RECV"), "{methods:?}");
         assert!(methods.iter().any(|m| m == "WS-SEND"), "{methods:?}");
+    }
+
+    /// One request, answered with the body it was sent. Enough HTTP to carry a
+    /// body in each direction, which is the only thing this needs to prove.
+    fn echo_server() -> (u16, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut length = 0usize;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+                if line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            let mut body = vec![0u8; length];
+            let _ = std::io::Read::read_exact(&mut reader, &mut body);
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(&body);
+            let _ = stream.flush();
+        });
+        (port, handle)
+    }
+
+    #[test]
+    fn a_body_crosses_in_both_directions() {
+        // Bodies travel beside the message rather than inside it — base64 in
+        // the JSON would pay a third again in bytes on exactly the path a
+        // page's images take — so the framing carries two lengths and two
+        // buffers. This is the test that the second buffer is wired to the
+        // right end at both ends.
+        let (port, server) = echo_server();
+        let (client, broker, _served) = paired();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/echo")).expect("url");
+
+        let sent = b"a body long enough to be more than a header".to_vec();
+        let outcome = client.send_from(
+            &url,
+            Initiator::Navigation,
+            "POST",
+            &sent,
+            Some("text/plain"),
+            None,
+        );
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(outcome.body, sent, "the answer is what the server was sent");
+
+        // And the receipt is the broker's, written where the bytes moved.
+        let methods: Vec<String> = Broker::records(broker.as_ref())
+            .iter()
+            .map(|r| r.method.clone())
+            .collect();
+        assert!(methods.iter().any(|m| m == "POST"), "{methods:?}");
+        let _ = server.join();
     }
 
     #[test]

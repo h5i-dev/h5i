@@ -407,8 +407,13 @@ route to the network is to ask something else, which writes a receipt first.
 **What this buys, exactly:**
 
 - Credentials named with `--secret` are in the broker's environment and not in
-  the renderer's. A page-bound `type` resolves through the broker, so the
+  the renderer's. A page-bound `type` resolves through the broker, so an intact
   renderer receives the value for the field it was told to fill and no other.
+  A compromised one can ask the broker to resolve any credential **this session
+  was granted**, which is the narrowing the split actually buys: it cannot
+  reach one the session was not granted, and unconfined that would have been
+  every `H5I_SECRET_*` on the machine. Narrowing it further needs the control
+  channel to move to the broker, which is not built.
 - The receipts path, the egress proxy and the allowlist are likewise absent
   from the renderer.
 - The cookie jar is not in the renderer's memory. Script sees the non-`HttpOnly`
