@@ -258,6 +258,26 @@ a host that cannot confine runs the session unconfined and says so.
 </details>
 
 <details>
+<summary>Why does one session show up as two processes?</summary>
+
+Because the half that parses a stranger's bytes should not be the half that
+holds the decisions. The process h5i starts is the broker: the allowlist, the
+HTTP client, the receipt sink, the cookie jar and the credentials. It starts the
+renderer, which parses the HTML, runs the cascade and the script and draws the
+frame. The renderer holds none of those. Its environment has no `H5I_SECRET_*`
+in it, and its only route to the network is to ask the broker, which records
+first.
+
+Neither half is a command. `h5i browser open` is unchanged, and
+`H5I_BROWSER_NO_SPLIT=1` runs the old single process if you want to compare.
+
+It does not yet make the log evidence against a compromised renderer: the
+renderer is still in the broker's network namespace, so it could open a socket
+of its own. That closes when the renderer's own profile denies the network.
+
+</details>
+
+<details>
 <summary>What do `engine-claimed` and `host-observed` mean?</summary>
 
 `engine-claimed` is the browser's own account of what it fetched: fail-closed,

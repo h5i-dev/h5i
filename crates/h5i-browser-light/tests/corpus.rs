@@ -20,15 +20,14 @@
 use std::sync::Arc;
 
 use h5i_browser_light::engine::{PageFactory, PageOptions};
-use h5i_browser_light::net::Broker;
+use h5i_browser_light::net::LocalBroker;
 use h5i_browser_light::policy::Policy;
 use h5i_browser_light::receipt::MemorySink;
 
 /// Load a fixture with script enabled and settle it, as `open --script` does.
 fn read(html: &str) -> Reading {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+        .expect("broker");
     let fonts = h5i_browser_light::fonts::load(
         &[],
         &h5i_browser_light::fonts::default_font_dirs(),
@@ -816,9 +815,8 @@ struct Driver {
 
 impl Driver {
     fn open(html: &str) -> Self {
-        let broker = Arc::new(
-            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-        );
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker");
         let fonts = h5i_browser_light::fonts::load(
             &[],
             &h5i_browser_light::fonts::default_font_dirs(),

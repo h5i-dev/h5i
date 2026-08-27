@@ -31,7 +31,7 @@
 //! how the sandbox's own allowlist stays in the path. Rather than quietly open a
 //! hole in it, a non-loopback socket is refused whenever `$H5I_EGRESS_PROXY` is
 //! set. Loopback is exempt because the proxy already excludes it
-//! (`NoProxy::from_string("localhost,127.0.0.1,::1")` in [`crate::net::Broker`]),
+//! (`NoProxy::from_string("localhost,127.0.0.1,::1")` in [`crate::net::LocalBroker`]),
 //! so nothing is being bypassed that was ever in the path.
 //!
 //! ## Every frame is receipted
@@ -56,7 +56,7 @@ use std::sync::{Arc, Mutex};
 use h5i_error::H5iError;
 use url::Url;
 
-use crate::net::Broker;
+use crate::net::LocalBroker;
 use crate::ws::{self, Incoming};
 
 /// The bytes underneath a socket, plain or encrypted.
@@ -222,7 +222,7 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 const MAX_QUEUED: usize = 512;
 
 /// What a socket hands the page.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Event {
     Open,
     Message(String),
@@ -250,7 +250,7 @@ pub struct Socket {
     /// attributed to the connection that carried them.
     pub seq: u64,
     pub url: Url,
-    broker: Arc<Broker>,
+    broker: Arc<LocalBroker>,
     closed: Mutex<bool>,
 }
 
@@ -258,9 +258,9 @@ impl Socket {
     /// Open one, or say why not.
     ///
     /// The policy check and the decision record happen *before* the TCP
-    /// connect, the same order [`Broker::send_from`] uses and for the same
+    /// connect, the same order [`crate::broker::Broker::send_from`] uses and for the same
     /// reason: no receipt, no connection.
-    pub fn open(broker: Arc<Broker>, url: &Url, document: Option<&Url>) -> Result<Socket, String> {
+    pub fn open(broker: Arc<LocalBroker>, url: &Url, document: Option<&Url>) -> Result<Socket, String> {
         let secure = match url.scheme() {
             "ws" => false,
             "wss" => true,
@@ -434,11 +434,25 @@ impl Direction {
     }
 }
 
+impl crate::broker::Channel for Socket {
+    fn send(&self, text: &str) -> Result<(), String> {
+        Socket::send(self, text)
+    }
+
+    fn drain(&self) -> Vec<Event> {
+        Socket::drain(self)
+    }
+
+    fn close(&self) {
+        Socket::close(self)
+    }
+}
+
 /// Read frames until the socket ends, receipting each one.
 fn read_loop(
     mut reader: BufReader<Wire>,
     tx: SyncSender<Event>,
-    broker: Arc<Broker>,
+    broker: Arc<LocalBroker>,
     url: Url,
 ) {
     loop {
@@ -638,14 +652,12 @@ mod tests {
     /// property; what is left is the allowlist doing its job.
     #[test]
     fn wss_is_a_scheme_this_engine_has_and_is_judged_by_the_allowlist() {
-        let broker = Arc::new(
-            crate::net::Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 crate::policy::Policy::new(),
                 Arc::new(crate::receipt::MemorySink::new()),
                 None,
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         let url = Url::parse("wss://example.com/socket").unwrap();
         let error = match Socket::open(broker, &url, None) {
             Err(error) => error,
@@ -665,14 +677,12 @@ mod tests {
     /// and says which schemes are.
     #[test]
     fn a_non_socket_scheme_is_still_refused() {
-        let broker = Arc::new(
-            crate::net::Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 crate::policy::Policy::new(),
                 Arc::new(crate::receipt::MemorySink::new()),
                 None,
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         let url = Url::parse("https://example.com/socket").unwrap();
         let error = match Socket::open(broker, &url, None) {
             Err(error) => error,
@@ -687,14 +697,12 @@ mod tests {
     /// the proxy.
     #[test]
     fn tls_does_not_buy_a_way_past_the_proxy_rule() {
-        let broker = Arc::new(
-            crate::net::Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 crate::policy::Policy::new().allow_all_of(&["example.com".to_string()]),
                 Arc::new(crate::receipt::MemorySink::new()),
                 Some("http://127.0.0.1:9"),
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         let url = Url::parse("wss://example.com/socket").unwrap();
         let error = match Socket::open(broker, &url, None) {
             Err(error) => error,
@@ -708,14 +716,12 @@ mod tests {
         // The containment point. A WebSocket is a raw socket and does not go
         // through the proxy, so opening a remote one would step around the
         // allowlist the proxy enforces inside a box.
-        let broker = Arc::new(
-            crate::net::Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 crate::policy::Policy::new().allow_all_of(&["example.com".to_string()]),
                 Arc::new(crate::receipt::MemorySink::new()),
                 Some("http://127.0.0.1:3128"),
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         let url = Url::parse("ws://example.com/socket").unwrap();
         let error = match Socket::open(broker, &url, None) {
             Err(error) => error,

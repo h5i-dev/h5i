@@ -186,7 +186,7 @@ impl Secrets {
 }
 
 /// What a substitution did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Resolved {
     /// The text to hand to the page.
     pub text: String,

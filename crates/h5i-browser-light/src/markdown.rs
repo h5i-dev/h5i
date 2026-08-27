@@ -491,14 +491,12 @@ mod tests {
     use super::*;
 
     fn md(html: &str) -> String {
-        let broker = std::sync::Arc::new(
-            crate::net::Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 crate::policy::Policy::new(),
                 std::sync::Arc::new(crate::receipt::MemorySink::new()),
                 None,
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let factory = crate::engine::PageFactory::new(
             broker,
@@ -640,14 +638,12 @@ mod tests {
     #[test]
     fn truncation_is_announced_rather_than_silent() {
         let long = "<p>".to_string() + &"word ".repeat(20_000) + "</p>";
-        let broker = std::sync::Arc::new(
-            crate::net::Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 crate::policy::Policy::new(),
                 std::sync::Arc::new(crate::receipt::MemorySink::new()),
                 None,
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let factory = crate::engine::PageFactory::new(
             broker,

@@ -1,14 +1,12 @@
 use super::*;
 use crate::engine::{PageFactory, PageOptions};
-use crate::net::Broker;
+use crate::broker::Broker;
 use crate::policy::Policy;
 use crate::receipt::MemorySink;
 use std::sync::Arc;
 
 fn page_and_script(html: &str) -> (crate::engine::Page, Script) {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse("https://app.example/").unwrap();
@@ -20,10 +18,8 @@ fn page_and_script(html: &str) -> (crate::engine::Page, Script) {
 /// A page taken all the way through loading, which is what `page_and_script`
 /// deliberately is not: it builds a bare realm, so anything installed *by*
 /// `run_scripts` — the document lifecycle, named access — is not there.
-fn run_page(html: &str) -> (crate::engine::Page, Arc<Broker>) {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+fn run_page(html: &str) -> (crate::engine::Page, Arc<dyn Broker>) {
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse("https://app.example/").unwrap();
@@ -519,9 +515,7 @@ fn css_supports_answers_from_the_engine_that_would_have_to_do_it() {
 fn a_documents_encoding_reaches_both_its_text_and_its_urls() {
     // Two things follow from a document's encoding and they must not disagree:
     // how the bytes become text, and how a URL's query becomes bytes again.
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..PageOptions::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -817,9 +811,7 @@ fn a_page_can_open_a_socket_read_a_message_and_the_receipt_holds_every_frame() {
     let (port, server) = socket_server("hello from the server");
 
     let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
-    let broker = std::sync::Arc::new(
-        crate::net::Broker::new(crate::policy::Policy::new(), sink.clone(), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(crate::policy::Policy::new(), sink.clone(), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = crate::engine::PageFactory::new(
         broker.clone(),
@@ -900,9 +892,7 @@ fn a_peer_that_closes_releases_the_engine_side_too() {
     let (port, server) = socket_server("bye");
 
     let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
-    let broker = std::sync::Arc::new(
-        crate::net::Broker::new(crate::policy::Policy::new(), sink, None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(crate::policy::Policy::new(), sink, None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = crate::engine::PageFactory::new(
         broker.clone(),
@@ -960,9 +950,7 @@ fn an_open_socket_does_not_make_a_page_look_permanently_busy() {
 
     let (page, broker) = {
         let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
-        let broker = std::sync::Arc::new(
-            crate::net::Broker::new(crate::policy::Policy::new(), sink, None).expect("broker"),
-        );
+        let broker = crate::net::LocalBroker::new(crate::policy::Policy::new(), sink, None).expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
         let factory = crate::engine::PageFactory::new(
             broker.clone(),
@@ -1022,9 +1010,7 @@ fn a_page_can_read_an_event_stream_end_to_end() {
     });
 
     let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
-    let broker = std::sync::Arc::new(
-        crate::net::Broker::new(crate::policy::Policy::new(), sink.clone(), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(crate::policy::Policy::new(), sink.clone(), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = crate::engine::PageFactory::new(
         broker.clone(),
@@ -1237,9 +1223,7 @@ fn a_click_runs_script_that_fetches_and_the_agent_sees_the_result() {
     // DOM changes, and the change is in the outline the agent reads.
     let (port, server) = api_server();
     let sink = Arc::new(MemorySink::new());
-    let broker = Arc::new(
-        Broker::new(Policy::new(), sink.clone(), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), sink.clone(), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
@@ -1322,7 +1306,7 @@ fn an_external_script_is_fetched_through_the_broker_before_it_runs() {
     });
 
     let sink = Arc::new(MemorySink::new());
-    let broker = Arc::new(Broker::new(Policy::new(), sink.clone(), None).expect("broker"));
+    let broker = crate::net::LocalBroker::new(Policy::new(), sink.clone(), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -1347,7 +1331,7 @@ fn an_external_script_is_fetched_through_the_broker_before_it_runs() {
 fn script_is_off_unless_it_is_asked_for() {
     // The gate ROADMAP §12.5 asks for: a page whose script would change it is
     // left alone, and the outline shows what the server actually sent.
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse("https://app.example/").unwrap();
@@ -1367,7 +1351,7 @@ fn script_is_off_unless_it_is_asked_for() {
 fn the_snapshot_says_when_a_page_needed_an_api_this_engine_lacks() {
     // The routing signal. Without it an agent sees a thin outline and cannot
     // tell an empty page from one that needed the other engine.
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -1389,7 +1373,7 @@ fn the_snapshot_says_when_a_page_needed_an_api_this_engine_lacks() {
 
 #[test]
 fn a_page_that_never_settles_says_so_in_the_outline() {
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -1412,7 +1396,7 @@ fn a_page_that_never_settles_says_so_in_the_outline() {
 /// for the same reason — but it must not say the page is unfinished.
 #[test]
 fn a_looping_page_says_it_is_looping_rather_than_unfinished() {
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -1812,7 +1796,7 @@ fn typing_fires_input_and_change_because_it_is_a_user_edit() {
     // its own write would loop — but a person typing must. The handlers write
     // into the DOM so the assertion reads the same tree the agent would, rather
     // than trusting a value the engine already knew.
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -1875,7 +1859,7 @@ fn response_headers_reach_the_page() {
         let _ = stream.flush();
     });
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
@@ -1965,7 +1949,7 @@ fn a_web_page_cannot_read_the_dev_server_and_never_reaches_the_wire() {
     let (port, hits) = counting_server();
 
     let sink = Arc::new(MemorySink::new());
-    let broker = Arc::new(Broker::new(Policy::new(), sink.clone(), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), sink.clone(), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
 
@@ -2003,7 +1987,7 @@ fn the_dev_servers_own_page_still_reaches_it() {
     use std::sync::atomic::Ordering;
     let (port, hits) = counting_server();
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
 
@@ -2025,7 +2009,7 @@ fn leaving_an_origin_drops_the_session_and_the_agent_is_told() {
     // `localhost` and `127.0.0.1` are different hosts and both loopback, which
     // makes a genuine cross-origin navigation testable without two machines.
     let (port, _hits) = counting_server();
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
 
@@ -2137,7 +2121,7 @@ fn scripts_run_in_document_order_inline_and_external_together() {
         let _ = stream.flush();
     });
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -2162,7 +2146,7 @@ fn scripts_run_in_document_order_inline_and_external_together() {
 
 #[test]
 fn a_script_that_throws_is_reported_and_the_rest_of_the_page_still_runs() {
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -2188,7 +2172,7 @@ fn a_script_that_throws_is_reported_and_the_rest_of_the_page_still_runs() {
 
 #[test]
 fn a_refused_script_src_is_reported_and_the_page_survives() {
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
@@ -2253,7 +2237,7 @@ fn module_server(
     (port, asked)
 }
 
-fn scripted_factory(broker: Arc<Broker>) -> PageFactory {
+fn scripted_factory(broker: Arc<dyn Broker>) -> PageFactory {
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     PageFactory::new(broker, fonts.sources.clone(), options)
@@ -2271,7 +2255,7 @@ fn a_module_graph_loads_and_evaluates() {
         ("/lib/punctuation.js", "export default '!';"),
     ]);
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
@@ -2303,7 +2287,7 @@ fn a_module_imported_twice_is_fetched_once() {
         ("/shared.js", "globalThis.__loads = (globalThis.__loads || 0) + 1;"),
     ]);
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let _page = factory.from_html(
@@ -2325,7 +2309,7 @@ fn every_module_is_fetched_through_the_broker_and_receipted() {
     ]);
 
     let sink = Arc::new(MemorySink::new());
-    let broker = Arc::new(Broker::new(Policy::new(), sink.clone(), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), sink.clone(), None).unwrap();
     let factory = scripted_factory(broker);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let _page = factory.from_html(
@@ -2344,7 +2328,7 @@ fn a_bare_specifier_is_refused_and_the_page_is_told_why() {
     // never named, and the failure must be legible rather than an empty page.
     let (port, asked) = module_server(vec![("/entry.js", "import _ from 'lodash';")]);
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let page = factory.from_html(
@@ -2379,7 +2363,7 @@ fn an_inline_module_resolves_imports_against_the_page() {
         "export const value = 'from the module';",
     )]);
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/index.html")).unwrap();
 
@@ -2404,7 +2388,7 @@ fn an_inline_module_resolves_imports_against_the_page() {
 fn modules_run_after_classic_scripts_because_they_are_deferred() {
     // `type="module"` is deferred by definition: it never runs before a classic
     // script that follows it in the markup.
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
 
     let page = factory.from_html(
@@ -2427,7 +2411,7 @@ fn modules_run_after_classic_scripts_because_they_are_deferred() {
 fn a_module_that_fails_to_load_is_reported_rather_than_leaving_a_blank() {
     let (port, _asked) = module_server(vec![("/entry.js", "import './missing.js';")]);
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let page = factory.from_html(
@@ -2449,7 +2433,7 @@ fn a_module_may_not_reach_the_dev_server_from_a_page_the_web_served() {
     // through the same broker rather than a loader-local client.
     let (port, asked) = module_server(vec![("/secret.js", "globalThis.leaked = true;")]);
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker.clone());
     let evil = url::Url::parse("https://evil.example/page").unwrap();
 
@@ -2480,7 +2464,7 @@ fn a_click_is_credited_only_with_what_it_caused() {
         ("/clicked", "{}"),
     ]);
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
 
@@ -2516,7 +2500,7 @@ fn a_script_element_that_is_not_javascript_is_not_executed() {
     // `text/template` for markup — and the spec says those never execute.
     // Running them parses JSON as JavaScript and fills the console with syntax
     // errors that blame the page. Found by pointing the corpus at github.com.
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
 
     let page = factory.from_html(
@@ -2645,7 +2629,7 @@ fn an_http_error_page_is_not_presented_as_the_page_that_was_asked_for() {
         let _ = stream.flush();
     });
 
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
     let page = factory
         .open(&url::Url::parse(&format!("http://127.0.0.1:{port}/gone")).unwrap())
@@ -2663,7 +2647,7 @@ fn an_http_error_page_is_not_presented_as_the_page_that_was_asked_for() {
 #[test]
 fn an_empty_page_says_it_is_empty_rather_than_saying_nothing() {
     // Silence is the one answer an agent cannot act on.
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let factory = scripted_factory(broker);
     let page = factory.from_html(
         "<html><head><title>t</title></head><body></body></html>",
@@ -2731,7 +2715,7 @@ fn match_media_answers_from_the_viewport_the_engine_renders_at() {
 
 #[test]
 fn document_cookie_shows_what_a_browser_would_and_withholds_the_session() {
-    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let base = url::Url::parse("https://app.example/page").unwrap();
     broker.jar().store(&base, ["sid=secret; HttpOnly", "theme=dark"]);
 
@@ -3058,9 +3042,7 @@ fn document_identity_properties_answer_from_the_page() {
 
 #[test]
 fn current_script_names_the_running_element_and_only_then() {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
@@ -3611,9 +3593,7 @@ fn a_global_missing_because_a_script_was_refused_is_not_called_an_engine_gap() {
 
 #[test]
 fn an_uncaught_error_says_which_script_it_came_from() {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
@@ -3704,9 +3684,7 @@ fn a_scoped_tag_search_only_sees_the_subtree() {
 
 #[test]
 fn a_script_that_threw_explains_the_globals_it_never_defined() {
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options);
@@ -3789,9 +3767,7 @@ fn requests_overlap_instead_of_queueing_behind_each_other() {
     use std::sync::atomic::Ordering;
     let (port, peak) = slow_server(std::time::Duration::from_millis(120));
 
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
@@ -3828,9 +3804,7 @@ fn more_requests_than_slots_still_all_finish() {
     use std::sync::atomic::Ordering;
     let (port, peak) = slow_server(std::time::Duration::from_millis(30));
 
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
@@ -3885,9 +3859,7 @@ fn the_wire_says_what_this_engine_is_and_what_it_will_accept() {
         seen
     });
 
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let url = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let _ = broker.fetch(&url, crate::receipt::Initiator::Navigation);
 
@@ -4154,9 +4126,7 @@ fn the_old_request_object_goes_through_the_same_broker() {
     use std::sync::atomic::Ordering;
     let (port, hits) = counting_server();
 
-    let broker = Arc::new(
-        Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-    );
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
     let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
     let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();

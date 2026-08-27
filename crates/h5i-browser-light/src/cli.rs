@@ -23,9 +23,9 @@ use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand};
 use crate::engine::{Page, PageFactory, PageOptions};
-use crate::net::Broker;
+use crate::broker::Broker;
 use crate::policy::Policy;
-use crate::receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
+use crate::receipt::{JsonlSink, MemorySink, Sink};
 use crate::{fonts, Capabilities};
 use h5i_error::H5iError;
 use url::Url;
@@ -67,6 +67,14 @@ const ACTIONS_VAR: &str = "H5I_BROWSER_ACTIONS";
     about = "A lightweight visual browser for coding agents: every request is policy-checked and receipted before it reaches the wire."
 )]
 struct Cli {
+    /// This process is the renderer half; its broker is on standard input.
+    ///
+    /// Hidden because it is not an interface. Nobody types it: the broker
+    /// spawns the renderer with it, and `h5i browser open` is unchanged. See
+    /// [`crate::ipc`] for what the two halves are and why.
+    #[arg(long = "brokered", hide = true)]
+    brokered: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -779,23 +787,6 @@ struct ViewArgs {
     script: bool,
 }
 
-/// Writes to both sinks, and fails if either refuses.
-///
-/// The display sink is what the CLI prints at the end; the file sink is the
-/// durable record. Requiring both to succeed keeps the fail-closed rule from
-/// quietly weakening when someone passes `--receipts`.
-struct TeeSink {
-    display: Arc<MemorySink>,
-    file: Arc<dyn Sink>,
-}
-
-impl Sink for TeeSink {
-    fn append(&self, record: &RequestRecord) -> Result<(), H5iError> {
-        self.display.append(record)?;
-        self.file.append(record)
-    }
-}
-
 /// Run the engine's CLI over `args`, which must include the program name.
 ///
 /// Exits the process on failure rather than returning, because the caller is a
@@ -817,12 +808,104 @@ where
     }
 }
 
+/// Which half of the engine this process is.
+///
+/// Two processes by default: a broker that decides and records, and a renderer
+/// that parses the page. `Whole` is the shape the engine had before the split,
+/// kept because a host where the second process cannot be started is a host
+/// that should still be able to read a page — and because being able to run
+/// both shapes is what makes them comparable. See [`crate::ipc`].
+enum Half {
+    /// One process, brokering its own requests.
+    Whole,
+    /// This process renders. Everything that decides or records is on the
+    /// other end of this.
+    Renderer(Arc<crate::ipc::BrokerClient>),
+}
+
 fn run<I, T>(args: I) -> Result<(), H5iError>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    match Cli::parse_from(args).command {
+    let argv: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    let cli = Cli::parse_from(&argv);
+    // May not return: a process that becomes the broker spends the rest of its
+    // life answering the renderer, and exits with the renderer's status.
+    let half = half_for(&cli, &argv)?;
+    dispatch(cli.command, &half)
+}
+
+/// Decide which half this process is, and — when it is the broker — never come
+/// back.
+fn half_for(cli: &Cli, argv: &[std::ffi::OsString]) -> Result<Half, H5iError> {
+    if cli.brokered {
+        return Ok(Half::Renderer(crate::ipc::BrokerClient::on_stdin()?));
+    }
+    // Only the two commands that load a page have a broker to split from. The
+    // rest — `capabilities`, `doctor`, the session verbs, `replay` — either
+    // answer from this process or talk to a session that already exists.
+    let Some(net) = cli.command.net() else {
+        return Ok(Half::Whole);
+    };
+    if !crate::ipc::splitting() {
+        return Ok(Half::Whole);
+    }
+    become_broker(net, argv)
+}
+
+/// Build the broker, start the renderer under it, and serve until it exits.
+///
+/// Returns only when the renderer could not be started at all, and then the
+/// engine runs as one process and **says so**. A sandbox nobody can see is
+/// indistinguishable from one that was never applied, and the same is true of
+/// a split.
+#[cfg(unix)]
+fn become_broker(net: &NetArgs, argv: &[std::ffi::OsString]) -> Result<Half, H5iError> {
+    let broker = local_broker(net)?;
+    let (mut renderer, socket) = match crate::ipc::spawn_renderer(argv) {
+        Ok(pair) => pair,
+        Err(error) => {
+            eprintln!(
+                "h5i-browser-light: {error}. Running as one process: the policy, the receipts, \
+                 the cookie jar and the secrets are in the same process as the page's parsers."
+            );
+            return Ok(Half::Whole);
+        }
+    };
+
+    crate::ipc::serve(broker, socket);
+
+    // The renderer closed the socket, which is what exiting looks like from
+    // here. Its status is this process's status: `h5i browser` is waiting on
+    // one child and must not be told a page loaded because the broker's own
+    // work went fine.
+    let status = renderer
+        .wait()
+        .map_err(|e| H5iError::Metadata(format!("the renderer could not be waited for: {e}")))?;
+    std::process::exit(exit_code(&status));
+}
+
+#[cfg(not(unix))]
+fn become_broker(_net: &NetArgs, _argv: &[std::ffi::OsString]) -> Result<Half, H5iError> {
+    Ok(Half::Whole)
+}
+
+/// A child's status as an exit code, including the one a signal produced.
+///
+/// A renderer killed by the kernel's OOM killer is the case worth naming: it
+/// exits with no code at all, and reporting `0` there would say the page loaded.
+#[cfg(unix)]
+fn exit_code(status: &std::process::ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+    status
+        .code()
+        .or_else(|| status.signal().map(|signal| 128 + signal))
+        .unwrap_or(1)
+}
+
+fn dispatch(command: Command, half: &Half) -> Result<(), H5iError> {
+    match command {
         Command::Capabilities { script } => {
             // Reported for the configuration asked about, because what h5i
             // routes on is whether *this* invocation runs script.
@@ -842,7 +925,7 @@ where
             screenshot,
             text,
             json,
-        } => open(&targets, &net, &view, screenshot, text, json),
+        } => open(half, &targets, &net, &view, screenshot, text, json),
         Command::Serve {
             target,
             net,
@@ -855,6 +938,7 @@ where
             actions,
             once,
         } => serve(
+            half,
             &target,
             &net,
             &view,
@@ -869,6 +953,24 @@ where
     }
 }
 
+impl Command {
+    /// The network arguments this command brokers with, when it brokers at all.
+    ///
+    /// The two that load a page have one; the rest either answer from this
+    /// process or speak to a session that already exists. It is also the test
+    /// for whether this invocation splits into two processes, and those are the
+    /// same question: a command with no broker has no halves.
+    fn net(&self) -> Option<&NetArgs> {
+        match self {
+            Command::Open { net, .. } | Command::Serve { net, .. } => Some(net),
+            Command::Capabilities { .. }
+            | Command::Doctor { .. }
+            | Command::Session(_)
+            | Command::Replay { .. } => None,
+        }
+    }
+}
+
 /// Build the factory and load the first page, shared by `open` and `serve`.
 /// Everything a page needs, built once.
 ///
@@ -877,20 +979,37 @@ where
 /// font set — all three are per-*session* facts, and building them per page
 /// meant a run over twenty URLs re-read the font files twenty times and threw
 /// away every keep-alive connection between them.
-fn factory_for(net: &NetArgs, view: &ViewArgs) -> Result<(Arc<MemorySink>, PageFactory), H5iError> {
-    let policy = build_policy(net);
-    let (display, sink) = build_sinks(net)?;
-    let mut broker = Broker::new(policy, sink, proxy_of(net).as_deref())?;
-    broker.set_budget_limits(crate::budget::Limits {
-        max_requests: net.max_requests,
-        max_wire_bytes: net.max_wire_bytes,
-        // The decoded ceiling follows the wire one rather than being its own
-        // flag: it exists to bound what compression expands into, so tying it
-        // to the wire limit keeps the two from being set inconsistently.
-        max_decoded_bytes: net.max_wire_bytes.saturating_mul(4),
-        max_network_time: std::time::Duration::from_secs(net.max_network_seconds),
-    });
-    let broker = Arc::new(broker);
+/// The broker this process would build for itself.
+///
+/// One function, two callers, and that is the point: the broker process builds
+/// exactly what a whole process would have built, so the two shapes cannot
+/// drift into applying different policies or different ceilings.
+fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
+    crate::net::LocalBroker::with_limits(
+        build_policy(net),
+        receipts_sink(net)?,
+        proxy_of(net).as_deref(),
+        crate::budget::Limits {
+            max_requests: net.max_requests,
+            max_wire_bytes: net.max_wire_bytes,
+            // The decoded ceiling follows the wire one rather than being its
+            // own flag: it exists to bound what compression expands into, so
+            // tying it to the wire limit keeps the two from being set
+            // inconsistently.
+            max_decoded_bytes: net.max_wire_bytes.saturating_mul(4),
+            max_network_time: std::time::Duration::from_secs(net.max_network_seconds),
+        },
+    )
+}
+
+fn factory_for(half: &Half, net: &NetArgs, view: &ViewArgs) -> Result<PageFactory, H5iError> {
+    let broker: Arc<dyn Broker> = match half {
+        Half::Whole => local_broker(net)?,
+        // Nothing is built here: no policy, no sink, no jar, no secrets. This
+        // process asks, and the answers come from a process the page cannot
+        // reach.
+        Half::Renderer(client) => client.clone(),
+    };
     let font_setup = load_fonts(view);
     if font_setup.is_empty() {
         eprintln!("h5i-browser-light: no fonts registered; text will not be drawn.");
@@ -909,7 +1028,7 @@ fn factory_for(net: &NetArgs, view: &ViewArgs) -> Result<(Arc<MemorySink>, PageF
             navigation_budget: std::time::Duration::from_secs(view.navigation_seconds),
         },
     );
-    Ok((display, factory))
+    Ok(factory)
 }
 
 /// One page, through a factory that already exists.
@@ -928,17 +1047,19 @@ fn open_target(factory: &PageFactory, target: &str) -> Result<Page, H5iError> {
 }
 
 fn load(
+    half: &Half,
     target: &str,
     net: &NetArgs,
     view: &ViewArgs,
-) -> Result<(Arc<MemorySink>, PageFactory, Page), H5iError> {
-    let (display, factory) = factory_for(net, view)?;
+) -> Result<(PageFactory, Page), H5iError> {
+    let factory = factory_for(half, net, view)?;
     let page = open_target(&factory, target)?;
-    Ok((display, factory, page))
+    Ok((factory, page))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn serve(
+    half: &Half,
     target: &str,
     net: &NetArgs,
     view: &ViewArgs,
@@ -950,7 +1071,7 @@ fn serve(
     action_log: Option<PathBuf>,
     once: bool,
 ) -> Result<(), H5iError> {
-    let (requests, factory, page) = load(target, net, view)?;
+    let (factory, page) = load(half, target, net, view)?;
     let control_socket =
         control_socket.or_else(|| std::env::var(CONTROL_SOCKET_VAR).ok().map(PathBuf::from));
     let stream_file = stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
@@ -988,7 +1109,6 @@ fn serve(
             control_socket,
             action_log,
             once,
-            requests,
         },
     )
 }
@@ -1647,22 +1767,21 @@ fn proxy_of(net: &NetArgs) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-fn build_sinks(net: &NetArgs) -> Result<(Arc<MemorySink>, Arc<dyn Sink>), H5iError> {
-    let display = Arc::new(MemorySink::new());
+/// The durable half of the record, when one was asked for.
+///
+/// The other half is never optional: the broker keeps every record in memory
+/// whatever this returns, which is what `h5i browser open` prints and what the
+/// renderer can ask for. This is the file, and it is the one that can refuse —
+/// which is what makes `--receipts` the flag that puts the fail-closed rule
+/// under h5i's control rather than the caller's.
+fn receipts_sink(net: &NetArgs) -> Result<Arc<dyn Sink>, H5iError> {
     let receipts = net
         .receipts
         .clone()
         .or_else(|| std::env::var(RECEIPTS_VAR).ok().map(PathBuf::from));
     match &receipts {
-        None => Ok((display.clone(), display)),
-        Some(path) => {
-            let file = Arc::new(JsonlSink::create(path)?);
-            let tee = Arc::new(TeeSink {
-                display: display.clone(),
-                file,
-            });
-            Ok((display, tee))
-        }
+        None => Ok(Arc::new(crate::receipt::NullSink)),
+        Some(path) => Ok(Arc::new(JsonlSink::create(path)?)),
     }
 }
 
@@ -1712,12 +1831,13 @@ fn doctor(net: &NetArgs) -> Result<(), H5iError> {
 
     // Prove the client can actually be built with these settings rather than
     // reporting a configuration that fails at the first fetch.
-    Broker::new(policy, Arc::new(MemorySink::new()), proxy.as_deref())?;
+    crate::net::LocalBroker::new(policy, Arc::new(MemorySink::new()), proxy.as_deref())?;
     println!("client     : ok");
     Ok(())
 }
 
 fn open(
+    half: &Half,
     targets: &[String],
     net: &NetArgs,
     view: &ViewArgs,
@@ -1736,7 +1856,7 @@ fn open(
         ));
     }
 
-    let (display, factory) = factory_for(net, view)?;
+    let factory = factory_for(half, net, view)?;
     let mut results: Vec<serde_json::Value> = Vec::new();
     let mut failures = 0usize;
 
@@ -1745,7 +1865,7 @@ fn open(
         // batch — that sharing is the point — so a per-page view has to be cut
         // out of it rather than read whole, or every page after the first would
         // report the requests of the ones before it.
-        let seen_before = display.records().len();
+        let seen_before = factory.broker().records().len();
 
         let page = match open_target(&factory, target) {
             Ok(page) => page,
@@ -1770,7 +1890,7 @@ fn open(
         if targets.len() > 1 && !as_json && at > 0 {
             println!();
         }
-        let page_records = display.records().split_off(seen_before);
+        let page_records = factory.broker().records().split_off(seen_before);
         match one_page(
             page,
             page_records,

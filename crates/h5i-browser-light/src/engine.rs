@@ -21,7 +21,8 @@ use h5i_error::H5iError;
 use url::Url;
 
 use crate::fonts::FontSetup;
-use crate::net::{Broker, BrokerNet};
+use crate::broker::Broker;
+use crate::net::BrokerNet;
 use crate::receipt::Initiator;
 use crate::snapshot::Snapshot;
 
@@ -228,7 +229,7 @@ impl Page {
     /// in the receipt.
     pub fn open(
         url: &Url,
-        broker: Arc<Broker>,
+        broker: Arc<dyn Broker>,
         fonts: FontSetup,
         options: PageOptions,
     ) -> Result<Self, H5iError> {
@@ -362,7 +363,7 @@ impl Page {
         bytes: &[u8],
         content_type: Option<&str>,
         base_url: &Url,
-        broker: Arc<Broker>,
+        broker: Arc<dyn Broker>,
         fonts: FontSetup,
         options: PageOptions,
     ) -> Self {
@@ -392,7 +393,7 @@ impl Page {
     fn parse(
         html: &str,
         base_url: &Url,
-        broker: Arc<Broker>,
+        broker: Arc<dyn Broker>,
         fonts: &FontSetup,
         viewport: Viewport,
         captured: CapturedNavigation,
@@ -435,7 +436,7 @@ impl Page {
     pub fn from_html(
         html: &str,
         base_url: &Url,
-        broker: Arc<Broker>,
+        broker: Arc<dyn Broker>,
         fonts: FontSetup,
         options: PageOptions,
     ) -> Self {
@@ -558,7 +559,7 @@ impl Page {
     /// Obscura, a much larger engine in the same space, drops and recreates its
     /// whole JS runtime on every navigation for exactly this reason. The cost
     /// is real and it is the right one to pay.
-    pub fn run_scripts(&mut self, broker: Arc<Broker>) -> Result<(), H5iError> {
+    pub fn run_scripts(&mut self, broker: Arc<dyn Broker>) -> Result<(), H5iError> {
         // In document order, inline and external together, because execution
         // order is semantics: a bundle that defines a global in one script and
         // uses it in the next breaks if they are reordered.
@@ -1715,14 +1716,14 @@ pub enum WaitTarget {
 /// files again, which costs a few milliseconds per navigation and buys a much
 /// simpler ownership story than sharing a collection across documents.
 pub struct PageFactory {
-    broker: Arc<Broker>,
+    broker: Arc<dyn Broker>,
     font_sources: Vec<std::path::PathBuf>,
     options: PageOptions,
 }
 
 impl PageFactory {
     pub fn new(
-        broker: Arc<Broker>,
+        broker: Arc<dyn Broker>,
         font_sources: Vec<std::path::PathBuf>,
         options: PageOptions,
     ) -> Self {
@@ -1737,7 +1738,7 @@ impl PageFactory {
         &self.options
     }
 
-    pub fn broker(&self) -> &Arc<Broker> {
+    pub fn broker(&self) -> &Arc<dyn Broker> {
         &self.broker
     }
 
@@ -1815,7 +1816,7 @@ impl PageFactory {
     /// The rule itself, on a borrow, so the two infallible constructors can run
     /// it too rather than keeping their own copy of half of it.
     fn finish_page(&self, page: &mut Page) -> Result<(), H5iError> {
-        if self.broker.jar().retain_origin(page.url()) {
+        if self.broker.keep_only_origin(page.url()) {
             page.note(
                 "cookies from the previous origin were dropped on navigation: this engine \
                  holds a session only for the origin currently loaded",
@@ -1825,10 +1826,8 @@ impl PageFactory {
             page.run_scripts(self.broker.clone())?;
         }
         // After everything, so subresources and script fetches are counted.
-        page.budget_spent = Some((
-            self.broker.budget().spent(),
-            self.broker.budget().limits().clone(),
-        ));
+        let allowance = self.broker.budget();
+        page.budget_spent = Some((allowance.spent, allowance.limits));
         Ok(())
     }
 
@@ -1861,7 +1860,7 @@ impl PageFactory {
     /// would give the page that just spent its allowance a clean slate for the
     /// subresources it is about to ask for.
     fn begin_navigation(&self) {
-        self.broker.budget().reset();
+        self.broker.reset_budget();
     }
 
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
@@ -2259,7 +2258,7 @@ mod tests {
     use crate::receipt::MemorySink;
 
     fn page_from(html: &str, policy: Policy, sink: Arc<MemorySink>) -> Page {
-        let broker = Arc::new(Broker::new(policy, sink, None).expect("broker"));
+        let broker = crate::net::LocalBroker::new(policy, sink, None).expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
         Page::from_html(
             html,
@@ -2611,14 +2610,12 @@ mod navigation_origin_tests {
     /// pressing a submit button.
     #[test]
     fn a_form_submission_drops_the_previous_origins_cookies() {
-        let broker = Arc::new(
-            Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 Policy::new().allow("bank.example").allow("evil.example"),
                 Arc::new(MemorySink::new()),
                 None,
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         // A live session on one origin.
         broker.jar().store(
             &Url::parse("https://bank.example/").unwrap(),
@@ -2662,14 +2659,12 @@ mod navigation_origin_tests {
     /// having one.
     #[test]
     fn staying_on_an_origin_keeps_the_session_through_finish() {
-        let broker = Arc::new(
-            Broker::new(
+        let broker = crate::net::LocalBroker::new(
                 Policy::new().allow("bank.example"),
                 Arc::new(MemorySink::new()),
                 None,
             )
-            .expect("broker"),
-        );
+            .expect("broker");
         broker.jar().store(
             &Url::parse("https://bank.example/").unwrap(),
             ["sid=secret; HttpOnly"],
@@ -2698,9 +2693,7 @@ mod input_tests {
     use crate::receipt::MemorySink;
 
     fn page_with(html: &str) -> Page {
-        let broker = Arc::new(
-            Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker"),
-        );
+        let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
         let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
         factory.from_html(html, &Url::parse("https://site.example/page").unwrap())

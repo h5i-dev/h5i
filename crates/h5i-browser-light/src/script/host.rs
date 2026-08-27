@@ -14,7 +14,7 @@ use boa_engine::JsData;
 use boa_gc::{Finalize, Trace};
 
 use crate::engine::Dom;
-use crate::net::Broker;
+use crate::broker::Broker;
 
 /// One line a page wrote to the console.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +107,7 @@ pub struct Host {
     /// is the whole reason script belongs in *this* engine: nothing a page does
     /// reaches the wire without a record, including the traffic every other
     /// engine's evidence is thinnest about.
-    pub broker: std::sync::Arc<Broker>,
+    pub broker: std::sync::Arc<dyn Broker>,
 
     /// The page this document was loaded from, for resolving relative fetches.
     pub base: url::Url,
@@ -175,14 +175,15 @@ pub struct Host {
 
     /// Sockets this page has open, by the id the prelude holds.
     ///
-    /// `Arc` because the reader thread holds one too. The map is the only
-    /// owner the page can reach: closing a `WebSocket` removes it from here,
-    /// and dropping the last handle shuts the connection down.
-    pub sockets: RefCell<std::collections::BTreeMap<u64, std::sync::Arc<crate::wsclient::Socket>>>,
-    /// Event streams, in a second map for the same reason they are a second
+    /// [`crate::broker::Channel`] rather than the socket itself: the connection
+    /// belongs to the broker, and what the page holds is the right to send on
+    /// it, take what has arrived, and stop. Closing a `WebSocket` removes it
+    /// from here, and dropping the last handle shuts the connection down.
+    pub sockets: RefCell<std::collections::BTreeMap<u64, std::sync::Arc<dyn crate::broker::Channel>>>,
+    /// Event streams, in a second map for the same reason they were a second
     /// type: one can be sent to and the other cannot, and merging them would
     /// mean a `send` that is meaningful for half the values it accepts.
-    pub streams: RefCell<std::collections::BTreeMap<u64, std::sync::Arc<crate::sse::EventStream>>>,
+    pub streams: RefCell<std::collections::BTreeMap<u64, std::sync::Arc<dyn crate::broker::Channel>>>,
     /// Shared, so an id names exactly one connection of either kind.
     pub next_socket: std::cell::Cell<u64>,
 }
@@ -252,7 +253,7 @@ impl std::ops::Deref for HostHandle {
 }
 
 impl Host {
-    pub fn new(dom: Dom, broker: std::sync::Arc<Broker>, base: url::Url) -> Self {
+    pub fn new(dom: Dom, broker: std::sync::Arc<dyn Broker>, base: url::Url) -> Self {
         Self {
             dom,
             broker,

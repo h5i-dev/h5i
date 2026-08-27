@@ -1297,7 +1297,14 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
                 // carried in the profile rather than injected as a pile of
                 // variables, which is what makes `--secret` a policy statement
                 // instead of a shell habit.
-                &[],
+                //
+                // The one exception is the engine's own single-process switch,
+                // and it is here because a debugging hatch that silently does
+                // nothing in the default arrangement is worse than no hatch:
+                // it is documented as running the engine as one process, and
+                // inside the sandbox the variable would otherwise never arrive.
+                // It grants nothing and reveals nothing.
+                &single_process_switch(),
                 &log_path,
                 "browser-session",
             )?;
@@ -2616,6 +2623,20 @@ fn print_answer(answer: &Value) {
         "{}",
         serde_json::to_string_pretty(body).unwrap_or_else(|_| body.to_string())
     );
+}
+
+/// Forward `H5I_BROWSER_NO_SPLIT` into a confined session, if it is set.
+///
+/// The engine runs as two processes — a broker that decides and records, and a
+/// renderer that parses the page — and this is the switch that runs it as one.
+/// Empty in the ordinary case, which is the case that matters: the sandbox
+/// clears the environment, and everything that is not deliberately passed stays
+/// out.
+fn single_process_switch() -> Vec<(String, String)> {
+    match std::env::var(h5i_browser_light::ipc::NO_SPLIT_VAR) {
+        Ok(value) => vec![(h5i_browser_light::ipc::NO_SPLIT_VAR.to_string(), value)],
+        Err(_) => Vec::new(),
+    }
 }
 
 /// The engine is this binary. There is nothing to find.

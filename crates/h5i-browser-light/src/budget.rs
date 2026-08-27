@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 /// Every field is a *ceiling*, and the defaults are chosen to be far above what
 /// a real page does and far below what a runaway one would: a documentation
 /// page makes tens of requests, and a loop makes as many as it can.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Limits {
     pub max_requests: u64,
     /// Bytes as they crossed the wire, so a compressed response is counted at
@@ -53,6 +53,7 @@ pub struct Limits {
     /// Not the same as a per-request timeout: a hundred requests that each take
     /// two seconds are each well within the 30s per-request limit and together
     /// are three minutes an agent is waiting.
+    #[serde(with = "millis")]
     pub max_network_time: Duration,
 }
 
@@ -201,17 +202,32 @@ impl Budget {
 }
 
 /// A reading of what has been spent.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Spent {
     pub requests: u64,
     pub wire_bytes: u64,
     pub decoded_bytes: u64,
-    #[serde(serialize_with = "as_millis")]
+    #[serde(with = "millis")]
     pub network_time: Duration,
 }
 
-fn as_millis<S: serde::Serializer>(value: &Duration, out: S) -> Result<S::Ok, S::Error> {
-    out.serialize_u64(value.as_millis() as u64)
+/// Durations as whole milliseconds, both ways.
+///
+/// The console has always read these as a number of milliseconds, so the
+/// serialized form is fixed by something outside this crate. What is new is the
+/// other direction: a reading of the budget now crosses a process boundary, and
+/// a value that only serializes is a value the renderer cannot be told.
+mod millis {
+    use std::time::Duration;
+
+    pub fn serialize<S: serde::Serializer>(value: &Duration, out: S) -> Result<S::Ok, S::Error> {
+        out.serialize_u64(value.as_millis() as u64)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Duration, D::Error> {
+        use serde::Deserialize;
+        Ok(Duration::from_millis(u64::deserialize(input)?))
+    }
 }
 
 /// A wall-clock bound on one navigation, from the first byte to the last.
