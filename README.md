@@ -86,8 +86,7 @@ with hardware virtualization (`/dev/kvm` on Linux or Apple Silicon on macOS).
 ### 2.1. A browser session
 
 A **session** is the whole agent-facing surface: one page state, one cookie jar,
-one request log, one policy. `open` makes one and every verb that follows acts
-on it; `close` ends it. Nothing else is a concept an agent has to learn.
+one request log, one policy:
 
 ```bash
 h5i browser open https://docs.rs/ --allow docs.rs
@@ -116,11 +115,9 @@ h5i browser login              # hand the page to the human at the viewer
 
 `--delta` matters because re-reading three hundred lines after every click is
 the wrong shape for a loop. `login` closes the page to the agent while a person
-types a credential into the live view. The session it establishes stays in the
-jar afterwards, and the agent can see *that* it is logged in without ever
-reading the cookie that says so.
+types a credential into the live view.
 
-#### Read the record
+Read the record:
 
 ```bash
 h5i browser requests           # every request, including the refusals
