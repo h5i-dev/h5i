@@ -32,6 +32,7 @@
 
 pub mod encoding;
 pub mod canvas;
+pub mod cors;
 pub mod cookies;
 pub mod engine;
 pub mod extract;

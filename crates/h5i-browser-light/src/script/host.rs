@@ -220,6 +220,15 @@ pub enum FetchSlot {
         method: String,
         body: Vec<u8>,
         content_type: Option<String>,
+        /// The headers the page set, which decide whether this request is
+        /// simple enough to send without a preflight.
+        headers: Vec<(String, String)>,
+        /// How this request treats the origin boundary, and whether it carries
+        /// the session across one. Both come from the page's own `fetch` init
+        /// rather than being assumed, because assuming either is how a
+        /// cross-origin read gets made with credentials nobody asked to send.
+        mode: crate::cors::Mode,
+        credentials: crate::cors::Credentials,
     },
     /// On the wire, on its own thread, with the answer coming back here.
     InFlight(std::sync::mpsc::Receiver<crate::net::FetchOutcome>),

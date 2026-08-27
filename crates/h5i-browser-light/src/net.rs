@@ -82,6 +82,14 @@ pub struct FetchOutcome {
     pub body: Vec<u8>,
     pub status: Option<u16>,
     pub error: Option<String>,
+    /// Set when this was a cross-origin `no-cors` request.
+    ///
+    /// The body and headers are already empty and the status is already zero,
+    /// which is what an opaque response *is*. The flag exists so the caller can
+    /// say so rather than presenting a page with an empty 0 that looks like a
+    /// failure — a page checking `response.type === "opaque"` is doing the
+    /// right thing and should get the right answer.
+    pub opaque: bool,
 }
 
 impl FetchOutcome {
@@ -104,6 +112,7 @@ impl FetchOutcome {
             body: Vec::new(),
             status: None,
             error: Some(error),
+            opaque: false,
         }
     }
 
@@ -169,6 +178,19 @@ impl reqwest::dns::Resolve for Pinned {
             .into()),
         }))
     }
+}
+
+/// What a script request needs the broker to know about its origin.
+///
+/// Only script requests carry one. A navigation has no document behind it, and
+/// the absence of this is what says so.
+struct CorsContext {
+    /// `None` for a document with an opaque origin — a `file:` page, say —
+    /// which is same-origin with nothing and so may read nothing cross-origin.
+    document: Option<crate::cors::Origin>,
+    headers: Vec<(String, String)>,
+    mode: crate::cors::Mode,
+    credentials: crate::cors::Credentials,
 }
 
 pub struct Broker {
@@ -254,6 +276,107 @@ impl Broker {
 
     pub fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Ask a server, before the real request, whether it will accept one.
+    ///
+    /// A request in its own right and treated as one: policy-checked and
+    /// receipted like everything else, so it appears in the log rather than
+    /// arriving from nowhere. A caller reading two requests where the page made
+    /// one is reading the truth — the preflight really did happen, and it
+    /// really did cost a round trip.
+    ///
+    /// Not cached. `Access-Control-Max-Age` would make this cheaper and is one
+    /// more piece of state that can be wrong; when a corpus page makes the cost
+    /// real it can be added, with the receipts showing what was reused.
+    fn preflight(
+        &self,
+        url: &Url,
+        ask: &crate::cors::Preflight,
+        document: Option<&Url>,
+    ) -> Result<(), String> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+
+        // The same allowlist as any other request. A preflight is a request to
+        // the origin being asked about, so it is subject to the same grant.
+        if let Some(reason) = self.policy.check_from(url, document).reason() {
+            let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str())
+                .denied(reason);
+            let _ = self.record_pair(&record);
+            return Err(format!("the preflight was denied by policy: {reason}"));
+        }
+        if let Err(reason) = self.pin_addresses(url) {
+            let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str())
+                .denied(&reason);
+            let _ = self.record_pair(&record);
+            return Err(format!("the preflight was denied by policy: {reason}"));
+        }
+
+        let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str());
+        if let Err(e) = self.sink.append(&record) {
+            return Err(format!(
+                "refusing to preflight: the receipt could not be written: {e}"
+            ));
+        }
+
+        let started = Instant::now();
+        let mut request = self
+            .client
+            .request(reqwest::Method::OPTIONS, url.clone())
+            .header("origin", ask.origin.clone())
+            .header("access-control-request-method", ask.method.clone());
+        if !ask.headers.is_empty() {
+            request = request.header("access-control-request-headers", ask.headers.join(", "));
+        }
+        // Never. A preflight is a question about whether a credentialed request
+        // would be allowed, and sending the credential to ask would defeat the
+        // asking.
+        let response = request.send();
+        let elapsed = started.elapsed().as_millis() as u64;
+
+        let response = match response {
+            Ok(response) => response,
+            Err(e) => {
+                let mut outcome = record.response();
+                outcome.duration_ms = Some(elapsed);
+                outcome.error = Some(e.to_string());
+                let _ = self.sink.append(&outcome);
+                return Err(format!("the preflight could not be sent: {e}"));
+            }
+        };
+
+        let status = response.status();
+        let header = |name: &str| -> Option<String> {
+            response
+                .headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let acao = header("access-control-allow-origin");
+        let acac = header("access-control-allow-credentials");
+        let methods = header("access-control-allow-methods");
+        let headers = header("access-control-allow-headers");
+
+        let mut outcome = record.response();
+        outcome.status = Some(status.as_u16());
+        outcome.duration_ms = Some(elapsed);
+        let _ = self.sink.append(&outcome);
+
+        if !status.is_success() {
+            return Err(format!(
+                "the preflight was answered with {}, so the request was not made.",
+                status.as_u16()
+            ));
+        }
+
+        crate::cors::check_preflight(
+            ask,
+            acao.as_deref(),
+            acac.as_deref(),
+            methods.as_deref(),
+            headers.as_deref(),
+        )
     }
 
     /// Resolve a URL's host, check every address it answers with, and pin the
@@ -373,7 +496,66 @@ impl Broker {
         content_type: Option<&str>,
         document: Option<&Url>,
     ) -> FetchOutcome {
+        // No origin context: the agent asked for this by name, so there is no
+        // document whose boundary could be crossed. See `cors::plan`.
+        self.send_with_cors(url, initiator, method, body, content_type, document, None)
+    }
+
+    /// The same send, subject to the same-origin policy.
+    ///
+    /// Separate entry rather than a flag, because the two callers are asking
+    /// different questions. A navigation is the *agent* exercising its own
+    /// authority over a URL it named; a `fetch` is a *page* exercising an
+    /// authority it has to be granted. Answering both through one door with no
+    /// argument between them is how the second was going unasked.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_script(
+        &self,
+        url: &Url,
+        method: &str,
+        body: &[u8],
+        content_type: Option<&str>,
+        document: &Url,
+        headers: &[(String, String)],
+        mode: crate::cors::Mode,
+        credentials: crate::cors::Credentials,
+    ) -> FetchOutcome {
+        let context = CorsContext {
+            document: crate::cors::Origin::of(document),
+            headers: headers.to_vec(),
+            mode,
+            credentials,
+        };
+        self.send_with_cors(
+            url,
+            Initiator::Subresource,
+            method,
+            body,
+            content_type,
+            Some(document),
+            Some(&context),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_with_cors(
+        &self,
+        url: &Url,
+        initiator: Initiator,
+        method: &str,
+        body: &[u8],
+        content_type: Option<&str>,
+        document: Option<&Url>,
+        cors: Option<&CorsContext>,
+    ) -> FetchOutcome {
         let mut current = url.clone();
+        // What a caller may see of the answer. Recomputed per hop, because a
+        // redirect can change the origin the answer comes from.
+        let mut cors_exposure = crate::cors::Exposure::Full;
+        // Set once a redirect has crossed an origin, which makes the request's
+        // own origin opaque from there on: a server must not be able to launder
+        // a cross-origin read by bouncing it somewhere that says `*`.
+        let mut origin_tainted = false;
         // What originally asked, kept separate from the per-hop initiator: a
         // redirect chain that began as a navigation is still asking for a
         // document, and a subresource that redirects is still a subresource.
@@ -433,6 +615,66 @@ impl Broker {
                 );
             }
 
+            // 1c. The same-origin policy. The checks above decided whether
+            //     this engine may *connect*; this decides whether the document
+            //     that asked may *read the answer*, which is a different
+            //     question and was going unasked. See `crate::cors`.
+            let mut cors_plan: Option<crate::cors::Plan> = None;
+            if let Some(context) = cors {
+                // Tainted by a cross-origin redirect, or a document with no
+                // origin of its own: both are opaque, and an opaque requester
+                // is same-origin with nothing. Distinct from `Agent`, which is
+                // also origin-less and is the *opposite* case — see
+                // `cors::Requester`.
+                let requester = match (origin_tainted, context.document.as_ref()) {
+                    (false, Some(origin)) => crate::cors::Requester::Document(origin),
+                    _ => crate::cors::Requester::Opaque,
+                };
+                let plan = crate::cors::plan(
+                    requester,
+                    &current,
+                    &method,
+                    &context.headers,
+                    context.mode,
+                    context.credentials,
+                );
+
+                if let crate::cors::Plan::Blocked(why) = &plan {
+                    let record =
+                        RequestRecord::request(seq, initiator, &method, current.as_str())
+                            .denied(why);
+                    if let Err(e) = self.record_pair(&record) {
+                        return FetchOutcome::failed(
+                            current,
+                            format!("receipt sink refused: {e}"),
+                        );
+                    }
+                    return FetchOutcome::failed_at(
+                        current,
+                        format!("blocked by the same-origin policy: {why}"),
+                        Some(seq),
+                    );
+                }
+
+                // A request that is not simple asks permission first, and the
+                // preflight is a request like any other: policy-checked and
+                // receipted, so it appears in the log rather than arriving
+                // from nowhere.
+                if let crate::cors::Plan::Send {
+                    preflight: Some(ask),
+                    ..
+                } = &plan
+                    && let Err(why) = self.preflight(&current, ask, document)
+                {
+                    return FetchOutcome::failed_at(
+                        current,
+                        format!("blocked by the same-origin policy: {why}"),
+                        Some(seq),
+                    );
+                }
+                cors_plan = Some(plan);
+            }
+
             // 2. The decision record, before any bytes move. If this cannot be
             //    written, the fetch does not happen — this is the fail-closed
             //    guarantee, and it is why `Sink::append` returns a Result.
@@ -461,10 +703,36 @@ impl Broker {
                 }
                 request = request.body(body.clone());
             }
+            // Cookies, and whether this request may carry them at all.
+            //
+            // The gate is the whole point of the credentials mode: a
+            // cross-origin `fetch` defaults to sending none, so a script on one
+            // allowlisted origin cannot read another origin's pages *as the
+            // logged-in user*. Before this the jar was attached to every
+            // request unconditionally, which is what turned the missing
+            // same-origin policy from an unauthenticated cross-origin read into
+            // an authenticated one.
+            let may_send_cookies = match &cors_plan {
+                Some(crate::cors::Plan::Send { send_cookies, .. }) => *send_cookies,
+                // No CORS context: the agent asked, and its own requests carry
+                // its own session.
+                _ => true,
+            };
             let mut cookies_sent = 0;
-            if let Some((header, count)) = self.jar.header_for(&current) {
+            if may_send_cookies
+                && let Some((header, count)) = self.jar.header_for(&current)
+            {
                 request = request.header(reqwest::header::COOKIE, header);
                 cookies_sent = count;
+            }
+            // Cross-origin requests announce themselves, which is how a server
+            // knows to answer the CORS question at all.
+            if let Some(crate::cors::Plan::Send {
+                origin_header: Some(origin),
+                ..
+            }) = &cors_plan
+            {
+                request = request.header("origin", origin.clone());
             }
             let response = request.send();
             let elapsed = started.elapsed().as_millis() as u64;
@@ -521,6 +789,16 @@ impl Broker {
 
                 match location {
                     Some(next) if hop < self.policy.max_redirects() => {
+                        // A redirect that crosses an origin makes the request's
+                        // own origin opaque from here on, so a server cannot
+                        // launder a cross-origin read by bouncing it somewhere
+                        // that answers `*`. Checked against the *previous* hop,
+                        // because that is the boundary being crossed.
+                        if cors.is_some()
+                            && crate::cors::Origin::of(&next) != crate::cors::Origin::of(&current)
+                        {
+                            origin_tainted = true;
+                        }
                         current = next;
                         initiator = Initiator::Redirect;
                         // 303 always, and 301/302 by universal practice, turn
@@ -548,6 +826,63 @@ impl Broker {
                 }
             }
 
+            // The answer to the question the `Origin` header asked. A response
+            // that does not name this origin back is not handed to the caller —
+            // which is the entire point, and the reason the body is not even
+            // read below when this fails.
+            if let Some(crate::cors::Plan::Send {
+                check_response: true,
+                send_cookies,
+                ..
+            }) = &cors_plan
+            {
+                let header = |name: &str| -> Option<&str> {
+                    headers
+                        .iter()
+                        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                        .map(|(_, value)| value.as_str())
+                };
+                let origin = match &cors_plan {
+                    Some(crate::cors::Plan::Send {
+                        origin_header: Some(origin),
+                        ..
+                    }) => origin.clone(),
+                    _ => "null".to_string(),
+                };
+                if let Err(why) = crate::cors::check_response(
+                    header("access-control-allow-origin"),
+                    header("access-control-allow-credentials"),
+                    &origin,
+                    *send_cookies,
+                ) {
+                    let mut refused = record.response();
+                    refused.status = Some(status.as_u16());
+                    refused.duration_ms = Some(elapsed);
+                    refused.cookies_sent = Some(cookies_sent);
+                    refused.cookies_stored = Some(cookies_stored);
+                    refused.error = Some(format!("blocked by the same-origin policy: {why}"));
+                    let _ = self.sink.append(&refused);
+                    return FetchOutcome::failed_at(
+                        current,
+                        format!("blocked by the same-origin policy: {why}"),
+                        Some(seq),
+                    );
+                }
+                // Allowed. What of the headers the caller may see is the
+                // server's to widen, and `*` does not widen a credentialed
+                // response.
+                cors_exposure = crate::cors::exposure_from(
+                    header("access-control-expose-headers"),
+                    *send_cookies,
+                );
+            } else if let Some(crate::cors::Plan::Send {
+                exposure: crate::cors::Exposure::Opaque,
+                ..
+            }) = &cors_plan
+            {
+                cors_exposure = crate::cors::Exposure::Opaque;
+            }
+
             let body = self.read_capped(response);
             let mut outcome_record = record.response();
             outcome_record.status = Some(status.as_u16());
@@ -559,13 +894,21 @@ impl Broker {
                 Ok(body) => {
                     outcome_record.bytes = Some(body.len() as u64);
                     let _ = self.sink.append(&outcome_record);
+                    // What the caller may see of this. Same-origin sees
+                    // everything; a cross-origin CORS response is filtered to
+                    // the safelist plus whatever the server exposed; a no-cors
+                    // response is opaque, which is the whole reason it was
+                    // allowed to be sent without asking.
+                    let exposure = cors_exposure.clone();
+                    let opaque = matches!(exposure, crate::cors::Exposure::Opaque);
                     FetchOutcome {
                         seq: Some(seq),
-                        headers,
+                        headers: crate::cors::filter_headers(&headers, &exposure),
                         final_url: current,
-                        body,
-                        status: Some(status.as_u16()),
+                        body: if opaque { Vec::new() } else { body },
+                        status: if opaque { Some(0) } else { Some(status.as_u16()) },
                         error: None,
+                        opaque,
                     }
                 }
                 Err(e) => {
@@ -1010,6 +1353,301 @@ mod cookie_wire_tests {
     use crate::receipt::MemorySink;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
+
+    /// Serves a page that says who asked and echoes the cookie it saw, with
+    /// whatever CORS headers the test wants.
+    fn cors_server(
+        allow: Option<&'static str>,
+        allow_credentials: bool,
+        hits: usize,
+    ) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let record = seen.clone();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let method = line.split_whitespace().next().unwrap_or("").to_string();
+                let mut origin = String::new();
+                let mut cookie = String::new();
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                    let lower = header.to_ascii_lowercase();
+                    if let Some(rest) = lower.strip_prefix("origin:") {
+                        origin = rest.trim().to_string();
+                    }
+                    if let Some(rest) = lower.strip_prefix("cookie:") {
+                        cookie = rest.trim().to_string();
+                    }
+                }
+                record
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} origin={origin} cookie={cookie}"));
+
+                let body = "SECRET-BODY";
+                let mut head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\
+                     X-Private: nope\r\nConnection: close\r\n",
+                    body.len()
+                );
+                if let Some(allow) = allow {
+                    head.push_str(&format!("Access-Control-Allow-Origin: {allow}\r\n"));
+                    head.push_str("Access-Control-Allow-Methods: DELETE\r\n");
+                    head.push_str("Access-Control-Allow-Headers: x-token\r\n");
+                }
+                if allow_credentials {
+                    head.push_str("Access-Control-Allow-Credentials: true\r\n");
+                }
+                let mut stream = stream;
+                let _ = write!(stream, "{head}\r\n{body}");
+                let _ = stream.flush();
+            }
+        });
+        (port, seen)
+    }
+
+    fn cors_broker() -> (Arc<Broker>, Arc<MemorySink>) {
+        let sink = Arc::new(MemorySink::new());
+        let broker = Arc::new(
+            Broker::new(Policy::new(), sink.clone(), None).expect("broker"),
+        );
+        (broker, sink)
+    }
+
+    /// The hole. Loopback is reachable by default (it is the dev server), so
+    /// two pages on it are two *origins* — different ports — that the allowlist
+    /// both permits. Before the same-origin policy, a script on one could read
+    /// the other's body.
+    #[test]
+    fn a_cross_origin_read_is_refused_unless_the_server_allows_it() {
+        let (port, seen) = cors_server(None, false, 1);
+        let (broker, _sink) = cors_broker();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/secret")).unwrap();
+
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+
+        assert!(
+            outcome.error.is_some(),
+            "a cross-origin body must not be handed over: {outcome:?}"
+        );
+        assert!(
+            outcome.error.as_deref().unwrap().contains("same-origin policy"),
+            "{outcome:?}"
+        );
+        assert!(
+            outcome.body.is_empty(),
+            "the body must not even be read: {outcome:?}"
+        );
+        // The request *was* made and announced itself, which is what lets a
+        // server answer the question at all.
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].contains("origin=http://127.0.0.1:1"), "{seen:?}");
+    }
+
+    /// And the other half: a server that names us back gets read.
+    #[test]
+    fn a_cross_origin_read_the_server_allows_goes_through() {
+        let (port, _seen) = cors_server(Some("*"), false, 1);
+        let (broker, _sink) = cors_broker();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/open")).unwrap();
+
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(String::from_utf8_lossy(&outcome.body), "SECRET-BODY");
+        // Headers are filtered to the safelist: the server exposed nothing.
+        assert!(
+            !outcome.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("x-private")),
+            "an unexposed header leaked: {:?}",
+            outcome.headers
+        );
+        assert!(
+            outcome.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-type")),
+            "the safelist should still be visible: {:?}",
+            outcome.headers
+        );
+    }
+
+    /// The consequence of ROADMAP §B16's cookie work, and the reason this
+    /// module was written before any further capability: with `Domain` cookies
+    /// and no same-origin policy, a cross-origin read is an *authenticated*
+    /// one. The default credentials mode is what stops it.
+    #[test]
+    fn a_cross_origin_request_does_not_carry_the_session_by_default() {
+        let (port, seen) = cors_server(Some("*"), false, 1);
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/x")).unwrap();
+        // A session cookie for the target origin, as a login would have left.
+        broker.jar().store(&target, ["sid=s3cr3t; Path=/"]);
+
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen[0].contains("cookie="),
+            "the server should have been asked: {seen:?}"
+        );
+        assert!(
+            !seen[0].contains("s3cr3t"),
+            "a cross-origin fetch must not carry the session by default: {seen:?}"
+        );
+    }
+
+    /// A same-origin request is unaffected by any of it, which is what keeps
+    /// ordinary pages working.
+    #[test]
+    fn a_same_origin_request_still_carries_its_session_and_reads_everything() {
+        let (port, seen) = cors_server(None, false, 1);
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/api")).unwrap();
+        broker.jar().store(&target, ["sid=s3cr3t; Path=/"]);
+
+        let document = Url::parse(&format!("http://127.0.0.1:{port}/page")).unwrap();
+        let outcome = broker.send_script(
+            &target,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(String::from_utf8_lossy(&outcome.body), "SECRET-BODY");
+        assert!(
+            outcome.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("x-private")),
+            "same-origin sees every header: {:?}",
+            outcome.headers
+        );
+
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].contains("s3cr3t"), "{seen:?}");
+        // No `Origin` header at all: that is how a server tells a same-origin
+        // request from a cross-origin one, and sending one would ask a
+        // question that has no business being asked.
+        assert!(
+            !seen[0].contains("origin=http"),
+            "same-origin must send no Origin header: {seen:?}"
+        );
+    }
+
+    /// A non-simple request asks first, and the preflight is a real request:
+    /// policy-checked and receipted, so it appears in the log rather than
+    /// arriving from nowhere.
+    #[test]
+    fn a_non_simple_request_preflights_and_the_preflight_is_receipted() {
+        // Two hits: the OPTIONS, then the DELETE.
+        let (port, seen) = cors_server(Some("*"), false, 2);
+        let (broker, sink) = cors_broker();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/item")).unwrap();
+
+        let outcome = broker.send_script(
+            &target,
+            "DELETE",
+            &[],
+            None,
+            &document,
+            &[("x-token".to_string(), "abc".to_string())],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_none(), "{outcome:?}");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "one preflight, one request: {seen:?}");
+        assert!(seen[0].starts_with("OPTIONS"), "{seen:?}");
+        assert!(seen[1].starts_with("DELETE"), "{seen:?}");
+
+        // And both are in the log. A preflight that did not appear would be a
+        // request this engine made and did not record.
+        let options = sink
+            .records()
+            .into_iter()
+            .filter(|r| r.method == "OPTIONS")
+            .count();
+        assert!(options >= 1, "the preflight must be receipted");
+    }
+
+    /// A server that refuses at preflight time refuses before the real
+    /// request is made, which is the round trip a preflight buys.
+    #[test]
+    fn a_refused_preflight_stops_the_request_before_it_is_made() {
+        let (port, seen) = cors_server(None, false, 1);
+        let (broker, _sink) = cors_broker();
+        let document = Url::parse("http://127.0.0.1:1/page").unwrap();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/item")).unwrap();
+
+        let outcome = broker.send_script(
+            &target,
+            "DELETE",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::default(),
+        );
+        assert!(outcome.error.is_some(), "{outcome:?}");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "only the preflight was sent: {seen:?}");
+        assert!(seen[0].starts_with("OPTIONS"), "{seen:?}");
+    }
+
+    /// A request the *agent* made is unrestricted, which is what keeps
+    /// `navigate` and the read verbs working exactly as they did.
+    #[test]
+    fn an_agent_request_is_not_subject_to_the_same_origin_policy() {
+        let (port, _seen) = cors_server(None, false, 1);
+        let (broker, _sink) = cors_broker();
+        let target = Url::parse(&format!("http://127.0.0.1:{port}/anything")).unwrap();
+
+        let outcome = broker.fetch_from(&target, Initiator::Navigation, None);
+        assert!(outcome.error.is_none(), "{outcome:?}");
+        assert_eq!(String::from_utf8_lossy(&outcome.body), "SECRET-BODY");
+    }
 
     /// A server that sets a cookie, then reports what came back.
     fn login_server() -> (u16, std::thread::JoinHandle<()>) {

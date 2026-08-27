@@ -39,6 +39,48 @@ fn arg_id(args: &[JsValue], index: usize, context: &mut Context) -> JsResult<usi
     Ok(args.get_or_undefined(index).to_number(context)? as usize)
 }
 
+/// Read a JS array of `[name, value]` pairs.
+///
+/// The shape `Headers` already iterates in, so the prelude hands over what it
+/// has rather than a second representation that could disagree with the first.
+fn string_pairs(args: &[JsValue], index: usize, context: &mut Context) -> Vec<(String, String)> {
+    let Some(object) = args.get(index).and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    let Ok(array) = boa_engine::object::builtins::JsArray::from_object(object.clone()) else {
+        return Vec::new();
+    };
+    let length = array.length(context).unwrap_or(0);
+    let mut out = Vec::new();
+    for at in 0..length {
+        let Ok(entry) = array.get(at, context) else {
+            continue;
+        };
+        let Some(entry) = entry.as_object() else {
+            continue;
+        };
+        let Ok(pair) = boa_engine::object::builtins::JsArray::from_object(entry.clone()) else {
+            continue;
+        };
+        let name = pair
+            .get(0u64, context)
+            .ok()
+            .and_then(|v| v.to_string(context).ok())
+            .map(|v| v.to_std_string_escaped())
+            .unwrap_or_default();
+        let value = pair
+            .get(1u64, context)
+            .ok()
+            .and_then(|v| v.to_string(context).ok())
+            .map(|v| v.to_std_string_escaped())
+            .unwrap_or_default();
+        if !name.is_empty() {
+            out.push((name, value));
+        }
+    }
+    out
+}
+
 fn id_value(id: Option<usize>) -> JsValue {
     match id {
         Some(id) => JsValue::from(id as f64),
@@ -73,7 +115,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("setValue", 2, set_value),
         ("log", 2, log),
         ("unsupported", 1, unsupported),
-        ("fetchStart", 3, fetch_start),
+        ("fetchStart", 6, fetch_start),
         ("fetchDrain", 0, fetch_drain),
         ("fetchPending", 0, fetch_pending),
         ("userAgent", 0, user_agent),
@@ -920,6 +962,14 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let target = arg_string(args, 0, context)?;
     let method = arg_string(args, 1, context).unwrap_or_else(|_| "GET".to_string());
     let body = arg_string(args, 2, context).unwrap_or_default();
+    // The rest of the request's origin story: what the page set, and how it
+    // asked to treat the boundary. Defaults match `fetch`'s own — `cors` mode,
+    // `same-origin` credentials — so a page that says nothing gets the
+    // behaviour a browser gives it rather than the widest one available.
+    let mode = crate::cors::Mode::parse(&arg_string(args, 3, context).unwrap_or_default());
+    let credentials =
+        crate::cors::Credentials::parse(&arg_string(args, 4, context).unwrap_or_default());
+    let headers = string_pairs(args, 5, context);
     let host = host(context)?;
 
     let resolved = match host.base.join(&target) {
@@ -940,9 +990,22 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         crate::script::host::FetchSlot::Queued {
             url: resolved,
             method,
-            content_type: (!body.is_empty())
-                .then(|| "application/x-www-form-urlencoded".to_string()),
+            // Whatever the page set, or the default `fetch` applies to a body.
+            // Read from the headers rather than assumed, because the value
+            // decides whether the request preflights: `application/json` is
+            // deliberately not on the CORS safelist.
+            content_type: headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+                .map(|(_, value)| value.clone())
+                .or_else(|| {
+                    (!body.is_empty())
+                        .then(|| "application/x-www-form-urlencoded".to_string())
+                }),
             body: body.into_bytes(),
+            headers,
+            mode,
+            credentials,
         },
     );
     Ok(JsValue::from(id as f64))
@@ -978,6 +1041,9 @@ fn fetch_drain(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsR
                 method,
                 body,
                 content_type,
+                headers,
+                mode,
+                credentials,
             }) = pending.remove(&id)
             else {
                 continue;
@@ -996,13 +1062,18 @@ fn fetch_drain(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsR
             let spawned = std::thread::Builder::new()
                 .name(format!("h5i-fetch-{id}"))
                 .spawn(move || {
-                    let outcome = broker.send_from(
+                    // `send_script`, not `send_from`: a page exercises an
+                    // authority it has to be granted, and the broker has to be
+                    // told whose authority it is before it can decide.
+                    let outcome = broker.send_script(
                         &url,
-                        crate::receipt::Initiator::Subresource,
                         &method,
                         &body,
                         content_type.as_deref(),
-                        Some(&document),
+                        &document,
+                        &headers,
+                        mode,
+                        credentials,
                     );
                     // A closed receiver means the realm went away; there is
                     // nobody left to tell.
@@ -1114,6 +1185,10 @@ fn reply_value(
         headers.push(pair, context)?;
     }
     reply.set(js_string!("headers"), headers, false, context)?;
+    // So a page can tell an opaque response from a failed one. Both have no
+    // body and no headers; only one of them means "the request was made and
+    // you may not read the answer".
+    reply.set(js_string!("opaque"), outcome.opaque, false, context)?;
     Ok(reply.into())
 }
 

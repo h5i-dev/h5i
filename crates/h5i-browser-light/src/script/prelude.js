@@ -2823,6 +2823,13 @@
       this.headers = new Headers(i.headers);
       this.body = i.body ?? null;
       this.signal = i.signal || null;
+      // The two that decide what happens at an origin boundary. Defaults are
+      // the spec's — `cors` and `same-origin` — so a page that says nothing
+      // gets what a browser gives it: the request may cross, and it does not
+      // take the session with it.
+      this.mode = i.mode || (input instanceof Request ? input.mode : "cors");
+      this.credentials =
+        i.credentials || (input instanceof Request ? input.credentials : "same-origin");
     }
   }
 
@@ -5534,7 +5541,16 @@
     // that two calls to `fetch` overlap: the old binding did the round trip
     // inline, so a page that fanned out ten requests paid for them in series
     // and every SPA waterfall was ours rather than the site's.
-    const id = api.fetchStart(request.url, request.method, body);
+    // The origin story travels with the request. The host decides what may be
+    // sent and what may be read from it; this side only reports what the page
+    // asked for, because a page that could choose its own answer to those
+    // questions would not be subject to a policy at all.
+    const headerPairs = [];
+    for (const [name, value] of request.headers) headerPairs.push([name, value]);
+    const id = api.fetchStart(
+      request.url, request.method, body,
+      request.mode, request.credentials, headerPairs,
+    );
     return new Promise((resolve, reject) => {
       pendingFetches.set(id, { resolve, reject, request, signal });
     });
@@ -5549,6 +5565,10 @@
     const response = {
       ok: res.ok,
       status: res.status,
+      // What a page checks to find out it was handed an opaque response
+      // rather than a failed one. Reported rather than left to be inferred
+      // from an empty body with status 0, which reads as a network error.
+      type: res.opaque ? "opaque" : "basic",
       statusText: res.status === 200 ? "OK" : "",
       url: res.url,
       redirected: res.url !== request.url,

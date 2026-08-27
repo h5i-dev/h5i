@@ -6658,6 +6658,92 @@ login corpus, and the §B11.6 iframe/popup question, which none of this touched.
 
 ---
 
+## B17. The same-origin policy, and the hole §B16 widened, 2026-08-26
+
+A third reading — Lightpanda and Obscura together, against the engine as §B16
+left it — found something neither corpus nor WPT would have: **this engine had
+no same-origin policy at all**, and the cookie work in §B16 had just made that
+worse.
+
+### B17.1 The finding, and how §B16 sharpened it
+
+The allowlist answers **"may this engine connect?"**. A browser's same-origin
+policy answers **"may this document read what came back?"**. Those are
+different questions, and only the first was being asked. `Broker::send_from`
+checked the allowlist, checked the address, wrote the receipt, and handed the
+response body to whoever asked — including page script, for any origin the
+operator had granted.
+
+So: allow two origins, and a script on either could `fetch` the other and read
+it. The allowlist had said yes, correctly, to the question it was asked.
+
+**And §B16 turned an unauthenticated read into an authenticated one.** While
+cookies were host-only (§12's refusal of the `Domain` attribute) a cross-origin
+read carried no credential worth having. §B16 added `Domain` over a public
+suffix list — right on its own terms, and it paid off a cost §12 had stated —
+and in doing so put the session cookie on requests a *different* origin's
+script had caused. `net.rs` attached the jar to every request unconditionally.
+The combination is a script on one allowlisted origin reading another origin's
+pages as the logged-in user.
+
+Neither change was wrong alone. The pair was, and that is worth recording
+plainly: **§B16 shipped a capability whose safety depended on a control that
+did not exist**, and nobody noticed because each half was reviewed against its
+own argument. The lesson is not "be more careful with cookies"; it is that a
+credential-widening change needs the question *who may read the response* asked
+out loud, and this file had never asked it.
+
+### B17.2 What was built
+
+`src/cors.rs` is the policy, pure and testable; `net.rs` enforces it. The shape
+that matters:
+
+* **`Requester` has three cases, not two.** "The agent named this URL" and "a
+  page with no origin of its own asked" both look like the *absence* of an
+  origin, and collapsing them into an `Option` gives the second the authority
+  of the first — precisely backwards. An agent typing a URL has its own
+  authority and no boundary to cross; a `file:` page is same-origin with
+  nothing. `Agent` / `Document(origin)` / `Opaque`.
+* **`send_script` is a separate entry point from `send_from`**, rather than a
+  flag on one. The two callers are asking different questions, and answering
+  both through one door with no argument between them is how the second went
+  unasked for as long as it did.
+* **Credentials are the default-safe direction.** `credentials: "same-origin"`
+  is `fetch`'s own default, so a cross-origin request carries no session unless
+  the page asks for one *and* the server opts in twice — an explicit origin
+  echo and `Access-Control-Allow-Credentials: true`. A `*` with credentials is
+  refused rather than honoured, because a server that said "anyone may read
+  this" has not said "anyone may read this as the logged-in user".
+* **Preflights are real requests.** Policy-checked and receipted like anything
+  else, so a caller reading two requests where the page made one is reading the
+  truth. Not cached: `Access-Control-Max-Age` would make it cheaper and is one
+  more piece of state that can be wrong.
+* **A cross-origin redirect taints the origin.** From that hop on the request
+  sends `null`, so a server cannot launder a read by bouncing it somewhere that
+  answers `*`.
+* **Response headers are filtered** to the safelist plus
+  `Access-Control-Expose-Headers`, and `*` does not widen a credentialed
+  response. `Set-Cookie` is never exposed by name.
+* **`no-cors` is sendable and opaque** — status 0, no headers, no body — and
+  reported as `type: "opaque"` so a page can tell it from a failure. `no-cors`
+  with `credentials: "include"` is refused outright: an opaque response cannot
+  be checked, so a credential sent with one could never be shown to have been
+  permitted.
+
+Deliberately not modelled: CORB/ORB, which defend a shared process against a
+timing side channel. Every document here gets its own realm and the realm is
+destroyed on navigation (§B15.12a), so the thing they protect is already gone.
+
+### B17.3 What this does not change
+
+Navigations, subresources and the read verbs are untouched: they run through
+`send_from`, which passes `Requester::Agent`, and are unrestricted exactly as
+before. The same-origin policy constrains *pages*, not the agent driving them,
+and conflating the two would have broken every verb in the engine to fix a hole
+in one of them.
+
+---
+
 # Formal verification: a Lean model beside the Rust
 
 Status: proposed, 2026-08-15. Milestone stub: M16. Mode: the model is a
