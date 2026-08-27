@@ -70,8 +70,9 @@ Or build from source:
 cargo install --path .
 ```
 
-The browser engine is a second binary. `install.sh --browser-only` installs it
-alone, for the case where you want the browser and nothing else.
+That installs two binaries: `h5i`, the front door, and `h5i-browser-light`, the
+engine it launches to render a page. `install.sh --browser-only` installs the
+engine alone, for a CI image that renders a page and nothing else.
 
 Two optional runtimes add stronger sandbox tiers: rootless
 [Podman](https://podman.io/) provides `container`, while

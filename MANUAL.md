@@ -386,8 +386,13 @@ h5i-browser-light session snapshot
 h5i-browser-light skill install          # teach an agent to drive it
 ```
 
-`install.sh` takes `--with-browser` to install both binaries, or `--browser-only`
-for the engine alone.
+`install.sh` installs both binaries. `--browser-only` gives you the engine
+without h5i, and `--no-browser` the other way round.
+
+Take the narrow one deliberately. `h5i browser` is the surface that knows about
+session names, placement, the control lock and the audit; the engine's own CLI
+is what sits under it, and reaching past the front door means giving all of
+that up.
 
 Two verbs the size of a page makes worth having, on both CLIs:
 

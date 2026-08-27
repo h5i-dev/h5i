@@ -22,8 +22,17 @@ Disposable, confined development boxes. `h5i box` with no verb creates one from 
 h5i\-forum(1)
 The forum: how boxed agents work together without sharing authority
 .TP
+h5i\-ui(1)
+Open the box console in a browser: one read\-only screen over the whole fleet \(em what each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
+.TP
 h5i\-browser(1)
 Browser sessions: open one, drive it, close it
+.TP
+h5i\-join(1)
+Open a box someone else is sharing, from a ticket they sent you
+.TP
+h5i\-runner(1)
+Run boxes on another Linux machine you own
 .TP
 h5i\-skill(1)
 Write or print the agent skill this binary carries
@@ -90,7 +99,7 @@ Create a box explicitly. `h5i box [SOURCE]` is the short form and takes the same
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-clone\fR] [\fB\-\-new\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-engine\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBcreate\fR [\fB\-\-from\fR] [\fB\-\-pr\fR] [\fB\-\-clone\fR] [\fB\-\-new\fR] [\fB\-\-remote\fR] [\fB\-\-profile\fR] [\fB\-\-isolation\fR] [\fB\-\-image\fR] [\fB\-\-engine\fR] [\fB\-\-runner\fR] [\fB\-\-backend\fR] [\fB\-\-audit\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -121,6 +130,13 @@ Base image for isolation=container and isolation=microvm (pre\-pulled; runs neve
 .TP
 \fB\-\-engine\fR \fI<ENGINE>\fR
 Browser engine for the `browser` profile: chromium (default), lightpanda, or h5i\-light. Overrides the profile\*(Aqs `engine`. Pinned in the policy digest, and never falls back: a box whose engine cannot serve a page fails and names the recreate, because switching engine changes what a page is able to do
+.TP
+\fB\-\-runner\fR \fI<NAME>\fR
+Run this box on a paired runner instead of this machine.
+
+The source is copied across as a git bundle and the box is built there; the repository, the policy and the credentials stay here. The box is bound to that machine\*(Aqs host key, not to its name, so a name re\-pointed at other hardware never silently moves a box.
+
+`h5i runner pair` sets one up and `h5i runner probe` says what it can do. A tier the runner does not offer is refused with the capability named, never quietly swapped for a weaker one.
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
 Workspace backend (auto|worktree)
@@ -346,6 +362,132 @@ Frame\-rate ceiling asked of the box, for `\-\-term`
 .TP
 \fB\-\-assume\-graphics\fR
 Skip the graphics probe and render anyway, for `\-\-term`. Frames are then sent uncompressed (about six times the bytes), because the probe is also what asks whether this terminal accepts deflated ones
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE"
+Let one other person try this box's web app, from their own machine
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBshare\fR [\fB\-\-port\fR] [\fB\-\-expire\fR] [\fB\-\-label\fR] [\fB\-\-tunnel\fR] [\fB\-\-direct\-only\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] [\fIsubcommands\fR]
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 3000]
+The port inside the box \(em whatever the dev server in there binds.
+
+Not `0`: that is not a port a server can be listening on, and the same spelling means "pick a free one" on `h5i join`, which is the opposite.
+.TP
+\fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
+How long the ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
+.TP
+\fB\-\-label\fR \fI<LABEL>\fR
+A name for the peer you are sending this to, for `status` and the receipt
+.TP
+\fB\-\-tunnel\fR
+Publish through a Cloudflare quick tunnel instead of peer to peer, so the other side needs no h5i \(em just a browser.
+
+The trade is real and is recorded in the receipt: Cloudflare terminates TLS, so this path is not end\-to\-end encrypted.
+.TP
+\fB\-\-direct\-only\fR
+Refuse to move any application byte over a relay. If a direct peer\-to\-peer path cannot be established, the share fails instead
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fINAME\fR]
+The box whose dev server you want someone else to try
+.SH "H5I BOX SHARE STATUS"
+Show a share: its endpoint, its grants, and how long each has left
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstatus\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+Emit the share record as JSON instead of the human view
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE LIST"
+List this clone's share records, live ones and any left by a crash
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I BOX SHARE GRANT"
+Mint another ticket for a running share, so a second person can join
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgrant\fR [\fB\-\-label\fR] [\fB\-\-expire\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-label\fR \fI<LABEL>\fR
+A name for this peer, to make `status` and the receipt readable
+.TP
+\fB\-\-expire\fR \fI<EXPIRE>\fR [default: 60m]
+How long this ticket lasts: `30m`, `2h`, `90s`, or bare seconds. 24h max
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I BOX SHARE REVOKE"
+Revoke one peer's ticket. The share keeps serving everyone else, and any connection that peer already has is dropped within a second
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrevoke\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> <\fIGRANT\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.TP
+<\fIGRANT\fR>
+
+.SH "H5I BOX SHARE STOP"
+Stop a share running in another terminal
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstop\fR [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-force\fR
+Delete the share record instead of asking its process to stop.
+
+For a record whose pid has been taken over by an unrelated process: h5i then believes the share is serving forever, and no other verb gets out of that. No receipt is written, because the process that would have written one is gone.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
@@ -1193,6 +1335,24 @@ Machine\-readable output
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I UI"
+Open the box console in a browser: one read-only screen over the whole fleet \(em what each box is, what its policy actually allows, what ran inside it, and what pressed on a boundary
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBui\fR [\fB\-\-port\fR] [\fB\-\-open\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 8765]
+Port to bind on 127.0.0.1. `0` asks the OS for a free one
+.TP
+\fB\-\-open\fR
+Also hand the URL to this desktop\*(Aqs browser
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER"
 Browser sessions: open one, drive it, close it
 .ie \n(.g .ds Aq \(aq
@@ -1662,6 +1822,186 @@ Print help
 .TP
 <\fINAME\fR>
 A box name
+.SH "H5I JOIN"
+Open a box someone else is sharing, from a ticket they sent you
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBjoin\fR [\fB\-\-port\fR] [\fB\-\-shared\-jar\fR] [\fB\-\-bind\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITICKET\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR [default: 0]
+Local port to serve it on. 0 picks a free one and prints it
+.TP
+\fB\-\-shared\-jar\fR
+Join even when the only address left is `127.0.0.1`.
+
+Each join normally gets a loopback address of its own, because a browser\*(Aqs cookie jar is scoped by host and ignores the port. On `127.0.0.1` the jar is shared with every local service you run, so the token this proxy sets is sent to any of them you visit while joined \(em and that token reaches the box. macOS configures only `127.0.0.1` on `lo0`, so this is the macOS answer unless you add an address yourself (`sudo ifconfig lo0 alias 127.0.0.2`).
+
+Your own cookies are not the other half of this: they are filtered on a shared jar whether or not you pass this, and only cookies the box set itself are ever sent back to it.
+.TP
+\fB\-\-bind\fR \fI<ADDR>\fR
+Serve on this loopback address instead of a random `127.x.y.z`.
+
+The address is bound exactly \(em no fallback \(em and only loopback (`127.0.0.0/8`) is accepted. This is the WSL answer: Windows forwards only `127.0.0.1` into the VM, so the private address a join normally picks binds fine and is then unreachable from a Windows browser. `\-\-bind 127.0.0.1` counts as shared\-jar consent by itself and carries the same cookie caveats as \-\-shared\-jar; any other loopback address keeps a cookie jar of its own.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fITICKET\fR>
+The `h5i1_...` ticket you were sent, or `\-` to read it from stdin.
+
+`/proc/<pid>/cmdline` is world\-readable on an ordinary Linux box and this process runs for the whole session, so a ticket passed as an argument is legible to every other user on the machine for as long as you are joined \(em and a ticket is the whole authorization. `pbpaste | h5i join \-` keeps it out of the process table and out of your shell history.
+.SH "H5I RUNNER"
+Run boxes on another Linux machine you own
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBrunner\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I RUNNER PAIR"
+Pair with a Linux machine so boxes can run on it
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpair\fR [\fB\-\-port\fR] [\fB\-\-fingerprint\fR] [\fB\-\-print\-only\fR] [\fB\-\-worker\-path\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> <\fI[USER@]HOST\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-port\fR \fI<PORT>\fR
+SSH port, when it is not 22
+.TP
+\fB\-\-fingerprint\fR \fI<SHA256:...>\fR
+Refuse to pair unless the host key matches this fingerprint.
+
+Pairing otherwise trusts the key the machine presents the first time, exactly like your first `ssh` to a new host. Read the real one on the machine itself with `ssh\-keygen \-lf /etc/ssh/ssh_host_ed25519_key.pub` and pass it here to close that window.
+.TP
+\fB\-\-print\-only\fR
+Print the `authorized_keys` line instead of installing it.
+
+For a runner where you add keys by another route, or where you want to read the line before it goes in.
+.TP
+\fB\-\-worker\-path\fR \fI<PATH>\fR
+Path to `h5i` on the runner, when it is not on the PATH of the account you are pairing with
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+A short name for this machine, used in commands and output. It is a label: the runner\*(Aqs identity is its host key, so renaming or re\-pointing a name never moves a box to different hardware
+.TP
+<\fI[USER@]HOST\fR>
+Where it is: `user@host`, or just `host` to use your SSH default
+.SH "H5I RUNNER PROBE"
+Ask a runner what it can do right now
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBprobe\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I RUNNER LIST"
+List the machines this account has paired
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBlist\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH "H5I RUNNER BOXES"
+List the boxes a runner is holding
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBboxes\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I RUNNER DESTROY"
+Remove a box from a runner
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBdestroy\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> <\fIBOX_ID\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.TP
+<\fIBOX_ID\fR>
+
+.SH "H5I RUNNER GC"
+Reap what the leases say is over
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBgc\fR [\fB\-\-all\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-\-all\fR
+Reap every box, not only the expired ones
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
+.SH "H5I RUNNER UNPAIR"
+Forget a runner: its record, its key, and its pinned host key
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBunpair\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fINAME\fR>
+
 .SH "H5I SKILL"
 Write or print the agent skill this binary carries
 .ie \n(.g .ds Aq \(aq

@@ -644,8 +644,12 @@ h5i-browser-light serve https://docs.rs/ --allow docs.rs &amp;
 h5i-browser-light session snapshot
 h5i-browser-light skill install          # teach an agent to drive it
 </code></pre>
-<p><code>install.sh</code> takes <code>--with-browser</code> to install both binaries, or <code>--browser-only</code>
-for the engine alone.</p>
+<p><code>install.sh</code> installs both binaries. <code>--browser-only</code> gives you the engine
+without h5i, and <code>--no-browser</code> the other way round.</p>
+<p>Take the narrow one deliberately. <code>h5i browser</code> is the surface that knows about
+session names, placement, the control lock and the audit; the engine's own CLI
+is what sits under it, and reaching past the front door means giving all of
+that up.</p>
 <p>Two verbs the size of a page makes worth having, on both CLIs:</p>
 <pre><code class="language-bash">h5i browser snapshot &lt;session&gt; --delta   # only what changed since the last read
 h5i browser login &lt;session&gt;              # hand the page to the human
