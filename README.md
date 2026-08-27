@@ -119,8 +119,8 @@ h5i browser list               # every session on this machine, and which is def
 
 ### 2.2. The configurable sandbox
 
-While h5i browser runs in a light-weight sandbox by default, we can further specify
-fine-grained configuration in `.h5i/env.toml`.
+While h5i runs in a light-weight sandbox by default, we can further specify
+fine-grained setting in `.h5i/env.toml`.
 
 ```toml
 [profile.reading]
