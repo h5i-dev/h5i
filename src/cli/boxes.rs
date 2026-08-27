@@ -1271,9 +1271,16 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                         }
                     }
                     println!();
+                    // Every kernel tier, including `supervised`. It was missing
+                    // here while `sandbox::probe` enumerated it correctly, so
+                    // the command whose whole job is "what can this host
+                    // enforce" left out the tier the code calls the security
+                    // keystone — and anyone choosing a tier from this output
+                    // would conclude it was unavailable.
                     for (claim, profile_net_deny) in [
                         (h5i_core::sandbox::IsolationClaim::Workspace, false),
                         (h5i_core::sandbox::IsolationClaim::Process, true),
+                        (h5i_core::sandbox::IsolationClaim::Supervised, true),
                     ] {
                         let mut p = h5i_core::sandbox::Profile::builtin("probe", claim);
                         if !profile_net_deny {
