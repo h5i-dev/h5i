@@ -219,37 +219,7 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 5. The engine
-
-h5i's browser is its own engine, built for the case an agent is actually in:
-read a page, act on it, read what changed. It runs in **one process** and holds
-a page in roughly a seventh of the memory Chromium needs (76 MiB against 563
-MiB, median over the same pages), from a binary a ninth the size. It is about
-30% *slower*, because it has an interpreter where Chromium has a JIT.
-
-It runs page JavaScript, follows redirects and `<meta refresh>`, keeps a cookie
-jar scoped by origin, and puts every request through the same broker as the rest
-of h5i. What it reads is an outline with `@ref` handles, not pixels.
-
-Two properties to check before you rely on it:
-
-- **It says what it could not do.** A page needing an API this engine lacks gets
-  that API *named* in the snapshot rather than a blank space, and console errors
-  carry the script and line they came from. "The page is empty" and "I could not
-  read the page" are different answers, and it gives different answers.
-- **It is not a complete browser, and does not pretend to be.** Of twenty
-  single-page applications measured, eighteen read usefully and one not at all.
-  Canvas, WebSockets, Workers and IndexedDB are absent.
-
-For a page it cannot read, a box can be pinned to `--engine chromium` and driven
-with `agent-browser` inside it. That trade is worth stating plainly: Chromium
-reads more pages, and gives up both properties this product is built on. Its
-request lane is best-effort rather than fail-closed, and its control channel
-lives inside the box, where a takeover is a request rather than a boundary.
-
----
-
-## 6. Documentation
+## 5. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
@@ -258,7 +228,7 @@ lives inside the box, where a takeover is a request rather than a boundary.
 
 ---
 
-## 7. FAQ
+## 6. FAQ
 
 <details>
 <summary>Why not Playwright or Puppeteer?</summary>
@@ -373,13 +343,13 @@ No. Model egress is a separate policy decision.
 
 ---
 
-## 8. License
+## 7. License
 
 Apache-2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 9. Contributors
+## 8. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
