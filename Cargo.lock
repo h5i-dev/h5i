@@ -62,6 +62,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloc-no-stdlib"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc7bb162ec39d46ab1ca8c77bf72e890535becd1751bb45f64c597edb4c8c6b3"
+
+[[package]]
+name = "alloc-stdlib"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e76a019e91224d279006ff972f1e984179a6e9feb050adba6ce8274aef23195"
+dependencies = [
+ "alloc-no-stdlib",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -649,6 +664,27 @@ checksum = "a88b7ea17d208c4193f2c1e6de3c35fe71f98c96982d5ced308bdcc749ff6e1f"
 dependencies = [
  "bytes",
  "cfg_aliases",
+]
+
+[[package]]
+name = "brotli"
+version = "8.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cc91aac060a7a1e25823bdccbfb6af1875b88f17c6daac97894eed8207166b3"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+ "brotli-decompressor",
+]
+
+[[package]]
+name = "brotli-decompressor"
+version = "5.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a32acac15fe1967bc3986b2a6347dffc965602354ea6f450ad07e8bfd253583"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
 ]
 
 [[package]]
@@ -1930,16 +1966,20 @@ dependencies = [
  "blitz-traits",
  "boa_engine",
  "boa_gc",
+ "brotli",
  "clap",
  "cssparser",
  "encoding_rs",
+ "flate2",
  "getrandom 0.2.17",
  "h5i-error",
  "httpdate",
  "image",
  "parley",
  "portable-atomic",
+ "psl",
  "reqwest 0.12.28",
+ "rustls",
  "selectors",
  "serde",
  "serde_json",
@@ -1950,6 +1990,7 @@ dependencies = [
  "tempfile",
  "url",
  "vello_cpu",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4071,6 +4112,21 @@ checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "psl"
+version = "2.1.226"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bc88482eea924ca3a2f56a547454169af58deef35567965eb4fc2392a834841"
+dependencies = [
+ "psl-types",
+]
+
+[[package]]
+name = "psl-types"
+version = "2.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 
 [[package]]
 name = "quick-xml"

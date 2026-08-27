@@ -118,6 +118,58 @@ base64 = "0.22"
 # calls `substr` and died on `not a callable function`.
 boa_engine = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832", default-features = false, features = ["annex-b"] }
 boa_gc = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832" }
+# The public suffix list, compiled in as a static table rather than fetched.
+#
+# This is what makes the `Domain` attribute safe to honour. The rule a browser
+# actually enforces is "the domain must not be a public suffix", and without the
+# list there is no way to know that `co.uk` is one — so a page on `evil.co.uk`
+# could set `Domain=co.uk` and every later request to `bank.co.uk` would carry
+# the cookie. Pure Rust, no build script, no network at runtime: it is a
+# generated match table, which is the only shape that keeps the build hermetic.
+#
+# The list does rot, which was the argument against embedding one. It rots
+# *slowly* and in a known direction — new suffixes are added, so a stale list
+# is conservative about what it refuses rather than permissive — and a version
+# bump is how it is refreshed. See `cookies::registrable_domain`.
+psl = "2.1.226"
+# TLS for `wss://`, and only for that.
+#
+# The refusal it replaces said `wss://` "needs a raw TLS stream, which the HTTP
+# client here does not expose" — true of `reqwest`, and quietly generalised into
+# a property of the engine. It is not one. A socket that owns its transport
+# needs no help from the HTTP client, which is how Lightpanda gets `wss://` for
+# free through curl.
+#
+# `ring` rather than aws-lc-rs, because aws-lc-rs has a C build and this crate
+# refuses those (see `system-fonts` above): the cross-check matrix compiles for
+# windows-msvc, darwin and musl from Linux. Both crates are already in the tree
+# through reqwest's `rustls-tls`, so this adds a name to the manifest and no
+# code to the build.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1.0"
+# Compression, decoded here rather than by the HTTP client.
+#
+# The engine had never sent an `Accept-Encoding` header at all, so every
+# document, stylesheet and bundle it fetched arrived identity-encoded — three
+# to five times its compressed size, an omission the receipts question never
+# caught because a receipt recorded that bytes moved and not that three times
+# too many did.
+#
+# `reqwest` will negotiate and decode transparently, and that was tried first.
+# It **strips `Content-Encoding` and `Content-Length` after decoding**, so the
+# compressed size — the number that says what the request actually cost — is
+# gone by the time a body is in hand. An engine whose whole claim is that its
+# request log is the truth rather than an observation of it cannot delegate the
+# measurement to a layer that then hides it. That is the CONNECT-gate blindness
+# this engine exists to remove, in miniature.
+#
+# So the client asks for encodings, and this crate decodes them: `wire_bytes` is
+# *measured*, not read off a header, so it is right under chunked transfer too;
+# and the decoded size is capped as well as the compressed one, which is what
+# stops a small response decompressing into an enormous one. Both crates are
+# pure Rust (flate2 on miniz_oxide), so the hermetic build is unchanged.
+flate2 = "1.1.9"
+brotli = { version = "8.0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3.8"

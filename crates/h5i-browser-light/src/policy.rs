@@ -198,6 +198,50 @@ impl Policy {
         self.check(url)
     }
 
+    /// Check the *address* a host actually resolved to.
+    ///
+    /// [`Self::check`] decides about a name. This decides about where that name
+    /// went, and the two are not the same question: DNS answers can change
+    /// between the check and the connection, and an allowed name that resolves
+    /// into loopback or private space is the classic rebinding move. A
+    /// name-level allowlist cannot see it — by the time the address exists the
+    /// decision has already been made.
+    ///
+    /// The rule is narrow on purpose. Reaching an internal address is fine when
+    /// the *name* said so: `localhost` is the dev server and is allowed by
+    /// design. It is not fine when a public name arrives there, because then
+    /// the receipt says `docs.example.com` and the bytes went to `10.0.0.1`,
+    /// which is precisely the plausible-wrong record this engine refuses.
+    pub fn check_address(&self, url: &Url, addr: std::net::IpAddr) -> Verdict {
+        if !is_internal_address(addr) {
+            return Verdict::Allow;
+        }
+        let host = url.host_str().unwrap_or_default();
+        // A name that already declared itself local, and a policy that permits
+        // local names at all.
+        if self.allow_loopback && is_loopback(host) {
+            return Verdict::Allow;
+        }
+        // An address written directly into the URL was itself what `check`
+        // decided about, so it is not a rebinding: the caller asked for this
+        // address by name and the allowlist answered about it.
+        if host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host)
+            .parse::<std::net::IpAddr>()
+            .is_ok()
+        {
+            return self.check(url);
+        }
+        Verdict::Deny(format!(
+            "`{host}` resolved to {addr}, which is an internal address. A public name \
+             pointing into private space is how an allowlist is walked around, so the \
+             request is refused rather than made to somewhere the receipt would not \
+             describe."
+        ))
+    }
+
     pub fn check(&self, url: &Url) -> Verdict {
         match url.scheme() {
             // `data:` is inline in the document that already passed policy;
@@ -266,6 +310,39 @@ impl Policy {
     }
 }
 
+/// Whether an address belongs to a space only something on this machine or
+/// this network should be able to reach.
+///
+/// Loopback, the unspecified address, link-local (which carries the cloud
+/// metadata endpoint at `169.254.169.254`), and the RFC 1918 private ranges.
+/// IPv6 unique-local and its IPv4-mapped forms are included, or the same
+/// address reached by a different spelling would answer differently.
+pub fn is_internal_address(addr: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match addr {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                // 100.64.0.0/10, carrier-grade NAT, which `std` does not name.
+                || (v4.octets()[0] == 100 && (64..128).contains(&v4.octets()[1]))
+        }
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_internal_address(IpAddr::V4(mapped));
+            }
+            v6.is_loopback()
+                || v6.is_unspecified()
+                // fc00::/7 unique-local and fe80::/10 link-local, neither of
+                // which `std` exposes on stable.
+                || (v6.octets()[0] & 0xfe) == 0xfc
+                || (v6.octets()[0] == 0xfe && (v6.octets()[1] & 0xc0) == 0x80)
+        }
+    }
+}
+
 fn is_loopback(host: &str) -> bool {
     // `localhost` and its subdomains resolve to loopback by convention.
     if host == "localhost" || host.ends_with(".localhost") {
@@ -301,7 +378,21 @@ fn normalize_origin(input: &str) -> Option<String> {
         .or_else(|_| Url::parse(&format!("https://{trimmed}")))
         .ok()?;
 
-    let scheme = parsed.scheme();
+    // A socket address is judged as its HTTP twin, which is what `check`'s
+    // documentation already promised: "same host, same allowlist, same loopback
+    // exemption. The scheme differs; what is being decided does not."
+    //
+    // Nothing implemented that promise. A remote `ws://` on an allowed origin
+    // came back "could not derive an origin from `ws://…`" — a denial with the
+    // wrong reason, which sends whoever reads it looking for a malformed URL
+    // instead of at their allowlist. It stayed hidden because the proxy rule in
+    // `wsclient` refuses remote sockets first inside a box, and outside one
+    // nothing had exercised it.
+    let scheme = match parsed.scheme() {
+        "ws" => "http",
+        "wss" => "https",
+        other => other,
+    };
     if !matches!(scheme, "http" | "https") {
         return None;
     }
@@ -392,6 +483,135 @@ mod tests {
         assert!(!policy.check(&url("https://notexample.com/")).is_allowed());
         assert!(!policy.check(&url("https://example.com.evil.test/")).is_allowed());
         assert!(!policy.check(&url("https://evil-example.com/")).is_allowed());
+    }
+
+    /// The gap a name-level allowlist cannot see: the check happens against a
+    /// name, the connection happens against an address, and DNS decides the
+    /// second one after the first has been approved.
+    #[test]
+    fn an_allowed_name_that_resolves_inward_is_refused() {
+        let policy = Policy::new().allow("https://docs.example.com");
+        let url = Url::parse("https://docs.example.com/page").unwrap();
+
+        // The name itself is fine — that is the point.
+        assert!(policy.check(&url).is_allowed());
+
+        for addr in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "192.168.1.5",
+            "172.16.0.1",
+            // The cloud metadata endpoint, which is the one every SSRF
+            // write-up reaches for.
+            "169.254.169.254",
+            "::1",
+            // The same loopback address wearing its IPv4-mapped spelling.
+            "::ffff:127.0.0.1",
+        ] {
+            let verdict = policy.check_address(&url, addr.parse().unwrap());
+            assert!(
+                !verdict.is_allowed(),
+                "{addr} should not be reachable through a public name"
+            );
+        }
+
+        // A public address through the same name is the ordinary case.
+        assert!(
+            policy
+                .check_address(&url, "93.184.216.34".parse().unwrap())
+                .is_allowed()
+        );
+    }
+
+    /// Loopback by *name* is the dev server, which is allowed by design. The
+    /// address check must not take that back.
+    #[test]
+    fn a_loopback_name_may_still_reach_a_loopback_address() {
+        let policy = Policy::new();
+        for (name, addr) in [
+            ("http://localhost:3000/", "127.0.0.1"),
+            ("http://127.0.0.1:3000/", "127.0.0.1"),
+            ("http://[::1]:3000/", "::1"),
+            ("http://app.localhost:3000/", "127.0.0.1"),
+        ] {
+            let url = Url::parse(name).unwrap();
+            assert!(
+                policy.check_address(&url, addr.parse().unwrap()).is_allowed(),
+                "{name} is the dev server and must stay reachable"
+            );
+        }
+    }
+
+    /// An address written into the URL is what the allowlist already answered
+    /// about, so the address check defers to that answer rather than inventing
+    /// a second one.
+    #[test]
+    fn a_literal_address_is_judged_by_the_allowlist_not_by_its_range() {
+        let allowed = Policy::new().allow("http://10.1.2.3:8080");
+        let url = Url::parse("http://10.1.2.3:8080/admin").unwrap();
+        assert!(
+            allowed
+                .check_address(&url, "10.1.2.3".parse().unwrap())
+                .is_allowed(),
+            "an operator who granted this address by name meant it"
+        );
+
+        let empty = Policy::new();
+        assert!(
+            !empty
+                .check_address(&url, "10.1.2.3".parse().unwrap())
+                .is_allowed(),
+            "and one that was never granted is still refused"
+        );
+    }
+
+    #[test]
+    fn internal_ranges_are_recognised_in_every_spelling() {
+        for addr in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "192.168.0.1",
+            "169.254.169.254",
+            "100.64.0.1",
+        ] {
+            assert!(is_internal_address(addr.parse().unwrap()), "{addr}");
+        }
+        for addr in ["fd00::1", "fe80::1", "::1", "::"] {
+            assert!(is_internal_address(addr.parse().unwrap()), "{addr}");
+        }
+        for addr in ["8.8.8.8", "93.184.216.34", "2606:4700:4700::1111"] {
+            assert!(!is_internal_address(addr.parse().unwrap()), "{addr}");
+        }
+    }
+
+    /// A socket address is judged as its HTTP twin. The promise was in
+    /// `check`'s documentation and nothing implemented it, so an allowed
+    /// remote socket was denied for "could not derive an origin" — a refusal
+    /// whose reason pointed at the URL when the answer was the allowlist.
+    #[test]
+    fn a_socket_address_is_judged_as_its_http_twin() {
+        let policy = Policy::new().allow("https://example.com");
+        assert!(
+            policy.check(&url("wss://example.com/socket")).is_allowed(),
+            "granting https should grant wss to the same origin"
+        );
+        assert!(
+            !policy.check(&url("ws://example.com/socket")).is_allowed(),
+            "but not the plaintext twin, which is a different origin"
+        );
+
+        let plain = Policy::new().allow("http://example.com");
+        assert!(plain.check(&url("ws://example.com/socket")).is_allowed());
+
+        // And a refusal names the allowlist rather than the URL's shape.
+        let empty = Policy::new();
+        let verdict = empty.check(&url("wss://elsewhere.example/socket"));
+        assert!(!verdict.is_allowed());
+        assert!(
+            verdict.reason().unwrap().contains("allowlist"),
+            "the reason should point at the allowlist: {:?}",
+            verdict.reason()
+        );
     }
 
     #[test]

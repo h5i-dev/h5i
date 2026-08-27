@@ -31,6 +31,9 @@
 //! engine's compatibility bar.
 
 pub mod encoding;
+pub mod canvas;
+pub mod cors;
+pub mod budget;
 pub mod cookies;
 pub mod engine;
 pub mod extract;
@@ -39,12 +42,14 @@ pub mod markdown;
 pub mod net;
 pub mod policy;
 pub mod receipt;
+pub mod replay;
 pub mod script;
 pub mod selector;
 pub mod skill;
 pub mod secrets;
 pub mod snapshot;
 pub mod sse;
+pub mod structured;
 pub mod stream;
 pub mod verbs;
 pub mod ws;
@@ -80,6 +85,20 @@ pub struct Capabilities {
     pub video: bool,
     pub webgl: bool,
     pub downloads: bool,
+    /// Canvas 2D that actually rasterises, and composites into the page.
+    ///
+    /// Needs script to be reachable at all, so it follows `javascript` rather
+    /// than being a fixed `true`: a caller routing a chart-drawing page here
+    /// with script off would get a blank canvas, which is the wrong answer to
+    /// have promised.
+    ///
+    /// Partial, and this flag does not say which part — text, gradients,
+    /// patterns, shadows and `drawImage` are not built. A page that asks for
+    /// one is *named* in the snapshot's note, which is the finer-grained
+    /// answer and the one to route on.
+    pub canvas_2d: bool,
+    /// Real WebSocket connections, `ws://` and `wss://`, every frame receipted.
+    pub websockets: bool,
     /// Fetches are refused unless a receipts sink is accepting writes.
     pub fail_closed_receipts: bool,
 }
@@ -101,6 +120,8 @@ impl Capabilities {
             video: false,
             webgl: false,
             downloads: false,
+            canvas_2d: javascript,
+            websockets: javascript,
             fail_closed_receipts: true,
         }
     }
@@ -120,5 +141,18 @@ mod tests {
         assert!(!caps.webgl);
         assert!(caps.screenshot);
         assert!(caps.fail_closed_receipts);
+
+        // Canvas and sockets need a realm to be reachable at all, so with
+        // script off they are absent — promising them here would route a
+        // chart-drawing page to an engine that would hand back a blank one.
+        assert!(!caps.canvas_2d);
+        assert!(!caps.websockets);
+
+        let scripted = Capabilities::with_script(true);
+        assert!(scripted.canvas_2d);
+        assert!(scripted.websockets);
+        // And the ones that are absent whatever the configuration stay absent.
+        assert!(!scripted.webgl);
+        assert!(!scripted.video);
     }
 }

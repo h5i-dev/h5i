@@ -63,6 +63,18 @@ pub enum Verb {
     Markdown,
     /// Which credentials this session could substitute, by name.
     Env,
+    /// What this session did, as something that can be run again.
+    Script,
+    /// What the page publishes about itself: JSON-LD, OpenGraph, meta.
+    Structured,
+    /// Set a checkbox or radio to a state, rather than toggling it.
+    SetChecked,
+    /// Choose an option in a `<select>`.
+    Select,
+    /// Send a key that does something: Enter, Escape, Tab.
+    Press,
+    /// Locate elements by role and name, the way the outline names them.
+    Find,
 }
 
 impl Verb {
@@ -82,6 +94,12 @@ impl Verb {
         Verb::Extract,
         Verb::Markdown,
         Verb::Env,
+        Verb::Script,
+        Verb::Structured,
+        Verb::SetChecked,
+        Verb::Select,
+        Verb::Press,
+        Verb::Find,
     ];
 
     /// The name on the wire.
@@ -101,6 +119,12 @@ impl Verb {
             Verb::Extract => "extract",
             Verb::Markdown => "markdown",
             Verb::Env => "env",
+            Verb::Script => "script",
+            Verb::Structured => "structured",
+            Verb::SetChecked => "set_checked",
+            Verb::Select => "select",
+            Verb::Press => "press",
+            Verb::Find => "find",
         }
     }
 
@@ -136,7 +160,17 @@ impl Verb {
             | Verb::Markdown
             // Asked during a human's login, this is a question about
             // credentials at exactly the wrong moment.
-            | Verb::Env => false,
+            | Verb::Env
+            // The recording names the fields a login flow used and the URLs it
+            // visited. Engine-written, like the request log, and refused for
+            // the same reason: it is still a reading of what the human at the
+            // viewer is doing.
+            | Verb::Script
+            | Verb::Structured
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press
+            | Verb::Find => false,
         }
     }
 
@@ -149,7 +183,12 @@ impl Verb {
     /// gets the check by existing rather than by remembering.
     pub fn needs_ref(self) -> bool {
         match self {
-            Verb::Type | Verb::Submit | Verb::Click => true,
+            Verb::Type
+            | Verb::Submit
+            | Verb::Click
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press => true,
 
             Verb::Status
             | Verb::Snapshot
@@ -161,7 +200,11 @@ impl Verb {
             | Verb::WaitForScript
             | Verb::Extract
             | Verb::Markdown
-            | Verb::Env => false,
+            | Verb::Env
+            | Verb::Script
+            | Verb::Structured
+            // It produces handles rather than consuming one.
+            | Verb::Find => false,
         }
     }
 
@@ -189,7 +232,13 @@ impl Verb {
             | Verb::Requests
             | Verb::Extract
             | Verb::Markdown
-            | Verb::Env => false,
+            | Verb::Env
+            | Verb::Script
+            | Verb::Structured
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press
+            | Verb::Find => false,
         }
     }
 
@@ -218,7 +267,109 @@ impl Verb {
             | Verb::WaitFor
             | Verb::Extract
             | Verb::Markdown
-            | Verb::Env => false,
+            | Verb::Env
+            // Named `script` for what it produces, not for the JS realm; it
+            // needs no realm to report what the session did.
+            | Verb::Script
+            | Verb::Structured
+            // These act on the DOM, which exists either way. A page with no
+            // script simply has nothing listening for the events they fire.
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press
+            | Verb::Find => false,
+        }
+    }
+
+    /// Whether this verb belongs in a replay.
+    ///
+    /// State-mutating verbs only. A replay exists to reach a state again, and
+    /// the reads are how a model decided what to do next rather than part of
+    /// the doing — replaying them would cost time and change nothing.
+    ///
+    /// Waits are the interesting exclusion. A wait is not a state change, and
+    /// the settle it drives happens anyway on the verbs that are recorded; a
+    /// replay on this engine's virtual clock reaches the same quiescent state
+    /// without being told to wait for it. On a wall-clock engine that would not
+    /// be true, which is why theirs record waits and this does not.
+    pub fn is_recorded(self) -> bool {
+        match self {
+            Verb::Navigate
+            | Verb::Scroll
+            | Verb::Type
+            | Verb::Submit
+            | Verb::Click
+            // `set_checked` especially: it is the *reason* it exists beside
+            // `click`. A click on a checkbox is a toggle and replays to a
+            // different state; setting one is idempotent and replays to the
+            // same one.
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press => true,
+
+            Verb::Status
+            | Verb::Snapshot
+            | Verb::Requests
+            | Verb::WaitFor
+            | Verb::WaitForScript
+            | Verb::Extract
+            | Verb::Markdown
+            | Verb::Env
+            | Verb::Script
+            | Verb::Structured
+            | Verb::Find
+            // Handing the page to a human is the one step a replay must never
+            // reproduce: there is nobody there to take it.
+            | Verb::Login => false,
+        }
+    }
+
+    /// Whether this verb accepts an optional `url` and goes there before it
+    /// reads.
+    ///
+    /// A round trip an agent does not have to spend. `navigate` then `markdown`
+    /// is two turns through a model to answer one question, and the model pays
+    /// for the intervening reply in context as well as latency. The read verbs
+    /// therefore take the URL directly, and the reply says where it ended up so
+    /// a redirect is not silent.
+    ///
+    /// Only *reads* qualify. Fusing a navigation into `type` or `click` would
+    /// mean acting on a page whose refs the caller has never seen, which is the
+    /// failure the staleness check exists to prevent — the ref would be
+    /// resolved against a reading nobody had read.
+    pub fn navigates_first(self) -> bool {
+        match self {
+            Verb::Snapshot
+            | Verb::Markdown
+            | Verb::Extract
+            | Verb::Structured
+            | Verb::Find => true,
+
+            // Already a navigation; a second URL would be ambiguous.
+            Verb::Navigate
+            // Acts on a ref, which must come from a reading the caller has
+            // actually seen.
+            | Verb::Type
+            | Verb::Submit
+            | Verb::Click
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press
+            // Reads the session rather than the page, so there would be
+            // nothing for a navigation to change.
+            | Verb::Status
+            | Verb::Login
+            | Verb::Requests
+            | Verb::Env
+            | Verb::Script
+            | Verb::Scroll
+            // A wait fused with a navigation reads as "go here, then tell me
+            // when this appears", which is a useful verb and a different one:
+            // the settle it would have to run belongs to the navigation, so
+            // the reported outcome would describe the load rather than the
+            // wait. Left out until something asks for it by name.
+            | Verb::WaitFor
+            | Verb::WaitForScript => false,
         }
     }
 
@@ -421,6 +572,16 @@ impl VerbError {
         )
     }
 
+    /// A selector that matched nothing on the page.
+    ///
+    /// In-band rather than protocol: a selector the caller can correct is a
+    /// different failure from a policy refusal, and reporting the first the way
+    /// the second is reported ends a self-correction loop instead of prompting
+    /// one.
+    pub fn no_match(message: impl Into<String>) -> Self {
+        VerbError::new(Code::NoMatch, message)
+    }
+
     pub fn refused(message: impl Into<String>) -> Self {
         VerbError::new(Code::Refused, message)
     }
@@ -467,7 +628,10 @@ mod tests {
             .filter(|v| v.needs_ref())
             .map(|v| v.name())
             .collect();
-        assert_eq!(refs, vec!["type", "submit", "click"]);
+        assert_eq!(
+            refs,
+            vec!["type", "submit", "click", "set_checked", "select", "press"]
+        );
     }
 
     #[test]

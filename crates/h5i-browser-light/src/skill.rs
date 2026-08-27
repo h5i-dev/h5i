@@ -114,12 +114,17 @@ mod tests {
         // line here is a verb an agent will never use.
         let text = page(None).expect("the main page");
         for verb in crate::verbs::Verb::ALL {
-            // `login` is documented under its own heading rather than by name
-            // in a command line, so match on either spelling.
+            // As a *command*, not merely as a word. Matching the bare name let
+            // `script` pass on the `--script` flag and `structured` on the
+            // phrase "structured data" — so two verbs an agent could not have
+            // found were reported as documented. The CLI accepts either
+            // spelling of an underscore, so both are allowed here.
             let dashed = verb.name().replace('_', "-");
+            let documented = text.contains(&format!("session {}", verb.name()))
+                || text.contains(&format!("session {dashed}"));
             assert!(
-                text.contains(verb.name()) || text.contains(&dashed),
-                "the skill never mentions `{}`",
+                documented,
+                "the skill never shows `session {}` as a command an agent can run",
                 verb.name()
             );
         }

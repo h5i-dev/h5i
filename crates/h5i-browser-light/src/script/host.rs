@@ -136,6 +136,16 @@ pub struct Host {
 
     pub unsupported: RefCell<Unsupported>,
 
+    /// Every `<canvas>` this document has drawn on.
+    ///
+    /// Kept here rather than on the element because a canvas surface is *not*
+    /// part of the DOM: it survives reflow, it is not serialised by
+    /// `outerHTML`, and it is exactly the kind of thing a second tree would let
+    /// drift from the first. Keyed by node id, so a canvas removed from the
+    /// document keeps its pixels for as long as script holds a reference to it,
+    /// which is what a page doing off-screen composition depends on.
+    pub canvases: RefCell<crate::canvas::Canvases>,
+
     /// URLs script asked for, in order, so a caller can say which action caused
     /// which request. The receipt remains the record; this is only the link,
     /// stamped by the one component that knows the causal fact.
@@ -210,6 +220,15 @@ pub enum FetchSlot {
         method: String,
         body: Vec<u8>,
         content_type: Option<String>,
+        /// The headers the page set, which decide whether this request is
+        /// simple enough to send without a preflight.
+        headers: Vec<(String, String)>,
+        /// How this request treats the origin boundary, and whether it carries
+        /// the session across one. Both come from the page's own `fetch` init
+        /// rather than being assumed, because assuming either is how a
+        /// cross-origin read gets made with credentials nobody asked to send.
+        mode: crate::cors::Mode,
+        credentials: crate::cors::Credentials,
     },
     /// On the wire, on its own thread, with the answer coming back here.
     InFlight(std::sync::mpsc::Receiver<crate::net::FetchOutcome>),
@@ -243,6 +262,7 @@ impl Host {
             styles_stale: RefCell::new(false),
             console: RefCell::new(Vec::new()),
             unsupported: RefCell::new(Unsupported::default()),
+            canvases: RefCell::new(crate::canvas::Canvases::new()),
             requests: RefCell::new(Vec::new()),
             comments: RefCell::new(std::collections::HashMap::new()),
             pending_fetches: RefCell::new(std::collections::BTreeMap::new()),
