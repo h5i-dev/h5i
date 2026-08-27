@@ -62,11 +62,8 @@ h5i browser read https://example.com          # or: one page, no session
 
 ```bash
 curl -fsSL https://h5i.dev/install.sh | sh
-# if you would rather not add a domain to the chain:
-# curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
-
-# build from source
-# cargo install --path .
+# curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh  # if you would rather not add a domain to the chain:
+# cargo install --path .                                                         # build from source
 ```
 
 The agent-facing interface is a skill, and the binary carries it:
