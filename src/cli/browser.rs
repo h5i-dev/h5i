@@ -36,7 +36,7 @@
 //! other headless browser does is **record**: the engine checks every request
 //! against the session's policy and writes the decision before the bytes move,
 //! and it refuses the fetch when it cannot write the record
-//! (`h5i-browser-light`'s `net::Broker`). That is the default, and it is
+//! (the engine's `net::Broker`). That is the default, and it is
 //! auditability rather than containment — the honest claim, because the engine
 //! is describing itself.
 //!
@@ -819,6 +819,7 @@ struct Spawned {
 fn spawn_on_host(dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
     let control = dir.join(bs::CONTROL_FILE);
     let mut argv: Vec<String> = vec![
+        ENGINE_SUBCOMMAND.into(),
         "serve".into(),
         opts.url.clone(),
         "--stream-file".into(),
@@ -840,7 +841,7 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
     }
 
     let log = std::fs::File::create(dir.join("engine.log"))?;
-    let mut command = Command::new(engine_binary());
+    let mut command = Command::new(engine_binary()?);
     command
         .args(&argv)
         .stdin(Stdio::null())
@@ -848,12 +849,9 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
         .stderr(Stdio::from(log));
     detach(&mut command);
 
-    let mut child = command.spawn().map_err(|e| {
-        anyhow::anyhow!(
-            "could not start the browser engine ({e}). h5i looks for `h5i-browser-light` \
-             next to this binary and then on $PATH; set $H5I_BROWSER_ENGINE to say where it is."
-        )
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("could not start the browser engine ({e})"))?;
     let pid = child.id();
 
     Ok(Spawned {
@@ -917,28 +915,11 @@ fn preflight_box(
         );
     }
 
-    // 2. The engine has to be something the box may execute. Under Landlock a
-    //    box can *read* `~/.cargo/bin` and not run from it, so `command -v`
-    //    finding the binary proves nothing — the check has to try to run it.
-    let probe = Command::new(std::env::current_exe()?)
-        .arg("box")
-        .arg("run")
-        .arg(name)
-        .arg("--")
-        .arg("sh")
-        .arg("-c")
-        .arg(format!("{} --version >/dev/null 2>&1", engine_in_box()))
-        .output()?;
-    if !probe.status.success() {
-        anyhow::bail!(
-            "box `{name}` cannot execute `{ENGINE_IN_BOX}`. A box may be able to *read* a \
-             binary it is not allowed to run: under Landlock `~/.cargo/bin` and \
-             `~/.local/bin` are readable and not executable, so an engine installed there \
-             is found by `command -v` and refused by `exec`.\n\n  \
-             Install the engine somewhere the box may run it, then try again:\n    \
-             sudo install -m755 $(command -v {ENGINE_IN_BOX}) /usr/local/bin/"
-        );
-    }
+    // There used to be a second check here: can the box actually *execute* the
+    // engine? A box can read `~/.cargo/bin` under Landlock and not run from it,
+    // so `command -v` found the binary and `exec` refused it. The engine is
+    // `h5i` now, and a box that could not run `h5i` could not have run this
+    // preflight either, so the question answers itself.
     Ok(())
 }
 
@@ -1013,7 +994,8 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
     }
 
     let mut argv: Vec<String> = vec![
-        engine_in_box(),
+        H5I_IN_BOX.into(),
+        ENGINE_SUBCOMMAND.into(),
         "serve".into(),
         opts.url.clone(),
         // A socket, not a port. Every `h5i box run` gets its own network
@@ -1071,8 +1053,8 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
             )
         } else {
             format!(
-                "The box needs `{ENGINE_IN_BOX}` on its own PATH, at a location it is allowed \
-                 to execute. Check with:\n    h5i box run {name} -- command -v {ENGINE_IN_BOX}"
+                "The box needs `h5i` on its own PATH. Check with:\n    \
+                 h5i box run {name} -- command -v h5i"
             )
         };
         anyhow::anyhow!("could not start the browser engine in `{name}`: {detail}\n\n  {hint}")
@@ -1151,20 +1133,21 @@ fn shell_join(argv: &[String]) -> String {
         .join(" ")
 }
 
-/// The engine's name inside a box.
+/// The hidden subcommand `h5i` becomes when it is the engine.
 ///
-/// Bare, not a path: under Landlock a box's `~/.cargo/bin` and `~/.local/bin`
-/// are readable but not executable, so what actually runs is the system install
-/// — and the box's `PATH` is the thing that knows where that is.
-const ENGINE_IN_BOX: &str = "h5i-browser-light";
+/// The engine used to be a second binary, and finding it was a problem with
+/// two halves that both bit: on the host it might be an older install earlier
+/// on `$PATH`, and inside a box it might sit in `~/.cargo/bin`, which Landlock
+/// makes readable and **not executable** — so `command -v` found it and `exec`
+/// refused it. Neither can happen now: the engine is this binary, and a box
+/// that can run `h5i` at all can run it.
+const ENGINE_SUBCOMMAND: &str = "__engine";
 
-/// What to invoke inside a box, when the box's `PATH` is not where the engine
-/// is. `$H5I_BROWSER_ENGINE_IN_BOX` is a **box-side** path or command, so it is
-/// separate from `$H5I_BROWSER_ENGINE`, which names a binary on this machine.
-/// Mixing them would point one side at a path the other cannot see.
-fn engine_in_box() -> String {
-    std::env::var("H5I_BROWSER_ENGINE_IN_BOX").unwrap_or_else(|_| ENGINE_IN_BOX.to_string())
-}
+/// How to invoke the engine inside a box.
+///
+/// Bare `h5i`, not a path: a box's `PATH` is the thing that knows where the
+/// system install is, and it is already the binary `h5i box run` executes.
+const H5I_IN_BOX: &str = "h5i";
 
 fn net_args(opts: &StartOptions) -> Vec<String> {
     let mut argv = Vec::new();
@@ -1342,8 +1325,9 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
             // session directory can sit anywhere — including a path longer than
             // `sockaddr_un` would accept.
             let control = dir.join(bs::CONTROL_FILE);
-            let mut command = Command::new(engine_binary());
+            let mut command = Command::new(engine_binary()?);
             command
+                .arg(ENGINE_SUBCOMMAND)
                 .arg("session")
                 .args(&argv)
                 .arg("--control-file")
@@ -1367,7 +1351,8 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
                 .arg("--json")
                 .arg(name)
                 .arg("--")
-                .arg(engine_in_box())
+                .arg(H5I_IN_BOX)
+                .arg(ENGINE_SUBCOMMAND)
                 .arg("session")
                 .args(&argv)
                 .arg("--control-socket")
@@ -1845,24 +1830,11 @@ fn print_answer(answer: &Value) {
     );
 }
 
-/// Where the engine binary is.
-///
-/// Next to this binary first, because an `h5i` and the engine it launches are
-/// installed together and a `$PATH` hit from an older install is the confusing
-/// failure. `$H5I_BROWSER_ENGINE` overrides both.
-fn engine_binary() -> PathBuf {
-    if let Some(explicit) = std::env::var_os("H5I_BROWSER_ENGINE") {
-        return PathBuf::from(explicit);
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let sibling = dir.join(ENGINE_IN_BOX);
-        if sibling.exists() {
-            return sibling;
-        }
-    }
-    PathBuf::from(ENGINE_IN_BOX)
+/// The engine is this binary. There is nothing to find.
+fn engine_binary() -> anyhow::Result<PathBuf> {
+    std::env::current_exe().map_err(|e| {
+        anyhow::anyhow!("could not find this executable, so the browser engine cannot start: {e}")
+    })
 }
 
 /// Put the child in its own session, so closing the terminal that started it

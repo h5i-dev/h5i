@@ -17,16 +17,12 @@ use std::process::Command;
 /// of which is a test that says why it matters.
 const EXIT_SESSION_GONE: i32 = 69;
 
+/// There is no separate engine to find any more: `h5i` execs itself. Kept as a
+/// function so the skip below still reads as a precondition rather than as a
+/// bare `h5i` existence check.
 fn engine() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("H5I_BROWSER_ENGINE") {
-        let path = PathBuf::from(explicit);
-        return path.exists().then_some(path);
-    }
-    let mut here = std::env::current_exe().ok()?;
-    here.pop();
-    here.pop();
-    let sibling = here.join("h5i-browser-light");
-    sibling.exists().then_some(sibling)
+    let h5i = h5i();
+    h5i.exists().then_some(h5i)
 }
 
 fn h5i() -> PathBuf {
@@ -98,10 +94,6 @@ struct Fixture {
 impl Fixture {
     fn new() -> Option<Fixture> {
         let engine = engine()?;
-        let h5i = h5i();
-        if !h5i.exists() {
-            return None;
-        }
         let home = tempfile::tempdir().ok()?;
         let site = Site::start()?;
         Some(Fixture { home, engine, site })
@@ -111,7 +103,6 @@ impl Fixture {
         Command::new(h5i())
             .args(args)
             .env("H5I_BROWSER_HOME", self.home.path())
-            .env("H5I_BROWSER_ENGINE", &self.engine)
             .output()
             .expect("h5i runs")
     }
@@ -146,7 +137,7 @@ fn skip(why: &str) {
 #[test]
 fn the_ordinary_case_names_no_session() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let url = fx.site.base.clone();
     assert!(fx.run(&["browser", "open", &url, "--allow", "127.0.0.1"]).status.success());
@@ -174,7 +165,7 @@ fn the_ordinary_case_names_no_session() {
 #[test]
 fn opening_again_navigates_rather_than_forking() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let url = fx.site.base.clone();
     fx.open(&[]);
@@ -198,7 +189,7 @@ fn opening_again_navigates_rather_than_forking() {
 #[test]
 fn a_name_addresses_a_session_and_so_does_its_id() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let auth = fx.open(&["--session", "auth"]);
     let public = fx.open(&["--session", "public", "--new"]);
@@ -221,7 +212,7 @@ fn a_name_addresses_a_session_and_so_does_its_id() {
 #[test]
 fn a_creation_flag_on_a_live_session_is_refused() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     fx.open(&[]);
     let url = fx.site.base.clone();
@@ -237,7 +228,7 @@ fn a_creation_flag_on_a_live_session_is_refused() {
 #[test]
 fn a_refused_verb_exits_non_zero() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     fx.open(&[]);
     assert!(fx.run(&["browser", "snapshot"]).status.success());
@@ -251,7 +242,7 @@ fn a_refused_verb_exits_non_zero() {
 #[test]
 fn a_session_starts_answers_and_closes() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let id = fx.open(&[]);
 
@@ -274,7 +265,7 @@ fn a_session_starts_answers_and_closes() {
 #[test]
 fn a_verb_on_a_closed_session_is_refused_with_its_own_exit_code() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let _ = fx.open(&[]);
     assert!(fx.run(&["browser", "close"]).status.success());
@@ -293,7 +284,7 @@ fn a_verb_on_a_closed_session_is_refused_with_its_own_exit_code() {
 #[test]
 fn killing_the_engine_is_recorded_as_a_death_not_papered_over() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let id = fx.open(&[]);
     let record: serde_json::Value =
@@ -317,7 +308,7 @@ fn killing_the_engine_is_recorded_as_a_death_not_papered_over() {
 #[test]
 fn a_restore_is_a_new_session_with_the_inheritance_written_down() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let first = fx.open(&[]);
     assert!(fx.run(&["browser", "close"]).status.success());
@@ -334,7 +325,7 @@ fn a_restore_is_a_new_session_with_the_inheritance_written_down() {
 #[test]
 fn a_host_session_says_which_lane_its_requests_are() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let _ = fx.open(&[]);
     let out = fx.run(&["browser", "status"]);
@@ -350,7 +341,7 @@ fn a_host_session_says_which_lane_its_requests_are() {
 #[test]
 fn the_control_lock_pauses_a_mutating_verb_and_lets_a_read_through() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let _ = fx.open(&[]);
     assert!(fx.run(&["browser", "take"]).status.success());
@@ -376,7 +367,7 @@ fn the_control_lock_pauses_a_mutating_verb_and_lets_a_read_through() {
 #[test]
 fn list_keeps_endings_and_hides_them_by_default() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let id = fx.open(&[]);
     assert!(fx.run(&["browser", "close"]).status.success());
@@ -393,7 +384,7 @@ fn list_keeps_endings_and_hides_them_by_default() {
 #[test]
 fn an_expired_session_is_an_ending_on_the_record() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     // One second, then a verb after it has passed: the sweep runs on the next
     // command rather than from a timer nothing is holding.
@@ -413,7 +404,7 @@ fn an_expired_session_is_an_ending_on_the_record() {
 #[test]
 fn the_request_log_lands_in_the_sessions_own_directory() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let _ = fx.open(&[]);
     let out = fx.run(&["browser", "requests", "--json"]);
@@ -428,7 +419,7 @@ fn the_request_log_lands_in_the_sessions_own_directory() {
 #[test]
 fn the_audit_carries_the_whole_session_in_one_timeline() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     fx.open(&[]);
     assert!(fx.run(&["browser", "snapshot"]).status.success());
@@ -488,7 +479,7 @@ fn the_audit_carries_the_whole_session_in_one_timeline() {
 #[test]
 fn the_audit_reports_a_log_it_could_not_read() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let id = fx.open(&[]);
     assert!(fx.run(&["browser", "close"]).status.success());
@@ -511,7 +502,7 @@ fn the_audit_reports_a_log_it_could_not_read() {
 #[test]
 fn reading_the_log_is_not_recorded_as_causing_it() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let id = fx.open(&[]);
     assert!(fx.run(&["browser", "requests"]).status.success());
@@ -534,7 +525,7 @@ fn reading_the_log_is_not_recorded_as_causing_it() {
 #[test]
 fn page_text_reaches_the_terminal_without_its_escape_sequences() {
     let Some(fx) = Fixture::new() else {
-        return skip("no h5i-browser-light to drive");
+        return skip("no h5i binary to drive");
     };
     let url = format!("{}/hostile", fx.site.base);
     let opened = fx.run(&["browser", "open", &url, "--allow", "127.0.0.1", "--json"]);

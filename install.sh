@@ -8,40 +8,24 @@ main() {
   INSTALL_DIR="${H5I_INSTALL_DIR:-/usr/local/bin}"
 
   # ── what to install ────────────────────────────────────────────────────────
-  # Two binaries ship from one release, and by default you get both. `h5i` is
-  # the front door: `h5i browser open <url>` is the first command anyone runs.
-  # `h5i-browser-light` is the engine it launches to render the page.
-  #
-  # **The default used to be `h5i` alone, and that made the product's first
-  # command fail on a fresh install** — `h5i browser open` would report that it
-  # could not find an engine. An install that leaves the headline broken is not
-  # a smaller install, it is a wrong one.
-  #
-  # One script rather than two, because almost everything below is shared and
-  # security-critical: target mapping, the Rosetta refusal, checksum
-  # verification, and the ownership handling that exists because a
-  # workspace-tier agent shares the invoking uid. A second copy of that is a
-  # second place for it to drift, and the drift would be silent.
-  BINARIES="h5i h5i-browser-light"
+  # One binary. The rendering engine used to ship as a second file
+  # (`h5i-browser-light`) and is now linked into `h5i`, which execs itself to
+  # become it. That removed three things at once: a default install that left
+  # `h5i browser open` with nothing to render a page, a version skew between two
+  # halves of one protocol with no handshake between them, and a box that could
+  # read the engine without being allowed to exec it.
+  BINARIES="h5i"
   for arg in "$@"; do
     case "$arg" in
-      # Accepted and does nothing: it is the default now, and quietly rejecting
-      # a flag that used to work would break scripts for no gain.
-      --with-browser) BINARIES="h5i h5i-browser-light" ;;
-      # The engine alone. It runs with no h5i anywhere, enforcing its own
-      # allowlist and writing its own fail-closed log, which is worth having in
-      # a CI image that renders a page and nothing else. Note what it does not
-      # give you: `h5i browser` is the surface that knows about session names,
-      # placement, the control lock and the audit, and none of that is here.
-      --browser-only) BINARIES="h5i-browser-light" ;;
-      # h5i without a browser. For a machine that only makes boxes.
-      --no-browser) BINARIES="h5i" ;;
+      # Both accepted and both no-ops: there is one binary now, and quietly
+      # rejecting a flag that used to work breaks scripts for no gain.
+      --with-browser | --no-browser | --browser-only) ;;
       -h | --help)
-        echo "Usage: install.sh [--browser-only | --no-browser]"
+        echo "Usage: install.sh"
         echo
-        echo "  (no flag)        install h5i and the h5i-browser-light engine"
-        echo "  --browser-only   install only the engine, without h5i"
-        echo "  --no-browser     install only h5i, without the engine"
+        echo "  Installs h5i, which includes the browser engine."
+        echo "  --with-browser, --no-browser and --browser-only are accepted"
+        echo "  and do nothing: the engine is part of the binary now."
         echo
         echo "Environment: H5I_INSTALL_DIR, H5I_VERSION, H5I_SKIP_CHECKSUM"
         exit 0
