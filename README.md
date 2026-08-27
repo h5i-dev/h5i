@@ -171,6 +171,12 @@ h5i join <ticket>                          # what the recipient runs
 ```
 
 ```bash
+h5i forum create "fix the auth refresh race" --ceiling code-review   # create a message forum for multu-agent team
+h5i forum attach claude-box --as claude-worker   --role worker
+h5i forum status
+```
+
+```bash
 h5i ui # watch the whole fleet in a browser
 ```
 
