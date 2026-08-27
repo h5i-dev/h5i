@@ -27,7 +27,7 @@
       <sub><a href="./crates/h5i-browser-light/DESIGN.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
-      <strong>~5× faster　reads</strong><br>
+      <strong>~5× faster reads</strong><br>
       <sub><a href="./crates/h5i-browser-light/DESIGN.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
