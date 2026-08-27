@@ -54,7 +54,16 @@ import serve  # noqa: E402
 HERE = Path(__file__).resolve().parent
 CRATE = HERE.parent
 REPO = CRATE.parent.parent
-BINARY = REPO / "target" / "release" / "h5i-browser-light"
+# The engine, as the shipping binary reaches it.
+#
+# It used to be `target/release/h5i-browser-light`, and that path is a trap now:
+# the crate became a library when the engine moved inside `h5i __engine`, so
+# nothing rebuilds that file — but a stale copy from the last release that did
+# build it stays on disk, executable, and happily answers every request. The
+# harness went on scoring it for eight days without a word, because "the binary
+# is there" was the only question anyone asked.
+BINARY = REPO / "target" / "release" / "h5i"
+ENGINE_ARGS = ["__engine"]
 
 # Directories that hold machinery rather than tests. Running them produces
 # noise that looks like failure and is not.
@@ -191,7 +200,7 @@ def run_one(args):
     try:
         proc = subprocess.run(
             capped(
-                [str(BINARY), "open", "--script", "--json", "--max-snapshot-lines", "1", url],
+                [str(BINARY), *ENGINE_ARGS, "open", "--script", "--json", "--max-snapshot-lines", "1", url],
                 mem_mb,
             ),
             capture_output=True, timeout=timeout,
@@ -277,7 +286,7 @@ def main():
     opts = parser.parse_args()
 
     if not BINARY.exists():
-        sys.exit(f"no binary at {BINARY}; cargo build --release -p h5i-browser-light")
+        sys.exit(f"no binary at {BINARY}; cargo build --release -p h5i")
 
     root = Path(opts.wpt).expanduser()
     serve.WPT_ROOT = str(root)
