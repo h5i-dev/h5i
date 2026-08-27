@@ -99,11 +99,6 @@ h5i browser markdown                        # the page a reader would read
 h5i browser close
 ```
 
-No session id anywhere. `open` makes one and points the default at it, and
-every verb that follows lands there. The opaque id (`br_7k2xqa`) exists, and it
-is what `--json` and the receipts carry, because a durable reference has to
-survive a rename. It is simply not what you type.
-
 Running several at once is what names are for:
 
 ```bash
