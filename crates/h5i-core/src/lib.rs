@@ -19,6 +19,7 @@ pub mod forum_tender;
 pub mod browser;
 pub mod browser_events;
 pub mod browser_frames;
+pub mod browser_sandbox;
 pub mod browser_session;
 pub mod browser_proxy;
 pub mod cache;

@@ -226,6 +226,56 @@ status line:
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 ```
 
+### The default sandbox
+
+A session on this machine runs in a **process-tier sandbox**: the same Landlock
+filesystem scoping, seccomp filter and rlimits `isolation = process` applies,
+built from a profile rather than resolved from a repository. There is no box, no
+worktree and no manifest; a session is not one of those.
+
+```
+placed   : on this machine, in a process-tier sandbox (its files and its environment; not its network)
+```
+
+The reason a browser gets this by default is that a browser is the thing h5i
+runs that most reliably parses bytes a stranger wrote. A bug in Blitz, Stylo, an
+image decoder or Boa would otherwise be running as whoever started the session.
+
+**What it contains:** the filesystem the engine can reach (its own session
+directory to write, the system to read, nothing under `$HOME`), the environment
+it can read (cleared, then only what was granted), how much it can allocate, and
+the privilege-escalation and kernel surface seccomp denies.
+
+**What it does not contain, and does not claim to:**
+
+- **The network.** A browser needs it, so the engine keeps the host's
+  reachability, loopback included. The policy that decides *which* origins is
+  the engine's own and a compromised engine is past it.
+- **Starting a program.** `execve` is not denied. What makes that survivable is
+  that Landlock's domain is inherited across `execve` and cannot be relaxed: a
+  shell a compromised engine starts reads and writes exactly what the engine
+  could.
+
+**It does not upgrade the request lane.** A sandboxed session is still
+`engine-claimed`, because a process-tier sandbox corroborates no part of the
+log. Containing the network, and earning `host-observed`, needs a boundary
+outside the engine: `--in`, below.
+
+Two consequences worth knowing before they surprise you:
+
+- **Secrets are not inherited.** Unconfined, the engine reads the whole
+  environment, so a compromised one reads every `H5I_SECRET_*` on the machine.
+  Confined it reads none unless named: `h5i browser open <url> --secret ACME_PASS`.
+- **Personal fonts are not visible.** Nothing under `$HOME` is granted, so
+  `~/.fonts` is not read and a page may render with different faces than it
+  would outside. The system font path is granted.
+
+`--no-sandbox` runs the engine unconfined. Some hosts cannot confine at all
+(no Landlock, an AppArmor profile, a CI container, macOS, Windows), and there
+the session runs unconfined **and says which**, on the placement line and in the
+record. A sandbox nobody can see is indistinguishable from one that was never
+applied.
+
 ### `--in <box>`: the same session, inside a box
 
 ```bash

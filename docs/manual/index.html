@@ -153,6 +153,7 @@
 <a class="t3" href="#the-id-is-internal">The id is internal</a>
 <a class="t3" href="#open-navigates-a-session-that-is-already-there">open navigates a session that is already there</a>
 <a class="t3" href="#what-is-true-by-default">What is true by default</a>
+<a class="t3" href="#the-default-sandbox">The default sandbox</a>
 <a class="t3" href="#--in-box-the-same-session-inside-a-box">--in &lt;box&gt;: the same session, inside a box</a>
 <a class="t3" href="#opening-a-session-from-inside-a-box">Opening a session from inside a box</a>
 <a class="t3" href="#reading-and-acting-beyond-snapshot-and-click">Reading and acting, beyond snapshot and click</a>
@@ -457,6 +458,48 @@ whether or not there is a box.</p>
 status line:</p>
 <pre><code>requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 </code></pre>
+<h3 id="the-default-sandbox">The default sandbox</h3>
+<p>A session on this machine runs in a <strong>process-tier sandbox</strong>: the same Landlock
+filesystem scoping, seccomp filter and rlimits <code>isolation = process</code> applies,
+built from a profile rather than resolved from a repository. There is no box, no
+worktree and no manifest; a session is not one of those.</p>
+<pre><code>placed   : on this machine, in a process-tier sandbox (its files and its environment; not its network)
+</code></pre>
+<p>The reason a browser gets this by default is that a browser is the thing h5i
+runs that most reliably parses bytes a stranger wrote. A bug in Blitz, Stylo, an
+image decoder or Boa would otherwise be running as whoever started the session.</p>
+<p><strong>What it contains:</strong> the filesystem the engine can reach (its own session
+directory to write, the system to read, nothing under <code>$HOME</code>), the environment
+it can read (cleared, then only what was granted), how much it can allocate, and
+the privilege-escalation and kernel surface seccomp denies.</p>
+<p><strong>What it does not contain, and does not claim to:</strong></p>
+<ul>
+<li><strong>The network.</strong> A browser needs it, so the engine keeps the host's
+  reachability, loopback included. The policy that decides <em>which</em> origins is
+  the engine's own and a compromised engine is past it.</li>
+<li><strong>Starting a program.</strong> <code>execve</code> is not denied. What makes that survivable is
+  that Landlock's domain is inherited across <code>execve</code> and cannot be relaxed: a
+  shell a compromised engine starts reads and writes exactly what the engine
+  could.</li>
+</ul>
+<p><strong>It does not upgrade the request lane.</strong> A sandboxed session is still
+<code>engine-claimed</code>, because a process-tier sandbox corroborates no part of the
+log. Containing the network, and earning <code>host-observed</code>, needs a boundary
+outside the engine: <code>--in</code>, below.</p>
+<p>Two consequences worth knowing before they surprise you:</p>
+<ul>
+<li><strong>Secrets are not inherited.</strong> Unconfined, the engine reads the whole
+  environment, so a compromised one reads every <code>H5I_SECRET_*</code> on the machine.
+  Confined it reads none unless named: <code>h5i browser open &lt;url&gt; --secret ACME_PASS</code>.</li>
+<li><strong>Personal fonts are not visible.</strong> Nothing under <code>$HOME</code> is granted, so
+  <code>~/.fonts</code> is not read and a page may render with different faces than it
+  would outside. The system font path is granted.</li>
+</ul>
+<p><code>--no-sandbox</code> runs the engine unconfined. Some hosts cannot confine at all
+(no Landlock, an AppArmor profile, a CI container, macOS, Windows), and there
+the session runs unconfined <strong>and says which</strong>, on the placement line and in the
+record. A sandbox nobody can see is indistinguishable from one that was never
+applied.</p>
 <h3 id="--in-box-the-same-session-inside-a-box"><code>--in &lt;box&gt;</code>: the same session, inside a box</h3>
 <pre><code class="language-bash">h5i box --profile browser --engine h5i --name web
 h5i browser open https://example.com --in web

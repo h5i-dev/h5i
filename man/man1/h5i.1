@@ -1370,7 +1370,7 @@ Open a URL, making a session if there is not one already
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
+\fBopen\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-new\fR] [\fB\-\-in\fR] [\fB\-\-allow\fR] [\fB\-\-no\-loopback\fR] [\fB\-\-script\fR] [\fB\-\-no\-sandbox\fR] [\fB\-\-secret\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-expires\-in\fR] [\fB\-\-restore\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1398,6 +1398,16 @@ Refuse loopback too. It is reachable by default: it is the dev server
 .TP
 \fB\-\-script\fR
 Run the page\*(Aqs own JavaScript. Off by default: with script off, page\-borne prompt injection has no delivery channel at all
+.TP
+\fB\-\-no\-sandbox\fR
+Run the engine unconfined.
+
+By default a session on this machine runs in a process\-tier sandbox: it may read the system and its own directory, write only its own directory, execute nothing, and see only the secrets named with `\-\-secret`. That contains what a parser bug could *do*; it does not contain the network, which needs a boundary outside the engine.
+.TP
+\fB\-\-secret\fR \fI<NAME>\fR
+Let this session substitute `$H5I_SECRET_<NAME>`. Repeatable.
+
+Nothing is granted by default. Unconfined, the engine inherits the whole environment and a compromised one reads every secret on the machine; inside the sandbox it reads the ones that were named.
 .TP
 \fB\-\-width\fR \fI<WIDTH>\fR [default: 1280]
 Viewport width

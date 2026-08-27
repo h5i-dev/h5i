@@ -35,6 +35,14 @@ h5i browser snapshot --delta     # only what changed; use this in a loop
 h5i browser close
 ```
 
+The session runs in a **process-tier sandbox** by default: it may write only its
+own directory, reads nothing under `$HOME`, and starts with an empty
+environment. That contains what a parser bug could *do*. It does not contain the
+network, and it does not upgrade the request lane. `h5i browser status` says
+which you have; `--no-sandbox` turns it off.
+
+**Secrets are not inherited into it.** Name them: `--secret ACME_PASS`.
+
 **You do not type a session id.** `open` makes a session and points the default
 at it; everything after lands there. The opaque id in `--json` and in the
 receipts is a durable reference, not an interface. Running several at once is

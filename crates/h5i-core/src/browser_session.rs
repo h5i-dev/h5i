@@ -343,6 +343,14 @@ pub struct Session {
     pub ended_at: Option<String>,
     /// One line on how it ended, for the states that have something to say.
     pub end_reason: Option<String>,
+    /// What is holding the engine process.
+    ///
+    /// A third axis, and genuinely a third question. `placement` says *where*
+    /// the session runs, `enclosing_box` says what h5i was standing in when it
+    /// opened one, and this says what confines the engine there. A host session
+    /// can be confined; a boxed one is confined by its box.
+    #[serde(default)]
+    pub confinement: crate::browser_sandbox::Confinement,
     /// The box **h5i itself was running inside** when this session was opened,
     /// if any.
     ///
@@ -383,15 +391,25 @@ impl Session {
     /// Where this session ran, in one clause, with nothing claimed that cannot
     /// be checked from wherever h5i was standing.
     pub fn where_it_ran(&self) -> String {
+        use crate::browser_sandbox::Confinement;
         match (&self.placement, &self.enclosing_box) {
             (Placement::Box { name }, _) => format!("in box `{name}`"),
             // h5i was in the box too. Name it; claim nothing about it.
             (Placement::Host, Some(id)) => {
                 format!("on this machine, which is box `{id}` — its policy is not readable here")
             }
-            (Placement::Host, None) => {
-                "on this machine, no containment beyond the engine".to_string()
-            }
+            (Placement::Host, None) => match &self.confinement {
+                Confinement::Process => {
+                    // Named precisely, because the two things it does not do are
+                    // the two a reader would otherwise assume it does.
+                    "on this machine, in a process-tier sandbox (its files and its \
+                     environment; not its network)"
+                        .to_string()
+                }
+                Confinement::None { why } => {
+                    format!("on this machine, unconfined — {why}")
+                }
+            },
         }
     }
 
@@ -1309,6 +1327,7 @@ mod tests {
             state: State::Live,
             ended_at: None,
             end_reason: None,
+            confinement: crate::browser_sandbox::Confinement::Process,
             enclosing_box: None,
             control: Control::default(),
             logs: Logs::default(),
@@ -1712,11 +1731,37 @@ mod tests {
         assert_eq!(session.enclosing_box, None);
     }
 
+    /// A host that cannot confine runs the session anyway and says so, with the
+    /// reason. A sandbox nobody can see is indistinguishable from one that was
+    /// never applied.
     #[test]
-    fn a_session_on_a_bare_host_still_says_it_is_uncontained() {
-        let outside = session("br_outside", Placement::Host);
-        assert!(outside.enclosing_box.is_none());
-        assert!(outside.where_it_ran().contains("no containment"));
+    fn an_unconfined_session_says_so_and_why() {
+        let mut outside = session("br_outside", Placement::Host);
+        outside.confinement = crate::browser_sandbox::Confinement::None {
+            why: "this host has no Landlock".into(),
+        };
+        let said = outside.where_it_ran();
+        assert!(said.contains("unconfined"), "{said}");
+        assert!(said.contains("no Landlock"), "{said}");
+    }
+
+    /// And a confined one names the two things it does *not* contain, because
+    /// those are the two a reader would otherwise assume it does.
+    #[test]
+    fn a_confined_session_names_what_it_does_not_contain() {
+        let inside = session("br_inside", Placement::Host);
+        assert_eq!(
+            inside.confinement,
+            crate::browser_sandbox::Confinement::Process
+        );
+        let said = inside.where_it_ran();
+        assert!(said.contains("sandbox"), "{said}");
+        assert!(said.contains("not its network"), "{said}");
+        // The sandbox is not evidence: it corroborates no part of the log.
+        assert_eq!(
+            Session::lane_for(&inside.placement, false),
+            Lane::EngineClaimed
+        );
     }
 
     /// `--in` and "I am already in a box" are different facts, and the record

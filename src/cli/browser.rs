@@ -127,6 +127,24 @@ pub enum BrowserCommands {
         #[arg(long)]
         script: bool,
 
+        /// Run the engine unconfined.
+        ///
+        /// By default a session on this machine runs in a process-tier sandbox:
+        /// it may read the system and its own directory, write only its own
+        /// directory, execute nothing, and see only the secrets named with
+        /// `--secret`. That contains what a parser bug could *do*; it does not
+        /// contain the network, which needs a boundary outside the engine.
+        #[arg(long)]
+        no_sandbox: bool,
+
+        /// Let this session substitute `$H5I_SECRET_<NAME>`. Repeatable.
+        ///
+        /// Nothing is granted by default. Unconfined, the engine inherits the
+        /// whole environment and a compromised one reads every secret on the
+        /// machine; inside the sandbox it reads the ones that were named.
+        #[arg(long = "secret", value_name = "NAME")]
+        secrets: Vec<String>,
+
         /// Viewport width.
         #[arg(long, default_value_t = 1280)]
         width: u32,
@@ -591,6 +609,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             allow,
             no_loopback,
             script,
+            no_sandbox,
+            secrets,
             width,
             height,
             expires_in,
@@ -606,6 +626,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 allow,
                 no_loopback,
                 script,
+                no_sandbox,
+                secrets,
                 width,
                 height,
                 expires_in,
@@ -839,6 +861,8 @@ struct StartOptions {
     allow: Vec<String>,
     no_loopback: bool,
     script: bool,
+    no_sandbox: bool,
+    secrets: Vec<String>,
     width: u32,
     height: u32,
     expires_in: Option<u64>,
@@ -926,6 +950,12 @@ fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
     }
     if opts.restore.is_some() {
         set.push("`--restore`");
+    }
+    if opts.no_sandbox {
+        set.push("`--no-sandbox`");
+    }
+    if !opts.secrets.is_empty() {
+        set.push("`--secret`");
     }
     set
 }
@@ -1016,6 +1046,7 @@ fn start(
         ended_at: None,
         end_reason: None,
         enclosing_box,
+        confinement: spawned.confinement.clone(),
         control: bs::Control {
             channel: spawned.channel,
             file: Some(spawned.control_in_engine_view.clone()),
@@ -1095,6 +1126,9 @@ struct Spawned {
     policy_digest: String,
     /// Where this machine can read the session's logs, when it can.
     logs: bs::Logs,
+    /// What is holding the engine, as it turned out rather than as it was asked
+    /// for: a host without Landlock answers `None` with the reason.
+    confinement: h5i_core::browser_sandbox::Confinement,
     /// Whether something outside the engine actually decides what may leave.
     /// See [`bs::Session::lane_for`] — this is the input to the one claim the
     /// product makes that a reader can check.
@@ -1143,27 +1177,93 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
         argv.push("--script".into());
     }
 
-    let log = std::fs::File::create(dir.join("engine.log"))?;
-    let mut command = Command::new(engine_binary()?);
-    command
-        .args(&argv)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log.try_clone()?))
-        .stderr(Stdio::from(log));
-    detach(&mut command);
+    let log_path = dir.join("engine.log");
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("could not start the browser engine ({e})"))?;
-    let pid = child.id();
+    // The sandbox, unless the caller declined it or the host cannot.
+    //
+    // The engine's own binary has to be readable, because a confined `execve`
+    // needs it and nothing under a development checkout — or under `~/.cargo` —
+    // is granted by the defaults. This is the same wall a box hits when the
+    // engine is somewhere it may read and not run.
+    let engine = engine_binary()?;
+    let reads = vec![engine.clone()];
+    let wants = h5i_core::browser_sandbox::Wants {
+        session_dir: dir,
+        reads: &reads,
+        secrets: &opts.secrets,
+    };
+    let confined = if opts.no_sandbox {
+        None
+    } else {
+        h5i_core::browser_sandbox::resolve_for(&wants)?
+    };
+
+    let (pid, confinement) = match &confined {
+        Some(policy) => {
+            // `spawn_background` is the same call `h5i box service start` makes:
+            // a confined child that outlives the command that started it, with
+            // no pid namespace, so the pid it returns is the engine itself.
+            // argv[0] is the program, and `spawn_background` execs it directly:
+            // `__engine` alone is a subcommand, not a binary.
+            let mut confined_argv = vec![engine.display().to_string()];
+            confined_argv.extend(argv.iter().cloned());
+            let handle = h5i_core::sandbox::spawn_background(
+                policy,
+                dir,
+                &confined_argv,
+                // The environment is cleared and rebuilt from the profile, so
+                // nothing here inherits by accident. The granted secrets are
+                // carried in the profile rather than injected as a pile of
+                // variables, which is what makes `--secret` a policy statement
+                // instead of a shell habit.
+                &[],
+                &log_path,
+                "browser-session",
+            )?;
+            (handle.pid, h5i_core::browser_sandbox::Confinement::Process)
+        }
+        None => {
+            let log = std::fs::File::create(&log_path)?;
+            let mut command = Command::new(engine_binary()?);
+            command
+                .args(&argv)
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(log.try_clone()?))
+                .stderr(Stdio::from(log));
+            detach(&mut command);
+            let child = command
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("could not start the browser engine ({e})"))?;
+            let why = if opts.no_sandbox {
+                "started with --no-sandbox".to_string()
+            } else {
+                h5i_core::browser_sandbox::unavailable_reason(&h5i_core::browser_sandbox::caps())
+            };
+            (child.id(), h5i_core::browser_sandbox::Confinement::None { why })
+        }
+    };
+
+    if let h5i_core::browser_sandbox::Confinement::None { why } = &confinement
+        && !opts.no_sandbox
+    {
+        // Loud, because a sandbox nobody can see is indistinguishable from one
+        // that was never applied. The record says it too; this is for whoever
+        // is watching the terminal.
+        eprintln!(
+            "  {}     no sandbox: {why}. The session still records every request; \
+             what it does not have is containment of what a parser bug could do.",
+            style("note").yellow()
+        );
+    }
 
     Ok(Spawned {
         channel,
-        alive: Box::new(move || match child.try_wait() {
-            Ok(Some(status)) => Some(format!("the browser engine exited ({status})")),
-            Ok(None) => None,
-            Err(e) => Some(format!("lost track of the browser engine: {e}")),
-        }),
+        // `waitpid(WNOHANG)` rather than a signal probe: the confined spawn
+        // hands back a pid and drops the `Child`, so a dead engine is an
+        // unreaped zombie and `kill(pid, 0)` would call it alive — which is the
+        // bug that made a start wait its whole timeout on an engine that exited
+        // immediately.
+        alive: Box::new(move || reap(pid)),
         pid: Some(pid),
         control_in_engine_view: control.clone(),
         control_on_host: Some(control),
@@ -1172,6 +1272,7 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
             actions: Some(dir.join(bs::ACTIONS_FILE)),
             requests: Some(dir.join(bs::RECEIPTS_FILE)),
         },
+        confinement,
         // Nothing outside the engine is deciding anything here. That is what
         // "no containment beyond the engine" means, and the lane says so.
         boundary_enforced: false,
@@ -1419,6 +1520,12 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         control_in_engine_view: control_in_box,
         control_on_host,
         channel: bs::Channel::Socket,
+        // A boxed session is confined by its box, whose tier the record already
+        // carries as `placement`. Saying "process" here would name the wrong
+        // thing.
+        confinement: h5i_core::browser_sandbox::Confinement::None {
+            why: "confined by its box, not by a session sandbox".into(),
+        },
         policy_digest: manifest.policy_digest.clone(),
         // The box's own logs, as this machine sees them. `None` on a tier whose
         // /tmp lives in an image, and an audit then says `unavailable` rather
@@ -1874,19 +1981,13 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
 
 fn print_summary(session: &bs::Session) {
     println!("  url      : {}", session.url);
-    match (&session.placement, &session.enclosing_box) {
-        (bs::Placement::Box { name }, _) => {
-            println!("  placed   : in box {}", style(name).cyan())
-        }
-        (bs::Placement::Host, Some(id)) => println!(
-            "  placed   : {}, which is box {} (its policy is not readable from in here)",
-            style("this machine").dim(),
-            style(id).cyan()
-        ),
-        (bs::Placement::Host, None) => println!(
-            "  placed   : {} (no containment beyond the engine)",
-            style("this machine").dim()
-        ),
+    // One sentence, from the record, so the summary and the audit cannot say
+    // different things about the same session.
+    let placed = session.where_it_ran();
+    match (&session.placement, session.confinement.is_confined()) {
+        (bs::Placement::Box { .. }, _) => println!("  placed   : {}", style(&placed).cyan()),
+        (_, true) => println!("  placed   : {}", style(&placed).green()),
+        (_, false) => println!("  placed   : {}", style(&placed).yellow()),
     }
     // The honest half of the product, printed every time rather than claimed
     // once in a README: what this session's network record actually is.
@@ -2230,6 +2331,31 @@ fn detach(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn detach(_command: &mut Command) {}
+
+/// Has this child exited? `Some(reason)` when it has.
+///
+/// `waitpid(WNOHANG)` rather than `kill(pid, 0)`. The confined spawn hands back
+/// a pid and drops the `Child`, so an engine that died is an unreaped zombie
+/// and a signal probe calls it alive — which is what made a start wait its whole
+/// timeout on an engine that exited immediately.
+#[cfg(unix)]
+fn reap(pid: u32) -> Option<String> {
+    let mut status: libc::c_int = 0;
+    // SAFETY: `pid` is a child of this process and `status` is a live local.
+    match unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG) } {
+        0 => None,
+        -1 => Some("lost track of the browser engine".to_string()),
+        _ => Some(format!(
+            "the browser engine exited (status {})",
+            libc::WEXITSTATUS(status)
+        )),
+    }
+}
+
+#[cfg(not(unix))]
+fn reap(_pid: u32) -> Option<String> {
+    None
+}
 
 #[cfg(unix)]
 fn kill(pid: u32) {
