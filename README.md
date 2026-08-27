@@ -25,6 +25,7 @@ h5i browser open https://example.com
 h5i browser snapshot                    # the page as a model should read it
 h5i browser click @e3
 h5i browser requests                    # what it asked for, and what was refused
+h5i browser audit                       # the whole session: verbs, fetches, handovers, ending
 h5i browser close
 ```
 
