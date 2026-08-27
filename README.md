@@ -62,19 +62,16 @@ h5i browser read https://example.com          # or: one page, no session
 
 ```bash
 curl -fsSL https://h5i.dev/install.sh | sh
-# if you would rather not add a domain to the chain:
-# curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
-
-# build from source
-# cargo install --path .
+# curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh  # if you would rather not add a domain to the chain:
+# cargo install --path .                                                         # build from source
 ```
 
 The agent-facing interface is a skill, and the binary carries it:
 
 ```bash
-h5i skill install                # writes it where your runtime looks
-h5i skill show policy            # or just read a page
-npx skills add h5i-dev/h5i       # if you do not have the binary yet
+npx skills add h5i-dev/h5i         # if you do not have the binary yet
+# h5i skill install                # writes it where your runtime looks
+# h5i skill show policy            # or just read a page
 ```
 
 Two optional runtimes add stronger sandbox tiers: rootless
@@ -89,8 +86,7 @@ with hardware virtualization (`/dev/kvm` on Linux or Apple Silicon on macOS).
 ### 2.1. A browser session
 
 A **session** is the whole agent-facing surface: one page state, one cookie jar,
-one request log, one policy. `open` makes one and every verb that follows acts
-on it; `close` ends it. Nothing else is a concept an agent has to learn.
+one request log, one policy:
 
 ```bash
 h5i browser open https://docs.rs/ --allow docs.rs
@@ -101,11 +97,6 @@ h5i browser extract  '{"titles": ["h2"]}'   # structured, by selector
 h5i browser markdown                        # the page a reader would read
 h5i browser close
 ```
-
-No session id anywhere. `open` makes one and points the default at it, and
-every verb that follows lands there. The opaque id (`br_7k2xqa`) exists, and it
-is what `--json` and the receipts carry, because a durable reference has to
-survive a rename. It is simply not what you type.
 
 Running several at once is what names are for:
 
@@ -124,11 +115,9 @@ h5i browser login              # hand the page to the human at the viewer
 
 `--delta` matters because re-reading three hundred lines after every click is
 the wrong shape for a loop. `login` closes the page to the agent while a person
-types a credential into the live view. The session it establishes stays in the
-jar afterwards, and the agent can see *that* it is logged in without ever
-reading the cookie that says so.
+types a credential into the live view.
 
-#### Read the record
+Read the record:
 
 ```bash
 h5i browser requests           # every request, including the refusals
@@ -174,25 +163,6 @@ h5i box --profile reading --name docs
 h5i browser open https://docs.rs/ --in docs
 ```
 
-`h5i box probe` says which tiers your host can actually run. An unsatisfiable
-one is refused, never quietly downgraded.
-
-#### `--in <box>` changes what the session may claim
-
-Nothing you type changes. What changes is **who saw the network**: the box
-enforces its egress at its own boundary, outside the browser being described, so
-the request lane is upgraded from the engine's own account to an outside
-observation.
-
-```
-requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
-requests : host-observed  (also seen at the box's boundary, outside the engine)
-```
-
-Being inside a box is not by itself enough to earn the second line. A box that
-lets the browser reach the whole network corroborates nothing, and h5i keeps
-calling that session `engine-claimed`.
-
 A boxed session also makes the human takeover real. Every verb is carried in
 from the host, so pausing the agent is a boundary rather than a request.
 
@@ -201,39 +171,6 @@ h5i browser take       # a human takes control; the agent pauses
 h5i browser release    # hands it back; the agent must re-snapshot first
 h5i box view docs      # watch the page, in a loopback-only forward
 ```
-
-#### Reading without a session
-
-For a crawl, a session is not what you want: no cookies to carry, nothing to
-click, nothing to leave running.
-
-```bash
-h5i browser read https://example.com
-h5i browser read url1 url2 url3 --json   # one browser, one jar
-```
-
-```
-confined : process (files and environment; the origin allowlist is the engine's)
-```
-
-**Naming the URL is what grants it.** There is no allowlist flag: the pages you
-asked for are reachable, and nothing else is. A script from a third-party CDN,
-or a redirect off-origin, is refused and appears in the request log as refused.
-
-When you want an allowlist wider or stricter than that, write it in
-`.h5i/env.toml` and read inside the box, where a tier enforces it and a digest
-pins it:
-
-```bash
-h5i browser read https://example.com --in docs
-```
-
-```
-confined : box docs, policy 6bca3b30c268
-```
-
-`--json` returns the page, its request log, and what was holding the engine,
-together.
 
 <p align="center">
   <img src="./docs/_static/sandboxed-browser-ui.png" alt="Watching a sandboxed browser session from the host" width="99%" />
