@@ -154,19 +154,6 @@ h5i box --profile reading --name docs
 h5i browser open https://docs.rs/ --in docs
 ```
 
-A boxed session also makes the human takeover real. Every verb is carried in
-from the host, so pausing the agent is a boundary rather than a request.
-
-```bash
-h5i browser take       # a human takes control; the agent pauses
-h5i browser release    # hands it back; the agent must re-snapshot first
-h5i box view docs      # watch the page, in a loopback-only forward
-```
-
-<p align="center">
-  <img src="./docs/_static/sandboxed-browser-ui.png" alt="Watching a sandboxed browser session from the host" width="99%" />
-</p>
-
 ### 2.3. A box holds more than a browser
 
 The top rung of that ladder is a whole environment. It can hold the code, the
@@ -188,6 +175,14 @@ h5i box share alpha --port 3000            # end-to-end encrypted P2P sharing
 h5i box share alpha --port 3000 --tunnel   # or a browser-ready demo link
 h5i join <ticket>                          # what the recipient runs
 ```
+
+```bash
+h5i ui # watch the whole fleet in a browser
+```
+
+<p align="center">
+  <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
+</p>
 
 ---
 
