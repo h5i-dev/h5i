@@ -91,10 +91,12 @@ one request log, one policy:
 ```bash
 h5i browser open https://docs.rs/ --allow docs.rs
 h5i browser snapshot                        # outline, with @ref handles
+h5i browser snapshot --delta                # only what changed since the last read
 h5i browser click    @e3
 h5i browser type     @e5 "serde"
 h5i browser extract  '{"titles": ["h2"]}'   # structured, by selector
 h5i browser markdown                        # the page a reader would read
+h5i browser login                           # hand the page to the human at the viewer
 h5i browser close
 ```
 
@@ -105,17 +107,6 @@ h5i browser open https://example.com/login --session auth --new
 h5i browser open https://example.com/      --session public --new
 h5i browser snapshot --session auth
 ```
-
-Two verbs the shape of an agent loop makes worth having:
-
-```bash
-h5i browser snapshot --delta   # only what changed since the last read
-h5i browser login              # hand the page to the human at the viewer
-```
-
-`--delta` matters because re-reading three hundred lines after every click is
-the wrong shape for a loop. `login` closes the page to the agent while a person
-types a credential into the live view.
 
 Read the record:
 
