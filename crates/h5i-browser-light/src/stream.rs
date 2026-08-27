@@ -707,7 +707,7 @@ pub fn ask(port: u16, request: &Value) -> Result<Value, H5iError> {
 /// still the current one; a caller that named a selector already has the
 /// durable form. Where no selector can be verified the step is dropped and
 /// counted, because a handle that resolves elsewhere is worse than no handle.
-fn record_step(session: &mut Session, request: &Value) {
+fn record_step(session: &mut Session, request: &Value, answer: &Value) {
     let Some(verb) = request
         .get("verb")
         .and_then(Value::as_str)
@@ -748,6 +748,24 @@ fn record_step(session: &mut Session, request: &Value) {
         }
         crate::verbs::Verb::Scroll => {
             step.by = request.get("by").and_then(Value::as_i64);
+        }
+        crate::verbs::Verb::SetChecked => {
+            step.checked = request.get("checked").and_then(Value::as_bool);
+        }
+        crate::verbs::Verb::Select => {
+            // The value the engine *resolved to*, not the text the caller
+            // typed. An agent reading a snapshot has the visible text, and a
+            // recording should carry what the form submits: the text is a
+            // label a redesign can change, and the value is the thing the
+            // server is keyed on.
+            step.option = answer
+                .get("selected")
+                .and_then(Value::as_str)
+                .or_else(|| request.get("option").and_then(Value::as_str))
+                .map(str::to_string);
+        }
+        crate::verbs::Verb::Press => {
+            step.key = request.get("key").and_then(Value::as_str).map(str::to_string);
         }
         crate::verbs::Verb::Type => {
             // The text **as the caller wrote it**, which for a credential is
@@ -816,7 +834,7 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     let Some(log) = &session.actions else {
         let (reply, changed) = control_verb(session, request);
         if reply.get("ok").and_then(Value::as_bool) == Some(true) {
-            record_step(session, request);
+            record_step(session, request, &reply);
         }
         return (redact_reply(&session.secrets, reply), changed);
     };
@@ -840,7 +858,7 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 
     let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
     if ok {
-        record_step(session, request);
+        record_step(session, request, &answer);
     }
     let url = answer.get("url").and_then(Value::as_str);
     let error = answer.get("error").and_then(Value::as_str);
@@ -1272,6 +1290,142 @@ fn control_verb_inner(
                 ));
             }
             (reply, true)
+        }
+
+        // Set a state rather than toggle one.
+        //
+        // The reason this exists beside `click` is replay: a click on a
+        // checkbox is a toggle, so a recorded session that clicks one reaches a
+        // different state depending on what the page was serving. Setting is
+        // idempotent, which is what a script replayed tomorrow needs.
+        Verb::SetChecked => {
+            let aim = match aim_of(request, Verb::SetChecked) {
+                Ok(aim) => aim,
+                Err(e) => return (e.reply(), false),
+            };
+            let Some(checked) = request.get("checked").and_then(Value::as_bool) else {
+                return (
+                    VerbError::bad_request(
+                        "`set_checked` needs `checked` to be true or false. It sets a state \
+                         rather than toggling one, which is what makes it replayable.",
+                    )
+                    .reply(),
+                    false,
+                );
+            };
+            let shown = aim.shown();
+            let snapshot = session.page.snapshot();
+            let entry = match resolve_aim(session, &snapshot, &aim) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
+            };
+            let role = entry.role.clone();
+            match session.page.set_checked(entry.node_id, checked) {
+                Some(moved) => (
+                    json!({
+                        "ok": true,
+                        "ref": shown,
+                        "checked": checked,
+                        // Whether this call did anything. A page already in the
+                        // wanted state is a success and not a change, and
+                        // saying so keeps a replay from looking like it fired
+                        // events the original run did not.
+                        "changed": moved,
+                    }),
+                    moved,
+                ),
+                None => (
+                    VerbError::wrong_role(&shown, &role, "a checkbox or a radio button").reply(),
+                    false,
+                ),
+            }
+        }
+
+        // Choose an option, by its value or its visible text.
+        Verb::Select => {
+            let aim = match aim_of(request, Verb::Select) {
+                Ok(aim) => aim,
+                Err(e) => return (e.reply(), false),
+            };
+            let Some(option) = request.get("option").and_then(Value::as_str) else {
+                return (
+                    VerbError::bad_request(
+                        "`select` needs an `option`: either the option's value or the text it \
+                         shows.",
+                    )
+                    .reply(),
+                    false,
+                );
+            };
+            let shown = aim.shown();
+            let snapshot = session.page.snapshot();
+            let entry = match resolve_aim(session, &snapshot, &aim) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
+            };
+            let role = entry.role.clone();
+            match session.page.select_option(entry.node_id, option) {
+                crate::engine::SelectOutcome::Chosen(value) => (
+                    // The *value*, which is what the form will submit and what
+                    // a recording should carry — the text is what the agent
+                    // read, and the two differ on most real forms.
+                    json!({"ok": true, "ref": shown, "selected": value}),
+                    true,
+                ),
+                // In-band: the caller named an option this select does not
+                // have, which is theirs to correct from a fresh snapshot.
+                crate::engine::SelectOutcome::NoSuchOption => (
+                    VerbError::no_match(format!(
+                        "this `select` has no option matching `{option}`, by value or by text. \
+                         Take a `snapshot` to see what it offers."
+                    ))
+                    .reply(),
+                    false,
+                ),
+                crate::engine::SelectOutcome::NotASelect => (
+                    VerbError::wrong_role(&shown, &role, "a `select`").reply(),
+                    false,
+                ),
+            }
+        }
+
+        // A key that does something, as opposed to text that goes somewhere.
+        Verb::Press => {
+            let aim = match aim_of(request, Verb::Press) {
+                Ok(aim) => aim,
+                Err(e) => return (e.reply(), false),
+            };
+            let Some(key) = request.get("key").and_then(Value::as_str) else {
+                return (
+                    VerbError::bad_request(
+                        "`press` needs a `key`, like `Enter`, `Escape` or `Tab`. To enter \
+                         text, use `type`.",
+                    )
+                    .reply(),
+                    false,
+                );
+            };
+            let shown = aim.shown();
+            let snapshot = session.page.snapshot();
+            let entry = match resolve_aim(session, &snapshot, &aim) {
+                Ok(entry) => entry,
+                Err(e) => return (e.reply(), false),
+            };
+            if !session.page.press(entry.node_id, key) {
+                return (
+                    VerbError::wrong_role(&shown, &entry.role, "an element on this page").reply(),
+                    false,
+                );
+            }
+            let settled = session
+                .page
+                .settled()
+                .map(|s| s.render())
+                .unwrap_or_default();
+            (
+                json!({"ok": true, "ref": shown, "key": key, "settled": settled}),
+                true,
+            )
         }
 
         Verb::Submit => {
@@ -2173,7 +2327,14 @@ mod tests {
         for verb in Verb::ALL {
             let expected = matches!(
                 verb,
-                Verb::Navigate | Verb::Scroll | Verb::Type | Verb::Submit | Verb::Click
+                Verb::Navigate
+                    | Verb::Scroll
+                    | Verb::Type
+                    | Verb::Submit
+                    | Verb::Click
+                    | Verb::SetChecked
+                    | Verb::Select
+                    | Verb::Press
             );
             assert_eq!(
                 verb.is_recorded(),
@@ -2230,6 +2391,254 @@ mod tests {
             control_verb(&mut session, &json!({"verb": "click", "selector": "#missing"}));
         assert_eq!(reply["code"], "no-match", "{reply:?}");
         assert_eq!(reply["retryable"], true, "{reply:?}");
+    }
+
+    /// The reason `set_checked` exists beside `click`: a click toggles, so
+    /// replaying one reaches a different state depending on what the page was
+    /// serving. Setting is idempotent.
+    #[test]
+    fn setting_a_checkbox_is_idempotent_where_clicking_it_toggles() {
+        let mut session = session_with(
+            "<html><body><input type=checkbox id=a></body></html>",
+        );
+        control_verb(&mut session, &json!({"verb": "snapshot"}));
+
+        let (first, moved) = control_verb(
+            &mut session,
+            &json!({"verb": "set_checked", "ref": "@e1", "checked": true}),
+        );
+        assert_eq!(first["ok"], true, "{first:?}");
+        assert_eq!(first["changed"], true);
+        assert!(moved);
+
+        // Again. A toggle would turn it off; setting a state does not.
+        let (again, moved) = control_verb(
+            &mut session,
+            &json!({"verb": "set_checked", "ref": "@e1", "checked": true}),
+        );
+        assert_eq!(again["ok"], true, "{again:?}");
+        assert_eq!(
+            again["changed"], false,
+            "already there is a success and not a change: {again:?}"
+        );
+        assert!(!moved, "and nothing moved, so no viewer needs a frame");
+    }
+
+    /// A radio group is a group, and nothing else in this engine implements
+    /// the exclusivity: a form submitted with two of a group checked is a
+    /// wrong answer.
+    #[test]
+    fn checking_a_radio_turns_off_the_rest_of_its_group() {
+        let mut session = session_with(
+            "<html><body>\
+               <input type=radio name=ship value=slow id=a checked>\
+               <input type=radio name=ship value=fast id=b>\
+               <input type=radio name=other value=x id=c checked>\
+             </body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "set_checked", "selector": "#b", "checked": true}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let (snap, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        let text = snap["text"].as_str().unwrap();
+        // The engine's own reading of the group: exactly one of `ship` is on,
+        // and the unrelated group is untouched.
+        let dom = session.page.dom();
+        let doc = dom.borrow();
+        let checked: Vec<String> = doc
+            .tree()
+            .iter()
+            .filter_map(|(_, node)| {
+                let el = node.data.downcast_element()?;
+                let on = matches!(
+                    el.special_data,
+                    blitz_dom::node::SpecialElementData::CheckboxInput(true)
+                );
+                on.then_some(())
+                    .and_then(|()| el.attr(blitz_dom::local_name!("id")))
+                    .map(str::to_string)
+            })
+            .collect();
+        assert_eq!(checked, vec!["b", "c"], "{text}");
+    }
+
+    #[test]
+    fn a_set_checked_on_the_wrong_kind_of_thing_says_which_kind_it_wanted() {
+        let mut session = session_with("<html><body><a href=/x id=go>Go</a></body></html>");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "set_checked", "selector": "#go", "checked": true}),
+        );
+        assert_eq!(reply["code"], "wrong-role", "{reply:?}");
+        assert!(
+            reply["error"].as_str().unwrap().contains("checkbox"),
+            "{reply:?}"
+        );
+    }
+
+    /// Value first, then text: an agent reading a snapshot has the text, and a
+    /// recording should carry the value, because that is what the form submits.
+    #[test]
+    fn select_takes_either_the_value_or_the_text_and_reports_the_value() {
+        let page = "<html><body><select id=s>\
+                      <option value=sl>Slow shipping</option>\
+                      <option value=ex>Express shipping</option>\
+                    </select></body></html>";
+
+        let mut by_text = session_with(page);
+        let (reply, _) = control_verb(
+            &mut by_text,
+            &json!({"verb": "select", "selector": "#s", "option": "Express shipping"}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(
+            reply["selected"], "ex",
+            "the reply carries the value, not the text: {reply:?}"
+        );
+
+        let mut by_value = session_with(page);
+        let (reply, _) = control_verb(
+            &mut by_value,
+            &json!({"verb": "select", "selector": "#s", "option": "ex"}),
+        );
+        assert_eq!(reply["selected"], "ex", "{reply:?}");
+
+        // And the snapshot reads back what the control is set to.
+        let (snap, _) = control_verb(&mut by_value, &json!({"verb": "snapshot"}));
+        assert!(
+            snap["text"].as_str().unwrap().contains("Express shipping"),
+            "{snap:?}"
+        );
+    }
+
+    /// An option this select does not have is the caller's to correct from a
+    /// fresh snapshot, so it is in-band and retryable.
+    #[test]
+    fn selecting_an_option_that_is_not_there_says_so_correctably() {
+        let mut session = session_with(
+            "<html><body><select id=s><option value=a>A</option></select></body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "select", "selector": "#s", "option": "Z"}),
+        );
+        assert_eq!(reply["code"], "no-match", "{reply:?}");
+        assert_eq!(reply["retryable"], true, "{reply:?}");
+    }
+
+    /// `press` sends keys a page listens for. `if (e.key === "Enter")` is the
+    /// commonest line in any form's script, and an event answering `undefined`
+    /// there takes the wrong branch silently.
+    #[test]
+    fn press_delivers_the_key_a_page_is_listening_for() {
+        let mut session = scripted_session_with(
+            "<html><body><input id=q><p id=out>none</p><script>\
+               document.getElementById('q').addEventListener('keydown', (e) => {\
+                 document.getElementById('out').textContent = 'got:' + e.key;\
+               });\
+             </script></body></html>",
+        );
+        let (reply, moved) = control_verb(
+            &mut session,
+            &json!({"verb": "press", "selector": "#q", "key": "Enter"}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(moved);
+
+        let (snap, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert!(
+            snap["text"].as_str().unwrap().contains("got:Enter"),
+            "the handler should have seen the key: {snap:?}"
+        );
+    }
+
+    /// A key with a quote in it must not end the literal the event is built
+    /// from and leave the rest as code.
+    #[test]
+    fn a_key_cannot_break_out_of_the_event_it_is_put_into() {
+        let mut session = scripted_session_with(
+            "<html><body><input id=q><p id=out>none</p><script>\
+               document.getElementById('q').addEventListener('keydown', (e) => {\
+                 document.getElementById('out').textContent = 'len:' + e.key.length;\
+               });\
+             </script></body></html>",
+        );
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "press", "selector": "#q", "key": "\"); globalThis.pwned = 1; (\""}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let (snap, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert!(
+            snap["text"].as_str().unwrap().contains("len:"),
+            "the key should have arrived as a string: {snap:?}"
+        );
+    }
+
+    /// All three are state changes, so all three belong in a replay — and
+    /// `set_checked` is the one that makes a replay land where the original
+    /// did.
+    #[test]
+    fn the_new_control_verbs_are_recorded_in_selector_terms() {
+        let mut session = session_with(
+            "<html><body><input type=checkbox id=box>\
+               <select id=s><option value=a>A</option><option value=b>B</option></select>\
+             </body></html>",
+        );
+        recorded_verb(&mut session, &json!({"verb": "snapshot"}));
+        recorded_verb(
+            &mut session,
+            &json!({"verb": "set_checked", "ref": "@e1", "checked": true}),
+        );
+        recorded_verb(
+            &mut session,
+            &json!({"verb": "select", "ref": "@e2", "option": "b"}),
+        );
+
+        let (script, _) = recorded_verb(&mut session, &json!({"verb": "script"}));
+        let steps: Vec<crate::replay::Step> =
+            serde_json::from_value(script["steps"].clone()).unwrap();
+        assert_eq!(steps.len(), 2, "{steps:?}");
+        assert_eq!(steps[0].verb, "set_checked");
+        assert_eq!(steps[0].checked, Some(true));
+        assert!(steps[0].selector.as_deref().unwrap().contains("box"));
+        assert_eq!(steps[1].verb, "select");
+        assert_eq!(steps[1].option.as_deref(), Some("b"));
+
+        // And when the caller names an option by its *text*, the recording
+        // keeps the value: the text is a label a redesign can change, and the
+        // value is what the server is keyed on.
+        let mut by_text = session_with(
+            "<html><body><select id=s><option value=b>Bee</option></select></body></html>",
+        );
+        recorded_verb(&mut by_text, &json!({"verb": "snapshot"}));
+        recorded_verb(
+            &mut by_text,
+            &json!({"verb": "select", "ref": "@e1", "option": "Bee"}),
+        );
+        let (script, _) = recorded_verb(&mut by_text, &json!({"verb": "script"}));
+        let recorded: Vec<crate::replay::Step> =
+            serde_json::from_value(script["steps"].clone()).unwrap();
+        assert_eq!(
+            recorded[0].option.as_deref(),
+            Some("b"),
+            "the recording should hold the value, not the label: {recorded:?}"
+        );
+
+        // And they replay into a session that has served no refs at all.
+        let mut replayed = session_with(
+            "<html><body><input type=checkbox id=box>\
+               <select id=s><option value=a>A</option><option value=b>B</option></select>\
+             </body></html>",
+        );
+        for step in &steps {
+            let (reply, _) = control_verb(&mut replayed, &step.request());
+            assert_eq!(reply["ok"], true, "replaying {:?}: {reply:?}", step.render());
+        }
     }
 
     /// A session whose page runs its own scripts, for the verbs that behave

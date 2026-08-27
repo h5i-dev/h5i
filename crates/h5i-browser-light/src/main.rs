@@ -400,6 +400,82 @@ enum SessionVerb {
         at: SessionArgs,
     },
 
+    /// Set a checkbox or radio to a state, rather than toggling it.
+    ///
+    /// Prefer this to `click` on a checkbox. A click *toggles*, so a recorded
+    /// session that clicks one reaches a different state depending on what the
+    /// page was serving; setting a state is idempotent and replays to the same
+    /// place. Fires `input` and `change` like a real edit, and turns off the
+    /// rest of a radio group.
+    SetChecked {
+        /// `e3` or `@e3` from a `snapshot`, then `true` or `false`.
+        ///
+        /// With `--selector`, pass the state alone.
+        #[arg(value_name = "REF|STATE")]
+        reference: Option<String>,
+        #[arg(value_name = "STATE")]
+        checked: Option<String>,
+        /// A CSS selector instead of a `@ref`.
+        ///
+        /// No `conflicts_with`, unlike `click` and `submit`: with a selector
+        /// the remaining positional carries the *value*, so the two are used
+        /// together rather than instead of each other.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Choose an option in a `<select>`, by its value or the text it shows.
+    ///
+    /// Value first, then text: an agent reading a snapshot has the text, and a
+    /// recorded script should carry the value, because that is what the form
+    /// submits and what survives a re-render.
+    Select {
+        /// `e3` or `@e3` from a `snapshot`, then the option.
+        ///
+        /// With `--selector`, pass the option alone.
+        #[arg(value_name = "REF|OPTION")]
+        reference: Option<String>,
+        #[arg(value_name = "OPTION")]
+        option: Option<String>,
+        /// A CSS selector instead of a `@ref`.
+        ///
+        /// No `conflicts_with`, unlike `click` and `submit`: with a selector
+        /// the remaining positional carries the *value*, so the two are used
+        /// together rather than instead of each other.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Send a key that does something: Enter, Escape, Tab, ArrowDown.
+    ///
+    /// Not typing. `type` enters text; this sends the keys a page *listens*
+    /// for, and merging them would make one verb whose meaning depended on its
+    /// argument. Fires keydown, keypress and keyup, because a page may be
+    /// waiting on any of the three.
+    Press {
+        /// `e3` or `@e3` from a `snapshot`, then the key.
+        ///
+        /// With `--selector`, pass the key alone. Spelled as
+        /// `KeyboardEvent.key` spells it: `Enter`, `Escape`, `Tab`.
+        #[arg(value_name = "REF|KEY")]
+        reference: Option<String>,
+        #[arg(value_name = "KEY")]
+        key: Option<String>,
+        /// A CSS selector instead of a `@ref`.
+        ///
+        /// No `conflicts_with`, unlike `click` and `submit`: with a selector
+        /// the remaining positional carries the *value*, so the two are used
+        /// together rather than instead of each other.
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// What the page publishes about itself: JSON-LD, OpenGraph, `<meta>`.
     ///
     /// The cheapest read there is. An outline is the page's content and costs
@@ -874,6 +950,35 @@ fn at_json(at: &SessionArgs) -> bool {
     at.json
 }
 
+/// Resolve the "`@ref` and a value, or `--selector` and the value" shape.
+///
+/// Both positionals are optional to clap and checked here, because clap refuses
+/// an optional positional before a required one — and with `--selector` the ref
+/// is genuinely absent. The check gives a better message than clap's would
+/// anyway: it can say which of the two forms was half-used, and name the value
+/// the verb was actually after.
+///
+/// One function rather than four copies, because four copies is where the four
+/// error messages drift apart.
+fn two_positionals(
+    verb: &str,
+    what: &str,
+    selector: &Option<String>,
+    first: &Option<String>,
+    second: &Option<String>,
+) -> Result<(Option<String>, String), H5iError> {
+    match (selector.is_some(), first, second) {
+        (true, Some(value), None) => Ok((None, value.clone())),
+        (true, _, Some(_)) => Err(H5iError::Metadata(format!(
+            "with `--selector`, pass only {what}: the selector is the handle."
+        ))),
+        (false, Some(reference), Some(value)) => Ok((Some(reference.clone()), value.clone())),
+        _ => Err(H5iError::Metadata(format!(
+            "`{verb}` needs a `@ref` and {what}, or `--selector <css>` and {what}."
+        ))),
+    }
+}
+
 fn session(verb: SessionVerb) -> Result<(), H5iError> {
     // Every name comes from `Verb`, so the CLI cannot ask for a verb the session
     // does not have. This used to be eight string literals that happened to
@@ -898,24 +1003,8 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             serde_json::json!({"verb": Verb::Scroll.name(), "by": by}),
         ),
         SessionVerb::Type { reference, text, selector, at } => {
-            // Which of the two forms the caller used, and a message naming the
-            // other one when neither is complete.
-            let (reference, text) = match (selector.is_some(), reference, text) {
-                (true, Some(text), None) => (None, text.clone()),
-                (true, _, Some(_)) => {
-                    return Err(H5iError::Metadata(
-                        "with `--selector`, pass only the text: the selector is the handle."
-                            .to_string(),
-                    ))
-                }
-                (false, Some(reference), Some(text)) => (Some(reference.clone()), text.clone()),
-                _ => {
-                    return Err(H5iError::Metadata(
-                        "`type` needs a `@ref` and the text, or `--selector <css>` and the text."
-                            .to_string(),
-                    ))
-                }
-            };
+            let (reference, text) =
+                two_positionals("type", "the text", selector, reference, text)?;
             (
                 at,
                 serde_json::json!({
@@ -978,6 +1067,60 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             }),
         ),
         SessionVerb::Env { at } => (at, serde_json::json!({"verb": Verb::Env.name()})),
+        SessionVerb::SetChecked { reference, checked, selector, at } => {
+            let (reference, state) =
+                two_positionals("set-checked", "`true` or `false`", selector, reference, checked)?;
+            // Parsed here rather than by clap, because the positional had to be
+            // a string for the reasons `two_positionals` explains — and a
+            // typo'd state should say what it should have been rather than
+            // silently meaning `false`.
+            let checked = match state.trim().to_ascii_lowercase().as_str() {
+                "true" | "yes" | "on" | "1" => true,
+                "false" | "no" | "off" | "0" => false,
+                other => {
+                    return Err(H5iError::Metadata(format!(
+                        "`{other}` is not a state. `set-checked` takes `true` or `false`: it \
+                         sets a state rather than toggling one, which is what makes it \
+                         replayable."
+                    )))
+                }
+            };
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::SetChecked.name(),
+                    "ref": reference,
+                    "selector": selector,
+                    "checked": checked,
+                }),
+            )
+        }
+        SessionVerb::Select { reference, option, selector, at } => {
+            let (reference, option) =
+                two_positionals("select", "the option", selector, reference, option)?;
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Select.name(),
+                    "ref": reference,
+                    "selector": selector,
+                    "option": option,
+                }),
+            )
+        }
+        SessionVerb::Press { reference, key, selector, at } => {
+            let (reference, key) =
+                two_positionals("press", "the key", selector, reference, key)?;
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Press.name(),
+                    "ref": reference,
+                    "selector": selector,
+                    "key": key,
+                }),
+            )
+        }
         SessionVerb::Structured { url, at } => (
             at,
             serde_json::json!({"verb": Verb::Structured.name(), "url": url}),
@@ -1826,6 +1969,12 @@ mod tests {
             vec!["h5i-browser-light", "session", "script", "--save", "/tmp/s.json"],
             vec!["h5i-browser-light", "replay", "/tmp/s.json"],
             vec!["h5i-browser-light", "open", "a.html", "b.html"],
+            vec!["h5i-browser-light", "session", "set-checked", "@e1", "true"],
+            vec!["h5i-browser-light", "session", "set-checked", "--selector", "#opt", "false"],
+            vec!["h5i-browser-light", "session", "select", "@e2", "Express"],
+            vec!["h5i-browser-light", "session", "select", "--selector", "#ship", "Express"],
+            vec!["h5i-browser-light", "session", "press", "@e3", "Enter"],
+            vec!["h5i-browser-light", "session", "press", "--selector", "#q", "Escape"],
         ] {
             Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?} should parse: {e}"));
         }

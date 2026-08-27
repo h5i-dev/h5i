@@ -1062,6 +1062,30 @@ impl Script {
         self.eval(&source)
     }
 
+    /// Dispatch a key event carrying the key that was pressed.
+    ///
+    /// Separate from [`Self::dispatch`] because a `KeyboardEvent` with no
+    /// `key` is the shape a handler most often branches on: `if (e.key ===
+    /// "Enter")` is the commonest line in any form's script, and an event that
+    /// answers `undefined` there takes the wrong branch silently.
+    pub fn dispatch_key(
+        &mut self,
+        node_id: usize,
+        event_type: &str,
+        key: &str,
+    ) -> Result<(), String> {
+        // Through `serde_json` rather than by hand: the key is a string from
+        // the agent, and a quote in it would otherwise end the literal and
+        // leave the rest as code.
+        let key = serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string());
+        let source = format!(
+            "(() => {{ const target = __h5iWrapById({node_id}); \
+             if (target) target.dispatchEvent(new KeyboardEvent({event_type:?}, \
+               {{ bubbles: true, cancelable: true, key: {key}, code: {key} }})); }})()"
+        );
+        self.eval(&source)
+    }
+
     /// Did script change the tree since this was last asked?
     pub fn take_dirty(&self) -> bool {
         self.host.take_dirty()

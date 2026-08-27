@@ -77,6 +77,18 @@ pub struct Step {
     /// How far to scroll.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<i64>,
+    /// The state a checkbox or radio was set to.
+    ///
+    /// A *state*, not a toggle, which is the whole reason `set_checked` exists
+    /// beside `click`: replaying a toggle twice returns to where it started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
+    /// The option a `<select>` was set to, by value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option: Option<String>,
+    /// The key that was pressed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     /// What the element was called when this was recorded.
     ///
     /// Never used to resolve anything — the selector does that. It is here so a
@@ -103,6 +115,15 @@ impl Step {
         if let Some(by) = self.by {
             object.insert("by".into(), serde_json::json!(by));
         }
+        if let Some(checked) = self.checked {
+            object.insert("checked".into(), serde_json::json!(checked));
+        }
+        if let Some(option) = &self.option {
+            object.insert("option".into(), serde_json::json!(option));
+        }
+        if let Some(key) = &self.key {
+            object.insert("key".into(), serde_json::json!(key));
+        }
         serde_json::Value::Object(object)
     }
 
@@ -117,8 +138,16 @@ impl Step {
             Some(name) if !name.is_empty() => format!("  # {name}"),
             _ => String::new(),
         };
-        match self.text.as_deref() {
-            Some(text) => format!("{} {target} {text}{named}", self.verb),
+        // Whatever this step carries, after the handle. Only one is ever set,
+        // because a step is one verb.
+        let argument = self
+            .text
+            .clone()
+            .or_else(|| self.option.clone())
+            .or_else(|| self.key.clone())
+            .or_else(|| self.checked.map(|c| c.to_string()));
+        match argument {
+            Some(argument) => format!("{} {target} {argument}{named}", self.verb),
             None => format!("{} {target}{named}", self.verb).trim_end().to_string(),
         }
     }

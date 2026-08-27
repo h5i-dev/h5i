@@ -67,6 +67,12 @@ pub enum Verb {
     Script,
     /// What the page publishes about itself: JSON-LD, OpenGraph, meta.
     Structured,
+    /// Set a checkbox or radio to a state, rather than toggling it.
+    SetChecked,
+    /// Choose an option in a `<select>`.
+    Select,
+    /// Send a key that does something: Enter, Escape, Tab.
+    Press,
 }
 
 impl Verb {
@@ -88,6 +94,9 @@ impl Verb {
         Verb::Env,
         Verb::Script,
         Verb::Structured,
+        Verb::SetChecked,
+        Verb::Select,
+        Verb::Press,
     ];
 
     /// The name on the wire.
@@ -109,6 +118,9 @@ impl Verb {
             Verb::Env => "env",
             Verb::Script => "script",
             Verb::Structured => "structured",
+            Verb::SetChecked => "set_checked",
+            Verb::Select => "select",
+            Verb::Press => "press",
         }
     }
 
@@ -150,7 +162,10 @@ impl Verb {
             // the same reason: it is still a reading of what the human at the
             // viewer is doing.
             | Verb::Script
-            | Verb::Structured => false,
+            | Verb::Structured
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press => false,
         }
     }
 
@@ -163,7 +178,12 @@ impl Verb {
     /// gets the check by existing rather than by remembering.
     pub fn needs_ref(self) -> bool {
         match self {
-            Verb::Type | Verb::Submit | Verb::Click => true,
+            Verb::Type
+            | Verb::Submit
+            | Verb::Click
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press => true,
 
             Verb::Status
             | Verb::Snapshot
@@ -207,7 +227,10 @@ impl Verb {
             | Verb::Markdown
             | Verb::Env
             | Verb::Script
-            | Verb::Structured => false,
+            | Verb::Structured
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press => false,
         }
     }
 
@@ -240,7 +263,12 @@ impl Verb {
             // Named `script` for what it produces, not for the JS realm; it
             // needs no realm to report what the session did.
             | Verb::Script
-            | Verb::Structured => false,
+            | Verb::Structured
+            // These act on the DOM, which exists either way. A page with no
+            // script simply has nothing listening for the events they fire.
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press => false,
         }
     }
 
@@ -257,7 +285,18 @@ impl Verb {
     /// be true, which is why theirs record waits and this does not.
     pub fn is_recorded(self) -> bool {
         match self {
-            Verb::Navigate | Verb::Scroll | Verb::Type | Verb::Submit | Verb::Click => true,
+            Verb::Navigate
+            | Verb::Scroll
+            | Verb::Type
+            | Verb::Submit
+            | Verb::Click
+            // `set_checked` especially: it is the *reason* it exists beside
+            // `click`. A click on a checkbox is a toggle and replays to a
+            // different state; setting one is idempotent and replays to the
+            // same one.
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press => true,
 
             Verb::Status
             | Verb::Snapshot
@@ -299,6 +338,9 @@ impl Verb {
             | Verb::Type
             | Verb::Submit
             | Verb::Click
+            | Verb::SetChecked
+            | Verb::Select
+            | Verb::Press
             // Reads the session rather than the page, so there would be
             // nothing for a navigation to change.
             | Verb::Status
@@ -572,7 +614,10 @@ mod tests {
             .filter(|v| v.needs_ref())
             .map(|v| v.name())
             .collect();
-        assert_eq!(refs, vec!["type", "submit", "click"]);
+        assert_eq!(
+            refs,
+            vec!["type", "submit", "click", "set_checked", "select", "press"]
+        );
     }
 
     #[test]

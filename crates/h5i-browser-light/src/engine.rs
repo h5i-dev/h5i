@@ -70,6 +70,19 @@ impl Default for PageOptions {
     }
 }
 
+/// What [`Page::select_option`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectOutcome {
+    /// Set. Carries the value the form will submit, which is what a recording
+    /// should hold — the text is what the agent read, and the two differ on
+    /// most real forms.
+    Chosen(String),
+    /// It is a `<select>`, and nothing in it matched by value or by text.
+    NoSuchOption,
+    /// It was never a `<select>`.
+    NotASelect,
+}
+
 /// A request a form asked for, caught on its way to the network.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Submission {
@@ -1028,6 +1041,26 @@ impl Page {
         painted
     }
 
+    /// Fire one key event at a node, if this page has a realm to fire it into.
+    ///
+    /// Silent when there is none, which is the same shape `dispatch_event`
+    /// takes: a page with no script cannot be listening, so there is nothing
+    /// the absence could be hiding.
+    fn dispatch_key(&mut self, node_id: usize, kind: &str, key: &str) {
+        let Some(script) = self.script.as_mut() else {
+            return;
+        };
+        let _ = script.dispatch_key(node_id, kind, key);
+        let settled = script.settle();
+        let dirty = script.take_dirty();
+        let _ = script.take_requests();
+        self.settled = Some(settled);
+        let painted = self.composite_canvases();
+        if dirty || painted {
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        }
+    }
+
     /// How many sockets this page holds open.
     ///
     /// Surfaced because it is the one thing in this engine that makes a session
@@ -1258,6 +1291,206 @@ impl Page {
     /// Returns `false` when the node is not something that takes text, so the
     /// caller can say which of "no such ref" and "that is a link, not a field"
     /// happened.
+    /// Set a checkbox or radio to a state, rather than toggling it.
+    ///
+    /// **The reason this exists beside `click` is replay.** A click on a
+    /// checkbox is a *toggle*: run it twice and you are back where you started,
+    /// so a recorded session that clicks one reaches a different state
+    /// depending on what the page happened to be serving. Setting a state is
+    /// idempotent, which is what a script replayed tomorrow needs.
+    ///
+    /// Returns `None` when the node is not something this can act on, so the
+    /// caller can say *which* wrong kind of thing it was rather than reporting
+    /// a generic failure.
+    pub fn set_checked(&mut self, node_id: usize, checked: bool) -> Option<bool> {
+        let was = {
+            let doc = self.doc.borrow();
+            let element = doc.get_node(node_id)?.element_data()?;
+            if element.name.local != local_name!("input") {
+                return None;
+            }
+            let kind = element.attr(local_name!("type")).unwrap_or("text");
+            if !(kind.eq_ignore_ascii_case("checkbox") || kind.eq_ignore_ascii_case("radio")) {
+                return None;
+            }
+            matches!(element.special_data, SpecialElementData::CheckboxInput(true))
+        };
+
+        if was == checked {
+            // Already there. Reported as a no-op rather than dispatched, or a
+            // replay would fire a `change` the original run never fired.
+            return Some(false);
+        }
+
+        {
+            let mut doc = self.doc.borrow_mut();
+            // A radio turns its group off, which is what makes the group a
+            // group. Done here rather than left to the page, because nothing
+            // else in this engine implements the exclusivity and a form
+            // submitted with two of a group checked is a wrong answer.
+            if checked {
+                let name = doc
+                    .get_node(node_id)
+                    .and_then(|node| node.element_data())
+                    .filter(|el| {
+                        el.attr(local_name!("type"))
+                            .is_some_and(|k| k.eq_ignore_ascii_case("radio"))
+                    })
+                    .and_then(|el| el.attr(local_name!("name")))
+                    .map(str::to_string);
+                if let Some(name) = name {
+                    let siblings: Vec<usize> = doc
+                        .tree()
+                        .iter()
+                        .filter_map(|(id, node)| {
+                            if id == node_id {
+                                return None;
+                            }
+                            let el = node.data.downcast_element()?;
+                            let is_radio = el
+                                .attr(local_name!("type"))
+                                .is_some_and(|k| k.eq_ignore_ascii_case("radio"));
+                            let same_group =
+                                el.attr(local_name!("name")).is_some_and(|n| n == name);
+                            (is_radio && same_group).then_some(id)
+                        })
+                        .collect();
+                    for id in siblings {
+                        if let Some(el) = doc
+                            .get_node_mut(id)
+                            .and_then(|node| node.data.downcast_element_mut())
+                        {
+                            el.special_data = SpecialElementData::CheckboxInput(false);
+                        }
+                    }
+                }
+            }
+
+            let element = doc
+                .get_node_mut(node_id)
+                .and_then(|node| node.data.downcast_element_mut())?;
+            element.special_data = SpecialElementData::CheckboxInput(checked);
+            // `:checked` is a real selector and the cascade has to see it.
+            let _ = guard_layout(|| doc.resolve(0.0));
+        }
+
+        // The pair a *user* edit fires, in the order a page expects. A page
+        // that enables its submit button on `change` needs this or the button
+        // stays disabled through a replay that looks like it worked.
+        self.dispatch_event(node_id, "input");
+        self.dispatch_event(node_id, "change");
+        Some(true)
+    }
+
+    /// Choose an option in a `<select>`, by its value or its visible text.
+    ///
+    /// Both, because an agent reading a snapshot sees the *text* and a
+    /// recorded script should carry the *value*: the first is what a model has
+    /// in hand and the second is what survives a re-render. Value is tried
+    /// first, so a page whose option text happens to match another option's
+    /// value behaves predictably.
+    ///
+    /// The three outcomes are kept apart because they are three different
+    /// mistakes: it worked, it is a `<select>` and nothing in it matched
+    /// (the caller's to fix from a fresh reading), or it was never a `<select>`
+    /// (the caller aimed at the wrong element). One message for all three would
+    /// send two of them looking in the wrong place.
+    pub fn select_option(&mut self, node_id: usize, wanted: &str) -> SelectOutcome {
+        let options: Vec<(usize, String, String)> = {
+            let doc = self.doc.borrow();
+            let element = doc.get_node(node_id).and_then(|node| node.element_data());
+            let Some(element) = element else {
+                return SelectOutcome::NotASelect;
+            };
+            if element.name.local != local_name!("select") {
+                return SelectOutcome::NotASelect;
+            }
+            let mut found = Vec::new();
+            let mut stack: Vec<usize> = doc.get_node(node_id).map(|n| n.children.clone()).unwrap_or_default();
+            stack.reverse();
+            while let Some(id) = stack.pop() {
+                let Some(child) = doc.get_node(id) else { continue };
+                if child.data.is_element_with_tag_name(&local_name!("option")) {
+                    let text = crate::snapshot::collapse(&child.text_content());
+                    let value = child
+                        .element_data()
+                        .and_then(|el| el.attr(local_name!("value")))
+                        .map(str::to_string)
+                        // An option with no `value` submits its text, which is
+                        // the rule a form actually follows.
+                        .unwrap_or_else(|| text.clone());
+                    found.push((id, value, text));
+                }
+                let mut kids = child.children.clone();
+                kids.reverse();
+                stack.extend(kids);
+            }
+            found
+        };
+
+        let chosen = options
+            .iter()
+            .find(|(_, value, _)| value == wanted)
+            .or_else(|| options.iter().find(|(_, _, text)| text == wanted))
+            .cloned();
+        let Some((chosen_id, value, _)) = chosen else {
+            return SelectOutcome::NoSuchOption;
+        };
+
+        {
+            let mut doc = self.doc.borrow_mut();
+            // Exactly one selected, which is what a single `<select>` means
+            // and what `snapshot` reads back to name the control.
+            for (id, _, _) in &options {
+                if let Some(el) = doc
+                    .get_node_mut(*id)
+                    .and_then(|node| node.data.downcast_element_mut())
+                {
+                    if *id == chosen_id {
+                        el.attrs.push(blitz_dom::node::Attribute {
+                            name: blitz_dom::QualName::new(
+                                None,
+                                blitz_dom::ns!(),
+                                local_name!("selected"),
+                            ),
+                            value: "selected".into(),
+                        });
+                    } else {
+                        el.attrs.retain(|a| a.name.local != local_name!("selected"));
+                    }
+                }
+            }
+            let _ = guard_layout(|| doc.resolve(0.0));
+        }
+
+        self.dispatch_event(node_id, "input");
+        self.dispatch_event(node_id, "change");
+        SelectOutcome::Chosen(value)
+    }
+
+    /// Send a key to whatever has focus, or to a named element.
+    ///
+    /// Not typing: this is `Enter` to submit, `Escape` to dismiss, `Tab` to
+    /// move on — the keys that *do* something rather than the ones that enter
+    /// text. `type` covers the second and this covers the first, and merging
+    /// them would mean a verb whose meaning depended on its argument.
+    pub fn press(&mut self, node_id: usize, key: &str) -> bool {
+        {
+            let mut doc = self.doc.borrow_mut();
+            if doc.get_node(node_id).is_none() {
+                return false;
+            }
+            doc.set_focus_to(node_id);
+        }
+        // A real key is three events, and a page may be listening for any of
+        // them: `keydown` is where `preventDefault` belongs, `keypress` is
+        // where legacy code lives, `keyup` is where a debounce ends.
+        for kind in ["keydown", "keypress", "keyup"] {
+            self.dispatch_key(node_id, kind, key);
+        }
+        true
+    }
+
     pub fn type_into(&mut self, node_id: usize, text: &str) -> bool {
         let mut doc = self.doc.borrow_mut();
         let takes_text = doc

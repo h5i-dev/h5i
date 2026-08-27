@@ -6820,6 +6820,51 @@ between jobs and `LOOP_ITERATION_LIMIT` guards a loop; a job that is neither is
 still beyond reach, and saying so is better than implying the deadline covers
 it.
 
+### B17.6 Three control verbs, and why `set_checked` is first
+
+`press`, `select` and `set_checked` are the gaps both reference engines have
+filled and this one had not: with none of them an agent meets a checkout form,
+cannot choose a shipping option, and either falls back to evaluating script or
+abandons the task.
+
+**`set_checked` is the one that matters most, and it is not the obvious one.**
+Clicking a checkbox is what an agent would reach for, and a click is a
+*toggle*: it ends up on or off depending on what the page was serving, so the
+same recorded step reaches a different state on a later run. Setting a state is
+idempotent, and that is the difference between a replay that lands where the
+original did and one that lands somewhere by coincidence. It is the clearest
+case so far of §B15.10's rule reaching back into the verb design: the recording
+format decided which verb was worth having.
+
+Three details are the engine's rather than the spec's:
+
+* **A radio turns off the rest of its group.** Nothing else here implements the
+  exclusivity, and a form submitted with two of a group checked is a wrong
+  answer that a page would never have produced.
+* **Already-in-that-state is a success and not a change.** The reply says
+  `changed: false` and no events fire, or a replay would dispatch a `change`
+  the original run never dispatched and a page that re-renders on it would
+  diverge.
+* **`select` reports and records the *value*, not the text.** The agent read
+  the label; the form submits the value. Recording the label would make a
+  script that breaks on a redesign that changed nothing but wording.
+
+`press` is deliberately not `type`. One verb whose meaning depended on whether
+its argument happened to name a key would be a verb nobody could read, and the
+keys that *do* something — Enter, Escape, Tab — are a different act from
+entering text. It fires keydown, keypress and keyup, because a page may be
+listening on any of the three, and the key is JSON-encoded into the event
+because a quote in it would otherwise close the literal and leave the rest as
+code.
+
+**The clap invariant test earned its place immediately.** All three verbs take
+"a ref and a value, or `--selector` and the value", which is the shape that
+broke `session type` in the previous commit — an optional positional before a
+required one, which clap refuses at parser-construction time. The test added
+after that bug caught all three before they shipped, and the resolution now
+lives in one `two_positionals` helper rather than four copies whose error
+messages would drift apart.
+
 ---
 
 # Formal verification: a Lean model beside the Rust

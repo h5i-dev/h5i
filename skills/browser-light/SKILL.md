@@ -119,6 +119,28 @@ The fix is always the same: take a fresh `snapshot` and use its refs. Typing and
 scrolling do not renumber anything, so a form can be filled and submitted
 without re-reading between steps.
 
+## Driving a control
+
+```bash
+h5i-browser-light session set-checked @e4 true
+h5i-browser-light session select @e5 'Express shipping'
+h5i-browser-light session press @e1 Enter
+```
+
+**Prefer `session set-checked` to clicking a checkbox.** A click *toggles*, so
+whether it ends up on or off depends on what the page was serving; setting a
+state is idempotent, and it is the difference between a recorded session that
+replays to the same place and one that does not. It turns off the rest of a
+radio group, and it reports `changed: false` when the box was already there.
+
+**`session select`** takes either the option's value or the text it shows, in
+that order. The reply carries the *value*, because that is what the form
+submits and what survives a re-render — the text is what you read.
+
+**`session press`** is for keys that *do* something: Enter, Escape, Tab,
+ArrowDown. To enter text use `type`; merging the two would make one verb whose
+meaning depended on its argument.
+
 ## Two handles, and when to use which
 
 **A `@ref` is for reading. A selector is for acting more than once.**
