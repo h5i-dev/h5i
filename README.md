@@ -13,12 +13,11 @@
 
 <h1 align="center">A Secure, Auditable Browser for AI Agents</h1>
 
-**h5i** (pronounced *high-five*) gives an AI agent a browser it can drive and
-you can audit. Every request the page makes is checked against the session's
-policy and written down **before** the bytes move, and the fetch is refused when
-the record cannot be written. A request that is not in the log did not happen.
+**h5i** (pronounced *high-five*) is a pure-Rust browser built for AI agents. It runs without Chromium or V8 and exposes each page as a structured snapshot an agent can read and act on. In our benchmarks, it used about 80% less peak memory than headless Chromium.
 
-**Auditable by default. Containable on demand.**
+Every session enforces an explicit network policy and records allowed and denied browser requests in a reviewable receipt. Run the browser directly, isolate it inside a configurable sandbox, or place the agent, workspace, dependencies, dev server, and browser inside one disposable environment.
+
+**Pure Rust. No Chromium. No V8. About 80% less peak memory. Securely sandboxed and auditable**
 
 ```bash
 h5i browser open https://example.com
