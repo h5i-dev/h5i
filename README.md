@@ -31,8 +31,8 @@
       <sub>Allowed and denied requests</sub>
     </td>
     <td align="center">
-      <strong>Configurable sandboxing</strong><br>
-      <sub>Browser-only or full workflow</sub>
+      <strong>Sandboxed by default</strong><br>
+      <sub>One flag up to a box, one flag off</sub>
     </td>
   </tr>
 </table>
@@ -135,9 +135,57 @@ h5i browser status             # placement, policy digest, who saw the network
 h5i browser list               # every session on this machine, and which is default
 ```
 
-### 2.2. Put the session in a sandbox
+### 2.2. Sandboxing, as a ladder
 
-Optional, and it changes nothing you type.
+A session is **already sandboxed**. There is nothing to turn on, and the rungs
+above and below it are one flag each.
+
+| | what holds the engine | the request lane |
+| --- | --- | --- |
+| `--no-sandbox` | nothing | `engine-claimed` |
+| **default** | a process-tier sandbox: its files and its environment | `engine-claimed` |
+| `--in <box>` | a box whose tier enforces egress at its own boundary | `host-observed` |
+
+#### The default
+
+```bash
+h5i browser open https://example.com
+```
+
+```
+placed   : on this machine, in a process-tier sandbox (its files and its environment; not its network)
+```
+
+The same Landlock filesystem scoping, seccomp filter and rlimits that
+`isolation = process` applies, built from a profile rather than a repository.
+No box, no worktree, no manifest: putting a git operation in front of "read this
+page" would be the wrong product.
+
+It contains what a compromised engine could **do**. It may write only its own
+session directory, reads nothing under `$HOME` except the font directories, and
+starts with an empty environment, so secrets are named rather than inherited:
+
+```bash
+h5i browser open https://example.com --secret ACME_PASS
+```
+
+It does not contain what a compromised engine could **reach**. A browser needs
+the network, so the host's reachability stays, loopback included; the policy
+deciding *which* origins is the engine's own, and a compromised engine is past
+it. It also does not forbid starting a program, and does not pretend to: what
+makes that survivable is that Landlock's domain is inherited across `execve`,
+so a shell the engine starts reads and writes exactly what the engine could.
+
+**It does not upgrade the request lane.** A process-tier sandbox corroborates no
+part of the log, so the session is still `engine-claimed`. Reading a sandbox as
+evidence is the one mistake this product refuses.
+
+Some hosts cannot confine at all: no Landlock, an AppArmor profile, a CI
+container, macOS, Windows. There the session runs unconfined and **says which**,
+on that line and in the record. A sandbox nobody can see is indistinguishable
+from one that was never applied.
+
+#### `--in <box>`: the rung that changes the claim
 
 ```bash
 h5i box --profile browser --engine h5i --name web
@@ -145,9 +193,9 @@ h5i browser open https://example.com --in web
 h5i browser snapshot                            # identical verb, identical answer
 ```
 
-What changes is **who saw the network**. The box enforces its egress allowlist
-at its own boundary, outside the browser being described, so the session's
-request lane is upgraded from the engine's own account to an outside
+Nothing you type changes. What changes is **who saw the network**. The box
+enforces its egress allowlist at its own boundary, outside the browser being
+described, so the lane is upgraded from the engine's own account to an outside
 observation:
 
 ```
@@ -172,11 +220,11 @@ h5i box view web       # watch the page, in a loopback-only forward
   <img src="./docs/_static/sandboxed-browser-ui.png" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
 
-### 2.3. Give an agent a whole sandbox
+### 2.3. A box holds more than a browser
 
-A box holds more than a browser. It can hold the code, the toolchain, the dev
-server and the agent itself, which is what you want when the agent is building
-the app it is about to browse.
+The top rung of that ladder is a whole environment. It can hold the code, the
+toolchain, the dev server and the agent itself, which is what you want when the
+agent is building the app it is about to browse.
 
 ```bash
 h5i box create alpha --profile agent-claude   # a sandboxed git worktree
@@ -196,10 +244,15 @@ h5i join <ticket>                          # what the recipient runs
 
 ---
 
-## 4. What confinement means here
+## 3. What confinement means here
 
 `h5i box probe` reports the tiers your host can run. h5i never silently
 downgrades: an unsatisfiable request fails closed.
+
+A browser session uses `process` by default, without a box. The rows below it
+are what `--in <box>` reaches for, and the difference that matters to a session
+is the one thing `process` cannot do: enforce which addresses may be reached, at
+a boundary outside the engine.
 
 | Tier | What enforces it |
 | --- | --- |
@@ -219,7 +272,7 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 5. Documentation
+## 4. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
@@ -228,7 +281,7 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 6. FAQ
+## 5. FAQ
 
 <details>
 <summary>Why not Playwright or Puppeteer?</summary>
@@ -255,10 +308,16 @@ exists in `--json` and in the receipts, where a durable reference belongs. Use
 <details>
 <summary>Is a default session sandboxed?</summary>
 
-No, and h5i does not claim it is. `h5i browser open` runs here, in your
-ordinary process space. What you get by default is a complete record; what you
-get with `--in <box>` is a boundary as well. `h5i browser status` prints which
-one this session has.
+Yes. `h5i browser open` runs the engine in a process-tier sandbox: Landlock
+filesystem scoping, a seccomp filter and rlimits, with no box and no repository
+involved. It contains what a compromised engine could *do* — its files, its
+environment, its allocations.
+
+It does not contain the network, because a browser needs one, and it does not
+upgrade the request lane: a process-tier sandbox corroborates no part of the
+log. `--in <box>` is the rung that does both. `--no-sandbox` turns it off, and
+a host that cannot confine runs the session unconfined and says so.
+`h5i browser status` prints which you have.
 
 </details>
 
@@ -343,13 +402,13 @@ No. Model egress is a separate policy decision.
 
 ---
 
-## 7. License
+## 6. License
 
 Apache-2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 8. Contributors
+## 7. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
