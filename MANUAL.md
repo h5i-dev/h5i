@@ -343,7 +343,25 @@ Two consequences worth knowing before they surprise you:
 
 - **Secrets are not inherited.** Unconfined, the engine reads the whole
   environment, so a compromised one reads every `H5I_SECRET_*` on the machine.
-  Confined it reads none unless named: `h5i browser open <url> --secret ACME_PASS`.
+  Confined it reads none unless named:
+
+        H5I_SECRET_ACME_PASS=... h5i browser open https://acme.test --secret ACME_PASS
+        h5i browser type @e2 '$H5I_SECRET_ACME_PASS'
+
+    `--secret ACME_PASS` and `--secret H5I_SECRET_ACME_PASS` name the same
+    credential. The value is resolved from the environment the command is
+    started in, once, and delivered to that session alone. It lands in the
+    session's broker process, not in the renderer that parses the page.
+
+    Fail-closed: a credential that cannot be resolved refuses the session,
+    rather than starting one that will decline the first `type` that needs it.
+    The same in both shapes, because a host that cannot confine still has to
+    answer `--secret` the same way.
+
+    Not for `--in`. A session placed in a box gets its credentials from that
+    box's policy, declared in `.h5i/env.toml` under the profile it was created
+    with. `--secret` with `--in` is refused rather than ignored.
+
 - **Personal fonts are visible, and nothing else under `$HOME` is.** `~/.fonts`
   and `~/.local/share/fonts` are granted read-only, because a font someone
   installed is not the page's font: the ones a page supplies arrive over

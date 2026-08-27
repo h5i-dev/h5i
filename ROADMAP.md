@@ -7267,6 +7267,17 @@ through a named set of operations is a broker whose surface is written down.
   allowlist. Substitution is a broker operation, so the renderer receives the
   value for the field it was told to fill and holds no other. That is the bound
   §B18.3 promised, and it is now the code rather than the plan.
+
+  Measuring it turned up that the claim had never been true in the other
+  direction either: `--secret NAME` set `profile.secrets` and nothing consumed
+  it, so under the default sandbox a named credential never reached the engine
+  at all and `h5i browser env` answered "no credentials" for one it had been
+  told to carry. `browser_sandbox` now declares `secret_grants` beside the name
+  list and `h5i browser` brokers them through `secrets_broker` like any other
+  run, on both the confined and the unconfined path — fail-closed is a property
+  of the promise, not of the sandbox. `--secret` with `--in` is refused rather
+  than ignored: a box declares its grants in `.h5i/env.toml`, and `spawn_in_box`
+  never read the flag.
 - **Redaction had to become a batch.** It runs over every string in every
   control reply; one round trip per string would have made it the most expensive
   thing the control channel does. `redact_all` is the operation, and the default

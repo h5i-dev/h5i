@@ -548,9 +548,25 @@ log. Containing the network, and earning <code>host-observed</code>, needs a bou
 outside the engine: <code>--in</code>, below.</p>
 <p>Two consequences worth knowing before they surprise you:</p>
 <ul>
-<li><strong>Secrets are not inherited.</strong> Unconfined, the engine reads the whole
+<li>
+<p><strong>Secrets are not inherited.</strong> Unconfined, the engine reads the whole
   environment, so a compromised one reads every <code>H5I_SECRET_*</code> on the machine.
-  Confined it reads none unless named: <code>h5i browser open &lt;url&gt; --secret ACME_PASS</code>.</li>
+  Confined it reads none unless named:</p>
+<pre><code>H5I_SECRET_ACME_PASS=... h5i browser open https://acme.test --secret ACME_PASS
+h5i browser type @e2 '$H5I_SECRET_ACME_PASS'
+</code></pre>
+<p><code>--secret ACME_PASS</code> and <code>--secret H5I_SECRET_ACME_PASS</code> name the same
+credential. The value is resolved from the environment the command is
+started in, once, and delivered to that session alone. It lands in the
+session's broker process, not in the renderer that parses the page.</p>
+<p>Fail-closed: a credential that cannot be resolved refuses the session,
+rather than starting one that will decline the first <code>type</code> that needs it.
+The same in both shapes, because a host that cannot confine still has to
+answer <code>--secret</code> the same way.</p>
+<p>Not for <code>--in</code>. A session placed in a box gets its credentials from that
+box's policy, declared in <code>.h5i/env.toml</code> under the profile it was created
+with. <code>--secret</code> with <code>--in</code> is refused rather than ignored.</p>
+</li>
 <li>
 <p><strong>Personal fonts are visible, and nothing else under <code>$HOME</code> is.</strong> <code>~/.fonts</code>
   and <code>~/.local/share/fonts</code> are granted read-only, because a font someone

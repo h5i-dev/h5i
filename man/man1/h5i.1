@@ -1408,6 +1408,10 @@ By default a session on this machine runs in a process\-tier sandbox: it may rea
 Let this session substitute `$H5I_SECRET_<NAME>`. Repeatable.
 
 Nothing is granted by default. Unconfined, the engine inherits the whole environment and a compromised one reads every secret on the machine; inside the sandbox it reads the ones that were named.
+
+The value is resolved from the environment this command runs in and delivered to this session alone. Fail\-closed: a name whose variable is not set refuses the session rather than starting one that cannot use it. `ACME_PASS` and `H5I_SECRET_ACME_PASS` name the same thing.
+
+Not for `\-\-in`: a session in a box takes its credentials from that box\*(Aqs policy, in `.h5i/env.toml`.
 .TP
 \fB\-\-width\fR \fI<WIDTH>\fR [default: 1280]
 Viewport width

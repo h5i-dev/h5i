@@ -142,6 +142,14 @@ pub enum BrowserCommands {
         /// Nothing is granted by default. Unconfined, the engine inherits the
         /// whole environment and a compromised one reads every secret on the
         /// machine; inside the sandbox it reads the ones that were named.
+        ///
+        /// The value is resolved from the environment this command runs in and
+        /// delivered to this session alone. Fail-closed: a name whose variable
+        /// is not set refuses the session rather than starting one that cannot
+        /// use it. `ACME_PASS` and `H5I_SECRET_ACME_PASS` name the same thing.
+        ///
+        /// Not for `--in`: a session in a box takes its credentials from that
+        /// box's policy, in `.h5i/env.toml`.
         #[arg(long = "secret", value_name = "NAME")]
         secrets: Vec<String>,
 
@@ -1053,6 +1061,30 @@ fn start(
         );
     }
 
+    if let (Some(target), false) = (&opts.in_box, opts.secrets.is_empty()) {
+        // A box already has a place to say this, and it is checked in: two ways
+        // to declare one grant is how one of them rots. `--secret` reaches the
+        // profile h5i builds for a *host* session, which is the placement with
+        // no repository and therefore no `env.toml` to write it in. A session
+        // placed in a box inherits that box's policy, so the grant belongs
+        // there, where a reviewer can read it beside everything else the box is
+        // allowed to do.
+        //
+        // An error rather than a warning because the flag did nothing at all
+        // here: `spawn_in_box` never read it, so every session started this way
+        // ran without the credential it was told to carry and said nothing.
+        anyhow::bail!(
+            "`--secret` does not apply to a session placed in a box. `{target}` gets its \
+             credentials from its own policy.\n\n  \
+             Declare the grant in `.h5i/env.toml`, under the profile the box was created \
+             with:\n    \
+             [profile.browser]\n    \
+             secrets = [\"H5I_SECRET_ACME_PASS\"]\n\n  \
+             `--secret` is for a session on this host, which has no repository and so no \
+             `env.toml` to declare anything in."
+        );
+    }
+
     let placement = match &opts.in_box {
         None => bs::Placement::Host,
         Some(name) => bs::Placement::Box { name: name.clone() },
@@ -1072,7 +1104,7 @@ fn start(
     let dir = bs::dir(root, &id);
 
     let mut spawned = match &placement {
-        bs::Placement::Host => spawn_on_host(&dir, &opts, enclosing_box.is_some())?,
+        bs::Placement::Host => spawn_on_host(root, &dir, &opts, enclosing_box.is_some())?,
         bs::Placement::Box { name } => spawn_in_box(name, &dir, &opts)?,
     };
     let lane = bs::Session::lane_for(&placement, spawned.boundary_enforced);
@@ -1194,7 +1226,12 @@ struct Spawned {
     stop: Box<dyn FnOnce()>,
 }
 
-fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Result<Spawned> {
+fn spawn_on_host(
+    root: &Path,
+    dir: &Path,
+    opts: &StartOptions,
+    in_a_box: bool,
+) -> anyhow::Result<Spawned> {
     // A port on a bare host, a socket inside a box.
     //
     // The port is the simpler channel and the session directory can be
@@ -1244,10 +1281,11 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
     // engine is somewhere it may read and not run.
     let engine = engine_binary()?;
     let reads = vec![engine.clone()];
+    let secrets = secret_variables(&opts.secrets)?;
     let wants = h5i_core::browser_sandbox::Wants {
         session_dir: dir,
         reads: &reads,
-        secrets: &opts.secrets,
+        secrets: &secrets,
         // A session is resident and is bounded by `--expires-in`, not a signal.
         wall_secs: 0,
     };
@@ -1256,6 +1294,31 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
     } else {
         h5i_core::browser_sandbox::resolve_for(&wants)?
     };
+
+    // The credentials this session was told to carry, resolved before anything
+    // is spawned and delivered to this child alone.
+    //
+    // Above the confined/unconfined branch on purpose. A host that cannot
+    // confine still has to answer `--secret` the same way, and the first cut of
+    // this brokered only on the confined path — so on a machine without
+    // Landlock, or under `--no-sandbox`, a credential that did not exist would
+    // have started a session that quietly could not use it. Fail-closed is not
+    // a property of the sandbox; it is a property of the promise.
+    //
+    // The grants come from the same function that put them on the profile, so
+    // the unconfined path cannot promise a different set from the confined one.
+    // Nothing is written to disk: `inject = env` has no file, and `broker`
+    // refuses `inject = file` off the workspace tier, which is what keeps the
+    // guard's unlink-on-drop from mattering to a session that outlives this
+    // command.
+    let brokered = h5i_core::secrets_broker::broker(
+        &h5i_core::browser_sandbox::grants_for(&secrets),
+        &secret_dir(root),
+        false,
+        false,
+        &h5i_core::secrets_broker::fingerprint_key(root)?,
+    )
+    .map_err(unresolved_credential)?;
 
     // Inside the sandbox the environment is cleared, so the engine's own
     // `$HOME`-based font discovery finds nothing. The grant and the search path
@@ -1288,23 +1351,24 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
             // `__engine` alone is a subcommand, not a binary.
             let mut confined_argv = vec![engine.display().to_string()];
             confined_argv.extend(argv.iter().cloned());
+            // The environment is cleared and rebuilt from the profile, so
+            // nothing here inherits by accident: `--secret` is a policy
+            // statement rather than a shell habit, and this is where the
+            // statement is made good.
+            let mut injected = brokered.env.clone();
+            // The engine's own single-process switch, which is here because a
+            // debugging hatch that silently does nothing in the default
+            // arrangement is worse than no hatch: it is documented as running
+            // the engine as one process, and inside the sandbox the variable
+            // would otherwise never arrive. It grants nothing and reveals
+            // nothing.
+            injected.extend(single_process_switch());
+
             let handle = h5i_core::sandbox::spawn_background(
                 &c.policy,
                 dir,
                 &confined_argv,
-                // The environment is cleared and rebuilt from the profile, so
-                // nothing here inherits by accident. The granted secrets are
-                // carried in the profile rather than injected as a pile of
-                // variables, which is what makes `--secret` a policy statement
-                // instead of a shell habit.
-                //
-                // The one exception is the engine's own single-process switch,
-                // and it is here because a debugging hatch that silently does
-                // nothing in the default arrangement is worse than no hatch:
-                // it is documented as running the engine as one process, and
-                // inside the sandbox the variable would otherwise never arrive.
-                // It grants nothing and reveals nothing.
-                &single_process_switch(),
+                &injected,
                 &log_path,
                 "browser-session",
             )?;
@@ -1318,6 +1382,12 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
                 .stdin(Stdio::null())
                 .stdout(Stdio::from(log.try_clone()?))
                 .stderr(Stdio::from(log));
+            // Named credentials, set explicitly even though this child inherits
+            // the whole environment anyway. What it buys is not secrecy — there
+            // is none to buy on this path, and the summary line says so — it is
+            // that `--secret` means one thing in both shapes: named, resolved,
+            // and refused if it is not there.
+            command.envs(brokered.env.clone());
             detach(&mut command);
             let child = command
                 .spawn()
@@ -2623,6 +2693,76 @@ fn print_answer(answer: &Value) {
         "{}",
         serde_json::to_string_pretty(body).unwrap_or_else(|_| body.to_string())
     );
+}
+
+/// A credential the session was told to carry and could not be given.
+///
+/// The broker's own sentence already names the grant and the variable, which is
+/// the part someone needs; this adds what to do about it and drops the error
+/// enum's prefix, because "Metadata error" is not what went wrong.
+fn unresolved_credential(error: h5i_core::error::H5iError) -> anyhow::Error {
+    let why = match &error {
+        h5i_core::error::H5iError::Metadata(text) => text.clone(),
+        other => other.to_string(),
+    };
+    anyhow::anyhow!(
+        "{why}\n\n  \
+         `--secret` names a credential h5i resolves from the environment you start the \
+         session in, and a session is not started without one it was told to carry. Set the \
+         variable there, or drop the flag."
+    )
+}
+
+/// The `H5I_SECRET_*` variables `--secret` named, in the one spelling that
+/// works.
+///
+/// Both `--secret ACME_PASS` and `--secret H5I_SECRET_ACME_PASS` mean the same
+/// credential, and the manual has used each. The prefix is not decoration: it
+/// is the namespace the engine substitutes from, so it has to be on the
+/// variable the session's child actually reads, and normalizing here is what
+/// keeps one spelling from silently naming a variable nothing sets.
+///
+/// Refused rather than mangled if it is not a variable name. A grant is
+/// resolved from the host environment by this exact string; a name with a space
+/// or a `$` in it could only ever be a typo, and the fail-closed answer to a
+/// typo is to say so before the session exists.
+fn secret_variables(named: &[String]) -> anyhow::Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in named {
+        let name = raw.trim();
+        let full = if name.starts_with(h5i_browser_light::secrets::PREFIX) {
+            name.to_string()
+        } else {
+            format!("{}{name}", h5i_browser_light::secrets::PREFIX)
+        };
+        let suffix = &full[h5i_browser_light::secrets::PREFIX.len()..];
+        if suffix.is_empty() || !suffix.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            anyhow::bail!(
+                "`--secret {raw}` is not the name of an environment variable. Name the \
+                 credential as `ACME_PASS` or `H5I_SECRET_ACME_PASS`, and set \
+                 `H5I_SECRET_ACME_PASS` in the environment you start the session from."
+            );
+        }
+        if !out.contains(&full) {
+            out.push(full);
+        }
+    }
+    // Sorted, because the list is serialized into the profile and the profile
+    // is digested: two callers naming the same two credentials in a different
+    // order must not produce two policies.
+    out.sort();
+    Ok(out)
+}
+
+/// Where a file-injected secret would go, which is deliberately **not** under
+/// the session directory.
+///
+/// `$WORK` is the one place the engine may write, so a credential written there
+/// would be a credential the confined engine could read back and rewrite. The
+/// path is unreachable today — `broker` refuses `inject = file` off the
+/// workspace tier — and it is chosen as though it were not.
+fn secret_dir(root: &Path) -> PathBuf {
+    root.join("secrets")
 }
 
 /// Forward `H5I_BROWSER_NO_SPLIT` into a confined session, if it is set.
