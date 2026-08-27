@@ -7361,6 +7361,367 @@ is confined exactly as much as the whole engine was, and no more"* — the split
 moved what a compromised parser can **reach in memory**, not yet what it can
 **reach on the network**.
 
+## B19. Obscura, second pass: the instruments, not the verbs, 2026-08-27
+
+§B15 read Obscura and Lightpanda across the *verb line* and settled what to take
+there. This pass reads two things that pass did not have: the engine as it
+stands today, which has grown a native rendering pipeline and an MCP server
+since; and `obscura-benchmark`, the companion repository that holds every
+instrument Obscura measures itself with. `obscura-benchmark` is not mentioned
+anywhere in this file, and it is where the useful material is.
+
+The finding, stated first, because it inverts the shape of §B15:
+
+> **The verb-line comparison is closed. The instrument comparison is not.**
+> Almost everything §B15 queued at the verb line has been built (§B15.13,
+> §B17.6, §B17.7). Nothing has been built against the way Obscura *measures*,
+> and that is now the larger of the two gaps.
+
+### B19.1 The two engines, as of today
+
+| | `h5i-browser-light` | Obscura |
+| --- | --- | --- |
+| Rust | 36,666 lines, one crate | 132,253 lines, nine crates |
+| script shim | 5,795 lines (`prelude.js`), Boa | 14,493 lines (`bootstrap.js`), V8 via `deno_core` |
+| DOM and CSS | Blitz plus Stylo, assembled | `html5ever` plus `selectors` plus its own cascade (`css.rs` 10,350, `style.rs` 10,924) |
+| layout and paint | Blitz plus `vello_cpu` | its own, 66,530 lines: forked `taffy`, forked `cosmic-text`, `tiny-skia` |
+| driver surface | 28 CLI subcommands, 20 session verbs | CDP server, 37 MCP tools, `fetch`/`scrape` CLI, embeddable `obscura` crate |
+| record of what was fetched | receipts, fail-closed, written before the bytes move | CDP `Network.*` events, reconstructed and emitted after navigation (§B15.2) |
+| identity on the wire | one honest UA naming this engine (`net.rs:40`) | `--stealth`: a real Chrome TLS ClientHello, cipher order, and matching `navigator` (§B15.12) |
+| default reach | allowlist; loopback allowed, because loopback is the dev server | deny loopback and RFC1918 by default, `--allow-private-network` to opt in |
+
+The size ratio is worth reading carefully rather than quoting. **We are about a
+quarter of their line count, and most of the difference is the renderer they
+wrote and we borrowed.** Subtract `obscura-render` (66,530) and the two engines
+are within a factor of two on the part both projects wrote by hand. That is the
+honest framing of "lightweight", and it is a different sentence from the one a
+raw line count invites.
+
+The second thing worth naming: **they took the opposite bet on the renderer and
+it is not obviously wrong.** Owning layout and paint bought them a `printToPDF`
+that is real (`obscura-browser/src/pdf.rs`, 1,027 lines), an activity-driven
+screencast, a CDP `Emulation` domain, and geometry that DOM APIs and screenshots
+share instead of disagreeing about. Borrowing Blitz bought us all of that
+cheaply for the parts Blitz has and none of it for the parts it does not. We
+should not re-litigate the choice. We should notice that the *cost* of the
+choice is now visible: it is the list in §B19.7.
+
+### B19.2 Their conformance number, and the one instrument worth taking
+
+Obscura reports WPT three ways, from `crates/triage`:
+
+| tier | subtests | what it is |
+| --- | --- | --- |
+| Core | 318,916 / 382,891 (83.3%) | the DOM/HTML/URL/fetch scraping contract |
+| Relevant | 420,319 / 494,422 (85.0%) | Core plus JS-observable correctness needing no layout |
+| Full | 503,413 / 839,489 (60.0%) | the whole suite, "for transparency" |
+
+**Do not compare these to our 333,690 (§B13.2).** §B13.3 already withdrew one
+such comparison and the reasons it gave apply here unchanged and with more
+force: different harness, different corpus, and in this case a denominator that
+is not even the same order of magnitude (584,707 against 839,489). Any table
+putting the two side by side would be the §B13.3 error committed a second time,
+by the same route, with a different competitor.
+
+What *is* transferable is the shape of the report, and it is precisely the thing
+§B13.3 said we were missing. Their tiers live in
+`crates/triage/src/tiers.list`: 163 lines, one `<tier> <prefix>` rule per line,
+first match wins, with a header stating the rule the file is built on:
+
+> The split is by CAPABILITY, not by outcome: a directory is excluded only when
+> it needs a capability Obscura intentionally does not implement (layout /
+> rendering, a media pipeline, real hardware, or a live network peer), never
+> because its tests happen to fail.
+
+That is a **published, auditable, diffable declaration of scope**, and it is the
+answer to the problem §B13.3 diagnosed and then solved with a paragraph of
+prose. Our caveat ("70% of every passing subtest comes from twenty files") is
+true, is correctly stated, and lives only in this document, where it travels
+only as far as somebody reading this document. A tiers file makes it structural:
+the encoding directory becomes one tier among several rather than a footnote,
+and a reader can check the claim by reading a table instead of trusting us.
+
+Two properties of theirs are worth copying exactly, and one is worth refusing:
+
+* **Copy: exclusion is by capability, and the reason is on the line.** A
+  directory is out because we do not implement service workers, not because it
+  scores badly.
+* **Copy: the file is the source of truth for the published number.** A tier is
+  not a query somebody typed once.
+* **Refuse: three tiers where the third is "everything".** "Full 60%" invites
+  exactly the reading their own header warns against. Ours should be scoped
+  tiers plus an explicit *unscoped remainder* count, so the denominator is
+  always visible and never rounded into a percentage.
+
+For us the tiers would not be theirs. Ours split around what an agent reading a
+page actually needs, and §B6's refusals (no iframes, no popups, no workers) are
+already the exclusion list, written down years before the instrument that would
+use them.
+
+### B19.3 The denominator, and the part of WPT we have decided we cannot reach
+
+`wpt/run.py`'s docstring says it plainly: WPT generates a large share of its
+endpoints at serve time, a static server cannot serve them, and the summary
+prints how many were skipped so the denominator is never mistaken for all of
+WPT. That was the right call for the instrument as built, and §B12.1's reason
+for building it that way is still good: nothing was added to the engine to make
+it measurable.
+
+Obscura's runner does not accept that ceiling. `scripts/run-wpt.sh` starts
+**`./wpt serve`**, the real wptserve, on the real `web-platform.test` hostnames,
+after `./wpt manifest` has expanded every generated variant
+(`crates/wpt-runner/src/manifest.rs` walks the manifest's variant arrays and
+skips only the content hash). That is what puts `.any.html`, `.any.worker.html`,
+the `.py` handlers, the HTTPS variants and the cross-origin subdomains inside
+their denominator and outside ours.
+
+The reason to revisit this now is not the score. It is that **three subsystems
+this engine has grown since §B12 are only testable on that server**:
+
+* §B17's same-origin policy and CORS. Every meaningful CORS test needs a second
+  origin, which needs the WPT subdomains, which needs their hosts file.
+* §B16.5's PSL cookies. Cookie scoping tests are about `Domain=` across
+  registrable boundaries, which is again several hostnames.
+* §B17.4's compression. `Content-Encoding` behaviour is served by wptserve's
+  handlers, not by files on disk.
+
+So we currently have three of the engine's most security-relevant subsystems
+tested by our own unit tests and by nothing external, and the external suite
+that would test them is one shell script away. The cost is real and should be
+stated: it needs a WPT checkout that is not pristine (a hosts file entry, and
+`./wpt serve` running), which is exactly what §B12.1's "pristine checkout"
+design chose to avoid. The proposal is not to replace `wpt/serve.py`. It is a
+**second backend** for `wpt/run.py`, off by default, so the static instrument
+stays the one CI can run and the wptserve instrument is what a conformance
+claim is made from.
+
+A second, cheaper borrow from the same runner: it has **two engine backends**,
+one process per test (`fetch`) and a persistent CDP connection with a worker
+pool. Ours is one process per test only, which is why a full sweep is measured
+in hours. We have had a resident session with a control socket since 2026-08-27.
+Pointing `run.py` at one would cost a flag and would be the single largest
+speedup available to that harness.
+
+### B19.4 The four instruments they have and we do not
+
+Their benchmark repo has seven tracks. Two of them we already have and ours is
+better in one respect worth recording. Four we do not have at all.
+
+**We already have, and ours is better:** the head-to-head against Chromium.
+`corpus/compare.py` samples peak RSS across the **whole process tree**, and says
+why: Chromium is a browser, a renderer, a GPU process and a zygote, and
+measuring only the launched process would flatter us by several hundred
+megabytes for no reason. Their `compare/head-to-head.py` reads GNU `time -v`
+Maximum RSS of the launched process. Their reported "Chrome 190 MB" is therefore
+a floor, not a measurement, and their own `compare/scale.py` (which uses
+`psutil`) reports 8.1 GB for eight Chrome workers, which is the same number
+measured properly. Ours is the sounder method and it is not written down
+anywhere but in that file's docstring.
+
+**We do not have, ranked by what they would find here:**
+
+1. **A reliability sweep with a classifier.** `reliability/sweep.py` does a
+   one-level BFS from a seed list to build ~1,500 real URLs, runs the engine
+   over all of them at concurrency, and sorts each outcome into
+   `CRASH` / `PANIC` / `CAP_HIT` / `HANG` / `HANG_HARD` / `THIN` / `OK` from the
+   exit code and stderr. The classes are the point: `CAP_HIT` exists because a
+   cyclic reparent once made `descendants()` loop forever, so the guard against
+   it has a named bucket in the instrument that would show it coming back.
+   This is §B8's own doctrine ("an instrument that cannot name what is missing")
+   applied to *crashing* rather than to *missing features*, and it is the one
+   thing on this list we have no substitute for. `corpus/run.py` reads 35 pages
+   and reports what they asked for; it does not sweep, does not classify, and a
+   panic in it looks like a page that failed.
+2. **An offline capability suite with vendored frameworks.** `obstacle-course/`
+   is 33 self-contained fixtures with React 18, Preact and Vue 3 pinned into
+   `vendor/`, each setting a deterministic value the runner asserts, each timed.
+   It is their authoritative behavioural gate and `AGENTS.md` requires 33/33
+   before any change lands. `tests/corpus.rs` is the same idea and is narrower
+   by construction: its fixtures are hand-written reductions of things the
+   network corpus found, so it can only ever contain regressions of bugs we
+   already had. It cannot answer "does Vue 3 mount", which is a question an
+   agent's user will ask on day one.
+3. **Failure triage that groups.** `crates/triage` deduplicates WPT failures
+   into root causes and prints the top error signatures per spec area. We have
+   the raw material for this and already use it: `run.py`'s `unsupported` map
+   is exactly this instrument in miniature, and §B12.2's "twenty files, four
+   bugs" is what it found. It stops at one directory at a time. Rolling it up
+   across a sweep is a merge, and `wpt/merge.py` already exists.
+4. **Speed as a tracked number.** Every obstacle-course stage is timed, and
+   `AGENTS.md` makes performance a hard constraint with a stated noise floor of
+   plus or minus 10% and a required interleaved A/B methodology. §B15.12a is our
+   equivalent lesson learned the expensive way, three optimisations reasoned
+   from code shape and all three wrong. The lesson it drew was "measure", and no
+   standing measurement was left behind.
+
+**One caution about their repo, and it is a lesson rather than a jab.** Its
+README opens by stating Obscura "has no rendering, layout, or paint pipeline",
+and the results are dated 2026-07-03 against commit `b5039a8`. Obscura's own
+README now headlines native rendering, and `obscura-render` is half the
+codebase. The instrument's *framing* rotted while its numbers stayed
+reproducible. This file has the same exposure at larger scale: §B13.3's
+withdrawn comparison is the shape of it, and the corpus harnesses in §B19.5 are
+the shape of it in code.
+
+### B19.5 Two harnesses in our own tree are pointed at a binary that does not exist
+
+Checked while looking for our answer to their obstacle course. Both fail to
+start, for the same reason, and neither says so anywhere:
+
+* `corpus/run.py:34` defaults to `target/debug/h5i-browser-light`.
+* `corpus/compare.py:28` uses `target/release/h5i-browser-light`.
+
+That binary was removed when the engine became a library reached through
+`h5i __engine` (see `Cargo.toml`'s comment, and `wpt/run.py`'s docstring, which
+records this exact path as "a trap now" and was updated). Both scripts also
+invoke `<bin> open <url> --json`, which is the argv the engine still takes, so
+the fix is the path plus one argument (`h5i __engine open ...`), not a rewrite.
+
+The consequence is worth stating rather than just the bug: **§B8's corpus, the
+instrument this document credits with finding most of the engine's real work,
+has not run since the self-exec change**, and `compare.py`, the source of every
+memory and latency claim about this engine against Chromium, has not run either.
+Any such number in this file predates the broker/renderer split (§B18), which is
+the change most likely to have moved it.
+
+### B19.6 `--restore` copies a file nothing writes
+
+`h5i browser open --restore <id>` documents itself as seeding a new session's
+storage from one that has ended, and `seed_storage` (`src/cli/browser.rs:1903`)
+copies `cookies.json` out of the old session's directory. Nothing in the
+workspace writes `cookies.json`: `cookies.rs:48` says "The jar lives in the
+process and dies with it", and it is accurate. `source.exists()` is therefore
+always false and the flag is a silent no-op.
+
+This is §B15.12's own finding about Obscura ("documented-but-absent
+`localStorage` persistence, where the documentation has to say so") reproduced
+in our tree, at the point where it costs the most: the flag exists to carry a
+login across sessions, and §B15.9 and the LOGIN-mode design both lean on a human
+authenticating once. Today the human authenticates once per session, forever.
+
+Two ways out, and they are not the same feature:
+
+* **Make the flag honest now.** Either refuse `--restore` with "this session
+  never wrote a jar" or delete it. Small, and it stops the promise.
+* **Write the jar, receipted.** A cookie file is credential material, so it is
+  not a `--storage-dir` in our design; it is a host-owned artifact with the same
+  treatment secrets already get (§B15.9's indirection). The shape that fits: the
+  jar is written on session end into the session's own directory, `--restore`
+  names one definite ended session as it already does, and the inheritance is
+  written into the new session's record, which the current help text says
+  happens and which is the part of the design that is already right.
+
+Obscura's `--storage-dir` is the wrong model for us and their own
+`browser_storage_state` / `browser_set_storage_state` pair is the interesting
+one: it is Playwright-shaped, which means a session's authenticated state is a
+value an agent can hold, name and hand back. That is compatible with receipts in
+a way a shared directory on disk is not.
+
+### B19.7 The verb line, re-counted
+
+§B15.2 counted 8 session verbs here against 36 in Obscura and called the gap the
+difference between an agent that finishes and one that stalls. It is now 20
+session verbs and 28 CLI subcommands against 37 MCP tools, and the remaining
+difference is no longer padding either. What they have that we do not, with what
+each is actually for:
+
+| theirs | what it buys | our position |
+| --- | --- | --- |
+| `browser_screenshot` | the agent sees the page it is acting on | **the real gap.** `--screenshot` is on `open` only (`cli.rs:104`); a resident session can only emit JPEG frames to the human's live view (`stream.rs:296`). An agent driving a session cannot capture it. |
+| `back` / `forward` / `reload` | undo a wrong click without re-navigating from scratch | we have no history at all. `reload` is the cheap half and is worth having on its own. |
+| tabs (`tab_new`/`list`/`switch`/`close`) | one session, several pages | the ROADMAP's own table says tab is agent-facing "when there is more than one page in a session". There is never more than one. |
+| `get_cookies` / `set_cookie` / `clear_cookies` | inspect and seed auth | deliberately absent, and it should stay deliberate: handing an agent the cookie is exactly what LOGIN mode exists to avoid. `--dump cookies` including HttpOnly is the version to refuse loudly rather than to have and not document. |
+| `console_messages` | see what the page's script complained about | we surface console output in `open --json` and in snapshot notes, not as a verb on a live session. |
+| `evaluate` | arbitrary JS | refused, correctly. A verb that runs arbitrary script is a verb whose receipt says nothing. |
+| `pdf` | a page as a document | needs print layout, which Blitz does not give us. §B11.5 and §B11.6 already queue it. Cost is now known to be large: theirs is 1,562 lines across two files on top of a renderer they own. |
+
+Only the first three are worth building. The screenshot verb is the one to build
+first and it is nearly free: `Page::screenshot_png` exists, the session holds the
+page, and the verb table (§B15.3) is where it goes.
+
+### B19.8 Import maps: the page names the destination, so the engine does not have to
+
+`script/modules.rs` refuses bare specifiers, and the reason is one of the better
+paragraphs in this codebase: a loader that rewrites `import "lodash"` to a CDN
+turns one line of page script into an unrequested request to a third party
+chosen by the engine. That is right and should not change.
+
+`<script type="importmap">` is the standard's answer to exactly this, and it
+does not have the property the refusal is aimed at: **the page declares the
+mapping, so the engine is not choosing anything.** Obscura implements it in
+`obscura-js/src/import_map.rs`, 455 lines. Every resolved URL still goes through
+our broker, still gets policy-checked, still gets a receipt, and the receipt is
+strictly more informative than today's outcome, which is a refusal that records
+nothing about where the page wanted to go.
+
+This is the rare item that increases both capability and auditability, and the
+refusal it modifies stays intact for its actual target: a bare specifier with no
+import map is still an error naming what would have to exist.
+
+### B19.9 What not to copy, second pass
+
+§B15.12 refused the stealth stack in full and that refusal is unchanged and
+correct. Three additions, since this pass read further:
+
+* **`--proxy` as a scraping feature.** Obscura's is a per-invocation flag
+  pointed at residential proxy pools, and their `AGENTS.md` carries affiliate
+  codes for four providers. Ours is `H5I_EGRESS_PROXY`, set by h5i, and it is an
+  *enforcement point*, not a route. A CLI flag that lets the caller choose the
+  proxy is a CLI flag that lets the caller step around the allowlist that proxy
+  enforces, which `net.rs:250` already says in as many words. Keep it as an
+  environment variable set by the thing doing the enforcing. SOCKS5 support
+  (their `reqwest` has `socks`, ours does not) is the same question and gets the
+  same answer.
+* **`--user-agent` as a free-text override.** `net.rs:40` shares one honest UA
+  between the wire and `navigator`, and the comment gives the reason: a page
+  that branches on it server-side and again in script must see the same answer
+  both times. An override that changes one and not the other is a bug factory,
+  and an override that changes both is the stealth argument wearing a smaller
+  hat. If a site gates on UA and an agent legitimately needs past it, the honest
+  form is a *named* profile whose value is in the receipt, not a string flag.
+* **`--obey-robots` as a boolean.** Their cache answers allow/deny and the
+  request either happens or does not. §B15.6's rule applies: a denial an agent
+  cannot branch on is a denial an agent cannot recover from, and that section
+  already names robots.txt denials as one of the variants that needs a name. If
+  we take robots at all it is as a *receipt annotation* first: record that the
+  origin asked us not to, on the record, and let policy decide. "The page said
+  not to and we did anyway, and here is the line that says so" is a thing only a
+  receipts engine can offer.
+
+### B19.10 The queue
+
+Ordered by what each buys divided by what it costs. The first two are repairs to
+instruments this document already relies on, which is why they are first.
+
+1. **Fix `corpus/run.py` and `corpus/compare.py`** (§B19.5). Two paths and one
+   argument. Until this lands, §B8's corpus is not an instrument, it is a
+   description of one.
+2. **Make `--restore` honest** (§B19.6). Refuse it or implement it; do not ship
+   a flag that copies a file nothing writes.
+3. **A `screenshot` verb on the session** (§B19.7). The page exists, the encoder
+   exists, the verb table is where it goes.
+4. **A reliability sweep with named outcome classes** (§B19.4). The one
+   instrument on the list with no substitute here, and the one whose findings
+   are not reachable any other way: a crash on the 900th real page is not a
+   thing 35 corpus pages or a WPT directory will ever show.
+5. **A tiers file for the WPT report** (§B19.2). Turns §B13.3's caveat from a
+   paragraph a reader has to trust into a table a reader can check.
+6. **A wptserve backend for `wpt/run.py`, off by default** (§B19.3). This is
+   what puts CORS, PSL cookies and compression under external test. Pair it with
+   the resident-session backend, which is the same file and pays for the sweep
+   time.
+7. **An offline capability suite with vendored frameworks** (§B19.4). Ours
+   should be smaller than 33 stages and should test what §B6 says we support,
+   which makes it a companion to the tiers file rather than a second corpus.
+8. **Import maps** (§B19.8).
+9. **`reload`, then history** (§B19.7).
+
+Not queued, decided: no `--proxy` flag, no `--user-agent` flag, no cookie
+read/write verbs, no stealth layer (§B19.9). CDP and MCP stay where §B15.11 put
+them, and nothing in this pass moves either: what changed is that the verb table
+§B15.3 asked for now exists, so the cost estimate in §B15.11 is if anything
+lower than it was.
+
 ---
 
 # Formal verification: a Lean model beside the Rust

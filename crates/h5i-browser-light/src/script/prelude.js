@@ -917,14 +917,6 @@
       const watched = observers.length > 0 || isCustom(this);
       const previous = watched ? api.getAttr(this._id, String(name)) : null;
       api.setAttr(this._id, String(name), String(value));
-      // `el.setAttribute("onclick", ...)` is the same handler the parser would
-      // have compiled, arriving by another road.
-      if (HANDLER_ATTR_SET.has(String(name).toLowerCase())) {
-        const lowered = String(name).toLowerCase();
-        const installed = this.__h5iInline ?? (this.__h5iInline = {});
-        installed[lowered] = String(value);
-        installInlineHandler(this, lowered, String(value));
-      }
       if (watched) {
         const lowered = String(name).toLowerCase();
         recordAttribute(this, lowered, previous);
@@ -1184,12 +1176,7 @@
     // Real serialisation. Returning textContent here silently stripped every
     // tag, so `el.innerHTML = el.innerHTML` destroyed the subtree.
     get innerHTML() { return api.innerHtml(this._id); }
-    set innerHTML(html) {
-      api.setInnerHtml(this._id, String(html));
-      // Markup written after load carries handlers too, and the lifecycle
-      // sweep has already been and gone by the time a page does this.
-      globalThis.__h5iInstallInlineHandlers(this);
-    }
+    set innerHTML(html) { api.setInnerHtml(this._id, String(html)); }
 
     /// `innerHTML`, plus the one thing `innerHTML` is specified *not* to do:
     /// turn `<template shadowrootmode>` into a real shadow root.
@@ -1205,7 +1192,6 @@
     setHTMLUnsafe(html) {
       api.setInnerHtml(this._id, String(html));
       adoptDeclarativeShadowRoots(this);
-      globalThis.__h5iInstallInlineHandlers(this);
     }
     get outerHTML() { return api.outerHtml(this._id); }
     set outerHTML(html) {
@@ -2493,121 +2479,6 @@
       },
     });
   }
-
-  /// The window's own `on*` properties.
-  ///
-  /// `window.onload = fn` stored the function and never called it. The
-  /// accessors above are installed on `Element.prototype`, and the window is
-  /// not an element, so the assignment landed on an ordinary expando: it read
-  /// back correctly, which is why nothing looked wrong, and it never ran.
-  ///
-  /// These delegate to the window's own `addEventListener`, so a page that
-  /// mixes the two forms gets one handler per assignment and no double-fire.
-  const WINDOW_HANDLER_EVENTS = [
-    "load", "unload", "beforeunload", "error", "message", "messageerror",
-    "hashchange", "popstate", "pagehide", "pageshow", "resize", "scroll",
-    "storage", "offline", "online", "languagechange", "rejectionhandled",
-    "unhandledrejection", "afterprint", "beforeprint",
-  ];
-  for (const type of WINDOW_HANDLER_EVENTS) {
-    const slot = `__on_window_${type}`;
-    Object.defineProperty(globalThis, `on${type}`, {
-      configurable: true,
-      get() { return globalThis[slot] ?? null; },
-      set(handler) {
-        if (globalThis[slot]) removeEventListener(type, globalThis[slot]);
-        globalThis[slot] = typeof handler === "function" ? handler : null;
-        if (globalThis[slot]) addEventListener(type, globalThis[slot]);
-      },
-    });
-  }
-
-  /// Event-handler *content attributes*: `<body onload="run()">`.
-  ///
-  /// These never ran either, and for a different reason than the window
-  /// properties: the `on*` accessors are IDL attributes, reached when *script*
-  /// assigns them, and markup does not go through script. Nothing was
-  /// compiling an attribute into a handler at all, so a page whose entire
-  /// behaviour hangs off `<body onload>` loaded, did nothing, and looked idle
-  /// — which is exactly how it was scored.
-  ///
-  /// The compiled function is the spec's shape: the attribute value is a
-  /// function *body* rather than an expression, it takes `event`, and it is
-  /// called with the element as `this`.
-  ///
-  /// The attribute names are enumerated rather than discovered because they
-  /// have to become a selector. CSS can match an attribute's value by prefix
-  /// but not its *name*, so "every element with some `on*` attribute" is not a
-  /// selector — and the alternative, walking every element and asking for its
-  /// attribute names, is a call into the tree per element on documents that
-  /// run to tens of thousands of them.
-  const HANDLER_ATTRS = [
-    ...HANDLER_EVENTS, ...WINDOW_HANDLER_EVENTS,
-    "beforeinput", "select", "reset", "invalid", "toggle", "cancel", "close",
-    "copy", "cut", "paste", "drag", "dragend", "dragenter", "dragleave",
-    "dragover", "dragstart", "drop", "animationstart", "animationiteration",
-    "transitionrun", "transitionstart", "transitioncancel", "pointermove",
-    "pointerover", "pointerout", "pointerenter", "pointerleave", "pointercancel",
-    "mouseenter", "mouseleave", "focusin", "focusout", "readystatechange",
-  ];
-  const HANDLER_ATTR_SET = new Set(HANDLER_ATTRS.map((type) => `on${type}`));
-  const HANDLER_ATTR_SELECTOR = HANDLER_ATTRS.map((type) => `[on${type}]`).join(",");
-
-  /// The handlers `<body>` and `<frameset>` do not keep for themselves.
-  ///
-  /// The spec forwards this set to the window, and the difference is not
-  /// cosmetic: `load` is fired *at* the window, so a `<body onload>` installed
-  /// on the body element would sit through the one event it exists for.
-  const BODY_FORWARDED = new Set([
-    "blur", "error", "focus", "load", "resize", "scroll", "afterprint",
-    "beforeprint", "beforeunload", "hashchange", "languagechange", "message",
-    "messageerror", "offline", "online", "pagehide", "pageshow", "popstate",
-    "rejectionhandled", "storage", "unhandledrejection", "unload",
-  ]);
-
-  function installInlineHandler(element, name, source) {
-    const type = name.slice(2);
-    let compiled;
-    try {
-      compiled = new Function("event", source);
-    } catch (error) {
-      // A handler that does not parse is the page's bug, not this engine's, and
-      // a browser reports it and carries on rather than taking the document
-      // down with it.
-      console.error(`inline ${name} did not compile: ${error}`);
-      return;
-    }
-    const handler = function (event) { return compiled.call(element, event); };
-    const tag = element.tagName;
-    if ((tag === "BODY" || tag === "FRAMESET") && BODY_FORWARDED.has(type)) {
-      globalThis[`on${type}`] = handler;
-      return;
-    }
-    if (`on${type}` in element) element[`on${type}`] = handler;
-    else element.addEventListener(type, handler);
-  }
-
-  /// Compile the inline handlers under `within`, or under the whole document.
-  ///
-  /// Idempotent by remembering the source it last compiled per attribute, so
-  /// the sweep can run again after markup arrives without stacking a second
-  /// copy of every handler on the elements it already saw.
-  globalThis.__h5iInstallInlineHandlers = function (within) {
-    const scope = within && within._id ? within._id : 0;
-    for (const id of api.queryAll(HANDLER_ATTR_SELECTOR, scope)) {
-      const element = wrap(id);
-      if (!element) continue;
-      const installed = element.__h5iInline ?? (element.__h5iInline = {});
-      for (const name of api.attrNames(id) ?? []) {
-        const lowered = String(name).toLowerCase();
-        if (!HANDLER_ATTR_SET.has(lowered)) continue;
-        const source = api.getAttr(id, name);
-        if (source == null || installed[lowered] === source) continue;
-        installed[lowered] = source;
-        installInlineHandler(element, lowered, source);
-      }
-    }
-  };
 
   /// Turn every `<template shadowrootmode>` inside `within` into a shadow root.
   ///
@@ -4686,11 +4557,6 @@
     // Again here: a script that ran during parsing may have added elements
     // with ids, and the handlers about to run will reach for them by name.
     globalThis.__h5iInstallNamedAccess();
-
-    // Before the first event, not after: `<body onload>` is a handler for the
-    // load event dispatched three lines below, so compiling it later would be
-    // compiling it too late.
-    globalThis.__h5iInstallInlineHandlers();
 
     documentReadyState = "interactive";
     at(new Event("readystatechange"));

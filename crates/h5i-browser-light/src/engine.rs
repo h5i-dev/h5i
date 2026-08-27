@@ -221,21 +221,6 @@ pub struct Page {
     notes: Vec<String>,
 }
 
-/// The event-handler content attributes, as a selector.
-///
-/// Enumerated rather than discovered because it has to be a selector: CSS can
-/// match an attribute's *value* by prefix but not its *name*, so "any element
-/// with an `on*` attribute" is not something a selector can ask for. The list
-/// mirrors the one `prelude.js` compiles from, and the two are meant to agree
-/// — this one decides whether the realm is built, that one decides what the
-/// realm compiles once it is.
-const INLINE_HANDLER_SELECTOR: &str = "[onload],[onclick],[onerror],[onchange],[oninput],\
-    [onsubmit],[onfocus],[onblur],[onkeydown],[onkeyup],[onkeypress],[onmousedown],\
-    [onmouseup],[onmouseover],[onmouseout],[onmousemove],[ondblclick],[onscroll],\
-    [onselect],[onreset],[oncontextmenu],[onwheel],[ontoggle],[onpageshow],\
-    [onpagehide],[onhashchange],[onpopstate],[onresize],[onmessage],[onunload],\
-    [onbeforeunload],[onanimationend],[ontransitionend],[onpointerdown],[onpointerup]";
-
 impl Page {
     /// Fetch a URL and load it.
     ///
@@ -653,26 +638,11 @@ impl Page {
                 .unwrap_or_default()
         };
 
-        // A handler attribute is script, and the shortcut below could not see it.
-        //
-        // `<body onload="init()">` is a document whose only code lives in an
-        // attribute. Skipping the realm for it did not skip 15ms of waste, it
-        // skipped the page: the realm being skipped is the thing that compiles
-        // the handler, so the page loaded, sat there, and reported itself
-        // settled with `timers_run: 0` — which reads as "nothing to do" rather
-        // than "nothing was run".
-        let has_inline_handler = {
-            let doc = self.doc.borrow();
-            doc.query_selector_all(INLINE_HANDLER_SELECTOR)
-                .map(|ids| !ids.is_empty())
-                .unwrap_or(false)
-        };
-
         // Nothing to run means nothing to build. Starting the realm costs about
         // 15ms — the prelude is 113 KiB of JavaScript, parsed and evaluated from
         // scratch — and a page with no script elements was paying all of it for
         // a realm that would never be asked a question.
-        if sources.is_empty() && !has_inline_handler {
+        if sources.is_empty() {
             self.ran_scripts = true;
             // Trivially settled, and said so rather than left null: a page with
             // no script has finished by definition, and "we do not know" is a
