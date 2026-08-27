@@ -265,18 +265,31 @@ enum SessionVerb {
     },
     /// Put text into a field, replacing what was there.
     Type {
-        /// `e3` or `@e3`, from a `snapshot`.
+        /// `e3` or `@e3` from a `snapshot`, then the text.
+        ///
+        /// With `--selector`, pass the text alone: the selector is the handle.
+        ///
+        /// Both positionals are optional to clap and checked in code, because
+        /// clap refuses an optional positional before a required one — and
+        /// with `--selector` the ref is genuinely absent. The check gives a
+        /// better message than clap's would anyway: it can say which of the
+        /// two forms was half-used.
+        #[arg(value_name = "REF|TEXT")]
         reference: Option<String>,
-        /// The text to put in it.
-        text: String,
-        /// A CSS selector instead, which is what a `snapshot`'s `refs` carry
-        /// beside each `@ref`.
+        #[arg(value_name = "TEXT")]
+        text: Option<String>,
+        /// A CSS selector instead of a `@ref`, which is what a `snapshot`'s
+        /// `refs` carry beside each one.
         ///
         /// The durable handle. A `@ref` is a position in the reading that
         /// minted it and is checked against that reading; a selector names
         /// whatever it matches now, which is what makes it survive a
         /// navigation and what makes a recorded session replayable.
-        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        ///
+        /// No `conflicts_with` here, unlike `click` and `submit`: with a
+        /// selector the remaining positional carries the *text*, so the two
+        /// are used together rather than instead of each other.
+        #[arg(long, value_name = "CSS")]
         selector: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
@@ -844,15 +857,35 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             at,
             serde_json::json!({"verb": Verb::Scroll.name(), "by": by}),
         ),
-        SessionVerb::Type { reference, text, selector, at } => (
-            at,
-            serde_json::json!({
-                "verb": Verb::Type.name(),
-                "ref": reference,
-                "selector": selector,
-                "text": text,
-            }),
-        ),
+        SessionVerb::Type { reference, text, selector, at } => {
+            // Which of the two forms the caller used, and a message naming the
+            // other one when neither is complete.
+            let (reference, text) = match (selector.is_some(), reference, text) {
+                (true, Some(text), None) => (None, text.clone()),
+                (true, _, Some(_)) => {
+                    return Err(H5iError::Metadata(
+                        "with `--selector`, pass only the text: the selector is the handle."
+                            .to_string(),
+                    ))
+                }
+                (false, Some(reference), Some(text)) => (Some(reference.clone()), text.clone()),
+                _ => {
+                    return Err(H5iError::Metadata(
+                        "`type` needs a `@ref` and the text, or `--selector <css>` and the text."
+                            .to_string(),
+                    ))
+                }
+            };
+            (
+                at,
+                serde_json::json!({
+                    "verb": Verb::Type.name(),
+                    "ref": reference,
+                    "selector": selector,
+                    "text": text,
+                }),
+            )
+        }
         SessionVerb::Submit { reference, selector, at } => (
             at,
             serde_json::json!({
@@ -1740,6 +1773,19 @@ mod tests {
             vec!["h5i-browser-light", "session", "navigate", "/docs"],
             vec!["h5i-browser-light", "session", "click", "@e3"],
             vec!["h5i-browser-light", "session", "click", "e3", "--port", "9000"],
+            // Both handles, on every verb that takes one. `type` is the awkward
+            // shape: with `--selector` the remaining positional is the *text*,
+            // so the two do not conflict there and do on the others.
+            vec!["h5i-browser-light", "session", "type", "@e1", "alice"],
+            vec!["h5i-browser-light", "session", "type", "--selector", "#user", "alice"],
+            vec!["h5i-browser-light", "session", "submit", "@e2"],
+            vec!["h5i-browser-light", "session", "submit", "--selector", "#go"],
+            vec!["h5i-browser-light", "session", "click", "--selector", "a.next"],
+            vec!["h5i-browser-light", "session", "structured"],
+            vec!["h5i-browser-light", "session", "markdown", "--url", "https://x.test/"],
+            vec!["h5i-browser-light", "session", "script", "--save", "/tmp/s.json"],
+            vec!["h5i-browser-light", "replay", "/tmp/s.json"],
+            vec!["h5i-browser-light", "open", "a.html", "b.html"],
         ] {
             Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?} should parse: {e}"));
         }
@@ -1759,6 +1805,34 @@ mod tests {
             .is_err(),
             "--port and --control-file must not be given together"
         );
+
+        // A selector *replaces* the ref on the verbs whose positional is the
+        // ref, so naming both is a request whose author did not know which one
+        // they meant.
+        for argv in [
+            vec!["h5i-browser-light", "session", "click", "@e1", "--selector", "#go"],
+            vec!["h5i-browser-light", "session", "submit", "@e1", "--selector", "#go"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&argv).is_err(),
+                "{argv:?} names the same element twice and should be refused"
+            );
+        }
+    }
+
+    /// clap asserts its own invariants at parser-construction time, and one of
+    /// them is that an optional positional may not precede a required one.
+    /// Teaching `type` a `--selector` made its ref optional while its text was
+    /// still required, so **every** `session type` invocation panicked before
+    /// parsing anything — in a debug build, which is what the tests run.
+    ///
+    /// Nothing caught it: the verb tests drive `control_verb` directly, and the
+    /// parse test above happened not to list `type`. This builds the whole
+    /// command tree, which is what runs clap's assertions.
+    #[test]
+    fn the_command_tree_satisfies_claps_own_invariants() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
     }
 
     #[test]
