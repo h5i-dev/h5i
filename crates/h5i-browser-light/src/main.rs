@@ -134,6 +134,32 @@ enum Command {
     #[command(subcommand)]
     Session(SessionVerb),
 
+    /// Run a recorded script against the session a `serve` is holding open.
+    ///
+    /// No model, no tokens. The script is a list of steps made of verified CSS
+    /// selectors, produced by `session script --save`, and this sends each one
+    /// through the same control channel an agent would use — so the policy, the
+    /// receipts and the action log all see a replay exactly as they see a live
+    /// session.
+    ///
+    /// A replay on this engine visits the same states in the same order,
+    /// because the settle runs on a virtual clock rather than a wall clock. A
+    /// recording, the request log it produced, and a replay that lands
+    /// identically are a browser session that can be re-executed and diffed.
+    Replay {
+        /// The script, as written by `session script --save`.
+        script: PathBuf,
+        /// Keep going after a step fails, and report how many did.
+        ///
+        /// Off by default: a replay is a sequence, and a step that acts on a
+        /// page the previous step failed to reach is acting somewhere the
+        /// script never described.
+        #[arg(long)]
+        keep_going: bool,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// Write or print the agent skill this binary carries.
     ///
     /// The skill teaches an agent to drive this browser on a bare host: the
@@ -178,6 +204,15 @@ enum SessionVerb {
         /// and the reply says which it is.
         #[arg(long)]
         delta: bool,
+        /// Go here first, then read.
+        ///
+        /// One round trip instead of `navigate` followed by this verb, which
+        /// costs an agent a whole turn through a model to read a reply it only
+        /// uses to send the next request. Relative to the current page, like
+        /// `navigate`. The reply carries the URL it ended up on, so a redirect
+        /// is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -224,16 +259,34 @@ enum SessionVerb {
     /// Put text into a field, replacing what was there.
     Type {
         /// `e3` or `@e3`, from a `snapshot`.
-        reference: String,
+        reference: Option<String>,
         /// The text to put in it.
         text: String,
+        /// A CSS selector instead, which is what a `snapshot`'s `refs` carry
+        /// beside each `@ref`.
+        ///
+        /// The durable handle. A `@ref` is a position in the reading that
+        /// minted it and is checked against that reading; a selector names
+        /// whatever it matches now, which is what makes it survive a
+        /// navigation and what makes a recorded session replayable.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
     /// Submit the form containing a `@ref`.
     Submit {
         /// Any `@ref` inside the form — the submit button, or a field.
-        reference: String,
+        reference: Option<String>,
+        /// A CSS selector instead, which is what a `snapshot`'s `refs` carry
+        /// beside each `@ref`.
+        ///
+        /// The durable handle. A `@ref` is a position in the reading that
+        /// minted it and is checked against that reading; a selector names
+        /// whatever it matches now, which is what makes it survive a
+        /// navigation and what makes a recorded session replayable.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -278,6 +331,15 @@ enum SessionVerb {
     Extract {
         /// The schema, as JSON.
         schema: String,
+        /// Go here first, then read.
+        ///
+        /// One round trip instead of `navigate` followed by this verb, which
+        /// costs an agent a whole turn through a model to read a reply it only
+        /// uses to send the next request. Relative to the current page, like
+        /// `navigate`. The reply carries the URL it ended up on, so a redirect
+        /// is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -287,6 +349,49 @@ enum SessionVerb {
         /// Stop after this many bytes. Truncation is always announced.
         #[arg(long, value_name = "BYTES")]
         max_bytes: Option<usize>,
+        /// Go here first, then read.
+        ///
+        /// One round trip instead of `navigate` followed by this verb, which
+        /// costs an agent a whole turn through a model to read a reply it only
+        /// uses to send the next request. Relative to the current page, like
+        /// `navigate`. The reply carries the URL it ended up on, so a redirect
+        /// is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// What this session did, as something that can be run again.
+    ///
+    /// Made of verified CSS selectors rather than `@ref` ordinals, because an
+    /// ordinal names a position in the reading that minted it and a replay
+    /// happens against a later page. Steps whose element had no verifiable
+    /// selector are dropped and counted rather than written down wrongly.
+    ///
+    /// Reads are not in it: a replay exists to reach a state, and a snapshot
+    /// changes nothing. `type` records the placeholder it was given, never a
+    /// resolved credential.
+    Script {
+        /// Write the steps here as JSON, for `replay`.
+        #[arg(long, value_name = "PATH")]
+        save: Option<PathBuf>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// What the page publishes about itself: JSON-LD, OpenGraph, `<meta>`.
+    ///
+    /// The cheapest read there is. An outline is the page's content and costs
+    /// hundreds of lines; this is a few hundred bytes the page already wrote
+    /// down for the purpose, and it is the one read where the answer is the
+    /// page's own words rather than something inferred from them.
+    ///
+    /// A page with no metadata is a result, not an error.
+    Structured {
+        /// Go here first, then read.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -322,7 +427,16 @@ enum SessionVerb {
     /// Follow a `@ref` from the last snapshot.
     Click {
         /// `e3` or `@e3`, from a `snapshot`.
-        reference: String,
+        reference: Option<String>,
+        /// A CSS selector instead, which is what a `snapshot`'s `refs` carry
+        /// beside each `@ref`.
+        ///
+        /// The durable handle. A `@ref` is a position in the reading that
+        /// minted it and is checked against that reading; a selector names
+        /// whatever it matches now, which is what makes it survive a
+        /// navigation and what makes a recorded session replayable.
+        #[arg(long, value_name = "CSS", conflicts_with = "reference")]
+        selector: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -462,6 +576,7 @@ fn run() -> Result<(), H5iError> {
         Command::Doctor { net } => doctor(&net),
         Command::Skill(action) => skill(action),
         Command::Session(verb) => session(verb),
+        Command::Replay { script, keep_going, at } => replay(&script, keep_going, &at),
         Command::Open {
             target,
             net,
@@ -614,6 +729,76 @@ fn skill(action: SkillCommands) -> Result<(), H5iError> {
 }
 
 /// Drive the resident session.
+/// Send a recorded script's steps through the control channel, in order.
+///
+/// Deliberately not a second execution engine. Every step is an ordinary verb
+/// request, so a replay is subject to the same policy checks, produces the same
+/// receipts, and lands in the same action log as the session it was recorded
+/// from. A replay that could bypass any of those would be a way to do things
+/// the audited path refuses.
+fn replay(script: &Path, keep_going: bool, at: &SessionArgs) -> Result<(), H5iError> {
+    let text = std::fs::read_to_string(script).map_err(|e| H5iError::with_path(e, script))?;
+    let recording: h5i_browser_light::replay::Recording = serde_json::from_str(&text)
+        .map_err(|e| H5iError::Metadata(format!("{} is not a script: {e}", script.display())))?;
+
+    if recording.dropped > 0 {
+        // Said before anything runs, not after. Whoever is about to trust this
+        // replay should know it is not the whole session.
+        eprintln!(
+            "note: this script is missing {} action(s) from the session it was recorded \
+             from — no durable selector could be verified for them",
+            recording.dropped
+        );
+    }
+
+    let port = session_port(at)?;
+    let mut ran = 0usize;
+    let mut failed = 0usize;
+
+    for (at_step, step) in recording.steps.iter().enumerate() {
+        let reply = h5i_browser_light::stream::ask(port, &step.request())?;
+        let ok = reply.get("ok").and_then(serde_json::Value::as_bool) == Some(true);
+        if ok {
+            ran += 1;
+            if !at_json(at) {
+                println!("{:>3}. {}", at_step + 1, step.render());
+            }
+            continue;
+        }
+
+        failed += 1;
+        let reason = reply
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("the session refused, without saying why");
+        eprintln!("{:>3}. {} — FAILED: {reason}", at_step + 1, step.render());
+        if !keep_going {
+            // A sequence, not a set. Carrying on would act on a page the
+            // previous step failed to reach.
+            return Err(H5iError::Metadata(format!(
+                "step {} of {} failed: {reason}. The replay stopped there; pass \
+                 --keep-going to run the rest anyway.",
+                at_step + 1,
+                recording.steps.len()
+            )));
+        }
+    }
+
+    if failed > 0 {
+        return Err(H5iError::Metadata(format!(
+            "{ran} of {} step(s) replayed; {failed} failed",
+            recording.steps.len()
+        )));
+    }
+    eprintln!("replayed {ran} step(s)");
+    Ok(())
+}
+
+/// Whether this invocation asked for machine output.
+fn at_json(at: &SessionArgs) -> bool {
+    at.json
+}
+
 fn session(verb: SessionVerb) -> Result<(), H5iError> {
     // Every name comes from `Verb`, so the CLI cannot ask for a verb the session
     // does not have. This used to be eight string literals that happened to
@@ -621,9 +806,9 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
     use h5i_browser_light::verbs::Verb;
     let (at, request) = match &verb {
         SessionVerb::Status { at } => (at, serde_json::json!({"verb": Verb::Status.name()})),
-        SessionVerb::Snapshot { delta, at } => (
+        SessionVerb::Snapshot { delta, url, at } => (
             at,
-            serde_json::json!({"verb": Verb::Snapshot.name(), "delta": delta}),
+            serde_json::json!({"verb": Verb::Snapshot.name(), "delta": delta, "url": url}),
         ),
         SessionVerb::Login { off, on: _, at } => (
             at,
@@ -637,17 +822,26 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             at,
             serde_json::json!({"verb": Verb::Scroll.name(), "by": by}),
         ),
-        SessionVerb::Type { reference, text, at } => (
+        SessionVerb::Type { reference, text, selector, at } => (
             at,
-            serde_json::json!({"verb": Verb::Type.name(), "ref": reference, "text": text}),
+            serde_json::json!({
+                "verb": Verb::Type.name(),
+                "ref": reference,
+                "selector": selector,
+                "text": text,
+            }),
         ),
-        SessionVerb::Submit { reference, at } => (
+        SessionVerb::Submit { reference, selector, at } => (
             at,
-            serde_json::json!({"verb": Verb::Submit.name(), "ref": reference}),
+            serde_json::json!({
+                "verb": Verb::Submit.name(), "ref": reference, "selector": selector,
+            }),
         ),
-        SessionVerb::Click { reference, at } => (
+        SessionVerb::Click { reference, selector, at } => (
             at,
-            serde_json::json!({"verb": Verb::Click.name(), "ref": reference}),
+            serde_json::json!({
+                "verb": Verb::Click.name(), "ref": reference, "selector": selector,
+            }),
         ),
         SessionVerb::Requests { since, at } => (
             at,
@@ -669,7 +863,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             at,
             serde_json::json!({"verb": Verb::WaitForScript.name(), "expr": expr}),
         ),
-        SessionVerb::Extract { schema, at } => {
+        SessionVerb::Extract { schema, url, at } => {
             // Parsed here so a typo is a message from the CLI rather than a
             // refusal from the far end of a socket.
             let parsed: serde_json::Value = serde_json::from_str(schema).map_err(|e| {
@@ -677,14 +871,25 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             })?;
             (
                 at,
-                serde_json::json!({"verb": Verb::Extract.name(), "schema": parsed}),
+                serde_json::json!({
+                    "verb": Verb::Extract.name(), "schema": parsed, "url": url,
+                }),
             )
         }
-        SessionVerb::Markdown { max_bytes, at } => (
+        SessionVerb::Markdown { max_bytes, url, at } => (
             at,
-            serde_json::json!({"verb": Verb::Markdown.name(), "max_bytes": max_bytes}),
+            serde_json::json!({
+                "verb": Verb::Markdown.name(), "max_bytes": max_bytes, "url": url,
+            }),
         ),
         SessionVerb::Env { at } => (at, serde_json::json!({"verb": Verb::Env.name()})),
+        SessionVerb::Structured { url, at } => (
+            at,
+            serde_json::json!({"verb": Verb::Structured.name(), "url": url}),
+        ),
+        SessionVerb::Script { save: _, at } => {
+            (at, serde_json::json!({"verb": Verb::Script.name()}))
+        }
     };
 
     let port = session_port(at)?;
@@ -703,6 +908,37 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("the session refused, without saying why");
         return Err(H5iError::Metadata(text.to_string()));
+    }
+
+    // A recording asked to be kept. Written as the step list rather than the
+    // rendered form, because `replay` reads this back and a comment is not a
+    // step.
+    if let SessionVerb::Script { save: Some(path), .. } = &verb {
+        let steps = reply.get("steps").cloned().unwrap_or(serde_json::json!([]));
+        let document = serde_json::json!({
+            "start_url": reply.get("start_url").cloned().unwrap_or(serde_json::Value::Null),
+            "steps": steps,
+            "dropped": reply.get("dropped").cloned().unwrap_or(serde_json::json!(0)),
+        });
+        let text = serde_json::to_string_pretty(&document)
+            .map_err(|e| H5iError::Metadata(format!("could not write the script: {e}")))?;
+        std::fs::write(path, text).map_err(|e| H5iError::with_path(e, path))?;
+        let dropped = reply.get("dropped").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let count = reply
+            .get("steps")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        eprintln!("wrote {count} step(s) to {}", path.display());
+        if dropped > 0 {
+            // Never silent. A script shorter than the session it came from is
+            // the fact the person about to run it most needs.
+            eprintln!(
+                "note: {dropped} action(s) are not in it — no durable selector could be \
+                 verified for what they acted on"
+            );
+        }
+        return Ok(());
     }
 
     // The snapshot is the whole point of the verb; everything else is a line.

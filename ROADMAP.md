@@ -6261,6 +6261,330 @@ testing, so it should be built after item 8 rather than before it.
 
 ---
 
+## B16. Lightpanda below the verb line, 2026-08-26
+
+§B15 read Lightpanda's agent surface — the tool table, the recorder, the
+selector path, the credential indirection — and its queue is built. This read
+is the other half: the engine underneath. The load pipeline, the settle loop,
+the network stack, the memory strategy and the protocol servers, read
+systematically against our own with both catalogued at the same depth.
+
+Facts to pin first, because they change what the comparison is allowed to
+claim:
+
+* **Lightpanda has no layout engine.** What it has is a deliberate fake:
+  elements are 5×5 boxes, a node's `y` is its document-order index times five
+  pixels, `<body>` is 1920 × 100,000,000, and the comments on
+  `contentWidth`/`contentHeight` (`Element.zig:1533`) are candid that the two
+  are mutually contradictory on purpose — each axis independently assumes the
+  arrangement that *produces* overflow, because under-reporting overflow is
+  what wedges measure-then-mutate loops. `Page.captureScreenshot` returns an
+  **embedded static PNG** (`cdp/domains/page.zig:23`), and `printToPDF` an
+  embedded PDF. That is §B15.11's `missingApi` lie at protocol scale, shipped,
+  in the second of the two engines we have now read. Among the three of us,
+  real pixels are ours alone.
+* **Its settle runs on the wall clock.** A page's `setTimeout(1000)` costs a
+  Lightpanda caller a real second; two runs of one page can differ. §B15.10's
+  replay-and-diff position rests on our virtual clock and nothing in this read
+  weakens it.
+* **Its network stack is libcurl** — the multi interface, nghttp2, BoringSSL,
+  brotli — with a browser-shaped policy layer on top. It did not write an HTTP
+  client, which is the correct decision for its goals and unavailable for
+  ours: our client *is* the receipt mechanism.
+
+So the engine-level comparison is lopsided in the opposite direction from
+§B15's: there the verbs were behind and the engine was fine; here the verbs
+are settled and what the reading found is in the load path. Mostly in ours.
+
+### B16.1 Three costs in our own load path, found by contrast
+
+The method note of §B15.1 repeats: reading another implementation found in an
+afternoon what neither the corpus nor WPT would ever surface, because a slow
+page is conformant and renders correctly.
+
+**1. We negotiate no compression.** reqwest is built with
+`default-features = false, features = ["blocking", "rustls-tls"]`
+(`Cargo.toml`), so the `gzip`/`brotli` features are off, and no code path sets
+`Accept-Encoding` — the string does not occur in `src/`. Every document,
+stylesheet and bundle this engine has ever fetched arrived identity-encoded,
+commonly three to five times its compressed size. Lightpanda ships brotli,
+gzip and deflate through curl and thinks about it never. Nothing in our design
+argues for this; it is not a trade, it is an omission the receipts question
+never noticed because a receipt records that bytes moved, not that three times
+too many did.
+
+**2. Subresources are fetched one at a time, on the parse thread, over
+HTTP/1.1.** `BrokerNet::fetch` (`net.rs:640`) is the whole adapter: Blitz asks
+for a resource, the broker blocks on the wire, the handler completes before
+returning. N subresources are N sequential round trips, and with the `http2`
+feature absent there is no multiplexing to soften it. The Cargo comment states
+this as a chosen shape — "a browser that fetches one subresource at a time is
+a browser whose receipt order is its request order" — and §B16.2 argues that
+sentence defends the claim at the wrong place.
+
+**3. Fonts are re-read from disk on every navigation.** `PageFactory::fonts()`
+(`engine.rs:1325`) calls `fonts::load` fresh, which `fs::read`s each candidate
+file and builds a new parley `Collection`, and it is called from all four page
+construction paths (`engine.rs:1362`, `:1433`, `:1451`, `:1461`) — up to the
+24-font budget of files per page load, for a font set that cannot change
+between navigations of one session. Unlike item 2 this has no comment arguing
+for it. It is bug-shaped: `FontSetup` is not shared because nothing made it
+shareable.
+
+Per §B15.12a's own lesson, none of these carries a promised number. Each entry
+in §B16.10 names the measurement that gates it; the corpus instrument (§B8)
+measures pages end to end and is the right harness, run against the network
+corpus rather than local fixtures, since two of the three are network effects.
+
+### B16.2 The preload scanner, and what "serial" actually protects
+
+Lightpanda buffers the whole document before parsing — the same
+buffer-then-parse shape we have, so no gap either way there — and then runs a
+**preload scanner** first: a tokenizer-only pass over the complete HTML
+(`src/html5ever/prescan.rs`, ~200 lines, modelled on Servo's
+`dom/servoparser/prefetch.rs`) that reports every `<script src>`, module
+preload and the first `<base href>`, so their transfers start before the tree
+builder reaches them. The comment beside it names the failure it removes:
+without this, N large blocking scripts download serially.
+
+That is exactly our shape, minus the fix. And the receipt argument for keeping
+it does not hold at the layer it is made. The engine's claim is **no receipt,
+no request**: the decision record is written before any bytes move. That is a
+claim about *ordering of decision and dispatch per request*, not about
+requests being in flight one at a time. A prescan pass that walks the
+document's resource list, policy-checks each URL, writes each receipt, and
+only then lets transfers overlap, preserves the claim exactly — the receipt
+log becomes the decision order, which it already is. Redirects stay per-hop
+policy-checked per transfer, unchanged. What changes is only that transfer N+1
+no longer waits for transfer N's bytes.
+
+The mechanical route does not even need Blitz's `NetProvider` to become
+async: the prescan primes the broker, transfers run on a small pool (the JS
+`fetch` path already runs six in flight through the shared client,
+`host.rs:203`), and `BrokerNet::fetch` becomes "join the transfer that is
+already running, or start one" instead of "start one now and wait". The same
+prescan output also answers `<link rel=preload>` for free.
+
+If the decision goes the other way — serial is kept — then the Cargo comment
+should say what it is actually buying, because "receipt order" is not it.
+
+### B16.3 The settle loop: name the page that will never finish
+
+Two rules from Lightpanda's scheduler are worth taking because they are about
+honesty, not speed. A task that reschedules itself **never blocks completion**
+(`Scheduler.zig:137`: "a task that endlessly reschedules itself would keep the
+page alive forever"), and once timer nesting reaches depth ten, further
+reschedules stop blocking too (`Timers.zig:20`) — the comment names
+`requestAnimationFrame` loops as the common case.
+
+Our virtual clock makes the *cost* of this problem zero — a self-rescheduling
+timer burns no wall time — but not the *answer*. A page whose only remaining
+work is a self-rescheduling interval rides `SETTLE_BUDGET_MS` to the cut-off
+(`script/mod.rs:773`) and every `wait_for` on it answers `budget`: "the page
+was still working, so it may yet appear". For an animation loop that is a
+plausible lie. The page is not on its way anywhere; the condition will not be
+met by waiting; the honest answer is the middle one.
+
+The fix is not to copy `blocks_done` — collapsing "only periodic work
+remains" into `quiescent` would be its own small lie, since a repeating timer
+*can* change the DOM. It is to detect the state (every pending timer is a
+repeat, or past a nesting depth, and no fetch is outstanding) and report it as
+what it is: a fourth `end` beside `met`/`quiescent`/`budget`, or `quiescent`
+with a named caveat, in the same spirit as `open_sockets`. Which of those two
+shapes is right should be decided when it is built; what §B15.13's item 3
+established is only that the distinction must not be erased.
+
+### B16.4 The snapshot economy
+
+Lightpanda's semantic tree is aggressively pruned for model context, and three
+of its heuristics (`SemanticTree.zig:200-233`, `:524`) transfer directly:
+
+* a **structural role** (generic, list, row, cell, navigation …) whose
+  computed name is just its descendants' text concatenated, with no explicit
+  `aria-label`, emits no name — otherwise every wrapper div hoists its
+  subtree's text and the real text nodes then look redundant;
+* a StaticText child whose text is a substring of its parent's name is
+  dropped;
+* a named leaf-semantic node — link, button, heading — does not walk its
+  children at all.
+
+Ours caps at 500 lines and truncates; theirs compresses before it ever needs
+to cap. The difference is the difference between a snapshot that fits and one
+that fits *and still contains the bottom of the page*. This is measurable in
+the corpus harness (outline bytes per page, before and after) and should be.
+
+The second economy is turns, not tokens: every Lightpanda read tool accepts an
+optional `url` and navigates before reading, and its model guidance says to
+prefer `markdown {url}` over `goto`-then-`markdown` — one round trip where an
+agent otherwise spends two. On our side that is a `url` argument on the read
+verbs, and with §B15.3's table built it is an exhaustive-match question each
+verb must answer rather than a scattering of flag code.
+
+Not taken from the same file: their per-session loading knobs
+(`LP.configureLoading` — skip subframes, workers, external stylesheets). We
+have no subframes or workers to skip, and stylesheet loading is what makes our
+visibility filtering true rather than approximate. If a cheap text-only read
+mode is ever wanted, it should be argued on its own, not imported.
+
+### B16.5 Cookies: the PSL is a table, not a service
+
+The `Domain` attribute was refused (§12's cookie narrowings) because honouring
+it without a public suffix list lets `evil.co.uk` set a cookie for `co.uk`,
+and the stated cost was real: a site that authenticates at `example.com` and
+serves from `www.example.com` logs out between requests. §B11.5.1's login
+corpus will hit this on its first multi-subdomain target.
+
+Lightpanda shows the missing piece is small. Its PSL is a **generated static
+table** compiled into the binary (`src/data/public_suffix_list.zig`, a
+comptime perfect-hash set regenerated by a script), consulted for both the
+Domain check and SameSite's registrable-domain computation, with the
+label-boundary check that stops `attackerexample.com` matching `example.com`
+(`Cookie.zig:324`). No fetch, no file, no staleness at runtime. In Rust the
+same shape is the `psl` crate or a `phf` table generated in CI.
+
+With that in hand, `Domain` can be honoured under the same fail-closed rules
+(reject public suffixes, reject non-suffix boundaries), and the other three
+narrowings stay exactly as written: in memory, never readable by an agent,
+`Secure`/prefixes enforced. This closes a stated cost without reopening a
+stated principle.
+
+### B16.6 The allowlist checks a name; the wire connects to an address
+
+Our policy layer decides on origins — names. Lightpanda's SSRF guard runs at
+a different layer: curl's open-socket callback hands it the **resolved
+sockaddr**, and the CIDR check runs there (`network/http.zig:240`), which
+means a hostname that passes every name-level check and then resolves to
+loopback or RFC1918 space is still refused. A name-level allowlist cannot do
+that: DNS rebinding is precisely an allowed name resolving somewhere the
+policy never saw.
+
+For us the exposure is narrow — inside a box the egress proxy is the
+enforcement point, and loopback is deliberately allowed — but the engine also
+runs bare, the README's request-log claims apply there too, and "the receipt
+says `docs.example.com` while the bytes went to `10.0.0.1`" is exactly the
+plausible-wrong-record this file refuses everywhere else. reqwest does not
+expose a socket hook, but it does expose `resolve()` overrides: resolve first,
+check the addresses against the policy, pin the checked answer for the
+request. That keeps check and connection on the same addresses, which is the
+property the socket hook provides.
+
+### B16.7 `wss://`, and a reason that was narrower than stated
+
+The refusal of `wss://` says "it needs a raw TLS stream the HTTP client here
+does not expose", which is true of reqwest and was quietly generalised into a
+property of the engine. Lightpanda gets `wss://` for free because its socket
+owns its transport — the WebSocket easy handle carries TLS, ALPN and proxying
+itself. The same shape exists in our ecosystem: `tungstenite` over a rustls
+stream is a socket that owns its transport, and the front half —
+`authorise_socket`, receipt, then dial — is unchanged, as is the per-frame
+receipting.
+
+What this does *not* change: a remote `ws://` or `wss://` is still refused
+whenever an egress proxy is configured, because a raw socket steps around the
+proxy that carries the box's allowlist, and that argument never depended on
+TLS. What it opens is `wss://` to loopback (dev servers behind local TLS) and
+remote `wss://` on bare-host runs, where today the refusal message blames a
+missing capability rather than a policy. Low urgency; recorded because the
+stated reason was implementation-specific and the file should not carry it as
+architecture.
+
+### B16.8 Notes for the CDP item, still queued behind the agent loop
+
+§B15.11 kept CDP behind the agent-loop work and required the conformance list
+to ship before the endpoint. This read adds two notes to that file, one
+mechanical and one confirming:
+
+* Lightpanda counts every CDP method it does not implement
+  (`cdp_unknown_commands`, `CDP.zig:344`, surfaced in its metrics endpoint).
+  That is the conformance list's live complement: the published list says what
+  is honestly absent, the counter says which absences real clients actually
+  hit, in what volume. If CDP is built, both ship together.
+* Its compatibility layer is a catalogue of client bugs worked around — a
+  fake startup target because Puppeteer expects one, TCP keepalive instead of
+  WebSocket ping because go-rod panics on pings and chromedp logs them as
+  malformed, `Page.getFrameTree` shaped for Stagehand — confirming Obscura's
+  discouraging cost estimate from the second source. The protocol is the small
+  part; the clients are the work.
+
+Also seen and noted, not taken: **WebMCP** (`navigator.modelContext` — pages
+declaring their own tool manifests to the browser, surfaced as CDP events).
+It is a bet that websites will ship agent-facing tools, and it is cheap for
+Lightpanda because its whole surface is protocol-shaped. For us it is a new
+inbound channel from untrusted page content to the agent, which is the
+boundary this engine exists to harden. Reopen if the corpus ever meets a page
+that ships one.
+
+### B16.9 What not to copy, this pass
+
+**Silent canvas stubs.** Lightpanda ships 61 `.noop = true` bridge functions —
+`fillRect`, `arc`, `save`/`restore` — so canvas code runs and draws nothing,
+silently. §B8.4 already names silent stubbing as the worst state for anything
+here. But the comparison does sharpen §B11.5.8 (Canvas 2D, the largest
+corpus-demand item): both reference engines fake or stub canvas because
+neither has a rasteriser. We have one — the paint path is `blitz-paint` over
+vello_cpu — so a *real* Canvas 2D is cheaper for this engine than for either
+of them, and when the corpus item is paid it should be paid for real, not with
+their stubs.
+
+**The pseudo-layout.** It is their load-bearing necessity, not a model for an
+engine that has Taffy. If a skip-layout fast path is ever proposed here, the
+`contentWidth`/`contentHeight` comments are the spec for what a fake must
+guarantee to avoid wedging real pages — and the fact that the spec is that
+subtle is the argument for not building one.
+
+**Wall-clock settling, SQLite-backed persistence, phone-home telemetry.** The
+first would trade away determinism (§B15.10's replay position), the second is
+§B6's storage line, the third is not what this engine is.
+
+**Missing-API stack traces**: Lightpanda's unknown-property interceptor
+records the JS stack of the first occurrence. Our `unsupported()` machinery
+already exists and already ranks by count; first-seen stacks are a debug-build
+nicety to remember, not an item.
+
+### B16.10 The queue
+
+Every item carries its gate. Per §B15.12a, the performance entries are built
+*after* their before-measurement exists, and reverted if the after fails to
+move it; the honesty and capability entries are gated by the rule of §B8 —
+a page, or a stated claim, has to be asking.
+
+1. **Negotiate compression.** Enable reqwest's `gzip` and `brotli`; decide
+   and document what the receipt's byte count means afterwards (wire bytes
+   and decoded bytes are different facts; the receipt should name the one it
+   records, and arguably both). Gate: network-corpus wall clock and bytes,
+   before and after. §B16.1.
+2. **Load fonts once per factory.** Share one `FontSetup` across navigations
+   of a session. Gate: measure the per-navigation cost first so the record
+   has a number; this one is a defect fix regardless. §B16.1.
+3. **Prescan and overlap subresource transfers**, HTTP/2 on. Receipts stay
+   decision-ordered; per-hop redirect checks unchanged; the prescan output
+   also serves `<link rel=preload>`. If refused, rewrite the Cargo comment to
+   say what serial actually buys. Gate: a network-corpus page with many
+   subresources, before and after. §B16.2.
+4. **Name the page that will never finish.** "Only self-rescheduling work
+   remains" becomes a reported settle outcome rather than `budget`. Gate:
+   a corpus fixture with an animation loop, asserting the answer. §B16.3.
+5. **Snapshot pruning**: structural-name suppression, StaticText dedup,
+   leaf short-circuit. Gate: outline bytes per corpus page, before and
+   after, with a diff review that the dropped lines were in fact redundant.
+   §B16.4.
+6. **`url` on the read verbs** — navigate and read in one round trip, as a
+   verb-table question. §B16.4.
+7. **`Domain` cookies over a compiled PSL**, SameSite computed on registrable
+   domains; the other cookie narrowings unchanged. Gate: §B11.5.1's login
+   corpus meeting a multi-subdomain site — which it will. §B16.5.
+8. **Resolve-then-check-then-pin** for bare-host runs, so the address the
+   policy checked is the address the socket dials. §B16.6.
+9. **`wss://` over an owned transport**, when a page asks; the proxy-bypass
+   refusal for remote sockets stands. §B16.7.
+
+Nothing here displaces §B15.13's two open items: replay (§B15.10) remains the
+natural next build on the verb side, and §B11.5.1's login corpus remains the
+oldest and least-verified claim in this file — item 7 above is best built
+against it, not before it.
+
+---
+
 # Formal verification: a Lean model beside the Rust
 
 Status: proposed, 2026-08-15. Milestone stub: M16. Mode: the model is a

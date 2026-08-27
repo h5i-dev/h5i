@@ -330,6 +330,21 @@ impl Page {
     }
 
     /// Parse markup into a document. Separated so it can be attempted twice.
+    /// One rule this engine adds to the user-agent stylesheet.
+    ///
+    /// A `<canvas>` is a replaced element: browsers lay it out at its own
+    /// width and height even though its `display` is `inline`. Blitz's default
+    /// sheet gives it no such treatment, so an inline canvas measured zero by
+    /// zero, and a surface composited onto a zero-sized box paints nothing —
+    /// the drawing worked, the pixels existed, and the page was blank.
+    ///
+    /// `inline-block` is the closest shape Blitz will size correctly, and it
+    /// keeps a canvas flowing inline with the text around it, which is where
+    /// pages put them. Added as a *user-agent* rule so a page's own stylesheet
+    /// still overrides it, which is what makes this a default rather than a
+    /// decision taken away from the document.
+    const CANVAS_UA_CSS: &'static str = "canvas { display: inline-block; }";
+
     fn parse(
         html: &str,
         base_url: &Url,
@@ -362,6 +377,15 @@ impl Page {
             },
         )
         .into_inner()
+    }
+
+    /// Apply this engine's own additions to the user-agent stylesheet.
+    ///
+    /// One rule today ([`Page::CANVAS_UA_CSS`]). Kept as a step of its own so
+    /// the next one has an obvious home, and so it runs on every path that
+    /// builds a document rather than on whichever one somebody remembered.
+    fn apply_ua_stylesheet(doc: &mut BaseDocument) {
+        doc.add_user_agent_stylesheet(Self::CANVAS_UA_CSS);
     }
 
     pub fn from_html(
@@ -423,6 +447,7 @@ impl Page {
             },
         };
 
+        Self::apply_ua_stylesheet(&mut doc);
         seed_checkbox_state(&mut doc);
 
         // Twice, deliberately. The broker is synchronous, so subresources have
@@ -578,6 +603,7 @@ impl Page {
                 timers_run: 0,
                 cut_off: false,
                 pending_timers: 0,
+                periodic_timers: 0,
             });
             return Ok(());
         }
@@ -771,6 +797,12 @@ impl Page {
         self.settled = Some(settled);
         self.script = Some(script);
         self.ran_scripts = true;
+        // A canvas drawn during the script phase reaches the page here. The
+        // realm has to be installed on `self` first, because the surfaces live
+        // on its host — so this cannot move above the line before it.
+        if self.composite_canvases() {
+            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        }
         Ok(())
     }
 
@@ -791,7 +823,8 @@ impl Page {
         let dirty = script.take_dirty();
         let requests = script.take_requests();
         self.settled = Some(settled);
-        if dirty {
+        let painted = self.composite_canvases();
+        if dirty || painted {
             self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
         }
         Some(requests)
@@ -840,6 +873,7 @@ impl Page {
                     timers_run: 0,
                     cut_off: false,
                     pending_timers: 0,
+                    periodic_timers: 0,
                 },
                 end: if met {
                     crate::script::WaitEnd::Met
@@ -874,10 +908,85 @@ impl Page {
     fn after_script(&mut self, settled: crate::script::Settled) -> bool {
         let dirty = self.script.as_mut().map(|s| s.take_dirty()).unwrap_or(false);
         self.settled = Some(settled);
-        if dirty {
+        // Canvas surfaces reach the page here, before layout rather than after:
+        // attaching the pixels sets the element's intrinsic size, which the
+        // layout pass then has to see.
+        let painted = self.composite_canvases();
+        if dirty || painted {
             self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
         }
-        dirty
+        dirty || painted
+    }
+
+    /// Hand every drawn canvas surface to the document as raster image data.
+    ///
+    /// `blitz-paint` draws `raster_image_data()` for *any* element, not only
+    /// `<img>`, which is what lets a canvas composite into the page with no
+    /// changes to the paint path and no GPU surface. Blitz's own
+    /// `CanvasData` is the other route and is not usable here: it carries a
+    /// `custom_paint_source_id` for an external renderer, and this engine's
+    /// canvas *is* a CPU buffer.
+    ///
+    /// Returns whether anything changed, so a page with no canvas pays nothing
+    /// and a page whose canvas has not been drawn on since the last pass pays
+    /// nothing either.
+    fn composite_canvases(&mut self) -> bool {
+        let Some(script) = self.script.as_ref() else {
+            return false;
+        };
+        let host = script.host();
+        if host.canvases.borrow().is_empty() {
+            return false;
+        }
+
+        let mut canvases = host.canvases.borrow_mut();
+        let dirty = canvases.dirty();
+        if dirty.is_empty() {
+            return false;
+        }
+
+        let doc = self.doc.clone();
+        let mut doc = doc.borrow_mut();
+        let mut painted = false;
+        for node_id in dirty {
+            let Some(canvas) = canvases.get_mut(node_id) else {
+                continue;
+            };
+            let (width, height) = (canvas.width(), canvas.height());
+            // The paint path expects straight-alpha RGBA; the surface is
+            // premultiplied, which is how the rasteriser writes it. Getting
+            // this backwards darkens every semi-transparent pixel — the kind
+            // of wrong that looks plausible until it is beside a browser.
+            let mut straight = Vec::with_capacity(canvas.pixels().len());
+            for pixel in canvas.pixels().as_chunks::<4>().0 {
+                let alpha = pixel[3];
+                if alpha == 0 {
+                    straight.extend_from_slice(&[0, 0, 0, 0]);
+                    continue;
+                }
+                let un = |channel: u8| -> u8 {
+                    ((channel as u32 * 255 + alpha as u32 / 2) / alpha as u32).min(255) as u8
+                };
+                straight.extend_from_slice(&[un(pixel[0]), un(pixel[1]), un(pixel[2]), alpha]);
+            }
+
+            let Some(node) = doc.get_node_mut(node_id) else {
+                continue;
+            };
+            let Some(element) = node.element_data_mut() else {
+                continue;
+            };
+            element.special_data = blitz_dom::node::SpecialElementData::Image(Box::new(
+                blitz_dom::node::ImageData::Raster(blitz_dom::node::RasterImageData::new(
+                    width,
+                    height,
+                    std::sync::Arc::new(straight),
+                )),
+            ));
+            canvas.mark_composited();
+            painted = true;
+        }
+        painted
     }
 
     /// How many sockets this page holds open.
@@ -1000,8 +1109,15 @@ impl Page {
             ));
         }
 
+        // Two different facts, one line. `cut_off` says the reading stopped
+        // before the page did. `periodic_timers` says the page finished what it
+        // owed and is still running a loop that re-arms itself, which makes two
+        // reads of it disagree without the agent having acted — the same caveat
+        // `open_sockets` carries, and it belongs in the outline for the same
+        // reason. Silence here would leave an agent unable to tell a page that
+        // is animating from one that is done.
         if let Some(settled) = &self.settled
-            && settled.cut_off
+            && (settled.cut_off || settled.periodic_timers > 0)
         {
             snapshot.notes.push(settled.render());
         }
@@ -2248,6 +2364,83 @@ mod input_tests {
         let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
         let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
         factory.from_html(html, &Url::parse("https://site.example/page").unwrap())
+    }
+
+    /// A wrapper that has swallowed a block of structure used to report one
+    /// run-on line — `TitleBody textRead more`, three pieces of the page with
+    /// no separator — and then suppress those pieces as prose it claimed to
+    /// have already said. It had said them all at once, unreadably, and the
+    /// structure an outline exists to show was gone.
+    #[test]
+    fn a_list_item_does_not_swallow_the_block_inside_it() {
+        let page = page_with(
+            "<html><body><ul><li>\
+               <h3>Widget</h3>\
+               <p>A thing that widgets.</p>\
+               <a href=\"/buy\">Buy now</a>\
+             </li></ul></body></html>",
+        );
+        let rendered = page.snapshot().render();
+
+        assert!(
+            !rendered.contains("WidgetA thing"),
+            "the wrapper ran the block together:\n{rendered}"
+        );
+        for piece in ["Widget", "A thing that widgets.", "Buy now"] {
+            assert!(
+                rendered.contains(piece),
+                "{piece:?} was suppressed as prose the wrapper never said:\n{rendered}"
+            );
+        }
+        // And each piece appears once, not once inside the wrapper's line and
+        // again on its own.
+        assert_eq!(
+            rendered.matches("A thing that widgets.").count(),
+            1,
+            "duplicated:\n{rendered}"
+        );
+    }
+
+    /// The other side of the same rule, and the reason it is scoped to *block*
+    /// descendants. Prose with a link in it is read well by the existing rule,
+    /// and a heading wrapping a single link is a shape where the wrapper's name
+    /// is the only thing carrying the heading level. Neither may change.
+    #[test]
+    fn prose_with_a_link_and_a_heading_around_one_are_unchanged() {
+        let page = page_with(
+            "<html><body>\
+               <p>Please <a href=\"/here\">read this</a> first.</p>\
+               <h2><a href=\"/sec\">Section two</a></h2>\
+             </body></html>",
+        );
+        let rendered = page.snapshot().render();
+        assert!(
+            rendered.contains("Please read this first."),
+            "the paragraph lost its own sentence:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Section two"),
+            "the heading lost its name:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("heading2"),
+            "the heading level went missing:\n{rendered}"
+        );
+    }
+
+    /// A table cell is the same shape as a list item and was wrong the same way.
+    #[test]
+    fn a_table_cell_does_not_swallow_the_block_inside_it() {
+        let page = page_with(
+            "<html><body><table><tr><td>\
+               <p>First</p><p>Second</p>\
+             </td></tr></table></body></html>",
+        );
+        let rendered = page.snapshot().render();
+        assert!(
+            !rendered.contains("FirstSecond"),
+            "the cell ran its paragraphs together:\n{rendered}"
+        );
     }
 
     fn ref_node(page: &Page, name: &str) -> usize {

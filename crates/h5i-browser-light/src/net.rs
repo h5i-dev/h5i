@@ -113,6 +113,64 @@ impl FetchOutcome {
 }
 
 /// Policy plus receipts plus a client, in that order of importance.
+/// Addresses this broker has already checked, keyed by host.
+///
+/// The other half of [`Policy::check_address`], and the half that makes the
+/// check mean something. Resolving a name to decide about it and then letting
+/// the HTTP client resolve it again leaves a window between the two: the second
+/// answer is what the bytes go to, and nothing checked it. That window is the
+/// whole of DNS rebinding.
+///
+/// So the checked addresses are *pinned*. The client is built with this as its
+/// resolver, and it answers from what the broker already decided about rather
+/// than asking the network a second time. A name that is not in the map has not
+/// been through the policy, and the answer is a refusal rather than a lookup —
+/// fail closed, in the one place where failing open would mean connecting
+/// somewhere nobody approved.
+///
+/// Lightpanda does this at curl's open-socket callback, which sees the resolved
+/// `sockaddr` and can refuse it there. reqwest exposes no such hook; a pinning
+/// resolver reaches the same place from the other side.
+#[derive(Default)]
+struct Pinned {
+    by_host: std::sync::Mutex<std::collections::HashMap<String, Vec<std::net::SocketAddr>>>,
+}
+
+impl Pinned {
+    /// Remember the addresses a host was approved for.
+    fn set(&self, host: &str, addrs: Vec<std::net::SocketAddr>) {
+        if let Ok(mut map) = self.by_host.lock() {
+            map.insert(host.to_ascii_lowercase(), addrs);
+        }
+    }
+
+    fn get(&self, host: &str) -> Option<Vec<std::net::SocketAddr>> {
+        self.by_host.lock().ok()?.get(&host.to_ascii_lowercase()).cloned()
+    }
+}
+
+impl reqwest::dns::Resolve for Pinned {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let found = self.get(name.as_str());
+        Box::pin(std::future::ready(match found {
+            Some(addrs) => {
+                let iter: reqwest::dns::Addrs = Box::new(addrs.into_iter());
+                Ok(iter)
+            }
+            // Not an error worth dressing up: every request this client makes
+            // goes through the broker, which pins before it sends. Arriving
+            // here means something reached the wire without a decision, and
+            // connecting anyway is the one outcome that must not happen.
+            None => Err(format!(
+                "`{}` was not resolved through the policy, so this engine will not connect \
+                 to it",
+                name.as_str()
+            )
+            .into()),
+        }))
+    }
+}
+
 pub struct Broker {
     policy: Policy,
     sink: Arc<dyn Sink>,
@@ -130,6 +188,13 @@ pub struct Broker {
     /// it refuses any non-loopback address while one is set, rather than
     /// stepping around the allowlist that proxy enforces.
     proxied: bool,
+    /// Addresses already approved, and the client's only source of them.
+    ///
+    /// `None` when an egress proxy is configured: the proxy resolves the name
+    /// itself and this engine never sees an address, so pinning one would be a
+    /// claim it cannot support. The proxy is the enforcement point there, which
+    /// is the same division of labour the socket client already follows.
+    pinned: Option<Arc<Pinned>>,
 }
 
 impl Broker {
@@ -160,6 +225,18 @@ impl Broker {
             builder = builder.proxy(proxy);
         }
 
+        // With a proxy in the path the name is resolved at the far end and this
+        // engine never sees an address, so there is nothing to pin and the
+        // proxy is the enforcement point. Without one, every connection goes to
+        // an address this broker has already decided about.
+        let pinned = if proxied {
+            None
+        } else {
+            let pinned = Arc::new(Pinned::default());
+            builder = builder.dns_resolver(pinned.clone());
+            Some(pinned)
+        };
+
         let client = builder
             .build()
             .map_err(|e| H5iError::Metadata(format!("failed to build the http client: {e}")))?;
@@ -168,6 +245,7 @@ impl Broker {
             policy,
             sink,
             client,
+            pinned,
             seq: AtomicU64::new(0),
             jar: crate::cookies::Jar::new(),
             proxied,
@@ -176,6 +254,56 @@ impl Broker {
 
     pub fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Resolve a URL's host, check every address it answers with, and pin the
+    /// result for the connection that follows.
+    ///
+    /// `Ok(())` when there is nothing to do — a proxy in the path, or a URL
+    /// with no host — so the caller has one branch rather than three.
+    ///
+    /// **Every** address is checked, not the first. A name that answers with
+    /// one public address and one loopback address is refused: which one gets
+    /// connected to is the client's choice among them, and approving a set
+    /// while objecting to a member of it would leave the outcome to chance.
+    fn pin_addresses(&self, url: &Url) -> Result<(), String> {
+        let Some(pinned) = self.pinned.as_ref() else {
+            // A proxy resolves the name at the far end; there is no address
+            // here to check, and none to pin.
+            return Ok(());
+        };
+        if !matches!(url.scheme(), "http" | "https") {
+            return Ok(());
+        }
+        let Some(host) = url.host_str() else {
+            return Ok(());
+        };
+
+        let port = url
+            .port_or_known_default()
+            .unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
+        // IPv6 arrives from `host_str` with its brackets, which the resolver
+        // does not want.
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+
+        use std::net::ToSocketAddrs;
+        let resolved: Vec<std::net::SocketAddr> = match (bare, port).to_socket_addrs() {
+            Ok(addrs) => addrs.collect(),
+            Err(e) => return Err(format!("`{host}` could not be resolved: {e}")),
+        };
+        if resolved.is_empty() {
+            return Err(format!("`{host}` resolved to no addresses"));
+        }
+        for addr in &resolved {
+            if let Some(reason) = self.policy.check_address(url, addr.ip()).reason() {
+                return Err(reason.to_string());
+            }
+        }
+        pinned.set(host, resolved);
+        Ok(())
     }
 
     /// The session's jar, for the things that may legitimately touch it:
@@ -284,6 +412,25 @@ impl Broker {
                     format!("denied by policy: {reason}")
                 };
                 return FetchOutcome::failed_at(current, message, Some(seq));
+            }
+
+            // 1b. Where that name actually goes. The check above decided about
+            //     a *name*; this decides about the address behind it and pins
+            //     the answer, so the bytes cannot reach somewhere the decision
+            //     never saw. Recorded as a denial like any other, because "the
+            //     name was allowed and the address was not" is exactly what a
+            //     reader of the log would want to find.
+            if let Err(reason) = self.pin_addresses(&current) {
+                let record = RequestRecord::request(seq, initiator, &method, current.as_str())
+                    .denied(&reason);
+                if let Err(e) = self.record_pair(&record) {
+                    return FetchOutcome::failed(current, format!("receipt sink refused: {e}"));
+                }
+                return FetchOutcome::failed_at(
+                    current,
+                    format!("denied by policy: {reason}"),
+                    Some(seq),
+                );
             }
 
             // 2. The decision record, before any bytes move. If this cannot be
@@ -486,6 +633,17 @@ impl Broker {
             return Err(format!("denied by policy: {reason}"));
         }
 
+        // And where that name goes, on the same rule as every other request.
+        if let Err(reason) = self.pin_addresses(url) {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str())
+                    .denied(&reason);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(format!("denied by policy: {reason}"));
+        }
+
         let record = RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str());
         if let Err(e) = self.sink.append(&record) {
             return Err(format!(
@@ -555,6 +713,17 @@ impl Broker {
             let record =
                 RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
                     .denied(reason);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(format!("denied by policy: {reason}"));
+        }
+
+        // And where that name goes, on the same rule as every other request.
+        if let Err(reason) = self.pin_addresses(url) {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
+                    .denied(&reason);
             if let Err(e) = self.record_pair(&record) {
                 return Err(format!("receipt sink refused: {e}"));
             }

@@ -498,17 +498,31 @@ written as ordinary request/response pairs with `WS-SEND`, `WS-RECV` or
 console, `h5i box watch` and the export bundle show socket traffic with no
 changes to any of them.
 
-Two refusals, by name:
+**`wss://` works**, and the reason it did not is worth recording because the
+reason was wrong. The refusal said it "needs a raw TLS stream the HTTP client
+here does not expose", which is true of `reqwest` and had been generalised into
+a property of the engine. It is not one: a socket that **owns its transport**
+needs nothing from the HTTP client. Lightpanda gets `wss://` free because its
+socket is a curl handle and curl carries the TLS; here the socket carries
+`rustls` directly, and both crates were already in the tree through `reqwest`'s
+own TLS, so this added a name to the manifest and no code to the build.
 
-- **`wss://` is not built.** It needs a raw TLS stream the HTTP client here does
-  not expose. `ws://` covers the case above. `EventSource` is unaffected: it is
-  an HTTP response, so it uses the same client, proxy and TLS as everything else
-  and `https://` works.
-- **A remote `ws://` is refused whenever an egress proxy is configured.** A
-  WebSocket is a raw socket and would not go through it, and inside a box that
-  proxy is how the sandbox's allowlist stays in the path. Loopback is exempt
-  because the proxy already excludes loopback, so nothing in the path is being
-  stepped around.
+One transport type serves both schemes, because a parallel path for the
+encrypted one is where the two drift and only one of them keeps getting the
+receipt rule right. The TLS half shares its connection between the reader thread
+and the writer under a lock — a TLS connection is one piece of state and cannot
+be `try_clone`d the way a `TcpStream` can — with a short read timeout that
+exists solely so the reader drops the lock often enough for a send to get in.
+
+**One refusal stands, by name:**
+
+- **A remote socket is refused whenever an egress proxy is configured**,
+  `wss://` included. A WebSocket is a raw socket and would not go through the
+  proxy, and inside a box that proxy is how the sandbox's allowlist stays in the
+  path. TLS buys no exemption here: the objection was never that the bytes were
+  readable, it was that the connection is not the proxy's to see. Loopback is
+  exempt because the proxy already excludes loopback, so nothing in the path is
+  being stepped around.
 
 **And one honest caveat.** A page holding a live connection is the one thing
 here that is *not* deterministic: messages arrive on wall-clock time, so two

@@ -86,6 +86,9 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("innerHtml", 1, inner_html),
         ("outerHtml", 1, outer_html),
         ("rect", 1, rect),
+        ("canvasOp", 3, canvas_op),
+        ("canvasSize", 4, canvas_size),
+        ("canvasPng", 1, canvas_png),
         ("computedStyle", 2, computed_style),
         ("supportsCss", 2, supports_css),
         ("validSelector", 1, valid_selector),
@@ -1291,6 +1294,222 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         y: y.clamp(0.0, max) as f64,
     });
     Ok(JsValue::undefined())
+}
+
+/// One entry point for every canvas drawing call.
+///
+/// A dispatcher rather than thirty primitives, because the whole surface takes
+/// the same shape — a node id, an operation name, and a list of numbers or
+/// strings — and thirty near-identical `fn`s would be thirty places for the
+/// argument handling to drift. The prelude's `CanvasRenderingContext2D` is what
+/// gives it the spec's shape; this is the part that has to touch Rust.
+///
+/// Returns `true` when the operation was performed and `false` when it was not
+/// understood, which is what the prelude turns into an `unsupported()` entry.
+/// **That return value is the honesty rule of this whole feature**: a canvas
+/// call that quietly does nothing is the silent stub ROADMAP §B8.4 refuses, and
+/// the only thing standing between this module and that failure is that an
+/// unknown operation says so instead of returning `undefined`.
+fn canvas_op(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let op = arg_string(args, 1, context)?;
+
+    // The numeric arguments, in order. A string argument (a colour, a cap) is
+    // read separately below, so this stays one shape.
+    let mut numbers: Vec<f64> = Vec::new();
+    let mut text = String::new();
+    if let Some(list) = args.get(2)
+        && let Some(object) = list.as_object()
+        && let Ok(array) = boa_engine::object::builtins::JsArray::from_object(object.clone())
+    {
+        let length = array.length(context).unwrap_or(0);
+        for at in 0..length {
+            let value = array.get(at, context)?;
+            if value.is_string() {
+                text = value.to_string(context)?.to_std_string_escaped();
+            } else {
+                numbers.push(value.to_number(context)?);
+            }
+        }
+    }
+
+    let host = host(context)?;
+    let mut canvases = host.canvases.borrow_mut();
+    let Some(canvas) = canvases.get_mut(id) else {
+        // No surface for this node: the caller never asked for a context.
+        return Ok(JsValue::from(false));
+    };
+
+    let n = |at: usize| -> f64 { numbers.get(at).copied().unwrap_or(0.0) };
+    let handled = match op.as_str() {
+        "save" => {
+            canvas.save();
+            true
+        }
+        "restore" => {
+            canvas.restore();
+            true
+        }
+        "fillStyle" => canvas.set_fill_style(&text),
+        "strokeStyle" => canvas.set_stroke_style(&text),
+        "lineWidth" => {
+            canvas.set_line_width(n(0));
+            true
+        }
+        "globalAlpha" => {
+            canvas.set_global_alpha(n(0));
+            true
+        }
+        "lineCap" => {
+            canvas.set_line_cap(&text);
+            true
+        }
+        "lineJoin" => {
+            canvas.set_line_join(&text);
+            true
+        }
+        "translate" => {
+            canvas.translate(n(0), n(1));
+            true
+        }
+        "scale" => {
+            canvas.scale(n(0), n(1));
+            true
+        }
+        "rotate" => {
+            canvas.rotate(n(0));
+            true
+        }
+        "transform" => {
+            canvas.transform(n(0), n(1), n(2), n(3), n(4), n(5));
+            true
+        }
+        "setTransform" => {
+            canvas.set_transform(n(0), n(1), n(2), n(3), n(4), n(5));
+            true
+        }
+        "resetTransform" => {
+            canvas.reset_transform();
+            true
+        }
+        "beginPath" => {
+            canvas.begin_path();
+            true
+        }
+        "closePath" => {
+            canvas.close_path();
+            true
+        }
+        "moveTo" => {
+            canvas.move_to(n(0), n(1));
+            true
+        }
+        "lineTo" => {
+            canvas.line_to(n(0), n(1));
+            true
+        }
+        "quadraticCurveTo" => {
+            canvas.quad_to(n(0), n(1), n(2), n(3));
+            true
+        }
+        "bezierCurveTo" => {
+            canvas.curve_to(n(0), n(1), n(2), n(3), n(4), n(5));
+            true
+        }
+        "rect" => {
+            canvas.rect(n(0), n(1), n(2), n(3));
+            true
+        }
+        "arc" => {
+            canvas.arc(n(0), n(1), n(2), n(3), n(4), n(5) != 0.0);
+            true
+        }
+        "fill" => {
+            if !text.is_empty() {
+                canvas.set_fill_rule(&text);
+            }
+            canvas.fill();
+            true
+        }
+        "stroke" => {
+            canvas.stroke();
+            true
+        }
+        "fillRect" => {
+            canvas.fill_rect(n(0), n(1), n(2), n(3));
+            true
+        }
+        "strokeRect" => {
+            canvas.stroke_rect(n(0), n(1), n(2), n(3));
+            true
+        }
+        "clearRect" => {
+            canvas.clear_rect(n(0), n(1), n(2), n(3));
+            true
+        }
+        // Everything else is genuinely not built. Answering `false` is what
+        // puts its name in front of the agent instead of leaving a blank
+        // canvas to be explained.
+        _ => false,
+    };
+
+    if handled {
+        // A drawn canvas has to reach the page, and the page is laid out from
+        // the tree. Marking the document dirty is what gets the surface
+        // composited on the next resolve.
+        *host.dirty.borrow_mut() = true;
+    }
+    Ok(JsValue::from(handled))
+}
+
+/// Create or resize the surface behind a `<canvas>`, and report its size.
+///
+/// Called two ways, and the fourth argument is the difference between them.
+/// `getContext` wants the surface it already has and must not wipe it.
+/// The `width`/`height` setters must **always** reset the bitmap, even when
+/// the value is unchanged — `canvas.width = canvas.width` is the idiomatic
+/// erase and it works precisely because assigning the same number still
+/// clears. Sizing on inequality looked right and made that idiom a no-op.
+///
+/// Returns `[width, height]`, which is what the element reports back, so a page
+/// that asks for an absurd size is told what it actually got rather than being
+/// allowed to believe the number it asked for.
+fn canvas_size(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let width = args.get_or_undefined(1).to_number(context)? as u32;
+    let height = args.get_or_undefined(2).to_number(context)? as u32;
+    let reset = args.get_or_undefined(3).to_boolean();
+
+    let host = host(context)?;
+    let mut canvases = host.canvases.borrow_mut();
+    let canvas = canvases.get_or_create(id, width, height);
+    if reset {
+        canvas.resize(width, height);
+    }
+    let size = (canvas.width(), canvas.height());
+
+    let array = boa_engine::object::builtins::JsArray::new(context)?;
+    array.push(JsValue::from(size.0 as f64), context)?;
+    array.push(JsValue::from(size.1 as f64), context)?;
+    Ok(array.into())
+}
+
+/// The surface as a `data:` URL, for `toDataURL`.
+fn canvas_png(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let id = arg_id(args, 0, context)?;
+    let host = host(context)?;
+    let canvases = host.canvases.borrow();
+    let Some(canvas) = canvases.get(id) else {
+        return Ok(JsValue::null());
+    };
+    let Some(png) = canvas.to_png() else {
+        return Ok(JsValue::null());
+    };
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+    Ok(JsValue::from(js_string!(format!(
+        "data:image/png;base64,{encoded}"
+    ))))
 }
 
 fn rect(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

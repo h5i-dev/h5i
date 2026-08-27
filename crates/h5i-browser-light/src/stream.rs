@@ -57,6 +57,14 @@ use crate::verbs::{Verb, VerbError};
 use crate::ws::{self, Incoming};
 
 /// How far a key scrolls, as a fraction of the viewport.
+/// How many distinct unknown verb names one session will remember.
+///
+/// The names come off the wire, so a caller looping over generated ones must
+/// not be able to grow the map without limit. Past this the counts already
+/// being kept still rise; new names are simply not added, which keeps the
+/// useful signal — what real clients repeatedly ask for — and drops the noise.
+const MAX_UNKNOWN_VERBS: usize = 64;
+
 const PAGE_SCROLL: f64 = 0.9;
 const LINE_SCROLL: f64 = 64.0;
 
@@ -192,6 +200,26 @@ struct Session {
     /// against; this is the evidence that an agent's `@e5` still means what the
     /// agent read. See [`resolve_ref`].
     served_refs: Option<Vec<crate::snapshot::RefEntry>>,
+    /// Verb names callers asked for that this session does not have, counted.
+    ///
+    /// Free telemetry on the gap between what this engine offers and what the
+    /// things driving it expect, and the only source of that fact which does
+    /// not depend on somebody filing a report. Lightpanda keeps the same
+    /// counter for CDP methods (`cdp_unknown_commands`) and it is the sharpest
+    /// item in its metrics: the published conformance list says what is
+    /// honestly absent, and this says which absences anyone actually hits.
+    ///
+    /// Names only, and only names that failed to resolve — a verb this session
+    /// *has* is never counted, so nothing here describes what an agent did with
+    /// the page. Reported by `status`.
+    unknown_verbs: std::collections::BTreeMap<String, u64>,
+    /// What this session has done, in a form that can be run again.
+    ///
+    /// In memory, like the cookie jar and for the same reason: it names the
+    /// fields a login used, and a file is exactly where that should not
+    /// accumulate on its own. `session script` hands it over when asked, and
+    /// the caller decides whether to keep it.
+    recording: crate::replay::Recording,
 
     /// Whether a human is typing a credential right now.
     ///
@@ -338,6 +366,8 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         actions,
         last_snapshot: None,
         served_refs: None,
+        unknown_verbs: std::collections::BTreeMap::new(),
+        recording: crate::replay::Recording::default(),
         requests: options.requests.clone(),
         secrets: crate::secrets::Secrets::from_env(),
         login: false,
@@ -667,6 +697,97 @@ pub fn ask(port: u16, request: &Value) -> Result<Value, H5iError> {
         .map_err(|e| H5iError::Metadata(format!("the session answered with non-JSON: {e}")))
 }
 
+/// Add one step to the replay recording, if this verb belongs in one.
+///
+/// Called only after a verb succeeded, and only from [`recorded_verb`], so
+/// there is one place where "did it" and "recorded it for replay" can drift.
+///
+/// The handle is rewritten on the way in. A caller that named a `@ref` gets its
+/// **verified selector** looked up now, while the reading that minted it is
+/// still the current one; a caller that named a selector already has the
+/// durable form. Where no selector can be verified the step is dropped and
+/// counted, because a handle that resolves elsewhere is worse than no handle.
+fn record_step(session: &mut Session, request: &Value) {
+    let Some(verb) = request
+        .get("verb")
+        .and_then(Value::as_str)
+        .and_then(crate::verbs::Verb::from_name)
+    else {
+        return;
+    };
+    if !verb.is_recorded() {
+        return;
+    }
+
+    // Where the session was when it started doing things, so a replay does not
+    // have to be told separately.
+    session
+        .recording
+        .start_at(session.page.url().as_ref());
+
+    let mut step = crate::replay::Step {
+        verb: verb.name().to_string(),
+        ..Default::default()
+    };
+
+    if verb.needs_ref() {
+        let Some(entry) = durable_handle(session, request) else {
+            session.recording.drop_step();
+            return;
+        };
+        step.selector = Some(entry.0);
+        step.named = Some(entry.1);
+    }
+
+    match verb {
+        crate::verbs::Verb::Navigate => {
+            step.url = request
+                .get("url")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        crate::verbs::Verb::Scroll => {
+            step.by = request.get("by").and_then(Value::as_i64);
+        }
+        crate::verbs::Verb::Type => {
+            // The text **as the caller wrote it**, which for a credential is
+            // the placeholder. `request` is the pre-substitution request; the
+            // resolved value never reaches this function and must not.
+            step.text = request
+                .get("text")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        _ => {}
+    }
+
+    session.recording.push(step);
+}
+
+/// The durable selector for whatever this request aimed at, and what it was
+/// called.
+///
+/// `None` when there is no verified selector for it, which is a real outcome:
+/// generated markup with no stable attribute and no unique ancestor chain does
+/// not always yield one.
+fn durable_handle(session: &Session, request: &Value) -> Option<(String, String)> {
+    // A selector the caller supplied is already the durable form.
+    if let Some(selector) = request.get("selector").and_then(Value::as_str) {
+        return Some((selector.to_string(), String::new()));
+    }
+    let reference = request.get("ref").and_then(Value::as_str)?;
+    let wanted = reference.trim_start_matches('@');
+    let entry = session
+        .served_refs
+        .as_ref()?
+        .iter()
+        .find(|e| e.id == wanted)?;
+    let dom = session.page.dom();
+    let doc = dom.borrow();
+    let selector = crate::selector::for_node(&doc, entry.node_id)?;
+    Some((selector, crate::snapshot::one_line(&entry.name)))
+}
+
 /// Record a verb, run it, record how it went.
 ///
 /// Wrapped around [`control_verb`] rather than folded into it so the verbs stay
@@ -694,6 +815,9 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 
     let Some(log) = &session.actions else {
         let (reply, changed) = control_verb(session, request);
+        if reply.get("ok").and_then(Value::as_bool) == Some(true) {
+            record_step(session, request);
+        }
         return (redact_reply(&session.secrets, reply), changed);
     };
 
@@ -715,6 +839,9 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     let (answer, changed) = control_verb(session, request);
 
     let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    if ok {
+        record_step(session, request);
+    }
     let url = answer.get("url").and_then(Value::as_str);
     let error = answer.get("error").and_then(Value::as_str);
     // Which receipts this verb produced, read back out of the reply it just
@@ -788,6 +915,20 @@ fn redact_reply(secrets: &crate::secrets::Secrets, value: Value) -> Value {
 fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     let name = request.get("verb").and_then(Value::as_str).unwrap_or("");
     let Some(verb) = crate::verbs::Verb::from_name(name) else {
+        // Counted before it is refused. A name nobody has is a request somebody
+        // expected to work, and the count is the only record of that which does
+        // not depend on them saying so.
+        //
+        // Bounded, because the name came off the wire: a caller looping over
+        // generated names must not be able to grow this without limit.
+        if session.unknown_verbs.len() < MAX_UNKNOWN_VERBS
+            || session.unknown_verbs.contains_key(name)
+        {
+            *session
+                .unknown_verbs
+                .entry(crate::snapshot::one_line(name))
+                .or_insert(0) += 1;
+        }
         return (VerbError::unknown_verb(name).reply(), false);
     };
 
@@ -799,6 +940,76 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         return (Session::login_refusal(verb), false);
     }
 
+    // A read verb given a `url` goes there first, so "look at this page" is one
+    // round trip rather than a `navigate` whose reply an agent reads only to
+    // send the next request. Which verbs may do this is a property of the verb
+    // (`Verb::navigates_first`), not a check remembered at each call site.
+    //
+    // The navigation happens *before* the verb runs and reports its own
+    // refusal, because a policy denial reached this way is the same fact it
+    // would have been on its own and must not be dressed up as an empty page.
+    let mut navigated = false;
+    if verb.navigates_first()
+        && let Some(target) = request.get("url").and_then(Value::as_str)
+    {
+        match navigate_to(session, target) {
+            Ok(()) => navigated = true,
+            Err(reply) => return (reply, false),
+        }
+    }
+
+    let (mut reply, moved) = control_verb_inner(session, request, verb);
+    if navigated {
+        // Where it actually ended up, which a redirect may have changed. An
+        // agent that fused the navigation into the read still gets the one
+        // fact the separate `navigate` reply would have given it.
+        if let Some(object) = reply.as_object_mut() {
+            object
+                .entry("url")
+                .or_insert_with(|| json!(session.page.url().to_string()));
+        }
+    }
+    (reply, moved || navigated)
+}
+
+/// Go to a URL, resolved against the page the session is on.
+///
+/// Shared by `navigate` and by the read verbs that fuse one in, so the two
+/// cannot resolve a relative URL differently or report a refusal differently.
+fn navigate_to(session: &mut Session, target: &str) -> Result<(), Value> {
+    // Resolved against the current page, so an agent may say `/docs` for the
+    // same reason a person may click one.
+    let resolved = match session.page.url().join(target) {
+        Ok(url) => url,
+        Err(error) => {
+            return Err(
+                VerbError::bad_request(format!("`{target}` is not a URL: {error}")).reply(),
+            );
+        }
+    };
+    match session.factory.open(&resolved) {
+        Ok(page) => {
+            session.page = page;
+            // The refs the caller last read describe a page this session is no
+            // longer on. Dropping them here is what makes a fused navigation
+            // safe: without it a `@ref` from before would be checked against a
+            // reading of a different document, and `same_target` could match by
+            // coincidence — same ordinal, same role, same href — on a page the
+            // agent has never seen.
+            session.served_refs = None;
+            Ok(())
+        }
+        // A refusal is an answer, not a crash: the allowlist saying no is the
+        // engine working, and the agent needs to read it as one.
+        Err(error) => Err(VerbError::refused(format!("{error}")).reply()),
+    }
+}
+
+fn control_verb_inner(
+    session: &mut Session,
+    request: &Value,
+    verb: crate::verbs::Verb,
+) -> (Value, bool) {
     match verb {
         // What the session is, for a client that just connected.
         Verb::Status => (
@@ -813,6 +1024,12 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 "cookies": session.factory.broker().jar().len(),
                 "login": session.login,
                 "open_sockets": session.page.open_sockets(),
+                // What was asked for and does not exist. Empty on almost every
+                // session, and when it is not it is the most useful line here:
+                // it names the gap between what this engine offers and what
+                // whatever is driving it expected, without anyone having to
+                // file a report.
+                "unknown_verbs": session.unknown_verbs,
             }),
             false,
         ),
@@ -915,6 +1132,14 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             let selectors = {
                 let dom = session.page.dom();
                 let doc = dom.borrow();
+                // One cache for the whole reading. Every candidate is verified
+                // with a full-document query, and refs that sit near each other
+                // share nearly all of their ancestor segments, so the same
+                // query was being run once per ref that shared it. The cache
+                // lives exactly as long as this borrow: the document cannot
+                // change underneath it, which is the only thing that would make
+                // a remembered answer wrong.
+                let mut cache = crate::selector::Cache::new();
                 snapshot
                     .refs
                     .iter()
@@ -927,7 +1152,9 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                             // verified: a selector that resolves elsewhere is
                             // worse than no selector, because it looks like a
                             // handle.
-                            "selector": crate::selector::for_node(&doc, entry.node_id),
+                            "selector": crate::selector::for_node_cached(
+                                &doc, entry.node_id, &mut cache,
+                            ),
                         })
                     })
                     .collect::<Vec<_>>()
@@ -974,25 +1201,9 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             let Some(target) = request.get("url").and_then(Value::as_str) else {
                 return (VerbError::bad_request("`navigate` needs a `url`.").reply(), false);
             };
-            // Resolved against the current page, so an agent may say
-            // `/docs` for the same reason a person may click one.
-            let resolved = match session.page.url().join(target) {
-                Ok(url) => url,
-                Err(error) => {
-                    return (
-                        VerbError::bad_request(format!("`{target}` is not a URL: {error}")).reply(),
-                        false,
-                    );
-                }
-            };
-            match session.factory.open(&resolved) {
-                Ok(page) => {
-                    session.page = page;
-                    (json!({"ok": true, "url": session.page.url().to_string()}), true)
-                }
-                // A refusal is an answer, not a crash: the allowlist saying no
-                // is the engine working, and the agent needs to read it as one.
-                Err(error) => (VerbError::refused(format!("{error}")).reply(), false),
+            match navigate_to(session, target) {
+                Ok(()) => (json!({"ok": true, "url": session.page.url().to_string()}), true),
+                Err(reply) => (reply, false),
             }
         }
 
@@ -1000,9 +1211,12 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         // session an agent cannot type into stops at the first form, so these
         // ship together or neither is worth having.
         Verb::Type => {
-            let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (VerbError::bad_request("`type` needs a `ref` from a snapshot.").reply(), false);
+            let aim = match aim_of(request, Verb::Type) {
+                Ok(aim) => aim,
+                Err(e) => return (e.reply(), false),
             };
+            let shown = aim.shown();
+            let reference = shown.as_str();
             let Some(text) = request.get("text").and_then(Value::as_str) else {
                 return (VerbError::bad_request("`type` needs `text`.").reply(), false);
             };
@@ -1019,7 +1233,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
             };
             let text = resolved.text.as_str();
             let snapshot = session.page.snapshot();
-            let entry = match resolve_ref(session, &snapshot, reference) {
+            let entry = match resolve_aim(session, &snapshot, &aim) {
                 Ok(entry) => entry,
                 Err(e) => return (e.reply(), false),
             };
@@ -1052,11 +1266,12 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         }
 
         Verb::Submit => {
-            let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (VerbError::bad_request("`submit` needs a `ref` inside the form.").reply(), false);
+            let aim = match aim_of(request, Verb::Submit) {
+                Ok(aim) => aim,
+                Err(e) => return (e.reply(), false),
             };
             let snapshot = session.page.snapshot();
-            let entry = match resolve_ref(session, &snapshot, reference) {
+            let entry = match resolve_aim(session, &snapshot, &aim) {
                 Ok(entry) => entry,
                 Err(e) => return (e.reply(), false),
             };
@@ -1082,11 +1297,14 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         }
 
         Verb::Click => {
-            let Some(reference) = request.get("ref").and_then(Value::as_str) else {
-                return (VerbError::bad_request("`click` needs a `ref` from a snapshot.").reply(), false);
+            let aim = match aim_of(request, Verb::Click) {
+                Ok(aim) => aim,
+                Err(e) => return (e.reply(), false),
             };
+            let shown = aim.shown();
+            let reference = shown.as_str();
             let snapshot = session.page.snapshot();
-            let entry = match resolve_ref(session, &snapshot, reference) {
+            let entry = match resolve_aim(session, &snapshot, &aim) {
                 Ok(entry) => entry,
                 Err(e) => return (e.reply(), false),
             };
@@ -1259,13 +1477,15 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                 json!({
                     "ok": true,
                     "met": waited.met,
-                    // Three outcomes, not two. "Not found and the page has
+                    // Four outcomes, not two. "Not found and the page has
                     // nothing left to run" is a different fact from "not found
-                    // and it was still working", and an agent branches
-                    // differently on them.
+                    // and it was still working", which is different again from
+                    // "not found and the only thing left is a loop that will
+                    // never converge". An agent branches differently on each.
                     "end": waited.end.as_str(),
                     "waited_ms": waited.settled.elapsed_ms,
                     "pending_timers": waited.settled.pending_timers,
+                    "periodic_timers": waited.settled.periodic_timers,
                     "message": waited.render(),
                 }),
                 moved,
@@ -1293,6 +1513,7 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                     "end": waited.end.as_str(),
                     "waited_ms": waited.settled.elapsed_ms,
                     "pending_timers": waited.settled.pending_timers,
+                    "periodic_timers": waited.settled.periodic_timers,
                     "message": waited.render(),
                 }),
                 moved,
@@ -1360,6 +1581,62 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         // Discovery for the credential scheme, and the whole of it: an agent
         // learns that a credential exists and what to call it, which is
         // everything it needs to use one and nothing it needs to leak one.
+        // What this session did, as something that can be run again.
+        //
+        // Made of selectors, not refs: an ordinal names a position in the
+        // reading that minted it, so a script full of them replays into a
+        // different page. See `crate::replay`.
+        Verb::Script => (
+            json!({
+                "ok": true,
+                "start_url": session.recording.start_url,
+                "steps": session.recording.steps,
+                // Named, because a script shorter than the session it came
+                // from is a fact the person running it needs.
+                "dropped": session.recording.dropped,
+                "script": session.recording.render(),
+            }),
+            false,
+        ),
+
+        // What the page says about *itself*, in the formats it already
+        // publishes for the purpose.
+        //
+        // The cheapest of the three reads by a wide margin: an outline is the
+        // page's content and costs hundreds of lines, markdown is denser and
+        // still prose, and this is a few hundred bytes the page has already
+        // written down. A model asked to pull a headline out of prose will
+        // occasionally invent one; handed `"headline": "…"` it will not.
+        Verb::Structured => {
+            let found = {
+                let dom = session.page.dom();
+                let doc = dom.borrow();
+                crate::structured::capture(&doc, session.page.url())
+            };
+            // Fenced like every other page-derived reading, because that is
+            // what it is: `og:title` is attacker-controlled on an attacker's
+            // page exactly as a heading is.
+            let mut reply = json!({
+                "ok": true,
+                "url": session.page.url().to_string(),
+                "empty": found.is_empty(),
+                "structured": found,
+            });
+            if found.is_empty() {
+                // A result, not a failure, and said as one. Plenty of pages
+                // publish no metadata, and "this page says nothing about
+                // itself" is a different answer from "the read went wrong" —
+                // reporting the first as the second is what ends a
+                // self-correction loop instead of prompting it.
+                reply["note"] = json!(
+                    "this page publishes no metadata of its own. That is a fact about the \
+                     page, not a failed read: use `markdown` or `snapshot` to see what it \
+                     does contain."
+                );
+            }
+            (reply, false)
+        }
+
         Verb::Env => {
             let names = session.secrets.names();
             (
@@ -1413,6 +1690,90 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
 /// that agree on all four fields would too. What it catches is every case where
 /// the *handle* has come to mean something else, which is the failure that was
 /// silent before. It is not a claim that the page is the same page.
+/// How a caller named the element an action is aimed at.
+///
+/// Two handle types, deliberately, and the difference is the whole of §B15.4.
+/// A `@ref` is a position in the reading that minted it: cheap, checked against
+/// that reading, and meaningless anywhere else. A selector is a handle that
+/// survives the reading — and survives a *navigation*, which is what makes a
+/// recorded session replayable at all.
+#[derive(Debug, Clone)]
+enum Aim {
+    /// `@e3`, checked against the reading it came from.
+    Ref(String),
+    /// A CSS selector, resolved with `querySelector` semantics.
+    Selector(String),
+}
+
+impl Aim {
+    /// How to name this in an error message.
+    fn shown(&self) -> String {
+        match self {
+            Aim::Ref(reference) => reference.clone(),
+            Aim::Selector(selector) => format!("`{selector}`"),
+        }
+    }
+}
+
+/// Read whichever handle the caller used.
+///
+/// `ref` and `selector` are alternatives, not both: a request carrying each
+/// would be a request whose author did not know which one they meant, and
+/// picking one silently is how a replay ends up acting somewhere its script did
+/// not say.
+fn aim_of(request: &Value, verb: crate::verbs::Verb) -> Result<Aim, VerbError> {
+    let reference = request.get("ref").and_then(Value::as_str);
+    let selector = request.get("selector").and_then(Value::as_str);
+    match (reference, selector) {
+        (Some(_), Some(_)) => Err(VerbError::bad_request(format!(
+            "`{}` takes either a `ref` or a `selector`, not both.",
+            verb.name()
+        ))),
+        (Some(reference), None) => Ok(Aim::Ref(reference.to_string())),
+        (None, Some(selector)) => Ok(Aim::Selector(selector.to_string())),
+        (None, None) => Err(VerbError::bad_request(format!(
+            "`{}` needs a `ref` from a snapshot, or a `selector`.",
+            verb.name()
+        ))),
+    }
+}
+
+/// Resolve either handle to the element it names.
+///
+/// A ref goes through the staleness check, because an ordinal only means
+/// anything against the reading that minted it. A selector does not, and does
+/// not need to: it names whatever it matches *now*, by the same
+/// `querySelector` rule the selector was verified under when it was minted, so
+/// there is no earlier reading for it to have drifted from. That is precisely
+/// why a recording is made of selectors.
+fn resolve_aim(
+    session: &Session,
+    snapshot: &crate::snapshot::Snapshot,
+    aim: &Aim,
+) -> Result<crate::snapshot::RefEntry, VerbError> {
+    match aim {
+        Aim::Ref(reference) => resolve_ref(session, snapshot, reference),
+        Aim::Selector(selector) => {
+            let dom = session.page.dom();
+            let doc = dom.borrow();
+            let matched = crate::script::dom_api::matches_within(&doc, 0, selector);
+            let Some(&node_id) = matched.first() else {
+                return Err(VerbError::no_match(format!(
+                    "`{selector}` matches nothing on this page. Take a `snapshot` to see what \
+                     is there; its `refs` carry a verified selector for each element."
+                )));
+            };
+            crate::snapshot::entry_for_node(&doc, node_id, selector).ok_or_else(|| {
+                VerbError::wrong_role(
+                    &format!("`{selector}`"),
+                    "an element",
+                    "something this engine offers as actionable — a link, a control or an image",
+                )
+            })
+        }
+    }
+}
+
 fn resolve_ref(
     session: &Session,
     snapshot: &crate::snapshot::Snapshot,
@@ -1587,10 +1948,279 @@ mod tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            unknown_verbs: std::collections::BTreeMap::new(),
+        recording: crate::replay::Recording::default(),
             requests,
             secrets: crate::secrets::Secrets::default(),
             login: false,
         }
+    }
+
+    /// Serves one page per connection, so a fused navigation has somewhere to
+    /// go. Loopback is reachable by default (it is the dev server), which is
+    /// what makes this testable without loosening a policy.
+    fn one_page_server(body: &'static str, hits: usize) -> u16 {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                }
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// A read verb given a `url` goes there first. The turn this saves is the
+    /// whole point: `navigate` then `markdown` is two passes through a model to
+    /// answer one question.
+    #[test]
+    fn a_read_verb_can_navigate_first_and_says_where_it_landed() {
+        let port = one_page_server("<html><body><h1>Arrived</h1></body></html>", 1);
+        let mut session = session_with("<html><body><p>before</p></body></html>");
+
+        let (reply, moved) = control_verb(
+            &mut session,
+            &json!({"verb": "markdown", "url": format!("http://127.0.0.1:{port}/")}),
+        );
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(
+            reply["text"].as_str().unwrap_or_default().contains("Arrived"),
+            "it read the page it was already on: {reply:?}"
+        );
+        assert!(
+            reply["url"].as_str().unwrap_or_default().contains(&port.to_string()),
+            "the reply must name where it ended up, or a redirect is silent: {reply:?}"
+        );
+        assert!(moved, "the viewers are looking at a different page now");
+    }
+
+    /// A policy refusal reached this way is the same fact it would have been on
+    /// its own. Dressing it up as an empty page would be the plausible-wrong
+    /// answer this engine refuses everywhere else.
+    #[test]
+    fn a_refused_fused_navigation_is_a_refusal_not_an_empty_read() {
+        let mut session = session_with("<html><body><p>before</p></body></html>");
+        let (reply, moved) = control_verb(
+            &mut session,
+            &json!({"verb": "markdown", "url": "https://blocked.example/"}),
+        );
+
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "refused", "{reply:?}");
+        assert!(!moved);
+        assert!(
+            reply.get("text").is_none(),
+            "a refusal must not also carry a reading: {reply:?}"
+        );
+    }
+
+    /// The safety half. A ref names a position in the reading that minted it,
+    /// so refs from before a navigation cannot be honoured after one — and a
+    /// fused navigation is still a navigation. Without this a `@ref` could
+    /// match by coincidence (same ordinal, same role, same href) on a document
+    /// the agent has never seen.
+    #[test]
+    fn a_fused_navigation_drops_the_refs_it_served_before() {
+        let port = one_page_server("<html><body><a href=\"/x\">Go</a></body></html>", 1);
+        let mut session = session_with("<html><body><a href=\"/x\">Go</a></body></html>");
+
+        let (first, _) = control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert_eq!(first["ok"], true);
+        assert!(session.served_refs.is_some(), "a reading was served");
+
+        let (_, _) = control_verb(
+            &mut session,
+            &json!({"verb": "markdown", "url": format!("http://127.0.0.1:{port}/")}),
+        );
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "click", "ref": "@e1"}));
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(
+            reply["code"], "no-snapshot",
+            "a ref from before the navigation must not be honoured after it: {reply:?}"
+        );
+    }
+
+    /// Which verbs may fuse a navigation is a property of the verb, and the
+    /// exhaustive match makes a new verb answer the question. This pins the
+    /// answer for the ones that exist: reads yes, actions and waits no.
+    #[test]
+    fn only_read_verbs_navigate_first() {
+        use crate::verbs::Verb;
+        for verb in Verb::ALL {
+            let expected = matches!(
+                verb,
+                Verb::Snapshot | Verb::Markdown | Verb::Extract | Verb::Structured
+            );
+            assert_eq!(
+                verb.navigates_first(),
+                expected,
+                "{} fuses a navigation when it should not, or the reverse",
+                verb.name()
+            );
+        }
+    }
+
+    /// The recording is made of selectors, not ordinals, and that is the whole
+    /// of why it can be run again: `@e1` names the first actionable thing in
+    /// the reading that minted it, which is a different element on a page with
+    /// one more link near the top.
+    #[test]
+    fn a_recorded_step_carries_a_selector_rather_than_the_ref_it_was_named_by() {
+        let mut session = session_with(
+            "<html><body><form action=\"/go\">\
+               <input name=\"user\">\
+               <button id=\"send\">Send</button>\
+             </form></body></html>",
+        );
+
+        let (snap, _) = recorded_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert_eq!(snap["ok"], true, "{snap:?}");
+
+        let (typed, _) = recorded_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": "@e1", "text": "alice"}),
+        );
+        assert_eq!(typed["ok"], true, "{typed:?}");
+
+        let (script, _) = recorded_verb(&mut session, &json!({"verb": "script"}));
+        assert_eq!(script["ok"], true, "{script:?}");
+
+        let steps = script["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 1, "only the state change is recorded: {steps:?}");
+        assert_eq!(steps[0]["verb"], "type");
+        assert_eq!(steps[0]["text"], "alice");
+        let selector = steps[0]["selector"].as_str().unwrap();
+        assert!(
+            selector.contains("user"),
+            "the selector should name the field durably, not by position: {selector}"
+        );
+        assert!(
+            steps[0].get("ref").is_none(),
+            "an ordinal must not reach the recording: {:?}",
+            steps[0]
+        );
+    }
+
+    /// And the recorded form actually drives the engine: the selector a
+    /// recording carries is one the action verbs accept.
+    #[test]
+    fn a_recorded_script_replays_through_the_same_verbs() {
+        let page = "<html><body><form action=\"/go\">\
+                      <input name=\"user\">\
+                      <button id=\"send\">Send</button>\
+                    </form></body></html>";
+        let mut session = session_with(page);
+        recorded_verb(&mut session, &json!({"verb": "snapshot"}));
+        recorded_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": "@e1", "text": "alice"}),
+        );
+        let (script, _) = recorded_verb(&mut session, &json!({"verb": "script"}));
+        let steps: Vec<crate::replay::Step> =
+            serde_json::from_value(script["steps"].clone()).unwrap();
+
+        // A fresh session, which has served no refs at all. An ordinal would be
+        // refused here; the selector is not.
+        let mut replayed = session_with(page);
+        for step in &steps {
+            let (reply, _) = control_verb(&mut replayed, &step.request());
+            assert_eq!(reply["ok"], true, "replaying {:?}: {reply:?}", step.render());
+        }
+
+        let (snap, _) = control_verb(&mut replayed, &json!({"verb": "snapshot"}));
+        assert!(
+            snap["text"].as_str().unwrap().contains("alice"),
+            "the replay should have reached the same state: {snap:?}"
+        );
+    }
+
+    /// Reads are not recorded, and neither is handing the page to a human:
+    /// there is nobody there to take it on a replay.
+    #[test]
+    fn only_state_changing_verbs_are_recorded() {
+        use crate::verbs::Verb;
+        for verb in Verb::ALL {
+            let expected = matches!(
+                verb,
+                Verb::Navigate | Verb::Scroll | Verb::Type | Verb::Submit | Verb::Click
+            );
+            assert_eq!(
+                verb.is_recorded(),
+                expected,
+                "{} is recorded when it should not be, or the reverse",
+                verb.name()
+            );
+        }
+    }
+
+    /// A selector is a durable handle, so it needs no staleness check — it
+    /// names whatever it matches now. An ordinal from no reading at all is
+    /// still refused, which is the property that must not have been loosened.
+    #[test]
+    fn a_selector_needs_no_prior_reading_but_a_ref_still_does() {
+        let mut session = session_with(
+            "<html><body><input id=\"user\" name=\"user\"></body></html>",
+        );
+
+        // An ordinal with no reading behind it is refused, and that must not
+        // have been loosened by teaching the verbs about selectors.
+        let (by_ref, _) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "ref": "@e1", "text": "alice"}),
+        );
+        assert_eq!(by_ref["code"], "no-snapshot", "{by_ref:?}");
+
+        // The same element named durably needs no earlier reading: a selector
+        // names whatever it matches now, so there is nothing for it to have
+        // drifted from.
+        let (by_selector, _) = control_verb(
+            &mut session,
+            &json!({"verb": "type", "selector": "#user", "text": "alice"}),
+        );
+        assert_eq!(by_selector["ok"], true, "{by_selector:?}");
+    }
+
+    #[test]
+    fn naming_an_element_two_ways_at_once_is_a_bad_request() {
+        let mut session = session_with("<html><body><a id=\"go\" href=\"/x\">Go</a></body></html>");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": "@e1", "selector": "#go"}),
+        );
+        assert_eq!(reply["code"], "bad-request", "{reply:?}");
+    }
+
+    /// A selector that matches nothing is the caller's to fix, so it is
+    /// in-band and retryable rather than a protocol failure.
+    #[test]
+    fn a_selector_that_matches_nothing_says_so_as_a_correctable_error() {
+        let mut session = session_with("<html><body><p>nothing here</p></body></html>");
+        let (reply, _) =
+            control_verb(&mut session, &json!({"verb": "click", "selector": "#missing"}));
+        assert_eq!(reply["code"], "no-match", "{reply:?}");
+        assert_eq!(reply["retryable"], true, "{reply:?}");
     }
 
     /// A session whose page runs its own scripts, for the verbs that behave
@@ -1616,6 +2246,8 @@ mod tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            unknown_verbs: std::collections::BTreeMap::new(),
+        recording: crate::replay::Recording::default(),
             requests,
             secrets: crate::secrets::Secrets::default(),
             login: false,
@@ -2773,6 +3405,8 @@ mod delta_and_login_tests {
             actions: None,
             last_snapshot: None,
             served_refs: None,
+            unknown_verbs: std::collections::BTreeMap::new(),
+        recording: crate::replay::Recording::default(),
             requests,
             secrets: crate::secrets::Secrets::default(),
             login: false,

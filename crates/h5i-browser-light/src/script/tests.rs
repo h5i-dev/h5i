@@ -164,15 +164,50 @@ fn a_page_that_never_settles_is_cut_off_and_says_so() {
     // The failure this reports rather than hides: a snapshot taken here
     // describes a page that had not finished, and an agent reading it without
     // that sentence would treat a half-built DOM as the final one.
+    //
+    // The page has to *owe* the work for that to be true. This one arms a
+    // timer past the settle budget, so the budget is genuinely what ended the
+    // reading. A self-rescheduling loop used to stand in for this case and is
+    // now a different answer entirely — see the test below.
     let (_page, mut script) = page_and_script("<html><body></body></html>");
     script
-        .eval("function again(){ setTimeout(again, 1) } again();")
+        .eval("setTimeout(function(){}, 20000);")
         .expect("runs");
 
     let settled = script.settle();
     assert!(settled.cut_off, "{settled:?}");
     assert!(settled.pending_timers > 0);
     assert!(settled.render().contains("still busy"), "{}", settled.render());
+}
+
+/// The case that used to be folded into the one above, and should not have
+/// been. `function again(){ setTimeout(again, 1) } again()` is not a page that
+/// ran out of time — it is a page that will still be looping tomorrow, and
+/// reporting it as cut off told an agent to come back and wait again.
+#[test]
+fn a_self_rescheduling_loop_is_not_reported_as_an_unfinished_page() {
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    script
+        .eval("function again(){ setTimeout(again, 1) } again();")
+        .expect("runs");
+
+    let settled = script.settle();
+    assert!(
+        !settled.cut_off,
+        "the page paid off everything it owed: {settled:?}"
+    );
+    assert_eq!(settled.pending_timers, 0, "{settled:?}");
+    assert!(settled.periodic_timers > 0, "{settled:?}");
+    assert!(
+        settled.render().contains("self-rescheduling"),
+        "the note should name what is actually running: {}",
+        settled.render()
+    );
+    assert!(
+        !settled.render().contains("still busy"),
+        "and should not claim the page is unfinished: {}",
+        settled.render()
+    );
 }
 
 #[test]
@@ -1087,8 +1122,14 @@ fn a_socket_the_policy_refuses_throws_where_the_page_can_see_it() {
         .eval_value("(() => { try { new WebSocket('wss://example.com/s'); return 'no throw'; } \
                     catch (e) { return String(e.message); } })()")
         .unwrap();
-    assert!(error.contains("wss://"), "{error}");
-    assert!(error.contains("not built"), "{error}");
+    // The allowlist, not the scheme: `wss://` is built, and this session grants
+    // nothing remote. A refusal that named the scheme would send whoever read
+    // it looking for a missing capability instead of at their allowlist.
+    assert!(error.contains("denied by policy"), "{error}");
+    assert!(
+        !error.contains("not built"),
+        "`wss://` is built now: {error}"
+    );
 }
 
 #[test]
@@ -1353,13 +1394,37 @@ fn a_page_that_never_settles_says_so_in_the_outline() {
     let options = PageOptions { script: true, ..Default::default() };
     let factory = PageFactory::new(broker, fonts.sources.clone(), options);
 
+    // Past the settle budget, so the budget is what ended the reading. A
+    // self-rescheduling loop stood here once and now reports the periodic note
+    // instead, which is the subject of the test below.
+    let page = factory.from_html(
+        "<html><body><p>hi</p><script>setTimeout(function(){},20000);</script></body></html>",
+        &url::Url::parse("https://app.example/").unwrap(),
+    );
+
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("still busy"), "{rendered}");
+}
+
+/// The same reporting path, for the page that is running rather than stuck.
+/// The note has to be there — a loop makes two reads of one page disagree
+/// without the agent having acted, which is the caveat `open_sockets` carries
+/// for the same reason — but it must not say the page is unfinished.
+#[test]
+fn a_looping_page_says_it_is_looping_rather_than_unfinished() {
+    let broker = Arc::new(Broker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap());
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let options = PageOptions { script: true, ..Default::default() };
+    let factory = PageFactory::new(broker, fonts.sources.clone(), options);
+
     let page = factory.from_html(
         "<html><body><p>hi</p><script>function again(){setTimeout(again,1)}again();</script></body></html>",
         &url::Url::parse("https://app.example/").unwrap(),
     );
 
     let rendered = page.snapshot().render();
-    assert!(rendered.contains("still busy"), "{rendered}");
+    assert!(rendered.contains("self-rescheduling"), "{rendered}");
+    assert!(!rendered.contains("still busy"), "{rendered}");
 }
 
 // ── the surface added 2026-08-09 ───────────────────────────────────────────
@@ -4525,5 +4590,233 @@ fn a_variable_holding_a_node_survives_that_nodes_removal() {
     assert!(
         rendered.contains("SPAN|true|false"),
         "the detached node is still readable through the page's own variable:\n{rendered}"
+    );
+}
+
+/// A page whose only remaining work is a loop that re-arms itself is neither
+/// finished nor on its way anywhere, and before the nesting limit it was
+/// reported as the latter: `requestAnimationFrame` is a `setTimeout` here, so
+/// an animation loop presented a fresh one-shot every frame, rode the whole
+/// settle budget, and answered `budget` — "it may yet appear" — about a page
+/// that would still be looping tomorrow.
+#[test]
+fn a_self_rescheduling_loop_is_periodic_not_pending() {
+    let (_page, mut script) = page_and_script("<html><body><p>hi</p></body></html>");
+    script
+        .eval_value(
+            "(() => { let n = 0; \
+               const spin = () => { n++; requestAnimationFrame(spin); }; \
+               spin(); return 'armed'; })()",
+        )
+        .expect("the loop arms");
+
+    let started = std::time::Instant::now();
+    let waited = script.settle_until_expr("document.querySelector('#never')");
+
+    assert!(!waited.met);
+    assert_eq!(
+        waited.end,
+        crate::script::WaitEnd::Periodic,
+        "an animation loop is not a page that ran out of time: {}",
+        waited.render()
+    );
+    assert!(
+        waited.settled.periodic_timers > 0,
+        "the loop is still armed and should be counted: {waited:?}"
+    );
+    assert_eq!(
+        waited.settled.pending_timers, 0,
+        "and it should not be counted as work the page still owes"
+    );
+    assert!(
+        !waited.settled.cut_off,
+        "the page paid off everything it owed, so this is not a cut-off"
+    );
+
+    // The point of the limit: the loop stops holding the page open after a
+    // bounded number of frames rather than at the ten-second budget.
+    assert!(
+        waited.settled.elapsed_ms < SETTLE_BUDGET_MS,
+        "it rode the budget anyway: {}ms",
+        waited.settled.elapsed_ms
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "and it should not have taken real time to decide: {:?}",
+        started.elapsed()
+    );
+}
+
+/// The other half of the same rule, and the one that was already true: an
+/// interval is perpetual by definition. What changed is that it is now
+/// *reported* rather than folded into "nothing left to run", because a polling
+/// loop can still change the DOM and `quiescent` claims nothing can.
+#[test]
+fn an_interval_is_reported_as_periodic_rather_than_quiescent() {
+    let (_page, mut script) = page_and_script("<html><body><p>hi</p></body></html>");
+    script
+        .eval_value("(() => { setInterval(() => {}, 50); return 'armed'; })()")
+        .expect("the interval arms");
+
+    let waited = script.settle_until_expr("document.querySelector('#never')");
+    assert_eq!(
+        waited.end,
+        crate::script::WaitEnd::Periodic,
+        "{}",
+        waited.render()
+    );
+    assert!(waited.settled.periodic_timers > 0);
+}
+
+/// A plain one-shot chain that *does* converge must keep blocking, or the
+/// escape hatch would be cutting real work short. Three nested timers is a
+/// normal shape — a page staging its own initialisation — and it has to finish.
+#[test]
+fn a_short_timer_chain_still_holds_the_page_open() {
+    let (page, _broker) = run_page(
+        "<html><body><p id=out>start</p><script>\
+           setTimeout(() => { setTimeout(() => { setTimeout(() => { \
+             document.getElementById('out').textContent = 'done'; \
+           }, 5); }, 5); }, 5);\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("done"),
+        "a converging chain was cut short by the nesting limit:\n{rendered}"
+    );
+}
+
+// ── Canvas 2D ──────────────────────────────────────────────────────────────
+
+/// The whole claim of `crate::canvas`, checked end to end: a page draws, and
+/// the pixels are real. A no-op stub — which is what both reference engines
+/// ship — passes every API-shape assertion ever written and fails this one.
+#[test]
+fn a_page_that_draws_on_a_canvas_gets_real_pixels() {
+    let (mut page, _broker) = run_page(
+        "<html><body><canvas id=c width=100 height=100></canvas><script>\
+           const ctx = document.getElementById('c').getContext('2d');\
+           ctx.fillStyle = '#ff0000';\
+           ctx.fillRect(10, 10, 50, 50);\
+         </script></body></html>",
+    );
+
+    let png = page.screenshot_png().expect("the page rasterises");
+    let image = image::load_from_memory(&png).expect("decodes").to_rgba8();
+    // Somewhere in the rendered page there is a strongly red pixel, which
+    // there cannot be unless the canvas actually painted.
+    let red = image
+        .pixels()
+        .any(|p| p.0[0] > 200 && p.0[1] < 80 && p.0[2] < 80);
+    assert!(red, "the canvas did not reach the page");
+}
+
+/// `getContext('2d')` must return a context, not `null`. It answered `null`
+/// before there was a rasteriser behind it, and a page's fallback branch is
+/// the wrong branch now.
+#[test]
+fn getting_a_2d_context_returns_one() {
+    let (page, _broker) = run_page(
+        "<html><body><canvas id=c></canvas><p id=out></p><script>\
+           const ctx = document.getElementById('c').getContext('2d');\
+           document.getElementById('out').textContent = \
+             (ctx === null) + '|' + (typeof ctx.fillRect) + '|' + ctx.canvas.width;\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("false|function|300"),
+        "a 2d context, its methods, and the default width:\n{rendered}"
+    );
+}
+
+/// Everything that is *not* built still names itself, which is the rule the
+/// whole feature is built around: a blank canvas with no explanation is the
+/// silent stub this engine refuses.
+#[test]
+fn an_unbuilt_canvas_call_is_reported_rather_than_silently_ignored() {
+    let (page, _broker) = run_page(
+        "<html><body><canvas id=c></canvas><script>\
+           const ctx = document.getElementById('c').getContext('2d');\
+           ctx.fillText('hello', 10, 10);\
+           ctx.drawImage(new Image(), 0, 0);\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("CanvasRenderingContext2D.fillText"),
+        "an unbuilt call must name itself:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("Web APIs this engine does not have"),
+        "and go through the same routing note as every other gap:\n{rendered}"
+    );
+}
+
+/// WebGL is genuinely absent, and `null` is what a browser returns for a
+/// context it cannot provide — so a page's own fallback runs. That behaviour
+/// was right before 2D existed and still is for everything else.
+#[test]
+fn an_unavailable_context_type_still_answers_null() {
+    let (page, _broker) = run_page(
+        "<html><body><canvas id=c></canvas><p id=out></p><script>\
+           const gl = document.getElementById('c').getContext('webgl');\
+           document.getElementById('out').textContent = String(gl === null);\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("true"), "{rendered}");
+    assert!(rendered.contains("canvas.getContext(webgl)"), "{rendered}");
+}
+
+/// `toDataURL` returns the surface, not a placeholder.
+#[test]
+fn to_data_url_returns_the_pixels_that_were_drawn() {
+    let (page, _broker) = run_page(
+        "<html><body><canvas id=c width=20 height=20></canvas><p id=out></p><script>\
+           const ctx = document.getElementById('c').getContext('2d');\
+           ctx.fillStyle = 'blue';\
+           ctx.fillRect(0, 0, 20, 20);\
+           const url = document.getElementById('c').toDataURL();\
+           document.getElementById('out').textContent = \
+             url.slice(0, 22) + '|' + (url.length > 100);\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("data:image/png;base64,") && rendered.contains("|true"),
+        "a real PNG, not a placeholder:\n{rendered}"
+    );
+}
+
+/// The idiomatic erase, which depends on the width setter reaching the
+/// surface rather than only the attribute.
+#[test]
+fn assigning_the_width_clears_the_surface() {
+    let (page, _broker) = run_page(
+        "<html><body><canvas id=c width=40 height=40></canvas><p id=out></p><script>\
+           const el = document.getElementById('c');\
+           const ctx = el.getContext('2d');\
+           ctx.fillStyle = 'black';\
+           ctx.fillRect(0, 0, 40, 40);\
+           const filled = el.toDataURL();\
+           el.width = el.width;\
+           const cleared = el.toDataURL();\
+           const fresh = document.createElement('canvas');\
+           fresh.width = 40; fresh.height = 40;\
+           fresh.getContext('2d');\
+           document.getElementById('out').textContent = \
+             'changed=' + (cleared !== filled) + ' blank=' + (cleared === fresh.toDataURL());\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("changed=true"),
+        "assigning the width must reach the surface, not only the attribute:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("blank=true"),
+        "and what is left must be an empty surface:\n{rendered}"
     );
 }

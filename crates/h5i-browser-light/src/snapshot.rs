@@ -546,7 +546,23 @@ impl Walker<'_> {
                 takes_ref,
                 is_leaf,
             }) => {
-                let name = accessible_name(&tag, node);
+                // A wrapper that has swallowed a block of structure is not a
+                // leaf, whatever its tag says. It keeps only the words it holds
+                // directly and lets what is under it speak, which is both a
+                // truer reading and a shorter one.
+                //
+                // Not for a ref-taking element: its name is how an agent tells
+                // one control from another, and trading that for brevity would
+                // produce anonymous rows. Not for `code`, whose whole point is
+                // that its text is carried verbatim.
+                let hoisting =
+                    is_leaf && !takes_ref && role != "code" && hoists_a_block(self.doc, node);
+
+                let name = if hoisting {
+                    direct_text(self.doc, node)
+                } else {
+                    accessible_name(&tag, node)
+                };
 
                 // For `<pre>`, the same text again but split on its own line
                 // breaks. Computed here, where the raw text is still in reach.
@@ -640,10 +656,28 @@ impl Walker<'_> {
                     depth
                 };
 
-                // Always recurse. A leaf's own words are done, so its subtree
-                // continues in prose mode, where only actionable things speak.
-                for child in node.children.clone() {
-                    self.walk(child, child_depth, in_prose || is_leaf);
+                if hoisting {
+                    // The direct text is already on this node's line, so the
+                    // text nodes it came from are skipped rather than emitted
+                    // again. Everything else recurses in full: this node never
+                    // claimed to have said it.
+                    for child in node.children.clone() {
+                        let is_text = self
+                            .doc
+                            .get_node(child)
+                            .map(|kid| kid.is_text_node())
+                            .unwrap_or(false);
+                        if !is_text {
+                            self.walk(child, child_depth, in_prose);
+                        }
+                    }
+                } else {
+                    // Always recurse. A leaf's own words are done, so its
+                    // subtree continues in prose mode, where only actionable
+                    // things speak.
+                    for child in node.children.clone() {
+                        self.walk(child, child_depth, in_prose || is_leaf);
+                    }
                 }
             }
             None => {
@@ -671,6 +705,120 @@ struct Descriptor {
     takes_ref: bool,
     /// Leaves carry their own text and are not recursed into.
     is_leaf: bool,
+}
+
+/// Describe one node the way a snapshot walk would have described it.
+///
+/// The bridge between a durable selector and the action verbs, which work in
+/// terms of [`RefEntry`]. A selector names an element directly, so there is no
+/// walk and no ordinal — the `id` is the selector itself, which is what a
+/// replayed step should carry in an error message anyway.
+///
+/// `None` when the node is not something this engine offers as actionable:
+/// a `<div>`, a hidden input, an `<a>` with no `href`. Refusing here is what
+/// keeps a replayed step from clicking something a reading would never have
+/// offered.
+pub fn entry_for_node(doc: &BaseDocument, node_id: usize, named_as: &str) -> Option<RefEntry> {
+    let node = doc.get_node(node_id)?;
+    let element = node.element_data()?;
+    let tag = element.name.local.as_ref().to_string();
+    let descriptor = describe(&tag, node)?;
+    if !descriptor.takes_ref {
+        return None;
+    }
+    Some(RefEntry {
+        id: named_as.to_string(),
+        node_id,
+        role: descriptor.role.to_string(),
+        name: accessible_name(&tag, node),
+        href: attr_of(node, "href")
+            .or_else(|| attr_of(node, "src"))
+            .map(collapse)
+            .filter(|value| !value.is_empty()),
+    })
+}
+
+/// Roles that structure a page rather than sit inside a sentence.
+///
+/// Used for one question only: whether a semantic leaf is really a leaf, or a
+/// wrapper that has swallowed a block of structure below it. See
+/// [`hoists_a_block`].
+fn is_block_role(role: &str) -> bool {
+    matches!(
+        role,
+        "heading1"
+            | "heading2"
+            | "heading3"
+            | "heading4"
+            | "heading5"
+            | "heading6"
+            | "paragraph"
+            | "listitem"
+            | "cell"
+            | "quote"
+            | "code"
+    )
+}
+
+/// Whether this node's text is really its own, or belongs to a block of
+/// structure underneath it.
+///
+/// `text_content()` concatenates the whole subtree, so a list item wrapping a
+/// heading, a paragraph and a link reported *one* line reading
+/// `TitleBody textRead more` — three pieces of the page run together with no
+/// separator, in an outline whose purpose is to show structure. The pieces were
+/// then suppressed as prose, because the wrapper claimed to have said them
+/// already. It had not: it had said all of them at once, unreadably.
+///
+/// Only a *block* descendant triggers this. Prose with a link in it
+/// (`<p>see <a>here</a></p>`) is the case the existing prose rule handles well,
+/// and a heading wrapping a single link (`<h2><a>Section</a></h2>`) is a shape
+/// where the wrapper's name is the only thing carrying the heading level. Both
+/// keep their current reading.
+fn hoists_a_block(doc: &BaseDocument, node: &Node) -> bool {
+    let mut stack: Vec<usize> = node.children.clone();
+    while let Some(id) = stack.pop() {
+        let Some(child) = doc.get_node(id) else {
+            continue;
+        };
+        let Some(element) = child.element_data() else {
+            continue;
+        };
+        let tag = element.name.local.as_ref();
+        // Their text is not page content and is never emitted, so they cannot
+        // be what a wrapper is hoisting.
+        if matches!(tag, "script" | "style" | "head" | "title" | "meta" | "link") {
+            continue;
+        }
+        match describe(tag, child) {
+            Some(descriptor) if is_block_role(descriptor.role) => return true,
+            // A described inline element speaks for itself and stops the
+            // search there: what is inside a link is the link's name.
+            Some(_) => continue,
+            // An unremarkable container (div, span, section) is transparent —
+            // the block may be below it, which is the common markup shape.
+            None => stack.extend(child.children.iter().copied()),
+        }
+    }
+    false
+}
+
+/// The text a node holds *itself*, without its element children's.
+///
+/// The other half of [`hoists_a_block`]: once the children are going to speak
+/// for themselves, the wrapper must say only what is left, or the same words
+/// appear on two lines.
+fn direct_text(doc: &BaseDocument, node: &Node) -> String {
+    let mut out = String::new();
+    for id in node.children.iter().copied() {
+        let Some(child) = doc.get_node(id) else {
+            continue;
+        };
+        if child.is_text_node() {
+            out.push_str(&child.text_content());
+        }
+    }
+    collapse(&out)
 }
 
 /// Read the two attributes the role decision depends on, then decide.

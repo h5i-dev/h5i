@@ -118,6 +118,35 @@ base64 = "0.22"
 # calls `substr` and died on `not a callable function`.
 boa_engine = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832", default-features = false, features = ["annex-b"] }
 boa_gc = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832" }
+# The public suffix list, compiled in as a static table rather than fetched.
+#
+# This is what makes the `Domain` attribute safe to honour. The rule a browser
+# actually enforces is "the domain must not be a public suffix", and without the
+# list there is no way to know that `co.uk` is one — so a page on `evil.co.uk`
+# could set `Domain=co.uk` and every later request to `bank.co.uk` would carry
+# the cookie. Pure Rust, no build script, no network at runtime: it is a
+# generated match table, which is the only shape that keeps the build hermetic.
+#
+# The list does rot, which was the argument against embedding one. It rots
+# *slowly* and in a known direction — new suffixes are added, so a stale list
+# is conservative about what it refuses rather than permissive — and a version
+# bump is how it is refreshed. See `cookies::registrable_domain`.
+psl = "2.1.226"
+# TLS for `wss://`, and only for that.
+#
+# The refusal it replaces said `wss://` "needs a raw TLS stream, which the HTTP
+# client here does not expose" — true of `reqwest`, and quietly generalised into
+# a property of the engine. It is not one. A socket that owns its transport
+# needs no help from the HTTP client, which is how Lightpanda gets `wss://` for
+# free through curl.
+#
+# `ring` rather than aws-lc-rs, because aws-lc-rs has a C build and this crate
+# refuses those (see `system-fonts` above): the cross-check matrix compiles for
+# windows-msvc, darwin and musl from Linux. Both crates are already in the tree
+# through reqwest's `rustls-tls`, so this adds a name to the manifest and no
+# code to the build.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1.0"
 
 [dev-dependencies]
 tempfile = "3.8"

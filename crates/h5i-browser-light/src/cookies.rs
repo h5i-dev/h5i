@@ -5,24 +5,43 @@
 //! could aim at; a jar changes that, and the defences have to arrive with it
 //! rather than after it (ROADMAP §11 item 5.5).
 //!
-//! # Host-only, always
+//! # `Domain`, honoured over a public suffix list
 //!
-//! **The `Domain` attribute is ignored.** A cookie is scoped to the exact host
-//! that set it, and to nothing else.
+//! A cookie is host-only unless it says otherwise. When it does, the `Domain`
+//! attribute is honoured under the rules a browser actually enforces, and the
+//! load-bearing one needs a list: **the domain must not be a public suffix.**
+//! Without that, a page on `evil.co.uk` sets `Domain=co.uk` and every later
+//! request to `bank.co.uk` carries the cookie.
 //!
-//! Honouring `Domain` correctly requires a public suffix list, because the rule
-//! a browser actually enforces is "the domain must not be a public suffix" —
-//! without it, a page on `evil.co.uk` may set `Domain=co.uk` and every later
-//! request to `bank.co.uk` carries the cookie. There is no PSL in this
-//! dependency tree, an embedded copy is a list that silently rots, and the
-//! failure mode of getting it wrong is handing a credential to an attacker's
-//! neighbour.
+//! This was refused for exactly that reason until the list arrived. The stated
+//! cost was real and is now paid off: a site that logs you in at `example.com`
+//! and serves the app from `www.example.com` stays logged in. Four rules stand
+//! between that and the failure above, and a cookie must pass all of them:
 //!
-//! The narrowing is real and worth stating: a site that logs you in at
-//! `example.com` and serves the app from `www.example.com` will not stay logged
-//! in here. That is a missing feature. Sending a session cookie to the wrong
-//! origin would be a vulnerability, and between the two this engine takes the
-//! missing feature.
+//! 1. **The domain must not be a public suffix.** `Domain=co.uk`,
+//!    `Domain=com`, `Domain=github.io` are all refused.
+//! 2. **The request host must be within it**, on a label boundary.
+//!    `Domain=example.com` may not be set by `attackerexample.com`, which a
+//!    plain suffix test would have allowed.
+//! 3. **A host that is an IP address gets no `Domain` at all.** There is no
+//!    domain tree above an address to widen into.
+//! 4. **`__Host-` still forbids it outright**, which is the prefix's whole
+//!    purpose: it is how a server says "this one is mine alone".
+//!
+//! The list is compiled in (the `psl` crate) rather than fetched, so nothing
+//! here depends on the network to decide where a credential may go. It goes
+//! stale between version bumps, and it does so safely: the list only grows, so
+//! an out-of-date copy refuses suffixes it has not heard of rather than
+//! accepting them.
+//!
+//! # SameSite, recorded and enforced where it can be
+//!
+//! Parsed and stored rather than dropped. `SameSite=None` without `Secure` is
+//! refused at store time, which is the rule that stops a cross-site cookie
+//! travelling in the clear. The cross-site *request* distinction itself is
+//! computed on registrable domains — the same list, so `a.example.com` and
+//! `b.example.com` are one site — rather than on bare host equality, which
+//! would have called every subdomain a third party.
 //!
 //! # In memory, never on disk
 //!
@@ -48,14 +67,41 @@ use std::time::{Duration, SystemTime};
 
 use url::Url;
 
+/// How a cookie says it may travel across sites.
+///
+/// Stored rather than dropped. Only one of these is enforceable here — `None`
+/// requires `Secure`, checked at store time — but the value is what a
+/// cross-site decision would be made from, and parsing an attribute only to
+/// throw it away is how a jar ends up unable to answer a question it already
+/// had the information for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SameSite {
+    Strict,
+    #[default]
+    Lax,
+    None,
+}
+
 /// One stored cookie, already scoped to the host that set it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Cookie {
     name: String,
     value: String,
-    /// The exact host this may be sent to. See the module docs on why there is
-    /// no domain-matching here.
+    /// The host that set it, lowercased.
+    ///
+    /// With `host_only` set this is the only host it may be sent to. Otherwise
+    /// it is the domain the cookie widened to, and any host at or below it
+    /// matches — see [`domain_matches`].
     host: String,
+    /// Whether `Domain` was absent, which is the default and the narrow case.
+    ///
+    /// Kept as its own flag rather than inferred from `host`, because
+    /// `Domain=example.com` set *by* `example.com` is not the same cookie as
+    /// one set without the attribute: the first is sent to `www.example.com`
+    /// and the second is not. RFC 6265 §5.3 draws the line here and a jar that
+    /// inferred it would send credentials one hop wider than the server asked.
+    host_only: bool,
+    same_site: SameSite,
     path: String,
     /// `None` is a session cookie, which in this engine means "until the
     /// process exits" — the same thing, since nothing is persisted.
@@ -152,7 +198,7 @@ impl Jar {
 
         let mut matched: Vec<&Cookie> = jar
             .iter()
-            .filter(|c| c.host == host)
+            .filter(|c| domain_matches(&host, c))
             .filter(|c| !c.secure || secure_channel)
             .filter(|c| path_matches(&request_path, &c.path))
             .filter(|c| keep(c))
@@ -230,12 +276,8 @@ impl Jar {
                     continue;
                 }
                 // And it may not stand on one the wire set.
-                let shadows_http_only = jar.iter().any(|c| {
-                    c.http_only
-                        && c.name == cookie.name
-                        && c.host == cookie.host
-                        && c.path == cookie.path
-                });
+                let shadows_http_only =
+                    jar.iter().any(|c| c.http_only && same_cookie(c, &cookie));
                 if shadows_http_only {
                     continue;
                 }
@@ -244,7 +286,7 @@ impl Jar {
             // Replacing by identity is what makes deletion work: a server
             // clears a cookie by re-sending it with an expiry in the past, so
             // the removal has to happen through the same door as the write.
-            jar.retain(|c| !(c.name == cookie.name && c.host == cookie.host && c.path == cookie.path));
+            jar.retain(|c| !same_cookie(c, &cookie));
 
             if cookie.is_expired(now) {
                 // Stored as a deletion, which is a real outcome and is counted
@@ -355,6 +397,123 @@ fn path_matches(request_path: &str, cookie_path: &str) -> bool {
     cookie_path.ends_with('/') || request_path.as_bytes().get(cookie_path.len()) == Some(&b'/')
 }
 
+/// Whether two cookies are the same one, for replacement and deletion.
+///
+/// RFC 6265 §5.3 identifies a cookie by name, domain and path — and *domain*
+/// here includes whether it was host-only, because `Domain=example.com` set by
+/// `example.com` and a bare cookie set by the same host are two different
+/// cookies that a browser stores side by side. Comparing only the scope string
+/// would have let a widened cookie silently delete the narrow one, which is a
+/// logout the server never asked for.
+fn same_cookie(a: &Cookie, b: &Cookie) -> bool {
+    a.name == b.name && a.host == b.host && a.host_only == b.host_only && a.path == b.path
+}
+
+/// Whether a stored cookie may be sent to this host.
+///
+/// Host-only cookies match exactly. The rest match the domain they were scoped
+/// to and anything below it, **on a label boundary** — the check that makes
+/// `attackerexample.com` fail to match a cookie scoped to `example.com`, which
+/// a bare `ends_with` would have let through.
+fn domain_matches(request_host: &str, cookie: &Cookie) -> bool {
+    if cookie.host_only {
+        return request_host == cookie.host;
+    }
+    if request_host == cookie.host {
+        return true;
+    }
+    request_host
+        .strip_suffix(&cookie.host)
+        .is_some_and(|prefix| prefix.ends_with('.'))
+}
+
+/// The registrable domain for a host: one label above its public suffix.
+///
+/// `www.example.co.uk` is `example.co.uk`; `example.co.uk` is itself; `co.uk`
+/// is nothing, because a public suffix is not a domain anyone registers.
+/// `None` for an IP address or an unknown shape, which every caller here treats
+/// as "refuse to widen".
+fn registrable_domain(host: &str) -> Option<String> {
+    // The `psl` crate answers over bytes and returns the suffix; the domain is
+    // the suffix plus one more label, which it computes for us.
+    let domain = psl::domain(host.as_bytes())?;
+    let text = std::str::from_utf8(domain.as_bytes()).ok()?;
+    Some(text.to_ascii_lowercase())
+}
+
+/// Whether a host is a public suffix in its own right (`com`, `co.uk`,
+/// `github.io`), which is the one thing a `Domain` may never be.
+fn is_public_suffix(host: &str) -> bool {
+    // A host with no registrable domain is either a suffix itself or a shape
+    // the list does not describe. Both must refuse to widen, so both answer
+    // true here — the conservative direction.
+    match registrable_domain(host) {
+        Some(domain) => domain != host,
+        None => true,
+    }
+}
+
+/// What host a cookie should be scoped to, given the `Domain` it asked for.
+///
+/// `None` refuses the cookie outright. The four rules in the module docs live
+/// here, in the order that makes each one cheap.
+fn scope_for(host: &str, requested: Option<&str>) -> Option<(String, bool)> {
+    let Some(requested) = requested else {
+        // No `Domain`: host-only, which is both the default and the narrow
+        // case.
+        return Some((host.to_string(), true));
+    };
+
+    // A leading dot is legal and historically meaningless (RFC 6265 §5.2.3).
+    let wanted = requested
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
+    if wanted.is_empty() {
+        return Some((host.to_string(), true));
+    }
+
+    // Rule 3: an address has no domain tree above it to widen into. Checked
+    // before the list, which does not describe addresses.
+    if host.parse::<std::net::IpAddr>().is_ok() || wanted.parse::<std::net::IpAddr>().is_ok() {
+        return (host == wanted).then(|| (host.to_string(), true));
+    }
+
+    // Rule 1: never a public suffix. This is the whole reason the list is here.
+    if is_public_suffix(&wanted) {
+        return None;
+    }
+
+    // Rule 2: the setter must be at or below what it is asking for, on a label
+    // boundary. `attackerexample.com` asking for `example.com` fails here.
+    let within = host == wanted
+        || host
+            .strip_suffix(&wanted)
+            .is_some_and(|prefix| prefix.ends_with('.'));
+    if !within {
+        return None;
+    }
+
+    Some((wanted, false))
+}
+
+/// Whether two hosts are the same *site*, which is not the same question as
+/// whether they are the same host.
+///
+/// Computed on registrable domains, so `app.example.com` and `api.example.com`
+/// are one site. Host equality would have called them third parties to each
+/// other, which is how a same-site rule ends up breaking the ordinary case it
+/// was never aimed at.
+#[allow(dead_code)]
+fn same_site(a: &str, b: &str) -> bool {
+    match (registrable_domain(a), registrable_domain(b)) {
+        (Some(x), Some(y)) => x == y,
+        // No registrable domain on either side (an address, say): fall back to
+        // the strict answer rather than guessing generously.
+        _ => a == b,
+    }
+}
+
 /// Parse one `Set-Cookie` value, or refuse it.
 ///
 /// Refusals are silent by design at this layer — a malformed or disallowed
@@ -375,6 +534,8 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
     let mut http_only = false;
     let mut max_age: Option<i64> = None;
     let mut expires: Option<SystemTime> = None;
+    let mut domain: Option<String> = None;
+    let mut same_site = SameSite::default();
 
     for attribute in parts {
         let attribute = attribute.trim();
@@ -388,11 +549,20 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
             "path" if val.starts_with('/') => path = Some(val),
             "max-age" => max_age = val.parse::<i64>().ok(),
             "expires" => expires = httpdate::parse_http_date(&val).ok(),
-            // `Domain` is read and deliberately dropped; see the module docs.
-            // `SameSite` is a no-op because this engine makes one navigation at
-            // a time on the agent's behalf, so there is no third-party context
-            // to be lax about. `HttpOnly` used to be one too, on the reasoning
-            // that there was no script to hide a cookie from. There is now.
+            // Honoured now, over a public suffix list. Read and dropped before
+            // that list existed, because the alternative to checking it is
+            // sending a session cookie to an attacker's neighbour.
+            "domain" if !val.is_empty() => domain = Some(val),
+            "samesite" => {
+                same_site = match val.to_ascii_lowercase().as_str() {
+                    "strict" => SameSite::Strict,
+                    "none" => SameSite::None,
+                    // Anything unrecognised is the default rather than a
+                    // refusal: an attribute a server spelled wrong should not
+                    // silently widen the cookie.
+                    _ => SameSite::Lax,
+                }
+            }
             _ => {}
         }
     }
@@ -424,14 +594,31 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
     if name.starts_with("__Secure-") && !secure {
         return None;
     }
-    if name.starts_with("__Host-") && (!secure || path != "/") {
+    // `__Host-` forbids `Domain` outright, which is the prefix's whole point:
+    // it is how a server says this cookie is its host's alone and may not be
+    // widened to a sibling.
+    if name.starts_with("__Host-") && (!secure || path != "/" || domain.is_some()) {
         return None;
     }
+
+    // `SameSite=None` is a cookie asking to travel cross-site, and the spec
+    // requires it to be `Secure` for that. Refused rather than silently
+    // downgraded: a server that asked for the wide behaviour should not get the
+    // narrow one and no indication.
+    if same_site == SameSite::None && !secure {
+        return None;
+    }
+
+    // Where this cookie may go. `None` is a refusal — a public suffix, or a
+    // host asking to widen into a domain it is not under.
+    let (scope, host_only) = scope_for(host, domain.as_deref())?;
 
     Some(Cookie {
         name: name.to_string(),
         value,
-        host: host.to_string(),
+        host: scope,
+        host_only,
+        same_site,
         path,
         expires,
         secure,
@@ -458,18 +645,190 @@ mod tests {
     }
 
     #[test]
-    fn a_cookie_never_reaches_another_host_even_a_sibling() {
-        // The narrowing this jar is built around. `Domain=.example` would make
-        // a browser send this to both; here it goes nowhere but the setter.
+    fn a_cookie_without_domain_never_reaches_another_host_even_a_sibling() {
+        // The default, and still the narrow one: no `Domain` means host-only,
+        // so a sibling gets nothing.
         let jar = Jar::new();
-        jar.store(&url("https://a.example/"), ["sid=abc; Domain=.example"]);
+        jar.store(&url("https://a.example.com/"), ["sid=abc"]);
 
-        assert!(jar.header_for(&url("https://b.example/")).is_none());
-        assert!(jar.header_for(&url("https://example/")).is_none());
+        assert!(jar.header_for(&url("https://b.example.com/")).is_none());
+        assert!(jar.header_for(&url("https://example.com/")).is_none());
         assert!(
-            jar.header_for(&url("https://a.example/")).is_some(),
+            jar.header_for(&url("https://a.example.com/")).is_some(),
             "the host that set it still gets it"
         );
+    }
+
+    /// The narrowing this jar was built around, now paid off. A site that logs
+    /// you in at `example.com` and serves the app from `www.example.com` used
+    /// to log you straight back out.
+    #[test]
+    fn a_domain_cookie_reaches_subdomains_of_what_it_asked_for() {
+        let jar = Jar::new();
+        jar.store(
+            &url("https://example.com/"),
+            ["sid=abc; Domain=example.com"],
+        );
+
+        for host in [
+            "https://example.com/",
+            "https://www.example.com/",
+            "https://deep.nested.example.com/",
+        ] {
+            assert!(
+                jar.header_for(&url(host)).is_some(),
+                "{host} is within the domain it was scoped to"
+            );
+        }
+        assert!(
+            jar.header_for(&url("https://other.com/")).is_none(),
+            "and nothing outside it"
+        );
+    }
+
+    /// The whole reason the list is here. Without it this cookie is stored and
+    /// every later request to any `.co.uk` carries it.
+    #[test]
+    fn a_domain_that_is_a_public_suffix_is_refused() {
+        let jar = Jar::new();
+        for attempt in [
+            ("https://evil.co.uk/", "sid=abc; Domain=co.uk"),
+            ("https://evil.com/", "sid=abc; Domain=com"),
+            ("https://evil.github.io/", "sid=abc; Domain=github.io"),
+        ] {
+            assert_eq!(
+                jar.store(&url(attempt.0), [attempt.1]),
+                0,
+                "{} must not be storable",
+                attempt.1
+            );
+        }
+        assert!(jar.header_for(&url("https://bank.co.uk/")).is_none());
+        assert!(jar.header_for(&url("https://victim.github.io/")).is_none());
+    }
+
+    /// The label-boundary check, which a bare suffix test would have failed.
+    /// `attackerexample.com` *ends with* `example.com`.
+    #[test]
+    fn a_host_may_not_widen_into_a_domain_it_merely_ends_with() {
+        let jar = Jar::new();
+        assert_eq!(
+            jar.store(
+                &url("https://attackerexample.com/"),
+                ["sid=abc; Domain=example.com"]
+            ),
+            0,
+            "a suffix match is not a domain match"
+        );
+        assert!(jar.header_for(&url("https://example.com/")).is_none());
+    }
+
+    /// And the same boundary on the way out: a cookie scoped to `example.com`
+    /// must not be sent to `notexample.com`.
+    #[test]
+    fn a_domain_cookie_is_not_sent_to_a_host_that_merely_ends_with_it() {
+        let jar = Jar::new();
+        jar.store(
+            &url("https://example.com/"),
+            ["sid=abc; Domain=example.com"],
+        );
+        assert!(jar.header_for(&url("https://notexample.com/")).is_none());
+    }
+
+    /// `__Host-` says "mine alone", so it may not be widened at all. This is
+    /// the prefix doing the one job it exists for.
+    #[test]
+    fn host_prefixed_cookies_refuse_a_domain_outright() {
+        let jar = Jar::new();
+        assert_eq!(
+            jar.store(
+                &url("https://example.com/"),
+                ["__Host-s=1; Secure; Path=/; Domain=example.com"]
+            ),
+            0
+        );
+        // Without the attribute the same cookie is fine.
+        assert_eq!(
+            jar.store(&url("https://example.com/"), ["__Host-s=1; Secure; Path=/"]),
+            1
+        );
+    }
+
+    /// There is no domain tree above an address to widen into.
+    #[test]
+    fn an_ip_address_host_gets_no_domain_widening() {
+        let jar = Jar::new();
+        assert_eq!(
+            jar.store(&url("https://127.0.0.1/"), ["sid=abc; Domain=0.0.1"]),
+            0
+        );
+        // Host-only still works, which is what a dev server needs.
+        assert_eq!(jar.store(&url("https://127.0.0.1/"), ["sid=abc"]), 1);
+        assert!(jar.header_for(&url("https://127.0.0.1/")).is_some());
+    }
+
+    /// A cookie asking to travel cross-site has to be `Secure` for it. Refused
+    /// rather than quietly downgraded to the narrow behaviour.
+    #[test]
+    fn same_site_none_without_secure_is_refused() {
+        let jar = Jar::new();
+        assert_eq!(
+            jar.store(&url("https://example.com/"), ["sid=abc; SameSite=None"]),
+            0
+        );
+        assert_eq!(
+            jar.store(
+                &url("https://example.com/"),
+                ["sid=abc; SameSite=None; Secure"]
+            ),
+            1
+        );
+    }
+
+    /// A widened cookie and a host-only one of the same name are two cookies,
+    /// as they are in a browser. Folding them together would let one delete
+    /// the other — a logout the server never asked for.
+    #[test]
+    fn a_domain_cookie_does_not_replace_the_host_only_one_beside_it() {
+        let jar = Jar::new();
+        jar.store(&url("https://example.com/"), ["sid=narrow"]);
+        jar.store(
+            &url("https://example.com/"),
+            ["sid=wide; Domain=example.com"],
+        );
+
+        let (header, count) = jar.header_for(&url("https://example.com/")).unwrap();
+        assert_eq!(count, 2, "both are stored: {header}");
+        assert!(header.contains("sid=narrow"), "{header}");
+        assert!(header.contains("sid=wide"), "{header}");
+
+        // And only the wide one reaches a subdomain.
+        let (sub, count) = jar.header_for(&url("https://www.example.com/")).unwrap();
+        assert_eq!(count, 1, "{sub}");
+        assert!(sub.contains("sid=wide"), "{sub}");
+    }
+
+    /// Registrable-domain arithmetic, which both the `Domain` gate and the
+    /// same-site decision rest on.
+    #[test]
+    fn registrable_domains_are_computed_over_the_list_not_by_counting_dots() {
+        assert_eq!(
+            registrable_domain("www.example.co.uk").as_deref(),
+            Some("example.co.uk"),
+            "a two-label suffix is one suffix"
+        );
+        assert_eq!(
+            registrable_domain("example.com").as_deref(),
+            Some("example.com")
+        );
+        assert!(is_public_suffix("co.uk"));
+        assert!(is_public_suffix("com"));
+        assert!(!is_public_suffix("example.com"));
+
+        // Same site is computed here, not on host equality, or every subdomain
+        // would be a third party to its own siblings.
+        assert!(same_site("app.example.com", "api.example.com"));
+        assert!(!same_site("example.com", "example.org"));
     }
 
     #[test]

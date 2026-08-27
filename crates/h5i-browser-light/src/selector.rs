@@ -43,17 +43,63 @@ const STABLE_ATTRS: &[&str] = &["data-testid", "data-test-id", "data-test", "nam
 /// How far up to walk before giving up on narrowing.
 const MAX_ANCESTORS: usize = 32;
 
+/// Selector results already computed against one unchanged document.
+///
+/// Every candidate here is verified with a full-document query, and a snapshot
+/// mints a selector for *every* ref it serves. The candidates repeat heavily
+/// across siblings — fifty rows in a table share every ancestor segment above
+/// the row — so without this the same query runs once per ref that shares it.
+///
+/// Correct only for as long as the document does not change, which is why it is
+/// created per snapshot rather than held on the session: a cache that outlived
+/// a mutation would verify selectors against a page that had moved on, which is
+/// the exact failure the verification exists to prevent.
+#[derive(Default)]
+pub struct Cache {
+    seen: std::collections::HashMap<String, Vec<usize>>,
+}
+
+impl Cache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn matches(&mut self, doc: &BaseDocument, selector: &str) -> &[usize] {
+        // `entry` would need an owned key on every hit, and the hit is the
+        // common case here by construction.
+        if !self.seen.contains_key(selector) {
+            let found = matches(doc, selector);
+            self.seen.insert(selector.to_string(), found);
+        }
+        &self.seen[selector]
+    }
+
+    /// Whether this selector's **first** match is the node we want.
+    ///
+    /// First, not "is among", because that is what an action does with a
+    /// selector: `querySelector` semantics. A selector that matches the target
+    /// third is not a handle on the target.
+    fn resolves_to(&mut self, doc: &BaseDocument, selector: &str, node_id: usize) -> bool {
+        self.matches(doc, selector).first() == Some(&node_id)
+    }
+}
+
 /// The simplest verified selector for one node, or `None` if none can be built.
 ///
 /// `None` rather than a guess: an element whose selector cannot be verified is
 /// better reported as having none than handed a string that resolves elsewhere.
 pub fn for_node(doc: &BaseDocument, node_id: usize) -> Option<String> {
-    let mut current = local_segment(doc, node_id)?;
-    if resolves_to(doc, &current, node_id) {
+    for_node_cached(doc, node_id, &mut Cache::new())
+}
+
+/// The same, reusing work already done against this document.
+pub fn for_node_cached(doc: &BaseDocument, node_id: usize, cache: &mut Cache) -> Option<String> {
+    let mut current = local_segment_cached(doc, node_id, cache)?;
+    if cache.resolves_to(doc, &current, node_id) {
         return Some(current);
     }
 
-    let mut narrowest = matches(doc, &current).len();
+    let mut narrowest = cache.matches(doc, &current).len();
     let mut ancestor = doc.get_node(node_id).and_then(|n| n.parent);
     let mut walked = 0;
 
@@ -62,16 +108,21 @@ pub fn for_node(doc: &BaseDocument, node_id: usize) -> Option<String> {
         if walked > MAX_ANCESTORS {
             break;
         }
-        if let Some(segment) = local_segment(doc, id) {
+        if let Some(segment) = local_segment_cached(doc, id, cache) {
             let candidate = format!("{segment} {current}");
-            let count = matches(doc, &candidate).len();
+            // One query answers both questions. Asking `matches` for the count
+            // and then `resolves_to` for the first element ran the same
+            // full-document query twice for every ancestor that narrowed.
+            let found = cache.matches(doc, &candidate);
+            let count = found.len();
+            let is_first = found.first() == Some(&node_id);
             // Only when it actually narrows. An ancestor that leaves the count
             // where it was has added length and no information, and a longer
             // selector is a more brittle one.
             if count < narrowest {
                 narrowest = count;
                 current = candidate;
-                if resolves_to(doc, &current, node_id) {
+                if is_first {
                     return Some(current);
                 }
             }
@@ -79,11 +130,15 @@ pub fn for_node(doc: &BaseDocument, node_id: usize) -> Option<String> {
         ancestor = doc.get_node(id).and_then(|n| n.parent);
     }
 
-    strict_path(doc, node_id).filter(|path| resolves_to(doc, path, node_id))
+    strict_path(doc, node_id).filter(|path| cache.resolves_to(doc, path, node_id))
 }
 
 /// One element's own segment, without any ancestor context.
-fn local_segment(doc: &BaseDocument, node_id: usize) -> Option<String> {
+fn local_segment_cached(
+    doc: &BaseDocument,
+    node_id: usize,
+    cache: &mut Cache,
+) -> Option<String> {
     let node = doc.get_node(node_id)?;
     let element = node.element_data()?;
     let tag = element.name.local.to_string();
@@ -96,7 +151,7 @@ fn local_segment(doc: &BaseDocument, node_id: usize) -> Option<String> {
         && is_css_ident(&id)
     {
         let candidate = format!("#{id}");
-        if resolves_to(doc, &candidate, node_id) {
+        if cache.resolves_to(doc, &candidate, node_id) {
             return Some(candidate);
         }
     }
@@ -106,7 +161,7 @@ fn local_segment(doc: &BaseDocument, node_id: usize) -> Option<String> {
             && !value.is_empty()
         {
             let candidate = format!("{tag}[{name}=\"{}\"]", escape_attr(&value));
-            if resolves_to(doc, &candidate, node_id) {
+            if cache.resolves_to(doc, &candidate, node_id) {
                 return Some(candidate);
             }
         }
@@ -190,14 +245,6 @@ fn matches(doc: &BaseDocument, selector: &str) -> Vec<usize> {
     crate::script::dom_api::matches_within(doc, 0, selector)
 }
 
-/// Whether this selector's **first** match is the node we want.
-///
-/// First, not "is among", because that is what an action does with a selector:
-/// `querySelector` semantics. A selector that matches the target third is not a
-/// handle on the target.
-fn resolves_to(doc: &BaseDocument, selector: &str, node_id: usize) -> bool {
-    matches(doc, selector).first() == Some(&node_id)
-}
 
 /// Whether a value can go after `#` without quoting.
 ///

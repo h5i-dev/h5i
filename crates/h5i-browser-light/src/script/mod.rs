@@ -61,7 +61,7 @@ const PRELUDE_PATH: &str = "<h5i browser prelude>";
 /// Two seconds was cutting real applications off mid-render: preactjs.com
 /// fetches its content, then needs five virtual seconds to render it, and was
 /// being stopped at two with its own data already in hand.
-const SETTLE_BUDGET_MS: u64 = 10_000;
+pub(crate) const SETTLE_BUDGET_MS: u64 = 10_000;
 
 /// How far the virtual clock advances per settle round.
 ///
@@ -207,13 +207,21 @@ enum Ready<'a> {
 
 /// How a wait ended.
 ///
-/// Three outcomes, kept apart because they ask the caller for different things.
+/// Four outcomes, kept apart because they ask the caller for different things.
 /// `Met` is the answer. `Quiescent` means the page has nothing left to run, so
 /// waiting longer cannot change anything — a different fact from `Budget`,
 /// which means time ran out with work still pending and the condition might
 /// yet have come true.
 ///
-/// Collapsing the last two into "timed out" is the lie this engine keeps
+/// `Periodic` is the one the others hid. A page whose only remaining work is a
+/// loop that re-arms itself — an animation frame, a poll, a carousel — is
+/// neither finished nor converging. Reporting it as `Quiescent` would claim
+/// nothing can change, which is false, because the loop runs and can touch the
+/// DOM. Reporting it as `Budget` claims the page was on its way somewhere and
+/// merely ran out of time, which is the claim that sent agents back to wait
+/// again on a page that will never arrive.
+///
+/// Collapsing any of these into "timed out" is the lie this engine keeps
 /// refusing elsewhere: it would report a page that had finished and a page that
 /// was cut off as the same thing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,6 +232,9 @@ pub enum WaitEnd {
     Quiescent,
     /// The budget ran out with work still pending.
     Budget,
+    /// The page has only self-rescheduling work left. It is not converging, so
+    /// waiting is not a strategy — but it is not finished either.
+    Periodic,
 }
 
 impl WaitEnd {
@@ -232,6 +243,7 @@ impl WaitEnd {
             WaitEnd::Met => "met",
             WaitEnd::Quiescent => "quiescent",
             WaitEnd::Budget => "budget",
+            WaitEnd::Periodic => "periodic",
         }
     }
 }
@@ -270,6 +282,12 @@ impl Waited {
                  it may yet appear",
                 self.settled.elapsed_ms, self.settled.pending_timers
             ),
+            WaitEnd::Periodic => format!(
+                "not found after {}ms, and the only work left on this page is {} \
+                 self-rescheduling timer(s) — an animation or polling loop, which will not \
+                 converge no matter how long you wait",
+                self.settled.elapsed_ms, self.settled.periodic_timers
+            ),
         }
     }
 }
@@ -284,8 +302,14 @@ pub struct Settled {
     /// True when the budget ran out with work still pending. A snapshot taken
     /// here describes a page that had not finished.
     pub cut_off: bool,
-    /// Timers still queued when it stopped.
+    /// Timers still queued when it stopped, counting only the ones the page
+    /// still owes: one-shot, and not so deep in a self-arming chain that they
+    /// have stopped converging.
     pub pending_timers: usize,
+    /// Timers armed but no longer holding the page open: intervals, and
+    /// one-shots past the nesting limit. A page with these is running, but it
+    /// is not running *towards* anything.
+    pub periodic_timers: usize,
 }
 
 impl Settled {
@@ -295,6 +319,16 @@ impl Settled {
             format!(
                 "still busy after {}ms ({} timers pending) — this page had not finished",
                 self.elapsed_ms, self.pending_timers
+            )
+        } else if self.periodic_timers > 0 {
+            // Not "still busy": this page *did* finish everything it owed. The
+            // note exists because a periodic loop makes two reads of one page
+            // disagree without the agent having acted, which is the same
+            // caveat `open_sockets` carries and for the same reason.
+            format!(
+                "settled after {}ms, with {} self-rescheduling timer(s) still running — \
+                 this page has an animation or polling loop, so a later read may differ",
+                self.elapsed_ms, self.periodic_timers
             )
         } else {
             format!("settled after {}ms", self.elapsed_ms)
@@ -573,6 +607,13 @@ impl Script {
             WaitEnd::Met
         } else if cut_short || settled.cut_off {
             WaitEnd::Budget
+        } else if settled.periodic_timers > 0 {
+            // The page paid off everything it owed and is still running a loop
+            // that re-arms itself. Reporting this as `Quiescent` would tell the
+            // caller nothing can change, which is false; reporting it as
+            // `Budget` would tell them to wait again, which is worse, because
+            // the loop will still be there next time.
+            WaitEnd::Periodic
         } else {
             WaitEnd::Quiescent
         };
@@ -624,6 +665,7 @@ impl Script {
                     timers_run: 0,
                     cut_off: false,
                     pending_timers: self.pending_timers(),
+                    periodic_timers: self.periodic_timers(),
                 },
                 true,
             );
@@ -663,6 +705,7 @@ impl Script {
                         timers_run,
                         cut_off: false,
                         pending_timers: self.pending_timers(),
+                        periodic_timers: self.periodic_timers(),
                     },
                     true,
                 );
@@ -688,6 +731,7 @@ impl Script {
                                 timers_run,
                                 cut_off: true,
                                 pending_timers: self.pending_timers(),
+                                periodic_timers: self.periodic_timers(),
                             },
                             false,
                         );
@@ -714,6 +758,7 @@ impl Script {
                                 timers_run,
                                 cut_off: true,
                                 pending_timers: self.pending_timers(),
+                                periodic_timers: self.periodic_timers(),
                             },
                             false,
                         );
@@ -735,9 +780,16 @@ impl Script {
                         continue;
                     }
 
-                    // Nothing left to wait on. For a plain settle that is the
-                    // page being done; for a wait it is the answer, because the
-                    // condition cannot become true without something running.
+                    // Nothing the page still owes. For a plain settle that is
+                    // the page being done; for a wait it is the answer, because
+                    // the condition cannot become true without something
+                    // running.
+                    //
+                    // "Nothing owed" is not the same as "nothing armed": an
+                    // interval, or a one-shot chain past the nesting limit, is
+                    // still going to fire. It is counted rather than waited on,
+                    // and the count is what lets the caller be told which of
+                    // the two answers it got.
                     self.collect_module_failures();
                     return (
                         Settled {
@@ -745,6 +797,7 @@ impl Script {
                             timers_run,
                             cut_off: false,
                             pending_timers: 0,
+                            periodic_timers: self.periodic_timers(),
                         },
                         ready_now!(),
                     );
@@ -784,6 +837,7 @@ impl Script {
                         timers_run,
                         cut_off: true,
                         pending_timers: self.pending_timers(),
+                        periodic_timers: self.periodic_timers(),
                     },
                     ready_now!(),
                 );
@@ -945,10 +999,34 @@ impl Script {
         }
     }
 
+    /// The host this realm is bound to.
+    ///
+    /// Exposed for the one consumer outside the realm: the canvas surfaces live
+    /// on the host (they are not part of the DOM), and the engine has to reach
+    /// them to composite them into the page.
+    pub fn host(&self) -> Rc<Host> {
+        self.host.clone()
+    }
+
     fn pending_timers(&mut self) -> usize {
         match self
             .context
             .eval(Source::from_bytes("__h5iPendingTimers()"))
+        {
+            Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
+            Err(_) => 0,
+        }
+    }
+
+    /// Timers armed but no longer holding the page open.
+    ///
+    /// Asked only where a settle is about to return, so the common path pays
+    /// nothing for it: a page with no periodic work answers zero and the
+    /// reporting is unchanged.
+    fn periodic_timers(&mut self) -> usize {
+        match self
+            .context
+            .eval(Source::from_bytes("__h5iPeriodicTimers()"))
         {
             Ok(value) => value.as_number().unwrap_or(0.0).max(0.0) as usize,
             Err(_) => 0,

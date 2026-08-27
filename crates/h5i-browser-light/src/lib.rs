@@ -31,6 +31,7 @@
 //! engine's compatibility bar.
 
 pub mod encoding;
+pub mod canvas;
 pub mod cookies;
 pub mod engine;
 pub mod extract;
@@ -39,12 +40,14 @@ pub mod markdown;
 pub mod net;
 pub mod policy;
 pub mod receipt;
+pub mod replay;
 pub mod script;
 pub mod selector;
 pub mod skill;
 pub mod secrets;
 pub mod snapshot;
 pub mod sse;
+pub mod structured;
 pub mod stream;
 pub mod verbs;
 pub mod ws;
