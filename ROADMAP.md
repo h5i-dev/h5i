@@ -121,7 +121,7 @@ This document has five parts:
 - **The environment**, sections 1 to 12. Scope, architecture, phases and the
   decisions behind them. Decisions already taken are in section 10; what is
   still open is in section 11.
-- **The browser engine**, sections B1 to B15. The work on
+- **The browser engine**, sections B1 to B18. The work on
   `crates/h5i-browser-light`, formerly `ROADMAP_BROWSER.md`. Those sections
   carry a `B` prefix so the two numbering schemes never collide. Section 12
   stays the authority on the engine's *scope and why*; the B sections are the
@@ -7029,6 +7029,194 @@ name is a page where picking one would be this engine deciding which the agent
 meant; the refusal lists the candidates so the next attempt can be exact. And
 `--name` matches exactly, because a substring match would make `--name Save`
 hit "Save as draft" and "Discard without saving".
+
+---
+
+## B18. The broker/renderer split, proposed 2026-08-27
+
+Status: **proposed.** Nothing here is built. §B18.6 is the measured seam, which
+is the part worth trusting; the rest is a design that has not met a compiler.
+
+The default session sandbox landed first (`h5i-core::browser_sandbox`), and it
+sharpened the case for this rather than replacing it. That sandbox contains what
+a compromised engine could *do* — its files, its environment, its allocations —
+and cannot contain what it could *reach*, because `NetMode` has two values and a
+browser needs the one that says yes. This is the change that closes the other
+half, and it closes it in the one place the product's central claim lives.
+
+### B18.1 Why the claim needs it
+
+"A request that is not in the log did not happen" holds while the engine is
+intact, and only then. The broker that decides and records is in the same
+process as the parsers that read the page, so a bug in Blitz, Stylo, an image
+decoder or Boa takes the recorder along with the renderer. Today's honest
+framing is that this is **the integrity of normal operation, not resistance to
+compromise**, and the README says so.
+
+Splitting moves the recorder somewhere the page cannot reach. A renderer with no
+socket cannot fetch at all without asking, so the log stops being the engine's
+account of itself and becomes an account written by a component the page never
+touched.
+
+### B18.2 The line
+
+Not "renderer versus network". **What parses attacker bytes** versus **what
+makes and records decisions**.
+
+| | sandboxed renderer | trusted broker |
+| --- | --- | --- |
+| HTML parse, DOM (blitz-dom) | ● | |
+| CSS cascade (stylo) | ● | |
+| layout, text shaping (taffy, parley) | ● | |
+| image decode, font loading | ● | |
+| paint (vello_cpu) | ● | |
+| script (boa) and the DOM API | ● | |
+| snapshot / markdown / extract / structured | ● | |
+| policy: allowlist, redirect hops, rebinding, internal addresses | | ● |
+| the wire (reqwest) | | ● |
+| the receipt sink, fail-closed | | ● |
+| the cookie jar | | ● |
+| secret substitution | | ● |
+| the control channel and the control lock | | ● |
+| the action log | | ● |
+
+The renderer gets no filesystem beyond its own scratch and no network syscall at
+all. That is also what tightens the session sandbox: with the renderer holding
+no socket, its profile can move from `net.mode = host` to `deny` — an empty
+network namespace — which is a one-line change to `browser_sandbox::profile_for`
+and the whole reason this ordering is right.
+
+### B18.3 The four cases the table does not settle
+
+**Cookies: the gain is narrower than it first looks.** The obvious claim — "the
+renderer would see only the non-HttpOnly subset" — is already true where it
+matters most: `Jar::document_cookie` returns exactly that, script can neither
+read nor overwrite an `HttpOnly` cookie, and `dom_api.rs` goes through it. The
+same-origin work in §B17 closed that.
+
+What the split adds is one step further out. Page script is already fenced off
+from the jar; the **renderer binary** is not, because the jar is in its address
+space. So the gain is against a compromised *engine*, not against a hostile
+*page*, and those are different threats with different likelihoods. Worth
+having, and not worth describing as though `document.cookie` were leaking
+today.
+
+**Secrets: the split has a limit, and it must not be oversold.** Substitution
+happens on the way into a field (`stream.rs`, the `type` verb), so the broker
+resolves the placeholder and the renderer receives the *value* to put in the
+input. A compromised renderer captures it. What the split protects is every
+credential that was not typed: today a compromised engine reads all of
+`H5I_SECRET_*`, afterwards it reads the ones actually used. Going further would
+mean injecting at the HTTP layer rather than the DOM layer, which works for a
+form post and not for JS-driven auth. That is the boundary, and it belongs in
+the docs the day this ships.
+
+**`@ref` resolution stays in the renderer.** Handles are Blitz node ids and live
+with the DOM. The broker keeps the *record* of what it served, for the audit. A
+compromised renderer accepting a ref it never served buys an attacker nothing:
+it does not need to be tricked into clicking.
+
+**Frames stay bytes.** The renderer paints; the broker relays without decoding.
+This is already the posture — `termview` decodes JPEG host-side with a
+`#![forbid(unsafe_code)]` decoder precisely because those bytes were made inside
+the box — and the split must not quietly move a decoder to the trusted side.
+
+### B18.4 The lane needs a third value
+
+`engine-claimed` and `host-observed` do not describe what this produces. The
+broker is not the engine describing itself, and it is not h5i observing from
+outside a box boundary: it is a component inside the session's own trust domain
+that the page cannot influence.
+
+So a third value — `broker-attested` or whatever survives review — and it should
+be named **before** the implementation, because the temptation at that point
+will be to call it `host-observed`, which is exactly the upgrade this codebase
+refuses everywhere else.
+
+### B18.5 What it costs
+
+An IPC round trip per subresource. The engine already fetches subresources
+serially, and the crate's own manifest says why: "a browser that fetches one
+subresource at a time is a browser whose receipt order is its request order". So
+this adds latency to an existing shape rather than changing it. Worth measuring
+before and after; not an architectural objection.
+
+One thing it makes better for free: when the renderer dies the broker knows,
+with a status, so a session becomes `died` for a stated reason instead of h5i
+inferring it from a vanished process.
+
+### B18.6 The seam, measured
+
+The methods that would cross, from the current tree:
+
+- `fetch`, `fetch_from`, `send_from`, `send_script` — request/response, direct.
+- `policy`, `has_proxy`, `budget`, `set_budget_limits` — small, direct.
+- `authorise_socket`, `record_socket_frame`, `open_event_stream` — **streaming**,
+  not request/response. WebSocket and SSE need a channel, not a call.
+- `jar()` — **returns a live reference**, at twelve call sites. This is the one
+  that cannot be transported as written; it has to become operations
+  (`cookie_header_for(url)`, `store_set_cookie(url, header)`,
+  `document_cookie(url)`), which is also what produces the HttpOnly split in
+  §B18.3.
+
+Roughly ten operations plus two streams. The files that move or change:
+`net.rs`, `wsclient.rs`, `sse.rs`, `script/host.rs`, `engine.rs`.
+
+### B18.6b What the sandbox still lets the renderer read
+
+Recorded 2026-08-27, from a measurement rather than a reading of the code, and
+deliberately **not** fixed: the fix is small, invisible, and closes half a hole,
+which is the shape of work this section exists to replace.
+
+`browser_sandbox::profile_for` starts from `Profile::builtin`, so it inherits
+`default_fs_read()` whole: `/usr`, `/lib`, `/bin`, `/sbin`, `/etc`, `/nix`,
+`/opt`, `/tmp`, `/proc`. Writes are confined (`$WORK` plus the two `/dev`
+sinks) and `$HOME` is granted nothing and denies `~/.ssh`, `~/.aws`,
+`~/.config/gh`, `~/.config/h5i` outright. Reads are not confined in the same
+sense. Verified by opening an unrelated `chmod 600` file in `/tmp` from inside
+the default sandbox: it renders.
+
+`/tmp` is the interesting entry, because it is where another agent's scratch,
+another box's spool and short-lived credentials sit. Dropping it from this one
+profile was tried and works — ordinary reads, loopback and public, are
+unaffected, and a `/tmp` file that was not the target becomes
+`Permission denied`. `$WORK` does not need it: a read's scratch directory lives
+under `/tmp` but is granted as its own rule.
+
+It was not taken, for two reasons:
+
+- **It closes half.** Granting only the named local target breaks that page's
+  own sibling subresources (`a.html` and its `s.css`). Granting the target's
+  parent directory re-grants all of `/tmp` whenever the target is directly in
+  it, which is the common case. Only a target one directory deeper actually
+  gains anything.
+- **Nothing above `/tmp` moves.** `/etc` and `/proc` stay readable either way,
+  so "the renderer cannot read files it was not given" is not reachable by
+  subtracting entries from this list. It is reachable by §B18's split, where the
+  half that parses the page holds no socket and can be given a profile written
+  for a process that only parses.
+
+So this is a §B18.7 step 3 concern, not a patch: when the renderer becomes its
+own process, its profile is authored rather than inherited, and `default_fs_read`
+stops being the thing that decides what a hostile page can read. Until then the
+honest statement — the one the CLI already makes — is that the default sandbox
+contains the engine's *writes* and its environment, not its reads.
+
+### B18.7 Order
+
+1. **The seam, still one process.** Put the broker behind a trait and make the
+   renderer call it through that. `jar()` becomes operations. Refactoring, with
+   the existing tests as the harness, and nothing user-visible changes.
+2. **Two processes.** The trait's implementation becomes an IPC client;
+   `h5i browser open` spawns the broker, the broker spawns the renderer
+   confined. Both are internal: `h5i browser open` is unchanged, and there is no
+   subcommand or concept for either half — the same conclusion §"The id is not
+   the interface" reached about session ids, applied to processes.
+3. **Tighten the renderer's profile** to `net.mode = deny`, and add the third
+   lane value with the tests that keep it apart from `host-observed`.
+
+Step 1 is worth doing whether or not step 2 follows: a broker reachable only
+through a named set of operations is a broker whose surface is written down.
 
 ---
 

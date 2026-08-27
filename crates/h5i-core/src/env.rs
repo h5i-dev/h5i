@@ -4806,6 +4806,15 @@ const DAEMON_SESSION: &str = "default";
 /// tell a real daemon from h5i's own listener.
 use crate::browser::DAEMON_DIR_NAME;
 
+/// The line that separates a captured run's stdout from its stderr.
+///
+/// Part of the evidence format, not decoration: a receipt has one output field
+/// and a reader has to be able to tell the two streams apart in it. It is
+/// public because the split has to be undone somewhere — `browser read --in`
+/// puts a page back on stdout and its request log back on stderr — and two
+/// spellings of a separator is how that quietly stops working.
+pub const STDERR_BANNER: &str = "\n----- stderr -----\n";
+
 /// Start mediating the browser daemon's socket for the duration of a run.
 ///
 /// The daemon keeps running on a path the box has no grant for; the path the
@@ -5842,7 +5851,7 @@ fn run_inner(
         if !raw.is_empty() && !raw.ends_with(b"\n") {
             raw.push(b'\n');
         }
-        raw.extend_from_slice(b"\n----- stderr -----\n");
+        raw.extend_from_slice(STDERR_BANNER.as_bytes());
         raw.extend_from_slice(&outcome.stderr);
     }
     if outcome.timed_out {
@@ -7143,7 +7152,7 @@ fn ingest_shell_spool(
             if !raw.is_empty() && !raw.ends_with(b"\n") {
                 raw.push(b'\n');
             }
-            raw.extend_from_slice(b"\n----- stderr -----\n");
+            raw.extend_from_slice(STDERR_BANNER.as_bytes());
             raw.extend_from_slice(&stderr);
         }
 

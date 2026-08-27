@@ -127,6 +127,24 @@ pub enum BrowserCommands {
         #[arg(long)]
         script: bool,
 
+        /// Run the engine unconfined.
+        ///
+        /// By default a session on this machine runs in a process-tier sandbox:
+        /// it may read the system and its own directory, write only its own
+        /// directory, execute nothing, and see only the secrets named with
+        /// `--secret`. That contains what a parser bug could *do*; it does not
+        /// contain the network, which needs a boundary outside the engine.
+        #[arg(long)]
+        no_sandbox: bool,
+
+        /// Let this session substitute `$H5I_SECRET_<NAME>`. Repeatable.
+        ///
+        /// Nothing is granted by default. Unconfined, the engine inherits the
+        /// whole environment and a compromised one reads every secret on the
+        /// machine; inside the sandbox it reads the ones that were named.
+        #[arg(long = "secret", value_name = "NAME")]
+        secrets: Vec<String>,
+
         /// Viewport width.
         #[arg(long, default_value_t = 1280)]
         width: u32,
@@ -154,6 +172,55 @@ pub enum BrowserCommands {
         restore: Option<String>,
 
         /// Print the session record as JSON instead of a summary line.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Read one page, or a batch of them, and leave no session behind.
+    ///
+    /// For the shape a crawl actually has: fetch, read, move on. No cookies
+    /// carried between verbs, no `@ref` to click, nothing resident afterwards.
+    ///
+    /// **This is the only browser shape that can have an egress allowlist
+    /// enforced outside the engine.** A session is resident by design, and the
+    /// tier that enforces egress cannot hold a resident process yet; a read runs
+    /// to completion inside this command, which is the shape that tier already
+    /// has. The confinement it got is printed with the result.
+    ///
+    /// Several targets share one browser: one connection pool, one cookie jar
+    /// and one font set across the batch, and a page that fails does not stop
+    /// the ones after it.
+    Read {
+        /// URLs, or paths to local HTML files.
+        #[arg(required = true, num_args = 1..)]
+        targets: Vec<String>,
+
+        /// Read inside this box.
+        ///
+        /// The box's profile is where a strict egress allowlist belongs, pinned
+        /// in `.h5i/env.toml` and digested, and a box at the supervised tier
+        /// enforces it at a network namespace boundary outside the engine — the
+        /// one thing a session cannot have, because that tier cannot hold a
+        /// resident process and a read does not need it to.
+        ///
+        /// Without this, the read runs here under the same built-in sandbox a
+        /// session gets: its files and its environment, and the origin
+        /// allowlist is the engine's alone.
+        #[arg(long = "in", value_name = "BOX")]
+        in_box: Option<String>,
+
+        /// Print the page's prose instead of its outline.
+        #[arg(long)]
+        text: bool,
+
+        /// Run the page's own JavaScript.
+        #[arg(long)]
+        script: bool,
+
+        /// Read unconfined.
+        #[arg(long)]
+        no_sandbox: bool,
+
         #[arg(long)]
         json: bool,
     },
@@ -591,6 +658,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             allow,
             no_loopback,
             script,
+            no_sandbox,
+            secrets,
             width,
             height,
             expires_in,
@@ -606,6 +675,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 allow,
                 no_loopback,
                 script,
+                no_sandbox,
+                secrets,
                 width,
                 height,
                 expires_in,
@@ -613,6 +684,14 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             },
             json,
         ),
+        BrowserCommands::Read {
+            targets,
+            in_box,
+            text,
+            script,
+            no_sandbox,
+            json,
+        } => read(targets, in_box, text, script, no_sandbox, json),
         BrowserCommands::List { all, json } => list(&root, all, json),
         BrowserCommands::Status { session, json } => status(&root, session.as_deref(), json),
         BrowserCommands::Close { session, all, json } => close(&root, session.as_deref(), all, json),
@@ -839,6 +918,8 @@ struct StartOptions {
     allow: Vec<String>,
     no_loopback: bool,
     script: bool,
+    no_sandbox: bool,
+    secrets: Vec<String>,
     width: u32,
     height: u32,
     expires_in: Option<u64>,
@@ -926,6 +1007,12 @@ fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
     }
     if opts.restore.is_some() {
         set.push("`--restore`");
+    }
+    if opts.no_sandbox {
+        set.push("`--no-sandbox`");
+    }
+    if !opts.secrets.is_empty() {
+        set.push("`--secret`");
     }
     set
 }
@@ -1016,6 +1103,7 @@ fn start(
         ended_at: None,
         end_reason: None,
         enclosing_box,
+        confinement: spawned.confinement.clone(),
         control: bs::Control {
             channel: spawned.channel,
             file: Some(spawned.control_in_engine_view.clone()),
@@ -1095,6 +1183,9 @@ struct Spawned {
     policy_digest: String,
     /// Where this machine can read the session's logs, when it can.
     logs: bs::Logs,
+    /// What is holding the engine, as it turned out rather than as it was asked
+    /// for: a host without Landlock answers `None` with the reason.
+    confinement: h5i_core::browser_sandbox::Confinement,
     /// Whether something outside the engine actually decides what may leave.
     /// See [`bs::Session::lane_for`] — this is the input to the one claim the
     /// product makes that a reader can check.
@@ -1143,27 +1234,117 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
         argv.push("--script".into());
     }
 
-    let log = std::fs::File::create(dir.join("engine.log"))?;
-    let mut command = Command::new(engine_binary()?);
-    command
-        .args(&argv)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log.try_clone()?))
-        .stderr(Stdio::from(log));
-    detach(&mut command);
+    let log_path = dir.join("engine.log");
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("could not start the browser engine ({e})"))?;
-    let pid = child.id();
+    // The sandbox, unless the caller declined it or the host cannot.
+    //
+    // The engine's own binary has to be readable, because a confined `execve`
+    // needs it and nothing under a development checkout — or under `~/.cargo` —
+    // is granted by the defaults. This is the same wall a box hits when the
+    // engine is somewhere it may read and not run.
+    let engine = engine_binary()?;
+    let reads = vec![engine.clone()];
+    let wants = h5i_core::browser_sandbox::Wants {
+        session_dir: dir,
+        reads: &reads,
+        secrets: &opts.secrets,
+        // A session is resident and is bounded by `--expires-in`, not a signal.
+        wall_secs: 0,
+    };
+    let confined = if opts.no_sandbox {
+        None
+    } else {
+        h5i_core::browser_sandbox::resolve_for(&wants)?
+    };
+
+    // Inside the sandbox the environment is cleared, so the engine's own
+    // `$HOME`-based font discovery finds nothing. The grant and the search path
+    // come from one list so they cannot disagree, and `--font-dir` *replaces*
+    // the engine's defaults — which is why the system directories travel with
+    // the personal ones rather than being left implicit.
+    if let Some(c) = &confined {
+        for dir in &c.fonts {
+            argv.push("--font-dir".into());
+            argv.push(dir.display().to_string());
+        }
+        if !c.dropped_fonts.is_empty() {
+            eprintln!(
+                "  {}     {} personal font director{} could not be granted, so a page may \
+                 render with different faces here than outside. The likeliest cause is a \
+                 symlink that resolves somewhere the policy denies.",
+                style("note").yellow(),
+                c.dropped_fonts.len(),
+                if c.dropped_fonts.len() == 1 { "y" } else { "ies" }
+            );
+        }
+    }
+
+    let (pid, confinement) = match &confined {
+        Some(c) => {
+            // `spawn_background` is the same call `h5i box service start` makes:
+            // a confined child that outlives the command that started it, with
+            // no pid namespace, so the pid it returns is the engine itself.
+            // argv[0] is the program, and `spawn_background` execs it directly:
+            // `__engine` alone is a subcommand, not a binary.
+            let mut confined_argv = vec![engine.display().to_string()];
+            confined_argv.extend(argv.iter().cloned());
+            let handle = h5i_core::sandbox::spawn_background(
+                &c.policy,
+                dir,
+                &confined_argv,
+                // The environment is cleared and rebuilt from the profile, so
+                // nothing here inherits by accident. The granted secrets are
+                // carried in the profile rather than injected as a pile of
+                // variables, which is what makes `--secret` a policy statement
+                // instead of a shell habit.
+                &[],
+                &log_path,
+                "browser-session",
+            )?;
+            (handle.pid, h5i_core::browser_sandbox::Confinement::Process)
+        }
+        None => {
+            let log = std::fs::File::create(&log_path)?;
+            let mut command = Command::new(engine_binary()?);
+            command
+                .args(&argv)
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(log.try_clone()?))
+                .stderr(Stdio::from(log));
+            detach(&mut command);
+            let child = command
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("could not start the browser engine ({e})"))?;
+            let why = if opts.no_sandbox {
+                "started with --no-sandbox".to_string()
+            } else {
+                h5i_core::browser_sandbox::unavailable_reason(&h5i_core::browser_sandbox::caps())
+            };
+            (child.id(), h5i_core::browser_sandbox::Confinement::None { why })
+        }
+    };
+
+    if let h5i_core::browser_sandbox::Confinement::None { why } = &confinement
+        && !opts.no_sandbox
+    {
+        // Loud, because a sandbox nobody can see is indistinguishable from one
+        // that was never applied. The record says it too; this is for whoever
+        // is watching the terminal.
+        eprintln!(
+            "  {}     no sandbox: {why}. The session still records every request; \
+             what it does not have is containment of what a parser bug could do.",
+            style("note").yellow()
+        );
+    }
 
     Ok(Spawned {
         channel,
-        alive: Box::new(move || match child.try_wait() {
-            Ok(Some(status)) => Some(format!("the browser engine exited ({status})")),
-            Ok(None) => None,
-            Err(e) => Some(format!("lost track of the browser engine: {e}")),
-        }),
+        // `waitpid(WNOHANG)` rather than a signal probe: the confined spawn
+        // hands back a pid and drops the `Child`, so a dead engine is an
+        // unreaped zombie and `kill(pid, 0)` would call it alive — which is the
+        // bug that made a start wait its whole timeout on an engine that exited
+        // immediately.
+        alive: Box::new(move || reap(pid)),
         pid: Some(pid),
         control_in_engine_view: control.clone(),
         control_on_host: Some(control),
@@ -1172,6 +1353,7 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
             actions: Some(dir.join(bs::ACTIONS_FILE)),
             requests: Some(dir.join(bs::RECEIPTS_FILE)),
         },
+        confinement,
         // Nothing outside the engine is deciding anything here. That is what
         // "no containment beyond the engine" means, and the lane says so.
         boundary_enforced: false,
@@ -1419,6 +1601,12 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         control_in_engine_view: control_in_box,
         control_on_host,
         channel: bs::Channel::Socket,
+        // A boxed session is confined by its box, whose tier the record already
+        // carries as `placement`. Saying "process" here would name the wrong
+        // thing.
+        confinement: h5i_core::browser_sandbox::Confinement::None {
+            why: "confined by its box, not by a session sandbox".into(),
+        },
         policy_digest: manifest.policy_digest.clone(),
         // The box's own logs, as this machine sees them. `None` on a tier whose
         // /tmp lives in an image, and an audit then says `unavailable` rather
@@ -1474,6 +1662,12 @@ fn shell_join(argv: &[String]) -> String {
 /// refused it. Neither can happen now: the engine is this binary, and a box
 /// that can run `h5i` at all can run it.
 const ENGINE_SUBCOMMAND: &str = "__engine";
+
+/// The outer bound on a confined read, in seconds.
+///
+/// Generous on purpose. The engine already bounds each navigation; this only
+/// catches the case where it stops making progress at all.
+const READ_WALL_SECS: u64 = 300;
 
 /// How to invoke h5i inside a box.
 ///
@@ -1769,6 +1963,228 @@ fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Resu
     Ok(parsed)
 }
 
+/// One page, or a batch, with nothing left behind.
+///
+/// Two placements, and neither invents a policy. `--in <box>` carries the read
+/// into a box, so the tier's egress comes from that box's pinned
+/// `.h5i/env.toml` and the run lands in the box's own receipt with the policy
+/// digest that was enforced. Without it the read runs here under the same
+/// built-in sandbox a session gets.
+///
+/// There is no `--allow` here, and that is deliberate twice over. The engine is
+/// fail-closed, so *something* has to name the origins — but naming a URL and
+/// then naming its origin again is ceremony that teaches nothing, so the
+/// targets grant themselves and nothing else: a page that pulls a script from
+/// a third-party CDN, or redirects off-origin, is still refused and still says
+/// so in the request log. And an allowlist wider than "what I asked for"
+/// belongs in `.h5i/env.toml`, reached through `--in`, where a tier enforces it
+/// and a digest pins it. An earlier version took the allowlist as arguments;
+/// that was a second way to say what `.h5i/env.toml` already says, and a policy
+/// assembled from arguments is one nothing can be verified against.
+fn read(
+    targets: Vec<String>,
+    in_box: Option<String>,
+    text: bool,
+    script: bool,
+    no_sandbox: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let mut engine_args: Vec<String> = vec![ENGINE_SUBCOMMAND.into(), "open".into()];
+    engine_args.extend(targets.iter().cloned());
+    for origin in origins_of(&targets) {
+        engine_args.push("--allow".into());
+        engine_args.push(origin);
+    }
+    if text {
+        engine_args.push("--text".into());
+    }
+    if script {
+        engine_args.push("--script".into());
+    }
+    if json {
+        engine_args.push("--json".into());
+    }
+
+    if let Some(name) = &in_box {
+        return read_in_box(name, &engine_args, json);
+    }
+    read_here(&engine_args, no_sandbox, json)
+}
+
+/// The origins the caller named, by naming the URLs.
+///
+/// The targets are handed back verbatim: the engine's `--allow` already accepts
+/// a full URL and normalizes it with the same code that later checks a request,
+/// so there is nothing to parse here and no second notion of "origin" to drift
+/// from the first. A local file path normalizes to no entry at all, which is
+/// right — a page opened from disk needs no grant.
+///
+/// Deduplicated so a batch produces a stable argv.
+fn origins_of(targets: &[String]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for t in targets {
+        if !seen.contains(t) {
+            seen.push(t.clone());
+        }
+    }
+    seen
+}
+
+/// Carry the read into a box, through the same `box run` a person would type.
+///
+/// Nothing here re-implements the tier: `box run` already resolves the box's
+/// pinned policy, dispatches to the backend it names, and writes a receipt. A
+/// read is run-to-completion, which is why it fits a tier a session does not.
+fn read_in_box(name: &str, engine_args: &[String], json: bool) -> anyhow::Result<()> {
+    // `box run --json` rather than its streamed output: the envelope carries the
+    // **policy digest that was enforced**, which is the reason to read inside a
+    // box at all and the thing a hand-built policy could never hand back. It
+    // also keeps `box run`'s own framing out of the middle of a page.
+    let out = Command::new(std::env::current_exe()?)
+        .arg("box")
+        .arg("run")
+        .arg("--json")
+        .arg(name)
+        .arg("--")
+        .arg(h5i_in_box())
+        .args(engine_args)
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let envelope: Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+        anyhow::anyhow!(
+            "could not read the box's answer ({e}): {}",
+            bs::scrub_text(&String::from_utf8_lossy(&out.stderr))
+        )
+    })?;
+
+    let digest = envelope["policy_digest"].as_str().unwrap_or("unknown");
+    let exit = envelope["exit_code"].as_i64().unwrap_or(1);
+    let body = envelope["output"].as_str().unwrap_or_default();
+    let confinement = serde_json::json!({"kind": "box", "box": name, "policy_digest": digest});
+
+    // A receipt has one output field, so `box run` folded the two streams into
+    // it behind a banner. Unfold them: the page belongs on stdout and the
+    // request log on stderr, the same as a read that ran here, and a caller
+    // parsing `--json` should not have to find the JSON inside a transcript.
+    let (out, err) = match body.split_once(h5i_core::env::STDERR_BANNER) {
+        Some((out, err)) => (out, err),
+        None => (body, ""),
+    };
+
+    if !json {
+        println!("  confined : box {name}, policy {digest}");
+        println!();
+    }
+    relay(out.as_bytes(), err.as_bytes(), json, confinement);
+    if exit != 0 {
+        std::process::exit(exit as i32);
+    }
+    Ok(())
+}
+
+/// Read on this machine, under the session sandbox.
+fn read_here(engine_args: &[String], no_sandbox: bool, json: bool) -> anyhow::Result<()> {
+    let engine = engine_binary()?;
+    // A scratch directory is `$WORK`: a read that left state behind would be a
+    // session with the word "read" on it.
+    let scratch = tempfile::tempdir()?;
+
+    let wants = h5i_core::browser_sandbox::Wants {
+        session_dir: scratch.path(),
+        reads: std::slice::from_ref(&engine),
+        secrets: &[],
+        // A backstop, not a policy: the engine's per-navigation budgets are what
+        // actually bound a fetch. Leaving this at a session's `0` would hand
+        // `sandbox::run` a deadline that has already passed.
+        wall_secs: READ_WALL_SECS,
+    };
+    let confined = if no_sandbox {
+        None
+    } else {
+        h5i_core::browser_sandbox::resolve_for(&wants)?
+    };
+
+    let out = match &confined {
+        Some(c) => {
+            let mut argv = vec![engine.display().to_string()];
+            argv.extend(engine_args.iter().cloned());
+            for dir in &c.fonts {
+                argv.push("--font-dir".into());
+                argv.push(dir.display().to_string());
+            }
+            let outcome = h5i_core::sandbox::run(&c.policy, scratch.path(), &argv)?;
+            (outcome.stdout, outcome.stderr, outcome.exit_code)
+        }
+        None => {
+            let out = Command::new(&engine).args(engine_args).output()?;
+            (out.stdout, out.stderr, out.status.code())
+        }
+    };
+
+    let confinement = match &confined {
+        Some(_) => serde_json::json!({"kind": "process"}),
+        None => serde_json::json!({"kind": "none"}),
+    };
+    if !json {
+        println!(
+            "  confined : {}",
+            match &confined {
+                Some(_) => "process (files and environment; the origin allowlist is the engine's)",
+                None => "nothing — `--in <box>` is where a tier-enforced allowlist comes from",
+            }
+        );
+        println!();
+    }
+    relay(&out.0, &out.1, json, confinement);
+    if out.2 != Some(0) {
+        std::process::exit(out.2.unwrap_or(1));
+    }
+    Ok(())
+}
+
+/// Print what the engine said, scrubbed. Everything here was composed by a page.
+/// Print what the engine produced, with what held it attached.
+///
+/// `confinement` is carried *into* the JSON rather than printed beside it: a
+/// machine reading a read has no other way to learn what was holding the
+/// engine, and a request log without the thing that was containing the requests
+/// is half a receipt. In text mode it is a line above the page, for the reader.
+fn relay(stdout: &[u8], stderr: &[u8], json: bool, confinement: Value) {
+    let mut body: Value = match serde_json::from_slice(stdout) {
+        Ok(v) => v,
+        Err(_) => Value::String(String::from_utf8_lossy(stdout).to_string()),
+    };
+    bs::scrub(&mut body);
+    if json {
+        // An object gains a field; anything else — a `--text` read, or a box's
+        // merged output — becomes one, so the key is in the same place either way.
+        let answer = match body {
+            Value::Object(mut map) => {
+                map.insert("confinement".into(), confinement);
+                Value::Object(map)
+            }
+            other => serde_json::json!({"confinement": confinement, "read": other}),
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&answer).unwrap_or_else(|_| answer.to_string())
+        );
+    } else {
+        match body.as_str() {
+            Some(t) => println!("{t}"),
+            None => println!(
+                "{}",
+                serde_json::to_string_pretty(&body).unwrap_or_else(|_| body.to_string())
+            ),
+        }
+    }
+    let err = bs::scrub_text(&String::from_utf8_lossy(stderr));
+    if !err.trim().is_empty() {
+        eprintln!("{}", err.trim());
+    }
+}
+
 fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {
     let sessions: Vec<bs::Session> = bs::list(root)?
         .into_iter()
@@ -1874,19 +2290,13 @@ fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()>
 
 fn print_summary(session: &bs::Session) {
     println!("  url      : {}", session.url);
-    match (&session.placement, &session.enclosing_box) {
-        (bs::Placement::Box { name }, _) => {
-            println!("  placed   : in box {}", style(name).cyan())
-        }
-        (bs::Placement::Host, Some(id)) => println!(
-            "  placed   : {}, which is box {} (its policy is not readable from in here)",
-            style("this machine").dim(),
-            style(id).cyan()
-        ),
-        (bs::Placement::Host, None) => println!(
-            "  placed   : {} (no containment beyond the engine)",
-            style("this machine").dim()
-        ),
+    // One sentence, from the record, so the summary and the audit cannot say
+    // different things about the same session.
+    let placed = session.where_it_ran();
+    match (&session.placement, session.confinement.is_confined()) {
+        (bs::Placement::Box { .. }, _) => println!("  placed   : {}", style(&placed).cyan()),
+        (_, true) => println!("  placed   : {}", style(&placed).green()),
+        (_, false) => println!("  placed   : {}", style(&placed).yellow()),
     }
     // The honest half of the product, printed every time rather than claimed
     // once in a README: what this session's network record actually is.
@@ -2230,6 +2640,31 @@ fn detach(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn detach(_command: &mut Command) {}
+
+/// Has this child exited? `Some(reason)` when it has.
+///
+/// `waitpid(WNOHANG)` rather than `kill(pid, 0)`. The confined spawn hands back
+/// a pid and drops the `Child`, so an engine that died is an unreaped zombie
+/// and a signal probe calls it alive — which is what made a start wait its whole
+/// timeout on an engine that exited immediately.
+#[cfg(unix)]
+fn reap(pid: u32) -> Option<String> {
+    let mut status: libc::c_int = 0;
+    // SAFETY: `pid` is a child of this process and `status` is a live local.
+    match unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG) } {
+        0 => None,
+        -1 => Some("lost track of the browser engine".to_string()),
+        _ => Some(format!(
+            "the browser engine exited (status {})",
+            libc::WEXITSTATUS(status)
+        )),
+    }
+}
+
+#[cfg(not(unix))]
+fn reap(_pid: u32) -> Option<String> {
+    None
+}
 
 #[cfg(unix)]
 fn kill(pid: u32) {

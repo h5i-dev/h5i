@@ -71,6 +71,11 @@ impl Site {
             // it is printed into.
             "/hostile" => "<html><body><h1>start\u{1b}[2K\u{1b}[1Aoverwritten</h1></body></html>"
                 .to_string(),
+            // A subresource on an origin the caller never named. Reachable only
+            // if the allowlist means more than "what I asked for".
+            "/third-party" => "<html><body><h1>third party</h1>\
+                  <img src=\"https://cdn.example.invalid/x.png\"><p>body</p></body></html>"
+                .to_string(),
             _ => "<html><head><title>t</title></head><body><h1>hello</h1>\
                   <p>a <a href=\"https://example.com/next\">link</a></p></body></html>"
                 .to_string(),
@@ -331,9 +336,15 @@ fn a_host_session_says_which_lane_its_requests_are() {
     let text = String::from_utf8_lossy(&out.stdout);
     // The default is honest about being the engine's own account. A page-only
     // claim rendered as host-observed would be the one lie this product cannot
-    // afford.
+    // afford — and the default sandbox must not tempt anyone into it, since a
+    // process-tier sandbox corroborates no part of the request log.
     assert!(text.contains("engine-claimed"), "{text}");
-    assert!(text.contains("no containment"), "{text}");
+    // And the placement line names what the sandbox does *not* contain, whether
+    // or not this host could apply one.
+    assert!(
+        text.contains("not its network") || text.contains("unconfined"),
+        "{text}"
+    );
     let _ = fx.run(&["browser", "close"]);
 }
 
@@ -515,6 +526,175 @@ fn reading_the_log_is_not_recorded_as_causing_it() {
     assert!(
         !row.contains("\"requests\":["),
         "the reader claimed to have caused what it read:\n{row}"
+    );
+}
+
+/// The default sandbox is not a label. A session must be unable to read a file
+/// the engine could read without it, and `--no-sandbox` must be able to.
+///
+/// `$HOME` is the boundary under test because it is the one that matters and the
+/// one the profile's defaults do not grant: `/tmp` *is* granted, so a probe file
+/// in the fixture's own tempdir would prove nothing.
+#[test]
+fn the_default_sandbox_denies_what_no_sandbox_allows() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return skip("no $HOME to place a probe file outside the granted paths");
+    };
+    let Ok(probe) = tempfile::Builder::new()
+        .prefix(".h5i-sandbox-probe-")
+        .suffix(".html")
+        .tempfile_in(&home)
+    else {
+        return skip("cannot write a probe file into $HOME");
+    };
+    std::fs::write(probe.path(), "<html><body><h1>secret-probe-content</h1></body></html>").unwrap();
+    let url = format!("file://{}", probe.path().display());
+
+    // Whether this host can confine at all. A kernel without Landlock runs the
+    // session unconfined and says so, and there is nothing here to test.
+    let opened = fx.run(&["browser", "open", &url, "--json"]);
+    if !opened.status.success() {
+        let why = String::from_utf8_lossy(&opened.stderr);
+        assert!(
+            why.contains("Permission denied"),
+            "the sandbox refused for some other reason: {why}"
+        );
+    } else {
+        let record: serde_json::Value = serde_json::from_slice(&opened.stdout).unwrap();
+        if record["confinement"]["kind"] != "process" {
+            return skip("this host cannot confine a session");
+        }
+        panic!("the sandbox let the engine read a file under $HOME");
+    }
+
+    // And the escape hatch is a real escape hatch.
+    let out = fx.run(&["browser", "open", &url, "--no-sandbox", "--json"]);
+    assert!(
+        out.status.success(),
+        "--no-sandbox could not read it either: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let record: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(record["confinement"]["kind"], "none");
+    let read = fx.run(&["browser", "markdown"]);
+    assert!(
+        String::from_utf8_lossy(&read.stdout).contains("secret-probe-content"),
+        "the unconfined session should have read the probe"
+    );
+    let _ = fx.run(&["browser", "close"]);
+}
+
+/// A sandboxed session still does the thing the product is for.
+#[test]
+fn the_sandbox_does_not_break_reading_or_recording() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let id = fx.open(&[]);
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fx.dir(&id).join("session.json")).unwrap())
+            .unwrap();
+    if record["confinement"]["kind"] != "process" {
+        return skip("this host cannot confine a session");
+    }
+
+    let snapshot = fx.run(&["browser", "snapshot"]);
+    assert!(snapshot.status.success(), "{}", String::from_utf8_lossy(&snapshot.stderr));
+    assert!(String::from_utf8_lossy(&snapshot.stdout).contains("hello"));
+
+    // The whole point: confined and still recording.
+    let requests = fx.run(&["browser", "requests", "--json"]);
+    let answer: serde_json::Value = serde_json::from_slice(&requests.stdout).unwrap();
+    assert!(
+        answer["total"].as_u64().unwrap_or(0) > 0,
+        "a confined session recorded nothing: {answer}"
+    );
+
+    // And the lane is not upgraded by it. A process-tier sandbox corroborates
+    // no part of the request log.
+    assert_eq!(record["lane"], "engine-claimed");
+    let _ = fx.run(&["browser", "close"]);
+}
+
+/// A read leaves nothing behind. That is the whole difference from a session,
+/// and it is what lets a read have a tier a session cannot.
+#[test]
+fn a_read_leaves_no_session() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    // No `--allow`: naming the URL is what grants it.
+    let out = fx.run(&["browser", "read", &url, "--text"]);
+    assert!(
+        out.status.success(),
+        "read failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("hello"), "{text}");
+    // It says what held it, before the page, because that is the part a reader
+    // cannot recover from the output.
+    assert!(text.contains("confined :"), "{text}");
+
+    let listed = fx.run(&["browser", "list", "--all", "--json"]);
+    let listed: Vec<serde_json::Value> = serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(listed.is_empty(), "a read left a session behind: {listed:?}");
+}
+
+/// A read grants the targets it was given, and only those.
+///
+/// The first half is why there is no `--allow`: a URL the caller typed is a URL
+/// the caller asked for, and making them say it twice teaches nothing. The
+/// second half is why that is not a wide default: the page's off-origin
+/// subresource is still refused, and still says so in the log, which is the
+/// part that would have been given away by an allowlist meaning "and whatever
+/// this page pulls in".
+#[test]
+fn a_read_grants_its_targets_and_nothing_else() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = format!("{}/third-party", fx.site.base);
+    let out = fx.run(&["browser", "read", &url, "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let requests = answer["requests"].as_array().expect("a request log");
+
+    assert!(
+        requests
+            .iter()
+            .any(|r| r["allowed"] == true && r["url"].as_str().is_some_and(|u| u.starts_with(&url))),
+        "the target was not reachable without `--allow`: {answer}"
+    );
+    assert!(
+        requests.iter().any(|r| r["allowed"] == false),
+        "an off-origin subresource was not refused: {answer}"
+    );
+}
+
+/// The request log comes back with the page, machine-readable, which is what a
+/// crawl needs and what no other headless browser can hand over completely.
+#[test]
+fn a_read_returns_its_request_log() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = fx.site.base.clone();
+    let out = fx.run(&["browser", "read", &url, "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    // What held the engine travels with the log, not beside it: a request log
+    // whose reader cannot tell whether anything was containing the requests is
+    // half a receipt.
+    assert!(answer["confinement"]["kind"].is_string(), "{answer}");
+    let requests = answer["requests"].as_array().expect("a request log");
+    assert!(
+        requests.iter().any(|r| r["url"].as_str().is_some_and(|u| u.starts_with(&url))),
+        "the page's own fetch is not in the log: {answer}"
     );
 }
 

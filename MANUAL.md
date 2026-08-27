@@ -226,6 +226,145 @@ status line:
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 ```
 
+### `read`: one page, no session
+
+```bash
+h5i browser read https://example.com
+h5i browser read url1 url2 url3 --json
+```
+
+```
+confined : process (files and environment; the origin allowlist is the engine's)
+```
+
+For the shape a crawl has: fetch, read, move on. No cookies carried between
+verbs, no `@ref` to click, nothing resident afterwards — and `h5i browser list`
+shows nothing when it is done.
+
+**There is no `--allow` here, and the omission is the design.** The engine is
+fail-closed, so something has to name the origins; making you name a URL and
+then name its origin again is ceremony that teaches nothing. So the targets
+grant themselves, and only themselves. A page that pulls a script from a
+third-party CDN, or redirects to another host, is still refused and still says
+so in the log — which is the part a wider default would have given away.
+
+Several targets share one browser — one connection pool, one cookie jar and one
+font set across the batch — and a page that fails does not stop the ones after
+it. `--json` returns the page, its request log, and what was holding the engine
+together, which is what a crawl wants and what no other headless browser can
+hand over completely.
+
+#### `--in <box>`: an allowlist a tier enforces
+
+An allowlist that is not simply "what I asked for" belongs in a file, not in
+arguments. Write it in `.h5i/env.toml`:
+
+```toml
+[profile.docs]
+isolation = "supervised"
+
+[profile.docs.net]
+mode   = "host"
+egress = ["docs.rs", "*.rust-lang.org"]
+```
+
+```bash
+h5i browser read https://docs.rs/serde --in docs --json
+```
+
+```
+confined : box docs, policy 6bca3b30c268
+```
+
+The read runs inside that box, through the same `box run` you would type
+yourself: the tier resolves the pinned policy, enforces egress at a network
+namespace boundary **outside the engine**, and writes a receipt. The digest on
+the line is the policy that was actually enforced, which is the thing an
+allowlist assembled from command-line arguments could never hand back.
+
+**A read can have this and a session cannot**, and the reason is the difference
+between the two rather than a preference. A session is resident by design
+(`snapshot` then `click @e3` needs the page to still be there), and the
+supervised tier cannot hold a resident process yet: its seccomp-notify gate is
+served by a thread inside the `h5i` process that started the run, so when that
+command exits the gate has no server and every filtered syscall blocks. A read
+runs to completion inside that command, which is the shape that tier already
+has.
+
+Aim a read at `localhost` and use no box: under a tier with its own network
+namespace the loopback is the sandbox's, not the one your dev server is on.
+
+### The default sandbox
+
+A session on this machine runs in a **process-tier sandbox**: the same Landlock
+filesystem scoping, seccomp filter and rlimits `isolation = process` applies,
+built from a profile rather than resolved from a repository. There is no box, no
+worktree and no manifest; a session is not one of those.
+
+```
+placed   : on this machine, in a process-tier sandbox (its files and its environment; not its network)
+```
+
+The reason a browser gets this by default is that a browser is the thing h5i
+runs that most reliably parses bytes a stranger wrote. A bug in Blitz, Stylo, an
+image decoder or Boa would otherwise be running as whoever started the session.
+
+**What it contains:** the filesystem the engine can **write** (its own session
+directory, and the two `/dev` sinks — nothing else, and nothing under `$HOME`),
+the environment it can read (cleared, then only what was granted), how much it
+can allocate, and the privilege-escalation and kernel surface seccomp denies.
+
+Reading is a weaker boundary than writing here, and the difference is worth
+stating rather than folding into "the system to read". The engine reads what any
+confined h5i profile reads: `/usr`, `/lib`, `/bin`, `/sbin`, `/etc`, `/opt`,
+`/proc` — and `/tmp`, which is where another agent's scratch tends to be.
+`$HOME` is granted nothing, and `~/.ssh`, `~/.aws`, `~/.config/gh` and
+`~/.config/h5i` are denied outright, so the files worth taking are not in reach;
+the ones in `/tmp` are. Narrowing the list is not the fix — `/etc` and `/proc`
+stay either way — so this is left for the broker/renderer split, where the half
+that parses the page gets a profile written for a process that only parses.
+
+**What it does not contain, and does not claim to:**
+
+- **The network.** A browser needs it, so the engine keeps the host's
+  reachability, loopback included. The policy that decides *which* origins is
+  the engine's own and a compromised engine is past it.
+- **Starting a program.** `execve` is not denied. What makes that survivable is
+  that Landlock's domain is inherited across `execve` and cannot be relaxed: a
+  shell a compromised engine starts reads and writes exactly what the engine
+  could.
+
+**It does not upgrade the request lane.** A sandboxed session is still
+`engine-claimed`, because a process-tier sandbox corroborates no part of the
+log. Containing the network, and earning `host-observed`, needs a boundary
+outside the engine: `--in`, below.
+
+Two consequences worth knowing before they surprise you:
+
+- **Secrets are not inherited.** Unconfined, the engine reads the whole
+  environment, so a compromised one reads every `H5I_SECRET_*` on the machine.
+  Confined it reads none unless named: `h5i browser open <url> --secret ACME_PASS`.
+- **Personal fonts are visible, and nothing else under `$HOME` is.** `~/.fonts`
+  and `~/.local/share/fonts` are granted read-only, because a font someone
+  installed is not the page's font: the ones a page supplies arrive over
+  `@font-face`, go through the broker and are parsed either way, so this adds no
+  new parser input. The grant is exactly those directories — a file elsewhere
+  under `$HOME` is refused.
+
+    Two mechanics behind it. The environment is cleared inside the sandbox, so
+    the engine's own `$HOME`-based discovery would find nothing; h5i computes
+    the list, grants it, and passes it back as `--font-dir`, one list for both.
+    And if a personal directory cannot be granted — a symlink that resolves
+    somewhere the policy denies is the case that exists — it is dropped and the
+    sandbox is kept, with a line saying so. A font path must never be the reason
+    a session runs unconfined.
+
+`--no-sandbox` runs the engine unconfined. Some hosts cannot confine at all
+(no Landlock, an AppArmor profile, a CI container, macOS, Windows), and there
+the session runs unconfined **and says which**, on the placement line and in the
+record. A sandbox nobody can see is indistinguishable from one that was never
+applied.
+
 ### `--in <box>`: the same session, inside a box
 
 ```bash

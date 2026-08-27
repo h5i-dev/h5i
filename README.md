@@ -46,6 +46,8 @@ h5i browser click @e3
 h5i browser requests                    # what it asked for, and what was refused
 h5i browser audit                       # the whole session: verbs, fetches, handovers, ending
 h5i browser close
+
+h5i browser read https://example.com          # or: one page, no session
 ```
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
@@ -135,20 +137,52 @@ h5i browser status             # placement, policy digest, who saw the network
 h5i browser list               # every session on this machine, and which is default
 ```
 
-### 2.2. Put the session in a sandbox
+### 2.2. The sandbox, and how to write your own
 
-Optional, and it changes nothing you type.
+A session is **already sandboxed**: files and environment, on a process tier,
+with nothing to turn on. `--no-sandbox` turns it off. Everything below is how to
+say something more specific than the default.
 
-```bash
-h5i box --profile browser --engine h5i --name web
-h5i browser open https://example.com --in web
-h5i browser snapshot                            # identical verb, identical answer
+#### Write it in `.h5i/env.toml`
+
+The same file and the same vocabulary a box uses. Fine-grained filesystem,
+environment, resources, egress and tier:
+
+```toml
+[profile.reading]
+isolation = "supervised"          # workspace | process | supervised | container | microvm
+
+[profile.reading.net]
+mode   = "host"
+egress = ["docs.rs", "static.crates.io"]   # everything else is refused
+
+[profile.reading.fs]
+read  = ["/usr", "/etc"]          # replaces the defaults, so grant what it needs
+write = []
+
+[profile.reading.resources]
+mem   = "512M"
+procs = 64
+
+secrets = ["ACME_PASS"]           # the only $H5I_SECRET_* it may substitute
 ```
 
-What changes is **who saw the network**. The box enforces its egress allowlist
-at its own boundary, outside the browser being described, so the session's
-request lane is upgraded from the engine's own account to an outside
-observation:
+Give it to a browser session through a box:
+
+```bash
+h5i box --profile reading --name docs
+h5i browser open https://docs.rs/ --in docs
+```
+
+`h5i box probe` says which tiers your host can actually run. An unsatisfiable
+one is refused, never quietly downgraded.
+
+#### `--in <box>` changes what the session may claim
+
+Nothing you type changes. What changes is **who saw the network**: the box
+enforces its egress at its own boundary, outside the browser being described, so
+the request lane is upgraded from the engine's own account to an outside
+observation.
 
 ```
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
@@ -165,18 +199,51 @@ from the host, so pausing the agent is a boundary rather than a request.
 ```bash
 h5i browser take       # a human takes control; the agent pauses
 h5i browser release    # hands it back; the agent must re-snapshot first
-h5i box view web       # watch the page, in a loopback-only forward
+h5i box view docs      # watch the page, in a loopback-only forward
 ```
+
+#### Reading without a session
+
+For a crawl, a session is not what you want: no cookies to carry, nothing to
+click, nothing to leave running.
+
+```bash
+h5i browser read https://example.com
+h5i browser read url1 url2 url3 --json   # one browser, one jar
+```
+
+```
+confined : process (files and environment; the origin allowlist is the engine's)
+```
+
+**Naming the URL is what grants it.** There is no allowlist flag: the pages you
+asked for are reachable, and nothing else is. A script from a third-party CDN,
+or a redirect off-origin, is refused and appears in the request log as refused.
+
+When you want an allowlist wider or stricter than that, write it in
+`.h5i/env.toml` and read inside the box, where a tier enforces it and a digest
+pins it:
+
+```bash
+h5i browser read https://example.com --in docs
+```
+
+```
+confined : box docs, policy 6bca3b30c268
+```
+
+`--json` returns the page, its request log, and what was holding the engine,
+together.
 
 <p align="center">
   <img src="./docs/_static/sandboxed-browser-ui.png" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
 
-### 2.3. Give an agent a whole sandbox
+### 2.3. A box holds more than a browser
 
-A box holds more than a browser. It can hold the code, the toolchain, the dev
-server and the agent itself, which is what you want when the agent is building
-the app it is about to browse.
+The top rung of that ladder is a whole environment. It can hold the code, the
+toolchain, the dev server and the agent itself, which is what you want when the
+agent is building the app it is about to browse.
 
 ```bash
 h5i box create alpha --profile agent-claude   # a sandboxed git worktree
@@ -196,10 +263,15 @@ h5i join <ticket>                          # what the recipient runs
 
 ---
 
-## 4. What confinement means here
+## 3. What confinement means here
 
 `h5i box probe` reports the tiers your host can run. h5i never silently
 downgrades: an unsatisfiable request fails closed.
+
+A browser session uses `process` by default, without a box. The rows below it
+are what `--in <box>` reaches for, and the difference that matters to a session
+is the one thing `process` cannot do: enforce which addresses may be reached, at
+a boundary outside the engine.
 
 | Tier | What enforces it |
 | --- | --- |
@@ -219,7 +291,7 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 5. Documentation
+## 4. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
@@ -228,7 +300,7 @@ receives a private, one-time copy of approved HOME state.
 
 ---
 
-## 6. FAQ
+## 5. FAQ
 
 <details>
 <summary>Why not Playwright or Puppeteer?</summary>
@@ -255,10 +327,16 @@ exists in `--json` and in the receipts, where a durable reference belongs. Use
 <details>
 <summary>Is a default session sandboxed?</summary>
 
-No, and h5i does not claim it is. `h5i browser open` runs here, in your
-ordinary process space. What you get by default is a complete record; what you
-get with `--in <box>` is a boundary as well. `h5i browser status` prints which
-one this session has.
+Yes. `h5i browser open` runs the engine in a process-tier sandbox: Landlock
+filesystem scoping, a seccomp filter and rlimits, with no box and no repository
+involved. It contains what a compromised engine could *do* — its files, its
+environment, its allocations.
+
+It does not contain the network, because a browser needs one, and it does not
+upgrade the request lane: a process-tier sandbox corroborates no part of the
+log. `--in <box>` is the rung that does both. `--no-sandbox` turns it off, and
+a host that cannot confine runs the session unconfined and says so.
+`h5i browser status` prints which you have.
 
 </details>
 
@@ -343,13 +421,13 @@ No. Model egress is a separate policy decision.
 
 ---
 
-## 7. License
+## 6. License
 
 Apache-2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 8. Contributors
+## 7. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />
