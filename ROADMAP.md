@@ -7088,10 +7088,18 @@ and the whole reason this ordering is right.
 
 ### B18.3 The four cases the table does not settle
 
-**Cookies: the split gains something.** The jar is credentials, and it currently
-sits beside the parsers. Moved to the broker, the renderer sees only the
-non-HttpOnly subset, for `document.cookie`, and a compromised renderer cannot
-exfiltrate a session it was never shown. This is strictly better than today.
+**Cookies: the gain is narrower than it first looks.** The obvious claim — "the
+renderer would see only the non-HttpOnly subset" — is already true where it
+matters most: `Jar::document_cookie` returns exactly that, script can neither
+read nor overwrite an `HttpOnly` cookie, and `dom_api.rs` goes through it. The
+same-origin work in §B17 closed that.
+
+What the split adds is one step further out. Page script is already fenced off
+from the jar; the **renderer binary** is not, because the jar is in its address
+space. So the gain is against a compromised *engine*, not against a hostile
+*page*, and those are different threats with different likelihoods. Worth
+having, and not worth describing as though `document.cookie` were leaking
+today.
 
 **Secrets: the split has a limit, and it must not be oversold.** Substitution
 happens on the way into a field (`stream.rs`, the `type` verb), so the broker
