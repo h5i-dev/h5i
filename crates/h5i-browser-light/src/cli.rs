@@ -1,21 +1,32 @@
-//! `h5i-browser-light` — the engine's command line.
+//! The engine's command line.
 //!
-//! Standalone on purpose (ROADMAP 7.1 step 3): it runs on a bare host with no
-//! h5i anywhere, which is how someone tries it, and h5i drives the same binary
-//! as a process rather than linking it. One honesty rule travels with that:
-//! outside a box there is no egress proxy and no receipt store, so what runs
-//! here is a light browser with a request log — the containment claims belong
-//! to the box, and this binary does not imply them.
+//! **Reached through `h5i __engine`, not through a second binary.** The engine
+//! used to ship as `h5i-browser-light` alongside `h5i`, because it was a second
+//! product somebody might want on its own. It is now the renderer behind
+//! `h5i browser`, and two files bought three problems: an install that left the
+//! headline command broken by default, a version skew between two halves of one
+//! protocol with no handshake between them, and a box that could *read* the
+//! engine without being allowed to `exec` it.
+//!
+//! The process boundary that mattered is untouched. `h5i browser` still runs
+//! the engine as a separate process and speaks a protocol to it; it execs
+//! itself to get there instead of a second file. What was separate was the
+//! file, not the process.
+//!
+//! One honesty rule travels with running it directly: outside a box there is no
+//! egress proxy and no receipt store, so what runs here is a light browser with
+//! a request log — the containment claims belong to the box, and this entry
+//! point does not imply them.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand};
-use h5i_browser_light::engine::{Page, PageFactory, PageOptions};
-use h5i_browser_light::net::Broker;
-use h5i_browser_light::policy::Policy;
-use h5i_browser_light::receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
-use h5i_browser_light::{fonts, Capabilities};
+use crate::engine::{Page, PageFactory, PageOptions};
+use crate::net::Broker;
+use crate::policy::Policy;
+use crate::receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
+use crate::{fonts, Capabilities};
 use h5i_error::H5iError;
 use url::Url;
 
@@ -40,13 +51,18 @@ const STREAM_FILE_VAR: &str = "H5I_BROWSER_STREAM_FILE";
 /// control file sits beside the stream file.
 const CONTROL_FILE_VAR: &str = "H5I_BROWSER_CONTROL_FILE";
 
+/// Where a session's Unix control socket is. Set by h5i for a session it placed
+/// in a box, where a port cannot be reached across the per-run network
+/// namespace; unset everywhere else, where the port is simpler.
+const CONTROL_SOCKET_VAR: &str = "H5I_BROWSER_CONTROL_SOCKET";
+
 /// Where h5i wants the agent's verbs recorded, so the console's agent-actions
 /// pane has a source on an engine that has no mediated socket in front of it.
 const ACTIONS_VAR: &str = "H5I_BROWSER_ACTIONS";
 
 #[derive(Parser)]
 #[command(
-    name = "h5i-browser-light",
+    name = "h5i __engine",
     version,
     about = "A lightweight visual browser for coding agents: every request is policy-checked and receipted before it reaches the wire."
 )]
@@ -121,6 +137,16 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         control_file: Option<PathBuf>,
 
+        /// Also take control connections on a Unix socket here. **Unix only.**
+        ///
+        /// For a session inside an h5i box. Every `h5i box run` gets its own
+        /// network namespace, so a verb carried in afterwards has a loopback of
+        /// its own and cannot reach the port this session bound. A path can be
+        /// reached because the box's filesystem is one filesystem across every
+        /// run in it. Defaults to $H5I_BROWSER_CONTROL_SOCKET.
+        #[arg(long, value_name = "PATH")]
+        control_socket: Option<PathBuf>,
+
         /// Record the verbs an agent asks for here, as JSON lines. Defaults to
         /// $H5I_BROWSER_ACTIONS. With one set, a verb that cannot be recorded
         /// is refused rather than performed unseen.
@@ -166,14 +192,6 @@ enum Command {
         #[command(flatten)]
         at: SessionArgs,
     },
-
-    /// Write or print the agent skill this binary carries.
-    ///
-    /// The skill teaches an agent to drive this browser on a bare host: the
-    /// verbs, the ref rule, the error codes, and — the part it must not get
-    /// wrong — which guarantees hold anywhere and which need an h5i box.
-    #[command(subcommand)]
-    Skill(SkillCommands),
 
     /// Report what this engine can and cannot do, as JSON.
     ///
@@ -298,7 +316,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -326,7 +344,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -457,7 +475,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -493,7 +511,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -531,7 +549,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -636,7 +654,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -644,24 +662,6 @@ enum SessionVerb {
         #[command(flatten)]
         at: SessionArgs,
     },
-}
-
-#[derive(Subcommand)]
-enum SkillCommands {
-    /// Write the skill to disk. Defaults to this runtime's per-user skill
-    /// directory; `$H5I_SKILL_DIR` overrides it, which is how a box redirects
-    /// an install to an in-box location.
-    Install {
-        /// Write here instead of the default target.
-        #[arg(long, value_name = "DIR")]
-        target: Option<PathBuf>,
-    },
-
-    /// Print the skill to stdout.
-    Show,
-
-    /// Print where `install` would write.
-    Path,
 }
 
 #[derive(Args, Clone)]
@@ -675,6 +675,14 @@ struct SessionArgs {
     /// The control port directly, when there is no file to read it from.
     #[arg(long, conflicts_with = "control_file")]
     port: Option<u16>,
+
+    /// The session's Unix control socket, when it has one. **Unix only.**
+    ///
+    /// Preferred over a port whenever it is set, because the arrangement that
+    /// needs it — a session in a box — is the one where a port cannot work.
+    /// Defaults to $H5I_BROWSER_CONTROL_SOCKET.
+    #[arg(long, value_name = "PATH")]
+    control_socket: Option<PathBuf>,
 
     /// Print the session's raw JSON answer instead of human output.
     #[arg(long)]
@@ -788,15 +796,33 @@ impl Sink for TeeSink {
     }
 }
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("h5i-browser-light: {error}");
-        std::process::exit(1);
+/// Run the engine's CLI over `args`, which must include the program name.
+///
+/// Exits the process on failure rather than returning, because the caller is a
+/// `main` whose only remaining job would be to do the same thing. The prefix on
+/// the error names the engine, not h5i: a page that failed to load is the
+/// engine's answer, and attributing it to the caller would send someone looking
+/// in the wrong place.
+pub fn main<I, T>(args: I) -> !
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    match run(args) {
+        Ok(()) => std::process::exit(0),
+        Err(error) => {
+            eprintln!("h5i browser engine: {error}");
+            std::process::exit(1);
+        }
     }
 }
 
-fn run() -> Result<(), H5iError> {
-    match Cli::parse().command {
+fn run<I, T>(args: I) -> Result<(), H5iError>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    match Cli::parse_from(args).command {
         Command::Capabilities { script } => {
             // Reported for the configuration asked about, because what h5i
             // routes on is whether *this* invocation runs script.
@@ -807,7 +833,6 @@ fn run() -> Result<(), H5iError> {
             Ok(())
         }
         Command::Doctor { net } => doctor(&net),
-        Command::Skill(action) => skill(action),
         Command::Session(verb) => session(verb),
         Command::Replay { script, keep_going, at } => replay(&script, keep_going, &at),
         Command::Open {
@@ -826,6 +851,7 @@ fn run() -> Result<(), H5iError> {
             quality,
             stream_file,
             control_file,
+            control_socket,
             actions,
             once,
         } => serve(
@@ -836,6 +862,7 @@ fn run() -> Result<(), H5iError> {
             quality,
             stream_file,
             control_file,
+            control_socket,
             actions,
             once,
         ),
@@ -854,7 +881,7 @@ fn factory_for(net: &NetArgs, view: &ViewArgs) -> Result<(Arc<MemorySink>, PageF
     let policy = build_policy(net);
     let (display, sink) = build_sinks(net)?;
     let mut broker = Broker::new(policy, sink, proxy_of(net).as_deref())?;
-    broker.set_budget_limits(h5i_browser_light::budget::Limits {
+    broker.set_budget_limits(crate::budget::Limits {
         max_requests: net.max_requests,
         max_wire_bytes: net.max_wire_bytes,
         // The decoded ceiling follows the wire one rather than being its own
@@ -919,10 +946,13 @@ fn serve(
     quality: u8,
     stream_file: Option<PathBuf>,
     control_file: Option<PathBuf>,
+    control_socket: Option<PathBuf>,
     action_log: Option<PathBuf>,
     once: bool,
 ) -> Result<(), H5iError> {
     let (requests, factory, page) = load(target, net, view)?;
+    let control_socket =
+        control_socket.or_else(|| std::env::var(CONTROL_SOCKET_VAR).ok().map(PathBuf::from));
     let stream_file = stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
     let chosen = control_file
         .or_else(|| std::env::var(CONTROL_FILE_VAR).ok().map(PathBuf::from))
@@ -947,14 +977,15 @@ fn serve(
         make_private_dir(parent)?;
     }
     let action_log = action_log.or_else(|| std::env::var(ACTIONS_VAR).ok().map(PathBuf::from));
-    h5i_browser_light::stream::serve(
+    crate::stream::serve(
         factory,
         page,
-        h5i_browser_light::stream::ServeOptions {
+        crate::stream::ServeOptions {
             addr,
             quality,
             stream_file,
             control_file,
+            control_socket,
             action_log,
             once,
             requests,
@@ -962,30 +993,6 @@ fn serve(
     )
 }
 
-/// Write or print the skill this binary carries.
-fn skill(action: SkillCommands) -> Result<(), H5iError> {
-    match action {
-        SkillCommands::Install { target } => {
-            let target = match target {
-                Some(path) => path,
-                None => h5i_browser_light::skill::default_target()?,
-            };
-            let written = h5i_browser_light::skill::install(&target)?;
-            println!(
-                "installed the {} skill ({} page(s), v{}) -> {}",
-                h5i_browser_light::skill::NAME,
-                written.len(),
-                env!("CARGO_PKG_VERSION"),
-                target.display()
-            );
-        }
-        SkillCommands::Show => print!("{}", h5i_browser_light::skill::page(None)?),
-        SkillCommands::Path => {
-            println!("{}", h5i_browser_light::skill::default_target()?.display())
-        }
-    }
-    Ok(())
-}
 
 /// Drive the resident session.
 /// Send a recorded script's steps through the control channel, in order.
@@ -997,7 +1004,7 @@ fn skill(action: SkillCommands) -> Result<(), H5iError> {
 /// the audited path refuses.
 fn replay(script: &Path, keep_going: bool, at: &SessionArgs) -> Result<(), H5iError> {
     let text = std::fs::read_to_string(script).map_err(|e| H5iError::with_path(e, script))?;
-    let recording: h5i_browser_light::replay::Recording = serde_json::from_str(&text)
+    let recording: crate::replay::Recording = serde_json::from_str(&text)
         .map_err(|e| H5iError::Metadata(format!("{} is not a script: {e}", script.display())))?;
 
     if recording.dropped > 0 {
@@ -1015,7 +1022,7 @@ fn replay(script: &Path, keep_going: bool, at: &SessionArgs) -> Result<(), H5iEr
     let mut failed = 0usize;
 
     for (at_step, step) in recording.steps.iter().enumerate() {
-        let reply = h5i_browser_light::stream::ask(port, &step.request())?;
+        let reply = crate::stream::ask(port, &step.request())?;
         let ok = reply.get("ok").and_then(serde_json::Value::as_bool) == Some(true);
         if ok {
             ran += 1;
@@ -1058,32 +1065,92 @@ fn at_json(at: &SessionArgs) -> bool {
     at.json
 }
 
-/// Resolve the "`@ref` and a value, or `--selector` and the value" shape.
+/// Resolve the "`@ref` and a value, or a locator and the value" shape.
 ///
 /// Both positionals are optional to clap and checked here, because clap refuses
-/// an optional positional before a required one — and with `--selector` the ref
-/// is genuinely absent. The check gives a better message than clap's would
-/// anyway: it can say which of the two forms was half-used, and name the value
-/// the verb was actually after.
+/// an optional positional before a required one — and with a locator the ref is
+/// genuinely absent. The check gives a better message than clap's would anyway:
+/// it can say which of the forms was half-used, and name the value the verb was
+/// actually after.
+///
+/// `located` covers `--selector` **and** `--role`. It used to be `--selector`
+/// alone, and `--role` additionally conflicted with the positional, so
+/// `set-checked --role checkbox true` was rejected by clap before this could
+/// see it: the flag existed on three verbs and could not be used on any of
+/// them, while `find` and `click` — which take one positional, so a locator
+/// simply replaces it — worked and were the only forms documented.
 ///
 /// One function rather than four copies, because four copies is where the four
 /// error messages drift apart.
 fn two_positionals(
     verb: &str,
     what: &str,
-    selector: &Option<String>,
+    located: bool,
     first: &Option<String>,
     second: &Option<String>,
 ) -> Result<(Option<String>, String), H5iError> {
-    match (selector.is_some(), first, second) {
+    match (located, first, second) {
         (true, Some(value), None) => Ok((None, value.clone())),
         (true, _, Some(_)) => Err(H5iError::Metadata(format!(
-            "with `--selector`, pass only {what}: the selector is the handle."
+            "with `--selector` or `--role`, pass only {what}: the locator is the handle."
         ))),
         (false, Some(reference), Some(value)) => Ok((Some(reference.clone()), value.clone())),
         _ => Err(H5iError::Metadata(format!(
-            "`{verb}` needs a `@ref` and {what}, or `--selector <css>` and {what}."
+            "`{verb}` needs a `@ref` and {what}, or `--selector <css>` / `--role <role>` \
+             and {what}."
         ))),
+    }
+}
+
+#[cfg(test)]
+mod positional_tests {
+    use super::two_positionals;
+
+    /// `--role` had to stop conflicting with the positional the value arrives
+    /// in. Before that, `set-checked --role checkbox true` was rejected by clap
+    /// and the flag existed on three verbs without being usable on any of them.
+    #[test]
+    fn a_locator_takes_the_value_in_the_first_positional() {
+        let value = Some("true".to_string());
+        let (reference, state) =
+            two_positionals("set-checked", "a state", true, &value, &None).expect("the role form");
+        assert_eq!(reference, None, "a locator is the handle; there is no ref");
+        assert_eq!(state, "true");
+    }
+
+    #[test]
+    fn a_ref_takes_both_positionals() {
+        let (reference, state) = two_positionals(
+            "set-checked",
+            "a state",
+            false,
+            &Some("@e1".to_string()),
+            &Some("false".to_string()),
+        )
+        .expect("the ref form");
+        assert_eq!(reference.as_deref(), Some("@e1"));
+        assert_eq!(state, "false");
+    }
+
+    #[test]
+    fn half_of_either_form_says_which_forms_there_are() {
+        let only_a_ref = two_positionals("select", "the option", false, &Some("@e1".into()), &None)
+            .unwrap_err()
+            .to_string();
+        assert!(only_a_ref.contains("--role"), "{only_a_ref}");
+        assert!(only_a_ref.contains("--selector"), "{only_a_ref}");
+
+        // A locator plus both positionals is a caller using two handles.
+        let both = two_positionals(
+            "select",
+            "the option",
+            true,
+            &Some("@e1".into()),
+            &Some("x".into()),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(both.contains("the locator is the handle"), "{both}");
     }
 }
 
@@ -1091,7 +1158,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
     // Every name comes from `Verb`, so the CLI cannot ask for a verb the session
     // does not have. This used to be eight string literals that happened to
     // match eight others in `stream.rs`, with nothing enforcing the agreement.
-    use h5i_browser_light::verbs::Verb;
+    use crate::verbs::Verb;
     let (at, request) = match &verb {
         SessionVerb::Status { at } => (at, serde_json::json!({"verb": Verb::Status.name()})),
         SessionVerb::Snapshot { delta, url, at } => (
@@ -1112,7 +1179,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         ),
         SessionVerb::Type { reference, text, selector, role, name, at } => {
             let (reference, text) =
-                two_positionals("type", "the text", selector, reference, text)?;
+                two_positionals("type", "the text", selector.is_some() || role.is_some(), reference, text)?;
             (
                 at,
                 serde_json::json!({
@@ -1181,7 +1248,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Env { at } => (at, serde_json::json!({"verb": Verb::Env.name()})),
         SessionVerb::SetChecked { reference, checked, selector, role, name, at } => {
             let (reference, state) =
-                two_positionals("set-checked", "`true` or `false`", selector, reference, checked)?;
+                two_positionals("set-checked", "`true` or `false`", selector.is_some() || role.is_some(), reference, checked)?;
             // Parsed here rather than by clap, because the positional had to be
             // a string for the reasons `two_positionals` explains — and a
             // typo'd state should say what it should have been rather than
@@ -1211,7 +1278,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         }
         SessionVerb::Select { reference, option, selector, role, name, at } => {
             let (reference, option) =
-                two_positionals("select", "the option", selector, reference, option)?;
+                two_positionals("select", "the option", selector.is_some() || role.is_some(), reference, option)?;
             (
                 at,
                 serde_json::json!({
@@ -1226,7 +1293,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         }
         SessionVerb::Press { reference, key, selector, role, name, at } => {
             let (reference, key) =
-                two_positionals("press", "the key", selector, reference, key)?;
+                two_positionals("press", "the key", selector.is_some() || role.is_some(), reference, key)?;
             (
                 at,
                 serde_json::json!({
@@ -1254,8 +1321,25 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         }
     };
 
-    let port = session_port(at)?;
-    let reply = h5i_browser_light::stream::ask(port, &request)?;
+    // The socket wins when there is one. It is only ever set deliberately —
+    // by a flag or by h5i inside a box — and in a box it is the only channel
+    // that reaches the session at all.
+    let reply = match session_socket(at) {
+        #[cfg(unix)]
+        Some(path) => crate::stream::ask_unix(&path, &request)?,
+        // Refused rather than quietly falling back to the port. A caller who
+        // named a socket named it for a reason, and answering from somewhere
+        // else is worse than not answering.
+        #[cfg(not(unix))]
+        Some(path) => {
+            return Err(H5iError::Metadata(format!(
+                "a Unix control socket ({}) is not available on this platform. \
+                 Pass `--control-file` or `--port` instead.",
+                path.display()
+            )))
+        }
+        None => crate::stream::ask(session_port(at)?, &request)?,
+    };
 
     if at.json {
         println!("{reply}");
@@ -1350,6 +1434,17 @@ fn exit_status(reply: &serde_json::Value) -> Result<(), H5iError> {
 /// The fallback chain ends at the stream file because that is the one thing
 /// h5i already sets in a box: an agent that has to be told a port is an agent
 /// that has to be told this engine exists.
+/// The Unix control socket to use, if one was named.
+///
+/// Never guessed: a socket is either passed or put in the environment by
+/// whatever started the session. Guessing a path would mean a verb silently
+/// talking to a different session that happened to leave a socket behind.
+fn session_socket(at: &SessionArgs) -> Option<PathBuf> {
+    at.control_socket
+        .clone()
+        .or_else(|| std::env::var(CONTROL_SOCKET_VAR).ok().map(PathBuf::from))
+}
+
 fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
     if let Some(port) = at.port {
         return Ok(port);
@@ -1389,9 +1484,9 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
     // not a suspicious one.
     if !path.exists() {
         return Err(H5iError::Metadata(format!(
-            "no session is listening ({} does not exist). Start one with \
-             `h5i-browser-light serve <url>` — it holds a page open for these verbs to \
-             drive — or point at a running one with --control-file or --port.",
+            "no session is listening ({} does not exist). Open one with \
+             `h5i browser open <url>` — it holds a page open for these verbs to drive — \
+             or point at a running one with --control-file, --control-socket or --port.",
             path.display()
         )));
     }
@@ -1408,7 +1503,7 @@ fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
             path.display()
         )));
     }
-    h5i_browser_light::stream::read_port_file(&path)
+    crate::stream::read_port_file(&path)
 }
 
 /// Where a session advertises itself when nothing else says.
@@ -1721,7 +1816,7 @@ fn open(
 /// Read one page and report it. Returns the JSON payload when asked for one.
 fn one_page(
     mut page: Page,
-    records: Vec<h5i_browser_light::receipt::RequestRecord>,
+    records: Vec<crate::receipt::RequestRecord>,
     screenshot: Option<PathBuf>,
     as_text: bool,
     as_json: bool,
@@ -1795,7 +1890,7 @@ fn one_page(
         eprintln!("\nrequests:");
         for record in records
             .iter()
-            .filter(|r| r.phase == h5i_browser_light::receipt::Phase::Response)
+            .filter(|r| r.phase == crate::receipt::Phase::Response)
         {
             eprintln!("  {}", record.render());
         }

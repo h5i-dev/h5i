@@ -11,6 +11,11 @@
 // is git refs, the transport is the inbox and spool mounts that already exist.
 pub mod forum;
 pub mod boxes;
+// `h5i browser`. Gated with the `browser` feature it drives, so a build without
+// the rendering engine linked in has no `browser` verb rather than one that
+// starts a subprocess that cannot render — the same rule `ui`, `share` and
+// `runner` follow.
+#[cfg(feature = "browser")]
 pub mod browser;
 pub mod completion;
 // `h5i box detect`. Not feature-gated, deliberately: the verbs are how a user

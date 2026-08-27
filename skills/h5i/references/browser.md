@@ -1,78 +1,163 @@
-# The browser in the box
+# The browser
 
-A `browser` box is an agent box with a browser and its automation inside it. The
-agent, its builds and tests, the dev server on `localhost:3000`, and the browser
-are all inside **one** box, so the app under test is reachable at loopback with
-no port publishing and no second container.
+A **session** is the unit. It holds one page state, one cookie jar, one request
+log and one policy, and it is addressed by an id:
 
 ```bash
-h5i box --profile browser --name ui
-h5i box shell ui
+h5i browser open https://example.com --allow example.com   # -> br_7k2xqa
+h5i browser <verb> br_7k2xqa ...
+h5i browser close
 ```
 
-## First: which engine is this box pinned to
+It needs no box and no repository. `h5i browser --help` is the authoritative
+verb table and cannot go stale.
 
-**Two engines, two different sets of verbs.** Check before driving anything, or
-the first command fails in a way that does not name the real problem:
+## Where the session runs
 
-```bash
-echo "$H5I_BROWSER_ALLOW"   # set only on the h5i-light engine
-```
-
-| | Chromium (default) | `h5i-light` |
+| | on this machine (default) | `--in <box>` |
 | --- | --- | --- |
-| created by | `--profile browser` | `--profile browser --engine h5i-light` |
-| driven with | `agent-browser <verb>` | `h5i-browser-light session <verb>` |
-| JavaScript | yes | **opt-in**, and limited — see below |
-| use it for | anything script-heavy, video, WebGL | reading the web, docs, forms, a dev server |
+| started by | `h5i browser open <url>` | `h5i browser open <url> --in ui` |
+| verbs | identical | identical |
+| containment | none beyond the engine | the box's tier |
+| request lane | `engine-claimed` | `host-observed`, **if** the box enforces egress |
+| human takeover | advisory | enforced |
 
-Ask rather than assume, because the answer depends on how *this* session was
-started rather than on which binary it is:
+`h5i browser status <session>` prints both lines. Read them rather than assuming
+either: a session on this machine is not sandboxed, and a box that lets the
+browser reach the whole network does not upgrade the lane.
+
+`--in` needs a box on a tier that can hold a resident process. If yours cannot,
+`start` says so before it starts anything, and names the fix.
+
+## Which engine
+
+`h5i browser` drives h5i's own engine. A box pinned to `--engine chromium` has
+no h5i session in it; drive `agent-browser` inside that box instead.
+
+| | h5i engine (`h5i browser`) | Chromium (`agent-browser`, in-box) |
+| --- | --- | --- |
+| JavaScript | **opt-in** (`--script`), and limited | yes |
+| request log | fail-closed, written before the wire | best-effort, reconstructed |
+| takeover | enforced when boxed | advisory, inside the box |
+| use it for | reading the web, docs, forms, a dev server | script-heavy pages, video, WebGL |
+
+Running `agent-browser` in a box pinned to `h5i` fails with `Failed to
+create socket directory: Permission denied`. That is not a permissions problem
+to work around: it is the box telling you it has no Chromium.
+
+## Driving a session
 
 ```bash
-h5i-browser-light capabilities    # what this invocation can do, as JSON
+h5i browser open http://localhost:3000   # -> br_7k2xqa, and it holds the page
+h5i browser snapshot  # the outline, with @refs
+h5i browser navigate /docs      # relative, like a click
+h5i browser click @e1
+h5i browser status
 ```
 
-Running `agent-browser` in an `h5i-light` box fails with `Failed to create
-socket directory: Permission denied`. That is not a permissions problem to work
-around: it is this box telling you it has no Chromium. Use the light engine's
-own verbs below.
-
-## Driving the light engine
-
-The light engine needs a **resident session** to drive, because `open` renders
-its own page and exits — two `open`s share nothing. Start one, then act on it:
-
-```bash
-h5i-browser-light serve http://localhost:3000 &   # holds the page open
-h5i-browser-light session snapshot                # the outline, with @refs
-h5i-browser-light session navigate /docs          # relative, like a click
-h5i-browser-light session click @e1
-h5i-browser-light session status
-```
-
-Inside a box these need no flags: h5i sets the variables that point them at the
-session. (On a bare host they need none either — `serve` advertises itself in a
-per-user runtime directory. See the `h5i-browser-light` skill, which the engine
-carries and installs with `h5i-browser-light skill install`.)
+The engine has its own CLI under `h5i __engine`, which is what `h5i browser`
+sits in front of. **Use `h5i browser`.** It is the surface that knows about
+session names, placement, the control lock, the audit, and the scrubbing every
+answer goes through. `__engine` is hidden for that reason; reach for it only for
+something the front door genuinely does not offer, like a one-shot render or
+`__engine doctor`.
 
 Reading, beyond the outline:
 
 ```bash
-h5i-browser-light session markdown                # the page as a reader reads it
-h5i-browser-light session extract '{"rows": ["li"]}'
-h5i-browser-light session requests                # what it fetched, and what was refused
+h5i browser markdown  # the page as a reader reads it
+h5i browser extract '{"rows": ["li"]}'
+h5i browser requests  # what it fetched, and what was refused
 ```
 
 `requests` is the one no other engine can answer completely: this engine *is*
 the HTTP client, so the log is the decision record written before the bytes
 moved rather than an observation made beside the network.
 
+`h5i browser audit` is that log merged with the verbs you asked for, the moments
+a human took the controls, and how the session ended, in one ordered timeline.
+Reach for `requests` inside a loop and `audit` when you are writing up what
+happened. Every row says whether it is the engine describing itself or something
+h5i saw from outside, and the summary names any log it could not read at all.
+
+## Reading a page cheaply
+
+```bash
+h5i browser structured                          # what the page says about itself
+h5i browser markdown --url https://example.com  # go there and read, in one trip
+```
+
+`structured` is the cheapest read there is: JSON-LD, OpenGraph, `<meta>`,
+`<link rel>` — a few hundred bytes where a snapshot is a few hundred lines. Try
+it first on an article, a product, or anything with a canonical URL. A page with
+no metadata answers `empty`, which is a fact about the page rather than a failed
+read.
+
+Every read verb takes `--url`, which goes there first and then reads. Prefer it:
+one round trip where `navigate` and then the read would be two, and the reply
+still names the URL it ended up on, so a redirect is not silent.
+
+## Naming an element without a `@ref`
+
+```bash
+h5i browser find  --role button --name 'Sign in'
+h5i browser click --role button --name 'Sign in'
+```
+
+A snapshot line reads `- button "Sign in" [ref=e3]`, and `--role button --name
+'Sign in'` names the same thing by what it is called rather than by where it
+sat. That survives a re-render that moves everything; a `@ref` from an older
+reading does not, and is refused rather than resolved against whatever now
+occupies that position.
+
+`--selector <css>` is the third way in, for when the page has a stable id and
+you already know it.
+
+## Driving a control
+
+```bash
+h5i browser set-checked @e4 true
+h5i browser set-checked --role checkbox true       # or by what it is called
+h5i browser select @e5 'Express shipping'
+h5i browser press  @e1 Enter
+```
+
+**Prefer `set-checked` to clicking a checkbox.** A click *toggles*, so where it
+lands depends on what the page was serving; setting a state is idempotent. That
+is the difference between a session that replays to the same place and one that
+does not. It turns off the rest of a radio group, and reports `changed: false`
+when the box was already there.
+
+**`select`** takes the option's value or the text it shows, in that order. The
+reply carries the *value*, because that is what the form submits and what
+survives a re-render; the text is what you read.
+
+**`press`** is for keys that *do* something: Enter, Escape, Tab, ArrowDown. To
+enter text use `type`. Merging the two would make one verb whose meaning
+depended on its argument.
+
+Each of these takes either a `@ref` and the value, or a locator and the value.
+With a locator there is no ref: the locator is the handle.
+
+## Recording and replaying
+
+```bash
+h5i browser script --save flow.json     # what this session did, as steps
+h5i __engine replay flow.json           # send it back through the same channel
+```
+
+The steps are verified CSS selectors rather than `@ref` handles, so a script
+outlives the reading it was recorded from. A replay goes through the control
+channel an agent would use, so the policy, the receipts and the action log see
+it exactly as they see a live session — and on this engine it visits the same
+states in the same order, because the settle runs on a virtual clock rather
+than a wall clock.
+
 Waiting has three answers, not two:
 
 ```bash
-h5i-browser-light session wait-for --selector '#results'
-h5i-browser-light session wait-for --text 'Signed in'
+h5i browser wait-for --selector '#results'
+h5i browser wait-for --text 'Signed in'
 ```
 
 `met` is there; `quiescent` means it is not and the page has nothing left to run,
@@ -107,10 +192,10 @@ Logging in works, and **never with a literal credential**. Put it in the
 environment `serve` runs in, under `H5I_SECRET_`, and name it:
 
 ```bash
-h5i-browser-light session env                        # names only, never values
-h5i-browser-light session type @e1 alice
-h5i-browser-light session type @e2 '$H5I_SECRET_ACME_PASS'
-h5i-browser-light session submit @e3                 # any @ref inside the form
+h5i browser env  # names only, never values
+h5i browser type @e1 alice
+h5i browser type @e2 '$H5I_SECRET_ACME_PASS'
+h5i browser submit @e3                 # any @ref inside the form
 ```
 
 The value is substituted on the way into the field and the reply echoes the
@@ -181,10 +266,15 @@ Two clients can drive one browser — you, and a human at the viewer. Nothing
 upstream arbitrates between them, so h5i does.
 
 ```bash
-h5i browser status <box>     # who holds control, and whether your @refs are stale
-h5i browser take <box>       # a human takes control
-h5i browser release <box>    # hands it back
+h5i browser status  <session>   # who holds control, and whether your @refs are stale
+h5i browser take    <session>   # a human takes control
+h5i browser release <session>   # hands it back
 ```
+
+**How strong the lock is depends on where the session runs**, and `take` says
+which one you have. In a box it is *enforced*: every verb is carried in from the
+host, so there is no path around it. On this machine it is *advisory*: it pauses
+`h5i browser` and nothing else.
 
 You hold control by default. A human **takes** it rather than asking, and when
 they do:
@@ -194,8 +284,8 @@ they do:
 - Read-only verbs (`snapshot`, `screenshot`, `console`) keep working. Watching
   never collides.
 - When control comes back, your handles are stale because the page moved under
-  you. Run `agent-browser snapshot` before acting. Acting first is refused rather
-  than mis-clicked.
+  you. Run `h5i browser snapshot <session>` before acting. Acting first is
+  refused rather than mis-clicked.
 
 ## The viewer
 

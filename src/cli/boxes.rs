@@ -71,7 +71,7 @@ pub enum BoxCommands {
         image: Option<String>,
 
         /// Browser engine for the `browser` profile: chromium (default),
-        /// lightpanda, or h5i-light. Overrides the profile's `engine`. Pinned
+        /// lightpanda, or h5i. Overrides the profile's `engine`. Pinned
         /// in the policy digest, and never falls back: a box whose engine
         /// cannot serve a page fails and names the recreate, because switching
         /// engine changes what a page is able to do.
@@ -1894,6 +1894,26 @@ pub fn run(action: BoxCommands) -> anyhow::Result<()> {
                                              expires",
                                             style("warning:").yellow().bold(),
                                             problem
+                                        );
+                                    }
+                                    // A browser session placed in this box has
+                                    // just lost its engine. Recording the cause
+                                    // here is the difference between a record
+                                    // that says "evicted, the box was removed"
+                                    // and one that says "died" — both true, one
+                                    // of them knowable only on this side of the
+                                    // boundary and only at this moment.
+                                    if let Ok(root) = h5i_core::browser_session::root()
+                                        && let Ok(n) =
+                                            h5i_core::browser_session::evict_box(&root, name)
+                                        && n > 0
+                                    {
+                                        println!(
+                                            "  {} browser session{} in this box {} ended \
+                                             (`h5i browser list --all` keeps the record)",
+                                            n,
+                                            if n == 1 { "" } else { "s" },
+                                            if n == 1 { "was" } else { "were" }
                                         );
                                     }
                                     println!(

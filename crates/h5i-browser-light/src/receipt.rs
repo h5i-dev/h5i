@@ -46,10 +46,26 @@ pub enum Initiator {
     Redirect,
 }
 
+/// The engine's clock, RFC3339 with microseconds.
+///
+/// Microseconds because a page's subresource fetches land inside the same
+/// second, and a log an audit sorts by needs a total order within one verb.
+fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+}
+
 /// One line of the request log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestRecord {
     pub seq: u64,
+    /// When the engine wrote this row, RFC3339.
+    ///
+    /// **The engine's own claim**, not an observation. A reader outside the box
+    /// has no way to check the box's clock, so this is what orders the engine's
+    /// two logs against each other and what a host-side reader labels as a
+    /// claim when it puts them beside rows h5i wrote itself.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub at: String,
     pub phase: Phase,
     pub initiator: Initiator,
     pub method: String,
@@ -101,6 +117,7 @@ impl RequestRecord {
     pub fn request(seq: u64, initiator: Initiator, method: &str, url: &str) -> Self {
         Self {
             seq,
+            at: now_rfc3339(),
             phase: Phase::Request,
             initiator,
             method: method.to_string(),
@@ -129,6 +146,9 @@ impl RequestRecord {
     pub fn response(&self) -> Self {
         let mut next = self.clone();
         next.phase = Phase::Response;
+        // Its own time, not the request's: the gap between them is how long the
+        // fetch took, and copying the request's stamp would erase it.
+        next.at = now_rfc3339();
         next
     }
 
@@ -220,6 +240,35 @@ impl MemorySink {
 
     pub fn records(&self) -> Vec<RequestRecord> {
         self.records.lock().map(|r| r.clone()).unwrap_or_default()
+    }
+
+    /// The highest sequence number written so far, or `None` on an empty log.
+    ///
+    /// The mark a verb takes before it runs, so the receipts written while it
+    /// ran can be identified afterwards. The highest rather than the count:
+    /// numbers are taken before the append, so append order and sequence order
+    /// can differ and a count would drift.
+    pub fn high_water(&self) -> Option<u64> {
+        self.records()
+            .iter()
+            .map(|r| r.seq)
+            .max()
+    }
+
+    /// Sequence numbers written after `mark`, deduplicated and in order.
+    ///
+    /// A request and its response share a sequence number, so the pair collapses
+    /// to one entry: what a reader wants is "which fetches", not "how many rows".
+    pub fn since(&self, mark: Option<u64>) -> Vec<u64> {
+        let mut seen: Vec<u64> = self
+            .records()
+            .iter()
+            .map(|r| r.seq)
+            .filter(|seq| mark.is_none_or(|floor| *seq > floor))
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen
     }
 
     /// Just the URLs that actually reached the wire, in order.
@@ -342,6 +391,10 @@ mod tests {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionRecord {
     pub seq: u64,
+    /// When the engine wrote this row, RFC3339. The engine's own claim, like
+    /// [`RequestRecord::at`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub at: String,
     /// `request` before the verb runs, `result` after it.
     pub phase: String,
     pub verb: String,
@@ -353,12 +406,26 @@ pub struct ActionRecord {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Receipt sequence numbers this verb caused.
+    /// Receipt sequence numbers written **while this verb ran**.
     ///
-    /// The differentiator, written down: not "a request happened around then"
-    /// but "this click produced these receipts". Stamped by the only component
-    /// that knows the causal fact, and joined in the console against the
-    /// request log's own numbering.
+    /// The differentiator, and the field a reviewer joins against the request
+    /// log's own numbering: not "a request happened somewhere in this session"
+    /// but "this click is the verb the page was under when these fetches went
+    /// out".
+    ///
+    /// Deliberately a *window*, and named as one. The engine could only claim
+    /// strict causation for the one path that dispatches a script event and
+    /// gets a list back; every other verb that moves the page — `navigate`, a
+    /// click that follows an href, `submit`, a `wait_for` that lets a pending
+    /// load finish — produces fetches it never enumerates. A window covers all
+    /// of them, and its one weakness is stated rather than hidden: the page
+    /// thread owns the session, but a viewer's own traffic can land inside the
+    /// window and be attributed to a verb that did not ask for it.
+    ///
+    /// The earlier version of this field read the reply's `requests` key, which
+    /// the `requests` verb uses for the rows it *returns*. The one verb that
+    /// causes nothing was therefore recorded as having caused everything it
+    /// read, and the verbs that actually fetch recorded nothing at all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requests: Vec<u64>,
 }
@@ -415,6 +482,7 @@ impl ActionLog {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         self.write(&ActionRecord {
             seq,
+            at: now_rfc3339(),
             phase: "request".to_string(),
             verb: verb.to_string(),
             target: target.map(str::to_string),
@@ -431,6 +499,7 @@ impl ActionLog {
     pub fn finish(&self, seq: u64, verb: &str, target: Option<&str>, outcome: ActionOutcome) {
         let _ = self.write(&ActionRecord {
             seq,
+            at: now_rfc3339(),
             phase: "result".to_string(),
             verb: verb.to_string(),
             target: target.map(str::to_string),

@@ -135,7 +135,7 @@ pub struct Options {
 fn not_streaming_hint(engine: Option<&str>) -> String {
     match engine {
         Some("h5i-light") => "the box's browser is not streaming. Inside the box, run \
-                              `h5i-browser-light serve <url>`, then try again."
+                              `h5i browser open <url>`, then try again."
             .into(),
         _ => "the box's browser is not streaming. Inside the box, run \
               `agent-browser stream enable`, then try again."
@@ -906,7 +906,7 @@ mod tests {
         // its owner to a CLI that fails on a missing socket directory before it
         // can answer the question they asked.
         let light = not_streaming_hint(Some("h5i-light"));
-        assert!(light.contains("h5i-browser-light serve"), "{light}");
+        assert!(light.contains("h5i browser open"), "{light}");
         assert!(!light.contains("agent-browser"), "{light}");
 
         for other in [Some("chromium"), Some("lightpanda"), None] {

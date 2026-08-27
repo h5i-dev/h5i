@@ -30,6 +30,7 @@
 //! keeps Chromium for the agent's own dev server, and docs-grade pages are this
 //! engine's compatibility bar.
 
+pub mod cli;
 pub mod encoding;
 pub mod canvas;
 pub mod cors;
@@ -45,7 +46,6 @@ pub mod receipt;
 pub mod replay;
 pub mod script;
 pub mod selector;
-pub mod skill;
 pub mod secrets;
 pub mod snapshot;
 pub mod sse;

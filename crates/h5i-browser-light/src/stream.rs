@@ -39,8 +39,10 @@
 //! because a command is handled to completion before the next one starts.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -93,6 +95,21 @@ pub struct ServeOptions {
     /// either way: anything that can reach this port is already inside the box
     /// and could run the binary itself.
     pub control_file: Option<PathBuf>,
+
+    /// Also listen for control clients on a Unix socket at this path.
+    ///
+    /// The TCP listener above is unconditional and stays the simple case. This
+    /// is for the one arrangement it cannot serve: **a session inside a box**.
+    /// Every `h5i box run` gets a fresh network namespace, so a verb carried
+    /// into the box afterwards has a loopback of its own and the resident
+    /// session's port is not on it — the connection fails with `ENETUNREACH`,
+    /// which reads exactly like a session that is not running.
+    ///
+    /// A filesystem path has no such problem: the box's `/tmp` is one
+    /// filesystem across every run in it, so the socket a `serve` created is
+    /// the socket the next verb opens. Unix-only, and optional, so the crate
+    /// stays portable and the default arrangement gains no new mechanism.
+    pub control_socket: Option<PathBuf>,
     /// Where to record the verbs an agent asks for. `None` on a bare host,
     /// where there is no console to feed.
     pub action_log: Option<PathBuf>,
@@ -115,6 +132,7 @@ impl Default for ServeOptions {
             quality: 80,
             stream_file: None,
             control_file: None,
+            control_socket: None,
             action_log: None,
             once: false,
             requests: Arc::new(crate::receipt::MemorySink::new()),
@@ -347,14 +365,47 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     if let Some(path) = &options.control_file {
         write_port_file(path, control_port)?;
     }
+
+    // Bound before the files are advertised, like the TCP listener, and for the
+    // same reason: a client that finds the path must find something listening.
+    #[cfg(unix)]
+    let control_unix = match &options.control_socket {
+        Some(path) => Some(bind_control_socket(path)?),
+        None => None,
+    };
+    // And refused where there are none, rather than stored and ignored. A
+    // session that accepted `--control-socket` and bound nothing would answer
+    // on a port while every verb waited on a path — enforcement absent and
+    // nothing saying so, which is the shape of failure this file exists to
+    // avoid.
+    #[cfg(not(unix))]
+    if let Some(path) = &options.control_socket {
+        return Err(H5iError::Metadata(format!(
+            "a Unix control socket ({}) is not available on this platform. \
+             The socket exists for a session inside an h5i box, where every run gets its own \
+             network namespace and a port cannot be reached from the next one; there are no \
+             boxes here, so the loopback control port is the channel.",
+            path.display()
+        )));
+    }
+
     eprintln!("h5i-browser-light: live view on 127.0.0.1:{port}");
     eprintln!("h5i-browser-light: session control on 127.0.0.1:{control_port}");
+    #[cfg(unix)]
+    if let Some(path) = &options.control_socket {
+        eprintln!("h5i-browser-light: session control on {}", path.display());
+    }
 
     let (tx, rx) = channel::<Command>();
 
     let viewer_tx = tx.clone();
     let once = options.once;
     thread::spawn(move || accept_viewers(viewers, viewer_tx, once));
+    #[cfg(unix)]
+    if let Some(listener) = control_unix {
+        let unix_tx = tx.clone();
+        thread::spawn(move || accept_control_unix(listener, unix_tx));
+    }
     thread::spawn(move || accept_control(control, tx));
 
     // Opened before the listeners are advertised: a session that cannot record
@@ -381,7 +432,14 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     };
     run_session(session, rx, options.once);
 
-    for path in [&options.stream_file, &options.control_file].into_iter().flatten() {
+    for path in [&options.stream_file, &options.control_file]
+        .into_iter()
+        .flatten()
+    {
+        let _ = std::fs::remove_file(path);
+    }
+    #[cfg(unix)]
+    if let Some(path) = &options.control_socket {
         let _ = std::fs::remove_file(path);
     }
     Ok(())
@@ -626,9 +684,47 @@ fn accept_control(listener: TcpListener, tx: Sender<Command>) {
     }
 }
 
-fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError> {
+/// The same accept loop over a Unix socket. Separate function rather than a
+/// generic one because `Incoming` is not a shared trait, and two four-line loops
+/// are cheaper to read than the abstraction that would unify them.
+#[cfg(unix)]
+fn accept_control_unix(listener: UnixListener, tx: Sender<Command>) {
+    for incoming in listener.incoming() {
+        let Ok(stream) = incoming else { continue };
+        let tx = tx.clone();
+        thread::spawn(move || {
+            if let Err(error) = serve_control(stream, &tx) {
+                eprintln!("h5i-browser-light: control client: {error}");
+            }
+        });
+    }
+}
+
+/// Bind a control socket, replacing a stale one.
+///
+/// A socket file outlives the process that made it, so a session that was
+/// killed leaves a path that `connect` refuses with `ECONNREFUSED`. Removing it
+/// first is what makes a restart work; the removal is narrow — the path is one
+/// h5i chose, and a bind failure afterwards is reported rather than retried.
+#[cfg(unix)]
+fn bind_control_socket(path: &Path) -> Result<UnixListener, H5iError> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    let _ = std::fs::remove_file(path);
+    UnixListener::bind(path).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// One control connection, whatever carried it.
+///
+/// Generic over the stream so the TCP and Unix paths cannot drift: the protocol
+/// is one JSON object per line each way, and there is exactly one implementation
+/// of it.
+fn serve_control<S: ControlStream>(stream: S, tx: &Sender<Command>) -> Result<(), H5iError> {
     let mut writer = stream
-        .try_clone()
+        .dup()
         .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
     let reader = BufReader::new(stream);
 
@@ -665,6 +761,43 @@ fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError
 }
 
 
+/// A connection the control protocol can be spoken over.
+///
+/// `dup` rather than `try_clone` by name because the two concrete types spell
+/// it the same way but share no trait that says so.
+trait ControlStream: Read + Write + Send + Sized + 'static {
+    fn dup(&self) -> std::io::Result<Self>;
+}
+
+impl ControlStream for TcpStream {
+    fn dup(&self) -> std::io::Result<Self> {
+        self.try_clone()
+    }
+}
+
+#[cfg(unix)]
+impl ControlStream for UnixStream {
+    fn dup(&self) -> std::io::Result<Self> {
+        self.try_clone()
+    }
+}
+
+/// Ask a resident session one thing over a Unix socket.
+///
+/// The sibling of [`ask`], and the one a boxed session needs: see
+/// [`ServeOptions::control_socket`] for why a port cannot serve it.
+#[cfg(unix)]
+pub fn ask_unix(path: &Path, request: &Value) -> Result<Value, H5iError> {
+    let stream = UnixStream::connect(path).map_err(|e| {
+        H5iError::Metadata(format!(
+            "no session answering on {} ({e}). Open one with `h5i browser open <url>`; \
+             inside a box that is the channel it uses.",
+            path.display()
+        ))
+    })?;
+    exchange(stream, request)
+}
+
 /// Read a port advertised in a file by [`write_port_file`].
 pub fn read_port_file(path: &Path) -> Result<u16, H5iError> {
     let text = std::fs::read_to_string(path).map_err(|e| H5iError::with_path(e, path))?;
@@ -681,12 +814,20 @@ pub fn read_port_file(path: &Path) -> Result<u16, H5iError> {
 pub fn ask(port: u16, request: &Value) -> Result<Value, H5iError> {
     let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|e| {
         H5iError::Metadata(format!(
-            "no session answering on 127.0.0.1:{port} ({e}). Start one with \
-             `h5i-browser-light serve <url>`."
+            "no session answering on 127.0.0.1:{port} ({e}). Open one with \
+             `h5i browser open <url>`."
         ))
     })?;
+    exchange(stream, request)
+}
+
+/// One request, one answer, on a connection that is already open.
+///
+/// Shared by [`ask`] and [`ask_unix`] so the client half of the protocol has one
+/// implementation, exactly as the server half does.
+fn exchange<S: ControlStream>(stream: S, request: &Value) -> Result<Value, H5iError> {
     let mut writer = stream
-        .try_clone()
+        .dup()
         .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
     writeln!(writer, "{request}").map_err(H5iError::Io)?;
     writer.flush().map_err(H5iError::Io)?;
@@ -861,6 +1002,12 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         }
     };
 
+    // The mark, taken before the verb runs. Everything the broker writes past
+    // it belongs to this verb's window — which is the join a reviewer needs and
+    // the thing the old implementation got exactly backwards (see
+    // `ActionRecord::requests`).
+    let mark = session.requests.high_water();
+
     let (answer, changed) = control_verb(session, request);
 
     let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
@@ -869,18 +1016,7 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
     }
     let url = answer.get("url").and_then(Value::as_str);
     let error = answer.get("error").and_then(Value::as_str);
-    // Which receipts this verb produced, read back out of the reply it just
-    // returned. The engine already stamped the link; this is what carries it
-    // into the log the console reads.
-    let caused: Vec<u64> = answer
-        .get("requests")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| row.get("seq").and_then(Value::as_u64))
-                .collect()
-        })
-        .unwrap_or_default();
+    let caused = session.requests.since(mark);
     if let Some(log) = &session.actions {
         log.finish(
             seq,
@@ -1500,9 +1636,13 @@ fn control_verb_inner(
                             "ok": true,
                             "ref": reference,
                             "settled": settled,
-                            // The causal link, stamped by the one component
-                            // that knows it: this click, these receipts.
-                            "requests": caused,
+                            // Strict causation, from the one component that can
+                            // know it: this handler dispatched, these fetches.
+                            // A different key from the `requests` verb's rows on
+                            // purpose — one name for two meanings is what made
+                            // the action log attribute every fetch to the verb
+                            // that merely read them.
+                            "caused_requests": caused,
                         }),
                         true,
                     );
@@ -3400,6 +3540,94 @@ mod tests {
     }
 
     #[test]
+    fn the_verb_that_only_reads_the_log_does_not_claim_to_have_caused_it() {
+        // The bug this pins: the causal field was read out of the reply's
+        // `requests` key, which the `requests` verb uses for the rows it
+        // *returns*. So the one verb that fetches nothing was recorded as
+        // having caused every fetch in the session, and the verbs that do fetch
+        // recorded nothing at all. A reviewer joining on that field would have
+        // been reading the exact opposite of what happened.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("actions.jsonl");
+        let mut session = session_with(tall_page());
+        session.actions = Some(ActionLog::create(&path).expect("log"));
+
+        // Put something in the request log that this verb plainly did not do.
+        use crate::receipt::Sink as _;
+        session
+            .requests
+            .append(&crate::receipt::RequestRecord::request(
+                7,
+                crate::receipt::Initiator::Navigation,
+                "GET",
+                "https://example.com/earlier",
+            ))
+            .expect("appended");
+
+        recorded_verb(&mut session, &json!({"verb": "requests"}));
+
+        let text = std::fs::read_to_string(&path).expect("written");
+        let result = text
+            .lines()
+            .find(|l| l.contains("\"phase\":\"result\"") && l.contains("\"verb\":\"requests\""))
+            .expect("the verb was recorded");
+        assert!(
+            !result.contains("\"requests\":["),
+            "reading the log is not causing it:\n{result}"
+        );
+    }
+
+    #[test]
+    fn a_verb_carries_the_receipts_written_while_it_ran() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("actions.jsonl");
+        let mut session = session_with(tall_page());
+        session.actions = Some(ActionLog::create(&path).expect("log"));
+
+        // One receipt from before the verb, one from during it. Only the second
+        // belongs to the window.
+        use crate::receipt::Sink as _;
+        session
+            .requests
+            .append(&crate::receipt::RequestRecord::request(
+                1,
+                crate::receipt::Initiator::Navigation,
+                "GET",
+                "https://example.com/before",
+            ))
+            .expect("appended");
+
+        let mark = session.requests.high_water();
+        assert_eq!(mark, Some(1));
+        session
+            .requests
+            .append(&crate::receipt::RequestRecord::request(
+                2,
+                crate::receipt::Initiator::Navigation,
+                "GET",
+                "https://example.com/during",
+            ))
+            .expect("appended");
+
+        assert_eq!(
+            session.requests.since(mark),
+            vec![2],
+            "the window starts at the mark, not at the beginning of the session"
+        );
+        // A request and its response share a number, so the pair is one entry.
+        session
+            .requests
+            .append(&crate::receipt::RequestRecord::request(
+                2,
+                crate::receipt::Initiator::Navigation,
+                "GET",
+                "https://example.com/during",
+            ))
+            .expect("appended");
+        assert_eq!(session.requests.since(mark), vec![2]);
+    }
+
+    #[test]
     fn a_verb_that_cannot_be_recorded_does_not_happen() {
         // No record, no action. Proved by the page not moving, not merely by
         // the reply: an agent that scrolled invisibly would be the bug.
@@ -3550,9 +3778,13 @@ mod tests {
 
     #[test]
     fn a_click_reports_the_requests_it_caused() {
-        // The causal link, stamped by the one component that knows it. Empty
+        // Strict causation, stamped by the one component that knows it. Empty
         // here because the handler makes none, which is still the honest answer
         // rather than a missing field.
+        //
+        // Under its own key, not `requests`: that name belongs to the rows the
+        // `requests` verb returns, and one name for two meanings is what made
+        // the action log record the reader as the cause.
         let mut session = scripted_session_with(
             "<html><body><button id='b'>Go</button><script>\
              document.querySelector('#b').addEventListener('click', () => {});\
@@ -3561,8 +3793,8 @@ mod tests {
         let reference = serve_refs(&mut session)[0].id.clone();
         let (reply, _) = control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
 
-        assert!(reply["requests"].is_array(), "{reply:?}");
-        assert_eq!(reply["requests"].as_array().unwrap().len(), 0);
+        assert!(reply["caused_requests"].is_array(), "{reply:?}");
+        assert_eq!(reply["caused_requests"].as_array().unwrap().len(), 0);
     }
 
     #[test]

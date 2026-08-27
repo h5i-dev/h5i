@@ -14,12 +14,18 @@ something, it is the thing that decides whether bytes move at all. No receipt, n
 request.
 
 ```bash
-h5i-browser-light serve https://docs.rs/ --allow docs.rs &
+h5i browser open https://docs.rs/ --allow docs.rs
 
-h5i-browser-light session snapshot                   # the page, with @ref handles
-h5i-browser-light session extract '{"crates": ["h3 a"]}'
-h5i-browser-light session requests                   # everything it fetched, and what was refused
+h5i browser snapshot                   # the page, with @ref handles
+h5i browser extract '{"crates": ["h3 a"]}'
+h5i browser requests                   # everything it fetched, and what was refused
 ```
+
+**This crate is the engine, not the interface.** It used to ship as its own
+binary, `h5i-browser-light`; it is linked into `h5i` now, which execs itself to
+render a page. What an agent drives is `h5i browser` — the surface that knows
+about session names, placement, the control lock and the audit. Everything below
+describes what the engine underneath does.
 
 ## Highlights
 
@@ -42,20 +48,24 @@ h5i-browser-light session requests                   # everything it fetched, an
 ## Install
 
 ```bash
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --browser-only
+curl -fsSL https://h5i.dev/install.sh | sh
 
-h5i-browser-light skill install    # teach an agent to drive it
-h5i-browser-light doctor           # fonts, proxy, allowlist
+h5i skill install       # teach an agent to drive it
+h5i __engine doctor     # fonts, proxy, allowlist
 ```
 
-`--browser-only` installs this engine and nothing else; `--with-browser` installs
-it alongside h5i. The script verifies the published checksum before it installs
-anything.
+One binary, engine included. The script verifies the published checksum before it
+installs anything.
+
+`h5i __engine` is the engine's own CLI, hidden because it is not the interface.
+Reach for it only for something `h5i browser` genuinely does not offer — a
+one-shot render, the font `doctor`, a replay.
 
 Not on crates.io, and that is not an oversight: the crate depends on `boa` by git
 revision, because no published version's ICU requirements can coexist with the
-ones `parley` pulls through blitz. `scripts/check_boa_release.sh` fails the build
-the day that stops being true.
+ones `parley` pulls through blitz. Now that `h5i` links this crate, that applies
+to `h5i` as well — a release archive is how anyone gets either.
+`scripts/check_boa_release.sh` fails the build the day that stops being true.
 
 ## Quick start
 
@@ -63,9 +73,9 @@ the day that stops being true.
 interactive needs a resident session:
 
 ```bash
-h5i-browser-light serve http://localhost:3000 &   # loopback needs no --allow
-h5i-browser-light session snapshot
-h5i-browser-light session click @e1
+h5i browser open http://localhost:3000    # loopback needs no --allow
+h5i browser snapshot
+h5i browser click @e1
 ```
 
 `serve` advertises itself in a per-user runtime directory, so the `session` verbs
@@ -77,9 +87,9 @@ nothing remote is reachable.
 #### Reading a page
 
 ```bash
-h5i-browser-light session snapshot          # outline with @ref handles, to act on
-h5i-browser-light session markdown          # prose, lists, tables, to read
-h5i-browser-light session extract '{"rows": [{"selector": "tr.item", "limit": 5,
+h5i browser snapshot          # outline with @ref handles, to act on
+h5i browser markdown          # prose, lists, tables, to read
+h5i browser extract '{"rows": [{"selector": "tr.item", "limit": 5,
   "fields": {"name": ".title", "url": {"selector": "a", "attr": "href"}}}]}'
 ```
 
@@ -94,7 +104,7 @@ deciding what to do next, and a page cannot forge its way out of it.
 #### The request log
 
 ```console
-$ h5i-browser-light session requests
+$ h5i browser requests
    200 GET https://docs.rs/blitz/ (12043 bytes, 84ms)
 DENIED GET https://telemetry.example.com/collect
 ```
@@ -108,10 +118,10 @@ record written before the bytes moved.
 #### Acting on a page
 
 ```bash
-h5i-browser-light session click @e2
-h5i-browser-light session type @e1 "search terms"
-h5i-browser-light session submit @e3
-h5i-browser-light session scroll 400
+h5i browser click @e2
+h5i browser type @e1 "search terms"
+h5i browser submit @e3
+h5i browser scroll 400
 ```
 
 A `@ref` belongs to the snapshot that minted it. `e1` means "the first actionable
@@ -130,9 +140,9 @@ still fills and submits without a re-read between steps.
 #### Waiting
 
 ```bash
-h5i-browser-light session wait-for --selector '#results'
-h5i-browser-light session wait-for --text 'Signed in'
-h5i-browser-light session wait-for-script 'document.querySelectorAll("li").length > 3'
+h5i browser wait-for --selector '#results'
+h5i browser wait-for --text 'Signed in'
+h5i browser wait-for-script 'document.querySelectorAll("li").length > 3'
 ```
 
 Three answers, not two:
@@ -149,14 +159,14 @@ sleep, so polling it in a loop does no good.
 
 #### Logging in
 
-Never type a credential as a literal. Set it in the environment `serve` runs in
-and name it:
+Never type a credential as a literal. Set it in the environment the session is
+opened in and name it:
 
 ```bash
-H5I_SECRET_ACME_PASS=… h5i-browser-light serve https://acme.example --allow acme.example &
+H5I_SECRET_ACME_PASS=… h5i browser open https://acme.example --allow acme.example
 
-h5i-browser-light session env                       # names only, never values
-h5i-browser-light session type @e2 '$H5I_SECRET_ACME_PASS'
+h5i browser env                       # names only, never values
+h5i browser type @e2 '$H5I_SECRET_ACME_PASS'
 ```
 
 The value is substituted on the way into the field and the reply echoes the
@@ -241,7 +251,8 @@ make it h5i's.
   fence's tested property, and the measurements with their caveats.
 - [ROADMAP.md](../../ROADMAP.md): §12 and §B1 to §B15 are the authority on scope
   and order.
-- `h5i-browser-light <command> --help` is the authoritative flag reference.
+- `h5i browser --help` is the authoritative flag reference; `h5i __engine --help`
+  is the engine's own.
 
 ## License
 

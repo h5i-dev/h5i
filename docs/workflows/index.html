@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The h5i workflow: box, forum, work, export, apply</title>
-  <meta name="description" content="The end-to-end h5i loop for Claude Code and Codex: copy the code into a disposable box per agent, put those boxes on one Git-backed forum so they can compare notes without sharing a credential, let each build and test and drive a browser inside its own boundary, then export a patch, a report and an execution receipt and decide what to take.">
+  <title>The h5i workflow: browse, contain, work, export, apply</title>
+  <meta name="description" content="The end-to-end h5i loop for Claude Code and Codex: open a browser session an agent drives and you audit, place it inside a disposable box when the record needs a witness outside the browser, let the agent build and test in the same boundary, put several boxes on one Git-backed forum when the task needs more than one agent, then export a patch, a report and an execution receipt and decide what to take.">
   <meta name="keywords" content="h5i workflow, multi-agent workflow, agent forum, agent sandbox workflow, h5i box, coding agent loop, export patch receipt, claude code sandbox, codex sandbox, disposable dev environment">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
@@ -37,7 +37,8 @@
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "step": [
       {"@type": "HowToStep", "name": "Install", "text": "Install the binary with the install script or cargo install, then run h5i skill install so your agent knows how to use it.", "url": "https://h5i.dev/workflows/#install"},
-      {"@type": "HowToStep", "name": "Make a box", "text": "h5i box . snapshots this repository at HEAD. h5i box --pr 1234 takes a pull request, a URL clones an external repository, and --new starts empty. The policy is resolved and hashed before any state exists on disk.", "url": "https://h5i.dev/workflows/#box"},
+      {"@type": "HowToStep", "name": "Open a browser session", "text": "h5i browser open opens a session an agent drives by id. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused.", "url": "https://h5i.dev/workflows/#session"},
+      {"@type": "HowToStep", "name": "Make a box", "text": "h5i box . snapshots this repository at HEAD. h5i box --pr 1234 takes a pull request, a URL clones an external repository, and --new starts empty. Adding --in to h5i browser open places the session inside that box, which adds an egress allowlist enforced outside the browser.", "url": "https://h5i.dev/workflows/#box"},
       {"@type": "HowToStep", "name": "Work in it", "text": "h5i box shell drops you or an agent into the box with stdio inherited, so every command the session spawns is contained. Build, test, start the dev server, drive the browser.", "url": "https://h5i.dev/workflows/#work"},
       {"@type": "HowToStep", "name": "Export and apply", "text": "h5i box export writes patch.diff, report.md and receipt.json. Read the report, starting with denied egress attempts, then git apply --3way the patch wherever you want it.", "url": "https://h5i.dev/workflows/#export"}
     ]
@@ -73,13 +74,14 @@
   <article class="post">
     <header>
       <div class="post-eyebrow">h5i Workflow</div>
-      <h1>Box, forum, work, export, apply</h1>
+      <h1>Browse, contain, work, export, apply</h1>
       <p class="post-deck">
-        The whole loop on one page. Copy the code into a disposable box that holds the agent, the
-        toolchain, the dev server and a browser. Put one box per agent on a shared forum when the task
-        needs more than one of them. Let them work, then read a patch, a report and an execution receipt
-        and decide what to take. <strong>Nothing of your machine goes in, no agent holds another's keys,
-        and nothing comes out that you have not looked at.</strong>
+        The whole loop on one page. Open a browser session an agent drives by id and you audit by
+        reading its request log. Place that session inside a disposable box when the record needs a
+        witness outside the browser, and put the code, the toolchain and the dev server in there too.
+        Add a forum when the task needs more than one agent. Then read a patch, a report and an
+        execution receipt and decide what to take. <strong>A request that is not in the log did not
+        happen, and nothing comes out that you have not looked at.</strong>
       </p>
       <div class="post-meta">
         <span><strong>Updated</strong> 2026-08-20</span>
@@ -89,9 +91,10 @@
     </header>
 
     <div class="callout">
-      <strong>The commands that matter.</strong> <code>h5i box .</code> makes a box.
-      <code>h5i forum create</code> and <code>h5i forum attach</code> put boxes on one conversation.
+      <strong>The commands that matter.</strong> <code>h5i browser open &lt;url&gt;</code> opens a
+      session. <code>h5i box .</code> makes a sandbox and <code>--in</code> puts the session in it.
       <code>h5i box shell &lt;name&gt;</code> is where the agent runs.
+      <code>h5i forum create</code> and <code>h5i forum attach</code> put boxes on one conversation.
       <code>h5i box export &lt;name&gt; --out ./review</code> is the only way out.
       <code>git apply --3way ./review/patch.diff</code> lands it. Everything below is those with the
       reasoning attached.
@@ -124,7 +127,49 @@
       exec while Landlock, seccomp and user namespaces all report present.
     </p>
 
-    <h2 id="box">2. Make a box</h2>
+    <h2 id="session">2. Open a browser session</h2>
+    <p>
+      A session is the whole agent-facing surface: one page state, one cookie jar, one request log,
+      one policy. <code>start</code> prints an id, every verb names that id, <code>close</code> ends
+      it. Nothing else is a concept the agent has to learn.
+    </p>
+
+    <div class="terminal">
+      <div class="terminal-bar"><span class="terminal-path">a session, on this machine</span></div>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --allow docs.rs</span>
+<span class="t-pass">&#10004;</span>  browser session <span class="t-ai">br_7k2xqa</span>
+   placed   : <span class="t-out">this machine (no containment beyond the engine)</span>
+   requests : <span class="t-warn">engine-claimed</span> <span class="t-out">(fail-closed, and the engine&#39;s own account of what it fetched)</span>
+
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>      <span class="t-cmt"># outline, with @ref handles</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e3</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests</span>      <span class="t-cmt"># refusals included</span></pre></div>
+    </div>
+
+    <p>
+      That runs here, in your ordinary process space, and h5i says so on the placement line rather
+      than letting you assume a sandbox you do not have. What it gives you without one is the record:
+      the engine is the HTTP client, so it checks the policy, writes the decision, and only then
+      touches the wire. When the record cannot be written the fetch is refused. There is no path that
+      reaches the network quietly.
+    </p>
+
+    <p>
+      Read the log the same way you read a receipt. A denied request is in it with its reason, so
+      the log shows what was <em>attempted</em> and not only what succeeded, and a redirect out of the
+      allowlist is refused at the hop rather than followed and explained afterwards.
+    </p>
+
+    <div class="callout">
+      <strong>Sessions end, and the ending is written down.</strong> A verb sent to a session that is
+      not live is refused with exit code 69 and never silently restarted. An agent whose retry cannot
+      tell &#8220;the session is gone&#8221; from &#8220;the click did not work&#8221; quietly starts a
+      second browser and loses both the page it was reasoning about and the record of losing it.
+      <code>--restore</code> carries the old storage into a <em>new</em> id, with the inheritance
+      recorded; an id is never reused.
+    </div>
+
+    <h2 id="box">3. Make a box</h2>
     <p>
       Where the code comes from decides the shape of the box, and the difference matters more than
       the syntax suggests.
@@ -173,7 +218,7 @@
       you want, because a silent downgrade puts a claim in the record the run never had.
     </p>
 
-    <h2 id="forum">3. Put them on a forum</h2>
+    <h2 id="forum">4. Put them on a forum</h2>
     <p>
       One box is a solved problem. The moment a second agent needs to see what the first found, the
       usual answer is a shared credential: an issue tracker, a chat API, a directory both can write.
@@ -241,7 +286,7 @@
       refused teaches its readers that nothing was refused.
     </p>
 
-    <h2 id="work">4. Work in it</h2>
+    <h2 id="work">5. Work in it</h2>
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">work</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box shell fix-auth</span>
@@ -276,7 +321,7 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i ui</span>                          <span class="t-cmt"># the whole fleet, read-only, every route a GET</span></pre></div>
     </div>
 
-    <h2 id="export">5. Export, read, apply</h2>
+    <h2 id="export">6. Export, read, apply</h2>
     <div class="terminal">
       <div class="terminal-bar"><span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span><span class="terminal-path">export</span></div>
       <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box diff fix-auth</span>                    <span class="t-cmt"># against the pinned base</span>

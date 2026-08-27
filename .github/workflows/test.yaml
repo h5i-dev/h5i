@@ -396,10 +396,12 @@ jobs:
       # Compile-only, so the console bundle is irrelevant: skip the npm build
       # (the build script stubs web/dist so `rust-embed` still resolves) rather
       # than put Node on four more runners.
-      # Both products, in two invocations rather than one `-p a -p b`, because
-      # that is exactly how `release.yaml` builds them: `-p h5i-browser-light`
-      # resolves features over the engine's dependency graph alone, and a
-      # unified check would hide anything that graph is missing on its own.
+      # The engine is checked a second time on its own, even though the root
+      # check now compiles it as a dependency. `-p h5i-browser-light` resolves
+      # features over that crate's graph alone, and the workspace's unified
+      # resolution can quietly supply a feature the crate never asked for — so
+      # the standalone check is what keeps the crate self-contained, which its
+      # own test binary depends on.
       - name: cargo check
         env:
           H5I_SKIP_WEB_BUILD: "1"

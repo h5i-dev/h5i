@@ -1,8 +1,120 @@
+# ROADMAP: h5i as a secure, auditable browser for AI agents
+
+Status: in progress, 2026-08-27. **This section is the scope authority.** It
+supersedes the "contained agentic development environment" positioning below,
+which itself superseded "auditable workspaces / provenance". Both are kept as
+history for the parts we keep, and both describe real, shipped machinery. What
+changed is which part is the product.
+
+## The pivot, and why the assets already point at it
+
+The one-liner is now:
+
+> Give an AI agent a browser it can drive and you can audit. Every request is
+> policy-checked and written down before the bytes move, and the fetch is
+> refused when the record cannot be written.
+
+Nothing was thrown away to get here. The engine (`crates/h5i-browser-light`),
+the fail-closed request broker, the egress proxy, the receipt lanes, the
+control lock and the box tiers were all built for the environment story and all
+of them are load-bearing for this one. What the pivot does is put the piece with
+no equivalent elsewhere at the front. Playwright and Puppeteer drive a browser;
+neither can tell you what it reached, because neither *is* the HTTP client.
+
+## The three decisions this pivot rests on
+
+1. **The sandbox is opt-in.** `h5i browser open` runs on the host, like any
+   other headless browser, and h5i says so on the placement line rather than
+   letting the word "browser" imply a boundary. Requiring a box up front would
+   have made hello-world fail on CI, under AppArmor, on macOS and inside a
+   container, which is fatal for adoption and buys nothing the record does not
+   already give. Containment is `--in <box>`.
+2. **The box stays a separate, orthogonal product surface.** It is not the
+   browser's implementation detail, so it stays agent-facing. `h5i box run --
+   h5i browser open` is ordinary composition; `--in` is sugar over the same
+   placement.
+3. **The lane is earned, not assumed.** A boxed session is `host-observed` only
+   when something outside the engine decides what may leave. A box that lets the
+   browser reach the whole network corroborates nothing and keeps the
+   `engine-claimed` label. See `browser_session::Session::lane_for`.
+
+## The id is not the interface
+
+`h5i browser open` makes a session and points the **default** at it; every verb
+that follows lands there. The opaque id (`br_7k2xqa`) is in the record, in
+`--json` and in the receipts, because a durable reference has to survive a
+rename — and it is not what anyone types.
+
+Demanding one on every verb is the shape of a remote-browser HTTP API
+(Browserbase returns an `id` and a `connectUrl` for exactly this reason), where
+the id exists because the client and the browser share nothing else. Playwright
+never shows one because the caller holds the object. A local CLI is nearer to
+Playwright than to Browserbase: it shares a filesystem with the browser, so the
+id can stay where it belongs.
+
+Names, not ids, are for running several at once (`--session auth`), and a name
+is comfortable precisely because it is *not* an identity: it can be reused once
+the session it named has ended.
+
+Two rules fell out of building it, both of them about not moving under an agent:
+
+- **No "if only one is live, use it".** It reads as helpful and silently
+  redirects the next verb the moment a second session exists.
+- **The default outlives the session it names.** Following a pointer to a closed
+  session is what lets the next bare verb say *"the session you were on was
+  closed"* instead of *"no session is open"*. Only a pointer to a record that is
+  gone is dropped.
+
+## What is agent-facing, and what is not
+
+| concept | agent-facing? |
+| --- | --- |
+| session | yes, but usually implicitly: `open` sets the default and verbs follow it. |
+| session name | yes, for running several at once (`--session auth`). |
+| session id | no. Durable reference, in `--json` and receipts; never typed. |
+| tab | yes, when there is more than one page in a session. |
+| box | yes, but as a *placement*, never as part of a session's definition. |
+| connection, worker, CDP session | no. Internal, and deliberately unnamed. |
+
+The rule the table encodes: a thing that is a session's own implementation does
+not get a name in the CLI, and a thing that stands beside a session does.
+
+## Built, 2026-08-27
+
+- `browser_session`: the host-owned registry. Ids that are never reused,
+  five states, endings written down, `EXIT_SESSION_GONE`, host-named artifacts,
+  and the scrubber every relayed answer goes through.
+- `h5i browser` as the front door: `start`, `list`, `status`, `close`, the
+  fourteen session verbs, and the control lock moved onto the session.
+- `--in <box>`: the engine runs as a *service* (the writer lock would otherwise
+  shut every later verb out of its own box), and verbs are carried in over a
+  Unix socket (every `box run` gets a fresh netns, so a port cannot be reached
+  from the next run). Preflighted, so a box that cannot hold a session says why
+  before anything starts.
+- `env::service_start_with_def` and the engine's `--control-socket`, both added
+  for the above.
+
+## Open, and honest about it
+
+- **Supervised and container cannot hold a resident process** (h5i-sandbox's
+  `spawn_background`, "Idea 3.5"). Those are also the two tiers that enforce an
+  egress allowlist on Linux, so today the only tier that both holds a session
+  and earns `host-observed` is `microvm`. Closing this is the single highest
+  -value piece of remaining work: it is what makes the product's central claim
+  reachable on an ordinary Linux box.
+- **One session per box.** One resident engine, one service name. Enough for
+  now; a second would need per-session service names and stream files.
+- **No browser-first demo film.** `docs/demo/` still tells the box story and is
+  labelled as such (`docs/demo/README.md`).
+
+---
+
 # ROADMAP: h5i as a contained agentic development environment
 
-Status: in progress, 2026-08-05. Supersedes the "auditable workspaces /
-provenance" positioning for the product surface. Design docs under `roadmap/`
-stay as history for the parts we keep.
+Status: superseded 2026-08-27 by the section above, and retained because every
+section below still describes machinery that exists and is tested. Read it as
+the reference for the box, the forum, the runner, the detection lane and the
+Lean work, not as the product's framing.
 
 This document has five parts:
 
@@ -175,7 +287,7 @@ h5i box allow <host>         # persistent egress allowlist entry
 h5i box cache ls|refresh|rm  # per project warm dependency caches
 
 h5i browser status|take|release   # the control lock, and who holds it
-h5i browser url                  # the viewer URL for this box
+h5i browser url  # the viewer URL for this box
 
 h5i skill install|show|path      # write or print the embedded agent skill
 

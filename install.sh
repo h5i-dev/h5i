@@ -8,26 +8,24 @@ main() {
   INSTALL_DIR="${H5I_INSTALL_DIR:-/usr/local/bin}"
 
   # ── what to install ────────────────────────────────────────────────────────
-  # Two products ship from one release. `h5i` is the confined development
-  # environment; `h5i-browser-light` is its browser engine, which also runs on
-  # its own with no h5i anywhere.
-  #
-  # One script rather than two, because almost everything below is shared and
-  # security-critical: target mapping, the Rosetta refusal, checksum
-  # verification, and the ownership handling that exists because a
-  # workspace-tier agent shares the invoking uid. A second copy of that is a
-  # second place for it to drift, and the drift would be silent.
+  # One binary. The rendering engine used to ship as a second file
+  # (`h5i-browser-light`) and is now linked into `h5i`, which execs itself to
+  # become it. That removed three things at once: a default install that left
+  # `h5i browser open` with nothing to render a page, a version skew between two
+  # halves of one protocol with no handshake between them, and a box that could
+  # read the engine without being allowed to exec it.
   BINARIES="h5i"
   for arg in "$@"; do
     case "$arg" in
-      --with-browser) BINARIES="h5i h5i-browser-light" ;;
-      --browser-only) BINARIES="h5i-browser-light" ;;
+      # Both accepted and both no-ops: there is one binary now, and quietly
+      # rejecting a flag that used to work breaks scripts for no gain.
+      --with-browser | --no-browser | --browser-only) ;;
       -h | --help)
-        echo "Usage: install.sh [--with-browser | --browser-only]"
+        echo "Usage: install.sh"
         echo
-        echo "  (no flag)        install h5i"
-        echo "  --with-browser   install h5i and the h5i-browser-light engine"
-        echo "  --browser-only   install only h5i-browser-light"
+        echo "  Installs h5i, which includes the browser engine."
+        echo "  --with-browser, --no-browser and --browser-only are accepted"
+        echo "  and do nothing: the engine is part of the binary now."
         echo
         echo "Environment: H5I_INSTALL_DIR, H5I_VERSION, H5I_SKIP_CHECKSUM"
         exit 0

@@ -94,7 +94,7 @@
     <li><a href="https://github.com/h5i-dev/h5i" class="nav-cta">GitHub &rarr;</a></li>
   </ul>
 </nav><main class="article-wrap"><article class="post">
-<header><div class="post-eyebrow">Guide 04 / Browser &middot; 2026-08-21</div>
+<header><div class="post-eyebrow">Guide 06 / Takeover &middot; 2026-08-21</div>
 <h1>Watch the page, then take the controls</h1><p class="post-deck">The browser belongs inside the same boundary as the code and dev server. You still need a way to see it—and a handoff that cannot turn a stale page reference into the wrong click.</p>
 <div class="post-meta"><span>9 min read</span><span>Dev server &middot; Viewer &middot; Control lock</span></div></header>
 
@@ -149,7 +149,7 @@ $ less ./browser-review/report.md</code></pre></div></div>
 <h2 id="troubleshoot">If no frames arrive</h2>
 <p>Keep the box session running, confirm <code>agent-browser stream enable</code> succeeded, and check <code>h5i browser status browser-demo</code>. At isolated tiers the viewer finds the namespace through the live session's process, so an exited shell leaves no namespace to enter. If the dev server is missing, inspect it inside the same shell instead of publishing a replacement on the host.</p>
 <h2 id="sources">Reference</h2>
-<ul><li><a href="/manual/#h5i-box-view">Browser and terminal viewer reference</a>.</li><li><a href="/manual/#driving-the-browser-itself">Browser engine and control-lock commands</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser-light">The local browser implementation</a>.</li></ul>
+<ul><li><a href="/manual/#h5i-box-view">Browser and terminal viewer reference</a>.</li><li><a href="/manual/#h5i-browser">Browser session and control-lock commands</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser-light">The local browser implementation</a>.</li></ul>
 <h2 id="faq">Questions that come up</h2><div class="faq-list"><details class="faq-item"><summary>Does h5i publish the box's browser port?</summary><div class="faq-answer">No. h5i enters the box's network namespace by process id, connects from inside, and hands the socket back out through a loopback-only authenticated viewer.</div></details><details class="faq-item"><summary>Why do page references become stale after a handoff?</summary><div class="faq-answer">A human can change navigation, focus, and DOM state. Invalidating old handles forces the agent to observe the new page before acting, preventing a stale reference from targeting the wrong element.</div></details><details class="faq-item"><summary>Can I watch over SSH?</summary><div class="faq-answer">Yes, with h5i box view --term in a terminal that supports the Kitty graphics protocol. This path does not bind a port.</div></details></div>
 <a class="next-up" href="/blog/the-environment-is-the-sandbox/"><span class="label">Read the principle</span><h3>The environment is the sandbox</h3><p>Why the browser, server, shell, and agent must share one boundary.</p></a>
 <div class="post-cta"><h3>Put localhost inside the boundary</h3><p>Let the agent exercise the same application you are watching without publishing its internal ports.</p>

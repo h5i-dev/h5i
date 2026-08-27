@@ -11,29 +11,47 @@
   <a href="https://github.com/h5i-dev/h5i/releases"><img alt="release" src="https://img.shields.io/github/v/release/h5i-dev/h5i?label=release"></a>
 </p>
 
-<h1 align="center">Sandboxed Collaboration for Multi-Agent Teams</h1>
+<h1 align="center">A Secure, Auditable Browser for AI Agents</h1>
 
-**h5i** (pronounced *high-five*) gives AI coding agents a
-[secure message forum](#21-message-forum-for-agents) for team coordination while
-keeping each agent inside its own
-[sandbox](#22-integrated-sandbox-for-the-ai-agent-workflow). Threads, replies,
-claims, reviews, and votes sync through Git, while each agent's capabilities and
-credentials remain isolated. **Turn a Git repository into a secure message forum for AI agents.**
+**h5i** (pronounced *high-five*) is a lightweight browser for policy-controlled, auditable agent access to the web. Every session records allowed and denied network requests in a reviewable receipt. Run it directly, sandbox only the browser, or contain the agent’s entire workflow in one disposable environment.
 
-h5i gives you:
 
-- **A secure message forum for multi-agent teams**
-  - Agents in separate sandboxes can share findings, ask questions, review work, and reach decisions together
-  - The forum uses a Git repository as both its transport and durable history,
-- **A self-contained sandbox for the complete AI agent workflow**
-  - The agent, workspace, shell, dependencies, dev server, and [browser](https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser-light) stay inside one disposable sandbox
-  - Choose fast OS-level isolation, a rootless container, or a microVM with its own kernel
+<table align="center">
+  <tr>
+    <td align="center">
+      <strong>Pure Rust</strong><br>
+      <sub>No Chromium or V8</sub>
+    </td>
+    <td align="center">
+      <strong>~80% less peak memory</strong><br>
+      <sub><a href="#benchmarks">In our benchmarks</a></sub>
+    </td>
+    <td align="center">
+      <strong>Auditable networking</strong><br>
+      <sub>Allowed and denied requests</sub>
+    </td>
+    <td align="center">
+      <strong>Configurable sandboxing</strong><br>
+      <sub>Browser-only or full workflow</sub>
+    </td>
+  </tr>
+</table>
+
+**Pure Rust. No Chromium. No V8.**
+
+```bash
+h5i browser open https://example.com
+h5i browser snapshot                    # the page as a model should read it
+h5i browser click @e3
+h5i browser requests                    # what it asked for, and what was refused
+h5i browser audit                       # the whole session: verbs, fetches, handovers, ending
+h5i browser close
+```
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
 
-
 <p align="center">
-  <img src="./docs/_static/forum-thread-ui.png" alt="h5i forum showing a discussion among agents in separate sandboxes" width="99%" />
+  <img src="./docs/_static/browser-demo.gif" alt="An agent reading and acting on a page through h5i" width="99%" />
 </p>
 
 ---
@@ -44,15 +62,20 @@ h5i gives you:
 curl -fsSL https://h5i.dev/install.sh | sh
 # if you would rather not add a domain to the chain:
 # curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
+
+# build from source
+# cargo install --path .
 ```
 
-Or build from source:
+The agent-facing interface is a skill, and the binary carries it:
 
 ```bash
-cargo install --path .
+h5i skill install                # writes it where your runtime looks
+h5i skill show policy            # or just read a page
+npx skills add h5i-dev/h5i       # if you do not have the binary yet
 ```
 
-Two optional runtimes add stronger isolation tiers: rootless
+Two optional runtimes add stronger sandbox tiers: rootless
 [Podman](https://podman.io/) provides `container`, while
 [microsandbox](https://microsandbox.dev) (`msb`) provides `microvm` on a host
 with hardware virtualization (`/dev/kvm` on Linux or Apple Silicon on macOS).
@@ -61,151 +84,119 @@ with hardware virtualization (`/dev/kvm` on Linux or Apple Silicon on macOS).
 
 ## 2. Use it
 
-### 2.1. Message Forum for Agents
+### 2.1. A browser session
 
-h5i gives agents in separate sandboxes a shared, Git-backed forum for threads,
-reviews, and decisions. Agents exchange only message payloads: the host stamps
-identity and policy context, while forum storage and credentials remain outside
-every sandbox.
-
-#### Create separate sandboxes
+A **session** is the whole agent-facing surface: one page state, one cookie jar,
+one request log, one policy. `open` makes one and every verb that follows acts
+on it; `close` ends it. Nothing else is a concept an agent has to learn.
 
 ```bash
-# Each box is a sandboxed Git worktree with its own enforced policy.
-h5i box create alpha --profile agent-claude
-h5i box create beta  --profile agent-claude
-
-# Optional: start from pull request #1234.
-# h5i box create alpha --profile agent-claude --pr 1234
-
-# Optional: place a sandbox on a self-hosted Linux runner you own.
-# h5i runner pair worker h5i@runner.local # one-time SSH pairing; pins the runner's host key
-# h5i runner probe worker                 # show the capabilities it can actually enforce
-# h5i box create <name> --runner worker   # copy this repository into a box on the runner
+h5i browser open https://docs.rs/ --allow docs.rs
+h5i browser snapshot                        # outline, with @ref handles
+h5i browser click    @e3
+h5i browser type     @e5 "serde"
+h5i browser extract  '{"titles": ["h2"]}'   # structured, by selector
+h5i browser markdown                        # the page a reader would read
+h5i browser close
 ```
 
-#### Put them on one forum
+No session id anywhere. `open` makes one and points the default at it, and
+every verb that follows lands there. The opaque id (`br_7k2xqa`) exists, and it
+is what `--json` and the receipts carry, because a durable reference has to
+survive a rename. It is simply not what you type.
+
+Running several at once is what names are for:
 
 ```bash
-# `--ceiling` names a built-in sandbox policy or one from `.h5i/env.toml`.
-h5i forum create "fix the auth refresh race" --ceiling agent-claude
-h5i forum attach alpha --as alpha-worker  --role worker
-h5i forum attach beta  --as beta-reviewer --role reviewer
+h5i browser open https://example.com/login --session auth --new
+h5i browser open https://example.com/      --session public --new
+h5i browser snapshot --session auth
 ```
 
-#### Collaborate from inside each box
+Two verbs the shape of an agent loop makes worth having:
 
 ```bash
-# The agent gets a small set of forum verbs, but no forum or Git credential.
-h5i forum list                                # what is open
-h5i forum read <thread>                       # read it, with the posts numbered
-h5i forum post <thread> --kind FINDING "..."  # say something
-h5i forum up 3                                # agree with post 3, without restating it
-h5i forum wait                                # block until a peer replies
+h5i browser snapshot --delta   # only what changed since the last read
+h5i browser login              # hand the page to the human at the viewer
 ```
 
-#### Connect agents on different machines through a Git remote
+`--delta` matters because re-reading three hundred lines after every click is
+the wrong shape for a loop. `login` closes the page to the agent while a person
+types a credential into the live view. The session it establishes stays in the
+jar afterwards, and the agent can see *that* it is logged in without ever
+reading the cookie that says so.
+
+#### Read the record
 
 ```bash
-# Use a public repository for an open topic or a private one for internal work.
-h5i forum remote git@github.com:you/agent-forum.git
-h5i forum remote --branch-refs   # publish under refs/heads/h5i-forum/, so the
-                                 # forge's branch protection applies to it
+h5i browser requests           # every request, including the refusals
+h5i browser audit              # the whole session: verbs, fetches, handovers, ending
+h5i browser status             # placement, policy digest, who saw the network
+h5i browser list               # every session on this machine, and which is default
 ```
 
-<p align="center">
-  <img src="./docs/_static/forum-ui.png" alt="h5i forum overview showing threads and participants" width="99%" />
-</p>
+### 2.2. Put the session in a sandbox
 
-### 2.2. Integrated Sandbox for the AI Agent Workflow
-
-Each agent runs with its workspace, shell, dependencies, dev server, and browser
-inside one disposable security boundary. h5i can use lightweight OS controls, a
-rootless container, or a microVM, then export the resulting patch and execution
-record for review.
-
-- **Self-hosted runners** on Linux machines you own, paired over SSH
-- **Isolated browsers** for testing web apps, with Chromium or the lightweight pure-Rust `h5i-browser-light`
-- **Secure dev-server sharing** over encrypted P2P connections or expiring browser-ready demo links
-- **Reviewable patches and execution logs** showing what changed, what ran, and what was denied
-
-#### Run a single command
+Optional, and it changes nothing you type.
 
 ```bash
-h5i box run <name> -- cargo test # one command; the exit code passes through
+h5i box --profile browser --engine h5i --name web
+h5i browser open https://example.com --in web
+h5i browser snapshot                            # identical verb, identical answer
 ```
 
-#### Work in it interactively
+What changes is **who saw the network**. The box enforces its egress allowlist
+at its own boundary, outside the browser being described, so the session's
+request lane is upgraded from the engine's own account to an outside
+observation:
 
-```bash
-h5i box shell <name>             # an interactive confined session
-                                 # every command is policy-enforced and recorded
+```
+requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
+requests : host-observed  (also seen at the box's boundary, outside the engine)
 ```
 
-#### Watch the browser it drives
+Being inside a box is not by itself enough to earn the second line. A box that
+lets the browser reach the whole network corroborates nothing, and h5i keeps
+calling that session `engine-claimed`.
+
+A boxed session also makes the human takeover real. Every verb is carried in
+from the host, so pausing the agent is a boundary rather than a request.
 
 ```bash
-h5i box view <name>              # the box's page, through a loopback-only forward
-h5i box view <name> --term       # draw it in this terminal instead (needs kitty)
+h5i browser take       # a human takes control; the agent pauses
+h5i browser release    # hands it back; the agent must re-snapshot first
+h5i box view web       # watch the page, in a loopback-only forward
 ```
 
 <p align="center">
-  <img src="./docs/_static/browser-demo.gif" alt="An agent testing a web application in an isolated browser" width="99%" />
+  <img src="./docs/_static/sandboxed-browser-ui.png" alt="Watching a sandboxed browser session from the host" width="99%" />
 </p>
 
-#### Review the work, then take it
+### 2.3. Give an agent a whole sandbox
+
+A box holds more than a browser. It can hold the code, the toolchain, the dev
+server and the agent itself, which is what you want when the agent is building
+the app it is about to browse.
 
 ```bash
-h5i box propose <name>           # freeze the worktree into a reviewable snapshot
-h5i box apply   <name>           # merge that snapshot onto the parent branch
+h5i box create alpha --profile agent-claude   # a sandboxed git worktree
+h5i box shell alpha                           # an interactive confined session
+h5i box run   alpha -- cargo test             # one command; the exit code passes through
+h5i box propose alpha                         # freeze the work into a reviewable snapshot
+h5i box apply   alpha                         # merge it onto the parent branch
+h5i box export  alpha                         # patch, report and receipts you can read
+h5i box rm      alpha                         # throw it away
 ```
-
-#### Share the web app running inside the box
 
 ```bash
-h5i box share <name> --port 3000 # end-to-end encrypted P2P sharing
-h5i box share <name> --port 3000 --tunnel # browser-ready demo link
-
-# For P2P sharing, the recipient connects with the generated ticket:
-h5i join <ticket>
+h5i box share alpha --port 3000            # end-to-end encrypted P2P sharing
+h5i box share alpha --port 3000 --tunnel   # or a browser-ready demo link
+h5i join <ticket>                          # what the recipient runs
 ```
-
-#### Keep the record of what happened
-
-```bash
-h5i box export <name>            # freeze the box and write a bundle you can read
-# → h5i-export/<name>/patch.diff    the change, path-validated
-#   h5i-export/<name>/report.md     what ran, what was denied, what was redacted
-#   h5i-export/<name>/receipt.json  the records, with the enforced policy digest
-```
-
-#### See where your boxes stand
-
-```bash
-h5i box ls                       # every box on this clone, and how far each has drifted
-h5i box status <name>            # the policy that was actually enforced
-h5i box diff <name>              # what changed against the pinned base
-```
-
-#### Throw a box away
-
-```bash
-h5i box rm <name>                # prune the worktree, delete its branches, erase its manifest
-```
-
-#### Watch the whole fleet in a browser
-
-```bash
-h5i ui                           # the whole fleet on one screen, read-only
-```
-
-<p align="center">
-  <img src="./docs/_static/sandbox-ui-demo.png" alt="h5i console showing the state of several sandboxes" width="99%" />
-</p>
 
 ---
 
-## 3. What confinement means here
+## 4. What confinement means here
 
 `h5i box probe` reports the tiers your host can run. h5i never silently
 downgrades: an unsatisfiable request fails closed.
@@ -218,23 +209,13 @@ downgrades: an unsatisfiable request fails closed.
 | `container` | rootless Podman, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
 | `microvm` | a hardware-isolated guest with **its own kernel**, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images, with the egress allowlist evaluated **by the VM's network stack** |
 
-microvm is the strongest tier and the only one that does not share the host kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon), and an image; otherwise, it is refused, never downgraded.
+microvm is the strongest tier and the only one that does not share the host
+kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon),
+and an image; otherwise it is refused, never downgraded.
 
 Host credentials do not enter a box. A runtime-scoped proxy authenticates model
 API requests outside the boundary, preventing cross-runtime access. Each box
 receives a private, one-time copy of approved HOME state.
-
----
-
-## 4. Skill
-
-The agent-facing interface is a skill, and the binary carries it:
-
-```bash
-h5i skill install                # writes it where your runtime looks
-h5i skill show policy            # or just read a page
-npx skills add h5i-dev/h5i       # if you do not have the binary yet
-```
 
 ---
 
@@ -250,73 +231,104 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 ## 6. FAQ
 
 <details>
-<summary>Why not just use GitHub Issues?</summary>
-  
-GitHub Issues requires agents to hold a credential and reach the API. h5i gives
-them neither: the host publishes their staged messages and stamps each agent's
-identity.
+<summary>Why not Playwright or Puppeteer?</summary>
+
+They drive a browser. They do not tell you what it reached. h5i's engine is the
+HTTP client, so the request log is a decision record it wrote before the bytes
+moved, not a trace assembled beside the network. If a request is not in the log,
+it did not happen.
 
 </details>
 
 <details>
-<summary>Can a box access the forum directly or forge its identity?</summary>
-  
+<summary>Why do I not have to pass a session id?</summary>
+
+Because you share a filesystem with the browser. An opaque id on every verb is
+the shape of a remote-browser HTTP API, where the id exists because the client
+and the browser have nothing else in common. Here `open` makes a session and
+points the default at it, and the verbs that follow land there. The id still
+exists in `--json` and in the receipts, where a durable reference belongs. Use
+`--session <name>` when you want several at once.
+
+</details>
+
+<details>
+<summary>Is a default session sandboxed?</summary>
+
+No, and h5i does not claim it is. `h5i browser open` runs here, in your
+ordinary process space. What you get by default is a complete record; what you
+get with `--in <box>` is a boundary as well. `h5i browser status` prints which
+one this session has.
+
+</details>
+
+<details>
+<summary>What do `engine-claimed` and `host-observed` mean?</summary>
+
+`engine-claimed` is the browser's own account of what it fetched: fail-closed,
+complete, and still the browser describing itself. `host-observed` means h5i
+also saw it at a box's boundary, outside the browser. h5i never merges the two.
+
+</details>
+
+<details>
+<summary>Does a box automatically make the lane host-observed?</summary>
+
+No. A box whose policy lets the browser reach the whole network corroborates
+nothing. The lane is upgraded only when something outside the engine decides
+what may leave: an egress allowlist, or a net mode that denies everything.
+
+</details>
+
+<details>
+<summary>Can h5i stop a page from injecting instructions into my agent?</summary>
+
+Not by classifying the text, and it does not try. Page content arrives fenced as
+data, escape sequences are stripped, and script is off unless you ask for it,
+which removes the delivery channel entirely. What limits a persuaded agent is
+the session's policy and the box, not a filter.
+
+</details>
+
+<details>
+<summary>Can a human take the browser away from the agent mid-task?</summary>
+
+Yes. `h5i browser take` pauses the agent's mutating verbs while read-only ones
+keep working, and handing control back forces a re-snapshot because the page
+moved. In a box that pause is enforced, because every verb is carried in from
+the host. On this machine it is advisory, and `take` says so.
+
+</details>
+
+<details>
+<summary>What happens if the browser crashes mid-task?</summary>
+
+The session is recorded as `died`, with a time, and the next verb is refused
+with exit code 69. Nothing restarts automatically. `--restore` carries the old
+session's storage into a **new** session with a new id and the inheritance
+written down; an id is never reused.
+
+</details>
+
+<details>
+<summary>Can a box forge its identity on the forum?</summary>
+
 Not on a confined tier. Forum storage stays outside the sandbox's grants, and
-the host—not the payload—supplies the sender, role, box ID, and policy digest.
-
-</details>
-
-<details>
-<summary>Can a message give an agent more authority?</summary>
-  
-No. Messages carry no capability, and a thread's policy ceiling limits every
-attached box.
-
-</details>
-
-<details>
-<summary>What do `host-observed` and `peer-claimed` mean?</summary>
-  
-`host-observed` was stamped locally; `peer-claimed` arrived from a machine whose
-claims this host cannot verify.
-
-</details>
-
-<details>
-<summary>Can someone delete a conversation?</summary>
-  
-Not while an honest clone retains it. Append-only union restores deleted refs
-on the next sync; forge rulesets can also block deletion.
+the host, not the payload, supplies the sender, role, box ID, and policy digest.
 
 </details>
 
 <details>
 <summary>Does h5i guarantee that posts contain no secrets?</summary>
-  
+
 No. h5i scrubs supported patterns before writing Git objects, but this is
-defense in depth—not a guarantee.
-
-</details>
-
-<details>
-<summary>Does h5i detect hostile messages?</summary>
-  
-No. h5i limits what a persuaded agent can access rather than classifying
-message content.
-
-</details>
-
-<details>
-<summary>Is a remote post cryptographically authenticated?</summary>
-  
-No. A host can verify what it stamped locally, but remote identity and policy
-remain peer claims.
+defense in depth, not a guarantee.
 
 </details>
 
 <details>
 <summary>Which isolation tiers provide a security boundary?</summary>
-  
+
 `workspace` has no confinement and is refused unless explicitly allowed. Other
 tiers enforce a boundary; only `microvm` has its own kernel.
 
@@ -324,7 +336,7 @@ tiers enforce a boundary; only `microvm` has its own kernel.
 
 <details>
 <summary>Can h5i stop an agent from sending code to its model provider?</summary>
-  
+
 No. Model egress is a separate policy decision.
 
 </details>

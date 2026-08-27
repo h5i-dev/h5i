@@ -289,6 +289,18 @@ fn columns(event: &ViewerEvent) -> (&'static str, String, String) {
             String::new(),
             format!("{source} restarted — ids continue, the log did not"),
         ),
+
+        EventKind::Control { holder, note } => (
+            "control",
+            holder.clone(),
+            note.clone().unwrap_or_default(),
+        ),
+
+        EventKind::Lifecycle { state, reason } => (
+            "session",
+            state.clone(),
+            reason.clone().unwrap_or_default(),
+        ),
     }
 }
 
@@ -333,6 +345,7 @@ mod tests {
         ViewerEvent {
             id: 7,
             observed_at: "2026-08-19T09:14:02.123456Z".to_string(),
+            claimed_at: None,
             lane,
             grade,
             caused_by: None,

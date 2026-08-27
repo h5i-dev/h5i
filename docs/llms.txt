@@ -1,22 +1,23 @@
 # h5i
 
-> h5i ("high-five") is open-source sandboxed collaboration for multi-agent teams. Agents in separate sandboxes coordinate on a Git-backed forum of threads, findings, reviews and votes, while each agent stays inside a disposable boundary holding its workspace, shell, dependencies, dev server, and isolated browser. No message carries a capability and no sandbox holds a forum credential, so agents share information and never permissions. Host files and reusable credentials stay outside. A human exports a reviewable patch and execution record when the work is done.
+> h5i ("high-five") is an open-source secure, auditable browser for AI agents. An agent drives a browser session by id and reads an outline with @ref handles; the engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Around the browser, h5i gives each agent a disposable box for the code, the toolchain and the dev server, and a Git-backed forum for several agents to coordinate on without sharing a credential.
 
 ## Start here
 
-- [Features](https://h5i.dev/features/): Product overview, the forum, isolation tiers, browser, output gate, and console.
+- [Features](https://h5i.dev/features/): Product overview, the browser session, isolation tiers, the forum, output gate, and console.
+- [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
 - [First box](https://h5i.dev/guides/first-box/): Install h5i and take one task from box creation to a reviewed patch.
-- [Run a forum](https://h5i.dev/guides/run-a-forum/): Put two confined agents on one thread without giving either a credential.
-- [Workflow](https://h5i.dev/workflows/): The complete box, forum, work, inspect, export, apply loop.
+- [Workflow](https://h5i.dev/workflows/): The complete browse, contain, work, inspect, export, apply loop.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
 ## Guides
 
-1. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
-2. [Put two confined agents on one problem](https://h5i.dev/guides/run-a-forum/): Open a thread with a policy ceiling, attach boxes under roles, and verify neither can reach the forum.
-3. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
-4. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
-5. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
+1. [Open a session and read what it reached](https://h5i.dev/guides/drive-a-browser-session/): Drive a page by @ref handle, then audit the fail-closed request log.
+2. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
+3. [Put two confined agents on one problem](https://h5i.dev/guides/run-a-forum/): Open a thread with a policy ceiling, attach boxes under roles, and verify neither can reach the forum.
+4. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
+5. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
+6. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
 
 ## Design essays
 
@@ -28,26 +29,42 @@
 
 ## Core model
 
-- A forum is Git refs the host owns; no sandbox can read or write them on a confined tier.
-- A box reaches the forum through a read-only inbox in and one staged record out. No socket, no port, no token.
-- The staged record has no sender field. The host stamps sender, role, box, and policy digest.
-- A thread names a ceiling profile; a box that exceeds it on any dimension is refused, never re-confined.
-- Roles are worker, reviewer, observer, human. create/attach/revoke/close are refused inside a box.
-- Forum attach refuses a workspace-tier box, because that tier enforces nothing.
+- A browser session holds one page state, one cookie jar, one request log, and one policy, addressed by an id.
+- The engine is the HTTP client: policy first, record second, wire third. A fetch that cannot be recorded is refused.
+- Denials are recorded with their reason, so the log shows what was attempted and not only what succeeded.
+- h5i browser audit merges verbs, fetch decisions, control handovers, and the ending into one ordered timeline.
+- Every audit row carries its lane: the engine's own account, or what h5i observed from outside. They are never merged.
+- An audit reports each source as read, empty, or unavailable, because an unwatched log is not a quiet session.
+- A fetch carries caused_by naming the verb the page was under; links come from the source, never from timing.
+- h5i box export writes browser/<id>.json per session placed in the box, and lists them in report.md.
+- A redirect out of the allowlist is refused at the hop, not followed and explained afterwards.
+- Snapshots arrive fenced as untrusted page content; escape sequences and control characters never reach the terminal.
+- Relayed strings, arrays, and nesting are capped, and the truncation is stated in the value.
+- Page JavaScript is off unless requested, which removes the page-borne injection delivery channel.
+- Session states are live, closed, died, expired, evicted. A verb on a non-live session exits 69 and never restarts it.
+- Session ids are never reused; --restore inherits storage into a new id and records the inheritance.
+- engine-claimed is the engine's own fail-closed account. host-observed means a box boundary saw it too.
+- A box upgrades the lane only when something outside the engine enforces egress; being boxed is not enough.
+- The control lock is enforced for a boxed session, because every verb is carried in from the host, and advisory otherwise.
+- Sessions live under $H5I_BROWSER_HOME or $XDG_STATE_HOME/h5i/browser, never under a git repository.
 - A box is a complete disposable development environment for one agent.
 - Five tiers: workspace, process, supervised, container, microvm.
 - Explicit isolation requests fail closed; h5i never silently downgrades.
 - supervised and microvm enforce egress at L3/L4. container uses an L7 proxy allowlist.
 - Model credentials remain host-side and are injected by a runtime-scoped proxy.
+- A forum is Git refs the host owns; no sandbox can read or write them on a confined tier.
+- The staged forum record has no sender field. The host stamps sender, role, box, and policy digest.
 - h5i box export produces patch.diff, report.md, and receipt.json.
-- Every receipt names the policy digest and the observer lane.
 - h5i is local-first, Apache-2.0, and requires no hosted sandbox or SaaS account.
 
 ## Honest limits
 
-- Messages carry no capability, so h5i bounds a persuaded agent rather than detecting the message that persuaded it.
-- Remote posts are peer-claimed: identity and policy from another machine are not cryptographically verified.
-- An idle box's inbox goes stale until something runs in it or a human touches the forum. There is no daemon.
+- A session on the host is not sandboxed and h5i does not claim it is. Containment is the --in flag.
+- The engine is not a complete browser: canvas, WebSockets, Workers, and IndexedDB are absent.
+- h5i does not classify page content. It bounds what a persuaded agent can reach rather than detecting persuasion.
+- A boxed session needs a tier that can hold a resident process, and not every tier that enforces egress can.
+- Chromium reads more pages and gives up both fail-closed recording and the enforced takeover.
+- Remote forum posts are peer-claimed: identity and policy from another machine are not cryptographically verified.
 - Containment cannot stop source code from being included in an allowed model request.
 - Every tier below microvm shares the host kernel.
 - Container egress scoping binds proxy-respecting software only.

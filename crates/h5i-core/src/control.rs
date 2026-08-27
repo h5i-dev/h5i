@@ -169,17 +169,13 @@ impl Verdict {
                  Wait, or ask them to hand it back (`h5i browser status` shows who holds it)."
                     .into(),
             ),
-            // Both engines are named rather than one guessed at. This type has
-            // no env directory and so no way to read the pinned engine, and an
-            // agent in an h5i-light box that is told to run `agent-browser
-            // snapshot` gets a socket-directory error instead of the answer it
-            // asked for. Naming both costs a clause; guessing costs the agent
-            // its next step.
+            // One command, not a list of engines: every verb an agent sends now
+            // goes through `h5i browser`, whatever renders the page, so the
+            // advice no longer has to guess which engine a box was pinned to.
             Verdict::NeedsResnapshot => Some(
                 "control was handed back after a human used the browser, so the page may have \
                  moved: every @ref from your last snapshot is stale. Re-snapshot before acting \
-                 (`agent-browser snapshot`, or `h5i-browser-light session snapshot` on the \
-                 h5i-light engine)."
+                 (`h5i browser snapshot <session>`)."
                     .into(),
             ),
         }

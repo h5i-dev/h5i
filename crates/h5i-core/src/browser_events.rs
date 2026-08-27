@@ -178,6 +178,29 @@ pub enum EventKind {
     /// was a busy one. That is the failure this whole module is arranged to
     /// prevent, and it was live in the first version of this reader.
     SessionReset { source: String },
+    /// Who is driving the browser, and from when.
+    ///
+    /// **Host-observed.** h5i wrote the lock; it was not told about it. That is
+    /// what makes a handover the one row in an audit that does not depend on
+    /// the engine's own account, and it is why it is a row at all rather than a
+    /// field on the session: "a human was at the controls between these two
+    /// verbs" is a fact about a span, and a current-holder field cannot say it.
+    Control {
+        holder: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+    /// The session began, or ended, and how.
+    ///
+    /// Host-observed for the same reason: the ending is written by whoever
+    /// noticed it, outside the thing that ended. An audit with no ending row is
+    /// an audit of a session that is still running, which is a different claim
+    /// from one that finished cleanly.
+    Lifecycle {
+        state: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
 }
 
 /// Console severity. `log`/`info` chatter is not evidence and is not carried;
@@ -231,9 +254,23 @@ pub struct Draft {
     pub key: Option<Key>,
     /// The key of the event that caused this one.
     pub caused_by: Option<Key>,
+    /// When the **source** says this happened, when the source says anything.
+    ///
+    /// Deliberately separate from `observed_at`, which is when h5i read the row
+    /// and is the only timestamp a viewer should order on. This is the box's
+    /// own clock, which h5i cannot check — so it is carried as a claim, labelled
+    /// as one, and used only where a claim is the best there is: ordering the
+    /// engine's two logs against each other inside one session.
+    pub claimed_at: Option<String>,
 }
 
 impl Draft {
+    /// A row h5i wrote from outside the box: host-observed, and fail-closed
+    /// because h5i either recorded it or did not act.
+    pub fn host(kind: EventKind) -> Self {
+        Draft::new(kind, Lane::HostObserved, Grade::FailClosed)
+    }
+
     fn new(kind: EventKind, lane: Lane, grade: Grade) -> Self {
         Self {
             kind,
@@ -241,7 +278,14 @@ impl Draft {
             grade,
             key: None,
             caused_by: None,
+            claimed_at: None,
         }
+    }
+
+    /// Attach the source's own timestamp, when it carried one.
+    pub fn claimed_at(mut self, at: Option<&str>) -> Self {
+        self.claimed_at = at.filter(|s| !s.is_empty()).map(str::to_string);
+        self
     }
 }
 
@@ -260,6 +304,10 @@ pub struct ViewerEvent {
     /// link. Never inferred.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caused_by: Option<u64>,
+    /// When the source said it happened. A claim, never an observation: see
+    /// [`Draft::claimed_at`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_at: Option<String>,
     #[serde(flatten)]
     pub kind: EventKind,
 }
@@ -370,6 +418,7 @@ impl EventLog {
             self.events.push_back(ViewerEvent {
                 id,
                 observed_at: observed_at.to_string(),
+                claimed_at: draft.claimed_at,
                 lane: draft.lane,
                 grade: draft.grade,
                 caused_by,
@@ -476,7 +525,8 @@ pub fn ingest_request_log_with(
                     },
                     Lane::BoxClaimed,
                     Grade::FailClosed,
-                );
+                )
+                .claimed_at(v.get("at").and_then(serde_json::Value::as_str));
                 draft.key = Some(Key::Request(seq));
                 // Only where the engine actually said so. Nothing here infers a
                 // link from timing — a request that merely happened near an
@@ -499,7 +549,8 @@ pub fn ingest_request_log_with(
                         },
                         Lane::BoxClaimed,
                         Grade::FailClosed,
-                    );
+                    )
+                    .claimed_at(v.get("at").and_then(serde_json::Value::as_str));
                     verdict.caused_by = Some(Key::Request(seq));
                     drafts.push(verdict);
                 }
@@ -518,7 +569,8 @@ pub fn ingest_request_log_with(
                     },
                     Lane::BoxClaimed,
                     Grade::FailClosed,
-                );
+                )
+                .claimed_at(v.get("at").and_then(serde_json::Value::as_str));
                 // The one correlation the source genuinely carries.
                 draft.caused_by = Some(Key::Request(seq));
                 drafts.push(draft);
@@ -686,7 +738,8 @@ pub fn ingest_light_actions_with(
             },
             Lane::BoxClaimed,
             Grade::BestEffort,
-        );
+        )
+        .claimed_at(v.get("at").and_then(serde_json::Value::as_str));
         if let Some(action_seq) = action_seq {
             draft.key = Some(Key::LightAction(action_seq));
             // "This click, these receipts" — stamped by the engine, which is

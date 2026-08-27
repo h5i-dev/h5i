@@ -660,8 +660,18 @@ pub enum BrowserEngine {
     /// Lightpanda, driven by agent-browser over CDP. Lighter than Chromium,
     /// still runs script.
     Lightpanda,
-    /// `h5i-browser-light`: our own engine. No script in this tier, and every
+    /// h5i's own engine, part of the h5i binary. Script is opt-in, and every
     /// request is policy-checked and receipted before the wire.
+    ///
+    /// Spelled `h5i`. It was `h5i-light` while the engine was a second binary
+    /// called `h5i-browser-light`; that binary is gone, and a value named after
+    /// it was naming something that no longer exists.
+    ///
+    /// `alias` rather than a silent acceptance: a `policy.resolved.toml` written
+    /// by an older h5i still *parses*, so the box fails on the digest check —
+    /// which already says "created by a different h5i version; recreate it" —
+    /// rather than on a TOML error that names a field and explains nothing.
+    #[serde(rename = "h5i", alias = "h5i-light")]
     H5iLight,
 }
 
@@ -809,7 +819,7 @@ impl BrowserEngine {
         match self {
             BrowserEngine::Chromium => "chromium",
             BrowserEngine::Lightpanda => "lightpanda",
-            BrowserEngine::H5iLight => "h5i-light",
+            BrowserEngine::H5iLight => "h5i",
         }
     }
 
@@ -821,17 +831,20 @@ impl BrowserEngine {
         match input.trim() {
             "chromium" | "chrome" => Ok(BrowserEngine::Chromium),
             "lightpanda" => Ok(BrowserEngine::Lightpanda),
-            "h5i-light" | "h5i_light" => Ok(BrowserEngine::H5iLight),
+            // The old spellings stay accepted as *input*. A profile or a habit
+            // that still says `h5i-light` costs nothing to honour, and what it
+            // resolves to is written out under the current name.
+            "h5i" | "h5i-light" | "h5i_light" => Ok(BrowserEngine::H5iLight),
             other => Err(format!(
-                "unknown browser engine `{other}` — expected one of: chromium, lightpanda, h5i-light (fail-closed)"
+                "unknown browser engine `{other}` — expected one of: chromium, lightpanda, h5i (fail-closed)"
             )),
         }
     }
 
     /// Whether agent-browser drives this engine.
     ///
-    /// `h5i-light` does not speak CDP, so agent-browser cannot drive it; h5i
-    /// runs that binary itself. Getting this backwards would mean injecting
+    /// The h5i engine does not speak CDP, so agent-browser cannot drive it; h5i
+    /// runs it itself. Getting this backwards would mean injecting
     /// `AGENT_BROWSER_*` variables for an engine that never reads them, which
     /// reviews as enforcement while enforcing nothing.
     pub fn driven_by_agent_browser(&self) -> bool {
@@ -1634,7 +1647,11 @@ mod browser_discovery_tests {
 
         // Spellings a person actually types.
         assert_eq!(BrowserEngine::parse("chrome").unwrap(), BrowserEngine::Chromium);
-        assert_eq!(BrowserEngine::parse(" h5i-light ").unwrap(), BrowserEngine::H5iLight);
+        assert_eq!(BrowserEngine::parse(" h5i ").unwrap(), BrowserEngine::H5iLight);
+        // The name it had while the engine was a second binary, still accepted
+        // as input so a profile written against an older h5i keeps resolving.
+        assert_eq!(BrowserEngine::parse("h5i-light").unwrap(), BrowserEngine::H5iLight);
+        assert_eq!(BrowserEngine::parse("h5i_light").unwrap(), BrowserEngine::H5iLight);
     }
 
     #[test]
@@ -1674,7 +1691,7 @@ mod browser_discovery_tests {
         let missing = engine_tooling_missing(BrowserEngine::H5iLight);
         assert!(
             !missing.iter().any(|m| m.contains("agent-browser")),
-            "h5i-light must not demand agent-browser: {missing:?}"
+            "the h5i engine must not demand agent-browser: {missing:?}"
         );
     }
 
