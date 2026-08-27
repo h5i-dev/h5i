@@ -3,7 +3,7 @@
 **Scope note (2026-08-27).** This film tells the *box* story: an agent with full
 autonomy inside a disposable boundary. That is still true and still worth
 showing, but it is no longer the product's headline. h5i now leads with the
-browser session (`h5i browser start`), and **there is no film for it yet.**
+browser session (`h5i browser open`), and **there is no film for it yet.**
 
 A browser-first film is outstanding work. It would need new scenes rather than
 new copy over the old ones: the hook is a page composing text that looks like an

@@ -130,7 +130,7 @@
                               "name": "Is a default session sandboxed?",
                               "acceptedAnswer": {
                                         "@type": "Answer",
-                                        "text": "No, and h5i does not claim it is. h5i browser start runs here, in your ordinary process space, like any other headless browser. What you get by default is a complete record. What you get with --in <box> is a boundary as well. h5i browser status prints which one this session has, on every line, rather than leaving you to infer it."
+                                        "text": "No, and h5i does not claim it is. h5i browser open runs here, in your ordinary process space, like any other headless browser. What you get by default is a complete record. What you get with --in <box> is a boundary as well. h5i browser status prints which one this session has, on every line, rather than leaving you to infer it."
                               }
                     },
                     {
@@ -218,7 +218,7 @@
                               "name": "What are the limits?",
                               "acceptedAnswer": {
                                         "@type": "Answer",
-                                        "text": "Below the microvm tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. A session on the host is not confined at all. A boxed session needs a tier that can hold a resident process, and the tiers that enforce an egress allowlist are not all of them, so h5i browser start --in tells you which constraint applies to your box before it starts anything. The manual keeps the full list."
+                                        "text": "Below the microvm tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. A session on the host is not confined at all. A boxed session needs a tier that can hold a resident process, and the tiers that enforce an egress allowlist are not all of them, so h5i browser open --in tells you which constraint applies to your box before it starts anything. The manual keeps the full list."
                               }
                     },
                     {
@@ -369,7 +369,7 @@
       <div class="feat-card">
         <div class="feat-name">One noun an agent has to learn</div>
         <div class="feat-desc">A <strong>session</strong> holds the page, the cookie jar, the request log and
-          the policy. <code>start</code> prints its id, every verb names that id, <code>close</code> ends it.
+          the policy. <code>open</code> makes one, every verb that follows acts on it, <code>close</code> ends it.
           Not the process, not the port, not whether it is in a box.</div>
         <div class="feat-proves">start &#183; snapshot &#183; click &#183; close</div>
       </div>
@@ -404,17 +404,17 @@
         actually wants. What you get afterwards is the decision record the engine wrote as it went.</p>
     </div>
     <div class="terminal"><div class="terminal-bar"><span class="terminal-path">one session, start to close</span></div>
-<div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser start https://docs.rs/ --allow docs.rs</span>
+<div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --allow docs.rs</span>
 <span class="t-pass">&#10004;</span>  browser session <span class="t-ai">br_7k2xqa</span>
    requests : <span class="t-warn">engine-claimed</span> (fail-closed, and the engine's own account of what it fetched)
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot br_7k2xqa</span>          <span class="t-cmt"># outline, with @ref handles</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click    br_7k2xqa @e3</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot br_7k2xqa --delta</span>  <span class="t-cmt"># only what changed</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests br_7k2xqa</span>          <span class="t-cmt"># refusals included</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>          <span class="t-cmt"># outline, with @ref handles</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e3</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot --delta</span>  <span class="t-cmt"># only what changed</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests</span>          <span class="t-cmt"># refusals included</span>
 <span class="t-out">  4 requests, 1 denied</span>
 <span class="t-red">  denied</span> <span class="t-out">https://tracker.example/px  origin not in the allowlist</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser close    br_7k2xqa</span></pre></div></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser close</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
         <div class="feat-name">Endings are recorded</div>
@@ -1001,7 +1001,7 @@
       </details>
       <details class="faq-item">
         <summary>Is a default session sandboxed?</summary>
-        <div class="faq-answer">No, and h5i does not claim it is. <code>h5i browser start</code> runs here, in your ordinary process space, like any other headless browser. What you get by default is a complete record. What you get with <code>--in &lt;box&gt;</code> is a boundary as well. <code>h5i browser status</code> prints which one this session has, on every line, rather than leaving you to infer it.</div>
+        <div class="faq-answer">No, and h5i does not claim it is. <code>h5i browser open</code> runs here, in your ordinary process space, like any other headless browser. What you get by default is a complete record. What you get with <code>--in &lt;box&gt;</code> is a boundary as well. <code>h5i browser status</code> prints which one this session has, on every line, rather than leaving you to infer it.</div>
       </details>
       <details class="faq-item">
         <summary>What do <code>engine-claimed</code> and <code>host-observed</code> mean?</summary>
@@ -1045,7 +1045,7 @@
       </details>
       <details class="faq-item">
         <summary>What are the limits?</summary>
-        <div class="faq-answer">Below the <code>microvm</code> tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. A session on the host is not confined at all. A boxed session needs a tier that can hold a resident process, and the tiers that enforce an egress allowlist are not all of them, so <code>h5i browser start --in</code> tells you which constraint applies to your box before it starts anything. The <a href="/manual/#limits">manual</a> keeps the full list.</div>
+        <div class="faq-answer">Below the <code>microvm</code> tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. A session on the host is not confined at all. A boxed session needs a tier that can hold a resident process, and the tiers that enforce an egress allowlist are not all of them, so <code>h5i browser open --in</code> tells you which constraint applies to your box before it starts anything. The <a href="/manual/#limits">manual</a> keeps the full list.</div>
       </details>
       <details class="faq-item">
         <summary>Is h5i free and open source?</summary>

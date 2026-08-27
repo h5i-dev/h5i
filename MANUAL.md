@@ -1548,18 +1548,62 @@ drops it, along with axum, tokio and the build script's need for Node, and the
 
 ## h5i browser
 
-A **session** is the whole agent-facing surface. `h5i browser start` makes one
-and prints its id; every other verb names that id; `h5i browser close` ends it.
-Nothing else is a concept an agent has to learn — not the process that renders
-the page, not the port it listens on, not whether it is running inside a box.
+A **session** is the whole agent-facing surface. `h5i browser open` makes one,
+every verb that follows acts on it, and `h5i browser close` ends it. Nothing
+else is a concept an agent has to learn — not the process that renders the page,
+not the port it listens on, not whether it is running inside a box, and not, in
+the ordinary case, the session itself.
 
 ```bash
-h5i browser start https://example.com      # prints a session id, e.g. br_7k2xqa
-h5i browser snapshot br_7k2xqa             # the page as a model should read it
-h5i browser click br_7k2xqa @e3
-h5i browser requests br_7k2xqa             # what it asked for, and what was refused
-h5i browser close br_7k2xqa
+h5i browser open https://example.com
+h5i browser snapshot            # the page as a model should read it
+h5i browser click @e3
+h5i browser requests            # what it asked for, and what was refused
+h5i browser close
 ```
+
+### The id is internal
+
+Every session has an opaque id (`br_7k2xqa`), and it is in the record, in
+`--json` and in the receipts, because a durable reference has to be something no
+rename can break. **It is not what you type.** A CLI that demands an opaque
+string on every verb is copying a remote-browser HTTP API, where the id exists
+because the client and the browser share nothing else. Here they share a
+filesystem.
+
+So a verb resolves its session in three steps, most explicit first:
+
+1. `--session <name>` (`-s`), a name someone chose, or an id pasted from `--json`
+2. `$H5I_BROWSER_SESSION`
+3. the **default**: the session `open` last made
+
+Running several at once is what names are for:
+
+```bash
+h5i browser open https://example.com/login --session auth   --new
+h5i browser open https://example.com/      --session public --new
+h5i browser snapshot --session auth
+h5i browser list                       # the default is the row marked `*`
+```
+
+A name is comfortable to type precisely because it is not an identity: it can be
+reused once the session it named has ended. The id cannot, which is why the id
+is what gets written down, and why `--restore` takes one.
+
+There is deliberately **no** "if only one session is live, use it" rule. It
+reads as helpful and is the same hazard as a moving default: an agent that
+opened one session, had it end, and opened another under a different name would
+find its next verb quietly landing somewhere it never asked for.
+
+### `open` navigates a session that is already there
+
+Opening a URL in a browser that is already up means *go there*. So `open`
+navigates the session it finds, and `--new` is how you say you meant a second
+one. The flags that only make sense at creation (`--allow`, `--in`, `--script`,
+`--no-loopback`, `--expires-in`, `--restore`) are **refused** rather than
+ignored when a session is reused: a session's policy is fixed when its engine
+starts, so accepting a grant and doing nothing with it would be a grant the
+caller believes it made.
 
 ### What is true by default
 
@@ -1585,8 +1629,8 @@ requests : engine-claimed (fail-closed, and the engine's own account of what it 
 
 ```bash
 h5i box --profile browser --engine h5i-light --name web
-h5i browser start https://example.com --in web
-h5i browser snapshot br_9m4tzz            # identical verb, identical answer
+h5i browser open https://example.com --in web
+h5i browser snapshot  # identical verb, identical answer
 ```
 
 `--in` changes nothing you type. It changes **who saw the network**. The box
@@ -1624,7 +1668,7 @@ with the agent inside the box structurally cannot be.
 `--in` needs a tier that can hold a resident process: `workspace`, `process` or
 `microvm`. The `browser` profile's egress allowlist needs `supervised` or
 `container`, and those two cannot hold a service yet, so on Linux today the tier
-that does both is `microvm`. `h5i browser start --in` says which of these applies
+that does both is `microvm`. `h5i browser open --in` says which of these applies
 to your box before it starts anything, rather than timing out.
 
 ### Sessions end, and endings are recorded
@@ -1645,10 +1689,10 @@ A verb sent to a session that is not live is **refused with exit code 69**
 (`EX_UNAVAILABLE`), never silently restarted:
 
 ```console
-$ h5i browser snapshot br_7k2xqa
+$ h5i browser snapshot
 browser session `br_7k2xqa` was closed: closed by the user. It will not be
-restarted automatically. Start a new one with `h5i browser start <url>`, or
-carry this one's storage forward with `h5i browser start <url> --restore br_7k2xqa`.
+restarted automatically. Start a new one with `h5i browser open <url>`, or
+carry this one's storage forward with `h5i browser open <url> --restore br_7k2xqa`.
 $ echo $?
 69
 ```
@@ -1703,12 +1747,17 @@ different:
 `$H5I_BROWSER_HOME`, else `$XDG_STATE_HOME/h5i/browser`, else
 `~/.local/state/h5i/browser`. Deliberately **not** under a git repository: every
 other noun in h5i stores its state under the enclosing repo because every other
-noun is about a repo, and a browser is not. `h5i browser start` in an empty
+noun is about a repo, and a browser is not. `h5i browser open` in an empty
 directory is the ordinary case.
+
+The default session is per registry, so two agents sharing a `$HOME` share it.
+Give each its own with `$H5I_BROWSER_HOME`, or give each session a
+`--session <name>`.
 
 | variable | what it names |
 | --- | --- |
 | `H5I_BROWSER_HOME` | the session registry's directory |
+| `H5I_BROWSER_SESSION` | which session a verb acts on, when `--session` is not given |
 | `H5I_BROWSER_ENGINE` | the engine binary **on this machine** |
 | `H5I_BROWSER_ENGINE_IN_BOX` | the engine command **inside a box**, when the box's `PATH` is not where it is |
 

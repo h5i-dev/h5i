@@ -8697,7 +8697,7 @@ pub fn service_start(
 /// rather than one declared in the box's `.h5i/env.toml`.
 ///
 /// This exists for one caller: a browser session placed in a box
-/// (`h5i browser start --in`). A resident browser is a service in every way
+/// (`h5i browser open --in`). A resident browser is a service in every way
 /// that matters here — it outlives the command that started it, it must not
 /// hold the writer lock, and it wants the pid registry and the log capture —
 /// but it is **not** something the repository declares. Requiring a

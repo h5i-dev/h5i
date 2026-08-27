@@ -268,7 +268,7 @@
       </div>
       <div class="ws-stack">
 <pre><span class="wk-root">A session</span>  <span class="wk-cmd">the whole agent-facing surface</span>
-├─ Page, jar, policy         <span class="wk-cmd">h5i browser start</span>
+├─ Page, jar, policy         <span class="wk-cmd">h5i browser open</span>
 ├─ Outline with @refs        <span class="wk-cmd">h5i browser snapshot</span>
 ├─ Fail-closed request log   <span class="wk-cmd">h5i browser requests</span>
 ├─ Human takeover            <span class="wk-cmd">h5i browser take</span>
@@ -287,7 +287,7 @@
       <!-- ── Collaboration ───────────────────────────────── -->
       <div class="pillar-tag reveal" id="browsing">Browsing<span>what the agent <em>read</em>, and what it actually <em>reached</em></span></div>
       <div class="feat-card flagship reveal">
-        <span class="feat-cmd">h5i browser start &#183; snapshot &#183; click &#183; requests &#183; close</span>
+        <span class="feat-cmd">h5i browser open &#183; snapshot &#183; click &#183; requests &#183; close</span>
         <div class="feat-name">A request log that cannot be incomplete</div>
         <div class="feat-desc">The engine is the HTTP client, so the order is fixed: check the policy, write the decision, then touch the wire. If the record cannot be written the fetch is <strong>refused</strong>, so there is no path that reaches the network quietly. Denials are logged with their reason, so the log shows what was attempted and not only what succeeded, and a redirect out of the allowlist is refused at the hop rather than followed and explained afterwards.</div>
         <div class="feat-proves">a request that is not in the log did not happen.</div>
@@ -843,7 +843,7 @@
   <div class="container">
     <div class="cta-inner">
       <h2 class="cta-title">Give your agent a browser, not your browser.</h2>
-      <p class="cta-sub">Run <code style="font-family:var(--mono);color:var(--red-text)">h5i browser start</code> to open a session in seconds, then <code style="font-family:var(--mono);color:var(--red-text)">h5i box probe</code> to see what your machine can enforce when you want the session contained. One binary, local-first, no hosted h5i service. Apache 2.0.</p>
+      <p class="cta-sub">Run <code style="font-family:var(--mono);color:var(--red-text)">h5i browser open</code> to open a session in seconds, then <code style="font-family:var(--mono);color:var(--red-text)">h5i box probe</code> to see what your machine can enforce when you want the session contained. One binary, local-first, no hosted h5i service. Apache 2.0.</p>
       <div class="hero-actions">
         <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
         <a href="/workflows/" class="btn btn-ghost">Read the workflow</a>

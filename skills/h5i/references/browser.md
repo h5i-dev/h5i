@@ -4,9 +4,9 @@ A **session** is the unit. It holds one page state, one cookie jar, one request
 log and one policy, and it is addressed by an id:
 
 ```bash
-h5i browser start https://example.com --allow example.com   # -> br_7k2xqa
+h5i browser open https://example.com --allow example.com   # -> br_7k2xqa
 h5i browser <verb> br_7k2xqa ...
-h5i browser close br_7k2xqa
+h5i browser close
 ```
 
 It needs no box and no repository. `h5i browser --help` is the authoritative
@@ -16,7 +16,7 @@ verb table and cannot go stale.
 
 | | on this machine (default) | `--in <box>` |
 | --- | --- | --- |
-| started by | `h5i browser start <url>` | `h5i browser start <url> --in ui` |
+| started by | `h5i browser open <url>` | `h5i browser open <url> --in ui` |
 | verbs | identical | identical |
 | containment | none beyond the engine | the box's tier |
 | request lane | `engine-claimed` | `host-observed`, **if** the box enforces egress |
@@ -48,11 +48,11 @@ to work around: it is the box telling you it has no Chromium.
 ## Driving a session
 
 ```bash
-h5i browser start http://localhost:3000   # -> br_7k2xqa, and it holds the page
-h5i browser snapshot br_7k2xqa            # the outline, with @refs
-h5i browser navigate br_7k2xqa /docs      # relative, like a click
-h5i browser click    br_7k2xqa @e1
-h5i browser status   br_7k2xqa
+h5i browser open http://localhost:3000   # -> br_7k2xqa, and it holds the page
+h5i browser snapshot  # the outline, with @refs
+h5i browser navigate /docs      # relative, like a click
+h5i browser click @e1
+h5i browser status
 ```
 
 The engine also has its own CLI (`h5i-browser-light session <verb>`), which is
@@ -64,9 +64,9 @@ all.
 Reading, beyond the outline:
 
 ```bash
-h5i browser markdown br_7k2xqa                # the page as a reader reads it
-h5i browser extract br_7k2xqa '{"rows": ["li"]}'
-h5i browser requests br_7k2xqa                # what it fetched, and what was refused
+h5i browser markdown  # the page as a reader reads it
+h5i browser extract '{"rows": ["li"]}'
+h5i browser requests  # what it fetched, and what was refused
 ```
 
 `requests` is the one no other engine can answer completely: this engine *is*
@@ -76,8 +76,8 @@ moved rather than an observation made beside the network.
 Waiting has three answers, not two:
 
 ```bash
-h5i browser wait-for br_7k2xqa --selector '#results'
-h5i browser wait-for br_7k2xqa --text 'Signed in'
+h5i browser wait-for --selector '#results'
+h5i browser wait-for --text 'Signed in'
 ```
 
 `met` is there; `quiescent` means it is not and the page has nothing left to run,
@@ -112,10 +112,10 @@ Logging in works, and **never with a literal credential**. Put it in the
 environment `serve` runs in, under `H5I_SECRET_`, and name it:
 
 ```bash
-h5i browser env br_7k2xqa                        # names only, never values
-h5i browser type br_7k2xqa @e1 alice
-h5i browser type br_7k2xqa @e2 '$H5I_SECRET_ACME_PASS'
-h5i browser submit br_7k2xqa @e3                 # any @ref inside the form
+h5i browser env  # names only, never values
+h5i browser type @e1 alice
+h5i browser type @e2 '$H5I_SECRET_ACME_PASS'
+h5i browser submit @e3                 # any @ref inside the form
 ```
 
 The value is substituted on the way into the field and the reply echoes the

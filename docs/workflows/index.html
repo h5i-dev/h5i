@@ -37,8 +37,8 @@
     "publisher": {"@type": "Organization", "name": "h5i", "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png"}},
     "step": [
       {"@type": "HowToStep", "name": "Install", "text": "Install the binary with the install script or cargo install, then run h5i skill install so your agent knows how to use it.", "url": "https://h5i.dev/workflows/#install"},
-      {"@type": "HowToStep", "name": "Open a browser session", "text": "h5i browser start opens a session an agent drives by id. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused.", "url": "https://h5i.dev/workflows/#session"},
-      {"@type": "HowToStep", "name": "Make a box", "text": "h5i box . snapshots this repository at HEAD. h5i box --pr 1234 takes a pull request, a URL clones an external repository, and --new starts empty. Adding --in to a browser start places the session inside that box, which adds an egress allowlist enforced outside the browser.", "url": "https://h5i.dev/workflows/#box"},
+      {"@type": "HowToStep", "name": "Open a browser session", "text": "h5i browser open opens a session an agent drives by id. The engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused.", "url": "https://h5i.dev/workflows/#session"},
+      {"@type": "HowToStep", "name": "Make a box", "text": "h5i box . snapshots this repository at HEAD. h5i box --pr 1234 takes a pull request, a URL clones an external repository, and --new starts empty. Adding --in to h5i browser open places the session inside that box, which adds an egress allowlist enforced outside the browser.", "url": "https://h5i.dev/workflows/#box"},
       {"@type": "HowToStep", "name": "Work in it", "text": "h5i box shell drops you or an agent into the box with stdio inherited, so every command the session spawns is contained. Build, test, start the dev server, drive the browser.", "url": "https://h5i.dev/workflows/#work"},
       {"@type": "HowToStep", "name": "Export and apply", "text": "h5i box export writes patch.diff, report.md and receipt.json. Read the report, starting with denied egress attempts, then git apply --3way the patch wherever you want it.", "url": "https://h5i.dev/workflows/#export"}
     ]
@@ -91,7 +91,7 @@
     </header>
 
     <div class="callout">
-      <strong>The commands that matter.</strong> <code>h5i browser start &lt;url&gt;</code> opens a
+      <strong>The commands that matter.</strong> <code>h5i browser open &lt;url&gt;</code> opens a
       session. <code>h5i box .</code> makes a sandbox and <code>--in</code> puts the session in it.
       <code>h5i box shell &lt;name&gt;</code> is where the agent runs.
       <code>h5i forum create</code> and <code>h5i forum attach</code> put boxes on one conversation.
@@ -136,14 +136,14 @@
 
     <div class="terminal">
       <div class="terminal-bar"><span class="terminal-path">a session, on this machine</span></div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser start https://docs.rs/ --allow docs.rs</span>
+      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --allow docs.rs</span>
 <span class="t-pass">&#10004;</span>  browser session <span class="t-ai">br_7k2xqa</span>
    placed   : <span class="t-out">this machine (no containment beyond the engine)</span>
    requests : <span class="t-warn">engine-claimed</span> <span class="t-out">(fail-closed, and the engine&#39;s own account of what it fetched)</span>
 
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot br_7k2xqa</span>      <span class="t-cmt"># outline, with @ref handles</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click    br_7k2xqa @e3</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests br_7k2xqa</span>      <span class="t-cmt"># refusals included</span></pre></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>      <span class="t-cmt"># outline, with @ref handles</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e3</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests</span>      <span class="t-cmt"># refusals included</span></pre></div>
     </div>
 
     <p>

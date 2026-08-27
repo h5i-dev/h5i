@@ -1,10 +1,24 @@
 //! The host-owned registry of browser sessions.
 //!
 //! A browser session is the unit an agent talks to: one page state, one cookie
-//! jar, one request log, one policy. `h5i browser start` makes one and prints
-//! its id; every later verb names that id. Nothing else about the session is
-//! agent-facing — not the process that renders the page, not the port it
-//! listens on, not whether it happens to be inside a box.
+//! jar, one request log, one policy. Nothing else about it is agent-facing —
+//! not the process that renders the page, not the port it listens on, not
+//! whether it happens to be inside a box.
+//!
+//! # The id is internal
+//!
+//! Every session has an opaque id (`br_7k2xqa`) and it appears in the record,
+//! in `--json`, and in receipts, because a durable reference has to be
+//! something no rename can break. **It is not what an agent types.** A CLI that
+//! demands an opaque string on every verb is a CLI copying a remote-browser
+//! HTTP API, where the id exists because the client and the browser share
+//! nothing else; here they share a filesystem.
+//!
+//! So resolution has three layers, from most to least explicit
+//! ([`resolve`]): a `--session <name>` a person chose, `$H5I_BROWSER_SESSION`,
+//! and the **default session** — the one `open` made when nobody said which.
+//! Names are for running several at once; the default is for the ordinary case
+//! of running one.
 //!
 //! # Why the registry is host-owned
 //!
@@ -23,7 +37,7 @@
 //!
 //! Every other noun in this product stores its state under the enclosing
 //! repository, because every other noun is *about* a repository. A browser is
-//! not. `h5i browser start https://example.com` in an empty directory is the
+//! not. `h5i browser open https://example.com` in an empty directory is the
 //! ordinary case and must work, so the registry lives in the user's state
 //! directory instead ([`root`]).
 //!
@@ -56,6 +70,14 @@ const SESSIONS: &str = "sessions";
 
 /// The record file inside a session directory.
 const RECORD: &str = "session.json";
+
+/// Holds the id of the session a verb acts on when nobody says which.
+///
+/// A pointer rather than a convention like "the newest live one", because the
+/// convention silently moves under an agent the moment a second session is
+/// opened, and an agent that has been quietly redirected to a different page is
+/// the failure this whole module is arranged to prevent.
+const DEFAULT_POINTER: &str = "default";
 
 /// Where the engine advertises its control port, inside a session directory.
 pub const CONTROL_FILE: &str = "control";
@@ -246,13 +268,28 @@ pub struct Control {
 /// One browser session, as the host records it.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Session {
+    /// The opaque, durable reference. In the record, in `--json`, in receipts.
+    /// Not what an agent types: see the module docs.
     pub id: String,
+    /// The name a person gave this session with `--session`, if any. Unnamed
+    /// sessions are the ordinary case and are reached through the default
+    /// pointer instead.
+    ///
+    /// A name is not an identity: it can be reused once the session it named
+    /// has ended, which is exactly what makes it comfortable to type. The id
+    /// cannot, which is why the id is what gets written down.
+    #[serde(default)]
+    pub name: Option<String>,
     pub engine: Engine,
     pub placement: Placement,
     pub lane: Lane,
-    /// The URL `start` was given. Not the current URL: that is page state, it
-    /// changes under the agent's feet, and asking the session is the only way
-    /// to know it. Recording it here would be a second answer that goes stale.
+    /// The URL this session was last **told to open**: the one `open` was given,
+    /// whether it made the session or navigated it.
+    ///
+    /// Deliberately not "the current URL". That is page state: a redirect, a
+    /// script or a human at the viewer moves it, and asking the session is the
+    /// only way to know it. Recording *that* here would be a second answer that
+    /// goes stale. What is recorded is an instruction, which does not.
     pub url: String,
     pub started_at: String,
     pub expires_at: Option<String>,
@@ -451,12 +488,142 @@ fn unknown(root: &Path, id: &str) -> H5iError {
     if known.is_empty() {
         H5iError::Metadata(format!(
             "`{id}` is not a browser session on this machine, and none are running. \
-             Start one with `h5i browser start <url>`."
+             Start one with `h5i browser open <url>`."
         ))
     } else {
         H5iError::Metadata(format!(
             "`{id}` is not a browser session on this machine. Live sessions: {}.",
             known.join(", ")
+        ))
+    }
+}
+
+/// The id of the default session, if one has been set.
+pub fn read_default(root: &Path) -> Option<String> {
+    let raw = fs::read_to_string(root.join(DEFAULT_POINTER)).ok()?;
+    let id = raw.trim().to_string();
+    (!id.is_empty()).then_some(id)
+}
+
+/// Point the default at this session.
+pub fn set_default(root: &Path, id: &str) -> Result<(), H5iError> {
+    fs::create_dir_all(root).map_err(H5iError::Io)?;
+    fs::write(root.join(DEFAULT_POINTER), format!("{id}\n")).map_err(H5iError::Io)
+}
+
+/// Clear the default if it points at this session.
+///
+/// Used for one case only: the pointer names a record that is *gone*. A pointer
+/// to a session that merely **ended** is deliberately kept, because following it
+/// is what lets the next bare verb say "the session you were on was closed"
+/// instead of "no session is open". The first tells an agent what happened; the
+/// second reads like it never had one.
+///
+/// Conditional on the id, because closing a named session must not disturb a
+/// default someone else is using.
+pub fn clear_default_if(root: &Path, id: &str) {
+    if read_default(root).as_deref() == Some(id) {
+        let _ = fs::remove_file(root.join(DEFAULT_POINTER));
+    }
+}
+
+/// The live session carrying this name, if any.
+pub fn find_by_name(root: &Path, name: &str) -> Option<Session> {
+    list(root)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|s| s.state.is_live() && s.name.as_deref() == Some(name))
+}
+
+/// Turn what the caller said (or did not say) into a session a verb may act on.
+///
+/// `selector` is a `--session` value or `$H5I_BROWSER_SESSION`: a name, or an
+/// opaque id for the case where something already recorded one. With neither,
+/// the default pointer answers.
+///
+/// There is deliberately **no** "if only one session is live, use it" rule. It
+/// reads as helpful and is the same hazard as a moving default: an agent that
+/// opened one session, had it end, and opened another under a different name
+/// would find its next verb quietly landing somewhere it never asked for.
+pub fn resolve(root: &Path, selector: Option<&str>) -> Result<Session, SessionGone> {
+    let selector = selector
+        .map(str::to_string)
+        .or_else(|| std::env::var("H5I_BROWSER_SESSION").ok())
+        .filter(|s| !s.trim().is_empty());
+
+    match selector {
+        Some(wanted) => {
+            // A name first: that is what a person typed. An id is accepted too,
+            // because `--json` and receipts hand one back and it should work
+            // where it is pasted.
+            if let Some(session) = find_by_name(root, &wanted) {
+                return Ok(session);
+            }
+            match read(root, &wanted) {
+                Ok(session) => open_it(root, session),
+                Err(_) => Err(SessionGone::Unknown(unknown_selector(root, &wanted))),
+            }
+        }
+        None => match read_default(root) {
+            Some(id) => match read(root, &id) {
+                Ok(session) => open_it(root, session),
+                // The pointer outlived what it pointed at. Say so plainly
+                // rather than reporting an id nobody typed.
+                Err(_) => {
+                    clear_default_if(root, &id);
+                    Err(SessionGone::Unknown(no_default(root)))
+                }
+            },
+            None => Err(SessionGone::Unknown(no_default(root))),
+        },
+    }
+}
+
+/// The error for a `--session` that names nothing.
+fn unknown_selector(root: &Path, wanted: &str) -> H5iError {
+    let live: Vec<String> = list(root)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| s.state.is_live())
+        .map(|s| match &s.name {
+            Some(name) => format!("{name} ({})", s.id),
+            None => format!("{} (unnamed)", s.id),
+        })
+        .collect();
+    if live.is_empty() {
+        H5iError::Metadata(format!(
+            "no browser session called `{wanted}`, and none is running. \
+             Open one with `h5i browser open <url>`."
+        ))
+    } else {
+        H5iError::Metadata(format!(
+            "no browser session called `{wanted}`. Running: {}.",
+            live.join(", ")
+        ))
+    }
+}
+
+/// The error for a verb sent with nothing to send it to.
+fn no_default(root: &Path) -> H5iError {
+    let named: Vec<String> = list(root)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| s.state.is_live())
+        .filter_map(|s| s.name)
+        .collect();
+    if named.is_empty() {
+        H5iError::Metadata(
+            "no browser session is open. Open one with `h5i browser open <url>`.".into(),
+        )
+    } else {
+        H5iError::Metadata(format!(
+            "no default browser session, and the ones running are named. \
+             Say which: {}.",
+            named
+                .iter()
+                .map(|n| format!("`--session {n}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ))
     }
 }
@@ -472,6 +639,11 @@ pub fn open_live(root: &Path, id: &str) -> Result<Session, SessionGone> {
         Ok(s) => s,
         Err(e) => return Err(SessionGone::Unknown(e)),
     };
+    open_it(root, session)
+}
+
+/// The liveness half of [`open_live`], over a record already in hand.
+fn open_it(root: &Path, session: Session) -> Result<Session, SessionGone> {
     if !session.state.is_live() {
         return Err(SessionGone::Ended {
             state: session.state,
@@ -498,10 +670,12 @@ pub fn open_live(root: &Path, id: &str) -> Result<Session, SessionGone> {
 pub enum SessionGone {
     /// No such id here.
     Unknown(H5iError),
-    /// The id names a session that has ended.
+    /// The selector names a session that has ended.
     Ended {
         state: State,
         reason: Option<String>,
+        /// The opaque id, which is what `--restore` takes: a name can be reused
+        /// and so cannot carry storage forward unambiguously.
         id: String,
     },
 }
@@ -518,8 +692,8 @@ impl std::fmt::Display for SessionGone {
                 write!(
                     f,
                     ". It will not be restarted automatically. \
-                     Start a new one with `h5i browser start <url>`, or carry this one's \
-                     storage forward with `h5i browser start <url> --restore {id}`."
+                     Open a new one with `h5i browser open <url>`, or carry this one's \
+                     storage forward with `h5i browser open <url> --restore {id}`."
                 )
             }
         }
@@ -754,6 +928,7 @@ mod tests {
     fn session(id: &str, placement: Placement) -> Session {
         Session {
             id: id.to_string(),
+            name: None,
             engine: Engine::H5iLight,
             lane: Session::lane_for(&placement, true),
             placement,
@@ -893,6 +1068,97 @@ mod tests {
         assert_eq!(after.state, State::Expired);
         assert!(after.ended_at.is_some());
         assert!(dir(root, &id).exists());
+    }
+
+    fn named(root: &Path, name: &str) -> Session {
+        let id = new_id(root).unwrap();
+        let mut s = session(&id, Placement::Host);
+        s.name = Some(name.to_string());
+        write(root, &s).unwrap();
+        s
+    }
+
+    #[test]
+    fn the_ordinary_case_names_nothing_and_lands_on_the_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = new_id(root).unwrap();
+        write(root, &session(&id, Placement::Host)).unwrap();
+        set_default(root, &id).unwrap();
+
+        assert_eq!(resolve(root, None).unwrap().id, id);
+    }
+
+    #[test]
+    fn a_name_addresses_a_session_and_so_does_its_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let auth = named(root, "auth");
+        let public = named(root, "public");
+
+        assert_eq!(resolve(root, Some("auth")).unwrap().id, auth.id);
+        assert_eq!(resolve(root, Some("public")).unwrap().id, public.id);
+        // The id from `--json` works where it is pasted.
+        assert_eq!(resolve(root, Some(&auth.id)).unwrap().id, auth.id);
+    }
+
+    #[test]
+    fn there_is_no_lone_session_shortcut() {
+        // One live session and no default: still an error, not a guess. A rule
+        // that silently picks "the only one" moves under an agent the moment a
+        // second session exists.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        named(root, "auth");
+        let why = resolve(root, None).unwrap_err().to_string();
+        assert!(why.contains("--session auth"), "{why}");
+    }
+
+    #[test]
+    fn the_default_outlives_the_session_so_the_next_verb_can_say_how_it_ended() {
+        // Clearing the pointer here would turn "the session you were on was
+        // closed" into "no session is open", which reads as though there never
+        // was one. The first tells an agent what happened to its page.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = new_id(root).unwrap();
+        let mut s = session(&id, Placement::Host);
+        write(root, &s).unwrap();
+        set_default(root, &id).unwrap();
+
+        end(root, &mut s, State::Closed, "closed by the user");
+        match resolve(root, None) {
+            Err(SessionGone::Ended { state, id: gone, .. }) => {
+                assert_eq!(state, State::Closed);
+                assert_eq!(gone, id);
+            }
+            other => panic!("expected the ending, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_default_naming_a_record_that_is_gone_is_dropped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        set_default(root, "br_never").unwrap();
+
+        let why = resolve(root, None).unwrap_err().to_string();
+        assert!(why.contains("h5i browser open"), "{why}");
+        assert_eq!(read_default(root), None, "a pointer to nothing is not kept");
+    }
+
+    #[test]
+    fn a_name_can_be_reused_once_its_session_has_ended() {
+        // This is what makes a name comfortable to type, and exactly why the
+        // id is what gets written into the record.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let mut first = named(root, "auth");
+        end(root, &mut first, State::Closed, "closed by the user");
+
+        let second = named(root, "auth");
+        assert_ne!(second.id, first.id);
+        assert_eq!(resolve(root, Some("auth")).unwrap().id, second.id);
     }
 
     #[test]

@@ -194,6 +194,8 @@
 <a class="t2" href="#h5i-ui">h5i ui</a>
 <a class="t2" href="#h5i-browser">h5i browser</a>
 <div class="t3group">
+<a class="t3" href="#the-id-is-internal">The id is internal</a>
+<a class="t3" href="#open-navigates-a-session-that-is-already-there">open navigates a session that is already there</a>
 <a class="t3" href="#what-is-true-by-default">What is true by default</a>
 <a class="t3" href="#--in-box-the-same-session-inside-a-box">--in &lt;box&gt;: the same session, inside a box</a>
 <a class="t3" href="#sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</a>
@@ -1641,16 +1643,51 @@ drops it, along with axum, tokio and the build script's need for Node, and the
 <code>h5i ui</code> command with it.</p>
 <hr />
 <h2 id="h5i-browser">h5i browser</h2>
-<p>A <strong>session</strong> is the whole agent-facing surface. <code>h5i browser start</code> makes one
-and prints its id; every other verb names that id; <code>h5i browser close</code> ends it.
-Nothing else is a concept an agent has to learn — not the process that renders
-the page, not the port it listens on, not whether it is running inside a box.</p>
-<pre><code class="language-bash">h5i browser start https://example.com      # prints a session id, e.g. br_7k2xqa
-h5i browser snapshot br_7k2xqa             # the page as a model should read it
-h5i browser click br_7k2xqa @e3
-h5i browser requests br_7k2xqa             # what it asked for, and what was refused
-h5i browser close br_7k2xqa
+<p>A <strong>session</strong> is the whole agent-facing surface. <code>h5i browser open</code> makes one,
+every verb that follows acts on it, and <code>h5i browser close</code> ends it. Nothing
+else is a concept an agent has to learn — not the process that renders the page,
+not the port it listens on, not whether it is running inside a box, and not, in
+the ordinary case, the session itself.</p>
+<pre><code class="language-bash">h5i browser open https://example.com
+h5i browser snapshot            # the page as a model should read it
+h5i browser click @e3
+h5i browser requests            # what it asked for, and what was refused
+h5i browser close
 </code></pre>
+<h3 id="the-id-is-internal">The id is internal</h3>
+<p>Every session has an opaque id (<code>br_7k2xqa</code>), and it is in the record, in
+<code>--json</code> and in the receipts, because a durable reference has to be something no
+rename can break. <strong>It is not what you type.</strong> A CLI that demands an opaque
+string on every verb is copying a remote-browser HTTP API, where the id exists
+because the client and the browser share nothing else. Here they share a
+filesystem.</p>
+<p>So a verb resolves its session in three steps, most explicit first:</p>
+<ol>
+<li><code>--session &lt;name&gt;</code> (<code>-s</code>), a name someone chose, or an id pasted from <code>--json</code></li>
+<li><code>$H5I_BROWSER_SESSION</code></li>
+<li>the <strong>default</strong>: the session <code>open</code> last made</li>
+</ol>
+<p>Running several at once is what names are for:</p>
+<pre><code class="language-bash">h5i browser open https://example.com/login --session auth   --new
+h5i browser open https://example.com/      --session public --new
+h5i browser snapshot --session auth
+h5i browser list                       # the default is the row marked `*`
+</code></pre>
+<p>A name is comfortable to type precisely because it is not an identity: it can be
+reused once the session it named has ended. The id cannot, which is why the id
+is what gets written down, and why <code>--restore</code> takes one.</p>
+<p>There is deliberately <strong>no</strong> "if only one session is live, use it" rule. It
+reads as helpful and is the same hazard as a moving default: an agent that
+opened one session, had it end, and opened another under a different name would
+find its next verb quietly landing somewhere it never asked for.</p>
+<h3 id="open-navigates-a-session-that-is-already-there"><code>open</code> navigates a session that is already there</h3>
+<p>Opening a URL in a browser that is already up means <em>go there</em>. So <code>open</code>
+navigates the session it finds, and <code>--new</code> is how you say you meant a second
+one. The flags that only make sense at creation (<code>--allow</code>, <code>--in</code>, <code>--script</code>,
+<code>--no-loopback</code>, <code>--expires-in</code>, <code>--restore</code>) are <strong>refused</strong> rather than
+ignored when a session is reused: a session's policy is fixed when its engine
+starts, so accepting a grant and doing nothing with it would be a grant the
+caller believes it made.</p>
 <h3 id="what-is-true-by-default">What is true by default</h3>
 <p>Started with no flags, a session runs on this machine in your ordinary process
 space, like any other headless browser. There is no sandbox, and h5i does not
@@ -1667,8 +1704,8 @@ status line:</p>
 </code></pre>
 <h3 id="--in-box-the-same-session-inside-a-box"><code>--in &lt;box&gt;</code>: the same session, inside a box</h3>
 <pre><code class="language-bash">h5i box --profile browser --engine h5i-light --name web
-h5i browser start https://example.com --in web
-h5i browser snapshot br_9m4tzz            # identical verb, identical answer
+h5i browser open https://example.com --in web
+h5i browser snapshot  # identical verb, identical answer
 </code></pre>
 <p><code>--in</code> changes nothing you type. It changes <strong>who saw the network</strong>. The box
 enforces its egress allowlist at its own boundary, which is outside the thing
@@ -1700,7 +1737,7 @@ with the agent inside the box structurally cannot be.</p>
 <p><code>--in</code> needs a tier that can hold a resident process: <code>workspace</code>, <code>process</code> or
 <code>microvm</code>. The <code>browser</code> profile's egress allowlist needs <code>supervised</code> or
 <code>container</code>, and those two cannot hold a service yet, so on Linux today the tier
-that does both is <code>microvm</code>. <code>h5i browser start --in</code> says which of these applies
+that does both is <code>microvm</code>. <code>h5i browser open --in</code> says which of these applies
 to your box before it starts anything, rather than timing out.</p>
 <h3 id="sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</h3>
 <p>A session directory outlives the session. Closing one writes the ending into its
@@ -1738,10 +1775,10 @@ afterwards — and what makes an id impossible to reuse.</p>
 </table>
 <p>A verb sent to a session that is not live is <strong>refused with exit code 69</strong>
 (<code>EX_UNAVAILABLE</code>), never silently restarted:</p>
-<pre><code class="language-console">$ h5i browser snapshot br_7k2xqa
+<pre><code class="language-console">$ h5i browser snapshot
 browser session `br_7k2xqa` was closed: closed by the user. It will not be
-restarted automatically. Start a new one with `h5i browser start &lt;url&gt;`, or
-carry this one's storage forward with `h5i browser start &lt;url&gt; --restore br_7k2xqa`.
+restarted automatically. Start a new one with `h5i browser open &lt;url&gt;`, or
+carry this one's storage forward with `h5i browser open &lt;url&gt; --restore br_7k2xqa`.
 $ echo $?
 69
 </code></pre>
@@ -1787,8 +1824,11 @@ different:</p>
 <p><code>$H5I_BROWSER_HOME</code>, else <code>$XDG_STATE_HOME/h5i/browser</code>, else
 <code>~/.local/state/h5i/browser</code>. Deliberately <strong>not</strong> under a git repository: every
 other noun in h5i stores its state under the enclosing repo because every other
-noun is about a repo, and a browser is not. <code>h5i browser start</code> in an empty
+noun is about a repo, and a browser is not. <code>h5i browser open</code> in an empty
 directory is the ordinary case.</p>
+<p>The default session is per registry, so two agents sharing a <code>$HOME</code> share it.
+Give each its own with <code>$H5I_BROWSER_HOME</code>, or give each session a
+<code>--session &lt;name&gt;</code>.</p>
 <table>
 <thead>
 <tr>
@@ -1800,6 +1840,10 @@ directory is the ordinary case.</p>
 <tr>
 <td><code>H5I_BROWSER_HOME</code></td>
 <td>the session registry's directory</td>
+</tr>
+<tr>
+<td><code>H5I_BROWSER_SESSION</code></td>
+<td>which session a verb acts on, when <code>--session</code> is not given</td>
 </tr>
 <tr>
 <td><code>H5I_BROWSER_ENGINE</code></td>

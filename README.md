@@ -21,10 +21,11 @@ the record cannot be written. A request that is not in the log did not happen.
 **Auditable by default. Containable on demand.**
 
 ```bash
-h5i browser start https://example.com   # → br_7k2xqa
-h5i browser snapshot br_7k2xqa          # the page as a model should read it
-h5i browser click br_7k2xqa @e3
-h5i browser requests br_7k2xqa          # what it asked for, and what was refused
+h5i browser open https://example.com
+h5i browser snapshot                    # the page as a model should read it
+h5i browser click @e3
+h5i browser requests                    # what it asked for, and what was refused
+h5i browser close
 ```
 
 That runs here, on your machine, like any other headless browser. Add `--in` and
@@ -68,24 +69,37 @@ with hardware virtualization (`/dev/kvm` on Linux or Apple Silicon on macOS).
 ### 2.1. A browser session
 
 A **session** is the whole agent-facing surface: one page state, one cookie jar,
-one request log, one policy. `start` prints its id, every verb names that id,
-`close` ends it. Nothing else is a concept an agent has to learn.
+one request log, one policy. `open` makes one and every verb that follows acts
+on it; `close` ends it. Nothing else is a concept an agent has to learn.
 
 ```bash
-h5i browser start https://docs.rs/ --allow docs.rs   # → br_7k2xqa
-h5i browser snapshot br_7k2xqa                       # outline, with @ref handles
-h5i browser click    br_7k2xqa @e3
-h5i browser type     br_7k2xqa @e5 "serde"
-h5i browser extract  br_7k2xqa '{"titles": ["h2"]}'  # structured, by selector
-h5i browser markdown br_7k2xqa                       # the page a reader would read
-h5i browser close    br_7k2xqa
+h5i browser open https://docs.rs/ --allow docs.rs
+h5i browser snapshot                        # outline, with @ref handles
+h5i browser click    @e3
+h5i browser type     @e5 "serde"
+h5i browser extract  '{"titles": ["h2"]}'   # structured, by selector
+h5i browser markdown                        # the page a reader would read
+h5i browser close
+```
+
+No session id anywhere. `open` makes one and points the default at it, and
+every verb that follows lands there. The opaque id (`br_7k2xqa`) exists, and it
+is what `--json` and the receipts carry, because a durable reference has to
+survive a rename. It is simply not what you type.
+
+Running several at once is what names are for:
+
+```bash
+h5i browser open https://example.com/login --session auth --new
+h5i browser open https://example.com/      --session public --new
+h5i browser snapshot --session auth
 ```
 
 Two verbs the shape of an agent loop makes worth having:
 
 ```bash
-h5i browser snapshot br_7k2xqa --delta   # only what changed since the last read
-h5i browser login    br_7k2xqa           # hand the page to the human at the viewer
+h5i browser snapshot --delta   # only what changed since the last read
+h5i browser login              # hand the page to the human at the viewer
 ```
 
 `--delta` matters because re-reading three hundred lines after every click is
@@ -97,9 +111,9 @@ reading the cookie that says so.
 #### Read the record
 
 ```bash
-h5i browser requests br_7k2xqa           # every request, including the refusals
-h5i browser status   br_7k2xqa           # placement, policy digest, who saw the network
-h5i browser list                         # every session on this machine
+h5i browser requests           # every request, including the refusals
+h5i browser status             # placement, policy digest, who saw the network
+h5i browser list               # every session on this machine, and which is default
 ```
 
 ### 2.2. Put the session in a sandbox
@@ -108,8 +122,8 @@ Optional, and it changes nothing you type.
 
 ```bash
 h5i box --profile browser --engine h5i-light --name web
-h5i browser start https://example.com --in web   # → br_9m4tzz
-h5i browser snapshot br_9m4tzz                   # identical verb, identical answer
+h5i browser open https://example.com --in web
+h5i browser snapshot                            # identical verb, identical answer
 ```
 
 What changes is **who saw the network**. The box enforces its egress allowlist
@@ -130,9 +144,9 @@ A boxed session also makes the human takeover real. Every verb is carried in
 from the host, so pausing the agent is a boundary rather than a request.
 
 ```bash
-h5i browser take    br_9m4tzz    # a human takes control; the agent pauses
-h5i browser release br_9m4tzz    # hands it back; the agent must re-snapshot first
-h5i box view web                 # watch the page, in a loopback-only forward
+h5i browser take       # a human takes control; the agent pauses
+h5i browser release    # hands it back; the agent must re-snapshot first
+h5i box view web       # watch the page, in a loopback-only forward
 ```
 
 <p align="center">
@@ -304,9 +318,21 @@ it did not happen.
 </details>
 
 <details>
+<summary>Why do I not have to pass a session id?</summary>
+
+Because you share a filesystem with the browser. An opaque id on every verb is
+the shape of a remote-browser HTTP API, where the id exists because the client
+and the browser have nothing else in common. Here `open` makes a session and
+points the default at it, and the verbs that follow land there. The id still
+exists in `--json` and in the receipts, where a durable reference belongs. Use
+`--session <name>` when you want several at once.
+
+</details>
+
+<details>
 <summary>Is a default session sandboxed?</summary>
 
-No, and h5i does not claim it is. `h5i browser start` runs here, in your
+No, and h5i does not claim it is. `h5i browser open` runs here, in your
 ordinary process space. What you get by default is a complete record; what you
 get with `--in <box>` is a boundary as well. `h5i browser status` prints which
 one this session has.

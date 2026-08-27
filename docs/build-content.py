@@ -111,35 +111,35 @@ SESSION = {
     "deck": "Driving a browser and observing one are different jobs. This guide does both in one sitting: act on a page by handle, then read back the decision record the engine wrote as it went.",
     "body": f"""
 <div class="callout"><strong>Outcome.</strong> In about ten minutes you will open a session, read a page as a model reads it, act on it, watch a request get refused by policy, and read the log that proves what did and did not reach the network.</div>
-<p>A session is the whole agent-facing surface: one page state, one cookie jar, one request log, one policy. <code>start</code> prints an id, every verb names that id, <code>close</code> ends it. Nothing else is a concept the agent has to learn, which is what lets the placement change later without changing a single command.</p>
+<p>A session is the whole agent-facing surface: one page state, one cookie jar, one request log, one policy. <code>open</code> makes one, every verb that follows acts on it, <code>close</code> ends it. You do not type a session id: the opaque one in <code>--json</code> and in the receipts is a durable reference, not an interface. Nothing else is a concept the agent has to learn, which is what lets the placement change later without changing a single command.</p>
 <h2 id="start">1. Open a session</h2>
-{terminal('host', '$ h5i browser start https://docs.rs/ --allow docs.rs')}
+{terminal('host', '$ h5i browser open https://docs.rs/ --allow docs.rs')}
 <p>Read the two lines it prints back before anything else. The placement line says where this session runs, and the requests line says who saw its network. Both are printed on every status afterwards, so you never have to infer either.</p>
 {terminal('what it answers', "placed   : this machine (no containment beyond the engine)\nrequests : engine-claimed (fail-closed, and the engine's own account of what it fetched)")}
 <p>That first line is the honest one. A session started this way is not sandboxed, and h5i says so rather than letting the word browser imply a boundary. What you get without one is the record.</p>
 <h2 id="read">2. Read the page the way a model reads it</h2>
-{terminal('host', '$ h5i browser snapshot br_7k2xqa')}
+{terminal('host', '$ h5i browser snapshot')}
 <p>What comes back is an outline with <code>@ref</code> handles rather than pixels or raw HTML: headings, paragraphs, and the things that can be acted on, each with a handle to act on it by. It arrives inside a fence marking everything within as page content, which is the difference between text the model treats as information and text it treats as an instruction.</p>
 <p>Two things are stripped on the way through, both because the page composed them. Escape sequences never survive: <code>ESC</code> in a page title is a page repainting the terminal it is printed into, and nothing a browser has to say needs one. Long values are capped with the truncation stated in the value, because an answer silently shortened is one an agent reasons about as if it were complete.</p>
 <h2 id="act">3. Act by handle, not by guess</h2>
-{terminal('host', '$ h5i browser click    br_7k2xqa @e3\n$ h5i browser snapshot br_7k2xqa --delta\n$ h5i browser type     br_7k2xqa @e5 "serde"\n$ h5i browser submit   br_7k2xqa @e5')}
+{terminal('host', '$ h5i browser click @e3\n$ h5i browser snapshot --delta\n$ h5i browser type @e5 "serde"\n$ h5i browser submit @e5')}
 <p>Use <code>--delta</code> once the loop is running. Re-reading three hundred lines after every click is the wrong shape for an agent, and when the page has changed too much for a difference to be the shorter answer the full outline arrives instead and the reply says which it is.</p>
 <p>A handle from a reading the page has moved on from is refused rather than resolved against whatever now sits in that position. That refusal is the feature: a mis-click on a page that changed underneath is the failure that is hardest to see afterwards.</p>
 <h2 id="refused">4. Watch a request get refused</h2>
 <p>The session was started with one origin allowed. Follow a link that leaves it.</p>
-{terminal('host', '$ h5i browser click br_7k2xqa @e9\ndenied by policy: origin `https://tracker.example` is not in the allowlist')}
+{terminal('host', '$ h5i browser click @e9\ndenied by policy: origin `https://tracker.example` is not in the allowlist')}
 <p>Redirects are checked at every hop, so a server cannot route the session out of its allowlist by answering with a <code>302</code>. The refusal is an answer with a reason, not a silent no-op, and it is in the log.</p>
 <h2 id="audit">5. Read back what it reached</h2>
-{terminal('host', '$ h5i browser requests br_7k2xqa')}
+{terminal('host', '$ h5i browser requests')}
 <p>This is the part that is different. The engine <em>is</em> the HTTP client, so this list is a decision record it wrote before the bytes moved rather than a trace assembled beside the network. The order is fixed: check the policy, write the record, then touch the wire. When the record cannot be written, the fetch is refused.</p>
 <p>Two consequences worth stating plainly. A request that is not in this list did not happen. And a denied request <em>is</em> in the list, with its reason, so the log shows what was attempted and not only what succeeded.</p>
 <p>Pass the <code>cursor</code> from a previous answer back as <code>--since</code> to see only what is new, the same way <code>--delta</code> works on a snapshot.</p>
 <h2 id="end">6. End it, and keep the record</h2>
-{terminal('host', '$ h5i browser close br_7k2xqa\n$ h5i browser list --all')}
+{terminal('host', '$ h5i browser close\n$ h5i browser list --all')}
 <p>Closing writes the ending into the session's record instead of deleting it, which is what makes &ldquo;how did this end&rdquo; answerable afterwards and what makes the id impossible to reuse. The states are <code>closed</code>, <code>died</code>, <code>expired</code> and <code>evicted</code>, and they are kept apart because they are different facts about the run.</p>
 <p>Send a verb to a session that is not live and it is refused with exit code 69 rather than silently restarted. That distinct code is the point of the design: an agent whose retry cannot tell &ldquo;the session is gone&rdquo; from &ldquo;the click did not work&rdquo; quietly starts a second browser and loses both the page it was reasoning about and the record of losing it.</p>
 <h2 id="contain">7. When you want a boundary too</h2>
-{terminal('host', '$ h5i box --profile browser --engine h5i-light --name web\n$ h5i browser start https://example.com --in web')}
+{terminal('host', '$ h5i box --profile browser --engine h5i-light --name web\n$ h5i browser open https://example.com --in web')}
 <p>Every verb above works unchanged. What changes is the requests line: the box enforces its egress allowlist at its own boundary, outside the browser being described, so the lane goes from <code>engine-claimed</code> to <code>host-observed</code>.</p>
 <p>Being inside a box does not earn that on its own. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session <code>engine-claimed</code>. What earns the upgrade is enforcement outside the engine.</p>
 <h2 id="sources">Reference</h2>
@@ -151,7 +151,7 @@ SESSION = {
         ("Does the engine run page JavaScript?", "Only if you ask for it with --script. Off is the default because with no script realm there is no delivery channel for page-borne injection at all. Turning it on is a decision, not a default you inherit."),
     ],
     "next": ("/guides/watch-the-browser/", "Next guide", "Watch the page, then take the controls", "Put the browser beside the dev server and hand control between agent and human."),
-    "cta": ("Open a session in one command", "No project, no repository, no configuration. h5i browser start takes a URL and gives you an id.", "/manual/#h5i-browser", "Read the session reference"),
+    "cta": ("Open a session in one command", "No project, no repository, no configuration. h5i browser open takes a URL and gives you an id.", "/manual/#h5i-browser", "Read the session reference"),
 }
 
 

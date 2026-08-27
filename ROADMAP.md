@@ -23,7 +23,7 @@ neither can tell you what it reached, because neither *is* the HTTP client.
 
 ## The three decisions this pivot rests on
 
-1. **The sandbox is opt-in.** `h5i browser start` runs on the host, like any
+1. **The sandbox is opt-in.** `h5i browser open` runs on the host, like any
    other headless browser, and h5i says so on the placement line rather than
    letting the word "browser" imply a boundary. Requiring a box up front would
    have made hello-world fail on CI, under AppArmor, on macOS and inside a
@@ -31,18 +31,47 @@ neither can tell you what it reached, because neither *is* the HTTP client.
    already give. Containment is `--in <box>`.
 2. **The box stays a separate, orthogonal product surface.** It is not the
    browser's implementation detail, so it stays agent-facing. `h5i box run --
-   h5i browser start` is ordinary composition; `--in` is sugar over the same
+   h5i browser open` is ordinary composition; `--in` is sugar over the same
    placement.
 3. **The lane is earned, not assumed.** A boxed session is `host-observed` only
    when something outside the engine decides what may leave. A box that lets the
    browser reach the whole network corroborates nothing and keeps the
    `engine-claimed` label. See `browser_session::Session::lane_for`.
 
+## The id is not the interface
+
+`h5i browser open` makes a session and points the **default** at it; every verb
+that follows lands there. The opaque id (`br_7k2xqa`) is in the record, in
+`--json` and in the receipts, because a durable reference has to survive a
+rename — and it is not what anyone types.
+
+Demanding one on every verb is the shape of a remote-browser HTTP API
+(Browserbase returns an `id` and a `connectUrl` for exactly this reason), where
+the id exists because the client and the browser share nothing else. Playwright
+never shows one because the caller holds the object. A local CLI is nearer to
+Playwright than to Browserbase: it shares a filesystem with the browser, so the
+id can stay where it belongs.
+
+Names, not ids, are for running several at once (`--session auth`), and a name
+is comfortable precisely because it is *not* an identity: it can be reused once
+the session it named has ended.
+
+Two rules fell out of building it, both of them about not moving under an agent:
+
+- **No "if only one is live, use it".** It reads as helpful and silently
+  redirects the next verb the moment a second session exists.
+- **The default outlives the session it names.** Following a pointer to a closed
+  session is what lets the next bare verb say *"the session you were on was
+  closed"* instead of *"no session is open"*. Only a pointer to a record that is
+  gone is dropped.
+
 ## What is agent-facing, and what is not
 
 | concept | agent-facing? |
 | --- | --- |
-| session | yes. The only noun a verb ever names. |
+| session | yes, but usually implicitly: `open` sets the default and verbs follow it. |
+| session name | yes, for running several at once (`--session auth`). |
+| session id | no. Durable reference, in `--json` and receipts; never typed. |
 | tab | yes, when there is more than one page in a session. |
 | box | yes, but as a *placement*, never as part of a session's definition. |
 | connection, worker, CDP session | no. Internal, and deliberately unnamed. |
@@ -258,7 +287,7 @@ h5i box allow <host>         # persistent egress allowlist entry
 h5i box cache ls|refresh|rm  # per project warm dependency caches
 
 h5i browser status|take|release   # the control lock, and who holds it
-h5i browser url                  # the viewer URL for this box
+h5i browser url  # the viewer URL for this box
 
 h5i skill install|show|path      # write or print the embedded agent skill
 

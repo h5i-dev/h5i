@@ -1,9 +1,33 @@
 //! `h5i browser` — the front door.
 //!
-//! One noun an agent has to learn: a **session**. `h5i browser start` makes one
-//! and prints its id, every other verb names that id, and `h5i browser close`
-//! ends it. Nothing else is agent-facing. Not the process that renders the
-//! page, not the port it listens on, not whether it is running inside a box.
+//! One noun an agent has to learn: a **session**. `h5i browser open` makes one
+//! and every other verb acts on it. Nothing else is agent-facing. Not the
+//! process that renders the page, not the port it listens on, not whether it is
+//! running inside a box — and not, in the ordinary case, the session itself.
+//!
+//! # The ordinary case types no id
+//!
+//! ```text
+//! h5i browser open https://example.com
+//! h5i browser snapshot
+//! h5i browser click @e3
+//! h5i browser close
+//! ```
+//!
+//! `open` makes a session and points the **default** at it; every later verb
+//! follows that pointer. The opaque id (`br_7k2xqa`) still exists, and it is
+//! what `--json` and the receipts carry, because a durable reference must
+//! survive a rename. It is simply not what a person or an agent types.
+//!
+//! Demanding one on every verb is the shape of a remote-browser HTTP API, where
+//! the id exists because the client and the browser share nothing else. Here
+//! they share a filesystem, so the id can stay where it belongs.
+//!
+//! Running several at once is what `--session <name>` is for
+//! (`h5i browser open <url> --session auth`), and a name is comfortable to type
+//! precisely because it is not an identity: it can be reused once the session
+//! it named has ended. The id cannot, which is why the id is what gets written
+//! down.
 //!
 //! # Containment is a placement, not a product
 //!
@@ -55,21 +79,36 @@ const START_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Subcommand)]
 pub enum BrowserCommands {
-    /// Start a browser session and print its id.
+    /// Open a URL, making a session if there is not one already.
     ///
-    /// The session holds the page, the cookie jar, the request log and the
-    /// policy until it is closed. Without `--in`, it runs here with no
-    /// containment beyond the engine itself; with `--in <box>`, the same
-    /// session runs inside that box.
-    Start {
+    /// With no `--session`, this uses the default session and points the
+    /// default at whatever it makes, so the verbs that follow need no id.
+    /// Without `--in`, the session runs here with no containment beyond the
+    /// engine itself; with `--in <box>`, the same session runs inside that box.
+    Open {
         /// A URL, or a path to a local HTML file.
         url: String,
 
+        /// Name this session, so several can run at once.
+        ///
+        /// A name is not an identity: it can be reused once the session it
+        /// named has ended. The opaque id in `--json` and in receipts is what
+        /// cannot be, and is what to keep when you need a durable reference.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+
+        /// Make a new session even if one is already open.
+        ///
+        /// Without this, `open` navigates the session it finds, because that is
+        /// what opening a URL means when a browser is already up.
+        #[arg(long)]
+        new: bool,
+
         /// Run the session inside this box instead of on this machine.
         ///
-        /// The box must already exist (`h5i box`) and be pinned to the
-        /// `h5i-light` engine. Its egress allowlist is enforced at the box's
-        /// boundary, so the session's request lane becomes host-observed.
+        /// The box must already exist (`h5i box`). Its egress allowlist is
+        /// enforced at the box's boundary, so the session's request lane
+        /// becomes host-observed.
         #[arg(long = "in", value_name = "BOX")]
         in_box: Option<String>,
 
@@ -109,8 +148,9 @@ pub enum BrowserCommands {
         /// A restore is a **new session with a new id**, and the inheritance is
         /// written into its record. Nothing resurrects an id: an agent holding
         /// a stale one always gets a refusal, never a different session wearing
-        /// the same name.
-        #[arg(long, value_name = "SESSION")]
+        /// the same name. Takes an id, not a name, because a name can be reused
+        /// and storage has to come from one definite session.
+        #[arg(long, value_name = "SESSION_ID")]
         restore: Option<String>,
 
         /// Print the session record as JSON instead of a summary line.
@@ -130,21 +170,36 @@ pub enum BrowserCommands {
 
     /// What a session is, where it runs, and who saw its network.
     Status {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         #[arg(long)]
         json: bool,
     },
 
     /// End a session. Its record stays.
     Close {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// End every live session on this machine.
+        #[arg(long, conflicts_with = "session")]
+        all: bool,
         #[arg(long)]
         json: bool,
     },
 
     /// The page as a model should read it: the outline, with `@ref` handles.
     Snapshot {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         /// Report only what changed since the last snapshot.
         #[arg(long)]
         delta: bool,
@@ -154,7 +209,11 @@ pub enum BrowserCommands {
 
     /// Go to a URL, resolved against the current page like a click would be.
     Navigate {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         url: String,
         #[arg(long)]
         json: bool,
@@ -162,7 +221,11 @@ pub enum BrowserCommands {
 
     /// Follow a `@ref` from the last snapshot.
     Click {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         /// `e3` or `@e3`, from a `snapshot`.
         reference: String,
         #[arg(long)]
@@ -171,7 +234,11 @@ pub enum BrowserCommands {
 
     /// Put text into a field, replacing what was there.
     Type {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         reference: String,
         text: String,
         #[arg(long)]
@@ -180,7 +247,11 @@ pub enum BrowserCommands {
 
     /// Submit the form containing a `@ref`.
     Submit {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         reference: String,
         #[arg(long)]
         json: bool,
@@ -188,7 +259,11 @@ pub enum BrowserCommands {
 
     /// Scroll the page. Negative scrolls up.
     Scroll {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         #[arg(allow_negative_numbers = true)]
         by: f64,
         #[arg(long)]
@@ -197,7 +272,11 @@ pub enum BrowserCommands {
 
     /// Wait until something is on the page, or until nothing can put it there.
     WaitFor {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         #[arg(long, value_name = "CSS")]
         selector: Option<String>,
         #[arg(long, value_name = "TEXT", conflicts_with = "selector")]
@@ -206,9 +285,13 @@ pub enum BrowserCommands {
         json: bool,
     },
 
-    /// Wait until a page expression is true. Needs `start --script`.
+    /// Wait until a page expression is true. Needs `open --script`.
     WaitForScript {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         expr: String,
         #[arg(long)]
         json: bool,
@@ -216,7 +299,11 @@ pub enum BrowserCommands {
 
     /// Pull structured data out of the page by selector.
     Extract {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         /// The schema, as JSON.
         schema: String,
         #[arg(long)]
@@ -225,7 +312,11 @@ pub enum BrowserCommands {
 
     /// The page as markdown: what a reader would read, without the handles.
     Markdown {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         #[arg(long, value_name = "BYTES")]
         max_bytes: Option<usize>,
         #[arg(long)]
@@ -238,7 +329,11 @@ pub enum BrowserCommands {
     /// before the bytes moved, not an observation made from beside the network.
     /// If a request is not in this list, it did not happen.
     Requests {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         /// Only what happened after this sequence number.
         #[arg(long, value_name = "SEQ")]
         since: Option<u64>,
@@ -248,14 +343,22 @@ pub enum BrowserCommands {
 
     /// Which credentials this session can use, by name. Never their values.
     Env {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         #[arg(long)]
         json: bool,
     },
 
     /// Hand the page to the human at the live view for as long as a login takes.
     Login {
-        session: String,
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
         /// End login mode and make the page readable again.
         #[arg(long)]
         off: bool,
@@ -264,11 +367,19 @@ pub enum BrowserCommands {
     },
 
     /// Take control as a human. The agent's automation pauses at its next verb.
-    Take { session: String },
+    Take {
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+    },
 
     /// Hand control back to the agent. It must re-snapshot before acting,
     /// because the page moved while you were driving.
-    Release { session: String },
+    Release {
+        /// Which session, when more than one is open.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+    },
 
     /// Print the loopback viewer URL for a box, token included. `h5i box view`
     /// is what actually serves it; this is for pasting into a browser when a
@@ -288,8 +399,10 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
     let _ = bs::expire_due(&root);
 
     match action {
-        BrowserCommands::Start {
+        BrowserCommands::Open {
             url,
+            session,
+            new,
             in_box,
             allow,
             no_loopback,
@@ -299,8 +412,10 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             expires_in,
             restore,
             json,
-        } => start(
+        } => open(
             &root,
+            session,
+            new,
             StartOptions {
                 url,
                 in_box,
@@ -315,8 +430,8 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             json,
         ),
         BrowserCommands::List { all, json } => list(&root, all, json),
-        BrowserCommands::Status { session, json } => status(&root, &session, json),
-        BrowserCommands::Close { session, json } => close(&root, &session, json),
+        BrowserCommands::Status { session, json } => status(&root, session.as_deref(), json),
+        BrowserCommands::Close { session, all, json } => close(&root, session.as_deref(), all, json),
 
         BrowserCommands::Snapshot {
             session,
@@ -327,16 +442,16 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             if delta {
                 argv.push("--delta".into());
             }
-            verb(&root, &session, argv, false, json)
+            verb(&root, session.as_deref(), argv, false, json)
         }
         BrowserCommands::Navigate { session, url, json } => {
-            verb(&root, &session, vec!["navigate".into(), url], true, json)
+            verb(&root, session.as_deref(), vec!["navigate".into(), url], true, json)
         }
         BrowserCommands::Click {
             session,
             reference,
             json,
-        } => verb(&root, &session, vec!["click".into(), reference], true, json),
+        } => verb(&root, session.as_deref(), vec!["click".into(), reference], true, json),
         BrowserCommands::Type {
             session,
             reference,
@@ -344,7 +459,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             json,
         } => verb(
             &root,
-            &session,
+            session.as_deref(),
             vec!["type".into(), reference, text],
             true,
             json,
@@ -353,10 +468,10 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             session,
             reference,
             json,
-        } => verb(&root, &session, vec!["submit".into(), reference], true, json),
+        } => verb(&root, session.as_deref(), vec!["submit".into(), reference], true, json),
         BrowserCommands::Scroll { session, by, json } => verb(
             &root,
-            &session,
+            session.as_deref(),
             vec!["scroll".into(), by.to_string()],
             true,
             json,
@@ -376,7 +491,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 argv.push("--text".into());
                 argv.push(text);
             }
-            verb(&root, &session, argv, false, json)
+            verb(&root, session.as_deref(), argv, false, json)
         }
         BrowserCommands::WaitForScript {
             session,
@@ -384,7 +499,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             json,
         } => verb(
             &root,
-            &session,
+            session.as_deref(),
             vec!["wait-for-script".into(), expr],
             false,
             json,
@@ -393,7 +508,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             session,
             schema,
             json,
-        } => verb(&root, &session, vec!["extract".into(), schema], false, json),
+        } => verb(&root, session.as_deref(), vec!["extract".into(), schema], false, json),
         BrowserCommands::Markdown {
             session,
             max_bytes,
@@ -404,7 +519,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 argv.push("--max-bytes".into());
                 argv.push(max.to_string());
             }
-            verb(&root, &session, argv, false, json)
+            verb(&root, session.as_deref(), argv, false, json)
         }
         BrowserCommands::Requests {
             session,
@@ -416,10 +531,10 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                 argv.push("--since".into());
                 argv.push(since.to_string());
             }
-            verb(&root, &session, argv, false, json)
+            verb(&root, session.as_deref(), argv, false, json)
         }
         BrowserCommands::Env { session, json } => {
-            verb(&root, &session, vec!["env".into()], false, json)
+            verb(&root, session.as_deref(), vec!["env".into()], false, json)
         }
         BrowserCommands::Login { session, off, json } => {
             let mut argv = vec!["login".to_string()];
@@ -427,11 +542,11 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             // Not mutating in the lock's sense: `login` is how a human takes the
             // keyboard, so refusing it while a human holds control would refuse
             // the very thing they are here to do.
-            verb(&root, &session, argv, false, json)
+            verb(&root, session.as_deref(), argv, false, json)
         }
 
-        BrowserCommands::Take { session } => take(&root, &session),
-        BrowserCommands::Release { session } => release(&root, &session),
+        BrowserCommands::Take { session } => take(&root, session.as_deref()),
+        BrowserCommands::Release { session } => release(&root, session.as_deref()),
         BrowserCommands::Url { name, port } => viewer_url(&name, port),
     }
 }
@@ -448,7 +563,106 @@ struct StartOptions {
     restore: Option<String>,
 }
 
-fn start(root: &Path, opts: StartOptions, json: bool) -> anyhow::Result<()> {
+/// Open a URL: navigate the session that is already there, or make one.
+///
+/// The two halves are deliberately not one. Opening a URL in a browser that is
+/// already up means *go there*, and making a second session behind the agent's
+/// back would leave the first one holding a page nothing points at any more.
+/// So a live session is navigated, and `--new` is how you say you meant a
+/// second one.
+///
+/// The flags that only make sense at creation are refused rather than ignored
+/// when a session is reused. A session's policy is fixed when its engine
+/// starts, so accepting `--allow` here and doing nothing with it would be a
+/// grant the caller believes it made.
+fn open(
+    root: &Path,
+    selector: Option<String>,
+    force_new: bool,
+    opts: StartOptions,
+    json: bool,
+) -> anyhow::Result<()> {
+    if !force_new
+        && let Ok(existing) = bs::resolve(root, selector.as_deref())
+    {
+        let creation_only = creation_flags(&opts);
+        if !creation_only.is_empty() {
+            anyhow::bail!(
+                "browser session {} is already open, and its policy was fixed when its \
+                 engine started, so {} cannot apply now.\n\n  \
+                 Open a second session with `--new`, or end this one with \
+                 `h5i browser close` first.",
+                label(&existing),
+                creation_only.join(" and ")
+            );
+        }
+        let dir = bs::dir(root, &existing.id);
+        let mut answer = deliver(&existing, &dir, vec!["navigate".into(), opts.url.clone()])?;
+        bs::scrub(&mut answer);
+        if answer.get("ok").and_then(Value::as_bool) == Some(false) {
+            // The session is still on whatever it was on. Saying otherwise
+            // would leave an agent acting on a page it never reached.
+            if json {
+                println!("{}", serde_json::to_string_pretty(&answer)?);
+            }
+            anyhow::bail!("{} did not go to {}: {}", label(&existing), opts.url, refusal(&answer));
+        }
+        // The record follows the page. `url` is what this session was last told
+        // to open, so `h5i browser list` keeps naming something true.
+        let mut moved = existing.clone();
+        moved.url = opts.url.clone();
+        let _ = bs::write(root, &moved);
+        if json {
+            let mut record = serde_json::to_value(&moved)?;
+            record["navigated"] = answer;
+            println!("{}", serde_json::to_string_pretty(&record)?);
+        } else {
+            println!("{} {} is now on {}", SUCCESS, label(&moved), opts.url);
+        }
+        return Ok(());
+    }
+    start(root, selector, opts, json)
+}
+
+/// Which creation-only flags the caller set, named the way they typed them.
+fn creation_flags(opts: &StartOptions) -> Vec<&'static str> {
+    let mut set = Vec::new();
+    if !opts.allow.is_empty() {
+        set.push("`--allow`");
+    }
+    if opts.in_box.is_some() {
+        set.push("`--in`");
+    }
+    if opts.script {
+        set.push("`--script`");
+    }
+    if opts.no_loopback {
+        set.push("`--no-loopback`");
+    }
+    if opts.expires_in.is_some() {
+        set.push("`--expires-in`");
+    }
+    if opts.restore.is_some() {
+        set.push("`--restore`");
+    }
+    set
+}
+
+/// How to refer to a session in a sentence: the name if it has one, and the id
+/// otherwise, because the id is the only thing every session has.
+fn label(session: &bs::Session) -> String {
+    match &session.name {
+        Some(name) => format!("`{name}` ({})", session.id),
+        None => session.id.clone(),
+    }
+}
+
+fn start(
+    root: &Path,
+    name: Option<String>,
+    opts: StartOptions,
+    json: bool,
+) -> anyhow::Result<()> {
     let placement = match &opts.in_box {
         None => bs::Placement::Host,
         Some(name) => bs::Placement::Box { name: name.clone() },
@@ -479,6 +693,7 @@ fn start(root: &Path, opts: StartOptions, json: bool) -> anyhow::Result<()> {
 
     let session = bs::Session {
         id: id.clone(),
+        name: name.clone(),
         engine: bs::Engine::H5iLight,
         lane,
         placement,
@@ -501,6 +716,11 @@ fn start(root: &Path, opts: StartOptions, json: bool) -> anyhow::Result<()> {
         },
     };
     bs::write(root, &session)?;
+    // The default follows the newest session whether or not it was named, so a
+    // `--session auth` that is the only thing running is still what a bare
+    // `h5i browser snapshot` acts on. A name adds a way to address it; it does
+    // not take away the ordinary one.
+    let _ = bs::set_default(root, &session.id);
 
     // Wait for the engine to say it is up, and record the death if it is not.
     if let Err(e) = await_control(&mut spawned, &dir) {
@@ -516,13 +736,23 @@ fn start(root: &Path, opts: StartOptions, json: bool) -> anyhow::Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&session)?);
     } else {
-        println!("{} browser session {}", SUCCESS, style(&session.id).cyan());
+        match &session.name {
+            Some(name) => println!(
+                "{} browser session {} ({})",
+                SUCCESS,
+                style(name).cyan(),
+                style(&session.id).dim()
+            ),
+            None => println!("{} browser session {}", SUCCESS, style(&session.id).dim()),
+        }
         print_summary(&session);
-        println!(
-            "\n  next     : {} {} ",
-            style("h5i browser snapshot").dim(),
-            style(&session.id).dim()
-        );
+        // The next command, spelled the way it is actually used. Printing the
+        // id here and expecting it back would teach the id as the interface.
+        let sel = match &session.name {
+            Some(name) => format!(" --session {name}"),
+            None => String::new(),
+        };
+        println!("\n  next     : {}", style(format!("h5i browser snapshot{sel}")).dim());
     }
     Ok(())
 }
@@ -1003,19 +1233,19 @@ fn seed_storage(root: &Path, from: &str, into: &Path) -> anyhow::Result<()> {
 ///    a page.
 fn verb(
     root: &Path,
-    id: &str,
+    selector: Option<&str>,
     argv: Vec<String>,
     mutating: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    let session = match bs::open_live(root, id) {
+    let session = match bs::resolve(root, selector) {
         Ok(session) => session,
         Err(gone) => {
             eprintln!("{}", gone);
             std::process::exit(bs::EXIT_SESSION_GONE);
         }
     };
-    let dir = bs::dir(root, id);
+    let dir = bs::dir(root, &session.id);
 
     if let Some(explanation) = h5i_core::control::check(&dir, mutating).explain() {
         anyhow::bail!("{explanation}");
@@ -1034,12 +1264,32 @@ fn verb(
     }
     bs::scrub(&mut answer);
 
+    // A refusal is an answer, and `--json` promised the answer — so it is
+    // printed either way. What must not happen is printing it and exiting 0: a
+    // script that checks the status code would read "denied by policy" as
+    // success, which is the failure this whole design is arranged against.
+    let refused = answer.get("ok").and_then(Value::as_bool) == Some(false);
+
     if json {
         println!("{}", serde_json::to_string_pretty(&answer)?);
-        return Ok(());
+    } else if refused {
+        anyhow::bail!("{}", refusal(&answer));
+    } else {
+        print_answer(&answer);
     }
-    print_answer(&answer);
+    if refused {
+        std::process::exit(1);
+    }
     Ok(())
+}
+
+/// What a session said when it refused, or a stand-in when it said nothing.
+fn refusal(answer: &Value) -> String {
+    answer
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or("the session refused, without saying why")
+        .to_string()
 }
 
 /// Carry a verb to wherever the session actually is.
@@ -1132,14 +1382,15 @@ fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {
     }
     if sessions.is_empty() {
         println!(
-            "  no browser sessions{}. Start one with `h5i browser start <url>`.",
+            "  no browser sessions{}. Open one with `h5i browser open <url>`.",
             if all { "" } else { " running" }
         );
         return Ok(());
     }
+    let default = bs::read_default(root);
     println!(
-        "  {:<10}  {:<8}  {:<9}  {:<15}  URL",
-        "SESSION", "STATE", "PLACED", "LANE"
+        "  {:<14}  {:<10}  {:<8}  {:<9}  {:<15}  URL",
+        "SESSION", "ID", "STATE", "PLACED", "LANE"
     );
     for session in sessions {
         let state = match session.state {
@@ -1147,9 +1398,19 @@ fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {
             bs::State::Closed => style(session.state.as_str()).dim(),
             _ => style(session.state.as_str()).yellow(),
         };
+        // The default is marked rather than hidden: an agent reading this
+        // needs to know which row a bare verb will land on.
+        let is_default = default.as_deref() == Some(session.id.as_str());
+        let shown = match (&session.name, is_default) {
+            (Some(name), true) => format!("{name} *"),
+            (Some(name), false) => name.clone(),
+            (None, true) => "(default) *".to_string(),
+            (None, false) => "-".to_string(),
+        };
         println!(
-            "  {:<10}  {:<8}  {:<9}  {:<15}  {}",
-            style(&session.id).cyan(),
+            "  {:<14}  {:<10}  {:<8}  {:<9}  {:<15}  {}",
+            style(shown).cyan(),
+            style(&session.id).dim(),
             state,
             session.placement.as_str(),
             session.lane.as_str(),
@@ -1159,8 +1420,15 @@ fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn status(root: &Path, id: &str, json: bool) -> anyhow::Result<()> {
-    let mut session = bs::read(root, id)?;
+fn status(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> {
+    // Not `resolve`: a status on a session that has ended is exactly the
+    // question worth answering, so this reads the record rather than refusing.
+    let mut session = match bs::resolve(root, selector) {
+        Ok(session) => session,
+        Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
+        Err(gone) => anyhow::bail!("{gone}"),
+    };
+    let id = &session.id.clone();
     // Reading status is the moment to notice a death and write it down.
     if session.state.is_live() && !session.probe() {
         bs::end(
@@ -1177,7 +1445,14 @@ fn status(root: &Path, id: &str, json: bool) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
-    println!("  session  : {}", style(&session.id).cyan());
+    match &session.name {
+        Some(name) => println!(
+            "  session  : {} ({})",
+            style(name).cyan(),
+            style(&session.id).dim()
+        ),
+        None => println!("  session  : {}", style(&session.id).cyan()),
+    }
     print_summary(&session);
     let lock = h5i_core::control::read(&bs::dir(root, id));
     println!(
@@ -1188,9 +1463,8 @@ fn status(root: &Path, id: &str, json: bool) -> anyhow::Result<()> {
     if lock.needs_resnapshot {
         println!(
             "  {}    the agent's @refs are stale — re-snapshot before acting \
-             (`h5i browser snapshot {}`)",
-            style("stale").yellow(),
-            session.id
+             (`h5i browser snapshot`)",
+            style("stale").yellow()
         );
     }
     if let Some(reason) = &session.end_reason {
@@ -1234,22 +1508,55 @@ fn print_summary(session: &bs::Session) {
     }
 }
 
-fn close(root: &Path, id: &str, json: bool) -> anyhow::Result<()> {
-    let mut session = bs::read(root, id)?;
-    if session.state.is_live() {
-        stop_engine(&session)?;
-        bs::end(root, &mut session, bs::State::Closed, "closed by the user");
+fn close(
+    root: &Path,
+    selector: Option<&str>,
+    all: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let targets: Vec<bs::Session> = if all {
+        bs::list(root)?
+            .into_iter()
+            .filter(|s| s.state.is_live())
+            .collect()
+    } else {
+        match bs::resolve(root, selector) {
+            Ok(session) => vec![session],
+            // Closing something already closed is the state `close` wanted, so
+            // it reports rather than fails. Only "no such session" is an error.
+            Err(bs::SessionGone::Ended { id, .. }) => vec![bs::read(root, &id)?],
+            Err(gone) => anyhow::bail!("{gone}"),
+        }
+    };
+
+    if targets.is_empty() {
+        if json {
+            println!("[]");
+        } else {
+            println!("  no browser session is open.");
+        }
+        return Ok(());
+    }
+
+    let mut closed = Vec::new();
+    for mut session in targets {
+        if session.state.is_live() {
+            stop_engine(&session)?;
+            bs::end(root, &mut session, bs::State::Closed, "closed by the user");
+        }
+        if !json {
+            println!(
+                "{} browser session {} {}. Its record stays at {}.",
+                SUCCESS,
+                label(&session),
+                session.state.describe(),
+                bs::dir(root, &session.id).display()
+            );
+        }
+        closed.push(session);
     }
     if json {
-        println!("{}", serde_json::to_string_pretty(&session)?);
-    } else {
-        println!(
-            "{} browser session {} {}. Its record stays at {}.",
-            SUCCESS,
-            style(&session.id).cyan(),
-            session.state.describe(),
-            bs::dir(root, id).display()
-        );
+        println!("{}", serde_json::to_string_pretty(&closed)?);
     }
     Ok(())
 }
@@ -1284,9 +1591,9 @@ fn stop_engine(session: &bs::Session) -> anyhow::Result<()> {
     }
 }
 
-fn take(root: &Path, id: &str) -> anyhow::Result<()> {
-    let session = bs::read(root, id)?;
-    let control = h5i_core::control::take(&bs::dir(root, id))?;
+fn take(root: &Path, selector: Option<&str>) -> anyhow::Result<()> {
+    let session = bs::resolve(root, selector).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let control = h5i_core::control::take(&bs::dir(root, &session.id))?;
     println!(
         "{} control taken by {} — the agent's automation is paused",
         SUCCESS,
@@ -1310,9 +1617,9 @@ fn take(root: &Path, id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn release(root: &Path, id: &str) -> anyhow::Result<()> {
-    let _ = bs::read(root, id)?;
-    let control = h5i_core::control::release(&bs::dir(root, id))?;
+fn release(root: &Path, selector: Option<&str>) -> anyhow::Result<()> {
+    let session = bs::resolve(root, selector).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let control = h5i_core::control::release(&bs::dir(root, &session.id))?;
     println!(
         "{} control returned to {} — it must re-snapshot before acting",
         SUCCESS,
