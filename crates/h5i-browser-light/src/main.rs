@@ -40,6 +40,11 @@ const STREAM_FILE_VAR: &str = "H5I_BROWSER_STREAM_FILE";
 /// control file sits beside the stream file.
 const CONTROL_FILE_VAR: &str = "H5I_BROWSER_CONTROL_FILE";
 
+/// Where a session's Unix control socket is. Set by h5i for a session it placed
+/// in a box, where a port cannot be reached across the per-run network
+/// namespace; unset everywhere else, where the port is simpler.
+const CONTROL_SOCKET_VAR: &str = "H5I_BROWSER_CONTROL_SOCKET";
+
 /// Where h5i wants the agent's verbs recorded, so the console's agent-actions
 /// pane has a source on an engine that has no mediated socket in front of it.
 const ACTIONS_VAR: &str = "H5I_BROWSER_ACTIONS";
@@ -113,6 +118,16 @@ enum Command {
         /// with a `.control` extension, so a box that sets one gets both.
         #[arg(long, value_name = "PATH")]
         control_file: Option<PathBuf>,
+
+        /// Also take control connections on a Unix socket here.
+        ///
+        /// For a session inside an h5i box. Every `h5i box run` gets its own
+        /// network namespace, so a verb carried in afterwards has a loopback of
+        /// its own and cannot reach the port this session bound. A path can be
+        /// reached because the box's filesystem is one filesystem across every
+        /// run in it. Defaults to $H5I_BROWSER_CONTROL_SOCKET.
+        #[arg(long, value_name = "PATH")]
+        control_socket: Option<PathBuf>,
 
         /// Record the verbs an agent asks for here, as JSON lines. Defaults to
         /// $H5I_BROWSER_ACTIONS. With one set, a verb that cannot be recorded
@@ -358,6 +373,14 @@ struct SessionArgs {
     #[arg(long, conflicts_with = "control_file")]
     port: Option<u16>,
 
+    /// The session's Unix control socket, when it has one.
+    ///
+    /// Preferred over a port whenever it is set, because the arrangement that
+    /// needs it — a session in a box — is the one where a port cannot work.
+    /// Defaults to $H5I_BROWSER_CONTROL_SOCKET.
+    #[arg(long, value_name = "PATH")]
+    control_socket: Option<PathBuf>,
+
     /// Print the session's raw JSON answer instead of human output.
     #[arg(long)]
     json: bool,
@@ -478,6 +501,7 @@ fn run() -> Result<(), H5iError> {
             quality,
             stream_file,
             control_file,
+            control_socket,
             actions,
             once,
         } => serve(
@@ -488,6 +512,7 @@ fn run() -> Result<(), H5iError> {
             quality,
             stream_file,
             control_file,
+            control_socket,
             actions,
             once,
         ),
@@ -545,10 +570,13 @@ fn serve(
     quality: u8,
     stream_file: Option<PathBuf>,
     control_file: Option<PathBuf>,
+    control_socket: Option<PathBuf>,
     action_log: Option<PathBuf>,
     once: bool,
 ) -> Result<(), H5iError> {
     let (requests, factory, page) = load(target, net, view)?;
+    let control_socket =
+        control_socket.or_else(|| std::env::var(CONTROL_SOCKET_VAR).ok().map(PathBuf::from));
     let stream_file = stream_file.or_else(|| std::env::var(STREAM_FILE_VAR).ok().map(PathBuf::from));
     let chosen = control_file
         .or_else(|| std::env::var(CONTROL_FILE_VAR).ok().map(PathBuf::from))
@@ -581,6 +609,7 @@ fn serve(
             quality,
             stream_file,
             control_file,
+            control_socket,
             action_log,
             once,
             requests,
@@ -687,8 +716,13 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Env { at } => (at, serde_json::json!({"verb": Verb::Env.name()})),
     };
 
-    let port = session_port(at)?;
-    let reply = h5i_browser_light::stream::ask(port, &request)?;
+    // The socket wins when there is one. It is only ever set deliberately —
+    // by a flag or by h5i inside a box — and in a box it is the only channel
+    // that reaches the session at all.
+    let reply = match session_socket(at) {
+        Some(path) => h5i_browser_light::stream::ask_unix(&path, &request)?,
+        None => h5i_browser_light::stream::ask(session_port(at)?, &request)?,
+    };
 
     if at.json {
         println!("{reply}");
@@ -752,6 +786,17 @@ fn exit_status(reply: &serde_json::Value) -> Result<(), H5iError> {
 /// The fallback chain ends at the stream file because that is the one thing
 /// h5i already sets in a box: an agent that has to be told a port is an agent
 /// that has to be told this engine exists.
+/// The Unix control socket to use, if one was named.
+///
+/// Never guessed: a socket is either passed or put in the environment by
+/// whatever started the session. Guessing a path would mean a verb silently
+/// talking to a different session that happened to leave a socket behind.
+fn session_socket(at: &SessionArgs) -> Option<PathBuf> {
+    at.control_socket
+        .clone()
+        .or_else(|| std::env::var(CONTROL_SOCKET_VAR).ok().map(PathBuf::from))
+}
+
 fn session_port(at: &SessionArgs) -> Result<u16, H5iError> {
     if let Some(port) = at.port {
         return Ok(port);

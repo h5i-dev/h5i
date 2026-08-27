@@ -102,8 +102,61 @@ def article_page(item):
 </article></main>{FOOTER}</body></html>"""
 
 
+SESSION = {
+    "section": "guides", "slug": "drive-a-browser-session", "eyebrow": "Guide 01 / Start here",
+    "time": "8 min", "tags": "Session &middot; Snapshot &middot; Request log",
+    "title": "Drive an h5i browser session | h5i",
+    "h1": "Open a session and read what it reached",
+    "description": "Open an h5i browser session, drive a page by @ref handle, then audit the fail-closed request log the engine wrote before any bytes moved.",
+    "deck": "Driving a browser and observing one are different jobs. This guide does both in one sitting: act on a page by handle, then read back the decision record the engine wrote as it went.",
+    "body": f"""
+<div class="callout"><strong>Outcome.</strong> In about ten minutes you will open a session, read a page as a model reads it, act on it, watch a request get refused by policy, and read the log that proves what did and did not reach the network.</div>
+<p>A session is the whole agent-facing surface: one page state, one cookie jar, one request log, one policy. <code>start</code> prints an id, every verb names that id, <code>close</code> ends it. Nothing else is a concept the agent has to learn, which is what lets the placement change later without changing a single command.</p>
+<h2 id="start">1. Open a session</h2>
+{terminal('host', '$ h5i browser start https://docs.rs/ --allow docs.rs')}
+<p>Read the two lines it prints back before anything else. The placement line says where this session runs, and the requests line says who saw its network. Both are printed on every status afterwards, so you never have to infer either.</p>
+{terminal('what it answers', "placed   : this machine (no containment beyond the engine)\nrequests : engine-claimed (fail-closed, and the engine's own account of what it fetched)")}
+<p>That first line is the honest one. A session started this way is not sandboxed, and h5i says so rather than letting the word browser imply a boundary. What you get without one is the record.</p>
+<h2 id="read">2. Read the page the way a model reads it</h2>
+{terminal('host', '$ h5i browser snapshot br_7k2xqa')}
+<p>What comes back is an outline with <code>@ref</code> handles rather than pixels or raw HTML: headings, paragraphs, and the things that can be acted on, each with a handle to act on it by. It arrives inside a fence marking everything within as page content, which is the difference between text the model treats as information and text it treats as an instruction.</p>
+<p>Two things are stripped on the way through, both because the page composed them. Escape sequences never survive: <code>ESC</code> in a page title is a page repainting the terminal it is printed into, and nothing a browser has to say needs one. Long values are capped with the truncation stated in the value, because an answer silently shortened is one an agent reasons about as if it were complete.</p>
+<h2 id="act">3. Act by handle, not by guess</h2>
+{terminal('host', '$ h5i browser click    br_7k2xqa @e3\n$ h5i browser snapshot br_7k2xqa --delta\n$ h5i browser type     br_7k2xqa @e5 "serde"\n$ h5i browser submit   br_7k2xqa @e5')}
+<p>Use <code>--delta</code> once the loop is running. Re-reading three hundred lines after every click is the wrong shape for an agent, and when the page has changed too much for a difference to be the shorter answer the full outline arrives instead and the reply says which it is.</p>
+<p>A handle from a reading the page has moved on from is refused rather than resolved against whatever now sits in that position. That refusal is the feature: a mis-click on a page that changed underneath is the failure that is hardest to see afterwards.</p>
+<h2 id="refused">4. Watch a request get refused</h2>
+<p>The session was started with one origin allowed. Follow a link that leaves it.</p>
+{terminal('host', '$ h5i browser click br_7k2xqa @e9\ndenied by policy: origin `https://tracker.example` is not in the allowlist')}
+<p>Redirects are checked at every hop, so a server cannot route the session out of its allowlist by answering with a <code>302</code>. The refusal is an answer with a reason, not a silent no-op, and it is in the log.</p>
+<h2 id="audit">5. Read back what it reached</h2>
+{terminal('host', '$ h5i browser requests br_7k2xqa')}
+<p>This is the part that is different. The engine <em>is</em> the HTTP client, so this list is a decision record it wrote before the bytes moved rather than a trace assembled beside the network. The order is fixed: check the policy, write the record, then touch the wire. When the record cannot be written, the fetch is refused.</p>
+<p>Two consequences worth stating plainly. A request that is not in this list did not happen. And a denied request <em>is</em> in the list, with its reason, so the log shows what was attempted and not only what succeeded.</p>
+<p>Pass the <code>cursor</code> from a previous answer back as <code>--since</code> to see only what is new, the same way <code>--delta</code> works on a snapshot.</p>
+<h2 id="end">6. End it, and keep the record</h2>
+{terminal('host', '$ h5i browser close br_7k2xqa\n$ h5i browser list --all')}
+<p>Closing writes the ending into the session's record instead of deleting it, which is what makes &ldquo;how did this end&rdquo; answerable afterwards and what makes the id impossible to reuse. The states are <code>closed</code>, <code>died</code>, <code>expired</code> and <code>evicted</code>, and they are kept apart because they are different facts about the run.</p>
+<p>Send a verb to a session that is not live and it is refused with exit code 69 rather than silently restarted. That distinct code is the point of the design: an agent whose retry cannot tell &ldquo;the session is gone&rdquo; from &ldquo;the click did not work&rdquo; quietly starts a second browser and loses both the page it was reasoning about and the record of losing it.</p>
+<h2 id="contain">7. When you want a boundary too</h2>
+{terminal('host', '$ h5i box --profile browser --engine h5i-light --name web\n$ h5i browser start https://example.com --in web')}
+<p>Every verb above works unchanged. What changes is the requests line: the box enforces its egress allowlist at its own boundary, outside the browser being described, so the lane goes from <code>engine-claimed</code> to <code>host-observed</code>.</p>
+<p>Being inside a box does not earn that on its own. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session <code>engine-claimed</code>. What earns the upgrade is enforcement outside the engine.</p>
+<h2 id="sources">Reference</h2>
+<ul><li><a href="/manual/#h5i-browser">The session reference: verbs, states, and where sessions live</a>.</li><li><a href="/guides/watch-the-browser/">Watch the page, then take the controls</a>.</li><li><a href="/blog/prompt-injection-is-a-boundary-problem/">Why browser authority changes the injection threat model</a>.</li><li><a href="https://github.com/h5i-dev/h5i/tree/main/crates/h5i-browser-light">The engine implementation</a>.</li></ul>""",
+    "faq": [
+        ("Is the session sandboxed?", "Not by default, and h5i does not claim it is. A session started with no flags runs in your ordinary process space like any other headless browser. The placement line says so on every status. Containment is the --in flag, which places the same session inside a box without changing any verb."),
+        ("What does engine-claimed mean?", "It is the browser's own account of what it fetched: fail-closed, complete, and still the browser describing itself. host-observed means h5i also saw the traffic at a box's boundary, outside the browser. h5i never merges the two labels."),
+        ("What happens if the browser dies mid-task?", "The session is recorded as died, with a time, and the next verb exits 69. Nothing restarts automatically. Use --restore to carry the old session's storage into a new session with a new id; the inheritance is written into the new record and the old id is never reused."),
+        ("Does the engine run page JavaScript?", "Only if you ask for it with --script. Off is the default because with no script realm there is no delivery channel for page-borne injection at all. Turning it on is a decision, not a default you inherit."),
+    ],
+    "next": ("/guides/watch-the-browser/", "Next guide", "Watch the page, then take the controls", "Put the browser beside the dev server and hand control between agent and human."),
+    "cta": ("Open a session in one command", "No project, no repository, no configuration. h5i browser start takes a URL and gives you an id.", "/manual/#h5i-browser", "Read the session reference"),
+}
+
+
 FIRST_BOX = {
-    "section": "guides", "slug": "first-box", "eyebrow": "Guide 01 / Start here",
+    "section": "guides", "slug": "first-box", "eyebrow": "Guide 02 / The box",
     "time": "9 min", "tags": "Install &middot; Create &middot; Export",
     "title": "Your first h5i box | h5i",
     "h1": "Take one coding task from prompt to reviewed patch",
@@ -190,7 +243,7 @@ $ h5i box gc''')}
 
 
 REVIEW_PR = {
-    "section": "guides", "slug": "review-a-pull-request", "eyebrow": "Guide 02 / Untrusted code",
+    "section": "guides", "slug": "review-a-pull-request", "eyebrow": "Guide 04 / Untrusted code",
     "time": "9 min", "tags": "Pull request &middot; Detached box &middot; Review",
     "title": "Review a pull request in an h5i box | h5i",
     "h1": "Run the pull request before you trust the pull request",
@@ -258,7 +311,7 @@ $ h5i box gc''')}
 
 
 POLICY = {
-    "section": "guides", "slug": "write-a-box-policy", "eyebrow": "Guide 03 / Policy",
+    "section": "guides", "slug": "write-a-box-policy", "eyebrow": "Guide 05 / Policy",
     "time": "10 min", "tags": "Isolation &middot; Egress &middot; Resources",
     "title": "Write an h5i box policy | h5i", "h1": "Write down what the agent may reach",
     "description": "Define an h5i profile with an explicit isolation tier, filesystem grants, default-deny networking, and resource limits, then verify it.",
@@ -345,7 +398,7 @@ $ h5i box log policy-check''')}
 
 
 BROWSER = {
-    "section": "guides", "slug": "watch-the-browser", "eyebrow": "Guide 04 / Browser",
+    "section": "guides", "slug": "watch-the-browser", "eyebrow": "Guide 06 / Takeover",
     "time": "9 min", "tags": "Dev server &middot; Viewer &middot; Control lock",
     "title": "Watch an agent's browser in an h5i box | h5i",
     "h1": "Watch the page, then take the controls",
@@ -728,7 +781,7 @@ INJECTION = {
 
 
 RUN_FORUM = {
-    "section": "guides", "slug": "run-a-forum", "eyebrow": "Guide 02 / Two agents",
+    "section": "guides", "slug": "run-a-forum", "eyebrow": "Guide 03 / Two agents",
     "time": "10 min", "tags": "Forum &middot; Ceiling &middot; Roles",
     "title": "Run a forum for two sandboxed agents | h5i",
     "h1": "Put two confined agents on one problem",
@@ -904,15 +957,15 @@ ZERO_TRUST = {
 }
 
 
-ARTICLES = [FIRST_BOX, RUN_FORUM, REVIEW_PR, POLICY, BROWSER,
+ARTICLES = [SESSION, FIRST_BOX, RUN_FORUM, REVIEW_PR, POLICY, BROWSER,
             ZERO_TRUST, ENVIRONMENT, TIERS, EVIDENCE, INJECTION]
 
 
 def index_page(section, items):
     guides = section == "guides"
-    title = "h5i guides: from first box to a forum of agents" if guides else "The h5i blog: boundaries, evidence, and agent work"
-    description = ("Five practical h5i guides: create a first box, run a forum for two sandboxed agents, review an untrusted pull request, write a policy, and watch the isolated browser." if guides else "Five durable essays on sandboxed coding agents: why a shared channel must carry no capability, the environment boundary, isolation tiers, audit evidence, and prompt-injection containment.")
-    h1 = "One path from a first box to a forum of them" if guides else "Fewer posts. Sharper arguments."
+    title = "h5i guides: from one browser session to a forum of agents" if guides else "The h5i blog: boundaries, evidence, and agent work"
+    description = ("Six practical h5i guides: drive a browser session and audit what it reached, create a first box, run a forum for two sandboxed agents, review an untrusted pull request, write a policy, and hand browser control between agent and human." if guides else "Five durable essays on sandboxed coding agents: why a shared channel must carry no capability, the environment boundary, isolation tiers, audit evidence, and prompt-injection containment.")
+    h1 = "One path from a browser session to a forum of agents" if guides else "Fewer posts. Sharper arguments."
     deck = ("Start at the top and follow the sequence. Each guide has one outcome, commands you can run, a verification step, and the point where human judgment belongs." if guides else "The blog is not a changelog and not a keyword warehouse. These essays explain the design decisions that stay true when commands and releases change.")
     url = f"https://h5i.dev/{section}/"
     schema = {"@context": "https://schema.org", "@type": "ItemList", "name": title,
@@ -999,23 +1052,24 @@ def build():
 
     (ROOT / "llms.txt").write_text("""# h5i
 
-> h5i ("high-five") is open-source sandboxed collaboration for multi-agent teams. Agents in separate sandboxes coordinate on a Git-backed forum of threads, findings, reviews and votes, while each agent stays inside a disposable boundary holding its workspace, shell, dependencies, dev server, and isolated browser. No message carries a capability and no sandbox holds a forum credential, so agents share information and never permissions. Host files and reusable credentials stay outside. A human exports a reviewable patch and execution record when the work is done.
+> h5i ("high-five") is an open-source secure, auditable browser for AI agents. An agent drives a browser session by id and reads an outline with @ref handles; the engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Sessions run on the host by default with no containment claimed, and one flag places the same session inside a sandbox, which adds an egress allowlist enforced outside the browser. Around the browser, h5i gives each agent a disposable box for the code, the toolchain and the dev server, and a Git-backed forum for several agents to coordinate on without sharing a credential.
 
 ## Start here
 
-- [Features](https://h5i.dev/features/): Product overview, the forum, isolation tiers, browser, output gate, and console.
+- [Features](https://h5i.dev/features/): Product overview, the browser session, isolation tiers, the forum, output gate, and console.
+- [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
 - [First box](https://h5i.dev/guides/first-box/): Install h5i and take one task from box creation to a reviewed patch.
-- [Run a forum](https://h5i.dev/guides/run-a-forum/): Put two confined agents on one thread without giving either a credential.
-- [Workflow](https://h5i.dev/workflows/): The complete box, forum, work, inspect, export, apply loop.
+- [Workflow](https://h5i.dev/workflows/): The complete browse, contain, work, inspect, export, apply loop.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
 ## Guides
 
-1. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
-2. [Put two confined agents on one problem](https://h5i.dev/guides/run-a-forum/): Open a thread with a policy ceiling, attach boxes under roles, and verify neither can reach the forum.
-3. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
-4. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
-5. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
+1. [Open a session and read what it reached](https://h5i.dev/guides/drive-a-browser-session/): Drive a page by @ref handle, then audit the fail-closed request log.
+2. [Take one coding task from prompt to reviewed patch](https://h5i.dev/guides/first-box/): Create, work, inspect, export, and remove a local box.
+3. [Put two confined agents on one problem](https://h5i.dev/guides/run-a-forum/): Open a thread with a policy ceiling, attach boxes under roles, and verify neither can reach the forum.
+4. [Run the pull request before you trust the pull request](https://h5i.dev/guides/review-a-pull-request/): Execute external code in a detached box and review evidence before prose.
+5. [Write down what the agent may reach](https://h5i.dev/guides/write-a-box-policy/): Define filesystem, network, isolation, and resource policy in .h5i/env.toml.
+6. [Watch the page, then take the controls](https://h5i.dev/guides/watch-the-browser/): Run the browser beside the dev server and transfer control without stale handles.
 
 ## Design essays
 
@@ -1027,26 +1081,37 @@ def build():
 
 ## Core model
 
-- A forum is Git refs the host owns; no sandbox can read or write them on a confined tier.
-- A box reaches the forum through a read-only inbox in and one staged record out. No socket, no port, no token.
-- The staged record has no sender field. The host stamps sender, role, box, and policy digest.
-- A thread names a ceiling profile; a box that exceeds it on any dimension is refused, never re-confined.
-- Roles are worker, reviewer, observer, human. create/attach/revoke/close are refused inside a box.
-- Forum attach refuses a workspace-tier box, because that tier enforces nothing.
+- A browser session holds one page state, one cookie jar, one request log, and one policy, addressed by an id.
+- The engine is the HTTP client: policy first, record second, wire third. A fetch that cannot be recorded is refused.
+- Denials are recorded with their reason, so the log shows what was attempted and not only what succeeded.
+- A redirect out of the allowlist is refused at the hop, not followed and explained afterwards.
+- Snapshots arrive fenced as untrusted page content; escape sequences and control characters never reach the terminal.
+- Relayed strings, arrays, and nesting are capped, and the truncation is stated in the value.
+- Page JavaScript is off unless requested, which removes the page-borne injection delivery channel.
+- Session states are live, closed, died, expired, evicted. A verb on a non-live session exits 69 and never restarts it.
+- Session ids are never reused; --restore inherits storage into a new id and records the inheritance.
+- engine-claimed is the engine's own fail-closed account. host-observed means a box boundary saw it too.
+- A box upgrades the lane only when something outside the engine enforces egress; being boxed is not enough.
+- The control lock is enforced for a boxed session, because every verb is carried in from the host, and advisory otherwise.
+- Sessions live under $H5I_BROWSER_HOME or $XDG_STATE_HOME/h5i/browser, never under a git repository.
 - A box is a complete disposable development environment for one agent.
 - Five tiers: workspace, process, supervised, container, microvm.
 - Explicit isolation requests fail closed; h5i never silently downgrades.
 - supervised and microvm enforce egress at L3/L4. container uses an L7 proxy allowlist.
 - Model credentials remain host-side and are injected by a runtime-scoped proxy.
+- A forum is Git refs the host owns; no sandbox can read or write them on a confined tier.
+- The staged forum record has no sender field. The host stamps sender, role, box, and policy digest.
 - h5i box export produces patch.diff, report.md, and receipt.json.
-- Every receipt names the policy digest and the observer lane.
 - h5i is local-first, Apache-2.0, and requires no hosted sandbox or SaaS account.
 
 ## Honest limits
 
-- Messages carry no capability, so h5i bounds a persuaded agent rather than detecting the message that persuaded it.
-- Remote posts are peer-claimed: identity and policy from another machine are not cryptographically verified.
-- An idle box's inbox goes stale until something runs in it or a human touches the forum. There is no daemon.
+- A session on the host is not sandboxed and h5i does not claim it is. Containment is the --in flag.
+- The engine is not a complete browser: canvas, WebSockets, Workers, and IndexedDB are absent.
+- h5i does not classify page content. It bounds what a persuaded agent can reach rather than detecting persuasion.
+- A boxed session needs a tier that can hold a resident process, and not every tier that enforces egress can.
+- Chromium reads more pages and gives up both fail-closed recording and the enforced takeover.
+- Remote forum posts are peer-claimed: identity and policy from another machine are not cryptographically verified.
 - Containment cannot stop source code from being included in an allowed model request.
 - Every tier below microvm shares the host kernel.
 - Container egress scoping binds proxy-respecting software only.

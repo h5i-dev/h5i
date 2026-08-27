@@ -73,7 +73,19 @@ enum Commands {
         open: bool,
     },
 
-    /// The browser control lock: who is driving the browser in a box.
+    /// Browser sessions: start one, drive it, close it.
+    ///
+    /// A session holds the page, the cookie jar, the request log and the policy
+    /// until it is closed. Every request is checked against that policy and
+    /// written down before it reaches the wire, and the engine refuses the
+    /// fetch when it cannot write the record — so a request that is not in
+    /// `h5i browser requests` did not happen.
+    ///
+    /// By default the session runs here, with no containment beyond the engine
+    /// itself, like any other headless browser. `--in <box>` places the same
+    /// session inside a box, which changes nothing an agent types and changes
+    /// who saw the network: the box's egress enforcement is h5i's, at a
+    /// boundary outside the engine.
     Browser {
         #[command(subcommand)]
         action: cli::browser::BrowserCommands,

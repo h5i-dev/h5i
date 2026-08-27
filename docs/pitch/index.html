@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i Pitch Deck: Auditable Sandbox for AI Coding Agents</title>
-<meta name="description" content="h5i pitch deck: an auditable sandbox for AI coding agents. h5i gives a coding agent a complete, disposable development environment inside one security boundary: workspace, shell, dependencies, dev server and browser inside, host files and credentials outside, a reviewable patch and execution log on the way out.">
+<title>h5i Pitch Deck: A Secure, Auditable Browser for AI Agents</title>
+<meta name="description" content="h5i pitch deck: a secure, auditable browser for AI agents. The engine is the HTTP client, so every request is policy-checked and written down before the bytes move and a fetch that cannot be recorded is refused. Sessions run on the host by default and can be placed inside a sandbox without changing a verb.">
 <meta name="keywords" content="h5i pitch, ai agent sandbox, disposable development environment, confined coding agent, landlock seccomp sandbox, network egress allowlist, microvm isolation, headless browser for agents, claude code, codex, agent containment">
 <meta name="author" content="h5i-dev">
 <meta name="theme-color" content="#D21C1C">
@@ -801,41 +801,41 @@
 <div class="slide active" style="gap:28px;">
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:1000px;">
-    <div class="hero-badge">A Git-backed forum · confined agents · host-stamped identity · a reviewed patch out</div>
-    <h1 style="font-size:clamp(2.6rem,5.4vw,4.4rem);">Sandboxed Collaboration<br><span class="shine-text">for Multi-Agent Teams</span></h1>
+    <div class="hero-badge">Fail-closed request records · fenced page content · enforced human takeover · an optional sandbox</div>
+    <h1 style="font-size:clamp(2.6rem,5.4vw,4.4rem);">A Secure, Auditable Browser<br><span class="shine-text">for AI Agents</span></h1>
     <ul class="lede" style="list-style:none;max-width:1040px;margin:28px 0 0;padding:0;font-size:clamp(2rem,3.8vw,3rem);line-height:1.4;display:flex;flex-direction:column;gap:20px;">
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span>h5i gives a team of coding agents a <span class="cyan">shared, Git-backed forum</span> while each stays inside its own sandbox.</li>
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span>No message carries a capability, so agents <span class="cyan">share information, never permissions</span>.</li>
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">▸</span>Under each of them: a disposable box, and a <span class="cyan">reviewable patch with an execution log</span> on the way out.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span>Agents browse now. h5i gives them a browser you can <span class="cyan">read back</span>.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span>The engine <span class="cyan">is</span> the HTTP client, so a request that is not in the log <span class="cyan">did not happen</span>.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Auditable by default. Containable on demand.</span></li>
     </ul>
-    <p class="mono" style="margin-top:30px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">★ <span style="color:var(--ink);">500+ GitHub stars</span> · Apache 2.0 · <span class="cyan">local-first, no hosted service</span></p>
+    <p class="mono" style="margin-top:30px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">&#9733; <span style="color:var(--ink);">500+ GitHub stars</span> &#183; Apache 2.0 &#183; <span class="cyan">local-first, no hosted service</span></p>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 2 — Why now (ML ensemble precedent → coding agents)
+     SLIDE 2 — Why now (agents got a browser before anyone got a record)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:980px;">
     <div class="section-tag">Why now</div>
-    <h2>Multi-agent teams multiply<br>capability—<span class="red">and risk</span>.</h2>
+    <h2>Agents got a browser<br>before anyone got <span class="red">a record</span>.</h2>
     <div class="g2" style="margin-top:36px;align-items:stretch;gap:24px;">
       <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
         <span class="pill red">today</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Multi-agent teams are hard to control</h3>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Driving is not observing</h3>
         <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Agent communication is ungoverned</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>Permissions become unmanageable</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">✕</span>No trusted record of who did what</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>A driver reconstructs what a browser reached, with gaps</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Every page is untrusted input wearing the shape of context</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>The agent&#39;s browser is usually just your browser</li>
         </ul>
       </div>
       <div class="card" style="border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
         <span class="pill green">with h5i</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">A sandbox for each agent. A forum for the team.</h3>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">A decision record, not a trace</h3>
         <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Agents talk through a Git-backed forum</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Every agent runs in its own sandbox</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">✓</span>Every action and message is recorded</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Policy, then record, then the wire. Never out of order</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Page text arrives fenced as data, with no escape sequences</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>One flag puts the same session inside a sandbox</li>
         </ul>
       </div>
     </div>
@@ -843,63 +843,63 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 3 — The problem (seven pains)
+     SLIDE 3 — The problem
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
   <div style="width:100%;max-width:1120px;">
     <div class="section-tag">The problem</div>
-    <h2>The pain is <span class="red">already here</span>.</h2>
+    <h2>The web is the one input <span class="red">you did not write</span>.</h2>
 
     <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the log</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">You cannot prove what it reached</span>
+        <span class="ml" style="font-size:1.2rem;">A driver attached to a browser reconstructs the network afterwards. Gaps look like silence.</span>
+      </div>
+      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the page</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">A page is an instruction channel</span>
+        <span class="ml" style="font-size:1.2rem;">Text written to look like your operator reads exactly like your operator.</span>
+      </div>
+      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the terminal</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Page bytes reach your screen</span>
+        <span class="ml" style="font-size:1.2rem;">An escape sequence in a title repaints the line above the answer it came in.</span>
+      </div>
+      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
         <span class="pill red">host access</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Agents access your machine</span>
-        <span class="ml" style="font-size:1.2rem;">Every repo, file, SSH key, and browser session is within reach.</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">The agent&#39;s browser is your browser</span>
+        <span class="ml" style="font-size:1.2rem;">Your cookie jar, your logged-in sessions, your reachable network.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">coordination</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Coordination needs creds/keys</span>
-        <span class="ml" style="font-size:1.2rem;">Every new agent gets another token and network route.</span>
+        <span class="pill red">the session</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">A crash looks like a click that failed</span>
+        <span class="ml" style="font-size:1.2rem;">A silently restarted browser leaves the agent reasoning about a page that is gone.</span>
       </div>
       <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">execution</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">You cannot verify what ran</span>
-        <span class="ml" style="font-size:1.2rem;">The agent’s own summary may be the only record.</span>
-      </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">network</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Agents can send data anywhere</span>
-        <span class="ml" style="font-size:1.2rem;">Any script or dependency can transmit what it finds.</span>
-      </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">identity</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Sender identity is unverified</span>
-        <span class="ml" style="font-size:1.2rem;">Agent names and roles are only self-reported text.</span>
-      </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">history</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">No complete team record</span>
-        <span class="ml" style="font-size:1.2rem;">Actions, messages, and decisions are split across tools.</span>
+        <span class="pill red">containment</span>
+        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Sandboxing is all or nothing</span>
+        <span class="ml" style="font-size:1.2rem;">Tools either demand a container up front or offer no boundary at all.</span>
       </div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 4 — The solution (answers all seven)
+     SLIDE 4 — The solution
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
   <div style="width:100%;max-width:1040px;">
     <div class="section-tag">The solution</div>
-    <h2>h5i <span class="red">solves all six</span>.</h2>
+    <h2>h5i answers <span class="red">all six</span>.</h2>
 
     <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">isolation</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">A sandbox per agent</span><p class="feat-desc" style="margin-top:6px;">Host files and credentials never enter the box.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">coordination</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">No keys in any box</span><p class="feat-desc" style="margin-top:6px;">Agents coordinate through a host-owned Git forum.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">execution</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Execution receipts</span><p class="feat-desc" style="margin-top:6px;">Commands, changes, failures, and denials are recorded.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">network</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Enforced network access</span><p class="feat-desc" style="margin-top:6px;">Egress is allowlisted at L3/L4, not through proxy settings.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">identity</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Host-stamped identities</span><p class="feat-desc" style="margin-top:6px;">The host-not the message-identifies every sender.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">evidence</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Complete team history</span><p class="feat-desc" style="margin-top:6px;">Runs leave receipts; conversations remain in Git.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the log</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Fail-closed records</span><p class="feat-desc" style="margin-top:6px;">No record, no fetch. Denials are logged with their reason.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the page</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Content stays data</span><p class="feat-desc" style="margin-top:6px;">Fenced for the model, stripped of escapes, script off by default.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the terminal</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Nothing repaints your screen</span><p class="feat-desc" style="margin-top:6px;">Every relayed string is scrubbed and capped, and says when it was.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">host access</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">A fresh jar every session</span><p class="feat-desc" style="margin-top:6px;">No host profile, no inherited login, no shared cookie store.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the session</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Endings are written down</span><p class="feat-desc" style="margin-top:6px;">died, expired, evicted. A verb on a dead session exits 69, never restarts.</p></div>
+      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">containment</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">One flag, same verbs</span><p class="feat-desc" style="margin-top:6px;">--in &lt;box&gt; adds a boundary without changing a single command.</p></div>
     </div>
   </div>
 </div>
@@ -1182,7 +1182,7 @@
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:1060px;">
     <div class="section-tag">Why now · why us</div>
-    <h2>We will make h5i the <span class="red">default place</span><br>a coding agent runs.</h2>
+    <h2>We will make h5i the <span class="red">default browser</span><br>an agent reaches for.</h2>
 
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:26px;text-align:left;align-items:stretch;">
       <div class="feat-card">
@@ -1197,14 +1197,14 @@
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>500+ GitHub stars, 20+ releases.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>Five isolation tiers on Linux and macOS, one Rust binary.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>Browser in the box, with human takeover.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">&#9656;</span>Our own engine, with fail-closed request records and human takeover.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>A Git-backed forum, verified across mixed isolation tiers.</li>
         </ul>
       </div>
       <div class="feat-card">
         <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--yellow);">Next 12 weeks</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Prove the browser box in live runs, not fixtures.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">&#9656;</span>Hold a resident session on every tier that enforces egress.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Boot the microVM tier on real virtualization hosts.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Convert 10 design partners.</li>
           <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Land first paid pilots.</li>
@@ -1212,7 +1212,7 @@
       </div>
     </div>
 
-    <p class="lede" style="margin:22px auto 0;text-align:center;max-width:860px;font-size:1.5rem;">Give your agent <strong style="color:var(--ink);">a whole machine</strong>. <span class="red" style="font-weight:700;">Just not yours.</span></p>
+    <p class="lede" style="margin:22px auto 0;text-align:center;max-width:860px;font-size:1.5rem;">Give your agent <strong style="color:var(--ink);">a browser</strong>. <span class="red" style="font-weight:700;">Just not yours.</span></p>
 
     <div class="cta-links" style="justify-content:center;margin-top:16px;">
       <a class="btn btn-primary" href="https://h5i.dev">h5i.dev</a>

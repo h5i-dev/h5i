@@ -4712,6 +4712,58 @@ pub fn browser_action_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> {
     Some(backing.join("browser-actions.jsonl"))
 }
 
+/// A file in the box's private `/tmp`, named in **both** views: what the box
+/// calls it, and what this machine calls it.
+///
+/// The two are different on Linux (`/tmp/x` in the box is `<env>/tmp/x` here)
+/// and the same on macOS (both say the private backing), which is exactly the
+/// confusion that puts a listener at a path nobody connects to. Returning the
+/// pair from one function means a caller cannot pick up one and use it as the
+/// other.
+///
+/// `None` for an image-backed tier: its `/tmp` lives inside the image, so there
+/// is no host path and a caller must say so rather than watching a decoy.
+pub fn box_tmp_file(
+    h5i_root: &Path,
+    m: &EnvManifest,
+    name: &str,
+) -> Option<(PathBuf, PathBuf)> {
+    let policy = load_policy(h5i_root, m).ok()?;
+    if policy.claim.image_backed() {
+        return None;
+    }
+    let in_box = PathBuf::from(box_tmp_root(&policy)).join(name);
+    let on_host = private_tmp_backing(&m.dir(h5i_root).join("tmp")).join(name);
+    Some((in_box, on_host))
+}
+
+/// Host-side path of the control file the box's resident session advertises.
+///
+/// The box side needs no path at all: `browser_light_env` points
+/// `H5I_BROWSER_STREAM_FILE` into the box's own `/tmp`, `serve` defaults its
+/// control file to that name with a `.control` extension, and `session` defaults
+/// to the control file beside the stream file. So an engine started inside a box
+/// with no flags, and a verb carried in with no flags, already agree.
+///
+/// What the host cannot do without this is *see* whether the engine is there.
+/// That is what a session record needs — not to reach the engine, which happens
+/// by carrying the verb into the box, but to answer `h5i browser list` without
+/// opening a socket per row.
+///
+/// `None` for the same two reasons as its siblings: another engine writes no
+/// such file, and an image-backed tier keeps `/tmp` where the host cannot look.
+pub fn browser_control_file(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> {
+    let policy = load_policy(h5i_root, m).ok()?;
+    if policy.profile.engine? != crate::sandbox::BrowserEngine::H5iLight {
+        return None;
+    }
+    if policy.claim.image_backed() {
+        return None;
+    }
+    let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
+    Some(backing.join("agent-browser").join("h5i-light.control"))
+}
+
 fn host_tmp_root(policy: &ResolvedPolicy, _env_dir: &Path) -> Option<PathBuf> {
     if policy.claim.image_backed() {
         return None;
@@ -8625,19 +8677,60 @@ pub fn service_start(
     name: &str,
 ) -> Result<ServiceRecord, H5iError> {
     validate_service_name(name)?;
-    // Deliberately **not** `RunLock`. That is the exclusive writer lock an
-    // `env shell` holds for its entire session, so taking it here made
-    // `box service start` fail outright while an agent session was open — at
-    // every tier, including the kernel ones that have no guest to race over.
-    // A service is not a run; it needs to serialize against other *service*
-    // operations, and guest creation serializes itself one layer down.
+    // The definition is read under the same lock that the start runs under, so
+    // a `.h5i/env.toml` edited mid-start cannot produce a record describing a
+    // command other than the one that ran.
     let _svc_lock = ServiceLock::acquire(&m.dir(h5i_root))?;
     let defs = load_service_defs(h5i_root, m)?;
-    let def = defs.get(name).ok_or_else(|| {
-        H5iError::Metadata(format!(
-            "no service '{name}' declared in .h5i/env.toml ([service.{name}])"
-        ))
-    })?;
+    let def = defs
+        .get(name)
+        .ok_or_else(|| {
+            H5iError::Metadata(format!(
+                "no service '{name}' declared in .h5i/env.toml ([service.{name}])"
+            ))
+        })?
+        .clone();
+    start_service_inner(repo, h5i_root, m, name, &def)
+}
+
+/// Start a long-lived in-box process from a definition the **caller** holds,
+/// rather than one declared in the box's `.h5i/env.toml`.
+///
+/// This exists for one caller: a browser session placed in a box
+/// (`h5i browser start --in`). A resident browser is a service in every way
+/// that matters here — it outlives the command that started it, it must not
+/// hold the writer lock, and it wants the pid registry and the log capture —
+/// but it is **not** something the repository declares. Requiring a
+/// `[service.…]` block would mean `--in` could only ever work in a repository
+/// that had been edited to permit it, and writing that block ourselves would
+/// mean h5i editing the user's tree to run a command.
+///
+/// Everything else is identical, deliberately: same lock, same policy
+/// preparation, same `spawn_background`, same record, same event. A second
+/// launch path for in-box processes is a second set of grants to keep in step,
+/// which is the kind of drift this codebase keeps writing tests against.
+pub fn service_start_with_def(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    name: &str,
+    def: &ServiceDef,
+) -> Result<ServiceRecord, H5iError> {
+    validate_service_name(name)?;
+    let _svc_lock = ServiceLock::acquire(&m.dir(h5i_root))?;
+    start_service_inner(repo, h5i_root, m, name, def)
+}
+
+/// The body both start paths share. **The service lock is the caller's**: it is
+/// taken before the definition is resolved, because resolving it is part of
+/// what the lock protects.
+fn start_service_inner(
+    repo: &Repository,
+    h5i_root: &Path,
+    m: &EnvManifest,
+    name: &str,
+    def: &ServiceDef,
+) -> Result<ServiceRecord, H5iError> {
     let svc_dir = services_dir(h5i_root, m);
     std::fs::create_dir_all(&svc_dir).map_err(|e| H5iError::with_path(e, &svc_dir))?;
     if let Some(rec) = read_service_record(&svc_dir, name)

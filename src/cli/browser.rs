@@ -1,102 +1,1405 @@
-//! `h5i browser` — the control lock.
+//! `h5i browser` — the front door.
 //!
-//! Deliberately three verbs. Driving the browser is `agent-browser`'s job;
-//! what h5i owns is arbitration between the agent and a human at the viewer,
-//! because nothing upstream does it (roadmap 5.4).
+//! One noun an agent has to learn: a **session**. `h5i browser start` makes one
+//! and prints its id, every other verb names that id, and `h5i browser close`
+//! ends it. Nothing else is agent-facing. Not the process that renders the
+//! page, not the port it listens on, not whether it is running inside a box.
+//!
+//! # Containment is a placement, not a product
+//!
+//! Started with no flags, a session runs here, in this user's ordinary process
+//! space, exactly like any other headless browser. What it still does that no
+//! other headless browser does is **record**: the engine checks every request
+//! against the session's policy and writes the decision before the bytes move,
+//! and it refuses the fetch when it cannot write the record
+//! (`h5i-browser-light`'s `net::Broker`). That is the default, and it is
+//! auditability rather than containment — the honest claim, because the engine
+//! is describing itself.
+//!
+//! `--in <box>` places the same session inside a box. Every verb keeps its name
+//! and its answer; what changes is who saw the network. The box's egress
+//! enforcement is h5i's, at a boundary outside the thing being described, so
+//! the session's lane goes from engine-claimed to host-observed
+//! ([`h5i_core::browser_session::Lane`]). That is what a box buys, stated as
+//! something a reader can check rather than as an adjective.
+//!
+//! # Why verbs are carried rather than dialled
+//!
+//! The engine's control listener is loopback TCP. A supervised box always has
+//! its own network namespace, so that port is not the host's to connect to, and
+//! the fix is not to punch a hole: it is to hand the verb to `h5i box run`,
+//! which is the same path a person typing the command takes. Two things fall
+//! out of that, both wanted. Every verb into a box gets a receipt like any
+//! other run. And the control lock is checked **here**, on the host, outside
+//! the box — which is the one configuration in which it is a boundary rather
+//! than a request (see `h5i_core::browser_proxy`'s limits, which describe the
+//! opposite arrangement).
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use clap::Subcommand;
 use console::style;
+use serde_json::Value;
 
+use h5i_core::browser_session as bs;
 use h5i_core::ui::SUCCESS;
+
+/// How long `start` waits for the engine to advertise its control file.
+///
+/// Generous, because the first thing a session does is fetch and render the URL
+/// it was given, and a cold font scan is not instant. A start that gives up
+/// says what it was waiting for and leaves the engine's own log behind.
+const START_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Subcommand)]
 pub enum BrowserCommands {
-    /// Who holds control of this box's browser, and whether the agent's
-    /// snapshot handles are stale.
-    Status {
-        name: String,
+    /// Start a browser session and print its id.
+    ///
+    /// The session holds the page, the cookie jar, the request log and the
+    /// policy until it is closed. Without `--in`, it runs here with no
+    /// containment beyond the engine itself; with `--in <box>`, the same
+    /// session runs inside that box.
+    Start {
+        /// A URL, or a path to a local HTML file.
+        url: String,
+
+        /// Run the session inside this box instead of on this machine.
+        ///
+        /// The box must already exist (`h5i box`) and be pinned to the
+        /// `h5i-light` engine. Its egress allowlist is enforced at the box's
+        /// boundary, so the session's request lane becomes host-observed.
+        #[arg(long = "in", value_name = "BOX")]
+        in_box: Option<String>,
+
+        /// Grant an origin. Repeatable. Without any, nothing remote is
+        /// reachable except the URL's own origin.
+        #[arg(long = "allow", value_name = "ORIGIN")]
+        allow: Vec<String>,
+
+        /// Refuse loopback too. It is reachable by default: it is the dev
+        /// server.
+        #[arg(long)]
+        no_loopback: bool,
+
+        /// Run the page's own JavaScript. Off by default: with script off,
+        /// page-borne prompt injection has no delivery channel at all.
+        #[arg(long)]
+        script: bool,
+
+        /// Viewport width.
+        #[arg(long, default_value_t = 1280)]
+        width: u32,
+
+        /// Viewport height.
+        #[arg(long, default_value_t = 720)]
+        height: u32,
+
+        /// End the session automatically after this many seconds.
+        ///
+        /// Recorded as an ending on the session's record when it passes, not as
+        /// a disappearance: `h5i browser status` still answers afterwards, and
+        /// says it expired.
+        #[arg(long, value_name = "SECONDS")]
+        expires_in: Option<u64>,
+
+        /// Seed this session's storage from one that has ended.
+        ///
+        /// A restore is a **new session with a new id**, and the inheritance is
+        /// written into its record. Nothing resurrects an id: an agent holding
+        /// a stale one always gets a refusal, never a different session wearing
+        /// the same name.
+        #[arg(long, value_name = "SESSION")]
+        restore: Option<String>,
+
+        /// Print the session record as JSON instead of a summary line.
         #[arg(long)]
         json: bool,
     },
 
-    /// Take control as a human. The agent's automation pauses at its next
-    /// command boundary.
-    Take { name: String },
+    /// List the browser sessions on this machine.
+    List {
+        /// Include sessions that have ended. They are kept: the record of how a
+        /// session ended is the part a reviewer needs.
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// What a session is, where it runs, and who saw its network.
+    Status {
+        session: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// End a session. Its record stays.
+    Close {
+        session: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// The page as a model should read it: the outline, with `@ref` handles.
+    Snapshot {
+        session: String,
+        /// Report only what changed since the last snapshot.
+        #[arg(long)]
+        delta: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Go to a URL, resolved against the current page like a click would be.
+    Navigate {
+        session: String,
+        url: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Follow a `@ref` from the last snapshot.
+    Click {
+        session: String,
+        /// `e3` or `@e3`, from a `snapshot`.
+        reference: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Put text into a field, replacing what was there.
+    Type {
+        session: String,
+        reference: String,
+        text: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Submit the form containing a `@ref`.
+    Submit {
+        session: String,
+        reference: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Scroll the page. Negative scrolls up.
+    Scroll {
+        session: String,
+        #[arg(allow_negative_numbers = true)]
+        by: f64,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Wait until something is on the page, or until nothing can put it there.
+    WaitFor {
+        session: String,
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        #[arg(long, value_name = "TEXT", conflicts_with = "selector")]
+        text: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Wait until a page expression is true. Needs `start --script`.
+    WaitForScript {
+        session: String,
+        expr: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Pull structured data out of the page by selector.
+    Extract {
+        session: String,
+        /// The schema, as JSON.
+        schema: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// The page as markdown: what a reader would read, without the handles.
+    Markdown {
+        session: String,
+        #[arg(long, value_name = "BYTES")]
+        max_bytes: Option<usize>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// The request log: what this session asked for, and what was refused.
+    ///
+    /// The engine is the HTTP client, so this is the decision record written
+    /// before the bytes moved, not an observation made from beside the network.
+    /// If a request is not in this list, it did not happen.
+    Requests {
+        session: String,
+        /// Only what happened after this sequence number.
+        #[arg(long, value_name = "SEQ")]
+        since: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Which credentials this session can use, by name. Never their values.
+    Env {
+        session: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Hand the page to the human at the live view for as long as a login takes.
+    Login {
+        session: String,
+        /// End login mode and make the page readable again.
+        #[arg(long)]
+        off: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Take control as a human. The agent's automation pauses at its next verb.
+    Take { session: String },
 
     /// Hand control back to the agent. It must re-snapshot before acting,
     /// because the page moved while you were driving.
-    Release { name: String },
+    Release { session: String },
 
     /// Print the loopback viewer URL for a box, token included. `h5i box view`
     /// is what actually serves it; this is for pasting into a browser when a
     /// forward is already running.
     Url {
+        /// A box name.
         name: String,
-        /// The loopback port `h5i box view` was given. Defaults to the one it
-        /// picks when unspecified.
         #[arg(long, default_value_t = 7331)]
         port: u16,
     },
 }
 
 pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
-    let repo = super::discover_repo("h5i browser")?;
-    let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
-
-    let dir_of = |name: &str| -> anyhow::Result<std::path::PathBuf> {
-        let m = h5i_core::env::find(&h5i_root, name)?;
-        Ok(h5i_core::env::env_dir(&h5i_root, &m.agent, &m.slug))
-    };
+    let root = bs::root()?;
+    // Cheap, and it means every entry point sweeps: there is no daemon to hold
+    // a timer, so expiry happens the next time anyone looks.
+    let _ = bs::expire_due(&root);
 
     match action {
-        BrowserCommands::Status { name, json } => {
-            let dir = dir_of(&name)?;
-            let c = h5i_core::control::read(&dir);
-            if json {
-                println!("{}", serde_json::to_string_pretty(&c)?);
-                return Ok(());
+        BrowserCommands::Start {
+            url,
+            in_box,
+            allow,
+            no_loopback,
+            script,
+            width,
+            height,
+            expires_in,
+            restore,
+            json,
+        } => start(
+            &root,
+            StartOptions {
+                url,
+                in_box,
+                allow,
+                no_loopback,
+                script,
+                width,
+                height,
+                expires_in,
+                restore,
+            },
+            json,
+        ),
+        BrowserCommands::List { all, json } => list(&root, all, json),
+        BrowserCommands::Status { session, json } => status(&root, &session, json),
+        BrowserCommands::Close { session, json } => close(&root, &session, json),
+
+        BrowserCommands::Snapshot {
+            session,
+            delta,
+            json,
+        } => {
+            let mut argv = vec!["snapshot".to_string()];
+            if delta {
+                argv.push("--delta".into());
             }
-            println!(
-                "  control  : {} (since {})",
-                style(c.holder.as_str()).cyan(),
-                c.since
-            );
-            if c.needs_resnapshot {
-                println!(
-                    "  {}    the agent's @refs are stale — it must re-snapshot before acting \
-                     (`agent-browser snapshot`, or `h5i-browser-light session snapshot` on \
-                     the h5i-light engine)",
-                    style("stale").yellow()
-                );
+            verb(&root, &session, argv, false, json)
+        }
+        BrowserCommands::Navigate { session, url, json } => {
+            verb(&root, &session, vec!["navigate".into(), url], true, json)
+        }
+        BrowserCommands::Click {
+            session,
+            reference,
+            json,
+        } => verb(&root, &session, vec!["click".into(), reference], true, json),
+        BrowserCommands::Type {
+            session,
+            reference,
+            text,
+            json,
+        } => verb(
+            &root,
+            &session,
+            vec!["type".into(), reference, text],
+            true,
+            json,
+        ),
+        BrowserCommands::Submit {
+            session,
+            reference,
+            json,
+        } => verb(&root, &session, vec!["submit".into(), reference], true, json),
+        BrowserCommands::Scroll { session, by, json } => verb(
+            &root,
+            &session,
+            vec!["scroll".into(), by.to_string()],
+            true,
+            json,
+        ),
+        BrowserCommands::WaitFor {
+            session,
+            selector,
+            text,
+            json,
+        } => {
+            let mut argv = vec!["wait-for".to_string()];
+            if let Some(selector) = selector {
+                argv.push("--selector".into());
+                argv.push(selector);
             }
+            if let Some(text) = text {
+                argv.push("--text".into());
+                argv.push(text);
+            }
+            verb(&root, &session, argv, false, json)
         }
-        BrowserCommands::Take { name } => {
-            let c = h5i_core::control::take(&dir_of(&name)?)?;
-            println!(
-                "{} control taken by {} — agent automation is paused",
-                SUCCESS,
-                c.holder.as_str()
-            );
+        BrowserCommands::WaitForScript {
+            session,
+            expr,
+            json,
+        } => verb(
+            &root,
+            &session,
+            vec!["wait-for-script".into(), expr],
+            false,
+            json,
+        ),
+        BrowserCommands::Extract {
+            session,
+            schema,
+            json,
+        } => verb(&root, &session, vec!["extract".into(), schema], false, json),
+        BrowserCommands::Markdown {
+            session,
+            max_bytes,
+            json,
+        } => {
+            let mut argv = vec!["markdown".to_string()];
+            if let Some(max) = max_bytes {
+                argv.push("--max-bytes".into());
+                argv.push(max.to_string());
+            }
+            verb(&root, &session, argv, false, json)
         }
-        BrowserCommands::Release { name } => {
-            let c = h5i_core::control::release(&dir_of(&name)?)?;
-            println!(
-                "{} control returned to {} — it will re-snapshot before acting",
-                SUCCESS,
-                c.holder.as_str()
-            );
+        BrowserCommands::Requests {
+            session,
+            since,
+            json,
+        } => {
+            let mut argv = vec!["requests".to_string()];
+            if let Some(since) = since {
+                argv.push("--since".into());
+                argv.push(since.to_string());
+            }
+            verb(&root, &session, argv, false, json)
         }
-        BrowserCommands::Url { name, port } => {
-            let dir = dir_of(&name)?;
-            let token = h5i_core::view::read_token(&dir).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "this box has no viewer token — it predates the viewer. Create a new box."
-                )
-            })?;
-            // Printed whether or not a forward is running: the URL is a
-            // property of the box, and `h5i box view` is what makes it answer.
-            println!("http://127.0.0.1:{port}/?token={token}");
+        BrowserCommands::Env { session, json } => {
+            verb(&root, &session, vec!["env".into()], false, json)
         }
+        BrowserCommands::Login { session, off, json } => {
+            let mut argv = vec!["login".to_string()];
+            argv.push(if off { "--off".into() } else { "--on".into() });
+            // Not mutating in the lock's sense: `login` is how a human takes the
+            // keyboard, so refusing it while a human holds control would refuse
+            // the very thing they are here to do.
+            verb(&root, &session, argv, false, json)
+        }
+
+        BrowserCommands::Take { session } => take(&root, &session),
+        BrowserCommands::Release { session } => release(&root, &session),
+        BrowserCommands::Url { name, port } => viewer_url(&name, port),
+    }
+}
+
+struct StartOptions {
+    url: String,
+    in_box: Option<String>,
+    allow: Vec<String>,
+    no_loopback: bool,
+    script: bool,
+    width: u32,
+    height: u32,
+    expires_in: Option<u64>,
+    restore: Option<String>,
+}
+
+fn start(root: &Path, opts: StartOptions, json: bool) -> anyhow::Result<()> {
+    let placement = match &opts.in_box {
+        None => bs::Placement::Host,
+        Some(name) => bs::Placement::Box { name: name.clone() },
+    };
+
+    // The inheritance is resolved before anything is spawned, so a bad
+    // `--restore` fails before there is a session to clean up.
+    let restored_from = match &opts.restore {
+        None => None,
+        Some(id) => {
+            let previous = bs::read(root, id)?;
+            Some(previous.id)
+        }
+    };
+
+    let id = bs::new_id(root)?;
+    let dir = bs::dir(root, &id);
+
+    let mut spawned = match &placement {
+        bs::Placement::Host => spawn_on_host(&dir, &opts)?,
+        bs::Placement::Box { name } => spawn_in_box(name, &dir, &opts)?,
+    };
+    let lane = bs::Session::lane_for(&placement, spawned.boundary_enforced);
+
+    if let Some(from) = &restored_from {
+        seed_storage(root, from, &dir)?;
+    }
+
+    let session = bs::Session {
+        id: id.clone(),
+        engine: bs::Engine::H5iLight,
+        lane,
+        placement,
+        url: opts.url.clone(),
+        started_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        expires_at: opts.expires_in.map(|secs| {
+            (chrono::Utc::now() + chrono::Duration::seconds(secs as i64))
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        }),
+        storage: bs::Storage::Ephemeral,
+        policy_digest: spawned.policy_digest.clone(),
+        restored_from,
+        state: bs::State::Live,
+        ended_at: None,
+        end_reason: None,
+        control: bs::Control {
+            file: Some(spawned.control_in_engine_view.clone()),
+            witness: spawned.control_on_host.clone(),
+            pid: spawned.pid,
+        },
+    };
+    bs::write(root, &session)?;
+
+    // Wait for the engine to say it is up, and record the death if it is not.
+    if let Err(e) = await_control(&mut spawned, &dir) {
+        // Stop whatever did start. A timeout that leaves an engine running is a
+        // session nothing owns: its record says died, its process is serving,
+        // and the next start in the same box collides with it.
+        (spawned.stop)();
+        let mut dead = session.clone();
+        bs::end(root, &mut dead, bs::State::Died, &e);
+        anyhow::bail!("{e}\n\n  The session is recorded as `{}`, died.", dead.id);
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&session)?);
+    } else {
+        println!("{} browser session {}", SUCCESS, style(&session.id).cyan());
+        print_summary(&session);
+        println!(
+            "\n  next     : {} {} ",
+            style("h5i browser snapshot").dim(),
+            style(&session.id).dim()
+        );
     }
     Ok(())
 }
+
+/// What a spawn produced, in both views of the filesystem it has to be seen in.
+struct Spawned {
+    /// Ask whether the engine is still on its way up. `Some(reason)` means it
+    /// is not, and the reason is what the user is told.
+    ///
+    /// A closure rather than a pid, because the honest answer differs by
+    /// placement and a pid cannot carry that. On the host it owns the `Child`
+    /// and asks `try_wait` — **a child nobody waits on is a zombie, and a
+    /// zombie answers `kill(pid, 0)`**, so polling the pid would wait the full
+    /// timeout on an engine that exited immediately, which is the commonest
+    /// failure there is. In a box it asks the service registry, which knows
+    /// that a microvm's pid is a guest pid and not this machine's to signal.
+    alive: Box<dyn FnMut() -> Option<String>>,
+    /// The process this machine can signal, when there is one. `None` for a
+    /// boxed session: at the microvm tier the service's pid belongs to the
+    /// guest, and a host `kill` on that number would be aimed at whatever
+    /// unrelated process happens to hold it.
+    pid: Option<u32>,
+    /// The control file's path **as the engine sees it**. Inside a box that is a
+    /// box path; on the host it is a host path. Never mixed: binding one and
+    /// reading the other is how enforcement goes silently missing.
+    control_in_engine_view: PathBuf,
+    /// The same file as this machine sees it, when it can.
+    control_on_host: Option<PathBuf>,
+    policy_digest: String,
+    /// Whether something outside the engine actually decides what may leave.
+    /// See [`bs::Session::lane_for`] — this is the input to the one claim the
+    /// product makes that a reader can check.
+    boundary_enforced: bool,
+    /// How to end it. `close` calls this before recording the ending.
+    stop: Box<dyn FnOnce()>,
+}
+
+fn spawn_on_host(dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
+    let control = dir.join(bs::CONTROL_FILE);
+    let mut argv: Vec<String> = vec![
+        "serve".into(),
+        opts.url.clone(),
+        "--stream-file".into(),
+        dir.join(bs::STREAM_FILE).display().to_string(),
+        "--control-file".into(),
+        control.display().to_string(),
+        "--receipts".into(),
+        dir.join(bs::RECEIPTS_FILE).display().to_string(),
+        "--actions".into(),
+        dir.join(bs::ACTIONS_FILE).display().to_string(),
+        "--width".into(),
+        opts.width.to_string(),
+        "--height".into(),
+        opts.height.to_string(),
+    ];
+    argv.extend(net_args(opts));
+    if opts.script {
+        argv.push("--script".into());
+    }
+
+    let log = std::fs::File::create(dir.join("engine.log"))?;
+    let mut command = Command::new(engine_binary());
+    command
+        .args(&argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log.try_clone()?))
+        .stderr(Stdio::from(log));
+    detach(&mut command);
+
+    let mut child = command.spawn().map_err(|e| {
+        anyhow::anyhow!(
+            "could not start the browser engine ({e}). h5i looks for `h5i-browser-light` \
+             next to this binary and then on $PATH; set $H5I_BROWSER_ENGINE to say where it is."
+        )
+    })?;
+    let pid = child.id();
+
+    Ok(Spawned {
+        alive: Box::new(move || match child.try_wait() {
+            Ok(Some(status)) => Some(format!("the browser engine exited ({status})")),
+            Ok(None) => None,
+            Err(e) => Some(format!("lost track of the browser engine: {e}")),
+        }),
+        pid: Some(pid),
+        control_in_engine_view: control.clone(),
+        control_on_host: Some(control),
+        policy_digest: host_policy_digest(opts),
+        // Nothing outside the engine is deciding anything here. That is what
+        // "no containment beyond the engine" means, and the lane says so.
+        boundary_enforced: false,
+        stop: Box::new(move || kill(pid)),
+    })
+}
+
+/// Everything about a box that has to be true before an engine is started in it,
+/// checked before anything is started.
+///
+/// Written as a preflight rather than discovered by the 30-second start timeout
+/// because all three of these failures look identical from outside — the engine
+/// never advertises — and each of them has a different fix. A timeout that
+/// says "did not come up" for a box that could never have run it is the kind of
+/// error that costs an afternoon.
+fn preflight_box(
+    name: &str,
+    h5i_root: &Path,
+    manifest: &h5i_core::env::EnvManifest,
+) -> anyhow::Result<()> {
+    let policy = h5i_core::env::load_policy(h5i_root, manifest)?;
+
+    // 1. The tier has to be able to hold a long-lived process at all. A
+    //    resident browser is a service, and services are a workspace/process/
+    //    microvm capability today: the supervised and container tiers cannot
+    //    spawn one (h5i-sandbox's `spawn_background`, "Idea 3.5").
+    let claim = policy.claim;
+    let holds_a_service = matches!(
+        claim,
+        h5i_core::sandbox::IsolationClaim::Workspace
+            | h5i_core::sandbox::IsolationClaim::Process
+            | h5i_core::sandbox::IsolationClaim::Microvm
+    );
+    if !holds_a_service {
+        anyhow::bail!(
+            "box `{name}` is at isolation `{}`, which cannot hold a resident process yet, so \
+             it cannot hold a browser session.\n\n  \
+             The tiers that can are workspace, process and microvm. Note the standing \
+             trade-off: the `browser` profile's egress allowlist needs supervised or \
+             container, and those are exactly the tiers that cannot hold a service — so on \
+             Linux today the only tier that does both is microvm.\n\n  \
+             Run the session on this machine instead (drop `--in`), which records every \
+             request the same way and claims no containment for it.",
+            claim.as_str()
+        );
+    }
+
+    // 2. The engine has to be something the box may execute. Under Landlock a
+    //    box can *read* `~/.cargo/bin` and not run from it, so `command -v`
+    //    finding the binary proves nothing — the check has to try to run it.
+    let probe = Command::new(std::env::current_exe()?)
+        .arg("box")
+        .arg("run")
+        .arg(name)
+        .arg("--")
+        .arg("sh")
+        .arg("-c")
+        .arg(format!("{} --version >/dev/null 2>&1", engine_in_box()))
+        .output()?;
+    if !probe.status.success() {
+        anyhow::bail!(
+            "box `{name}` cannot execute `{ENGINE_IN_BOX}`. A box may be able to *read* a \
+             binary it is not allowed to run: under Landlock `~/.cargo/bin` and \
+             `~/.local/bin` are readable and not executable, so an engine installed there \
+             is found by `command -v` and refused by `exec`.\n\n  \
+             Install the engine somewhere the box may run it, then try again:\n    \
+             sudo install -m755 $(command -v {ENGINE_IN_BOX}) /usr/local/bin/"
+        );
+    }
+    Ok(())
+}
+
+fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
+    let repo = super::discover_repo("h5i browser --in")?;
+    let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
+    let manifest = h5i_core::env::find(&h5i_root, name)?;
+    preflight_box(name, &h5i_root, &manifest)?;
+
+    // What this box actually enforces at its boundary, read from the policy it
+    // was created with rather than assumed from the fact that it is a box. Box
+    // creation is fail-closed on the combination — a profile that declares an
+    // egress allowlist cannot be created at a tier that cannot enforce one — so
+    // a declared allowlist here is an enforced one.
+    let boundary_enforced = match h5i_core::env::load_policy(&h5i_root, &manifest) {
+        Ok(policy) => {
+            !policy.profile.net_egress.is_empty()
+                || policy.profile.net_mode == h5i_core::sandbox::NetMode::Deny
+        }
+        Err(_) => false,
+    };
+
+    // Both views of the same file, named here rather than inherited from the
+    // box's environment. The `browser` profile does set `H5I_BROWSER_STREAM_FILE`
+    // and the engine would derive a control file beside it, but relying on that
+    // would tie `--in` to one profile — and a session in a box is not a
+    // property of the profile, it is a property of the placement.
+    let files = h5i_core::env::box_tmp_file(&h5i_root, &manifest, BROWSER_SERVICE);
+    let (control_in_box, control_on_host) = match &files {
+        Some((in_box, on_host)) => (
+            in_box.with_extension("sock"),
+            Some(on_host.with_extension("sock")),
+        ),
+        // Image-backed: the box's /tmp is inside the image. The engine still
+        // needs a path, and it is the box's own; this machine simply cannot
+        // watch it.
+        None => (
+            PathBuf::from("/tmp")
+                .join(BROWSER_SERVICE)
+                .with_extension("sock"),
+            None,
+        ),
+    };
+    let in_box_base = control_in_box.with_extension("");
+
+    // `sockaddr_un.sun_path` is 108 bytes on Linux and 104 on macOS, and a bind
+    // past it fails with a message about the address family rather than about
+    // the length. The path is h5i's own, so the failure is h5i's to explain, and
+    // to explain now rather than at the first verb.
+    const SUN_LEN: usize = 100;
+    if control_in_box.as_os_str().len() > SUN_LEN {
+        anyhow::bail!(
+            "the control socket for a session in `{name}` would be {} bytes, and a Unix socket \
+             path cannot exceed about {SUN_LEN}:\n    {}\n\n  \
+             The path comes from the box's own /tmp. Create the box under a shorter directory, \
+             or run the session on this machine (drop `--in`).",
+            control_in_box.as_os_str().len(),
+            control_in_box.display()
+        );
+    }
+
+    if control_on_host.is_none() {
+        // Not fatal: an image-backed tier has a `/tmp` the host cannot read, and
+        // a session there is still a session. What is lost is only the ability
+        // to answer "is it alive" without sending a verb, and `probe` says so
+        // by declining to guess rather than by reporting a death.
+        eprintln!(
+            "  {}     `{name}` keeps its /tmp inside its image, so `h5i browser list` cannot \
+             see whether this session is still up without sending it a verb",
+            style("note").yellow()
+        );
+    }
+
+    let mut argv: Vec<String> = vec![
+        engine_in_box(),
+        "serve".into(),
+        opts.url.clone(),
+        // A socket, not a port. Every `h5i box run` gets its own network
+        // namespace, so a verb carried in later has a loopback of its own and
+        // the port this session binds is not on it — the connection fails with
+        // ENETUNREACH, which reads exactly like a session that is not running.
+        // The box's filesystem is one filesystem across every run in it, so a
+        // path is the address that survives.
+        "--control-socket".into(),
+        control_in_box.display().to_string(),
+        "--stream-file".into(),
+        in_box_base.with_extension("stream").display().to_string(),
+        "--receipts".into(),
+        in_box_base.with_extension("requests.jsonl").display().to_string(),
+        "--actions".into(),
+        in_box_base.with_extension("actions.jsonl").display().to_string(),
+        "--width".into(),
+        opts.width.to_string(),
+        "--height".into(),
+        opts.height.to_string(),
+    ];
+    argv.extend(net_args(opts));
+    if opts.script {
+        argv.push("--script".into());
+    }
+
+    // **A service, not a run.** `h5i box run` takes the box's exclusive writer
+    // lock and holds it for the life of the command, so a resident engine
+    // started that way locks every later verb out of its own box — the failure
+    // this path was rewritten to fix. A service takes the service lock instead,
+    // which is what lets a brief `box run` carry a verb in while the engine
+    // keeps serving.
+    let def = h5i_core::env::ServiceDef {
+        command: shell_join(&argv),
+        port: None,
+        restart: None,
+        logs: true,
+    };
+    let record = h5i_core::env::service_start_with_def(
+        &repo,
+        &h5i_root,
+        &manifest,
+        BROWSER_SERVICE,
+        &def,
+    )
+    .map_err(|e| {
+        let detail = e.to_string();
+        // Two failures reach here and they want different next steps, so the
+        // hint is chosen rather than a paragraph covering both.
+        let hint = if detail.contains("services are not supported at isolation") {
+            format!(
+                "A resident browser is a long-lived process in the box, and `{name}` is on a \
+                 tier that cannot hold one. Make the box at a tier that can:\n    \
+                 h5i box --profile browser --engine h5i-light --isolation process --name {name}"
+            )
+        } else {
+            format!(
+                "The box needs `{ENGINE_IN_BOX}` on its own PATH, at a location it is allowed \
+                 to execute. Check with:\n    h5i box run {name} -- command -v {ENGINE_IN_BOX}"
+            )
+        };
+        anyhow::anyhow!("could not start the browser engine in `{name}`: {detail}\n\n  {hint}")
+    })?;
+
+    let log = PathBuf::from(record.log.clone());
+    if let Ok(mut sink) = std::fs::File::create(dir.join("engine.log")) {
+        use std::io::Write;
+        let _ = writeln!(sink, "the engine's own log is in the box, at {}", log.display());
+    }
+
+    let alive_root = h5i_root.clone();
+    let alive_manifest = manifest.clone();
+    let stop_root = h5i_root.clone();
+    let stop_manifest = manifest.clone();
+    let stop_repo_path = repo.path().to_path_buf();
+
+    Ok(Spawned {
+        alive: Box::new(move || {
+            let running = h5i_core::env::service_status(&alive_root, &alive_manifest)
+                .into_iter()
+                .find(|s| s.record.name == BROWSER_SERVICE)
+                .map(|s| s.alive)
+                .unwrap_or(false);
+            (!running).then(|| "the browser engine exited inside the box".to_string())
+        }),
+        // The service's pid is the box's, not this machine's to signal.
+        pid: None,
+        // The box's own view. `serve` with no `--control-file` derives it from
+        // `$H5I_BROWSER_STREAM_FILE`, which the box's environment sets.
+        control_in_engine_view: control_in_box,
+        control_on_host,
+        policy_digest: manifest.policy_digest.clone(),
+        boundary_enforced,
+        stop: Box::new(move || {
+            if let Ok(repo) = git2::Repository::open(&stop_repo_path) {
+                let _ = h5i_core::env::service_stop(
+                    &repo,
+                    &stop_root,
+                    &stop_manifest,
+                    BROWSER_SERVICE,
+                );
+            }
+        }),
+    })
+}
+
+/// The service name a boxed browser session runs under.
+///
+/// One per box, because one box holds one resident engine: the box's
+/// environment names a single stream file, and two engines writing it would be
+/// two sessions the viewers could not tell apart.
+const BROWSER_SERVICE: &str = "h5i-browser";
+
+/// Quote an argv into the single shell string a service definition carries.
+///
+/// A service's command goes through `sh -c`, so a URL with a `&` in it, or a
+/// path with a space, is a command that does something other than what was
+/// asked. Single quotes with the usual escape, applied to every word rather
+/// than to the ones that look dangerous.
+fn shell_join(argv: &[String]) -> String {
+    argv.iter()
+        .map(|word| format!("'{}'", word.replace('\'', "'\\''")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The engine's name inside a box.
+///
+/// Bare, not a path: under Landlock a box's `~/.cargo/bin` and `~/.local/bin`
+/// are readable but not executable, so what actually runs is the system install
+/// — and the box's `PATH` is the thing that knows where that is.
+const ENGINE_IN_BOX: &str = "h5i-browser-light";
+
+/// What to invoke inside a box, when the box's `PATH` is not where the engine
+/// is. `$H5I_BROWSER_ENGINE_IN_BOX` is a **box-side** path or command, so it is
+/// separate from `$H5I_BROWSER_ENGINE`, which names a binary on this machine.
+/// Mixing them would point one side at a path the other cannot see.
+fn engine_in_box() -> String {
+    std::env::var("H5I_BROWSER_ENGINE_IN_BOX").unwrap_or_else(|_| ENGINE_IN_BOX.to_string())
+}
+
+fn net_args(opts: &StartOptions) -> Vec<String> {
+    let mut argv = Vec::new();
+    for origin in &opts.allow {
+        argv.push("--allow".to_string());
+        argv.push(origin.clone());
+    }
+    if opts.no_loopback {
+        argv.push("--no-loopback".into());
+    }
+    argv
+}
+
+/// The digest of what a host session was allowed to do.
+///
+/// A host session has no box and so no box policy; its policy *is* the
+/// allowlist and the two switches it was started with. Digesting them means
+/// two sessions with the same digest were allowed the same things, which is the
+/// only promise the field makes anywhere.
+fn host_policy_digest(opts: &StartOptions) -> String {
+    use sha2::{Digest, Sha256};
+    let mut allow = opts.allow.clone();
+    allow.sort();
+    let material = format!(
+        "host\nallow={}\nloopback={}\nscript={}\n",
+        allow.join(","),
+        !opts.no_loopback,
+        opts.script
+    );
+    format!("sha256:{:x}", Sha256::digest(material.as_bytes()))
+}
+
+/// Wait until the engine advertises its control file, or until it is clear it
+/// never will.
+fn await_control(spawned: &mut Spawned, dir: &Path) -> Result<(), String> {
+    let Some(witness) = spawned.control_on_host.clone() else {
+        // Nothing on this side to watch. The first verb finds out.
+        return Ok(());
+    };
+    let deadline = Instant::now() + START_TIMEOUT;
+    loop {
+        if witness.exists() {
+            return Ok(());
+        }
+        if let Some(reason) = (spawned.alive)() {
+            return Err(format!(
+                "{reason} before it served a page. Its own output:\n{}",
+                tail_of(&dir.join("engine.log"))
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "the browser engine did not come up within {}s (see {})",
+                START_TIMEOUT.as_secs(),
+                dir.join("engine.log").display()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The last few lines of the engine's own output, scrubbed.
+///
+/// Quoted into an error because the useful half of a failed start is almost
+/// always one line the engine already printed — a URL the box cannot see, an
+/// engine not on its `PATH` — and telling someone to go and read a file is one
+/// step more than they need. Scrubbed like any other answer: this text came
+/// from a process that was rendering a page.
+fn tail_of(log: &Path) -> String {
+    let body = std::fs::read_to_string(log).unwrap_or_default();
+    let tail: Vec<&str> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .rev()
+        .take(6)
+        .collect();
+    tail.into_iter()
+        .rev()
+        .map(|line| format!("    {}", bs::scrub_text(line)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Carry a previous session's cookie jar into a new session's directory.
+///
+/// Deliberately narrow: cookies only, and by copy. Nothing about the old
+/// session's process, port or box comes across, because none of it is still
+/// true — this is an inheritance of state, not a resumption of a run.
+fn seed_storage(root: &Path, from: &str, into: &Path) -> anyhow::Result<()> {
+    let source = bs::dir(root, from).join("cookies.json");
+    if source.exists() {
+        std::fs::copy(&source, into.join("cookies.json"))?;
+    }
+    Ok(())
+}
+
+/// Send one verb to a session and print what came back.
+///
+/// The three things that happen here and nowhere else, in order:
+///
+/// 1. **The session must be live.** An ended one is refused with
+///    [`bs::EXIT_SESSION_GONE`], never restarted. An agent that retries into a
+///    silently restarted browser has lost the page it was reasoning about and
+///    the record of how it lost it.
+/// 2. **The control lock is checked**, before the verb leaves this process.
+/// 3. **The answer is scrubbed.** Everything a session returns was composed by
+///    a page.
+fn verb(
+    root: &Path,
+    id: &str,
+    argv: Vec<String>,
+    mutating: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let session = match bs::open_live(root, id) {
+        Ok(session) => session,
+        Err(gone) => {
+            eprintln!("{}", gone);
+            std::process::exit(bs::EXIT_SESSION_GONE);
+        }
+    };
+    let dir = bs::dir(root, id);
+
+    if let Some(explanation) = h5i_core::control::check(&dir, mutating).explain() {
+        anyhow::bail!("{explanation}");
+    }
+
+    let is_snapshot = argv.first().map(String::as_str) == Some("snapshot");
+    let mut answer = deliver(&session, &dir, argv)?;
+
+    // A completed snapshot is what clears the stale-ref flag a human takeover
+    // set. It has to happen here, after the answer came back, because the flag
+    // means "the agent has not seen the page since it moved" and only a
+    // delivered reading changes that. Clearing it on request rather than on
+    // answer would clear it for a snapshot that failed.
+    if is_snapshot && answer.get("ok").and_then(Value::as_bool) != Some(false) {
+        let _ = h5i_core::control::snapshotted(&dir);
+    }
+    bs::scrub(&mut answer);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&answer)?);
+        return Ok(());
+    }
+    print_answer(&answer);
+    Ok(())
+}
+
+/// Carry a verb to wherever the session actually is.
+fn deliver(session: &bs::Session, dir: &Path, argv: Vec<String>) -> anyhow::Result<Value> {
+    let output = match &session.placement {
+        bs::Placement::Host => {
+            // A port file, not a socket. On the host the engine and the verb
+            // share a network namespace, so the simpler channel works and the
+            // session directory can sit anywhere — including a path longer than
+            // `sockaddr_un` would accept.
+            let control = dir.join(bs::CONTROL_FILE);
+            let mut command = Command::new(engine_binary());
+            command
+                .arg("session")
+                .args(&argv)
+                .arg("--control-file")
+                .arg(&control)
+                .arg("--json");
+            command.output()?
+        }
+        bs::Placement::Box { name } => {
+            // The control file **as the box sees it**, straight from the record
+            // the start wrote. Deriving it here instead would be a second place
+            // that has to agree with the first.
+            let control = session
+                .control
+                .file
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("this session's record names no control socket"))?;
+            let mut command = Command::new(std::env::current_exe()?);
+            command
+                .arg("box")
+                .arg("run")
+                .arg("--json")
+                .arg(name)
+                .arg("--")
+                .arg(engine_in_box())
+                .arg("session")
+                .args(&argv)
+                .arg("--control-socket")
+                .arg(&control)
+                .arg("--json");
+            command.output()?
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.status.success() && stdout.trim().is_empty() {
+        let stderr = bs::scrub_text(&String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!("the session refused the verb: {}", stderr.trim());
+    }
+
+    let parsed: Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+        anyhow::anyhow!(
+            "could not read the session's answer ({e}): {}",
+            bs::scrub_text(stdout.trim())
+        )
+    })?;
+
+    // A boxed verb comes back wrapped in `h5i box run --json`'s envelope, whose
+    // `output` field is the engine's own answer as the receipt recorded it.
+    // Unwrapping here rather than at the call site keeps every verb's answer the
+    // same shape whatever the placement, which is the promise `--in` makes.
+    if session.placement.box_name().is_some() {
+        let inner = parsed
+            .get("output")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        return serde_json::from_str(&inner).map_err(|e| {
+            anyhow::anyhow!(
+                "the box ran the verb but its answer was unreadable ({e}): {}",
+                bs::scrub_text(&inner)
+            )
+        });
+    }
+    Ok(parsed)
+}
+
+fn list(root: &Path, all: bool, json: bool) -> anyhow::Result<()> {
+    let sessions: Vec<bs::Session> = bs::list(root)?
+        .into_iter()
+        .filter(|s| all || s.state.is_live())
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&sessions)?);
+        return Ok(());
+    }
+    if sessions.is_empty() {
+        println!(
+            "  no browser sessions{}. Start one with `h5i browser start <url>`.",
+            if all { "" } else { " running" }
+        );
+        return Ok(());
+    }
+    println!(
+        "  {:<10}  {:<8}  {:<9}  {:<15}  URL",
+        "SESSION", "STATE", "PLACED", "LANE"
+    );
+    for session in sessions {
+        let state = match session.state {
+            bs::State::Live => style(session.state.as_str()).green(),
+            bs::State::Closed => style(session.state.as_str()).dim(),
+            _ => style(session.state.as_str()).yellow(),
+        };
+        println!(
+            "  {:<10}  {:<8}  {:<9}  {:<15}  {}",
+            style(&session.id).cyan(),
+            state,
+            session.placement.as_str(),
+            session.lane.as_str(),
+            session.url
+        );
+    }
+    Ok(())
+}
+
+fn status(root: &Path, id: &str, json: bool) -> anyhow::Result<()> {
+    let mut session = bs::read(root, id)?;
+    // Reading status is the moment to notice a death and write it down.
+    if session.state.is_live() && !session.probe() {
+        bs::end(
+            root,
+            &mut session,
+            bs::State::Died,
+            "the engine stopped answering",
+        );
+    }
+    if json {
+        let control = h5i_core::control::read(&bs::dir(root, id));
+        let mut value = serde_json::to_value(&session)?;
+        value["control_lock"] = serde_json::to_value(&control)?;
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+    println!("  session  : {}", style(&session.id).cyan());
+    print_summary(&session);
+    let lock = h5i_core::control::read(&bs::dir(root, id));
+    println!(
+        "  control  : {} (since {})",
+        style(lock.holder.as_str()).cyan(),
+        lock.since
+    );
+    if lock.needs_resnapshot {
+        println!(
+            "  {}    the agent's @refs are stale — re-snapshot before acting \
+             (`h5i browser snapshot {}`)",
+            style("stale").yellow(),
+            session.id
+        );
+    }
+    if let Some(reason) = &session.end_reason {
+        println!("  ended    : {} — {}", session.state.as_str(), reason);
+    }
+    Ok(())
+}
+
+fn print_summary(session: &bs::Session) {
+    println!("  url      : {}", session.url);
+    match &session.placement {
+        bs::Placement::Host => println!(
+            "  placed   : {} (no containment beyond the engine)",
+            style("this machine").dim()
+        ),
+        bs::Placement::Box { name } => {
+            println!("  placed   : in box {}", style(name).cyan())
+        }
+    }
+    // The honest half of the product, printed every time rather than claimed
+    // once in a README: what this session's network record actually is.
+    let lane = match session.lane {
+        bs::Lane::EngineClaimed => style("engine-claimed").yellow(),
+        bs::Lane::HostObserved => style("host-observed").green(),
+    };
+    println!(
+        "  requests : {} ({})",
+        lane,
+        match session.lane {
+            bs::Lane::EngineClaimed =>
+                "fail-closed, and the engine's own account of what it fetched",
+            bs::Lane::HostObserved => "also seen at the box's boundary, outside the engine",
+        }
+    );
+    println!("  policy   : {}", session.policy_digest);
+    if let Some(from) = &session.restored_from {
+        println!("  storage  : inherited from {from}");
+    }
+    if let Some(expires) = &session.expires_at {
+        println!("  expires  : {expires}");
+    }
+}
+
+fn close(root: &Path, id: &str, json: bool) -> anyhow::Result<()> {
+    let mut session = bs::read(root, id)?;
+    if session.state.is_live() {
+        stop_engine(&session)?;
+        bs::end(root, &mut session, bs::State::Closed, "closed by the user");
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&session)?);
+    } else {
+        println!(
+            "{} browser session {} {}. Its record stays at {}.",
+            SUCCESS,
+            style(&session.id).cyan(),
+            session.state.describe(),
+            bs::dir(root, id).display()
+        );
+    }
+    Ok(())
+}
+
+/// End the process behind a session, wherever it is.
+///
+/// The host path signals the engine directly. The boxed path goes through
+/// `service_stop`, which is what ingests the engine's in-box log as a capture
+/// and writes the stop into the box's event log — so closing a boxed session
+/// leaves evidence in the box's own record, not only in the session's.
+fn stop_engine(session: &bs::Session) -> anyhow::Result<()> {
+    match &session.placement {
+        bs::Placement::Host => {
+            if let Some(pid) = session.control.pid {
+                kill(pid);
+            }
+            Ok(())
+        }
+        bs::Placement::Box { name } => {
+            let repo = super::discover_repo("h5i browser close")?;
+            let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
+            let manifest = h5i_core::env::find(&h5i_root, name)?;
+            match h5i_core::env::service_stop(&repo, &h5i_root, &manifest, BROWSER_SERVICE) {
+                Ok(_) => Ok(()),
+                // A service that is already gone is the state `close` wanted.
+                Err(e) => {
+                    eprintln!("  note     the box had no engine left to stop ({e})");
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+fn take(root: &Path, id: &str) -> anyhow::Result<()> {
+    let session = bs::read(root, id)?;
+    let control = h5i_core::control::take(&bs::dir(root, id))?;
+    println!(
+        "{} control taken by {} — the agent's automation is paused",
+        SUCCESS,
+        control.holder.as_str()
+    );
+    // Say which kind of pause this is, because the two are genuinely different
+    // and only one of them is a boundary.
+    match &session.placement {
+        bs::Placement::Box { .. } => println!(
+            "  {}  the session is in a box, so this is enforced: every verb is carried in \
+             from here and none of them is now",
+            style("enforced").green()
+        ),
+        bs::Placement::Host => println!(
+            "  {} the session runs on this machine, so this pauses `h5i browser` and nothing \
+             else: an agent that drives the engine binary directly is not stopped by it. \
+             Place the session in a box (`--in`) to make the pause a boundary.",
+            style("advisory").yellow()
+        ),
+    }
+    Ok(())
+}
+
+fn release(root: &Path, id: &str) -> anyhow::Result<()> {
+    let _ = bs::read(root, id)?;
+    let control = h5i_core::control::release(&bs::dir(root, id))?;
+    println!(
+        "{} control returned to {} — it must re-snapshot before acting",
+        SUCCESS,
+        control.holder.as_str()
+    );
+    Ok(())
+}
+
+fn viewer_url(name: &str, port: u16) -> anyhow::Result<()> {
+    let repo = super::discover_repo("h5i browser url")?;
+    let h5i_root = h5i_core::storage::h5i_root_for_repo(&repo)?;
+    let manifest = h5i_core::env::find(&h5i_root, name)?;
+    let dir = h5i_core::env::env_dir(&h5i_root, &manifest.agent, &manifest.slug);
+    let token = h5i_core::view::read_token(&dir).ok_or_else(|| {
+        anyhow::anyhow!("this box has no viewer token — it predates the viewer. Create a new box.")
+    })?;
+    // Printed whether or not a forward is running: the URL is a property of the
+    // box, and `h5i box view` is what makes it answer.
+    println!("http://127.0.0.1:{port}/?token={token}");
+    Ok(())
+}
+
+/// Render an engine answer for a person.
+///
+/// Known shapes get a plain rendering; anything else falls back to the JSON,
+/// which is a shape an agent can still use. Nothing here interprets the values
+/// — they came from a page, and [`bs::scrub`] has already run.
+fn print_answer(answer: &Value) {
+    let body = answer.get("data").unwrap_or(answer);
+    for key in ["outline", "text", "markdown", "message"] {
+        if let Some(text) = body.get(key).and_then(Value::as_str) {
+            println!("{text}");
+            return;
+        }
+    }
+    if let Some(text) = body.as_str() {
+        println!("{text}");
+        return;
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(body).unwrap_or_else(|_| body.to_string())
+    );
+}
+
+/// Where the engine binary is.
+///
+/// Next to this binary first, because an `h5i` and the engine it launches are
+/// installed together and a `$PATH` hit from an older install is the confusing
+/// failure. `$H5I_BROWSER_ENGINE` overrides both.
+fn engine_binary() -> PathBuf {
+    if let Some(explicit) = std::env::var_os("H5I_BROWSER_ENGINE") {
+        return PathBuf::from(explicit);
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let sibling = dir.join(ENGINE_IN_BOX);
+        if sibling.exists() {
+            return sibling;
+        }
+    }
+    PathBuf::from(ENGINE_IN_BOX)
+}
+
+/// Put the child in its own session, so closing the terminal that started it
+/// does not take the browser with it.
+#[cfg(unix)]
+fn detach(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn detach(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn kill(pid: u32) {
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill(_pid: u32) {}

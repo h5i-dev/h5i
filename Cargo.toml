@@ -82,12 +82,24 @@ clap = { version = "4.5.60", features = ["derive"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"
 console = "0.16.2"
+# The `kill(pid, 0)` liveness check and the `setsid` that detaches a browser
+# session from the terminal that started it (`cli::browser`).
+libc = "0.2.186"
+# One digest: what a host-placed browser session was allowed to do. A box's
+# policy digest comes from its manifest; a host session has no box, so its
+# policy is the allowlist it was started with and this is how that becomes a
+# comparable value.
+sha2 = "0.10"
+serde = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Only to drive `h5i-share`'s async transports from a blocking CLI handler.
 # Optional with it, so a `--no-default-features` build pulls in no runtime.
 tokio = { version = "1.0", features = ["rt-multi-thread"], optional = true }
 
 [dev-dependencies]
+# `kill(pid, SIGKILL)` in tests/browser_session_cli.rs: proving that an engine
+# that dies is recorded as having died needs a way to make one die.
+libc = "0.2.186"
 tempfile = "3.8"
 serde_json = { workspace = true }
 # Seeded generator for the interferes DRT harness (tests/interferes_drt.rs).

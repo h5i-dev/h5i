@@ -158,7 +158,7 @@
 <a class="t3" href="#h5i-box-export">h5i box export</a>
 <a class="t3" href="#h5i-box-cache">h5i box cache</a>
 <a class="t3" href="#h5i-box-view">h5i box view</a>
-<a class="t3" href="#the-browser-engine-on-its-own">The browser engine, on its own</a>
+<a class="t3" href="#the-engine-on-its-own">The engine, on its own</a>
 <a class="t3" href="#inspecting-what-happened">Inspecting what happened</a>
 <a class="t3" href="#lifecycle">Lifecycle</a>
 <a class="t3" href="#h5i-box-allow">h5i box allow</a>
@@ -194,8 +194,14 @@
 <a class="t2" href="#h5i-ui">h5i ui</a>
 <a class="t2" href="#h5i-browser">h5i browser</a>
 <div class="t3group">
+<a class="t3" href="#what-is-true-by-default">What is true by default</a>
+<a class="t3" href="#--in-box-the-same-session-inside-a-box">--in &lt;box&gt;: the same session, inside a box</a>
+<a class="t3" href="#sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</a>
+<a class="t3" href="#everything-a-session-returns-is-untrusted">Everything a session returns is untrusted</a>
+<a class="t3" href="#the-control-lock">The control lock</a>
+<a class="t3" href="#where-sessions-live">Where sessions live</a>
 <a class="t3" href="#choosing-the-engine">Choosing the engine</a>
-<a class="t3" href="#driving-the-browser-itself">Driving the browser itself</a>
+<a class="t3" href="#driving-chromium">Driving Chromium</a>
 </div>
 <a class="t2" href="#h5i-skill">h5i skill</a>
 <a class="t2" href="#h5i-runner">h5i runner</a>
@@ -335,7 +341,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 </tr>
 <tr>
 <td><a href="#h5i-browser"><code>h5i browser</code></a></td>
-<td>The control lock: who is driving a box's browser.</td>
+<td>Browser sessions: start one, drive it, close it. Auditable by default, containable with <code>--in</code>.</td>
 </tr>
 <tr>
 <td><a href="#h5i-runner"><code>h5i runner</code></a></td>
@@ -624,11 +630,11 @@ Both are recorded in the receipt, under the same lane the browser viewer uses.</
 h5i sends a press and a release together: typing works exactly, and holding a
 key down does not. Clicks are placed at the resolution of a terminal cell, which
 is fine for a form and coarse for a dense canvas.</p>
-<h3 id="the-browser-engine-on-its-own">The browser engine, on its own</h3>
-<p>h5i's own browser engine ships as a second binary, <code>h5i-browser-light</code>, and runs
-with no h5i anywhere. Its allowlist and its fail-closed receipts are enforced by
-the engine rather than by a box, so <code>--allow</code> and <code>--receipts</code> mean the same
-thing on a bare host as inside one:</p>
+<h3 id="the-engine-on-its-own">The engine, on its own</h3>
+<p>The engine ships as a second binary, <code>h5i-browser-light</code>, and runs with no h5i
+anywhere. <code>h5i browser</code> is the front door and the one an agent should use; the
+engine's own CLI is what is underneath, and it is there for the case where you
+want the browser and nothing else:</p>
 <pre><code class="language-bash">curl -fsSL https://h5i.dev/install.sh | sh -s -- --browser-only
 
 h5i-browser-light serve https://docs.rs/ --allow docs.rs &amp;
@@ -637,9 +643,18 @@ h5i-browser-light skill install          # teach an agent to drive it
 </code></pre>
 <p><code>install.sh</code> takes <code>--with-browser</code> to install both binaries, or <code>--browser-only</code>
 for the engine alone.</p>
-<p>What a box adds is that the agent cannot go around the browser. A standalone run
-is not sandboxed and does not claim to be; what it offers is a browser whose
-whole network activity is in a log you can read.</p>
+<p>Two verbs the size of a page makes worth having, on both CLIs:</p>
+<pre><code class="language-bash">h5i browser snapshot &lt;session&gt; --delta   # only what changed since the last read
+h5i browser login &lt;session&gt;              # hand the page to the human
+</code></pre>
+<p><code>--delta</code> matters because re-reading three hundred lines after every click is
+the wrong shape for an agent loop. <code>login</code> closes the page to the agent while a
+person types a credential into the live view: the session it establishes stays
+in the jar afterwards, and the agent can see <em>that</em> it is logged in without ever
+reading the cookie that says so.</p>
+<p>What the engine gives you without a box is a browser whose whole network
+activity is in a log you can read. What a box adds is that the agent cannot go
+around it.</p>
 <h3 id="inspecting-what-happened">Inspecting what happened</h3>
 <pre><code class="language-bash">h5i box probe                       # what this host can enforce at all
 h5i box capabilities &lt;name&gt; --json  # what this box actually got
@@ -1626,26 +1641,178 @@ drops it, along with axum, tokio and the build script's need for Node, and the
 <code>h5i ui</code> command with it.</p>
 <hr />
 <h2 id="h5i-browser">h5i browser</h2>
-<p>Deliberately four verbs. Driving the browser is <code>agent-browser</code>'s job; what h5i
-owns is arbitration between the agent and a human, because nothing upstream does
-it.</p>
-<pre><code class="language-bash">h5i browser status &lt;name&gt; [--json]   # who holds control, and whether @refs are stale
-h5i browser take &lt;name&gt;              # a human takes control
-h5i browser release &lt;name&gt;           # hands it back
-h5i browser url &lt;name&gt; [--port n]    # the viewer URL, token included
+<p>A <strong>session</strong> is the whole agent-facing surface. <code>h5i browser start</code> makes one
+and prints its id; every other verb names that id; <code>h5i browser close</code> ends it.
+Nothing else is a concept an agent has to learn — not the process that renders
+the page, not the port it listens on, not whether it is running inside a box.</p>
+<pre><code class="language-bash">h5i browser start https://example.com      # prints a session id, e.g. br_7k2xqa
+h5i browser snapshot br_7k2xqa             # the page as a model should read it
+h5i browser click br_7k2xqa @e3
+h5i browser requests br_7k2xqa             # what it asked for, and what was refused
+h5i browser close br_7k2xqa
 </code></pre>
-<p>The rules:</p>
+<h3 id="what-is-true-by-default">What is true by default</h3>
+<p>Started with no flags, a session runs on this machine in your ordinary process
+space, like any other headless browser. There is no sandbox, and h5i does not
+claim one.</p>
+<p>What it does that another headless browser does not is <strong>record</strong>. The engine
+is the HTTP client, so every request is checked against the session's policy and
+written down <em>before</em> the bytes move, and the fetch is refused when the record
+cannot be written. A request that is not in <code>h5i browser requests</code> did not
+happen. That is a property of the engine, not of a container, so it holds
+whether or not there is a box.</p>
+<p>The honest name for that is <strong>auditability</strong>, and the CLI says so on every
+status line:</p>
+<pre><code>requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
+</code></pre>
+<h3 id="--in-box-the-same-session-inside-a-box"><code>--in &lt;box&gt;</code>: the same session, inside a box</h3>
+<pre><code class="language-bash">h5i box --profile browser --engine h5i-light --name web
+h5i browser start https://example.com --in web
+h5i browser snapshot br_9m4tzz            # identical verb, identical answer
+</code></pre>
+<p><code>--in</code> changes nothing you type. It changes <strong>who saw the network</strong>. The box
+enforces its egress allowlist at its own boundary, which is outside the thing
+being described, so the session's lane is upgraded:</p>
+<pre><code>requests : host-observed (also seen at the box's boundary, outside the engine)
+</code></pre>
+<p>Being in a box is not by itself enough to earn that line. A box whose policy
+lets the engine reach the whole host network corroborates nothing, and such a
+session stays <code>engine-claimed</code>. What earns <code>host-observed</code> is an egress
+allowlist or a <code>deny</code> net mode — enforcement outside the engine.</p>
+<p>Two mechanics are worth knowing, because they explain the shape of the feature:</p>
 <ul>
-<li><strong>The agent holds control by default.</strong> A box exists to let an agent work; it
-  should not have to ask.</li>
-<li><strong>A human takes control, never asks for it.</strong> Someone reaching for the viewer
-  wants the pointer now, and the agent is a program that can wait. The agent's
-  mutating verbs are refused with a typed message rather than fighting for the
-  pointer; read-only verbs keep working, because watching never collides.</li>
+<li><strong>The engine runs as a service, not as a run.</strong> <code>h5i box run</code> holds the box's
+  exclusive writer lock for the life of the command, so a resident engine
+  started that way would lock every later verb out of its own box. It is
+  started the way <code>h5i box service start</code> starts things, which takes the
+  service lock instead.</li>
+<li><strong>Verbs are carried in, over a socket.</strong> Each <code>h5i box run</code> gets a fresh
+  network namespace, so a port bound by the resident session is unreachable
+  from the next run — the connect fails with <code>ENETUNREACH</code>, which reads exactly
+  like a session that is not running. The control channel inside a box is
+  therefore a Unix socket in the box's own <code>/tmp</code>, because the box's filesystem
+  is one filesystem across every run in it.</li>
+</ul>
+<p>Carrying the verb in has a second consequence, and it is the useful one: <strong>the
+control lock is checked on the host, outside the box.</strong> For a boxed session that
+makes a human takeover a boundary rather than a request, which the arrangement
+with the agent inside the box structurally cannot be.</p>
+<p><code>--in</code> needs a tier that can hold a resident process: <code>workspace</code>, <code>process</code> or
+<code>microvm</code>. The <code>browser</code> profile's egress allowlist needs <code>supervised</code> or
+<code>container</code>, and those two cannot hold a service yet, so on Linux today the tier
+that does both is <code>microvm</code>. <code>h5i browser start --in</code> says which of these applies
+to your box before it starts anything, rather than timing out.</p>
+<h3 id="sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</h3>
+<p>A session directory outlives the session. Closing one writes the ending into its
+record instead of deleting it, which is what makes "how did this end" answerable
+afterwards — and what makes an id impossible to reuse.</p>
+<table>
+<thead>
+<tr>
+<th>state</th>
+<th>what happened</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>live</code></td>
+<td>started, and the engine answered the last time anyone looked</td>
+</tr>
+<tr>
+<td><code>closed</code></td>
+<td>ended by <code>h5i browser close</code>; the record is complete</td>
+</tr>
+<tr>
+<td><code>died</code></td>
+<td>the engine stopped without being asked; the record has a gap and says so</td>
+</tr>
+<tr>
+<td><code>expired</code></td>
+<td>outlived <code>--expires-in</code></td>
+</tr>
+<tr>
+<td><code>evicted</code></td>
+<td>the box holding it was removed</td>
+</tr>
+</tbody>
+</table>
+<p>A verb sent to a session that is not live is <strong>refused with exit code 69</strong>
+(<code>EX_UNAVAILABLE</code>), never silently restarted:</p>
+<pre><code class="language-console">$ h5i browser snapshot br_7k2xqa
+browser session `br_7k2xqa` was closed: closed by the user. It will not be
+restarted automatically. Start a new one with `h5i browser start &lt;url&gt;`, or
+carry this one's storage forward with `h5i browser start &lt;url&gt; --restore br_7k2xqa`.
+$ echo $?
+69
+</code></pre>
+<p>The distinct code is the point. An agent whose retry cannot tell "the session is
+gone" from "the click did not work" is an agent that silently starts a second
+browser and loses both the page it was reasoning about and the record of how it
+lost it.</p>
+<p><code>--restore</code> is an inheritance, not a resurrection: it produces a <strong>new id</strong>, and
+writes <code>restored_from</code> into the new record.</p>
+<h3 id="everything-a-session-returns-is-untrusted">Everything a session returns is untrusted</h3>
+<p>The page composed the title, the link text, the error message and the URL; the
+engine only carried them. So every answer h5i relays is scrubbed before it
+reaches a terminal or a model: escape sequences never survive, other control
+characters are removed, and strings, arrays and nesting are capped with the
+truncation <strong>stated in the value</strong> rather than performed quietly.</p>
+<p>Escape sequences matter most. <code>ESC</code> in a relayed string is a page rewriting the
+terminal it is printed into — moving the cursor over the line above, hiding what
+it just did, repainting a prompt. Nothing a browser has to say needs <code>ESC</code>.</p>
+<p>Files a session produces are named by the host, never by the session, and land
+under the session's own <code>artifacts/</code> directory.</p>
+<h3 id="the-control-lock">The control lock</h3>
+<p>Two clients can drive one page: the agent, and a human at the live view.</p>
+<ul>
+<li><strong>The agent holds control by default.</strong> A session exists to let an agent work;
+  it should not have to ask.</li>
+<li><strong>A human takes control, never asks for it.</strong> <code>h5i browser take &lt;session&gt;</code>.
+  The agent's mutating verbs are refused with a typed message rather than
+  fighting for the pointer; read-only verbs keep working, because watching never
+  collides.</li>
 <li><strong>Handing control back invalidates what the agent knew.</strong> The page moved, so
-  every <code>@ref</code> from its last snapshot may now point somewhere else. It must
+  every <code>@ref</code> from its last snapshot may point somewhere else. It must
   re-snapshot before acting, and acting first is refused rather than mis-clicked.</li>
 </ul>
+<p><code>take</code> says which kind of pause it just created, because the two are genuinely
+different:</p>
+<ul>
+<li><strong>In a box: enforced.</strong> Every verb is carried in from the host, and none of
+  them is now.</li>
+<li><strong>On this machine: advisory.</strong> It pauses <code>h5i browser</code> and nothing else. An
+  agent that drives the engine binary directly is not stopped by it.</li>
+</ul>
+<h3 id="where-sessions-live">Where sessions live</h3>
+<p><code>$H5I_BROWSER_HOME</code>, else <code>$XDG_STATE_HOME/h5i/browser</code>, else
+<code>~/.local/state/h5i/browser</code>. Deliberately <strong>not</strong> under a git repository: every
+other noun in h5i stores its state under the enclosing repo because every other
+noun is about a repo, and a browser is not. <code>h5i browser start</code> in an empty
+directory is the ordinary case.</p>
+<table>
+<thead>
+<tr>
+<th>variable</th>
+<th>what it names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>H5I_BROWSER_HOME</code></td>
+<td>the session registry's directory</td>
+</tr>
+<tr>
+<td><code>H5I_BROWSER_ENGINE</code></td>
+<td>the engine binary <strong>on this machine</strong></td>
+</tr>
+<tr>
+<td><code>H5I_BROWSER_ENGINE_IN_BOX</code></td>
+<td>the engine command <strong>inside a box</strong>, when the box's <code>PATH</code> is not where it is</td>
+</tr>
+</tbody>
+</table>
+<p>The last two are separate on purpose. Mixing them points one side at a path the
+other cannot see.</p>
 <h3 id="choosing-the-engine">Choosing the engine</h3>
 <p><code>--engine</code> picks what runs pages in the box, and the choice is pinned in the
 digest: a run never quietly falls back to a different one.</p>
@@ -1693,16 +1860,9 @@ anything else. What it reads is an outline with <code>@ref</code> handles, not p
   Canvas, WebSockets, Workers and IndexedDB are absent. For a page it cannot
   read, the answer is <code>--engine chromium</code>.</li>
 </ul>
-<p>Driven directly, it has its own CLI (<code>h5i-browser-light --help</code>), including two
-verbs the size of a page makes worth having:</p>
-<pre><code class="language-bash">h5i-browser-light session snapshot --delta   # only what changed since last read
-h5i-browser-light session login              # hand the page to the human
-</code></pre>
-<p><code>--delta</code> matters because re-reading three hundred lines after every click is
-the wrong shape for an agent loop. <code>session login</code> closes the page to the agent
-while a person types a credential into the live view: the session it establishes
-stays in the jar afterwards, and the agent can see <em>that</em> it is logged in
-without ever reading the cookie that says so.</p>
+<p>Driven directly it has its own CLI (<code>h5i-browser-light --help</code>), which is what
+<code>h5i browser</code> sits in front of. See <a href="#the-engine-on-its-own">The engine, on its
+own</a>.</p>
 <p>Fonts are found by walking the system font directories at startup, not linked in
 at build time, so <code>h5i-browser-light doctor</code> reports what it found and
 <code>--font-file</code> names one directly. The scan keeps a budget of two dozen files, and
@@ -1718,8 +1878,9 @@ sequences: in front, it wins those characters, draws none of them, and reports
 each as a full emoji square, so the page loses every number and every word space
 at once. That reads as a broken layout engine rather than a font problem, which
 is why the ordering is a rule and not a preference.</p>
-<h3 id="driving-the-browser-itself">Driving the browser itself</h3>
-<p>That is <code>agent-browser</code>, run <strong>inside</strong> the box, and its <code>--help</code> is the verb
+<h3 id="driving-chromium">Driving Chromium</h3>
+<p><code>h5i browser</code> drives h5i's own engine. When the box is pinned to <code>chromium</code>, the
+driver is <code>agent-browser</code>, run <strong>inside</strong> the box, and its <code>--help</code> is the verb
 table. h5i does not wrap it: forty automation verbs behind a second CLI would
 buy nothing but drift.</p>
 <pre><code class="language-bash">agent-browser open http://localhost:3000
@@ -1729,6 +1890,10 @@ agent-browser fill @e3 &quot;test@example.com&quot;
 agent-browser screenshot shot.png
 agent-browser stream enable             # so `h5i box view` has something to show
 </code></pre>
+<p>The trade is worth stating plainly. Chromium reads pages this engine cannot, and
+gives up the two properties <code>h5i browser</code> is built on: its request lane is
+best-effort rather than fail-closed, and its control channel is inside the box,
+where the control lock is a request rather than a boundary.</p>
 <p>What the <code>browser</code> profile does to Chrome, and why:</p>
 <ul>
 <li><strong>Fresh profile, created in the box.</strong> No host cookie jar, extension or

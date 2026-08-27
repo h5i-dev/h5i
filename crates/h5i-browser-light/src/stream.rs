@@ -39,8 +39,10 @@
 //! because a command is handled to completion before the next one starts.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -78,6 +80,21 @@ pub struct ServeOptions {
     /// either way: anything that can reach this port is already inside the box
     /// and could run the binary itself.
     pub control_file: Option<PathBuf>,
+
+    /// Also listen for control clients on a Unix socket at this path.
+    ///
+    /// The TCP listener above is unconditional and stays the simple case. This
+    /// is for the one arrangement it cannot serve: **a session inside a box**.
+    /// Every `h5i box run` gets a fresh network namespace, so a verb carried
+    /// into the box afterwards has a loopback of its own and the resident
+    /// session's port is not on it — the connection fails with `ENETUNREACH`,
+    /// which reads exactly like a session that is not running.
+    ///
+    /// A filesystem path has no such problem: the box's `/tmp` is one
+    /// filesystem across every run in it, so the socket a `serve` created is
+    /// the socket the next verb opens. Unix-only, and optional, so the crate
+    /// stays portable and the default arrangement gains no new mechanism.
+    pub control_socket: Option<PathBuf>,
     /// Where to record the verbs an agent asks for. `None` on a bare host,
     /// where there is no console to feed.
     pub action_log: Option<PathBuf>,
@@ -100,6 +117,7 @@ impl Default for ServeOptions {
             quality: 80,
             stream_file: None,
             control_file: None,
+            control_socket: None,
             action_log: None,
             once: false,
             requests: Arc::new(crate::receipt::MemorySink::new()),
@@ -312,14 +330,32 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     if let Some(path) = &options.control_file {
         write_port_file(path, control_port)?;
     }
+
+    // Bound before the files are advertised, like the TCP listener, and for the
+    // same reason: a client that finds the path must find something listening.
+    #[cfg(unix)]
+    let control_unix = match &options.control_socket {
+        Some(path) => Some(bind_control_socket(path)?),
+        None => None,
+    };
+
     eprintln!("h5i-browser-light: live view on 127.0.0.1:{port}");
     eprintln!("h5i-browser-light: session control on 127.0.0.1:{control_port}");
+    #[cfg(unix)]
+    if let Some(path) = &options.control_socket {
+        eprintln!("h5i-browser-light: session control on {}", path.display());
+    }
 
     let (tx, rx) = channel::<Command>();
 
     let viewer_tx = tx.clone();
     let once = options.once;
     thread::spawn(move || accept_viewers(viewers, viewer_tx, once));
+    #[cfg(unix)]
+    if let Some(listener) = control_unix {
+        let unix_tx = tx.clone();
+        thread::spawn(move || accept_control_unix(listener, unix_tx));
+    }
     thread::spawn(move || accept_control(control, tx));
 
     // Opened before the listeners are advertised: a session that cannot record
@@ -344,7 +380,14 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     };
     run_session(session, rx, options.once);
 
-    for path in [&options.stream_file, &options.control_file].into_iter().flatten() {
+    for path in [&options.stream_file, &options.control_file]
+        .into_iter()
+        .flatten()
+    {
+        let _ = std::fs::remove_file(path);
+    }
+    #[cfg(unix)]
+    if let Some(path) = &options.control_socket {
         let _ = std::fs::remove_file(path);
     }
     Ok(())
@@ -589,9 +632,47 @@ fn accept_control(listener: TcpListener, tx: Sender<Command>) {
     }
 }
 
-fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError> {
+/// The same accept loop over a Unix socket. Separate function rather than a
+/// generic one because `Incoming` is not a shared trait, and two four-line loops
+/// are cheaper to read than the abstraction that would unify them.
+#[cfg(unix)]
+fn accept_control_unix(listener: UnixListener, tx: Sender<Command>) {
+    for incoming in listener.incoming() {
+        let Ok(stream) = incoming else { continue };
+        let tx = tx.clone();
+        thread::spawn(move || {
+            if let Err(error) = serve_control(stream, &tx) {
+                eprintln!("h5i-browser-light: control client: {error}");
+            }
+        });
+    }
+}
+
+/// Bind a control socket, replacing a stale one.
+///
+/// A socket file outlives the process that made it, so a session that was
+/// killed leaves a path that `connect` refuses with `ECONNREFUSED`. Removing it
+/// first is what makes a restart work; the removal is narrow — the path is one
+/// h5i chose, and a bind failure afterwards is reported rather than retried.
+#[cfg(unix)]
+fn bind_control_socket(path: &Path) -> Result<UnixListener, H5iError> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
+    }
+    let _ = std::fs::remove_file(path);
+    UnixListener::bind(path).map_err(|e| H5iError::with_path(e, path))
+}
+
+/// One control connection, whatever carried it.
+///
+/// Generic over the stream so the TCP and Unix paths cannot drift: the protocol
+/// is one JSON object per line each way, and there is exactly one implementation
+/// of it.
+fn serve_control<S: ControlStream>(stream: S, tx: &Sender<Command>) -> Result<(), H5iError> {
     let mut writer = stream
-        .try_clone()
+        .dup()
         .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
     let reader = BufReader::new(stream);
 
@@ -628,6 +709,44 @@ fn serve_control(stream: TcpStream, tx: &Sender<Command>) -> Result<(), H5iError
 }
 
 
+/// A connection the control protocol can be spoken over.
+///
+/// `dup` rather than `try_clone` by name because the two concrete types spell
+/// it the same way but share no trait that says so.
+trait ControlStream: Read + Write + Send + Sized + 'static {
+    fn dup(&self) -> std::io::Result<Self>;
+}
+
+impl ControlStream for TcpStream {
+    fn dup(&self) -> std::io::Result<Self> {
+        self.try_clone()
+    }
+}
+
+#[cfg(unix)]
+impl ControlStream for UnixStream {
+    fn dup(&self) -> std::io::Result<Self> {
+        self.try_clone()
+    }
+}
+
+/// Ask a resident session one thing over a Unix socket.
+///
+/// The sibling of [`ask`], and the one a boxed session needs: see
+/// [`ServeOptions::control_socket`] for why a port cannot serve it.
+#[cfg(unix)]
+pub fn ask_unix(path: &Path, request: &Value) -> Result<Value, H5iError> {
+    let stream = UnixStream::connect(path).map_err(|e| {
+        H5iError::Metadata(format!(
+            "no session answering on {} ({e}). Start one with \
+             `h5i-browser-light serve <url> --control-socket {}`.",
+            path.display(),
+            path.display()
+        ))
+    })?;
+    exchange(stream, request)
+}
+
 /// Read a port advertised in a file by [`write_port_file`].
 pub fn read_port_file(path: &Path) -> Result<u16, H5iError> {
     let text = std::fs::read_to_string(path).map_err(|e| H5iError::with_path(e, path))?;
@@ -648,8 +767,16 @@ pub fn ask(port: u16, request: &Value) -> Result<Value, H5iError> {
              `h5i-browser-light serve <url>`."
         ))
     })?;
+    exchange(stream, request)
+}
+
+/// One request, one answer, on a connection that is already open.
+///
+/// Shared by [`ask`] and [`ask_unix`] so the client half of the protocol has one
+/// implementation, exactly as the server half does.
+fn exchange<S: ControlStream>(stream: S, request: &Value) -> Result<Value, H5iError> {
     let mut writer = stream
-        .try_clone()
+        .dup()
         .map_err(|e| H5iError::Metadata(format!("could not clone the socket: {e}")))?;
     writeln!(writer, "{request}").map_err(H5iError::Io)?;
     writer.flush().map_err(H5iError::Io)?;
