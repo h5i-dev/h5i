@@ -491,9 +491,21 @@ outside the engine: <code>--in</code>, below.</p>
 <li><strong>Secrets are not inherited.</strong> Unconfined, the engine reads the whole
   environment, so a compromised one reads every <code>H5I_SECRET_*</code> on the machine.
   Confined it reads none unless named: <code>h5i browser open &lt;url&gt; --secret ACME_PASS</code>.</li>
-<li><strong>Personal fonts are not visible.</strong> Nothing under <code>$HOME</code> is granted, so
-  <code>~/.fonts</code> is not read and a page may render with different faces than it
-  would outside. The system font path is granted.</li>
+<li>
+<p><strong>Personal fonts are visible, and nothing else under <code>$HOME</code> is.</strong> <code>~/.fonts</code>
+  and <code>~/.local/share/fonts</code> are granted read-only, because a font someone
+  installed is not the page's font: the ones a page supplies arrive over
+  <code>@font-face</code>, go through the broker and are parsed either way, so this adds no
+  new parser input. The grant is exactly those directories — a file elsewhere
+  under <code>$HOME</code> is refused.</p>
+<p>Two mechanics behind it. The environment is cleared inside the sandbox, so
+the engine's own <code>$HOME</code>-based discovery would find nothing; h5i computes
+the list, grants it, and passes it back as <code>--font-dir</code>, one list for both.
+And if a personal directory cannot be granted — a symlink that resolves
+somewhere the policy denies is the case that exists — it is dropped and the
+sandbox is kept, with a line saying so. A font path must never be the reason
+a session runs unconfined.</p>
+</li>
 </ul>
 <p><code>--no-sandbox</code> runs the engine unconfined. Some hosts cannot confine at all
 (no Landlock, an AppArmor profile, a CI container, macOS, Windows), and there

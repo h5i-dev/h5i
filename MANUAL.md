@@ -266,9 +266,20 @@ Two consequences worth knowing before they surprise you:
 - **Secrets are not inherited.** Unconfined, the engine reads the whole
   environment, so a compromised one reads every `H5I_SECRET_*` on the machine.
   Confined it reads none unless named: `h5i browser open <url> --secret ACME_PASS`.
-- **Personal fonts are not visible.** Nothing under `$HOME` is granted, so
-  `~/.fonts` is not read and a page may render with different faces than it
-  would outside. The system font path is granted.
+- **Personal fonts are visible, and nothing else under `$HOME` is.** `~/.fonts`
+  and `~/.local/share/fonts` are granted read-only, because a font someone
+  installed is not the page's font: the ones a page supplies arrive over
+  `@font-face`, go through the broker and are parsed either way, so this adds no
+  new parser input. The grant is exactly those directories — a file elsewhere
+  under `$HOME` is refused.
+
+    Two mechanics behind it. The environment is cleared inside the sandbox, so
+    the engine's own `$HOME`-based discovery would find nothing; h5i computes
+    the list, grants it, and passes it back as `--font-dir`, one list for both.
+    And if a personal directory cannot be granted — a symlink that resolves
+    somewhere the policy denies is the case that exists — it is dropped and the
+    sandbox is kept, with a line saying so. A font path must never be the reason
+    a session runs unconfined.
 
 `--no-sandbox` runs the engine unconfined. Some hosts cannot confine at all
 (no Landlock, an AppArmor profile, a CI container, macOS, Windows), and there

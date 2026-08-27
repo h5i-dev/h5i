@@ -83,6 +83,51 @@ impl Default for Confinement {
     }
 }
 
+/// Where a font might be, in the engine's own order of preference.
+///
+/// A copy of the engine's `default_font_dirs`, and it has to be: inside the
+/// sandbox the environment is cleared, so `$HOME` is gone and the engine's own
+/// discovery would skip every personal directory whether or not Landlock
+/// granted it. So h5i computes the list, grants exactly it, and passes exactly
+/// it back as `--font-dir` — one list, used for both, because a grant and a
+/// search path that are derived separately are two things that can disagree.
+///
+/// Only directories that exist. A grant for a path that is not there is skipped
+/// by the Landlock builder anyway, and passing it as `--font-dir` would make the
+/// engine walk nothing.
+pub fn font_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".fonts"));
+        dirs.push(home.join(".local/share/fonts"));
+        if cfg!(target_os = "macos") {
+            dirs.push(home.join("Library/Fonts"));
+        }
+    }
+    if cfg!(target_os = "macos") {
+        dirs.push(PathBuf::from("/Library/Fonts"));
+        dirs.push(PathBuf::from("/System/Library/Fonts"));
+    } else {
+        dirs.push(PathBuf::from("/usr/local/share/fonts"));
+        dirs.push(PathBuf::from("/usr/share/fonts"));
+    }
+    dirs.retain(|d| d.is_dir());
+    dirs
+}
+
+/// A resolved confinement, and the font path it was granted.
+pub struct Confined {
+    pub policy: ResolvedPolicy,
+    /// Exactly the directories the engine may read fonts from, to be passed
+    /// back as `--font-dir`. Never wider than what was granted.
+    pub fonts: Vec<PathBuf>,
+    /// Personal font directories that had to be dropped to get a policy at all.
+    /// Empty in the ordinary case; non-empty is worth a line to the user,
+    /// because a page will render with different faces than it does outside.
+    pub dropped_fonts: Vec<PathBuf>,
+}
+
 /// What the caller wants confined, and what it must still be able to reach.
 pub struct Wants<'a> {
     /// The session's own directory. The one place the engine may write: its
@@ -107,21 +152,56 @@ pub struct Wants<'a> {
 /// `Err` is reserved for a policy that could not be resolved at all. A host that
 /// simply lacks the kernel features answers `Ok(None)` with a reason, because
 /// that is not a failure of the request — it is an answer about the machine.
-pub fn resolve_for(wants: &Wants<'_>) -> Result<Option<ResolvedPolicy>, H5iError> {
-    let profile = profile_for(wants);
+pub fn resolve_for(wants: &Wants<'_>) -> Result<Option<Confined>, H5iError> {
     let caps = sandbox::probe_host_for(IsolationClaim::Process);
-    let Ok(policy) = sandbox::resolve(&profile, &caps) else {
+    let all = font_dirs();
+
+    // Personal font directories are granted, and must never be the reason a
+    // session runs unconfined.
+    //
+    // The hazard is real and the codebase already catches it: Landlock grants
+    // follow symlinks, so `~/.fonts` pointing at `$HOME` would grant the home
+    // directory, and `resolve` refuses that because the grant would contain a
+    // denied `~/.ssh`. Refusing is right; refusing *the whole sandbox* over a
+    // font path is not. So the personal directories are dropped and the policy
+    // is resolved again, and the caller is told which.
+    for (fonts, dropped) in font_grant_attempts(&all) {
+        let profile = profile_for(wants, &fonts);
+        let Ok(policy) = sandbox::resolve(&profile, &caps) else {
+            continue;
+        };
+        if sandbox::verify_exec(&policy).is_ok() {
+            return Ok(Some(Confined {
+                policy,
+                fonts,
+                dropped_fonts: dropped,
+            }));
+        }
+        // A policy that resolves but cannot run is not a font problem; trying
+        // again with fewer grants would only take longer to say the same thing.
         return Ok(None);
-    };
-    // Present is not runnable. A kernel can report Landlock, seccomp and user
-    // namespaces and still refuse a confined `execve` under an AppArmor profile
-    // or inside a CI container, and the only way to know is to try — which is
-    // what `verify_exec` does, functionally, rather than reading capability
-    // bits and hoping.
-    match sandbox::verify_exec(&policy) {
-        Ok(()) => Ok(Some(policy)),
-        Err(_) => Ok(None),
     }
+    Ok(None)
+}
+
+/// The font grants to try, widest first, each with what it gave up.
+///
+/// Two, and the second exists so a font directory can never be the reason a
+/// session runs unconfined: a personal directory that resolves somewhere the
+/// policy denies makes the whole policy unresolvable, and losing the sandbox
+/// over a font path would be a security consequence for an unrelated thing.
+fn font_grant_attempts(all: &[PathBuf]) -> Vec<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let home = home_prefix();
+    let (personal, system): (Vec<PathBuf>, Vec<PathBuf>) =
+        all.iter().cloned().partition(|d| d.starts_with(&home));
+    vec![(all.to_vec(), Vec::new()), (system, personal)]
+}
+
+/// `$HOME`, or a path nothing starts with when it is unset.
+fn home_prefix() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("\0no-home"))
 }
 
 /// The profile a browser session runs under.
@@ -129,7 +209,7 @@ pub fn resolve_for(wants: &Wants<'_>) -> Result<Option<ResolvedPolicy>, H5iError
 /// Narrower than the built-in `process` profile in the two ways that matter for
 /// something whose whole job is to parse hostile input: it may write only its
 /// own directory, and it may execute nothing.
-fn profile_for(wants: &Wants<'_>) -> Profile {
+fn profile_for(wants: &Wants<'_>, fonts: &[PathBuf]) -> Profile {
     let mut p = Profile::builtin("browser-session", IsolationClaim::Process);
 
     // `$WORK` is the session directory (the caller passes it as the working
@@ -142,6 +222,13 @@ fn profile_for(wants: &Wants<'_>) -> Profile {
     ];
     p.fs_read.push("$WORK".to_string());
     for dir in wants.reads {
+        p.fs_read.push(dir.display().to_string());
+    }
+    // Read-only, and not attacker-chosen: a font the user installed is not the
+    // page's font. The ones a page supplies arrive over `@font-face`, go through
+    // the broker, and are parsed either way — granting these adds no new
+    // parser input, only the faces someone meant to have.
+    for dir in fonts {
         p.fs_read.push(dir.display().to_string());
     }
 
@@ -222,7 +309,7 @@ mod tests {
     #[test]
     fn the_engine_may_write_only_its_own_directory() {
         let tmp = tempfile::tempdir().unwrap();
-        let p = profile_for(&wants(tmp.path()));
+        let p = profile_for(&wants(tmp.path()), &[]);
         assert!(p.fs_write.contains(&"$WORK".to_string()));
         // Not $HOME, not the repository, not /tmp at large.
         assert!(
@@ -238,7 +325,7 @@ mod tests {
     #[test]
     fn the_process_ceiling_leaves_room_for_the_engines_threads() {
         let tmp = tempfile::tempdir().unwrap();
-        let p = profile_for(&wants(tmp.path()));
+        let p = profile_for(&wants(tmp.path()), &[]);
         let ceiling = p.max_procs.expect("a ceiling");
         assert!(ceiling > 1, "a ceiling of {ceiling} cannot start an HTTP client");
         assert!(ceiling <= 256, "a ceiling that high is not a ceiling");
@@ -252,7 +339,7 @@ mod tests {
     #[test]
     fn nothing_here_claims_to_forbid_exec() {
         let tmp = tempfile::tempdir().unwrap();
-        let p = profile_for(&wants(tmp.path()));
+        let p = profile_for(&wants(tmp.path()), &[]);
         assert!(
             p.tools.is_empty(),
             "a non-empty tools list would gate the initial command only, and read as more"
@@ -266,14 +353,17 @@ mod tests {
     #[test]
     fn no_secret_is_granted_unless_it_was_named() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(profile_for(&wants(tmp.path())).secrets.is_empty());
+        assert!(profile_for(&wants(tmp.path()), &[]).secrets.is_empty());
 
         let named = vec!["H5I_SECRET_ACME".to_string()];
-        let p = profile_for(&Wants {
-            session_dir: tmp.path(),
-            reads: &[],
-            secrets: &named,
-        });
+        let p = profile_for(
+            &Wants {
+                session_dir: tmp.path(),
+                reads: &[],
+                secrets: &named,
+            },
+            &[],
+        );
         assert_eq!(p.secrets, named);
     }
 
@@ -283,7 +373,7 @@ mod tests {
     #[test]
     fn the_network_is_not_what_this_contains() {
         let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(profile_for(&wants(tmp.path())).net_mode, NetMode::Host);
+        assert_eq!(profile_for(&wants(tmp.path()), &[]).net_mode, NetMode::Host);
     }
 
     /// A resident session outlives the command that opened it, so nothing here
@@ -291,7 +381,53 @@ mod tests {
     #[test]
     fn a_session_is_not_killed_on_a_wall_clock() {
         let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(profile_for(&wants(tmp.path())).wall_secs, 0);
+        assert_eq!(profile_for(&wants(tmp.path()), &[]).wall_secs, 0);
+    }
+
+    /// A font directory must never decide whether there is a sandbox. The
+    /// second attempt exists for one case that really happens — `~/.fonts` as a
+    /// symlink resolving somewhere the policy denies, which makes the whole
+    /// policy unresolvable — and it gives up the personal directories rather
+    /// than the confinement.
+    #[test]
+    fn the_fallback_gives_up_fonts_rather_than_the_sandbox() {
+        let home = home_prefix();
+        let all = vec![
+            home.join(".fonts"),
+            home.join(".local/share/fonts"),
+            PathBuf::from("/usr/share/fonts"),
+        ];
+        let attempts = font_grant_attempts(&all);
+        assert_eq!(attempts.len(), 2, "widest first, then narrower");
+
+        let (first, dropped_first) = &attempts[0];
+        assert_eq!(first, &all, "the first attempt gives up nothing");
+        assert!(dropped_first.is_empty());
+
+        let (second, dropped) = &attempts[1];
+        assert!(
+            second.iter().all(|d| !d.starts_with(&home)),
+            "the fallback keeps nothing under $HOME: {second:?}"
+        );
+        assert!(
+            second.iter().all(|d| all.contains(d)),
+            "the fallback is a subset, never a different set"
+        );
+        assert_eq!(dropped.len(), 2, "and it says exactly what it gave up");
+        assert!(dropped.iter().all(|d| d.starts_with(&home)));
+    }
+
+    /// The system path survives every attempt: a browser with no fonts at all
+    /// renders nothing anyone can read.
+    #[test]
+    fn the_system_font_path_is_never_given_up() {
+        let all = vec![home_prefix().join(".fonts"), PathBuf::from("/usr/share/fonts")];
+        for (fonts, _) in font_grant_attempts(&all) {
+            assert!(
+                fonts.contains(&PathBuf::from("/usr/share/fonts")),
+                "{fonts:?}"
+            );
+        }
     }
 
     #[test]

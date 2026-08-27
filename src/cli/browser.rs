@@ -1198,8 +1198,30 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
         h5i_core::browser_sandbox::resolve_for(&wants)?
     };
 
+    // Inside the sandbox the environment is cleared, so the engine's own
+    // `$HOME`-based font discovery finds nothing. The grant and the search path
+    // come from one list so they cannot disagree, and `--font-dir` *replaces*
+    // the engine's defaults — which is why the system directories travel with
+    // the personal ones rather than being left implicit.
+    if let Some(c) = &confined {
+        for dir in &c.fonts {
+            argv.push("--font-dir".into());
+            argv.push(dir.display().to_string());
+        }
+        if !c.dropped_fonts.is_empty() {
+            eprintln!(
+                "  {}     {} personal font director{} could not be granted, so a page may \
+                 render with different faces here than outside. The likeliest cause is a \
+                 symlink that resolves somewhere the policy denies.",
+                style("note").yellow(),
+                c.dropped_fonts.len(),
+                if c.dropped_fonts.len() == 1 { "y" } else { "ies" }
+            );
+        }
+    }
+
     let (pid, confinement) = match &confined {
-        Some(policy) => {
+        Some(c) => {
             // `spawn_background` is the same call `h5i box service start` makes:
             // a confined child that outlives the command that started it, with
             // no pid namespace, so the pid it returns is the engine itself.
@@ -1208,7 +1230,7 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions, in_a_box: bool) -> anyhow::Res
             let mut confined_argv = vec![engine.display().to_string()];
             confined_argv.extend(argv.iter().cloned());
             let handle = h5i_core::sandbox::spawn_background(
-                policy,
+                &c.policy,
                 dir,
                 &confined_argv,
                 // The environment is cleared and rebuilt from the profile, so
