@@ -265,6 +265,116 @@ fn the_document_lifecycle_fires() {
 }
 
 #[test]
+fn the_window_runs_the_handler_assigned_to_its_onload_property() {
+    // `window.onload = fn` read back as a function and never ran. The `on*`
+    // accessors were installed on `Element.prototype`, and the window is not an
+    // element, so the assignment landed on an ordinary expando — correct on
+    // inspection, inert in practice, which is the reason it survived four
+    // corpora and 7,684 timing-out WPT files.
+    let (page, _broker) = run_page(
+        "<html><body><div id='out'></div><script>\
+         window.onload = () => { document.getElementById('out').textContent = 'window.onload ran' };\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("window.onload ran"),
+        "the property handler fired on load:\n{rendered}"
+    );
+}
+
+#[test]
+fn assigning_the_same_window_handler_twice_leaves_one_handler() {
+    // What separates an `on*` property from `addEventListener`: the second
+    // assignment replaces the first rather than joining it.
+    let (page, _broker) = run_page(
+        "<html><body><div id='out'></div><script>\
+         globalThis.hits = 0;\
+         window.onload = () => { hits++ };\
+         window.onload = () => { hits++; document.getElementById('out').textContent = 'hits=' + hits };\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("hits=1"), "one handler, not two:\n{rendered}");
+}
+
+#[test]
+fn body_onload_is_the_windows_load_handler() {
+    // `<body onload>` is forwarded to the window by the spec, and the
+    // difference is not cosmetic: `load` is fired *at* the window, so a handler
+    // left on the body element sits through the one event it exists for.
+    //
+    // This is the shape most of WPT's timeout bucket had — a file whose entire
+    // test is `<body onload="run()">` loaded, registered nothing, and was
+    // scored as an engine that ran it and found nothing to say.
+    let (page, _broker) = run_page(
+        "<html><body onload=\"document.getElementById('out').textContent = 'body onload ran'\">\
+         <div id='out'></div></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("body onload ran"),
+        "the content attribute was compiled and fired:\n{rendered}"
+    );
+}
+
+#[test]
+fn an_inline_handler_attribute_runs_with_the_element_as_this() {
+    // The attribute value is a function *body* taking `event`, not an
+    // expression, and it runs with the element as `this`. Both halves are load
+    // bearing: `this.id` is how half of these handlers find what they act on.
+    let (page, _broker) = run_page(
+        "<html><body><button id='b' onclick=\"this.textContent = 'clicked ' + this.id + ' ' + event.type\">b</button>\
+         <script>addEventListener('load', () => document.getElementById('b').click());</script>\
+         </body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("clicked b click"),
+        "`this` is the element and `event` is in scope:\n{rendered}"
+    );
+}
+
+#[test]
+fn an_inline_handler_arriving_after_load_is_compiled_too() {
+    // The lifecycle sweep has been and gone by the time a page writes markup,
+    // so `innerHTML` and `setAttribute` have to compile what they introduce or
+    // handlers work only when they were in the original document.
+    let (page, _broker) = run_page(
+        "<html><body><div id='host'></div><div id='out'></div><script>\
+         addEventListener('load', () => {\
+           document.getElementById('host').innerHTML =\
+             '<button id=\\'late\\' onclick=\\'document.getElementById(\\\"out\\\").textContent = \\\"late ran\\\"\\'>x</button>';\
+           document.getElementById('late').click();\
+         });</script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("late ran"),
+        "markup written after load carries live handlers:\n{rendered}"
+    );
+}
+
+#[test]
+fn a_handler_attribute_that_does_not_compile_is_reported_not_fatal() {
+    // A syntax error in one handler is the page's bug. A browser reports it and
+    // carries on; taking the document down over it would be this engine
+    // inventing a failure the page does not have.
+    let (page, _broker) = run_page(
+        "<html><body><button id='b' onclick='(((' >b</button>\
+         <div id='out'></div>\
+         <script>addEventListener('load', () => {\
+           document.getElementById('out').textContent = 'document still ran';\
+         });</script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("document still ran"),
+        "the rest of the page is unaffected:\n{rendered}"
+    );
+}
+
+#[test]
 fn an_element_id_becomes_a_global_without_shadowing_one() {
     // "target is not defined" was the single largest cause of files that could
     // report nothing at all: a ReferenceError on line one ends a file before it
