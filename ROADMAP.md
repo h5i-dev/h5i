@@ -6583,6 +6583,79 @@ natural next build on the verb side, and §B11.5.1's login corpus remains the
 oldest and least-verified claim in this file — item 7 above is best built
 against it, not before it.
 
+### B16.11 What was built, 2026-08-26
+
+Nine capabilities, in one pass, plus §B15.10's replay which this work made
+buildable. What is *not* here is §B16.10's items 1 to 3 — compression, the
+preload scan, the font fix — because each is gated on a before-measurement and
+§B15.12a's lesson is that a performance change reasoned from the shape of the
+code is a change that gets reverted.
+
+**The settle escape hatch produced a fourth answer rather than the copied
+one.** Lightpanda's rule is that a self-arming task stops blocking completion;
+adopting only that would have folded an animating page into `quiescent`, which
+claims nothing can change, and a repeating timer changes the DOM. So `periodic`
+is a fourth `end` beside `met`/`quiescent`/`budget`. Two existing tests asserted
+the old behaviour on `function again(){ setTimeout(again, 1) } again()` — the
+exact shape the hatch exists for — and were rewritten; the "page that never
+settles" case they were really testing now uses a timer past the budget, which
+is a page that genuinely ran out of time.
+
+**The snapshot work turned out to be a correctness fix, not a token one.**
+`text_content()` concatenates a subtree, so a list item wrapping a heading, a
+paragraph and a link reported one line reading `TitleBody textRead more` and
+then suppressed all three as prose it claimed to have said. It had said them
+simultaneously, unreadably, in an outline whose purpose is structure. Scoped to
+*block* descendants: `<p>see <a>here</a></p>` and `<h2><a>Section</a></h2>` are
+shapes the existing prose rule reads well and neither changed.
+
+**Two of the nine found existing bugs.** `wss://` surfaced that `ws://` and
+`wss://` were never mapped to their HTTP twins, so an allowed remote socket was
+refused for "could not derive an origin" — a denial whose reason pointed at the
+URL when the answer was the allowlist; it had stayed hidden because the proxy
+rule refuses remote sockets first inside a box. And Canvas needed a user-agent
+rule before anything reached the page: an inline `<canvas>` measured zero by
+zero in Blitz, so the drawing worked, the pixels existed, `toDataURL` returned
+them, and the rendered page was blank.
+
+**Canvas is the clearest case of not copying the conclusion.** Both reference
+engines fake it — Lightpanda with sixty-one silent no-ops — because neither has
+a rasteriser. This one does, so what is implemented rasterises through
+`vello_cpu` and composites into the page, and what is not reports itself by
+name through the same channel as every other missing Web API. That split is the
+whole difference between this and a stub, and it is enforced by the bridge
+answering `false` for an operation it does not know rather than returning
+quietly. The unbuilt operations are *present* rather than absent, which inverts
+the usual rule for one reason: canvas drawing is incremental, and a throw on the
+fourth of thirty calls loses the other twenty-six.
+
+**`Domain` cookies paid off a stated cost.** §12's refusal was correct while
+there was no list; the list is a compiled-in table, so the refusal cost more
+than it bought. Four rules replace it, and the one that matters is the label
+boundary — `attackerexample.com` may not claim `example.com`, which a bare
+suffix test allows.
+
+**The address check strengthens the engine's own claim rather than adding a
+feature.** The allowlist decides about a name and the bytes go to an address;
+Lightpanda closes that at curl's open-socket hook, and reqwest has none, so the
+checked addresses are *pinned* through a custom resolver instead. A name that is
+not in the map fails closed rather than being looked up, because failing open
+there means connecting somewhere nobody approved.
+
+Also shipped: `--url` on every read verb; a `structured` verb; batch
+`open <url>...` sharing one broker, jar and font set; and an unknown-verb
+counter, which is the one item here that exists to tell us what to build next
+rather than to do something.
+
+**A test was strengthened on the way past.** The skill's "teaches the verbs this
+binary has" check matched a bare verb name, so `script` passed on the `--script`
+flag and `structured` on the phrase "structured data" — two verbs an agent could
+not have found were reported as documented. It now requires `session <verb>` as
+a command.
+
+Still open and unchanged: §B16.10 items 1 to 3 with their gates, §B11.5.1's
+login corpus, and the §B11.6 iframe/popup question, which none of this touched.
+
 ---
 
 # Formal verification: a Lean model beside the Rust

@@ -59,8 +59,15 @@ struct Cli {
 enum Command {
     /// Load a page, then report what it says and what it tried to reach.
     Open {
-        /// A URL, or a path to a local HTML file.
-        target: String,
+        /// One or more URLs, or paths to local HTML files.
+        ///
+        /// Several share one browser: one connection pool, one cookie jar and
+        /// one font set across the batch, so a run over twenty pages does not
+        /// re-read the font files twenty times or throw away every keep-alive
+        /// connection between them. They are read in order, and a page that
+        /// fails does not stop the ones after it.
+        #[arg(required = true, num_args = 1..)]
+        targets: Vec<String>,
 
         #[command(flatten)]
         net: NetArgs,
@@ -578,13 +585,13 @@ fn run() -> Result<(), H5iError> {
         Command::Session(verb) => session(verb),
         Command::Replay { script, keep_going, at } => replay(&script, keep_going, &at),
         Command::Open {
-            target,
+            targets,
             net,
             view,
             screenshot,
             text,
             json,
-        } => open(&target, &net, &view, screenshot, text, json),
+        } => open(&targets, &net, &view, screenshot, text, json),
         Command::Serve {
             target,
             net,
@@ -610,11 +617,14 @@ fn run() -> Result<(), H5iError> {
 }
 
 /// Build the factory and load the first page, shared by `open` and `serve`.
-fn load(
-    target: &str,
-    net: &NetArgs,
-    view: &ViewArgs,
-) -> Result<(Arc<MemorySink>, PageFactory, Page), H5iError> {
+/// Everything a page needs, built once.
+///
+/// Split from [`load`] so a batch of pages shares one of these. The broker
+/// carries the connection pool and the cookie jar, and the factory carries the
+/// font set — all three are per-*session* facts, and building them per page
+/// meant a run over twenty URLs re-read the font files twenty times and threw
+/// away every keep-alive connection between them.
+fn factory_for(net: &NetArgs, view: &ViewArgs) -> Result<(Arc<MemorySink>, PageFactory), H5iError> {
     let policy = build_policy(net);
     let (display, sink) = build_sinks(net)?;
     let broker = Arc::new(Broker::new(policy, sink, proxy_of(net).as_deref())?);
@@ -635,8 +645,12 @@ fn load(
             script: view.script,
         },
     );
+    Ok((display, factory))
+}
 
-    let page = match parse_target(target)? {
+/// One page, through a factory that already exists.
+fn open_target(factory: &PageFactory, target: &str) -> Result<Page, H5iError> {
+    Ok(match parse_target(target)? {
         Target::Remote(url) => factory.open(&url)?,
         Target::Local(path) => {
             // Bytes rather than `read_to_string`, so a local file gets the same
@@ -646,8 +660,16 @@ fn load(
             let bytes = std::fs::read(&path).map_err(|e| H5iError::with_path(e, &path))?;
             factory.from_bytes(&bytes, None, &local_base(&path)?)
         }
-    };
+    })
+}
 
+fn load(
+    target: &str,
+    net: &NetArgs,
+    view: &ViewArgs,
+) -> Result<(Arc<MemorySink>, PageFactory, Page), H5iError> {
+    let (display, factory) = factory_for(net, view)?;
+    let page = open_target(&factory, target)?;
     Ok((display, factory, page))
 }
 
@@ -1261,14 +1283,110 @@ fn doctor(net: &NetArgs) -> Result<(), H5iError> {
 }
 
 fn open(
-    target: &str,
+    targets: &[String],
     net: &NetArgs,
     view: &ViewArgs,
     screenshot: Option<PathBuf>,
     as_text: bool,
     as_json: bool,
 ) -> Result<(), H5iError> {
-    let (display, _factory, mut page) = load(target, net, view)?;
+    // One screenshot path cannot name several images, and picking one page to
+    // apply it to would be an arbitrary choice made silently. Refused with the
+    // reason instead.
+    if targets.len() > 1 && screenshot.is_some() {
+        return Err(H5iError::Metadata(
+            "`--screenshot` names one file, so it cannot be used with several targets. \
+             Open them one at a time, or drop the flag."
+                .to_string(),
+        ));
+    }
+
+    let (display, factory) = factory_for(net, view)?;
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut failures = 0usize;
+
+    for (at, target) in targets.iter().enumerate() {
+        // Where this page's own records start. The sink is shared across the
+        // batch — that sharing is the point — so a per-page view has to be cut
+        // out of it rather than read whole, or every page after the first would
+        // report the requests of the ones before it.
+        let seen_before = display.records().len();
+
+        let page = match open_target(&factory, target) {
+            Ok(page) => page,
+            // A page that fails does not stop the ones after it: a batch read
+            // is worth having precisely when some of it is going to fail, and
+            // stopping would throw away the pages that worked.
+            Err(error) => {
+                failures += 1;
+                if as_json {
+                    results.push(serde_json::json!({
+                        "url": target,
+                        "ok": false,
+                        "error": error.to_string(),
+                    }));
+                } else {
+                    eprintln!("{target}: {error}");
+                }
+                continue;
+            }
+        };
+
+        if targets.len() > 1 && !as_json && at > 0 {
+            println!();
+        }
+        let page_records = display.records().split_off(seen_before);
+        match one_page(
+            page,
+            page_records,
+            screenshot.clone(),
+            as_text,
+            as_json,
+            targets.len() > 1,
+        ) {
+            Ok(Some(payload)) => results.push(payload),
+            Ok(None) => {}
+            Err(error) => {
+                failures += 1;
+                eprintln!("{target}: {error}");
+            }
+        }
+    }
+
+    if as_json {
+        if targets.len() == 1 {
+            // One target keeps the shape it always had, so nothing driving
+            // this has to learn a new envelope to read one page.
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&results.into_iter().next().unwrap_or_default())?
+            );
+        } else {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "results": results }))?
+            );
+        }
+    }
+
+    if failures > 0 {
+        return Err(H5iError::Metadata(format!(
+            "{failures} of {} page(s) could not be read",
+            targets.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Read one page and report it. Returns the JSON payload when asked for one.
+fn one_page(
+    mut page: Page,
+    records: Vec<h5i_browser_light::receipt::RequestRecord>,
+    screenshot: Option<PathBuf>,
+    as_text: bool,
+    as_json: bool,
+    label: bool,
+) -> Result<Option<serde_json::Value>, H5iError> {
     let snapshot = page.snapshot();
 
     let screenshot_bytes = match &screenshot {
@@ -1279,8 +1397,6 @@ fn open(
         }
         None => None,
     };
-
-    let records = display.records();
 
     if as_json {
         let payload = serde_json::json!({
@@ -1319,10 +1435,14 @@ fn open(
                 "bytes": len,
             })),
         });
-        println!("{}", serde_json::to_string_pretty(&payload)?);
-        return Ok(());
+        return Ok(Some(payload));
     }
 
+    // Which page this is, when there is more than one. Without it a batch of
+    // outlines runs together and the second page looks like more of the first.
+    if label {
+        println!("=== {}", snapshot.url);
+    }
     if as_text {
         println!("{}", page.text());
     } else {
@@ -1344,7 +1464,7 @@ fn open(
     if let Some((path, len)) = screenshot_bytes {
         eprintln!("\nscreenshot: {} ({len} bytes)", path.display());
     }
-    Ok(())
+    Ok(None)
 }
 
 #[derive(Debug)]

@@ -84,15 +84,19 @@ Honest limits, because the claims above are security claims:
 ## Usage
 
 ```
-h5i-browser-light open  <url|path> [--allow ORIGIN]... [--screenshot PATH]
-                                   [--receipts PATH] [--text] [--json]
+h5i-browser-light open  <url|path>... [--allow ORIGIN]... [--screenshot PATH]
+                                      [--receipts PATH] [--text] [--json]
 h5i-browser-light serve <url|path> [--addr 127.0.0.1:0] [--stream-file PATH]
                                    [--control-file PATH]
 h5i-browser-light session status | snapshot | navigate <url> | scroll <px>
-                           | type <@ref> <text> | submit <@ref> | click <@ref>
+                           | type <@ref|--selector CSS> <text>
+                           | submit <@ref|--selector CSS>
+                           | click <@ref|--selector CSS>
                            | wait-for --selector <css> | wait-for-script <expr>
                            | requests [--since <seq>] | markdown | extract <schema>
-                           | env
+                           | structured | script [--save PATH] | env
+h5i-browser-light session snapshot|markdown|extract|structured [--url URL]
+h5i-browser-light replay <script.json>        # a recording, run without a model
 h5i-browser-light open|serve ... [--script]   # limited JavaScript preview
 h5i-browser-light capabilities     # what this engine can do, as JSON
 h5i-browser-light doctor           # fonts, proxy, allowlist, client
@@ -272,18 +276,32 @@ this verb is.
 
 Because the settle runs a page to quiescence, a page's own `setTimeout(1000)`
 has already fired by the time any verb is served. So `wait_for` does not
-usually wait. It **answers**, with one of three outcomes:
+usually wait. It **answers**, with one of four outcomes:
 
 | `end` | means |
 | --- | --- |
 | `met` | it is there |
 | `quiescent` | it is not, and the page has nothing left to run, so waiting cannot change this |
-| `budget` | it is not, and the page was still working, so it may yet appear |
+| `periodic` | it is not, and the only work left re-arms itself, so the page is running but not arriving |
+| `budget` | it is not, and the page was still working towards something, so it may yet appear |
 
-The middle one is the one worth having, and collapsing it into "timed out" is
-the lie this engine refuses elsewhere: a page that has finished and a page that
-was cut off are not the same fact. On a page with no script at all the answer
-comes back immediately, because nothing can put the element there.
+The middle two are the ones worth having, and collapsing either into "timed
+out" is the lie this engine refuses elsewhere: a page that has finished and a
+page that was cut off are not the same fact. On a page with no script at all the
+answer comes back immediately, because nothing can put the element there.
+
+**`periodic` was the last of the four to exist, and its absence was a lie the
+other three told.** `requestAnimationFrame` is a `setTimeout` here, so an
+animation loop presented a fresh one-shot timer every frame; the page never ran
+out of pending work, rode the whole ten-second budget, and answered `budget` —
+"it may yet appear" — about a page that would still be looping tomorrow.
+
+The fix is Lightpanda's, adapted. There, a task that reschedules itself never
+blocks completion and a timer chain stops blocking past a nesting depth of ten;
+here the timers still *fire*, they stop *counting*. What is not copied is the
+conclusion: folding this into `quiescent` would claim nothing can change, and a
+repeating timer can change the DOM. It is a fourth answer because it is a fourth
+fact.
 
 `wait_for_script` needs `--script` and says so as a routing answer rather than
 as a condition that failed. A condition that throws counts as *not yet*: a page
@@ -342,17 +360,25 @@ request is not in the list, it did not happen.
 "nothing was refused" is a claim about the session and an agent that only ever
 asks for windows should still be able to make it.
 
-### Cookies, and the four narrowings that make them safe
+### Cookies, and the narrowings that make them safe
 
 Cookies are the first thing this engine holds that is worth stealing, so the
 limits arrived with them rather than after:
 
-- **Host-only, always.** The `Domain` attribute is ignored. Honouring it needs a
-  public suffix list, and without one a page on `evil.co.uk` can set a cookie
-  for `co.uk`. The cost is real: a site that logs you in at `example.com` and
-  serves from `www.example.com` will not stay logged in. It is the trade
-  this engine takes, because the alternative failure is a credential sent to an
-  attacker's neighbour.
+- **`Domain` honoured, over a compiled-in public suffix list.** This was refused
+  until the list arrived, and the stated cost was real: a site that logs you in
+  at `example.com` and serves from `www.example.com` did not stay logged in.
+  Four rules stand between that and the failure the refusal was avoiding, and a
+  cookie must pass all of them — the domain must not be a public suffix
+  (`Domain=co.uk` is refused), the setter must be within it on a label boundary
+  (`attackerexample.com` may not claim `example.com`, which a bare suffix test
+  would have allowed), an IP host may not widen at all, and `__Host-` forbids
+  the attribute outright.
+
+  The list is compiled in rather than fetched, so nothing here depends on the
+  network to decide where a credential may go, and it goes stale safely: the
+  list only grows, so an out-of-date copy refuses suffixes it has not heard of
+  rather than accepting them.
 - **In memory, never on disk.** The jar dies with the process; restarting the
   session is a complete logout.
 - **Never readable by the agent.** No verb returns a value. `session status`
@@ -636,6 +662,24 @@ a time, so opening the console silently blocked `h5i box view`.
 
 Not yet done: **the frame half of LOGIN mode**, so a human taking over to type
 a password is protected from the agent's *reads* and not from an agent that
-attaches to the viewer socket; **no `Domain` cookies**, so cross-subdomain
-sessions do not persist; and no file uploads, which are dropped rather than
-read. Tier 3 (policy-gated script) remains deliberately unbuilt.
+attaches to the viewer socket; and no file uploads, which are dropped rather
+than read. Tier 3 (policy-gated script) remains deliberately unbuilt.
+
+`Domain` cookies were on this list and are now built, over a compiled-in public
+suffix list, so a cross-subdomain session persists.
+
+### What a reading of Lightpanda changed, 2026-08-26
+
+ROADMAP §B16 is the write-up; what landed here is: the fourth wait outcome
+above; a snapshot that no longer lets a wrapper swallow the block beneath it;
+`--url` on the read verbs, so a look at a page is one round trip rather than
+two; `Domain` cookies; an address-level rebinding check, so the receipt cannot
+name a host the bytes never reached; record-and-replay over durable selectors;
+a real Canvas 2D; `wss://`; a `structured` verb; and a counter for verb names
+callers asked for and this engine does not have.
+
+Three of those were **not** Lightpanda's ideas but its absences, found by
+reading its code beside ours: it fakes canvas with sixty-one silent no-ops, it
+pays wall-clock time for every timer, and it has no receipts at all. What the
+comparison was most useful for was the three costs it found in *our* load path,
+which are §B16.10's queue and are not built yet.

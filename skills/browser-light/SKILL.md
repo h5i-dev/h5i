@@ -45,6 +45,21 @@ with a durable CSS selector.
 **`session markdown`** is the page as a reader reads it: prose, lists, tables,
 no handles. Use it to *understand* a page; use `snapshot` to *act* on one.
 
+Every read verb takes an optional `--url`, which goes there first and then
+reads. Prefer it: `session markdown --url https://example.com/docs` is one round
+trip where `navigate` followed by `markdown` is two, and the reply still names
+the URL it ended up on so a redirect is not silent.
+
+**`session status`** says where the session is: the current URL, how many
+cookies it holds (a count, never a value), whether LOGIN mode is on, and any
+verb names that were asked for and do not exist.
+
+**`session structured`** is the cheapest read there is: what the page publishes
+*about itself* — JSON-LD, OpenGraph, `<meta>`, `<link rel>` — in a few hundred
+bytes rather than a few hundred lines. Try it first on an article, a product or
+anything with a canonical URL. A page with no metadata answers `"empty": true`,
+which is a fact about the page and not a failed read.
+
 **`session extract '<schema>'`** pulls out structured data. Keys are output
 names, values are selectors:
 
@@ -104,6 +119,44 @@ The fix is always the same: take a fresh `snapshot` and use its refs. Typing and
 scrolling do not renumber anything, so a form can be filled and submitted
 without re-reading between steps.
 
+## Two handles, and when to use which
+
+**A `@ref` is for reading. A selector is for acting more than once.**
+
+`@e5` names a position in the reading that minted it, which is why a stale one
+is refused. A selector names whatever it matches now, so it survives a
+navigation and needs no earlier reading at all. Every action verb takes either:
+
+```bash
+h5i-browser-light session click @e3
+h5i-browser-light session click --selector '#go'
+```
+
+The `refs` array in a `snapshot` reply pairs each `@ref` with a verified
+selector for the same element — verified with the matcher the action verbs
+themselves use, so `null` there means "no reliable handle exists", never a
+guess. Use the ref for the step you are taking now; keep the selector if you
+will come back to that element after the page moves.
+
+## Recording a session, and running it again
+
+A session records what it did, in selector terms:
+
+```bash
+h5i-browser-light session script --save login.json
+h5i-browser-light replay login.json
+```
+
+`replay` needs no model and no tokens: it sends the recorded steps through the
+same control channel an agent would, so the allowlist, the receipts and the
+action log see a replay exactly as they see a live session.
+
+Only state changes are recorded — reads are how *you* decided what to do next,
+not part of the doing. A step whose element had no verifiable selector is
+dropped and **counted**, and both `session script` and `replay` say how many, so
+a short script is visibly short rather than quietly wrong. A `type` that used a
+`$H5I_SECRET_*` placeholder records the placeholder, never the value.
+
 ## Waiting, and the third answer
 
 ```bash
@@ -112,13 +165,18 @@ h5i-browser-light session wait-for --text 'Signed in'
 h5i-browser-light session wait-for-script 'document.querySelectorAll("li").length > 3'
 ```
 
-Three outcomes, and the middle one is the useful one:
+Four outcomes, and the two middle ones are the useful ones:
 
 | `end` | means | what to do |
 | --- | --- | --- |
 | `met` | it is there | carry on |
 | `quiescent` | it is not, and the page has nothing left to run | stop waiting; it will not appear |
-| `budget` | it is not, and the page was still working | it may yet appear |
+| `periodic` | it is not, and the only work left is a loop that re-arms itself — an animation, a poller | stop waiting; the page is running but not arriving |
+| `budget` | it is not, and the page was still working towards something | it may yet appear |
+
+`periodic` and `budget` look similar and are not. A page that is still *working*
+may finish; a page whose only remaining work is a loop will be running that same
+loop tomorrow, and waiting again buys nothing.
 
 Do not poll `wait_for` in a loop. The engine runs a page to quiescence before
 answering any verb, so it returns a *decision*, not a snapshot of a moment.
