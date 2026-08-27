@@ -27,11 +27,11 @@
       <sub><a href="./crates/h5i-browser-light/DESIGN.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
-      <strong>Auditable networking</strong><br>
-      <sub>Allowed and denied requests</sub>
+      <strong>~5× faster　reads</strong><br>
+      <sub><a href="./crates/h5i-browser-light/DESIGN.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
-      <strong>Configurable sandboxing</strong><br>
+      <strong>Sandboxed & auditable</strong><br>
       <sub>Browser-only or full workflow</sub>
     </td>
   </tr>
