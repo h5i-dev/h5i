@@ -71,7 +71,7 @@ pub enum BoxCommands {
         image: Option<String>,
 
         /// Browser engine for the `browser` profile: chromium (default),
-        /// lightpanda, or h5i-light. Overrides the profile's `engine`. Pinned
+        /// lightpanda, or h5i. Overrides the profile's `engine`. Pinned
         /// in the policy digest, and never falls back: a box whose engine
         /// cannot serve a page fails and names the recreate, because switching
         /// engine changes what a page is able to do.

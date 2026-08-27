@@ -41,7 +41,7 @@ no h5i session in it; drive `agent-browser` inside that box instead.
 | takeover | enforced when boxed | advisory, inside the box |
 | use it for | reading the web, docs, forms, a dev server | script-heavy pages, video, WebGL |
 
-Running `agent-browser` in a box pinned to `h5i-light` fails with `Failed to
+Running `agent-browser` in a box pinned to `h5i` fails with `Failed to
 create socket directory: Permission denied`. That is not a permissions problem
 to work around: it is the box telling you it has no Chromium.
 

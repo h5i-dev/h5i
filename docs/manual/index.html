@@ -457,7 +457,7 @@ status line:</p>
 <pre><code>requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 </code></pre>
 <h3 id="--in-box-the-same-session-inside-a-box"><code>--in &lt;box&gt;</code>: the same session, inside a box</h3>
-<pre><code class="language-bash">h5i box --profile browser --engine h5i-light --name web
+<pre><code class="language-bash">h5i box --profile browser --engine h5i --name web
 h5i browser open https://example.com --in web
 h5i browser snapshot  # identical verb, identical answer
 </code></pre>
@@ -697,12 +697,12 @@ digest: a run never quietly falls back to a different one.</p>
 <td>A third-party headless engine.</td>
 </tr>
 <tr>
-<td><code>h5i-light</code></td>
-<td>h5i's own engine, described below.</td>
+<td><code>h5i</code></td>
+<td>h5i's own engine, part of this binary. Described below.</td>
 </tr>
 </tbody>
 </table>
-<h4 id="h5i-light">h5i-light</h4>
+<h4 id="the-h5i-engine">The h5i engine</h4>
 <p>An engine built for the case an agent is actually in: read a page, act on it,
 read what changed. It runs in <strong>one process</strong> and holds a page in roughly a
 seventh of the memory Chromium needs (76 MiB against 563 MiB, median over the
@@ -815,7 +815,7 @@ already spelled it as a flag.</p>
 <h3 id="h5i-box-create">h5i box create</h3>
 <pre><code>h5i box create &lt;NAME&gt; [--from &lt;rev&gt;] [--pr &lt;n&gt;] [--clone &lt;url&gt;] [--new]
                       [--profile &lt;p&gt;] [--isolation &lt;tier&gt;] [--image &lt;img&gt;]
-                      [--engine &lt;chromium|lightpanda|h5i-light&gt;]
+                      [--engine &lt;chromium|lightpanda|h5i&gt;]
 </code></pre>
 <p>The base revision is frozen at creation and pinned immutably. The policy is
 resolved, digested and stored <em>before</em> any state is created on disk, so an
@@ -858,7 +858,7 @@ unsatisfiable request fails closed rather than leaving half a box behind.</p>
 </tr>
 <tr>
 <td><code>--engine &lt;e&gt;</code></td>
-<td>Browser engine for the <code>browser</code> profile: <code>chromium</code> (default), <code>lightpanda</code>, or <code>h5i-light</code>. Pinned in the digest; never falls back. See <a href="#choosing-the-engine">Choosing the engine</a>.</td>
+<td>Browser engine for the <code>browser</code> profile: <code>chromium</code> (default), <code>lightpanda</code>, or <code>h5i</code>. Pinned in the digest; never falls back. See <a href="#choosing-the-engine">Choosing the engine</a>.</td>
 </tr>
 </tbody>
 </table>

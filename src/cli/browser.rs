@@ -1118,7 +1118,7 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
             format!(
                 "A resident browser is a long-lived process in the box, and `{name}` is on a \
                  tier that cannot hold one. Make the box at a tier that can:\n    \
-                 h5i box --profile browser --engine h5i-light --isolation process --name {name}"
+                 h5i box --profile browser --engine h5i --isolation process --name {name}"
             )
         } else {
             format!(

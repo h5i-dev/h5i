@@ -140,7 +140,7 @@ h5i browser list               # every session on this machine, and which is def
 Optional, and it changes nothing you type.
 
 ```bash
-h5i box --profile browser --engine h5i-light --name web
+h5i box --profile browser --engine h5i --name web
 h5i browser open https://example.com --in web
 h5i browser snapshot                            # identical verb, identical answer
 ```

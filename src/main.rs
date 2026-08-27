@@ -252,7 +252,7 @@ pub struct BoxArgs {
     #[arg(long)]
     image: Option<String>,
 
-    /// Browser engine for the `browser` profile: chromium | lightpanda | h5i-light.
+    /// Browser engine for the `browser` profile: chromium | lightpanda | h5i.
     #[arg(long)]
     engine: Option<String>,
 

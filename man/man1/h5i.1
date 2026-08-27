@@ -84,7 +84,7 @@ Isolation tier: auto (default) | workspace | process | supervised | container | 
 Container base image for isolation=container
 .TP
 \fB\-\-engine\fR \fI<ENGINE>\fR
-Browser engine for the `browser` profile: chromium | lightpanda | h5i\-light
+Browser engine for the `browser` profile: chromium | lightpanda | h5i
 .TP
 \fB\-\-json\fR
 Emit the created box\*(Aqs manifest as JSON instead of the human summary
@@ -129,7 +129,7 @@ Isolation: auto (default) | workspace | process | supervised | container | micro
 Base image for isolation=container and isolation=microvm (pre\-pulled; runs never pull). Overrides the profile\*(Aqs `container.image` and the repo\-level `[container] image` default in .h5i/env.toml. Passing it makes both image\-backed tiers candidates for the isolation auto\-pick
 .TP
 \fB\-\-engine\fR \fI<ENGINE>\fR
-Browser engine for the `browser` profile: chromium (default), lightpanda, or h5i\-light. Overrides the profile\*(Aqs `engine`. Pinned in the policy digest, and never falls back: a box whose engine cannot serve a page fails and names the recreate, because switching engine changes what a page is able to do
+Browser engine for the `browser` profile: chromium (default), lightpanda, or h5i. Overrides the profile\*(Aqs `engine`. Pinned in the policy digest, and never falls back: a box whose engine cannot serve a page fails and names the recreate, because switching engine changes what a page is able to do
 .TP
 \fB\-\-runner\fR \fI<NAME>\fR
 Run this box on a paired runner instead of this machine.

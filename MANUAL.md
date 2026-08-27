@@ -229,7 +229,7 @@ requests : engine-claimed (fail-closed, and the engine's own account of what it 
 ### `--in <box>`: the same session, inside a box
 
 ```bash
-h5i box --profile browser --engine h5i-light --name web
+h5i box --profile browser --engine h5i --name web
 h5i browser open https://example.com --in web
 h5i browser snapshot  # identical verb, identical answer
 ```
@@ -455,9 +455,9 @@ digest: a run never quietly falls back to a different one.
 | --- | --- |
 | `chromium` (default) | A real browser. Everything works; it costs what a browser costs. |
 | `lightpanda` | A third-party headless engine. |
-| `h5i-light` | h5i's own engine, described below. |
+| `h5i` | h5i's own engine, part of this binary. Described below. |
 
-#### h5i-light
+#### The h5i engine
 
 An engine built for the case an agent is actually in: read a page, act on it,
 read what changed. It runs in **one process** and holds a page in roughly a
@@ -590,7 +590,7 @@ Where the code comes from decides the shape of the box:
 ```
 h5i box create <NAME> [--from <rev>] [--pr <n>] [--clone <url>] [--new]
                       [--profile <p>] [--isolation <tier>] [--image <img>]
-                      [--engine <chromium|lightpanda|h5i-light>]
+                      [--engine <chromium|lightpanda|h5i>]
 ```
 
 The base revision is frozen at creation and pinned immutably. The policy is
@@ -606,7 +606,7 @@ unsatisfiable request fails closed rather than leaving half a box behind.
 | `--profile <p>` | See [Profiles](#profiles). |
 | `--isolation <tier>` | See [Isolation tiers](#isolation-tiers). |
 | `--image <img>` | Base image for `isolation=container` and `isolation=microvm`. Pre-pulled; runs never pull. |
-| `--engine <e>` | Browser engine for the `browser` profile: `chromium` (default), `lightpanda`, or `h5i-light`. Pinned in the digest; never falls back. See [Choosing the engine](#choosing-the-engine). |
+| `--engine <e>` | Browser engine for the `browser` profile: `chromium` (default), `lightpanda`, or `h5i`. Pinned in the digest; never falls back. See [Choosing the engine](#choosing-the-engine). |
 
 A profile can also refuse individual browser actions, enforced by h5i on the
 daemon's control socket rather than advised:
