@@ -62,17 +62,18 @@ h5i browser close
 curl -fsSL https://h5i.dev/install.sh | sh
 # if you would rather not add a domain to the chain:
 # curl -fsSL https://raw.githubusercontent.com/h5i-dev/h5i/main/install.sh | sh
+
+# build from source
+# cargo install --path .
 ```
 
-Or build from source:
+The agent-facing interface is a skill, and the binary carries it:
 
 ```bash
-cargo install --path .
+h5i skill install                # writes it where your runtime looks
+h5i skill show policy            # or just read a page
+npx skills add h5i-dev/h5i       # if you do not have the binary yet
 ```
-
-That installs two binaries: `h5i`, the front door, and `h5i-browser-light`, the
-engine it launches to render a page. `install.sh --browser-only` installs the
-engine alone, for a CI image that renders a page and nothing else.
 
 Two optional runtimes add stronger sandbox tiers: rootless
 [Podman](https://podman.io/) provides `container`, while
@@ -248,19 +249,7 @@ lives inside the box, where a takeover is a request rather than a boundary.
 
 ---
 
-## 6. Skill
-
-The agent-facing interface is a skill, and the binary carries it:
-
-```bash
-h5i skill install                # writes it where your runtime looks
-h5i skill show policy            # or just read a page
-npx skills add h5i-dev/h5i       # if you do not have the binary yet
-```
-
----
-
-## 7. Documentation
+## 6. Documentation
 
 - [Official Website](https://h5i.dev/): project overview, [Slides](https://h5i.dev/pitch/)
 - [MANUAL.md](MANUAL.md) / `man h5i`: full command reference
@@ -269,7 +258,7 @@ npx skills add h5i-dev/h5i       # if you do not have the binary yet
 
 ---
 
-## 8. FAQ
+## 7. FAQ
 
 <details>
 <summary>Why not Playwright or Puppeteer?</summary>
@@ -384,13 +373,13 @@ No. Model egress is a separate policy decision.
 
 ---
 
-## 9. License
+## 8. License
 
 Apache-2.0. See [LICENSE](LICENSE).
 
 ---
 
-## 10. Contributors
+## 9. Contributors
 
 <a href="https://github.com/h5i-dev/h5i/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=h5i-dev/h5i" alt="h5i contributors" />

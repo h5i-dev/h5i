@@ -7,14 +7,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # One binary. The rendering engine used to ship as a second archive
+  # (`h5i-browser-light`) and is linked into this one now; `h5i browser` execs
+  # itself to become it. That is still a release-only artifact rather than a
+  # crates.io publish, because the engine depends on boa by git revision and
+  # crates.io refuses that (see scripts/check_boa_release.sh).
   BINARY_NAME: h5i
-  # The browser engine ships as its own binary, because it is usable — and
-  # useful — with no h5i anywhere: its allowlist and its fail-closed receipts
-  # are enforced by the engine rather than by a box. It cannot go to crates.io
-  # (it depends on boa by git revision, which crates.io refuses; see
-  # scripts/check_boa_release.sh), so a release archive is the only way anyone
-  # gets it.
-  ENGINE_NAME: h5i-browser-light
 
 permissions:
   contents: write
@@ -171,14 +169,9 @@ jobs:
           H5I_SKIP_WEB_BUILD: "1"
         run: |
           cargo build --release --locked --target ${{ matrix.target }}
-          cargo build --release --locked --target ${{ matrix.target }} -p ${{ env.ENGINE_NAME }}
 
       # ── Package ───────────────────────────────────────────────────────────
 
-      # Two archives per target rather than one holding both binaries: someone
-      # who wants only the browser should not have to download h5i to get it,
-      # and someone installing h5i should not silently acquire a second
-      # executable they did not ask for.
       - name: Package (Unix)
         if: matrix.archive_ext == 'tar.gz'
         shell: bash
@@ -193,7 +186,6 @@ jobs:
             sha256sum "$archive" > "$archive.sha256"
           }
           package "${{ env.BINARY_NAME }}"
-          package "${{ env.ENGINE_NAME }}"
 
       - name: Package (Windows)
         if: matrix.archive_ext == 'zip'
@@ -209,18 +201,12 @@ jobs:
             "$hash  $archive" | Out-File -FilePath "$archive.sha256" -Encoding ASCII
           }
           Package "${{ env.BINARY_NAME }}"
-          Package "${{ env.ENGINE_NAME }}"
 
-      # One artifact per target carrying both products' archives. The release
-      # job's `h5i-*` pattern picks this up unchanged, because both names start
-      # with it.
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.target }}
-          path: |
-            ${{ env.BINARY_NAME }}-*-${{ matrix.target }}.*
-            ${{ env.ENGINE_NAME }}-*-${{ matrix.target }}.*
+          path: ${{ env.BINARY_NAME }}-*-${{ matrix.target }}.*
           if-no-files-found: error
 
   release:
@@ -298,19 +284,26 @@ jobs:
 
             **Windows:** download the `.zip`, extract `h5i.exe`, and add it to your `PATH`.
 
-            ### The browser on its own
+            ### The browser
 
             ```bash
-            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/h5i-browser-light-${{ github.ref_name }}-<TARGET>.tar.gz | tar -xz
-            sudo mv h5i-browser-light /usr/local/bin/
-            h5i-browser-light skill install     # teach an agent to drive it
+            h5i browser open https://example.com
+            h5i browser snapshot
+            h5i browser requests     # what it asked for, and what was refused
+            h5i browser audit        # the whole session, afterwards
             ```
 
+            The rendering engine is part of this binary. It used to ship as a
+            second archive (`h5i-browser-light`); `h5i browser` execs itself to
+            become it now, and `h5i __engine` reaches its own CLI for the cases
+            that want it directly.
+
             Every request it makes is checked against an allowlist — every
-            request and every redirect hop — and written to the receipt before
-            any bytes move, with or without h5i. What a box adds is that the
-            agent cannot simply go around the browser; on a bare host that part
-            is not claimed.
+            request and every redirect hop — and written to the log before any
+            bytes move. A request that is not in `h5i browser requests` did not
+            happen. What a box adds, with `--in`, is that the record gains a
+            witness outside the browser; on a bare host that part is not
+            claimed.
 
             ### Available targets
 

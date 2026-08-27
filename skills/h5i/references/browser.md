@@ -55,11 +55,12 @@ h5i browser click @e1
 h5i browser status
 ```
 
-The engine also has its own CLI (`h5i-browser-light session <verb>`), which is
-what `h5i browser` sits in front of. Use `h5i browser`: it is the surface that
-knows about session ids, placement, the control lock, and the scrubbing every
-answer goes through. Reach past it only when there is no h5i on the machine at
-all.
+The engine has its own CLI under `h5i __engine`, which is what `h5i browser`
+sits in front of. **Use `h5i browser`.** It is the surface that knows about
+session names, placement, the control lock, the audit, and the scrubbing every
+answer goes through. `__engine` is hidden for that reason; reach for it only for
+something the front door genuinely does not offer, like a one-shot render or
+`__engine doctor`.
 
 Reading, beyond the outline:
 

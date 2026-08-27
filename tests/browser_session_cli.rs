@@ -6,8 +6,8 @@
 //! to a second session, and that what a page composed does not reach a terminal
 //! with its escape sequences intact.
 //!
-//! Skipped, loudly, when there is no engine to drive. `H5I_BROWSER_ENGINE`
-//! names one; otherwise a sibling of the test binary or `$PATH`.
+//! Skipped, loudly, when the binary under test has not been built. There is no
+//! separate engine to find: `h5i` execs itself to render a page.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -87,16 +87,15 @@ impl Site {
 
 struct Fixture {
     home: tempfile::TempDir,
-    engine: PathBuf,
     site: Site,
 }
 
 impl Fixture {
     fn new() -> Option<Fixture> {
-        let engine = engine()?;
+        engine()?;
         let home = tempfile::tempdir().ok()?;
         let site = Site::start()?;
-        Some(Fixture { home, engine, site })
+        Some(Fixture { home, site })
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {

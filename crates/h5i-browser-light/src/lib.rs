@@ -42,7 +42,6 @@ pub mod policy;
 pub mod receipt;
 pub mod script;
 pub mod selector;
-pub mod skill;
 pub mod secrets;
 pub mod snapshot;
 pub mod sse;

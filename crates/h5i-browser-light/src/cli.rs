@@ -160,14 +160,6 @@ enum Command {
     #[command(subcommand)]
     Session(SessionVerb),
 
-    /// Write or print the agent skill this binary carries.
-    ///
-    /// The skill teaches an agent to drive this browser on a bare host: the
-    /// verbs, the ref rule, the error codes, and — the part it must not get
-    /// wrong — which guarantees hold anywhere and which need an h5i box.
-    #[command(subcommand)]
-    Skill(SkillCommands),
-
     /// Report what this engine can and cannot do, as JSON.
     ///
     /// h5i reads this to decide what to route here rather than inferring it
@@ -354,24 +346,6 @@ enum SessionVerb {
     },
 }
 
-#[derive(Subcommand)]
-enum SkillCommands {
-    /// Write the skill to disk. Defaults to this runtime's per-user skill
-    /// directory; `$H5I_SKILL_DIR` overrides it, which is how a box redirects
-    /// an install to an in-box location.
-    Install {
-        /// Write here instead of the default target.
-        #[arg(long, value_name = "DIR")]
-        target: Option<PathBuf>,
-    },
-
-    /// Print the skill to stdout.
-    Show,
-
-    /// Print where `install` would write.
-    Path,
-}
-
 #[derive(Args, Clone)]
 struct SessionArgs {
     /// The file a `serve` wrote its control port into. Defaults to
@@ -512,7 +486,6 @@ where
             Ok(())
         }
         Command::Doctor { net } => doctor(&net),
-        Command::Skill(action) => skill(action),
         Command::Session(verb) => session(verb),
         Command::Open {
             target,
@@ -646,30 +619,6 @@ fn serve(
     )
 }
 
-/// Write or print the skill this binary carries.
-fn skill(action: SkillCommands) -> Result<(), H5iError> {
-    match action {
-        SkillCommands::Install { target } => {
-            let target = match target {
-                Some(path) => path,
-                None => crate::skill::default_target()?,
-            };
-            let written = crate::skill::install(&target)?;
-            println!(
-                "installed the {} skill ({} page(s), v{}) -> {}",
-                crate::skill::NAME,
-                written.len(),
-                env!("CARGO_PKG_VERSION"),
-                target.display()
-            );
-        }
-        SkillCommands::Show => print!("{}", crate::skill::page(None)?),
-        SkillCommands::Path => {
-            println!("{}", crate::skill::default_target()?.display())
-        }
-    }
-    Ok(())
-}
 
 /// Drive the resident session.
 fn session(verb: SessionVerb) -> Result<(), H5iError> {

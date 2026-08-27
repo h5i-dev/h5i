@@ -371,45 +371,36 @@ h5i sends a press and a release together: typing works exactly, and holding a
 key down does not. Clicks are placed at the resolution of a terminal cell, which
 is fine for a form and coarse for a dense canvas.
 
-### The engine, on its own
+### The engine, underneath
 
-The engine ships as a second binary, `h5i-browser-light`, and runs with no h5i
-anywhere. `h5i browser` is the front door and the one an agent should use; the
-engine's own CLI is what is underneath, and it is there for the case where you
-want the browser and nothing else:
+The engine is part of the `h5i` binary. `h5i browser` runs it as a **separate
+process** and speaks a protocol to it, the way it always has; what changed is
+that it execs itself to get there instead of a second file.
 
-```bash
-curl -fsSL https://h5i.dev/install.sh | sh -s -- --browser-only
+It used to ship as `h5i-browser-light` beside `h5i`, and two files bought three
+problems. The default install left `h5i browser open` with nothing to render a
+page. Two halves of one protocol could drift apart with no handshake between
+them. And a box could *read* the engine without being allowed to `exec` it,
+because Landlock makes `~/.cargo/bin` readable and not executable, so
+`command -v` found it and `exec` refused it.
 
-h5i-browser-light serve https://docs.rs/ --allow docs.rs &
-h5i-browser-light session snapshot
-h5i-browser-light skill install          # teach an agent to drive it
-```
-
-`install.sh` installs both binaries. `--browser-only` gives you the engine
-without h5i, and `--no-browser` the other way round.
-
-Take the narrow one deliberately. `h5i browser` is the surface that knows about
-session names, placement, the control lock and the audit; the engine's own CLI
-is what sits under it, and reaching past the front door means giving all of
-that up.
-
-Two verbs the size of a page makes worth having, on both CLIs:
+The engine's own CLI is still reachable, hidden, for the cases that want it
+directly:
 
 ```bash
-h5i browser snapshot <session> --delta   # only what changed since the last read
-h5i browser login <session>              # hand the page to the human
+h5i __engine --help
+h5i __engine open https://docs.rs/ --allow docs.rs   # one-shot render, then exit
+h5i __engine doctor                                  # what fonts it found
+h5i __engine skill install                           # the engine's own skill
 ```
 
-`--delta` matters because re-reading three hundred lines after every click is
-the wrong shape for an agent loop. `login` closes the page to the agent while a
-person types a credential into the live view: the session it establishes stays
-in the jar afterwards, and the agent can see *that* it is logged in without ever
-reading the cookie that says so.
+Take it deliberately. `h5i browser` is the surface that knows about session
+names, placement, the control lock and the audit; `__engine` is what sits under
+it, and reaching past the front door means giving all of that up. It is hidden
+from `--help` for that reason and documented here for the same one.
 
-What the engine gives you without a box is a browser whose whole network
-activity is in a log you can read. What a box adds is that the agent cannot go
-around it.
+What the engine gives you with no box is a browser whose whole network activity
+is in a log you can read. What a box adds is that the agent cannot go around it.
 
 ### Inspecting what happened
 
@@ -1852,12 +1843,12 @@ Two properties to check before you rely on it:
   Canvas, WebSockets, Workers and IndexedDB are absent. For a page it cannot
   read, the answer is `--engine chromium`.
 
-Driven directly it has its own CLI (`h5i-browser-light --help`), which is what
-`h5i browser` sits in front of. See [The engine, on its
-own](#the-engine-on-its-own).
+Driven directly it has its own CLI (`h5i __engine --help`), which is what
+`h5i browser` sits in front of. See [The engine,
+underneath](#the-engine-underneath).
 
 Fonts are found by walking the system font directories at startup, not linked in
-at build time, so `h5i-browser-light doctor` reports what it found and
+at build time, so `h5i __engine doctor` reports what it found and
 `--font-file` names one directly. The scan keeps a budget of two dozen files, and
 what it spends them on is a preference order: the regular text faces first, then
 an emoji face, then weight and slant variants. Emoji sit ahead of the variants
