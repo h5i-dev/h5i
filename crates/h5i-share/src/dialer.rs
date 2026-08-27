@@ -328,6 +328,39 @@ impl Dialer {
 /// happened to be listening — the one outcome the Linux side refuses by
 /// construction. [`crate::owner`] is what makes the question answerable, and
 /// every dial asks it again.
+/// How many times [`Dialer::resolve`] re-runs a whole attribution pass that
+/// ended on a listener pid which had already exited.
+///
+/// Small on purpose. The condition it covers is a reaped pid, and a reaped pid
+/// does not come back: the process is gone from the table and gone from the
+/// socket scan, so the next pass sees the surviving listener instead. More than
+/// one attempt is only needed because a box mid-build produces these
+/// continuously, and a pass can lose the race twice. A dial that loses it four
+/// times in a row is refused rather than retried forever, which keeps a wedged
+/// process table a refusal with a sentence rather than a hang.
+#[cfg(target_os = "macos")]
+const ATTRIBUTION_ATTEMPTS: usize = 4;
+
+/// What one attribution pass concluded, and whether asking again could change
+/// it.
+///
+/// The distinction exists because `Err` alone cannot carry it: "this port is a
+/// stranger's" and "the pid h5i was about to name exited underneath it" are
+/// both refusals to the caller, and only the second is worth re-running. Kept
+/// private, so nothing outside this module can act on the difference — the
+/// retry is an implementation detail of `resolve`, not a second class of
+/// failure for callers to handle.
+#[cfg(target_os = "macos")]
+enum Pass {
+    /// The pass reached an answer about the port. Asking again would reach the
+    /// same one.
+    Settled(Result<std::net::SocketAddr, DialError>),
+    /// The pass named a listener that no longer exists, so it never got to an
+    /// answer about the port. The error is what to report if every attempt ends
+    /// this way.
+    Vanished(DialError),
+}
+
 #[cfg(target_os = "macos")]
 impl Dialer {
     /// Pin a dialer to one port of one box.
@@ -393,6 +426,23 @@ impl Dialer {
     /// dev server has died cannot have its share quietly inherited by the next
     /// process to claim the port.
     fn resolve(&self) -> Result<std::net::SocketAddr, DialError> {
+        let mut vanished = None;
+        for _ in 0..ATTRIBUTION_ATTEMPTS {
+            match self.resolve_once() {
+                Pass::Settled(r) => return r,
+                Pass::Vanished(e) => vanished = Some(e),
+            }
+        }
+        // Every pass landed on a listener that had exited by the time it was
+        // asked about. Reported as the refusal it always was rather than
+        // guessed past: a port whose holder cannot be held still long enough to
+        // be identified is not a port h5i can promise leads to the box.
+        Err(vanished.expect("the loop above runs at least once"))
+    }
+
+    /// One attribution pass, whole: the process table, every readable process's
+    /// descriptors, the decision, and the ancestry re-ask.
+    fn resolve_once(&self) -> Pass {
         use crate::owner::{self, Ownership};
 
         // Before anything is attributed. `is_descendant` answers true for the
@@ -403,12 +453,12 @@ impl Dialer {
             self.mac.root_started,
             h5i_core::env::proc_start_ticks(self.mac.root),
         ) {
-            return Err(DialError::NotTheBox(H5iError::Metadata(format!(
+            return Pass::Settled(Err(DialError::NotTheBox(H5iError::Metadata(format!(
                 "the box's session process (pid {}) is gone, and that pid now belongs to \
                  something else — so h5i cannot tell which processes are this box's and will \
                  not connect to any of them. Start a fresh session and a fresh share.",
                 self.mac.root
-            ))));
+            )))));
         }
 
         let pids = owner::process_tree(self.mac.root);
@@ -439,20 +489,52 @@ impl Dialer {
             // tree above is a snapshot taken before the sockets were scanned,
             // and a pid that changed hands in between would otherwise carry the
             // snapshot's word for it. See [`owner::is_descendant`].
-            Ownership::Box { addr, pid } if owner::is_descendant(pid, self.mac.root) => Ok(addr),
-            Ownership::Box { pid, .. } => Err(DialError::NotTheBox(H5iError::Metadata(format!(
-                "the process holding port {} (pid {pid}) stopped being part of this box while \
-                 h5i was looking at it, so h5i will not connect to it. This is the pid changing \
-                 hands underneath the check; try again.",
-                self.port
-            )))),
-            Ownership::Nobody => Err(DialError::NothingListening(H5iError::Metadata(format!(
-                "nothing is listening on port {} in the box. Start the dev server in the box, \
-                 or share the port it is actually on.",
-                self.port
-            )))),
+            Ownership::Box { addr, pid } if owner::is_descendant(pid, self.mac.root) => {
+                Pass::Settled(Ok(addr))
+            }
+            // The re-ask can fail for two reasons that look identical here and
+            // are not the same fact, and reading both as a refusal is what made
+            // a busy box refuse its own visitors.
+            //
+            // A pid that is **still alive** and no longer under the root did
+            // change hands: the number was reused while h5i was looking at it,
+            // and what holds the port now is a process the operator never
+            // offered to share. Refused, and not retried — asking again would
+            // only get the same true answer more slowly.
+            //
+            // A pid that is **gone** held nothing at all. It is the same shape
+            // `is_alive` already filters out of the listener list one step
+            // earlier, arriving one step later: a box child that inherited the
+            // dev server's listening descriptor across `fork` and exited before
+            // the re-ask reached it. The address it was found on is still the
+            // box's, still held by the process that bound it — so the pass is
+            // re-run rather than turned into a sentence about pids, which is
+            // what a visitor of a box mid-build would otherwise be shown.
+            Ownership::Box { pid, .. } if !owner::is_alive(pid) => {
+                Pass::Vanished(DialError::NotTheBox(H5iError::Metadata(format!(
+                    "the process found holding port {} (pid {pid}) exited before h5i could \
+                     confirm it was this box's, on every attempt. Nothing was published. Try \
+                     the connection again.",
+                    self.port
+                ))))
+            }
+            Ownership::Box { pid, .. } => {
+                Pass::Settled(Err(DialError::NotTheBox(H5iError::Metadata(format!(
+                    "the process holding port {} (pid {pid}) stopped being part of this box \
+                     while h5i was looking at it, so h5i will not connect to it. This is the \
+                     pid changing hands underneath the check; try again.",
+                    self.port
+                )))))
+            }
+            Ownership::Nobody => Pass::Settled(Err(DialError::NothingListening(
+                H5iError::Metadata(format!(
+                    "nothing is listening on port {} in the box. Start the dev server in the \
+                     box, or share the port it is actually on.",
+                    self.port
+                )),
+            ))),
             Ownership::Stranger { pid, addr } => {
-                Err(DialError::NotTheBox(H5iError::Metadata(format!(
+                Pass::Settled(Err(DialError::NotTheBox(H5iError::Metadata(format!(
                     "port {} on this machine is held by {}, which is not part of this box — so \
                      h5i will not share it.\n   On macOS a box has no network of its own: it \
                      binds the host's loopback, and `{}` is what a connection to port {} \
@@ -464,7 +546,7 @@ impl Dialer {
                     addr,
                     self.port,
                     self.port
-                ))))
+                )))))
             }
             Ownership::Contested { addr, others } => {
                 let who = others
@@ -472,13 +554,13 @@ impl Dialer {
                     .map(|p| named(*p))
                     .collect::<Vec<_>>()
                     .join(", ");
-                Err(DialError::NotTheBox(H5iError::Metadata(format!(
+                Pass::Settled(Err(DialError::NotTheBox(H5iError::Metadata(format!(
                     "port {} is held on {} by this box *and* by {} at the same time, so the \
                      kernel decides per connection which one answers.\n   h5i will not share a \
                      port it cannot promise leads to the box. Stop the other listener and start \
                      the share again.",
                     self.port, addr, who
-                ))))
+                )))))
             }
         }
     }
