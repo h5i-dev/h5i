@@ -24,7 +24,7 @@
     </td>
     <td align="center">
       <strong>~80% less peak memory</strong><br>
-      <sub><a href="#benchmarks">In our benchmarks</a></sub>
+      <sub><a href="./crates/h5i-browser-light/DESIGN.md">In our benchmarks</a></sub>
     </td>
     <td align="center">
       <strong>Auditable networking</strong><br>
