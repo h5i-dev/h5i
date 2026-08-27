@@ -134,11 +134,17 @@ SESSION = {
 <p>This is the part that is different. The engine <em>is</em> the HTTP client, so this list is a decision record it wrote before the bytes moved rather than a trace assembled beside the network. The order is fixed: check the policy, write the record, then touch the wire. When the record cannot be written, the fetch is refused.</p>
 <p>Two consequences worth stating plainly. A request that is not in this list did not happen. And a denied request <em>is</em> in the list, with its reason, so the log shows what was attempted and not only what succeeded.</p>
 <p>Pass the <code>cursor</code> from a previous answer back as <code>--since</code> to see only what is new, the same way <code>--delta</code> works on a snapshot.</p>
-<h2 id="end">6. End it, and keep the record</h2>
+<h2 id="audit">6. Read the whole session back</h2>
+<p><code>requests</code> is the network layer, and the verb to poll inside a loop. When you are writing up what happened, read the timeline instead.</p>
+{terminal('host', '$ h5i browser audit')}
+<p>It merges three sources: the verbs you asked for, the decision the engine made about every fetch, and the moments a human took the controls. Ordered across all of them, so the question a review actually asks &mdash; was a person driving when that form was submitted &mdash; has an answer. A current-holder field cannot give one.</p>
+<p>Every row says which lane it came from. The engine&rsquo;s rows are its own account of itself; the handovers and the ending are h5i&rsquo;s, written from outside. They are printed apart because a claim rendered as an observation is the one error this product cannot afford.</p>
+<p>Read the <code>sources</code> line before the rows. Each log is <code>read</code>, <code>empty</code>, or <code>unavailable</code>. An empty timeline over a log h5i could not see looks exactly like a session that did nothing, and those are different findings.</p>
+<h2 id="end">7. End it, and keep the record</h2>
 {terminal('host', '$ h5i browser close\n$ h5i browser list --all')}
 <p>Closing writes the ending into the session's record instead of deleting it, which is what makes &ldquo;how did this end&rdquo; answerable afterwards and what makes the id impossible to reuse. The states are <code>closed</code>, <code>died</code>, <code>expired</code> and <code>evicted</code>, and they are kept apart because they are different facts about the run.</p>
 <p>Send a verb to a session that is not live and it is refused with exit code 69 rather than silently restarted. That distinct code is the point of the design: an agent whose retry cannot tell &ldquo;the session is gone&rdquo; from &ldquo;the click did not work&rdquo; quietly starts a second browser and loses both the page it was reasoning about and the record of losing it.</p>
-<h2 id="contain">7. When you want a boundary too</h2>
+<h2 id="contain">8. When you want a boundary too</h2>
 {terminal('host', '$ h5i box --profile browser --engine h5i-light --name web\n$ h5i browser open https://example.com --in web')}
 <p>Every verb above works unchanged. What changes is the requests line: the box enforces its egress allowlist at its own boundary, outside the browser being described, so the lane goes from <code>engine-claimed</code> to <code>host-observed</code>.</p>
 <p>Being inside a box does not earn that on its own. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session <code>engine-claimed</code>. What earns the upgrade is enforcement outside the engine.</p>
@@ -1084,6 +1090,11 @@ def build():
 - A browser session holds one page state, one cookie jar, one request log, and one policy, addressed by an id.
 - The engine is the HTTP client: policy first, record second, wire third. A fetch that cannot be recorded is refused.
 - Denials are recorded with their reason, so the log shows what was attempted and not only what succeeded.
+- h5i browser audit merges verbs, fetch decisions, control handovers, and the ending into one ordered timeline.
+- Every audit row carries its lane: the engine's own account, or what h5i observed from outside. They are never merged.
+- An audit reports each source as read, empty, or unavailable, because an unwatched log is not a quiet session.
+- A fetch carries caused_by naming the verb the page was under; links come from the source, never from timing.
+- h5i box export writes browser/<id>.json per session placed in the box, and lists them in report.md.
 - A redirect out of the allowlist is refused at the hop, not followed and explained afterwards.
 - Snapshots arrive fenced as untrusted page content; escape sequences and control characters never reach the terminal.
 - Relayed strings, arrays, and nesting are capped, and the truncation is stated in the value.

@@ -423,6 +423,111 @@ fn the_request_log_lands_in_the_sessions_own_directory() {
     let _ = fx.run(&["browser", "close"]);
 }
 
+/// The whole record of a session, in one ordered timeline: what the agent
+/// asked for, what the engine decided, who was driving, and how it ended.
+#[test]
+fn the_audit_carries_the_whole_session_in_one_timeline() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i-browser-light to drive");
+    };
+    fx.open(&[]);
+    assert!(fx.run(&["browser", "snapshot"]).status.success());
+    assert!(fx.run(&["browser", "take"]).status.success());
+    assert!(fx.run(&["browser", "release"]).status.success());
+    assert!(fx.run(&["browser", "snapshot"]).status.success());
+    assert!(fx.run(&["browser", "close"]).status.success());
+
+    let out = fx.run(&["browser", "audit", "--json"]);
+    assert!(
+        out.status.success(),
+        "audit failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let audit: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let events = audit["events"].as_array().expect("a timeline");
+
+    let kinds: Vec<&str> = events
+        .iter()
+        .filter_map(|e| e["kind"].as_str())
+        .collect();
+    for expected in ["lifecycle", "agent-action", "request", "control"] {
+        assert!(kinds.contains(&expected), "no {expected} row: {kinds:?}");
+    }
+
+    // The handover sits between the two snapshots. That ordering is the whole
+    // reason the audit exists: "was a human driving when that happened" cannot
+    // be answered by a current-holder field.
+    let positions: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e["kind"] == "agent-action" && e["action"].as_str().is_some_and(|a| a.starts_with("snapshot")))
+        .map(|(i, _)| i)
+        .collect();
+    let control = events
+        .iter()
+        .position(|e| e["kind"] == "control")
+        .expect("a handover");
+    assert!(
+        positions.len() >= 2 && positions[0] < control && control < positions[1],
+        "the handover is not between the two snapshots: {kinds:?}"
+    );
+
+    // The lanes stay apart: a row h5i wrote from outside is never presented as
+    // the engine reporting on itself.
+    for event in events {
+        let expected = match event["kind"].as_str() {
+            Some("lifecycle") | Some("control") => "host-observed",
+            _ => "box-claimed",
+        };
+        assert_eq!(event["lane"], expected, "wrong lane: {event}");
+    }
+}
+
+/// An audit must say what it could not read. An empty timeline over a log h5i
+/// cannot see looks exactly like a session that did nothing.
+#[test]
+fn the_audit_reports_a_log_it_could_not_read() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i-browser-light to drive");
+    };
+    let id = fx.open(&[]);
+    assert!(fx.run(&["browser", "close"]).status.success());
+
+    // Take the engine's own logs away, the way an image-backed box would.
+    let dir = fx.dir(&id);
+    std::fs::remove_file(dir.join("actions.jsonl")).ok();
+    std::fs::remove_file(dir.join("requests.jsonl")).ok();
+
+    let out = fx.run(&["browser", "audit", "--json"]);
+    let audit: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(audit["sources"]["actions"], "unavailable");
+    assert_eq!(audit["sources"]["requests"], "unavailable");
+
+    let text = String::from_utf8_lossy(&fx.run(&["browser", "audit"]).stdout).to_string();
+    assert!(text.contains("unavailable"), "{text}");
+}
+
+/// The verb that reads the request log does not appear as the cause of it.
+#[test]
+fn reading_the_log_is_not_recorded_as_causing_it() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i-browser-light to drive");
+    };
+    let id = fx.open(&[]);
+    assert!(fx.run(&["browser", "requests"]).status.success());
+    assert!(fx.run(&["browser", "close"]).status.success());
+
+    let actions = std::fs::read_to_string(fx.dir(&id).join("actions.jsonl")).unwrap();
+    let row = actions
+        .lines()
+        .find(|l| l.contains("\"verb\":\"requests\"") && l.contains("\"phase\":\"result\""))
+        .expect("the verb was recorded");
+    assert!(
+        !row.contains("\"requests\":["),
+        "the reader claimed to have caused what it read:\n{row}"
+    );
+}
+
 /// A page with a hostile heading cannot repaint the terminal it is printed
 /// into. The engine carried the bytes; h5i is the last thing between them and a
 /// person's screen.

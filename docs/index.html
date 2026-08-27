@@ -414,7 +414,13 @@
 <span class="t-prompt">$</span> <span class="t-cmd">h5i browser requests</span>          <span class="t-cmt"># refusals included</span>
 <span class="t-out">  4 requests, 1 denied</span>
 <span class="t-red">  denied</span> <span class="t-out">https://tracker.example/px  origin not in the allowlist</span>
-<span class="t-prompt">$</span> <span class="t-cmd">h5i browser close</span></pre></div></div>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser close</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser audit</span>             <span class="t-cmt"># the whole session, afterwards</span>
+<span class="t-ai">  host  </span> <span class="t-out">session opened</span>
+<span class="t-out">  engine  verb   snapshot</span>
+<span class="t-ai">  host  </span> <span class="t-out">control -&gt; human  (taken by a human)</span>
+<span class="t-out">  engine  #1 </span><span class="t-red">DENIED</span><span class="t-out"> GET https://tracker.example/px</span>
+<span class="t-ai">  host  </span> <span class="t-out">session closed</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
         <div class="feat-name">Endings are recorded</div>
@@ -429,6 +435,14 @@
         <div class="feat-desc">The agent holds control by default; a person takes it, never asks for it.
           Mutating verbs pause, reads keep working, and handing control back forces a re-snapshot because
           the page moved. In a box that pause is enforced, since every verb is carried in from the host.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-name">One timeline, two lanes</div>
+        <div class="feat-desc"><code>h5i browser audit</code> merges the verbs the agent asked for, the
+          decision the engine made about every fetch, the moments a human took the controls, and how
+          the session ended. Every row says whether it is the engine describing <em>itself</em> or
+          something h5i saw from <em>outside</em>, and the summary names any log it could not read at
+          all: an empty timeline over a log nobody could see is not a quiet session.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">Credentials are named, never read</div>

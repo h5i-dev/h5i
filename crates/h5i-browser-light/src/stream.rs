@@ -839,23 +839,18 @@ fn recorded_verb(session: &mut Session, request: &Value) -> (Value, bool) {
         }
     };
 
+    // The mark, taken before the verb runs. Everything the broker writes past
+    // it belongs to this verb's window — which is the join a reviewer needs and
+    // the thing the old implementation got exactly backwards (see
+    // `ActionRecord::requests`).
+    let mark = session.requests.high_water();
+
     let (answer, changed) = control_verb(session, request);
 
     let ok = answer.get("ok").and_then(Value::as_bool).unwrap_or(false);
     let url = answer.get("url").and_then(Value::as_str);
     let error = answer.get("error").and_then(Value::as_str);
-    // Which receipts this verb produced, read back out of the reply it just
-    // returned. The engine already stamped the link; this is what carries it
-    // into the log the console reads.
-    let caused: Vec<u64> = answer
-        .get("requests")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| row.get("seq").and_then(Value::as_u64))
-                .collect()
-        })
-        .unwrap_or_default();
+    let caused = session.requests.since(mark);
     if let Some(log) = &session.actions {
         log.finish(
             seq,
@@ -1239,9 +1234,13 @@ fn control_verb(session: &mut Session, request: &Value) -> (Value, bool) {
                             "ok": true,
                             "ref": reference,
                             "settled": settled,
-                            // The causal link, stamped by the one component
-                            // that knows it: this click, these receipts.
-                            "requests": caused,
+                            // Strict causation, from the one component that can
+                            // know it: this handler dispatched, these fetches.
+                            // A different key from the `requests` verb's rows on
+                            // purpose — one name for two meanings is what made
+                            // the action log attribute every fetch to the verb
+                            // that merely read them.
+                            "caused_requests": caused,
                         }),
                         true,
                     );
@@ -2097,6 +2096,94 @@ mod tests {
     }
 
     #[test]
+    fn the_verb_that_only_reads_the_log_does_not_claim_to_have_caused_it() {
+        // The bug this pins: the causal field was read out of the reply's
+        // `requests` key, which the `requests` verb uses for the rows it
+        // *returns*. So the one verb that fetches nothing was recorded as
+        // having caused every fetch in the session, and the verbs that do fetch
+        // recorded nothing at all. A reviewer joining on that field would have
+        // been reading the exact opposite of what happened.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("actions.jsonl");
+        let mut session = session_with(tall_page());
+        session.actions = Some(ActionLog::create(&path).expect("log"));
+
+        // Put something in the request log that this verb plainly did not do.
+        use crate::receipt::Sink as _;
+        session
+            .requests
+            .append(&crate::receipt::RequestRecord::request(
+                7,
+                crate::receipt::Initiator::Navigation,
+                "GET",
+                "https://example.com/earlier",
+            ))
+            .expect("appended");
+
+        recorded_verb(&mut session, &json!({"verb": "requests"}));
+
+        let text = std::fs::read_to_string(&path).expect("written");
+        let result = text
+            .lines()
+            .find(|l| l.contains("\"phase\":\"result\"") && l.contains("\"verb\":\"requests\""))
+            .expect("the verb was recorded");
+        assert!(
+            !result.contains("\"requests\":["),
+            "reading the log is not causing it:\n{result}"
+        );
+    }
+
+    #[test]
+    fn a_verb_carries_the_receipts_written_while_it_ran() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("actions.jsonl");
+        let mut session = session_with(tall_page());
+        session.actions = Some(ActionLog::create(&path).expect("log"));
+
+        // One receipt from before the verb, one from during it. Only the second
+        // belongs to the window.
+        use crate::receipt::Sink as _;
+        session
+            .requests
+            .append(&crate::receipt::RequestRecord::request(
+                1,
+                crate::receipt::Initiator::Navigation,
+                "GET",
+                "https://example.com/before",
+            ))
+            .expect("appended");
+
+        let mark = session.requests.high_water();
+        assert_eq!(mark, Some(1));
+        session
+            .requests
+            .append(&crate::receipt::RequestRecord::request(
+                2,
+                crate::receipt::Initiator::Navigation,
+                "GET",
+                "https://example.com/during",
+            ))
+            .expect("appended");
+
+        assert_eq!(
+            session.requests.since(mark),
+            vec![2],
+            "the window starts at the mark, not at the beginning of the session"
+        );
+        // A request and its response share a number, so the pair is one entry.
+        session
+            .requests
+            .append(&crate::receipt::RequestRecord::request(
+                2,
+                crate::receipt::Initiator::Navigation,
+                "GET",
+                "https://example.com/during",
+            ))
+            .expect("appended");
+        assert_eq!(session.requests.since(mark), vec![2]);
+    }
+
+    #[test]
     fn a_verb_that_cannot_be_recorded_does_not_happen() {
         // No record, no action. Proved by the page not moving, not merely by
         // the reply: an agent that scrolled invisibly would be the bug.
@@ -2247,9 +2334,13 @@ mod tests {
 
     #[test]
     fn a_click_reports_the_requests_it_caused() {
-        // The causal link, stamped by the one component that knows it. Empty
+        // Strict causation, stamped by the one component that knows it. Empty
         // here because the handler makes none, which is still the honest answer
         // rather than a missing field.
+        //
+        // Under its own key, not `requests`: that name belongs to the rows the
+        // `requests` verb returns, and one name for two meanings is what made
+        // the action log record the reader as the cause.
         let mut session = scripted_session_with(
             "<html><body><button id='b'>Go</button><script>\
              document.querySelector('#b').addEventListener('click', () => {});\
@@ -2258,8 +2349,8 @@ mod tests {
         let reference = serve_refs(&mut session)[0].id.clone();
         let (reply, _) = control_verb(&mut session, &json!({"verb": "click", "ref": reference}));
 
-        assert!(reply["requests"].is_array(), "{reply:?}");
-        assert_eq!(reply["requests"].as_array().unwrap().len(), 0);
+        assert!(reply["caused_requests"].is_array(), "{reply:?}");
+        assert_eq!(reply["caused_requests"].as_array().unwrap().len(), 0);
     }
 
     #[test]

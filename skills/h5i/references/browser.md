@@ -73,6 +73,12 @@ h5i browser requests  # what it fetched, and what was refused
 the HTTP client, so the log is the decision record written before the bytes
 moved rather than an observation made beside the network.
 
+`h5i browser audit` is that log merged with the verbs you asked for, the moments
+a human took the controls, and how the session ended, in one ordered timeline.
+Reach for `requests` inside a loop and `audit` when you are writing up what
+happened. Every row says whether it is the engine describing itself or something
+h5i saw from outside, and the summary names any log it could not read at all.
+
 Waiting has three answers, not two:
 
 ```bash

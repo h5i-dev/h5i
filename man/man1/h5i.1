@@ -1536,6 +1536,24 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.SH "H5I BROWSER AUDIT"
+Everything recorded about this session, in one ordered timeline
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBaudit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER REQUESTS"
 The request log: what this session asked for, and what was refused
 .ie \n(.g .ds Aq \(aq

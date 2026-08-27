@@ -32,6 +32,11 @@
 - A browser session holds one page state, one cookie jar, one request log, and one policy, addressed by an id.
 - The engine is the HTTP client: policy first, record second, wire third. A fetch that cannot be recorded is refused.
 - Denials are recorded with their reason, so the log shows what was attempted and not only what succeeded.
+- h5i browser audit merges verbs, fetch decisions, control handovers, and the ending into one ordered timeline.
+- Every audit row carries its lane: the engine's own account, or what h5i observed from outside. They are never merged.
+- An audit reports each source as read, empty, or unavailable, because an unwatched log is not a quiet session.
+- A fetch carries caused_by naming the verb the page was under; links come from the source, never from timing.
+- h5i box export writes browser/<id>.json per session placed in the box, and lists them in report.md.
 - A redirect out of the allowlist is refused at the hop, not followed and explained afterwards.
 - Snapshots arrive fenced as untrusted page content; escape sequences and control characters never reach the terminal.
 - Relayed strings, arrays, and nesting are capped, and the truncation is stated in the value.

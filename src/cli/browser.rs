@@ -323,6 +323,25 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Everything recorded about this session, in one ordered timeline.
+    ///
+    /// What the agent asked for, what the engine decided about each fetch, who
+    /// was driving, and how the session ended. Each row says which lane it came
+    /// from: the action and request logs are the engine's own account, the
+    /// handovers and the lifecycle are h5i's, written from outside.
+    ///
+    /// `requests` is the network layer of this on its own, and stays the verb
+    /// to reach for in a loop. This is the one to read afterwards.
+    Audit {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// The request log: what this session asked for, and what was refused.
     ///
     /// The engine is the HTTP client, so this is the decision record written
@@ -533,6 +552,7 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             verb(&root, session.as_deref(), argv, false, json)
         }
+        BrowserCommands::Audit { session, json } => audit(&root, session.as_deref(), json),
         BrowserCommands::Env { session, json } => {
             verb(&root, session.as_deref(), vec!["env".into()], false, json)
         }
@@ -698,10 +718,13 @@ fn start(
         lane,
         placement,
         url: opts.url.clone(),
-        started_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        // Microseconds, to match the rest of the record: these stamps interleave
+        // with the engine's in an audit, and a whole agent loop fits inside one
+        // second.
+        started_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
         expires_at: opts.expires_in.map(|secs| {
             (chrono::Utc::now() + chrono::Duration::seconds(secs as i64))
-                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
         }),
         storage: bs::Storage::Ephemeral,
         policy_digest: spawned.policy_digest.clone(),
@@ -714,6 +737,7 @@ fn start(
             witness: spawned.control_on_host.clone(),
             pid: spawned.pid,
         },
+        logs: spawned.logs.clone(),
     };
     bs::write(root, &session)?;
     // The default follows the newest session whether or not it was named, so a
@@ -782,6 +806,8 @@ struct Spawned {
     /// The same file as this machine sees it, when it can.
     control_on_host: Option<PathBuf>,
     policy_digest: String,
+    /// Where this machine can read the session's logs, when it can.
+    logs: bs::Logs,
     /// Whether something outside the engine actually decides what may leave.
     /// See [`bs::Session::lane_for`] — this is the input to the one claim the
     /// product makes that a reader can check.
@@ -840,6 +866,10 @@ fn spawn_on_host(dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
         control_in_engine_view: control.clone(),
         control_on_host: Some(control),
         policy_digest: host_policy_digest(opts),
+        logs: bs::Logs {
+            actions: Some(dir.join(bs::ACTIONS_FILE)),
+            requests: Some(dir.join(bs::RECEIPTS_FILE)),
+        },
         // Nothing outside the engine is deciding anything here. That is what
         // "no containment beyond the engine" means, and the lane says so.
         boundary_enforced: false,
@@ -1076,6 +1106,17 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         control_in_engine_view: control_in_box,
         control_on_host,
         policy_digest: manifest.policy_digest.clone(),
+        // The box's own logs, as this machine sees them. `None` on a tier whose
+        // /tmp lives in an image, and an audit then says `unavailable` rather
+        // than rendering an empty list that looks like a quiet session.
+        logs: bs::Logs {
+            actions: files
+                .as_ref()
+                .map(|(_, on_host)| on_host.with_extension("actions.jsonl")),
+            requests: files
+                .as_ref()
+                .map(|(_, on_host)| on_host.with_extension("requests.jsonl")),
+        },
         boundary_enforced,
         stop: Box::new(move || {
             if let Ok(repo) = git2::Repository::open(&stop_repo_path) {
@@ -1561,6 +1602,137 @@ fn close(
     Ok(())
 }
 
+/// The whole record of one session, merged and ordered.
+///
+/// Reads the record rather than requiring a live session: the session a
+/// reviewer most wants to audit is usually the one that has already ended.
+fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> {
+    let session = match bs::resolve(root, selector) {
+        Ok(session) => session,
+        Err(bs::SessionGone::Ended { id, .. }) => bs::read(root, &id)?,
+        Err(gone) => anyhow::bail!("{gone}"),
+    };
+    let audit = bs::audit(root, &session);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&audit)?);
+        return Ok(());
+    }
+
+    println!("  session  : {}", label(&session));
+    print_summary(&session);
+
+    // What could and could not be read, before the rows. A reader has to know
+    // whether an empty timeline means a quiet session or a log h5i cannot see.
+    let src = &audit.sources;
+    println!(
+        "  sources  : actions {} · requests {} · control {}",
+        availability(src.actions),
+        availability(src.requests),
+        availability(src.control)
+    );
+    if audit.dropped > 0 {
+        println!(
+            "  {}  {} older rows were dropped by the cap",
+            style("capped").yellow(),
+            audit.dropped
+        );
+    }
+    // Said once rather than on every row: the engine's stamps are its own
+    // claim about its own clock, which nothing outside the box can check.
+    println!(
+        "  {}     engine rows are ordered by the engine's own clock, which h5i cannot verify",
+        style("note").dim()
+    );
+    println!();
+
+    for event in &audit.events {
+        // The lane on every row, because the two are not the same kind of
+        // claim: `host` is what h5i saw from outside, `engine` is the engine's
+        // own account of itself.
+        let lane = match event.lane {
+            h5i_core::browser_events::Lane::HostObserved => style("host  ").green(),
+            _ => style("engine").yellow(),
+        };
+        println!("  {lane}  {}", render_event(&event.kind));
+    }
+    if audit.events.is_empty() {
+        println!("  nothing recorded for this session yet.");
+    }
+    Ok(())
+}
+
+fn availability(a: bs::Availability) -> console::StyledObject<&'static str> {
+    match a {
+        bs::Availability::Read => style(a.as_str()).green(),
+        bs::Availability::Empty => style(a.as_str()).dim(),
+        // The one that must stand out: nothing can be concluded from the
+        // silence of a log h5i could not read.
+        bs::Availability::Unavailable => style(a.as_str()).red(),
+    }
+}
+
+/// One audit row, as a line.
+fn render_event(kind: &h5i_core::browser_events::EventKind) -> String {
+    use h5i_core::browser_events::EventKind as K;
+    match kind {
+        K::Lifecycle { state, reason } => format!(
+            "session {state}{}",
+            reason
+                .as_deref()
+                .map(|r| format!("  ({r})"))
+                .unwrap_or_default()
+        ),
+        K::Control { holder, note } => format!(
+            "control -> {holder}{}",
+            note.as_deref()
+                .map(|n| format!("  ({n})"))
+                .unwrap_or_default()
+        ),
+        K::AgentAction { action, forwarded } => {
+            format!("{} {action}", if *forwarded { "verb  " } else { "verb !" })
+        }
+        K::Request {
+            seq,
+            method,
+            url,
+            allowed,
+            denied_reason,
+            ..
+        } => {
+            if *allowed {
+                format!("#{seq} {method} {url}")
+            } else {
+                format!(
+                    "#{seq} DENIED {method} {url}  ({})",
+                    denied_reason.as_deref().unwrap_or("no reason recorded")
+                )
+            }
+        }
+        K::Response {
+            seq,
+            status,
+            bytes,
+            error,
+            ..
+        } => match (error, status) {
+            (Some(error), _) => format!("#{seq} failed  ({error})"),
+            (None, Some(status)) => format!(
+                "#{seq} {status}{}",
+                bytes.map(|b| format!("  {b} bytes")).unwrap_or_default()
+            ),
+            // A denied request never reaches the wire, so its outcome row has
+            // no status at all. Saying so beats printing an empty line that
+            // reads as a response nobody recorded.
+            (None, None) => format!("#{seq} no response (refused before the wire)"),
+        },
+        K::Navigated { url } => format!("page {url}"),
+        K::Console { level, text } => format!("console {} {text}", level.as_str()),
+        K::PolicyVerdict { subject, reason } => format!("refused {subject}  ({reason})"),
+        K::SessionReset { source } => format!("source restarted: {source}"),
+    }
+}
+
 /// End the process behind a session, wherever it is.
 ///
 /// The host path signals the engine directly. The boxed path goes through
@@ -1593,7 +1765,9 @@ fn stop_engine(session: &bs::Session) -> anyhow::Result<()> {
 
 fn take(root: &Path, selector: Option<&str>) -> anyhow::Result<()> {
     let session = bs::resolve(root, selector).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let control = h5i_core::control::take(&bs::dir(root, &session.id))?;
+    let dir = bs::dir(root, &session.id);
+    let control = h5i_core::control::take(&dir)?;
+    bs::journal_control(&dir, control.holder.as_str(), Some("taken by a human"));
     println!(
         "{} control taken by {} — the agent's automation is paused",
         SUCCESS,
@@ -1619,7 +1793,13 @@ fn take(root: &Path, selector: Option<&str>) -> anyhow::Result<()> {
 
 fn release(root: &Path, selector: Option<&str>) -> anyhow::Result<()> {
     let session = bs::resolve(root, selector).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let control = h5i_core::control::release(&bs::dir(root, &session.id))?;
+    let dir = bs::dir(root, &session.id);
+    let control = h5i_core::control::release(&dir)?;
+    bs::journal_control(
+        &dir,
+        control.holder.as_str(),
+        Some("handed back; the agent must re-snapshot"),
+    );
     println!(
         "{} control returned to {} — it must re-snapshot before acting",
         SUCCESS,

@@ -91,6 +91,13 @@ pub const RECEIPTS_FILE: &str = "requests.jsonl";
 /// The verbs an agent asked for, as the session recorded them.
 pub const ACTIONS_FILE: &str = "actions.jsonl";
 
+/// The handover journal: one line per `take` or `release`.
+///
+/// Separate from `control.json`, which holds only *who holds it now*. A current
+/// holder cannot answer "was a human driving when that form was submitted",
+/// and that is the question an audit is for.
+pub const CONTROL_JOURNAL: &str = "control.jsonl";
+
 /// Where files this session produced are collected. Host-named, always: see
 /// [`crate::browser_session::artifact_path`].
 pub const ARTIFACTS_DIR: &str = "artifacts";
@@ -305,6 +312,23 @@ pub struct Session {
     /// One line on how it ended, for the states that have something to say.
     pub end_reason: Option<String>,
     pub control: Control,
+    /// Where this machine can read the session's own logs, when it can.
+    #[serde(default)]
+    pub logs: Logs,
+}
+
+/// The engine's two logs, **as this machine sees them**.
+///
+/// Recorded at start rather than derived at read time, for the reason
+/// [`Control::witness`] exists: a boxed session's logs live in the box's
+/// `/tmp`, and re-deriving that path later means re-deriving a mapping that has
+/// since been rewritten. `None` means this machine cannot read that log at all,
+/// which an audit reports as **unavailable** rather than as an empty list. An
+/// empty list looks like a quiet session; unavailable looks like what it is.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct Logs {
+    pub actions: Option<PathBuf>,
+    pub requests: Option<PathBuf>,
 }
 
 impl Session {
@@ -903,8 +927,285 @@ pub fn scrub_text(text: &str) -> String {
     out
 }
 
+/// One handover, as the host recorded it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ControlEvent {
+    pub at: String,
+    /// `agent` or `human`.
+    pub holder: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Append a handover. Best effort by design: a `take` must not fail because the
+/// journal could not be written, since the point of `take` is that a person
+/// wants the pointer *now*.
+///
+/// That makes this the one log here that is **not** fail-closed, and the audit
+/// says so rather than presenting it beside two logs that are.
+pub fn journal_control(dir: &Path, holder: &str, note: Option<&str>) {
+    let event = ControlEvent {
+        at: now(),
+        holder: holder.to_string(),
+        note: note.map(str::to_string),
+    };
+    let Ok(line) = serde_json::to_string(&event) else {
+        return;
+    };
+    let _ = fs::create_dir_all(dir);
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(CONTROL_JOURNAL))
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// Every handover this session recorded, oldest first.
+pub fn control_journal(dir: &Path) -> Vec<ControlEvent> {
+    let Ok(text) = fs::read_to_string(dir.join(CONTROL_JOURNAL)) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// Which of an audit's sources this machine could actually read.
+///
+/// Reported beside the events, because "no rows" and "no log" are different
+/// findings and an audit that renders them the same way reports coverage it
+/// does not have.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct Sources {
+    pub actions: Availability,
+    pub requests: Availability,
+    pub control: Availability,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Availability {
+    /// Read, and it had content.
+    Read,
+    /// Read, and it was empty. The session really did nothing of this kind.
+    #[default]
+    Empty,
+    /// Not readable from here. Nothing can be concluded from its silence.
+    Unavailable,
+}
+
+impl Availability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Availability::Read => "read",
+            Availability::Empty => "empty",
+            Availability::Unavailable => "unavailable",
+        }
+    }
+
+    fn of(text: &Option<String>) -> Availability {
+        match text {
+            None => Availability::Unavailable,
+            Some(t) if t.trim().is_empty() => Availability::Empty,
+            Some(_) => Availability::Read,
+        }
+    }
+}
+
+/// Everything recorded about one session, in one ordered timeline.
+#[derive(Serialize, Debug, Clone)]
+pub struct Audit {
+    pub session: Session,
+    pub sources: Sources,
+    /// Oldest first. Each row carries the lane it came from and, where the
+    /// source said so, the event that caused it.
+    pub events: Vec<crate::browser_events::ViewerEvent>,
+    /// How many rows the cap discarded. Rendered, never hidden.
+    pub dropped: u64,
+}
+
+/// Most rows an audit holds before it starts dropping the oldest.
+///
+/// A page that loads a thousand subresources must not make one session's audit
+/// unreadable, and a cap that dropped silently would report a quiet session
+/// where there was a loud one — so the count comes back in [`Audit::dropped`].
+const AUDIT_CAPACITY: usize = 5000;
+
+/// Assemble the whole record of a session: what the agent asked for, what the
+/// engine decided, who was driving, and how it ended.
+///
+/// The merge reuses [`crate::browser_events`], which is the same machinery the
+/// console renders from. That is deliberate and it is the point: two surfaces
+/// that each assemble their own view of one session are two surfaces that can
+/// disagree, and a disagreement between them is unfalsifiable for whoever is
+/// trying to review the session.
+///
+/// **The lanes are not merged.** The action and request logs are the engine's
+/// own account; the handovers and the lifecycle are h5i's, written from
+/// outside. Every row carries which, because a claim rendered as an observation
+/// is the one error this product cannot afford.
+pub fn audit(root: &Path, session: &Session) -> Audit {
+    use crate::browser_events as ev;
+
+    let dir = dir(root, &session.id);
+    let read = |path: &Option<PathBuf>| -> Option<String> {
+        path.as_ref().and_then(|p| fs::read_to_string(p).ok())
+    };
+    let actions = read(&session.logs.actions);
+    let requests = read(&session.logs.requests);
+    let handovers = control_journal(&dir);
+    let read_at = now();
+
+    // Gathered with their times first and ordered afterwards, because the
+    // sources are three files and a timeline grouped by file is not a timeline.
+    // A stable sort keeps each source's own order inside a tie, which is what
+    // keeps a request ahead of its response and a verb ahead of the fetches it
+    // caused.
+    let mut rows: Vec<Row> = Vec::new();
+
+    rows.push(Row::host(
+        &session.started_at,
+        ev::Draft::host(ev::EventKind::Lifecycle {
+            state: "opened".into(),
+            reason: Some(format!(
+                "{} — {}",
+                session.url,
+                match &session.placement {
+                    Placement::Host => "on this machine, no containment beyond the engine".into(),
+                    Placement::Box { name } => format!("in box `{name}`"),
+                }
+            )),
+        }),
+    ));
+
+    // The action log before the request log: the causal map is filled by the
+    // first and read by the second. The one ordering dependency here, and the
+    // same one `BoxStream::poll` states in its own comment.
+    let mut caused = std::collections::BTreeMap::new();
+    if let Some(text) = &actions {
+        for draft in ev::ingest_light_actions_with(text, &mut caused) {
+            rows.push(Row::engine(&session.started_at, &read_at, draft));
+        }
+    }
+    if let Some(text) = &requests {
+        for draft in ev::ingest_request_log_with(text, &caused) {
+            rows.push(Row::engine(&session.started_at, &read_at, draft));
+        }
+    }
+
+    for handover in &handovers {
+        rows.push(Row::host(
+            &handover.at,
+            ev::Draft::host(ev::EventKind::Control {
+                holder: handover.holder.clone(),
+                note: handover.note.clone(),
+            }),
+        ));
+    }
+
+    if let (Some(ended_at), state) = (&session.ended_at, session.state)
+        && !state.is_live()
+    {
+        rows.push(Row::host(
+            ended_at,
+            ev::Draft::host(ev::EventKind::Lifecycle {
+                state: state.as_str().into(),
+                reason: session.end_reason.clone(),
+            }),
+        ));
+    }
+
+    rows.sort_by_key(|row| row.order);
+
+    let mut log = ev::EventLog::new(AUDIT_CAPACITY);
+    for row in rows {
+        log.extend([row.draft], &row.observed_at);
+    }
+
+    Audit {
+        session: session.clone(),
+        sources: Sources {
+            actions: Availability::of(&actions),
+            requests: Availability::of(&requests),
+            control: if handovers.is_empty() {
+                Availability::Empty
+            } else {
+                Availability::Read
+            },
+        },
+        events: log.since(0).into_iter().cloned().collect(),
+        dropped: log.dropped(),
+    }
+}
+
+/// One audit row, with the instant it sorts on.
+///
+/// `order` is a parsed instant rather than the string, because the two clocks
+/// print at different precisions: `2026-01-01T00:00:00Z` sorts *after*
+/// `2026-01-01T00:00:00.500000Z` as text, which would put a handover after
+/// engine rows it actually preceded.
+struct Row {
+    order: i64,
+    observed_at: String,
+    draft: crate::browser_events::Draft,
+}
+
+impl Row {
+    /// A row h5i wrote itself: its time is an observation, and it is the same
+    /// value the timeline sorts on.
+    fn host(at: &str, draft: crate::browser_events::Draft) -> Row {
+        Row {
+            order: micros(at),
+            observed_at: at.to_string(),
+            draft,
+        }
+    }
+
+    /// A row from one of the engine's logs.
+    ///
+    /// It sorts on the engine's own claim, because that is the only clock that
+    /// can order the two engine logs against each other. What it is *stamped*
+    /// with is `read_at`, the moment h5i read the file, because `observed_at`
+    /// means "when h5i saw this" everywhere else in this module and an audit
+    /// must not be the one place it quietly means something else. A row with no
+    /// claim at all falls back to the session's start, which puts it at the top
+    /// rather than pretending to a position it cannot support.
+    fn engine(started_at: &str, read_at: &str, draft: crate::browser_events::Draft) -> Row {
+        let order = draft
+            .claimed_at
+            .as_deref()
+            .map(micros)
+            .unwrap_or_else(|| micros(started_at));
+        Row {
+            order,
+            observed_at: read_at.to_string(),
+            draft,
+        }
+    }
+}
+
+/// An RFC3339 stamp as microseconds since the epoch, or `0` when it will not
+/// parse. Zero rather than a failure: a row with an unreadable time still
+/// belongs in the audit, at the top, where its lack of a position is visible.
+fn micros(at: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(at)
+        .map(|t| t.timestamp_micros())
+        .unwrap_or(0)
+}
+
+/// The host's clock, RFC3339 with microseconds.
+///
+/// Microseconds because these stamps have to interleave with the engine's, and
+/// the engine writes a whole agent loop inside one second. At second precision
+/// every host row lands on the `.000000` boundary and sorts ahead of engine
+/// rows it actually followed — a timeline that is arithmetically correct and
+/// tells the wrong story, which is worse than one that is obviously broken.
 fn now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
 /// `kill(pid, 0)`: does a process with this id exist and are we allowed to
@@ -942,6 +1243,7 @@ mod tests {
             ended_at: None,
             end_reason: None,
             control: Control::default(),
+            logs: Logs::default(),
         }
     }
 
@@ -1159,6 +1461,128 @@ mod tests {
         let second = named(root, "auth");
         assert_ne!(second.id, first.id);
         assert_eq!(resolve(root, Some("auth")).unwrap().id, second.id);
+    }
+
+    /// A session with both engine logs, a handover between two verbs, and an
+    /// ending. The point of the test is the **order**: grouped by source is not
+    /// a timeline, and "a human was driving between these two verbs" is the
+    /// question an audit exists to answer.
+    #[test]
+    fn the_audit_interleaves_the_engine_and_the_host_by_time() {
+        use crate::browser_events::EventKind as K;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = new_id(root).unwrap();
+        let dir = dir(root, &id);
+
+        std::fs::write(
+            dir.join(ACTIONS_FILE),
+            "{\"seq\":0,\"at\":\"2026-01-01T00:00:01.000000Z\",\"phase\":\"result\",\"verb\":\"snapshot\",\"ok\":true}\n\
+             {\"seq\":1,\"at\":\"2026-01-01T00:00:03.000000Z\",\"phase\":\"result\",\"verb\":\"click\",\"target\":\"@e1\",\"ok\":true,\"requests\":[7]}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(RECEIPTS_FILE),
+            "{\"seq\":7,\"at\":\"2026-01-01T00:00:03.500000Z\",\"phase\":\"request\",\"initiator\":\"navigation\",\"method\":\"GET\",\"url\":\"https://example.com/\",\"allowed\":true}\n",
+        )
+        .unwrap();
+        journal_control(&dir, "human", Some("taken"));
+
+        let mut session = session(&id, Placement::Host);
+        session.started_at = "2026-01-01T00:00:00.000000Z".into();
+        session.logs = Logs {
+            actions: Some(dir.join(ACTIONS_FILE)),
+            requests: Some(dir.join(RECEIPTS_FILE)),
+        };
+        write(root, &session).unwrap();
+        end(root, &mut session, State::Closed, "closed by the user");
+
+        let audit = audit(root, &read(root, &id).unwrap());
+        let shape: Vec<&str> = audit
+            .events
+            .iter()
+            .map(|e| match &e.kind {
+                K::Lifecycle { state, .. } if state == "opened" => "open",
+                K::Lifecycle { .. } => "end",
+                K::Control { .. } => "control",
+                K::AgentAction { action, .. } if action.starts_with("snapshot") => "snapshot",
+                K::AgentAction { .. } => "click",
+                K::Request { .. } => "request",
+                _ => "other",
+            })
+            .collect();
+
+        // The handover was journalled with today's clock, so it lands after the
+        // 2026-01-01 rows; what matters here is that the engine rows themselves
+        // came out in time order rather than file order.
+        let engine: Vec<&&str> = shape
+            .iter()
+            .filter(|k| matches!(**k, "snapshot" | "click" | "request"))
+            .collect();
+        assert_eq!(
+            engine,
+            vec![&"snapshot", &"click", &"request"],
+            "grouped by source rather than ordered by time: {shape:?}"
+        );
+        assert_eq!(shape.first(), Some(&"open"));
+        assert_eq!(shape.last(), Some(&"end"));
+
+        // The causal link the action log carried is resolved, not inferred.
+        let request = audit
+            .events
+            .iter()
+            .find(|e| matches!(e.kind, K::Request { .. }))
+            .expect("the request row");
+        assert!(
+            request.caused_by.is_some(),
+            "the click that caused this fetch is not linked to it"
+        );
+    }
+
+    /// A log this machine cannot read is `unavailable`, never an empty list.
+    /// An empty list looks like a session that did nothing.
+    #[test]
+    fn an_unreadable_log_is_reported_as_unavailable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = new_id(root).unwrap();
+        let mut session = session(&id, Placement::Host);
+        session.logs = Logs::default();
+        write(root, &session).unwrap();
+
+        let audit = audit(root, &session);
+        assert_eq!(audit.sources.actions, Availability::Unavailable);
+        assert_eq!(audit.sources.requests, Availability::Unavailable);
+        assert_eq!(audit.sources.control, Availability::Empty);
+    }
+
+    /// The two lanes stay apart. A row h5i wrote from outside must never be
+    /// presented as something the engine reported about itself.
+    #[test]
+    fn host_rows_and_engine_rows_keep_their_lanes() {
+        use crate::browser_events::{EventKind as K, Lane};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let id = new_id(root).unwrap();
+        let dir = dir(root, &id);
+        std::fs::write(
+            dir.join(ACTIONS_FILE),
+            "{\"seq\":0,\"at\":\"2026-01-01T00:00:01.000000Z\",\"phase\":\"result\",\"verb\":\"snapshot\",\"ok\":true}\n",
+        )
+        .unwrap();
+        let mut session = session(&id, Placement::Host);
+        session.logs.actions = Some(dir.join(ACTIONS_FILE));
+        write(root, &session).unwrap();
+        journal_control(&dir, "human", None);
+
+        let audit = audit(root, &session);
+        for event in &audit.events {
+            let expected = match event.kind {
+                K::Lifecycle { .. } | K::Control { .. } => Lane::HostObserved,
+                _ => Lane::BoxClaimed,
+            };
+            assert_eq!(event.lane, expected, "{:?} is in the wrong lane", event.kind);
+        }
     }
 
     #[test]

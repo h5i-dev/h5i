@@ -1671,6 +1671,53 @@ with the agent inside the box structurally cannot be.
 that does both is `microvm`. `h5i browser open --in` says which of these applies
 to your box before it starts anything, rather than timing out.
 
+### `audit`: the whole session, in one timeline
+
+`requests` is the network layer on its own, and it is the verb to reach for in a
+loop. `h5i browser audit` is the one to read afterwards: what the agent asked
+for, what the engine decided about every fetch, who was driving, and how the
+session ended, merged and ordered.
+
+```console
+$ h5i browser audit
+  sources  : actions read · requests read · control read
+  note     engine rows are ordered by the engine's own clock, which h5i cannot verify
+
+  host    session opened  (http://localhost:3000/ — on this machine, no containment…)
+  engine  #0 GET http://localhost:3000/
+  engine  #0 200  153 bytes
+  engine  verb   snapshot
+  host    control -> human  (taken by a human)
+  host    control -> agent  (handed back; the agent must re-snapshot)
+  engine  verb   snapshot
+  engine  #1 DENIED GET https://tracker.example/px  (origin is not in the allowlist)
+  engine  verb ! click @e1 — denied by policy
+  host    session closed  (closed by the user)
+```
+
+Three things this does that neither log does alone:
+
+- **The two lanes stay apart.** The action and request rows are the engine's own
+  account of itself; the handovers and the lifecycle are h5i's, written from
+  outside. Every row says which. Merging them into one confident-looking column
+  is the exact confusion the lane split exists to prevent.
+- **It orders across sources.** "Was a human at the controls when that form was
+  submitted" is a question about two logs at once, and a current-holder field
+  cannot answer it. The engine stamps its own rows and h5i stamps its own; the
+  engine's clock is the engine's claim, and the output says so.
+- **It says what it could not read.** `sources` reports each log as `read`,
+  `empty` or **`unavailable`**. An empty timeline over a log h5i cannot see
+  looks exactly like a session that did nothing, and those are different
+  findings.
+
+Rows carry `caused_by` where the source recorded the link, so a fetch can be
+traced to the verb the page was under when it went out. Nothing here infers a
+link from timing: a request that merely happened near a verb is not a request
+that verb caused.
+
+`--json` gives the whole thing, including the session record. It is the same
+structure `h5i box export` writes for each session placed in a box.
+
 ### Sessions end, and endings are recorded
 
 A session directory outlives the session. Closing one writes the ending into its

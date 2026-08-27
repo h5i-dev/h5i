@@ -305,6 +305,17 @@
         <div class="feat-proves">being in a box is not evidence; enforcement outside the engine is.</div>
       </div>
       <div class="feat-card reveal">
+        <span class="feat-cmd">h5i browser audit</span>
+        <div class="feat-name">One timeline, and it says who is speaking</div>
+        <div class="feat-desc">The request log is the network layer on its own. The audit merges it with
+          the verbs the agent asked for, the moments a human took the controls, and the ending, ordered
+          across all three. <strong>The lanes are never merged</strong>: the engine&#39;s rows are its own
+          account of itself, the handovers and the lifecycle are h5i&#39;s, written from outside, and every
+          row carries which. A log h5i could not read is reported as <code>unavailable</code>, because an
+          empty timeline and an unwatched session are different findings.</div>
+        <div class="feat-proves">&#8220;was a human driving when that form was submitted&#8221; is a question about two logs at once.</div>
+      </div>
+      <div class="feat-card reveal">
         <span class="feat-cmd">exit 69</span>
         <div class="feat-name">Endings are written down</div>
         <div class="feat-desc">A session directory outlives the session, so <code>closed</code>, <code>died</code>, <code>expired</code> and <code>evicted</code> stay answerable afterwards, and an id is never reused. A verb sent to a session that is not live is refused with its own exit code and <strong>never silently restarted</strong>, because an agent whose retry cannot tell &#8220;the session is gone&#8221; from &#8220;the click did not work&#8221; quietly starts a second browser and loses both the page and the record of losing it. <code>--restore</code> inherits the storage into a new id, with the inheritance recorded.</div>

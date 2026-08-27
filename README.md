@@ -112,9 +112,18 @@ reading the cookie that says so.
 
 ```bash
 h5i browser requests           # every request, including the refusals
+h5i browser audit              # the whole session: verbs, fetches, handovers, ending
 h5i browser status             # placement, policy digest, who saw the network
 h5i browser list               # every session on this machine, and which is default
 ```
+
+`requests` is the network layer, and the one to poll in a loop. `audit` is the
+one to read afterwards. It merges the verbs the agent asked for, the decision
+the engine made about every fetch, the moments a human took the controls, and
+how the session ended, into one ordered timeline. Every row says which lane it
+came from, and the summary says which logs could not be read at all: an empty
+timeline over a log h5i cannot see looks exactly like a session that did
+nothing, and those are different findings.
 
 ### 2.2. Put the session in a sandbox
 

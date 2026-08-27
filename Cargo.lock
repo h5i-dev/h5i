@@ -1933,6 +1933,7 @@ dependencies = [
  "blitz-traits",
  "boa_engine",
  "boa_gc",
+ "chrono",
  "clap",
  "cssparser",
  "encoding_rs",

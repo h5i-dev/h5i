@@ -66,6 +66,12 @@ getrandom = "0.2"
 # that outlives its deletion.
 httpdate = "1"
 
+# One job: stamping the engine's own logs. A log without a clock can be ordered
+# within itself and never against anything else, which is what an audit needs
+# most — "was a human at the controls when that form was submitted" is a
+# question about two logs at once.
+chrono = { version = "0.4", features = ["serde"] }
+
 # Stylo's `ToCss`, pinned to the version Blitz uses, so computed values can be
 # rendered as the strings CSS actually spells them. Without it `Display` prints
 # as its internal bitfield (`display(514)`), which is exactly the plausible lie

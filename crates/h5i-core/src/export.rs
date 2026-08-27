@@ -60,6 +60,9 @@ pub struct ExportSummary {
     /// the box's work after a conversation? Both are legitimate; only one of
     /// them can be checked by re-running the box alone.
     pub peer_influenced_by: Vec<String>,
+    /// Browser sessions that ran inside this box, with their timelines written
+    /// beside the patch. Empty when none did.
+    pub browser_sessions: Vec<ExportedSession>,
 }
 
 /// The machine-readable half of the bundle.
@@ -75,6 +78,12 @@ struct ReceiptBundle<'a> {
     branch: &'a str,
     exported_at: String,
     records: Vec<crate::receipt::ExecRecord>,
+    /// One entry per browser session placed in this box. The rows themselves
+    /// are in `browser/<id>.json`: a session that loaded a busy page is
+    /// thousands of them, and `receipt.json` has to stay a document a person
+    /// can open.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    browser_sessions: Vec<ExportedSession>,
 }
 
 /// Freeze the box and write the bundle to `out`.
@@ -235,6 +244,16 @@ pub fn export_with_remote(
     std::fs::write(&patch_path, patch.as_bytes())
         .map_err(|e| H5iError::with_path(e, &patch_path))?;
 
+    // Every browser session that was placed in this box, with its whole
+    // timeline. One file per session rather than a section of `receipt.json`,
+    // because a session that loaded a busy page is thousands of rows and the
+    // receipt has to stay a document somebody reads.
+    //
+    // The bundle stands alone or it is not evidence, so these are copied in
+    // rather than pointed at: a session's own directory lives under the user's
+    // state root and does not travel with the export.
+    let sessions = export_browser_audits(m, out);
+
     let bundle = ReceiptBundle {
         env_id: &m.id,
         agent: &m.agent,
@@ -246,6 +265,7 @@ pub fn export_with_remote(
         branch: &m.branch,
         exported_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         records: records.clone(),
+        browser_sessions: sessions.clone(),
     };
     let receipt_path = out.join("receipt.json");
     std::fs::write(&receipt_path, serde_json::to_vec_pretty(&bundle)?)
@@ -274,6 +294,7 @@ pub fn export_with_remote(
         peer_influenced_by: crate::forum_tender::peer_influence(h5i_root, m)
             .map(|i| i.senders)
             .unwrap_or_default(),
+        browser_sessions: sessions.clone(),
     };
 
     let report_path = out.join("report.md");
@@ -291,6 +312,7 @@ pub fn export_with_remote(
             &brief,
             live_share.as_deref(),
             &share_payloads,
+            &sessions,
         )
         .as_bytes(),
     )
@@ -312,6 +334,76 @@ pub fn export_with_remote(
 /// Failures are per record and never fail the export: a bundle without one
 /// session's detail is worth more than no bundle at all, and the report shows
 /// which one is missing.
+/// One exported browser session: what it was, and where its timeline landed.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportedSession {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub url: String,
+    pub state: String,
+    /// `engine-claimed` or `host-observed`. The claim this session's network
+    /// record can actually support, carried into the export so a reviewer does
+    /// not have to reconstruct it from the isolation tier.
+    pub lane: String,
+    pub events: usize,
+    /// Which of the audit's sources could be read. A source that could not is
+    /// the difference between a quiet session and one nobody watched.
+    pub sources: crate::browser_session::Sources,
+    /// The file inside the bundle, relative to its root.
+    pub file: String,
+}
+
+/// Write one `browser/<id>.json` per session placed in this box.
+///
+/// Best effort, and silent when there are none: a box with no browser session
+/// in it should not grow an empty directory to explain. What is *not* silent is
+/// a session whose logs could not be read — that travels inside the audit as
+/// `unavailable`, because "no rows" and "no log" are different findings.
+fn export_browser_audits(m: &EnvManifest, out: &Path) -> Vec<ExportedSession> {
+    let Ok(root) = crate::browser_session::root() else {
+        return Vec::new();
+    };
+    let Ok(all) = crate::browser_session::list(&root) else {
+        return Vec::new();
+    };
+    let mine: Vec<_> = all
+        .into_iter()
+        .filter(|s| s.placement.box_name() == Some(m.slug.as_str()))
+        .collect();
+    if mine.is_empty() {
+        return Vec::new();
+    }
+
+    let dir = out.join("browser");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return Vec::new();
+    }
+
+    let mut exported = Vec::new();
+    for session in mine {
+        let audit = crate::browser_session::audit(&root, &session);
+        let file = format!("browser/{}.json", session.id);
+        let Ok(body) = serde_json::to_vec_pretty(&audit) else {
+            continue;
+        };
+        if std::fs::write(out.join(&file), body).is_err() {
+            continue;
+        }
+        exported.push(ExportedSession {
+            id: session.id.clone(),
+            name: session.name.clone(),
+            url: session.url.clone(),
+            state: session.state.as_str().to_string(),
+            lane: session.lane.as_str().to_string(),
+            events: audit.events.len(),
+            sources: audit.sources.clone(),
+            file,
+        });
+    }
+    exported
+}
+
 fn copy_share_payloads(
     env_dir: &Path,
     out: &Path,
@@ -354,6 +446,7 @@ fn report(
     brief: &str,
     live_share: Option<&str>,
     share_payloads: &std::collections::BTreeSet<String>,
+    sessions: &[ExportedSession],
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Export: {}\n\n", m.id));
@@ -427,6 +520,59 @@ fn report(
         .iter()
         .filter_map(|r| r.browser.as_ref().map(|b| (r, b)))
         .collect();
+    if !sessions.is_empty() {
+        out.push_str("\n## Browser sessions\n\n");
+        out.push_str(
+            "Each session's whole timeline is beside this file: what the agent asked for, what \
+             the engine decided about every fetch, who was driving, and how it ended. The \
+             engine's rows are its own account of itself; the handovers and the endings are \
+             h5i's, written from outside. **The two are never merged.**\n\n",
+        );
+        out.push_str("| session | lane | state | rows | sources | file |\n");
+        out.push_str("|---|---|---|---|---|---|\n");
+        for session in sessions {
+            let name = session
+                .name
+                .as_deref()
+                .map(|n| format!("`{}` ({})", md_escape(n), session.id))
+                .unwrap_or_else(|| format!("`{}`", session.id));
+            out.push_str(&format!(
+                "| {name} | `{}` | {} | {} | actions {} · requests {} · control {} | `{}` |\n",
+                session.lane,
+                session.state,
+                session.events,
+                session.sources.actions.as_str(),
+                session.sources.requests.as_str(),
+                session.sources.control.as_str(),
+                session.file,
+            ));
+        }
+        // The thing a reviewer has to be told rather than left to infer, and
+        // the one claim in this bundle that is checkable.
+        let unverified = sessions.iter().any(|x| x.lane != "host-observed");
+        if unverified {
+            out.push_str(
+                "\nA session marked `engine-claimed` is the browser's own account of what it \
+                 fetched: fail-closed, complete, and still the browser describing itself. \
+                 Nothing outside it corroborated the list.\n",
+            );
+        }
+        let blind = sessions
+            .iter()
+            .filter(|x| {
+                x.sources.actions == crate::browser_session::Availability::Unavailable
+                    || x.sources.requests == crate::browser_session::Availability::Unavailable
+            })
+            .count();
+        if blind > 0 {
+            out.push_str(&format!(
+                "\n**{blind} session(s) had a log this machine could not read.** An empty \
+                 timeline there is not evidence of a quiet session.\n"
+            ));
+        }
+        out.push('\n');
+    }
+
     if !browser.is_empty() {
         out.push_str("\n## What the browser saw\n\n");
         let findings: Vec<_> = browser.iter().filter(|(_, b)| !b.is_clean()).collect();
@@ -727,6 +873,7 @@ mod tests {
             "brief",
             None,
             &copied,
+            &[],
         );
         assert!(text.contains("**missing**"), "{text}");
     }
@@ -743,11 +890,11 @@ mod tests {
         // That is a real second, and it is the one this section is for.
         let m = manifest();
         let s = summary();
-        let body = report(&m, &s, &[], "", Some("4321"), &Default::default());
+        let body = report(&m, &s, &[], "", Some("4321"), &Default::default(), &[]);
         assert!(body.contains("Shared with someone, right now"), "{body}");
         assert!(body.contains("export again afterwards"), "{body}");
 
-        let quiet = report(&m, &s, &[], "", None, &Default::default());
+        let quiet = report(&m, &s, &[], "", None, &Default::default(), &[]);
         assert!(!quiet.contains("right now"), "{quiet}");
     }
 
@@ -811,6 +958,7 @@ mod tests {
 
     fn summary() -> ExportSummary {
         ExportSummary {
+            browser_sessions: Vec::new(),
             env_id: "env/tester/ui".into(),
             dir: PathBuf::from("/out"),
             files_changed: 1,
@@ -871,6 +1019,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
 
         assert!(text.contains("## What the browser saw"), "{text}");
@@ -901,6 +1050,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
         assert!(text.contains("no console errors"), "{text}");
 
@@ -918,6 +1068,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
         assert!(text.contains("no browser available to observe"), "{text}");
     }
@@ -934,6 +1085,7 @@ mod tests {
             "brief",
             Some("4242"),
             &Default::default(),
+            &[],
         );
         assert!(text.contains("Shared with someone, right now"), "{text}");
         assert!(text.contains("written when the share ends"), "{text}");
@@ -946,6 +1098,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
         assert!(!quiet.contains("right now"), "{quiet}");
     }
@@ -966,7 +1119,7 @@ mod tests {
             turned_away: 0,
         });
         let payloads: std::collections::BTreeSet<String> = [r.id.clone()].into_iter().collect();
-        let text = report(&manifest(), &summary(), &[r], "brief", None, &payloads);
+        let text = report(&manifest(), &summary(), &[r], "brief", None, &payloads, &[]);
         assert!(text.contains("## Shared with someone"), "{text}");
         assert!(text.contains("terminates TLS"), "{text}");
         // The account is named by a path inside this bundle, not by a content
@@ -982,6 +1135,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
         assert!(!text.contains("## Shared with someone"), "{text}");
     }
@@ -1012,6 +1166,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
         assert!(text.contains("## Shared with someone"), "{text}");
         assert!(
@@ -1039,6 +1194,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
         assert!(text.contains("unrecorded"), "{text}");
         assert!(text.contains("not end-to-end encrypted"), "{text}");
@@ -1059,6 +1215,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
 
         assert!(text.contains("## Viewer sessions"), "{text}");
@@ -1077,6 +1234,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
         assert!(text.contains("## Viewer sessions"), "{text}");
         assert!(!text.contains("A human took control"), "{text}");
@@ -1093,6 +1251,7 @@ mod tests {
             "brief",
             None,
             &Default::default(),
+            &[],
         );
         assert!(!text.contains("What the browser saw"), "{text}");
     }
