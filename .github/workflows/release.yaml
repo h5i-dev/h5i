@@ -158,12 +158,10 @@ jobs:
       # public repositories, so the target that needed the most machinery is
       # now the same three steps as the other three.
       #
-      # Both binaries in one job, and failing together on purpose. The engine
-      # is a shipped product now rather than an internal component, so a target
-      # that cannot build it is a defect in the release — the same reading the
-      # asset guard below already takes. Note its dependency set is not h5i's:
-      # no git2, but blitz, vello_cpu and boa instead, so a target that builds
-      # one does not automatically build the other.
+      # One build, and the engine is inside it: the binary links blitz, vello_cpu
+      # and boa alongside git2, so a target that cannot compile the engine cannot
+      # produce a release binary at all. That is the reading the asset guard
+      # below already takes.
       - name: Build
         env:
           H5I_SKIP_WEB_BUILD: "1"
@@ -238,8 +236,9 @@ jobs:
       # notices until someone's install breaks.
       - name: Every expected asset is present, and nothing else
         run: |
-          # Four targets x two products x (archive + checksum).
-          expected=16
+          # Four targets x one binary x (archive + checksum). The engine used to
+          # be a second archive per target, which is where 16 came from.
+          expected=8
           found=$(find artifacts -maxdepth 1 -type f \
             \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) | wc -l)
           extra=$(find artifacts -mindepth 1 -maxdepth 1 \
@@ -272,9 +271,8 @@ jobs:
           body: |
             ## Install
 
-            Two binaries. `h5i` is the confined development environment;
-            `h5i-browser-light` is its browser engine, which also runs on its
-            own as a headless browser for agents.
+            One binary. `h5i` is the confined development environment, and it
+            carries its own browser engine.
 
             **Linux / macOS:**
             ```bash
