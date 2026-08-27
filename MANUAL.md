@@ -300,6 +300,45 @@ Not a preference either: a box's netns may have no usable loopback at all
 (`net.mode = deny` leaves nothing to dial), and every `h5i box run` gets a fresh
 one, so a port bound in one is unreachable from the next.
 
+### Reading and acting, beyond `snapshot` and `click`
+
+```bash
+h5i browser structured                          # what the page says about itself
+h5i browser markdown --url https://example.com  # go there and read, in one trip
+h5i browser find  --role button --name 'Sign in'
+h5i browser click --role button --name 'Sign in'
+h5i browser set-checked @e4 true
+h5i browser select @e5 'Express shipping'
+h5i browser press  @e1 Enter
+h5i browser script --save flow.json
+```
+
+`structured` is the cheapest read: JSON-LD, OpenGraph, `<meta>`, `<link rel>` —
+a few hundred bytes where a snapshot is a few hundred lines. A page with no
+metadata answers `empty`, which is a fact about the page rather than a failed
+read. Every read verb takes `--url`, which goes there first and then reads: one
+round trip where `navigate` and then the read would be two, and the reply still
+names the URL it ended up on so a redirect is not silent.
+
+A **locator** names an element by what it is called rather than by where it sat.
+`--role button --name 'Sign in'` survives a re-render that moves everything; a
+`@ref` from an older reading does not, and is refused rather than resolved
+against whatever now occupies that position. `--selector <css>` is the third way
+in. `find` reports what a locator matches without acting on it.
+
+`set-checked`, `select` and `press` take either a `@ref` and the value, or a
+locator and the value — with a locator there is no ref, because the locator is
+the handle. Prefer `set-checked` to clicking a checkbox: a click *toggles*, so
+where it lands depends on what the page was serving, and setting a state is
+idempotent. That is the difference between a session that replays to the same
+place and one that does not.
+
+`script --save` writes what the session did as steps of verified CSS selectors,
+so the script outlives the reading it was recorded from. `h5i __engine replay`
+sends each step back through the control channel an agent would use, so the
+policy, the receipts and the action log see a replay exactly as they see a live
+session.
+
 ### `audit`: the whole session, in one timeline
 
 `requests` is the network layer on its own, and it is the verb to reach for in a

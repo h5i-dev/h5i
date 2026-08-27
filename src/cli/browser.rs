@@ -203,6 +203,11 @@ pub enum BrowserCommands {
         /// Report only what changed since the last snapshot.
         #[arg(long)]
         delta: bool,
+        /// Go here first, then read. One round trip where `navigate` and then
+        /// this would be two, and the reply still names the URL it ended up on
+        /// so a redirect is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -306,6 +311,11 @@ pub enum BrowserCommands {
         session: Option<String>,
         /// The schema, as JSON.
         schema: String,
+        /// Go here first, then read. One round trip where `navigate` and then
+        /// this would be two, and the reply still names the URL it ended up on
+        /// so a redirect is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -319,6 +329,11 @@ pub enum BrowserCommands {
         session: Option<String>,
         #[arg(long, value_name = "BYTES")]
         max_bytes: Option<usize>,
+        /// Go here first, then read. One round trip where `navigate` and then
+        /// this would be two, and the reply still names the URL it ended up on
+        /// so a redirect is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -338,6 +353,156 @@ pub enum BrowserCommands {
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// What the page publishes **about itself**: JSON-LD, OpenGraph, `<meta>`,
+    /// `<link rel>`.
+    ///
+    /// The cheapest read there is — a few hundred bytes where a snapshot is a
+    /// few hundred lines. Try it first on an article, a product, or anything
+    /// with a canonical URL. A page with no metadata answers `empty`, which is
+    /// a fact about the page rather than a failed read.
+    Structured {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// Go here first, then read. One round trip where `navigate` and then
+        /// this would be two, and the reply still names the URL it ended up on
+        /// so a redirect is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Set a checkbox or radio to a state, rather than toggling it.
+    ///
+    /// Prefer this to clicking one. A click *toggles*, so where it lands
+    /// depends on what the page was serving; setting a state is idempotent, and
+    /// that is the difference between a session that replays to the same place
+    /// and one that does not.
+    SetChecked {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// `e3` or `@e3`, from a `snapshot`. Omit when using `--selector` or
+        /// `--role`, and give the state alone.
+        #[arg(value_name = "REF|STATE")]
+        reference: Option<String>,
+        /// `true` or `false`.
+        #[arg(value_name = "STATE")]
+        checked: Option<String>,
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        /// Find the control by what it is called, the way a person would.
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Choose an option in a `<select>`, by its value or by the text it shows.
+    ///
+    /// The reply carries the *value*, because that is what the form submits and
+    /// what survives a re-render. The text is what you read.
+    Select {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// `e3` or `@e3`. Omit when using `--selector` or `--role`.
+        #[arg(value_name = "REF|OPTION")]
+        reference: Option<String>,
+        /// The option's value, or the text it shows, in that order.
+        #[arg(value_name = "OPTION")]
+        option: Option<String>,
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Press a key that *does* something: Enter, Escape, Tab, ArrowDown.
+    ///
+    /// To enter text use `type`. Merging the two would make one verb whose
+    /// meaning depended on its argument.
+    Press {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// `e3` or `@e3`. Omit when using `--selector` or `--role`.
+        #[arg(value_name = "REF|KEY")]
+        reference: Option<String>,
+        /// The key name.
+        #[arg(value_name = "KEY")]
+        key: Option<String>,
+        #[arg(long, value_name = "CSS")]
+        selector: Option<String>,
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
+        role: Option<String>,
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Find an element by what it is called, rather than by where it sits.
+    ///
+    /// A role and, usually, its accessible name — the way a person would
+    /// describe it out loud. Survives a re-render that moves everything, which
+    /// a `@ref` from an older reading does not.
+    Find {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// `button`, `link`, `textbox`, `checkbox`, …
+        #[arg(long, value_name = "ROLE")]
+        role: String,
+        /// The accessible name.
+        #[arg(long, value_name = "TEXT")]
+        name: Option<String>,
+        /// Go here first, then read. One round trip where `navigate` and then
+        /// this would be two, and the reply still names the URL it ended up on
+        /// so a redirect is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Record what this session did as a replayable script.
+    ///
+    /// The steps are verified CSS selectors, not `@ref` handles, so the script
+    /// outlives the reading it was recorded from. `h5i browser replay` sends
+    /// each one back through the same control channel an agent uses, so the
+    /// policy, the receipts and the action log see a replay exactly as they see
+    /// a live session.
+    Script {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// Write the script here instead of printing it.
+        #[arg(long, value_name = "PATH")]
+        save: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -455,13 +620,18 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::Snapshot {
             session,
             delta,
+            url,
             json,
         } => {
             let mut argv = vec!["snapshot".to_string()];
             if delta {
                 argv.push("--delta".into());
             }
-            verb(&root, session.as_deref(), argv, false, json)
+            argv.extend(url_arg(url));
+            // Reading is not mutating, but a `--url` moves the page, and the
+            // lock exists so a human at the wheel is not steered from under.
+            let moves_the_page = argv.iter().any(|a| a == "--url");
+            verb(&root, session.as_deref(), argv, moves_the_page, json)
         }
         BrowserCommands::Navigate { session, url, json } => {
             verb(&root, session.as_deref(), vec!["navigate".into(), url], true, json)
@@ -526,17 +696,109 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         BrowserCommands::Extract {
             session,
             schema,
+            url,
             json,
-        } => verb(&root, session.as_deref(), vec!["extract".into(), schema], false, json),
+        } => {
+            let mut argv = vec!["extract".to_string(), schema];
+            argv.extend(url_arg(url));
+            let moves_the_page = argv.iter().any(|a| a == "--url");
+            verb(&root, session.as_deref(), argv, moves_the_page, json)
+        }
         BrowserCommands::Markdown {
             session,
             max_bytes,
+            url,
             json,
         } => {
             let mut argv = vec!["markdown".to_string()];
             if let Some(max) = max_bytes {
                 argv.push("--max-bytes".into());
                 argv.push(max.to_string());
+            }
+            argv.extend(url_arg(url));
+            let moves_the_page = argv.iter().any(|a| a == "--url");
+            verb(&root, session.as_deref(), argv, moves_the_page, json)
+        }
+        BrowserCommands::Structured {
+            session,
+            url,
+            json,
+        } => {
+            let mut argv = vec!["structured".to_string()];
+            argv.extend(url_arg(url));
+            let moves_the_page = argv.iter().any(|a| a == "--url");
+            verb(&root, session.as_deref(), argv, moves_the_page, json)
+        }
+        BrowserCommands::SetChecked {
+            session,
+            reference,
+            checked,
+            selector,
+            role,
+            name,
+            json,
+        } => {
+            let mut argv = vec!["set-checked".to_string()];
+            argv.extend(reference);
+            argv.extend(checked);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
+        BrowserCommands::Select {
+            session,
+            reference,
+            option,
+            selector,
+            role,
+            name,
+            json,
+        } => {
+            let mut argv = vec!["select".to_string()];
+            argv.extend(reference);
+            argv.extend(option);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
+        BrowserCommands::Press {
+            session,
+            reference,
+            key,
+            selector,
+            role,
+            name,
+            json,
+        } => {
+            let mut argv = vec!["press".to_string()];
+            argv.extend(reference);
+            argv.extend(key);
+            argv.extend(locator(selector, role, name));
+            verb(&root, session.as_deref(), argv, true, json)
+        }
+        BrowserCommands::Find {
+            session,
+            role,
+            name,
+            url,
+            json,
+        } => {
+            let mut argv = vec!["find".to_string(), "--role".into(), role];
+            if let Some(name) = name {
+                argv.push("--name".into());
+                argv.push(name);
+            }
+            argv.extend(url_arg(url));
+            let moves_the_page = argv.iter().any(|a| a == "--url");
+            verb(&root, session.as_deref(), argv, moves_the_page, json)
+        }
+        BrowserCommands::Script {
+            session,
+            save,
+            json,
+        } => {
+            let mut argv = vec!["script".to_string()];
+            if let Some(path) = save {
+                argv.push("--save".into());
+                argv.push(path.display().to_string());
             }
             verb(&root, session.as_deref(), argv, false, json)
         }
@@ -1224,6 +1486,41 @@ const ENGINE_SUBCOMMAND: &str = "__engine";
 /// developing h5i itself.
 fn h5i_in_box() -> String {
     std::env::var("H5I_IN_BOX").unwrap_or_else(|_| "h5i".to_string())
+}
+
+/// `--url X`, or nothing.
+fn url_arg(url: Option<String>) -> Vec<String> {
+    match url {
+        Some(url) => vec!["--url".to_string(), url],
+        None => Vec::new(),
+    }
+}
+
+/// The `--selector` / `--role` / `--name` way of naming an element, when a
+/// `@ref` is not what the caller has.
+///
+/// A role and its accessible name survive a re-render that moves everything; a
+/// `@ref` from an older reading does not, and is refused rather than resolved
+/// against whatever now sits in that position.
+fn locator(
+    selector: Option<String>,
+    role: Option<String>,
+    name: Option<String>,
+) -> Vec<String> {
+    let mut argv = Vec::new();
+    if let Some(selector) = selector {
+        argv.push("--selector".to_string());
+        argv.push(selector);
+    }
+    if let Some(role) = role {
+        argv.push("--role".to_string());
+        argv.push(role);
+    }
+    if let Some(name) = name {
+        argv.push("--name".to_string());
+        argv.push(name);
+    }
+    argv
 }
 
 fn net_args(opts: &StartOptions) -> Vec<String> {

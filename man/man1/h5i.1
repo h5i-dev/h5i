@@ -1485,7 +1485,7 @@ The page as a model should read it: the outline, with `@ref` handles
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBsnapshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-delta\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBsnapshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-delta\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1495,6 +1495,9 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 .TP
 \fB\-\-delta\fR
 Report only what changed since the last snapshot
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
 .TP
 \fB\-\-json\fR
 
@@ -1659,13 +1662,16 @@ Pull structured data out of the page by selector
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBextract\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISCHEMA\fR> 
+\fBextract\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISCHEMA\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
 .TP
 \fB\-\-json\fR
 
@@ -1680,7 +1686,7 @@ The page as markdown: what a reader would read, without the handles
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBmarkdown\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-max\-bytes\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBmarkdown\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-max\-bytes\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1690,6 +1696,9 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 .TP
 \fB\-\-max\-bytes\fR \fI<BYTES>\fR
 
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
 .TP
 \fB\-\-json\fR
 
@@ -1708,6 +1717,174 @@ Everything recorded about this session, in one ordered timeline
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER STRUCTURED"
+What the page publishes **about itself**: JSON-LD, OpenGraph, `<meta>`, `<link rel>`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBstructured\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER SET-CHECKED"
+Set a checkbox or radio to a state, rather than toggling it
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBset\-checked\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|STATE\fR] [\fISTATE\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-selector\fR \fI<CSS>\fR
+
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+Find the control by what it is called, the way a person would
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIREF|STATE\fR]
+`e3` or `@e3`, from a `snapshot`. Omit when using `\-\-selector` or `\-\-role`, and give the state alone
+.TP
+[\fISTATE\fR]
+`true` or `false`
+.SH "H5I BROWSER SELECT"
+Choose an option in a `<select>`, by its value or by the text it shows
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBselect\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|OPTION\fR] [\fIOPTION\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-selector\fR \fI<CSS>\fR
+
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIREF|OPTION\fR]
+`e3` or `@e3`. Omit when using `\-\-selector` or `\-\-role`
+.TP
+[\fIOPTION\fR]
+The option\*(Aqs value, or the text it shows, in that order
+.SH "H5I BROWSER PRESS"
+Press a key that *does* something: Enter, Escape, Tab, ArrowDown
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBpress\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-selector\fR] [\fB\-\-role\fR] [\fB\-\-name\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIREF|KEY\fR] [\fIKEY\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-selector\fR \fI<CSS>\fR
+
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIREF|KEY\fR]
+`e3` or `@e3`. Omit when using `\-\-selector` or `\-\-role`
+.TP
+[\fIKEY\fR]
+The key name
+.SH "H5I BROWSER FIND"
+Find an element by what it is called, rather than by where it sits
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBfind\fR [\fB\-s\fR|\fB\-\-session\fR] <\fB\-\-role\fR> [\fB\-\-name\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-role\fR \fI<ROLE>\fR
+`button`, `link`, `textbox`, `checkbox`, ...
+.TP
+\fB\-\-name\fR \fI<TEXT>\fR
+The accessible name
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER SCRIPT"
+Record what this session did as a replayable script
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBscript\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-save\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-save\fR \fI<PATH>\fR
+Write the script here instead of printing it
 .TP
 \fB\-\-json\fR
 

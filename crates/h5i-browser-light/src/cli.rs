@@ -316,7 +316,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -344,7 +344,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -475,7 +475,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -511,7 +511,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -549,7 +549,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -654,7 +654,7 @@ enum SessionVerb {
         /// More stable than a selector against generated markup, where the
         /// class names change every build and the button is still called
         /// "Sign in". Refused when it matches more than one, with the list.
-        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        #[arg(long, value_name = "ROLE", conflicts_with = "selector")]
         role: Option<String>,
         /// The accessible name to go with `--role`. Matched exactly.
         #[arg(long, value_name = "TEXT", requires = "role")]
@@ -1065,32 +1065,92 @@ fn at_json(at: &SessionArgs) -> bool {
     at.json
 }
 
-/// Resolve the "`@ref` and a value, or `--selector` and the value" shape.
+/// Resolve the "`@ref` and a value, or a locator and the value" shape.
 ///
 /// Both positionals are optional to clap and checked here, because clap refuses
-/// an optional positional before a required one — and with `--selector` the ref
-/// is genuinely absent. The check gives a better message than clap's would
-/// anyway: it can say which of the two forms was half-used, and name the value
-/// the verb was actually after.
+/// an optional positional before a required one — and with a locator the ref is
+/// genuinely absent. The check gives a better message than clap's would anyway:
+/// it can say which of the forms was half-used, and name the value the verb was
+/// actually after.
+///
+/// `located` covers `--selector` **and** `--role`. It used to be `--selector`
+/// alone, and `--role` additionally conflicted with the positional, so
+/// `set-checked --role checkbox true` was rejected by clap before this could
+/// see it: the flag existed on three verbs and could not be used on any of
+/// them, while `find` and `click` — which take one positional, so a locator
+/// simply replaces it — worked and were the only forms documented.
 ///
 /// One function rather than four copies, because four copies is where the four
 /// error messages drift apart.
 fn two_positionals(
     verb: &str,
     what: &str,
-    selector: &Option<String>,
+    located: bool,
     first: &Option<String>,
     second: &Option<String>,
 ) -> Result<(Option<String>, String), H5iError> {
-    match (selector.is_some(), first, second) {
+    match (located, first, second) {
         (true, Some(value), None) => Ok((None, value.clone())),
         (true, _, Some(_)) => Err(H5iError::Metadata(format!(
-            "with `--selector`, pass only {what}: the selector is the handle."
+            "with `--selector` or `--role`, pass only {what}: the locator is the handle."
         ))),
         (false, Some(reference), Some(value)) => Ok((Some(reference.clone()), value.clone())),
         _ => Err(H5iError::Metadata(format!(
-            "`{verb}` needs a `@ref` and {what}, or `--selector <css>` and {what}."
+            "`{verb}` needs a `@ref` and {what}, or `--selector <css>` / `--role <role>` \
+             and {what}."
         ))),
+    }
+}
+
+#[cfg(test)]
+mod positional_tests {
+    use super::two_positionals;
+
+    /// `--role` had to stop conflicting with the positional the value arrives
+    /// in. Before that, `set-checked --role checkbox true` was rejected by clap
+    /// and the flag existed on three verbs without being usable on any of them.
+    #[test]
+    fn a_locator_takes_the_value_in_the_first_positional() {
+        let value = Some("true".to_string());
+        let (reference, state) =
+            two_positionals("set-checked", "a state", true, &value, &None).expect("the role form");
+        assert_eq!(reference, None, "a locator is the handle; there is no ref");
+        assert_eq!(state, "true");
+    }
+
+    #[test]
+    fn a_ref_takes_both_positionals() {
+        let (reference, state) = two_positionals(
+            "set-checked",
+            "a state",
+            false,
+            &Some("@e1".to_string()),
+            &Some("false".to_string()),
+        )
+        .expect("the ref form");
+        assert_eq!(reference.as_deref(), Some("@e1"));
+        assert_eq!(state, "false");
+    }
+
+    #[test]
+    fn half_of_either_form_says_which_forms_there_are() {
+        let only_a_ref = two_positionals("select", "the option", false, &Some("@e1".into()), &None)
+            .unwrap_err()
+            .to_string();
+        assert!(only_a_ref.contains("--role"), "{only_a_ref}");
+        assert!(only_a_ref.contains("--selector"), "{only_a_ref}");
+
+        // A locator plus both positionals is a caller using two handles.
+        let both = two_positionals(
+            "select",
+            "the option",
+            true,
+            &Some("@e1".into()),
+            &Some("x".into()),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(both.contains("the locator is the handle"), "{both}");
     }
 }
 
@@ -1119,7 +1179,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         ),
         SessionVerb::Type { reference, text, selector, role, name, at } => {
             let (reference, text) =
-                two_positionals("type", "the text", selector, reference, text)?;
+                two_positionals("type", "the text", selector.is_some() || role.is_some(), reference, text)?;
             (
                 at,
                 serde_json::json!({
@@ -1188,7 +1248,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Env { at } => (at, serde_json::json!({"verb": Verb::Env.name()})),
         SessionVerb::SetChecked { reference, checked, selector, role, name, at } => {
             let (reference, state) =
-                two_positionals("set-checked", "`true` or `false`", selector, reference, checked)?;
+                two_positionals("set-checked", "`true` or `false`", selector.is_some() || role.is_some(), reference, checked)?;
             // Parsed here rather than by clap, because the positional had to be
             // a string for the reasons `two_positionals` explains — and a
             // typo'd state should say what it should have been rather than
@@ -1218,7 +1278,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         }
         SessionVerb::Select { reference, option, selector, role, name, at } => {
             let (reference, option) =
-                two_positionals("select", "the option", selector, reference, option)?;
+                two_positionals("select", "the option", selector.is_some() || role.is_some(), reference, option)?;
             (
                 at,
                 serde_json::json!({
@@ -1233,7 +1293,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         }
         SessionVerb::Press { reference, key, selector, role, name, at } => {
             let (reference, key) =
-                two_positionals("press", "the key", selector, reference, key)?;
+                two_positionals("press", "the key", selector.is_some() || role.is_some(), reference, key)?;
             (
                 at,
                 serde_json::json!({

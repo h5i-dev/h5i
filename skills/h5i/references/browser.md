@@ -80,6 +80,79 @@ Reach for `requests` inside a loop and `audit` when you are writing up what
 happened. Every row says whether it is the engine describing itself or something
 h5i saw from outside, and the summary names any log it could not read at all.
 
+## Reading a page cheaply
+
+```bash
+h5i browser structured                          # what the page says about itself
+h5i browser markdown --url https://example.com  # go there and read, in one trip
+```
+
+`structured` is the cheapest read there is: JSON-LD, OpenGraph, `<meta>`,
+`<link rel>` — a few hundred bytes where a snapshot is a few hundred lines. Try
+it first on an article, a product, or anything with a canonical URL. A page with
+no metadata answers `empty`, which is a fact about the page rather than a failed
+read.
+
+Every read verb takes `--url`, which goes there first and then reads. Prefer it:
+one round trip where `navigate` and then the read would be two, and the reply
+still names the URL it ended up on, so a redirect is not silent.
+
+## Naming an element without a `@ref`
+
+```bash
+h5i browser find  --role button --name 'Sign in'
+h5i browser click --role button --name 'Sign in'
+```
+
+A snapshot line reads `- button "Sign in" [ref=e3]`, and `--role button --name
+'Sign in'` names the same thing by what it is called rather than by where it
+sat. That survives a re-render that moves everything; a `@ref` from an older
+reading does not, and is refused rather than resolved against whatever now
+occupies that position.
+
+`--selector <css>` is the third way in, for when the page has a stable id and
+you already know it.
+
+## Driving a control
+
+```bash
+h5i browser set-checked @e4 true
+h5i browser set-checked --role checkbox true       # or by what it is called
+h5i browser select @e5 'Express shipping'
+h5i browser press  @e1 Enter
+```
+
+**Prefer `set-checked` to clicking a checkbox.** A click *toggles*, so where it
+lands depends on what the page was serving; setting a state is idempotent. That
+is the difference between a session that replays to the same place and one that
+does not. It turns off the rest of a radio group, and reports `changed: false`
+when the box was already there.
+
+**`select`** takes the option's value or the text it shows, in that order. The
+reply carries the *value*, because that is what the form submits and what
+survives a re-render; the text is what you read.
+
+**`press`** is for keys that *do* something: Enter, Escape, Tab, ArrowDown. To
+enter text use `type`. Merging the two would make one verb whose meaning
+depended on its argument.
+
+Each of these takes either a `@ref` and the value, or a locator and the value.
+With a locator there is no ref: the locator is the handle.
+
+## Recording and replaying
+
+```bash
+h5i browser script --save flow.json     # what this session did, as steps
+h5i __engine replay flow.json           # send it back through the same channel
+```
+
+The steps are verified CSS selectors rather than `@ref` handles, so a script
+outlives the reading it was recorded from. A replay goes through the control
+channel an agent would use, so the policy, the receipts and the action log see
+it exactly as they see a live session — and on this engine it visits the same
+states in the same order, because the settle runs on a virtual clock rather
+than a wall clock.
+
 Waiting has three answers, not two:
 
 ```bash

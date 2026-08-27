@@ -155,6 +155,7 @@
 <a class="t3" href="#what-is-true-by-default">What is true by default</a>
 <a class="t3" href="#--in-box-the-same-session-inside-a-box">--in &lt;box&gt;: the same session, inside a box</a>
 <a class="t3" href="#opening-a-session-from-inside-a-box">Opening a session from inside a box</a>
+<a class="t3" href="#reading-and-acting-beyond-snapshot-and-click">Reading and acting, beyond snapshot and click</a>
 <a class="t3" href="#audit-the-whole-session-in-one-timeline">audit: the whole session, in one timeline</a>
 <a class="t3" href="#sessions-end-and-endings-are-recorded">Sessions end, and endings are recorded</a>
 <a class="t3" href="#everything-a-session-returns-is-untrusted">Everything a session returns is untrusted</a>
@@ -514,6 +515,38 @@ read its own boundary.</p>
 Not a preference either: a box's netns may have no usable loopback at all
 (<code>net.mode = deny</code> leaves nothing to dial), and every <code>h5i box run</code> gets a fresh
 one, so a port bound in one is unreachable from the next.</p>
+<h3 id="reading-and-acting-beyond-snapshot-and-click">Reading and acting, beyond <code>snapshot</code> and <code>click</code></h3>
+<pre><code class="language-bash">h5i browser structured                          # what the page says about itself
+h5i browser markdown --url https://example.com  # go there and read, in one trip
+h5i browser find  --role button --name 'Sign in'
+h5i browser click --role button --name 'Sign in'
+h5i browser set-checked @e4 true
+h5i browser select @e5 'Express shipping'
+h5i browser press  @e1 Enter
+h5i browser script --save flow.json
+</code></pre>
+<p><code>structured</code> is the cheapest read: JSON-LD, OpenGraph, <code>&lt;meta&gt;</code>, <code>&lt;link rel&gt;</code> —
+a few hundred bytes where a snapshot is a few hundred lines. A page with no
+metadata answers <code>empty</code>, which is a fact about the page rather than a failed
+read. Every read verb takes <code>--url</code>, which goes there first and then reads: one
+round trip where <code>navigate</code> and then the read would be two, and the reply still
+names the URL it ended up on so a redirect is not silent.</p>
+<p>A <strong>locator</strong> names an element by what it is called rather than by where it sat.
+<code>--role button --name 'Sign in'</code> survives a re-render that moves everything; a
+<code>@ref</code> from an older reading does not, and is refused rather than resolved
+against whatever now occupies that position. <code>--selector &lt;css&gt;</code> is the third way
+in. <code>find</code> reports what a locator matches without acting on it.</p>
+<p><code>set-checked</code>, <code>select</code> and <code>press</code> take either a <code>@ref</code> and the value, or a
+locator and the value — with a locator there is no ref, because the locator is
+the handle. Prefer <code>set-checked</code> to clicking a checkbox: a click <em>toggles</em>, so
+where it lands depends on what the page was serving, and setting a state is
+idempotent. That is the difference between a session that replays to the same
+place and one that does not.</p>
+<p><code>script --save</code> writes what the session did as steps of verified CSS selectors,
+so the script outlives the reading it was recorded from. <code>h5i __engine replay</code>
+sends each step back through the control channel an agent would use, so the
+policy, the receipts and the action log see a replay exactly as they see a live
+session.</p>
 <h3 id="audit-the-whole-session-in-one-timeline"><code>audit</code>: the whole session, in one timeline</h3>
 <p><code>requests</code> is the network layer on its own, and it is the verb to reach for in a
 loop. <code>h5i browser audit</code> is the one to read afterwards: what the agent asked
