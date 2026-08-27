@@ -91,10 +91,12 @@ one request log, one policy:
 ```bash
 h5i browser open https://docs.rs/ --allow docs.rs
 h5i browser snapshot                        # outline, with @ref handles
+h5i browser snapshot --delta                # only what changed since the last read
 h5i browser click    @e3
 h5i browser type     @e5 "serde"
 h5i browser extract  '{"titles": ["h2"]}'   # structured, by selector
 h5i browser markdown                        # the page a reader would read
+h5i browser login                           # hand the page to the human at the viewer
 h5i browser close
 ```
 
@@ -106,17 +108,6 @@ h5i browser open https://example.com/      --session public --new
 h5i browser snapshot --session auth
 ```
 
-Two verbs the shape of an agent loop makes worth having:
-
-```bash
-h5i browser snapshot --delta   # only what changed since the last read
-h5i browser login              # hand the page to the human at the viewer
-```
-
-`--delta` matters because re-reading three hundred lines after every click is
-the wrong shape for a loop. `login` closes the page to the agent while a person
-types a credential into the live view.
-
 Read the record:
 
 ```bash
@@ -126,16 +117,10 @@ h5i browser status             # placement, policy digest, who saw the network
 h5i browser list               # every session on this machine, and which is default
 ```
 
-### 2.2. The sandbox, and how to write your own
+### 2.2. The configurable sandbox
 
-A session is **already sandboxed**: files and environment, on a process tier,
-with nothing to turn on. `--no-sandbox` turns it off. Everything below is how to
-say something more specific than the default.
-
-#### Write it in `.h5i/env.toml`
-
-The same file and the same vocabulary a box uses. Fine-grained filesystem,
-environment, resources, egress and tier:
+While h5i runs in a light-weight sandbox by default, we can further specify
+fine-grained setting in `.h5i/env.toml`.
 
 ```toml
 [profile.reading]
@@ -163,20 +148,7 @@ h5i box --profile reading --name docs
 h5i browser open https://docs.rs/ --in docs
 ```
 
-A boxed session also makes the human takeover real. Every verb is carried in
-from the host, so pausing the agent is a boundary rather than a request.
-
-```bash
-h5i browser take       # a human takes control; the agent pauses
-h5i browser release    # hands it back; the agent must re-snapshot first
-h5i box view docs      # watch the page, in a loopback-only forward
-```
-
-<p align="center">
-  <img src="./docs/_static/sandboxed-browser-ui.png" alt="Watching a sandboxed browser session from the host" width="99%" />
-</p>
-
-### 2.3. A box holds more than a browser
+### 2.3. A sandbox holds more than a browser
 
 The top rung of that ladder is a whole environment. It can hold the code, the
 toolchain, the dev server and the agent itself, which is what you want when the
@@ -197,6 +169,14 @@ h5i box share alpha --port 3000            # end-to-end encrypted P2P sharing
 h5i box share alpha --port 3000 --tunnel   # or a browser-ready demo link
 h5i join <ticket>                          # what the recipient runs
 ```
+
+```bash
+h5i ui # watch the whole fleet in a browser
+```
+
+<p align="center">
+  <img src="./docs/_static/sandbox-ui-demo.png" alt="Watching a sandboxed browser session from the host" width="99%" />
+</p>
 
 ---
 
