@@ -61,6 +61,17 @@
 //! The blob carries request and response bodies. They are the only large thing
 //! that crosses, and base64 inside the JSON would pay a third again in bytes
 //! and all of it in allocation, on exactly the path a page's images take.
+//!
+//! # Where this runs
+//!
+//! The split is a Unix arrangement: the transport is a socket pair the child
+//! inherits as its standard input, and there is no second implementation. What
+//! is gated is only the part that touches one — spawning, adopting, serving.
+//! The protocol, the framing and the client stay *compiled* everywhere the
+//! engine builds, so the portable half cannot rot behind a `cfg` nobody
+//! exercises; on a platform that cannot spawn a renderer it is simply
+//! unreachable, and the engine runs as one process the way it always did.
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -650,10 +661,17 @@ impl BrokerClient {
 
 /// Answer questions until the renderer stops asking.
 ///
+/// Unix only, and so is the split: the transport is a socket pair the child
+/// inherits, and there is no second implementation. Everything above this line
+/// is portable, which is what keeps the trait and the framing testable
+/// everywhere the engine builds.
+///
 /// Returns when the socket closes, which is what a renderer that exited looks
 /// like from here. Cheap answers are given on this thread; the ones that touch
 /// the wire get one of their own, because a fetch that took thirty seconds
 /// would otherwise stall every drain and every cookie read behind it.
+#[cfg(unix)]
+#[cfg(unix)]
 pub fn serve(broker: Arc<LocalBroker>, socket: std::os::unix::net::UnixStream) {
     let Ok(reader) = socket.try_clone() else {
         return;
@@ -841,6 +859,7 @@ impl Desk {
 /// The subcommand `h5i` hides the engine behind. The broker re-execs the binary
 /// it is already running, so there is no second file to find, no version skew
 /// between the halves, and no path to get wrong.
+#[cfg(unix)]
 const ENGINE_SUBCOMMAND: &str = "__engine";
 
 /// The flag that tells the child it is the renderer. Hidden, and not an
@@ -861,6 +880,7 @@ pub const NO_SPLIT_VAR: &str = "H5I_BROWSER_NO_SPLIT";
 /// The other three are configuration a renderer has no use for: the receipts
 /// path names a file only the broker writes, the proxy is the broker's wire,
 /// and the allowlist is the broker's decision.
+#[cfg(unix)]
 fn scrubbed(name: &str) -> bool {
     name.starts_with(crate::secrets::PREFIX)
         || matches!(
@@ -1075,8 +1095,11 @@ mod tests {
         };
 
         // Wait until the call is registered, so the broker ends *after* it
-        // parked rather than before it started.
-        for _ in 0..200 {
+        // parked rather than before it started. Ten seconds because this is a
+        // *liveness* budget on a shared CI runner, not a latency assertion: it
+        // exits the moment the condition holds, so a generous ceiling costs a
+        // passing run nothing and costs a flake everything.
+        for _ in 0..2000 {
             if client.waiting.lock().map(|w| !w.is_empty()).unwrap_or(false) {
                 break;
             }
@@ -1100,7 +1123,7 @@ mod tests {
         let client = BrokerClient::over(Box::new(reader), Box::new(Discard), false);
         drop(writer);
         // The reply thread has to notice before this means anything.
-        for _ in 0..200 {
+        for _ in 0..2000 {
             if client.gone.load(Ordering::SeqCst) {
                 break;
             }
@@ -1195,9 +1218,10 @@ mod tests {
         let channel = client.open_socket(&url, None).expect("the socket opened");
 
         // The greeting arrives on real time, so this waits for it rather than
-        // assuming a schedule.
+        // assuming a schedule. Generous for the same reason as above: the
+        // question is whether the message arrives at all.
         let mut seen: Vec<Event> = Vec::new();
-        for _ in 0..40 {
+        for _ in 0..400 {
             seen.extend(channel.drain());
             if seen.iter().any(|e| matches!(e, Event::Message(_))) {
                 break;

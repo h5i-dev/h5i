@@ -815,6 +815,7 @@ where
 /// kept because a host where the second process cannot be started is a host
 /// that should still be able to read a page — and because being able to run
 /// both shapes is what makes them comparable. See [`crate::ipc`].
+#[cfg_attr(not(unix), allow(dead_code))]
 enum Half {
     /// One process, brokering its own requests.
     Whole,
@@ -840,7 +841,7 @@ where
 /// back.
 fn half_for(cli: &Cli, argv: &[std::ffi::OsString]) -> Result<Half, H5iError> {
     if cli.brokered {
-        return Ok(Half::Renderer(crate::ipc::BrokerClient::on_stdin()?));
+        return renderer_half();
     }
     // Only the two commands that load a page have a broker to split from. The
     // rest — `capabilities`, `doctor`, the session verbs, `replay` — either
@@ -852,6 +853,28 @@ fn half_for(cli: &Cli, argv: &[std::ffi::OsString]) -> Result<Half, H5iError> {
         return Ok(Half::Whole);
     }
     become_broker(net, argv)
+}
+
+/// This process is the renderer: its broker is on the descriptor it was handed.
+#[cfg(unix)]
+fn renderer_half() -> Result<Half, H5iError> {
+    Ok(Half::Renderer(crate::ipc::BrokerClient::on_stdin()?))
+}
+
+/// There is no renderer half where there is no split.
+///
+/// The transport is a socket pair a child inherits, which is a Unix
+/// arrangement, so everywhere else the engine runs as one process — the way it
+/// always did. A `--brokered` here is a flag h5i itself would never pass on
+/// this platform, and saying so beats adopting whatever standard input happens
+/// to be.
+#[cfg(not(unix))]
+fn renderer_half() -> Result<Half, H5iError> {
+    Err(H5iError::Metadata(
+        "`--brokered` is how the broker starts the renderer, and this platform does not run \
+         the engine as two processes."
+            .to_string(),
+    ))
 }
 
 /// Build the broker, start the renderer under it, and serve until it exits.
