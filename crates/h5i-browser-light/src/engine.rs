@@ -2328,8 +2328,22 @@ mod tests {
         assert!(rendered.contains("paragraph \"See the guide for more.\""), "{rendered}");
         // ...and the link is addressable underneath it rather than lost in it.
         assert!(rendered.contains("link \"guide\" [ref=e1]"), "{rendered}");
-        // An empty input is named by its placeholder, not left anonymous.
-        assert!(rendered.contains("textbox \"you@example.com\""), "{rendered}");
+        // Named by its `<label>`, which beats the placeholder: that is the
+        // order the accessible-name computation specifies, and it is the
+        // better handle — "Email" is what a person sees the field called, and
+        // the placeholder is example text that a redesign will change.
+        assert!(rendered.contains("textbox \"Email\""), "{rendered}");
+        // The placeholder is still the fallback where there is no label.
+        let bare = page_from(
+            r#"<!doctype html><body><input type="email" placeholder="you@example.com"></body>"#,
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+        );
+        assert!(
+            bare.snapshot().render().contains("textbox \"you@example.com\""),
+            "{}",
+            bare.snapshot().render()
+        );
         // The hidden CSRF field is not something to act on, and its value is
         // not something to put in front of a model.
         assert!(!rendered.contains("secret-token"), "{rendered}");

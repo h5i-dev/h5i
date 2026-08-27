@@ -73,6 +73,8 @@ pub enum Verb {
     Select,
     /// Send a key that does something: Enter, Escape, Tab.
     Press,
+    /// Locate elements by role and name, the way the outline names them.
+    Find,
 }
 
 impl Verb {
@@ -97,6 +99,7 @@ impl Verb {
         Verb::SetChecked,
         Verb::Select,
         Verb::Press,
+        Verb::Find,
     ];
 
     /// The name on the wire.
@@ -121,6 +124,7 @@ impl Verb {
             Verb::SetChecked => "set_checked",
             Verb::Select => "select",
             Verb::Press => "press",
+            Verb::Find => "find",
         }
     }
 
@@ -165,7 +169,8 @@ impl Verb {
             | Verb::Structured
             | Verb::SetChecked
             | Verb::Select
-            | Verb::Press => false,
+            | Verb::Press
+            | Verb::Find => false,
         }
     }
 
@@ -197,7 +202,9 @@ impl Verb {
             | Verb::Markdown
             | Verb::Env
             | Verb::Script
-            | Verb::Structured => false,
+            | Verb::Structured
+            // It produces handles rather than consuming one.
+            | Verb::Find => false,
         }
     }
 
@@ -230,7 +237,8 @@ impl Verb {
             | Verb::Structured
             | Verb::SetChecked
             | Verb::Select
-            | Verb::Press => false,
+            | Verb::Press
+            | Verb::Find => false,
         }
     }
 
@@ -268,7 +276,8 @@ impl Verb {
             // script simply has nothing listening for the events they fire.
             | Verb::SetChecked
             | Verb::Select
-            | Verb::Press => false,
+            | Verb::Press
+            | Verb::Find => false,
         }
     }
 
@@ -308,6 +317,7 @@ impl Verb {
             | Verb::Env
             | Verb::Script
             | Verb::Structured
+            | Verb::Find
             // Handing the page to a human is the one step a replay must never
             // reproduce: there is nobody there to take it.
             | Verb::Login => false,
@@ -329,7 +339,11 @@ impl Verb {
     /// resolved against a reading nobody had read.
     pub fn navigates_first(self) -> bool {
         match self {
-            Verb::Snapshot | Verb::Markdown | Verb::Extract | Verb::Structured => true,
+            Verb::Snapshot
+            | Verb::Markdown
+            | Verb::Extract
+            | Verb::Structured
+            | Verb::Find => true,
 
             // Already a navigation; a second URL would be ambiguous.
             Verb::Navigate

@@ -538,6 +538,21 @@ impl Walker<'_> {
             return;
         }
 
+        // `aria-hidden="true"` hides a subtree from anything reading the page,
+        // and this outline is one of those things. The whole subtree, not only
+        // the element: `describe` already refuses to give it a role, but text
+        // does not go through `describe`, so without this the words inside an
+        // `aria-hidden` wrapper were still printed.
+        //
+        // Which is the sharper half. Content a screen reader is told to ignore
+        // is one of the places instructions aimed at *whatever is reading the
+        // page* get put, and it walks straight past the untrusted-content fence
+        // if the fence never sees it — the same argument the `display: none`
+        // filter above is written from.
+        if hidden_from_assistive_tech(node) {
+            return;
+        }
+
         let descriptor = describe(&tag, node);
 
         match descriptor {
@@ -826,9 +841,109 @@ fn direct_text(doc: &BaseDocument, node: &Node) -> String {
 /// The decision itself lives in [`role_for`], which takes plain values rather
 /// than a `Node`, so every branch is testable without standing up a document.
 fn describe(tag: &str, node: &Node) -> Option<Descriptor> {
+    // `aria-hidden="true"` removes an element from the accessibility tree, and
+    // this outline *is* an accessibility tree. Honoured here rather than in the
+    // walk so the locator gets it too: an element hidden from a screen reader
+    // must also be one an agent cannot address by role, or the two readings of
+    // the page disagree about what is there.
+    //
+    // **Inherited**, which is the half that is easy to miss: the attribute
+    // hides a whole subtree, so a `<button>` inside an `aria-hidden` wrapper is
+    // hidden even though the button carries nothing itself. Checking only the
+    // element found the button and reported it as addressable.
+    if hidden_from_assistive_tech(node) {
+        return None;
+    }
+
+    // An explicit `role` overrides the implicit one, which is the whole point
+    // of the attribute: `<div role="button">` is a button to everything that
+    // reads this page, and reporting it as an anonymous container is the
+    // engine disagreeing with the author about their own markup.
+    if let Some(explicit) = attr_of(node, "role")
+        .map(|r| r.trim().to_ascii_lowercase())
+        .filter(|r| !r.is_empty())
+        && let Some(descriptor) = descriptor_for_aria_role(&explicit)
+    {
+        return Some(descriptor);
+    }
+
     let input_type = attr_of(node, "type").map(str::to_ascii_lowercase);
     let has_href = attr_of(node, "href").is_some();
     role_for(tag, input_type.as_deref(), has_href)
+}
+
+/// Whether this node or anything above it is `aria-hidden="true"`.
+///
+/// Bounded by the same depth the walk is: a document nested deeper than that is
+/// past the point where this outline reports anything anyway, and an unbounded
+/// walk here would be a per-node cost on a hostile tree.
+fn hidden_from_assistive_tech(node: &Node) -> bool {
+    let is_hidden = |candidate: &Node| {
+        attr_of(candidate, "aria-hidden").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
+    };
+    if is_hidden(node) {
+        return true;
+    }
+    let doc = node.tree();
+    let mut current = node.parent;
+    for _ in 0..MAX_DEPTH {
+        let Some(id) = current else { return false };
+        let Some(ancestor) = doc.get(id) else {
+            return false;
+        };
+        if is_hidden(ancestor) {
+            return true;
+        }
+        current = ancestor.parent;
+    }
+    false
+}
+
+/// The ARIA roles this engine understands on an explicit `role=`.
+///
+/// Deliberately the ones that map onto something it can *act on* or *read*,
+/// rather than the whole taxonomy. A role it does not know falls through to the
+/// implicit computation instead of becoming an unaddressable line: an unknown
+/// role is a reason to read the element as its tag, not a reason to hide it.
+fn descriptor_for_aria_role(role: &str) -> Option<Descriptor> {
+    let d = |role, takes_ref, is_leaf| {
+        Some(Descriptor {
+            role,
+            takes_ref,
+            is_leaf,
+        })
+    };
+    match role {
+        "button" => d("button", true, true),
+        "link" => d("link", true, true),
+        "checkbox" | "switch" => d("checkbox", true, true),
+        "radio" => d("radio", true, true),
+        "textbox" | "searchbox" => d("textbox", true, true),
+        "combobox" | "listbox" => d("combobox", true, false),
+        "img" | "image" => d("image", true, true),
+        "heading" => d("heading2", false, true),
+        "paragraph" => d("paragraph", false, true),
+        "listitem" => d("listitem", false, true),
+        "cell" | "gridcell" => d("cell", false, true),
+        _ => None,
+    }
+}
+
+/// The role and accessible name of one node, as the outline would report them.
+///
+/// The single computation the locator and the snapshot share. Exposed so that
+/// `find --role button --name "Sign in"` resolves against exactly the string
+/// the outline printed: two implementations of "what is this called" would
+/// disagree eventually, and an agent given two answers has no way to choose.
+///
+/// `None` for a node this reading does not offer at all — a plain container, a
+/// hidden input, an `aria-hidden` subtree.
+pub fn role_and_name(doc: &BaseDocument, node_id: usize) -> Option<(String, String)> {
+    let node = doc.get_node(node_id)?;
+    let element = node.element_data()?;
+    let tag = element.name.local.as_ref().to_string();
+    let descriptor = describe(&tag, node)?;
+    Some((descriptor.role.to_string(), accessible_name(&tag, node)))
 }
 
 fn role_for(tag: &str, input_type: Option<&str>, has_href: bool) -> Option<Descriptor> {
@@ -925,7 +1040,27 @@ fn selected_option(node: &Node) -> Option<String> {
     first
 }
 
+/// The accessible name, computed once and used everywhere.
+///
+/// **The sharing is the requirement, not an optimisation.** A locator with its
+/// own idea of what a button is called would fail to find an element the
+/// snapshot had just described in exactly those words, and an agent given two
+/// answers to "what is this called" has no way to tell which one to trust. So
+/// `find --role button --name "Sign in"` resolves against the same string the
+/// outline printed, by construction.
+///
+/// Order follows the accessible-name computation, and the previous order here
+/// was wrong in a way worth naming: page *content* used to beat `aria-label`,
+/// so an element explicitly labelled by its author was reported by its text
+/// instead. The author's label is the more specific statement and wins.
 fn accessible_name(tag: &str, node: &Node) -> String {
+    // `aria-labelledby` first, which needs the document to resolve the ids it
+    // names. It beats everything, including a label the element carries
+    // itself: it is the most specific thing an author can say.
+    if let Some(labelled) = labelled_by(node) {
+        return labelled;
+    }
+
     let from_attr = |names: &[&str]| {
         names
             .iter()
@@ -977,21 +1112,109 @@ fn accessible_name(tag: &str, node: &Node) -> String {
             }
             // `value` is dropped from the fallback for a password, or a page
             // that served one in the markup would hand it straight over.
+            //
+            // `<label>` sits between the author's own `aria-label` and the
+            // weaker fallbacks, which is where the computation puts it and
+            // where a form actually carries its meaning: a field named only by
+            // its `<label>` is the commonest shape on the web, and without this
+            // it was reported by its `name` attribute or not at all.
             if is_password {
-                return from_attr(&["aria-label", "placeholder", "title", "name"])
+                return from_attr(&["aria-label"])
+                    .or_else(|| label_for(node))
+                    .or_else(|| from_attr(&["placeholder", "title", "name"]))
                     .unwrap_or_default();
             }
-            from_attr(&["aria-label", "placeholder", "value", "title", "name"]).unwrap_or_default()
+            from_attr(&["aria-label"])
+                .or_else(|| label_for(node))
+                .or_else(|| from_attr(&["placeholder", "value", "title", "name"]))
+                .unwrap_or_default()
         }
         _ => {
-            let text = collapse(&node.text_content());
-            if text.is_empty() {
-                from_attr(&["aria-label", "title"]).unwrap_or_default()
-            } else {
-                text
+            // The author's own label beats the element's text, which is the
+            // way round the computation specifies and the reverse of what this
+            // did: an icon button labelled `aria-label="Close"` containing a
+            // `×` glyph was reported as `×`, which is unusable as a handle and
+            // meaningless in an outline.
+            from_attr(&["aria-label"])
+                .or_else(|| {
+                    let text = collapse(&node.text_content());
+                    (!text.is_empty()).then_some(text)
+                })
+                .or_else(|| from_attr(&["title"]))
+                .unwrap_or_default()
+        }
+    }
+}
+
+/// Resolve `aria-labelledby` into the text it points at.
+///
+/// Several ids, space-separated, joined in the order given — that is what the
+/// computation says and what a screen reader announces. An id that resolves to
+/// nothing contributes nothing rather than making the whole name empty: a page
+/// with one stale reference in a list of three still has a usable name.
+fn labelled_by(node: &Node) -> Option<String> {
+    let raw = attr_of(node, "aria-labelledby")?;
+    let doc = node.tree();
+    let mut parts: Vec<String> = Vec::new();
+    for wanted in raw.split_ascii_whitespace() {
+        for (_, candidate) in doc.iter() {
+            let matches = candidate
+                .attrs()
+                .into_iter()
+                .flatten()
+                .any(|a| a.name.local.as_ref() == "id" && a.value.as_str() == wanted);
+            if matches {
+                let text = collapse(&candidate.text_content());
+                if !text.is_empty() {
+                    parts.push(text);
+                }
+                break;
             }
         }
     }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+/// The label element that names a control, for the fields that have one.
+///
+/// `<label for=id>` and a control wrapped in a `<label>` are both how forms are
+/// written, and a control named by neither is the one an agent cannot address.
+fn label_for(node: &Node) -> Option<String> {
+    let doc = node.tree();
+    let own_id = attr_of(node, "id");
+
+    // Wrapped: walk up for a `<label>` ancestor.
+    //
+    // `break`, not `?`. Using the question mark here returned from the *whole
+    // function* the moment the walk ran out of ancestors, so the `for=` lookup
+    // below was unreachable for any control that was not already wrapped —
+    // which is most of them. Found by driving a real form, not by a test.
+    let mut current = node.parent;
+    for _ in 0..8 {
+        let Some(id) = current else { break };
+        let Some(ancestor) = doc.get(id) else { break };
+        if ancestor.data.is_element_with_tag_name(&local_name!("label")) {
+            let text = collapse(&ancestor.text_content());
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+        current = ancestor.parent;
+    }
+
+    // Or referenced by `for`.
+    let own_id = own_id?;
+    doc.iter().find_map(|(_, candidate)| {
+        if !candidate.data.is_element_with_tag_name(&local_name!("label")) {
+            return None;
+        }
+        let points_here = attr_of(candidate, "for") == Some(own_id);
+        if !points_here {
+            return None;
+        }
+        let text = collapse(&candidate.text_content());
+        (!text.is_empty()).then_some(text)
+    })
 }
 
 /// Collapse a single line's interior whitespace but keep what it starts with.

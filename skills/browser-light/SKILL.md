@@ -141,6 +141,35 @@ submits and what survives a re-render — the text is what you read.
 ArrowDown. To enter text use `type`; merging the two would make one verb whose
 meaning depended on its argument.
 
+## Finding an element by what it is called
+
+```bash
+h5i-browser-light session find --role button
+h5i-browser-light session find --role button --name 'Sign in'
+h5i-browser-light session click --role button --name 'Sign in'
+```
+
+A snapshot line reads `- button "Sign in" [ref=e3]`. `--role button --name
+"Sign in"` addresses that element **in those same words**, through the same
+computation that printed them — so the two cannot disagree about what a thing
+is called.
+
+Prefer this to a CSS selector on generated markup: the class names change on
+every build and the button is still called "Sign in". Each `find` match comes
+back with a verified selector, so it is directly actionable.
+
+Roles: `button`, `link`, `textbox`, `checkbox`, `radio`, `combobox`, `image`,
+`heading`, `paragraph`, `listitem`, `cell`. An explicit `role=` on the page
+wins over the tag, and `aria-hidden="true"` removes an element from both the
+outline and the locator — if a screen reader cannot see it, neither can you.
+
+`--name` matches **exactly**, after collapsing whitespace. A substring match
+would make `--name Save` hit "Save as draft" and "Discard without saving".
+Matching more than one element is refused with the list, because picking one
+would be the engine deciding which you meant.
+
+Nothing matching is a result, not an error.
+
 ## Two handles, and when to use which
 
 **A `@ref` is for reading. A selector is for acting more than once.**

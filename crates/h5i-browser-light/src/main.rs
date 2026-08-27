@@ -291,6 +291,18 @@ enum SessionVerb {
         /// are used together rather than instead of each other.
         #[arg(long, value_name = "CSS")]
         selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -307,6 +319,18 @@ enum SessionVerb {
         /// navigation and what makes a recorded session replayable.
         #[arg(long, value_name = "CSS", conflicts_with = "reference")]
         selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -317,6 +341,10 @@ enum SessionVerb {
     /// waiting for — so that comes back immediately rather than after a budget
     /// spent proving it.
     WaitFor {
+        // No `--role` here, unlike the action verbs. Their `--selector` names
+        // *a handle on one element*; this one is a **condition** — "wait until
+        // something matches" — and the two happen to share a spelling. A role
+        // locator here would read as the first and behave as the second.
         /// A CSS selector that must match at least one element.
         #[arg(long, value_name = "CSS")]
         selector: Option<String>,
@@ -422,6 +450,18 @@ enum SessionVerb {
         /// together rather than instead of each other.
         #[arg(long, value_name = "CSS")]
         selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -446,6 +486,18 @@ enum SessionVerb {
         /// together rather than instead of each other.
         #[arg(long, value_name = "CSS")]
         selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -472,6 +524,50 @@ enum SessionVerb {
         /// together rather than instead of each other.
         #[arg(long, value_name = "CSS")]
         selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Locate elements by role and name, the way the outline names them.
+    ///
+    /// The handle an agent already has. A snapshot line reads
+    /// `- button "Sign in" [ref=e3]`, and `find --role button --name "Sign in"`
+    /// addresses the same element in the same words — through the same
+    /// computation that printed them, so the two cannot disagree.
+    ///
+    /// More stable than a CSS selector against generated markup, where the
+    /// class names change on every build and the button is still called
+    /// "Sign in". Each match comes back with a verified selector, so a `find`
+    /// is directly actionable.
+    ///
+    /// Nothing matching is a *result*, not an error.
+    Find {
+        /// `button`, `link`, `textbox`, `checkbox`, `radio`, `combobox`,
+        /// `image`, `heading`, `paragraph`, `listitem`, `cell`.
+        #[arg(long, value_name = "ROLE")]
+        role: String,
+        /// The accessible name, matched exactly after collapsing whitespace.
+        ///
+        /// Exact rather than a substring: `--name Save` matching "Save as
+        /// draft" and "Discard without saving" would hand back three elements
+        /// where one was asked for.
+        #[arg(long, value_name = "TEXT")]
+        name: Option<String>,
+        /// Go here first, then look.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -533,6 +629,18 @@ enum SessionVerb {
         /// navigation and what makes a recorded session replayable.
         #[arg(long, value_name = "CSS", conflicts_with = "reference")]
         selector: Option<String>,
+        /// Address it by role instead, the way the outline names it.
+        ///
+        /// `--role button --name "Sign in"` matches the snapshot line
+        /// `- button "Sign in"`, through the same computation that printed it.
+        /// More stable than a selector against generated markup, where the
+        /// class names change every build and the button is still called
+        /// "Sign in". Refused when it matches more than one, with the list.
+        #[arg(long, value_name = "ROLE", conflicts_with_all = ["reference", "selector"])]
+        role: Option<String>,
+        /// The accessible name to go with `--role`. Matched exactly.
+        #[arg(long, value_name = "TEXT", requires = "role")]
+        name: Option<String>,
         #[command(flatten)]
         at: SessionArgs,
     },
@@ -1002,7 +1110,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             at,
             serde_json::json!({"verb": Verb::Scroll.name(), "by": by}),
         ),
-        SessionVerb::Type { reference, text, selector, at } => {
+        SessionVerb::Type { reference, text, selector, role, name, at } => {
             let (reference, text) =
                 two_positionals("type", "the text", selector, reference, text)?;
             (
@@ -1011,20 +1119,24 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "verb": Verb::Type.name(),
                     "ref": reference,
                     "selector": selector,
+                    "role": role,
+                    "name": name,
                     "text": text,
                 }),
             )
         }
-        SessionVerb::Submit { reference, selector, at } => (
+        SessionVerb::Submit { reference, selector, role, name, at } => (
             at,
             serde_json::json!({
                 "verb": Verb::Submit.name(), "ref": reference, "selector": selector,
+                "role": role, "name": name,
             }),
         ),
-        SessionVerb::Click { reference, selector, at } => (
+        SessionVerb::Click { reference, selector, role, name, at } => (
             at,
             serde_json::json!({
                 "verb": Verb::Click.name(), "ref": reference, "selector": selector,
+                "role": role, "name": name,
             }),
         ),
         SessionVerb::Requests { since, at } => (
@@ -1067,7 +1179,7 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             }),
         ),
         SessionVerb::Env { at } => (at, serde_json::json!({"verb": Verb::Env.name()})),
-        SessionVerb::SetChecked { reference, checked, selector, at } => {
+        SessionVerb::SetChecked { reference, checked, selector, role, name, at } => {
             let (reference, state) =
                 two_positionals("set-checked", "`true` or `false`", selector, reference, checked)?;
             // Parsed here rather than by clap, because the positional had to be
@@ -1091,11 +1203,13 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "verb": Verb::SetChecked.name(),
                     "ref": reference,
                     "selector": selector,
+                    "role": role,
+                    "name": name,
                     "checked": checked,
                 }),
             )
         }
-        SessionVerb::Select { reference, option, selector, at } => {
+        SessionVerb::Select { reference, option, selector, role, name, at } => {
             let (reference, option) =
                 two_positionals("select", "the option", selector, reference, option)?;
             (
@@ -1104,11 +1218,13 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "verb": Verb::Select.name(),
                     "ref": reference,
                     "selector": selector,
+                    "role": role,
+                    "name": name,
                     "option": option,
                 }),
             )
         }
-        SessionVerb::Press { reference, key, selector, at } => {
+        SessionVerb::Press { reference, key, selector, role, name, at } => {
             let (reference, key) =
                 two_positionals("press", "the key", selector, reference, key)?;
             (
@@ -1117,10 +1233,18 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                     "verb": Verb::Press.name(),
                     "ref": reference,
                     "selector": selector,
+                    "role": role,
+                    "name": name,
                     "key": key,
                 }),
             )
         }
+        SessionVerb::Find { role, name, url, at } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::Find.name(), "role": role, "name": name, "url": url,
+            }),
+        ),
         SessionVerb::Structured { url, at } => (
             at,
             serde_json::json!({"verb": Verb::Structured.name(), "url": url}),

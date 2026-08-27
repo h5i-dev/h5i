@@ -6865,6 +6865,59 @@ after that bug caught all three before they shipped, and the resolution now
 lives in one `two_positionals` helper rather than four copies whose error
 messages would drift apart.
 
+### B17.7 A role locator, over one accessible-name computation
+
+`find --role button --name "Sign in"` addresses the element a snapshot line
+called `- button "Sign in"`, and every action verb takes the same handle.
+
+**The sharing is the requirement, not an optimisation.** A locator with its own
+idea of what a button is called would eventually fail to find an element the
+outline had just described in exactly those words, and an agent handed two
+answers to "what is this called" has no way to choose between them. So
+`snapshot::role_and_name` is one function and both callers go through it.
+
+Getting there meant making the computation right, and it was not:
+
+* **Page content beat `aria-label`.** An icon button labelled
+  `aria-label="Close"` containing a `×` glyph was reported as `×` — unusable as
+  a handle and meaningless in an outline. The author's label is the more
+  specific statement and wins, which is what the accessible-name computation
+  says.
+* **`<label>` beat nothing.** A field named only by its label — the commonest
+  shape on the web — was reported by its `placeholder`, or by its `name`
+  attribute, or not at all. A label now sits where the computation puts it,
+  above the placeholder and below the author's own `aria-label`. One existing
+  test pinned the old order and was wrong rather than broken.
+* **`aria-labelledby` was not read**, and it is how a control borrows a nearby
+  heading for its name.
+* **An explicit `role=` was ignored.** `<div role="button">` is a button to
+  everything else that reads the page, and reporting it as an anonymous
+  container is the engine disagreeing with the author about their own markup.
+
+**And `aria-hidden` turned out to be a fence problem, not an ergonomics one.**
+It was not honoured at all. Adding it to the role computation stopped hidden
+elements being *addressable*; the text inside them was still printed, because
+text does not go through that computation. Content a screen reader is told to
+ignore is one of the places instructions aimed at *whatever is reading the
+page* get put, and it walks straight past the untrusted-content fence if the
+fence never sees it — the same argument the `display: none` filter was already
+written from. The whole subtree is now skipped.
+
+Two bugs came out of driving a real form rather than a test. `aria-hidden` is
+**inherited**, so checking only the element found a `<button>` inside a hidden
+wrapper and called it addressable. And `label_for` used `?` in the walk that
+looks for a wrapping `<label>`, which returned from the whole function the
+moment it ran out of ancestors — making the `for=` lookup after it unreachable
+for every control that was not already wrapped, which is most of them. Both are
+tested now, and both are the kind a corpus would not have caught: the page is
+conformant and the outline was plausible.
+
+Refusing an ambiguous match is deliberate. Several elements with one role and
+name is a page where picking one would be this engine deciding which the agent
+meant; the refusal lists the candidates so the next attempt can be exact. And
+`--name` matches exactly, because a substring match would make `--name Save`
+hit "Save as draft" and "Discard without saving".
+
 ---
 
 # Formal verification: a Lean model beside the Rust
