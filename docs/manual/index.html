@@ -518,10 +518,19 @@ worktree and no manifest; a session is not one of those.</p>
 <p>The reason a browser gets this by default is that a browser is the thing h5i
 runs that most reliably parses bytes a stranger wrote. A bug in Blitz, Stylo, an
 image decoder or Boa would otherwise be running as whoever started the session.</p>
-<p><strong>What it contains:</strong> the filesystem the engine can reach (its own session
-directory to write, the system to read, nothing under <code>$HOME</code>), the environment
-it can read (cleared, then only what was granted), how much it can allocate, and
-the privilege-escalation and kernel surface seccomp denies.</p>
+<p><strong>What it contains:</strong> the filesystem the engine can <strong>write</strong> (its own session
+directory, and the two <code>/dev</code> sinks — nothing else, and nothing under <code>$HOME</code>),
+the environment it can read (cleared, then only what was granted), how much it
+can allocate, and the privilege-escalation and kernel surface seccomp denies.</p>
+<p>Reading is a weaker boundary than writing here, and the difference is worth
+stating rather than folding into "the system to read". The engine reads what any
+confined h5i profile reads: <code>/usr</code>, <code>/lib</code>, <code>/bin</code>, <code>/sbin</code>, <code>/etc</code>, <code>/opt</code>,
+<code>/proc</code> — and <code>/tmp</code>, which is where another agent's scratch tends to be.
+<code>$HOME</code> is granted nothing, and <code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.config/gh</code> and
+<code>~/.config/h5i</code> are denied outright, so the files worth taking are not in reach;
+the ones in <code>/tmp</code> are. Narrowing the list is not the fix — <code>/etc</code> and <code>/proc</code>
+stay either way — so this is left for the broker/renderer split, where the half
+that parses the page gets a profile written for a process that only parses.</p>
 <p><strong>What it does not contain, and does not claim to:</strong></p>
 <ul>
 <li><strong>The network.</strong> A browser needs it, so the engine keeps the host's

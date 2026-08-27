@@ -7162,6 +7162,46 @@ The methods that would cross, from the current tree:
 Roughly ten operations plus two streams. The files that move or change:
 `net.rs`, `wsclient.rs`, `sse.rs`, `script/host.rs`, `engine.rs`.
 
+### B18.6b What the sandbox still lets the renderer read
+
+Recorded 2026-08-27, from a measurement rather than a reading of the code, and
+deliberately **not** fixed: the fix is small, invisible, and closes half a hole,
+which is the shape of work this section exists to replace.
+
+`browser_sandbox::profile_for` starts from `Profile::builtin`, so it inherits
+`default_fs_read()` whole: `/usr`, `/lib`, `/bin`, `/sbin`, `/etc`, `/nix`,
+`/opt`, `/tmp`, `/proc`. Writes are confined (`$WORK` plus the two `/dev`
+sinks) and `$HOME` is granted nothing and denies `~/.ssh`, `~/.aws`,
+`~/.config/gh`, `~/.config/h5i` outright. Reads are not confined in the same
+sense. Verified by opening an unrelated `chmod 600` file in `/tmp` from inside
+the default sandbox: it renders.
+
+`/tmp` is the interesting entry, because it is where another agent's scratch,
+another box's spool and short-lived credentials sit. Dropping it from this one
+profile was tried and works — ordinary reads, loopback and public, are
+unaffected, and a `/tmp` file that was not the target becomes
+`Permission denied`. `$WORK` does not need it: a read's scratch directory lives
+under `/tmp` but is granted as its own rule.
+
+It was not taken, for two reasons:
+
+- **It closes half.** Granting only the named local target breaks that page's
+  own sibling subresources (`a.html` and its `s.css`). Granting the target's
+  parent directory re-grants all of `/tmp` whenever the target is directly in
+  it, which is the common case. Only a target one directory deeper actually
+  gains anything.
+- **Nothing above `/tmp` moves.** `/etc` and `/proc` stay readable either way,
+  so "the renderer cannot read files it was not given" is not reachable by
+  subtracting entries from this list. It is reachable by §B18's split, where the
+  half that parses the page holds no socket and can be given a profile written
+  for a process that only parses.
+
+So this is a §B18.7 step 3 concern, not a patch: when the renderer becomes its
+own process, its profile is authored rather than inherited, and `default_fs_read`
+stops being the thing that decides what a hostile page can read. Until then the
+honest statement — the one the CLI already makes — is that the default sandbox
+contains the engine's *writes* and its environment, not its reads.
+
 ### B18.7 Order
 
 1. **The seam, still one process.** Put the broker behind a trait and make the

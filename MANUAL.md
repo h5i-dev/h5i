@@ -309,10 +309,20 @@ The reason a browser gets this by default is that a browser is the thing h5i
 runs that most reliably parses bytes a stranger wrote. A bug in Blitz, Stylo, an
 image decoder or Boa would otherwise be running as whoever started the session.
 
-**What it contains:** the filesystem the engine can reach (its own session
-directory to write, the system to read, nothing under `$HOME`), the environment
-it can read (cleared, then only what was granted), how much it can allocate, and
-the privilege-escalation and kernel surface seccomp denies.
+**What it contains:** the filesystem the engine can **write** (its own session
+directory, and the two `/dev` sinks — nothing else, and nothing under `$HOME`),
+the environment it can read (cleared, then only what was granted), how much it
+can allocate, and the privilege-escalation and kernel surface seccomp denies.
+
+Reading is a weaker boundary than writing here, and the difference is worth
+stating rather than folding into "the system to read". The engine reads what any
+confined h5i profile reads: `/usr`, `/lib`, `/bin`, `/sbin`, `/etc`, `/opt`,
+`/proc` — and `/tmp`, which is where another agent's scratch tends to be.
+`$HOME` is granted nothing, and `~/.ssh`, `~/.aws`, `~/.config/gh` and
+`~/.config/h5i` are denied outright, so the files worth taking are not in reach;
+the ones in `/tmp` are. Narrowing the list is not the fix — `/etc` and `/proc`
+stay either way — so this is left for the broker/renderer split, where the half
+that parses the page gets a profile written for a process that only parses.
 
 **What it does not contain, and does not claim to:**
 
