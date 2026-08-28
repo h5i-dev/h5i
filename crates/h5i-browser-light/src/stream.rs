@@ -4098,6 +4098,20 @@ mod tests {
                     p.textContent = 'late'; document.querySelector('#host').appendChild(p); \
                     }, 1000);</script></body></html>";
 
+        // The same page with its timer already resolved, as a control. What the
+        // wait costs has to be compared against what building a session costs
+        // on *this* machine, because an absolute budget measures the runner:
+        // this assertion read `real < 900ms`, passed locally with the whole
+        // test finishing in 200ms, and failed CI at 934ms on a loaded shared
+        // runner. A number that turns red when the machine is busy is not
+        // testing the virtual clock.
+        let without_timer =
+            "<html><body><div id='host'><p>late</p></div><script>var n = 1;</script></body></html>";
+        let control_started = std::time::Instant::now();
+        let mut control = scripted_session_with(without_timer);
+        let _ = control_verb(&mut control, &json!({"verb": "wait_for", "text": "late"}));
+        let control_real = control_started.elapsed();
+
         let started = std::time::Instant::now();
         let mut first = scripted_session_with(page);
         let (a, _) = control_verb(&mut first, &json!({"verb": "wait_for", "text": "late"}));
@@ -4106,9 +4120,20 @@ mod tests {
         assert_eq!(a["ok"], true, "{a:?}");
         assert_eq!(a["met"], true, "the timer fired and the node landed: {a:?}");
         assert_eq!(a["end"], "met");
+
+        // The exact claim, with no clock in it at all: the wait did not wait.
+        // The settle had already run the page's timer to quiescence before the
+        // verb was served, so `wait_for` answered rather than slept. This is
+        // the deterministic half of the property, and it cannot be made to fail
+        // by a busy machine.
+        assert_eq!(
+            a["waited_ms"], 0,
+            "the page's second was spent before the verb was served: {a:?}"
+        );
         assert!(
-            real < std::time::Duration::from_millis(900),
-            "a page's own second of delay costs the agent nothing: {real:?}"
+            real < control_real + std::time::Duration::from_millis(500),
+            "a page's own second of delay costs the agent nothing: {real:?}, \
+             against {control_real:?} for the same page with nothing to wait for"
         );
 
         // And the answer does not depend on how the machine was feeling.
