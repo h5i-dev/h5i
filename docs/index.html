@@ -31,7 +31,7 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i: A Secure, Auditable Browser for AI Agents">
-  <meta name="twitter:description" content="A browser an agent drives and you audit. Fail-closed request records, fenced page content, enforced human takeover. Auditable by default. Containable on demand.">
+  <meta name="twitter:description" content="Let agents securely browse the web and test web apps. In benchmarks on simple websites, h5i reads pages ~5× faster with ~80% less peak memory, while recording every browser action and network request for review.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta name="twitter:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
 
@@ -273,12 +273,12 @@
 <!-- ── Hero ─────────────────────────────────────────────────── -->
 <section id="hero" tabindex="-1">
   <div class="hero-inner">
-    <div class="hero-badge">Fail-closed request records &middot; Fenced page content &middot; Enforced human takeover &middot; Optional sandbox</div>
+    <div class="hero-badge">Run more browser tasks &middot; Control where agents can go &middot; Review what they accessed</div>
     <h1 class="hero-title"><em>A Secure, Auditable Browser</em><br>for AI Agents</h1>
     <p class="hero-sub">
-      Give an agent a browser it can drive and you can <strong>audit</strong>. The engine is the HTTP client,
-      so every request is checked against the session's policy and written down <strong>before</strong> the
-      bytes move. A request that is not in the log did not happen.
+      Let agents securely browse the web and test web apps. In benchmarks on simple websites,
+      h5i reads pages <strong>~5&times; faster</strong> with <strong>~80% less peak memory</strong>, while recording
+      every browser action and network request for review.
     </p>
     <div class="hero-install" id="quickstart">
       <code id="install-cmd">curl -fsSL https://h5i.dev/install.sh | sh</code>
@@ -297,13 +297,13 @@
      the repository grows and never needs a deploy to stop lying. -->
 <div class="strip">
   <a class="stat" href="https://github.com/h5i-dev/h5i/stargazers">
-    <b>500+</b><span>GitHub stars</span>
+    <b>560+</b><span>GitHub stars</span>
   </a>
   <a class="stat" href="https://github.com/h5i-dev/h5i/forks">
     <b>50+</b><span>forks</span>
   </a>
   <a class="stat" href="https://github.com/h5i-dev/h5i/graphs/contributors">
-    <b>15+</b><span>contributors</span>
+    <b>20+</b><span>contributors</span>
   </a>
   <a class="stat" href="https://github.com/h5i-dev/h5i/blob/main/LICENSE">
     <b>Apache 2.0</b><span>open source, no lock-in</span>
@@ -315,35 +315,33 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The problem</span>
-      <h2 class="section-title">The web is the one input you did not write.</h2>
-      <p class="section-sub">An agent that can browse is an agent taking instructions from strangers. Every
-        page it reads was composed by someone else, every request it makes leaves your machine, and the tool
-        that drove the browser usually cannot tell you either thing afterwards.</p>
+      <h2 class="section-title">Giving AI agents a browser creates new security risks.</h2>
+      <p class="section-sub">Agents do more than read pages. They follow instructions, submit forms, use
+        logged-in sessions, access local services, and test code on your machine. A malicious website,
+        a vulnerable app, or a simple agent mistake can turn that access into unsafe actions.</p>
     </div>
     <div class="feat-grid feat-grid-four">
       <div class="feat-card">
-        <div class="feat-name">A page is untrusted input that looks like context</div>
-        <div class="feat-desc">Page text lands in the same window as the task. Text written to look like a
-          request from your operator reads exactly like one, and terminal escape sequences in a title can
-          repaint the line above the answer they came in.</div>
+        <div class="feat-name">Websites can manipulate the agent</div>
+        <div class="feat-desc">A prompt injection can make an agent ignore its task, click unsafe links,
+          submit forms, or send data somewhere it should not.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Driving is not observing</div>
-        <div class="feat-desc">A driver that attaches to a browser reconstructs what it saw, and a
-          reconstruction has gaps: attach races, buffer limits, subresources fetched before anyone was
-          listening. "No requests recorded" and "no requests made" become the same picture.</div>
+        <div class="feat-name">The agent can leak local data</div>
+        <div class="feat-desc">An agent with access to source code, credentials, logged-in sessions, or
+          internal services can accidentally expose them through the browser.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">A browser on your laptop is your laptop</div>
-        <div class="feat-desc">Run the agent's browser in your own profile and it inherits your cookie jar,
-          your logged-in sessions and your reachable network. Per-action approval just turns you into the
-          security boundary.</div>
+        <div class="feat-name">Web app testing runs code on your machine</div>
+        <div class="feat-desc">Testing an app often means running agent-written code, third-party
+          dependencies, a development server, and a browser on the same host. Without isolation, they share
+          access to your files and network.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Sessions vanish without a record</div>
-        <div class="feat-desc">A browser that dies mid-task and is silently restarted leaves the agent
-          reasoning about a page that no longer exists, and leaves you with no record of the moment it
-          stopped being true.</div>
+        <div class="feat-name">Ordinary browser logs are incomplete</div>
+        <div class="feat-desc">A list of clicks is not a complete record. Background requests, redirects,
+          blocked connections, crashes, and restarts may be missing when you need to understand what
+          happened.</div>
       </div>
     </div>
   </div>
