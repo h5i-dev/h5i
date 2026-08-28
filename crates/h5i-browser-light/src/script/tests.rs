@@ -2550,6 +2550,844 @@ fn a_bare_specifier_is_refused_and_the_page_is_told_why() {
     assert_eq!(paths, vec!["/entry.js".to_string()], "{paths:?}");
 }
 
+/// Read a page's text after script, for the interface-object tests below.
+fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) {
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let html = format!(
+        "<html><body><p id=\"out\">before</p>{body}</body></html>"
+    );
+    let page = factory.from_html(&html, &url::Url::parse("https://example.test/").unwrap());
+    (page.snapshot().render(), page.console())
+}
+
+#[test]
+fn a_form_owns_by_attribute_and_not_only_by_containment() {
+    // `form=""` names no id and therefore has no owner. This read the
+    // attribute for truthiness, so an empty one fell through to the ancestor
+    // search and reported the surrounding form — the opposite answer, since
+    // taking a control *out* of the form it sits in is the whole point.
+    let (text, console) = scripted_text(
+        r#"<form id="f"><input id="inside" name="a"><input id="opted" name="b" form=""></form>
+           <input id="outside" name="c" form="f">
+           <input id="nosuch" name="d" form="missing">
+           <script>
+             const g = (id) => document.getElementById(id);
+             const f = g("f");
+             const names = [...f.elements].map((e) => e.name).sort().join(",");
+             document.getElementById("out").textContent = [
+               g("inside").form === f,
+               String(g("opted").form),
+               g("outside").form === f,
+               String(g("nosuch").form),
+               names,
+             ].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|null|true|null|a,c"),
+        "form ownership is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn an_entry_list_carries_the_submitter_charset_and_nothing_disabled() {
+    // The entry list is the algorithm submission is made of, and each of these
+    // was a different wrong answer rather than a missing nicety: a skipped
+    // submitter means the server cannot tell which button was pressed, and
+    // `_charset_` is the one field whose value the browser supplies.
+    let (text, console) = scripted_text(
+        r#"<form id="f">
+             <input name="a" value="1">
+             <input name="off" value="x" disabled>
+             <input name="cb" type="checkbox" value="on">
+             <input name="_charset_" type="hidden">
+             <button id="b" name="action" value="save">save</button>
+             <button id="b2" name="action" value="del">del</button>
+           </form>
+           <script>
+             const f = document.getElementById("f");
+             const plain = JSON.stringify([...new FormData(f)]);
+             const withSubmitter = JSON.stringify(
+               [...new FormData(f, document.getElementById("b"))].filter((e) => e[0] === "action"));
+             document.getElementById("out").textContent = plain + " " + withSubmitter;
+           </script>"#,
+    );
+    assert!(
+        text.contains(r#"[["a","1"],["_charset_","UTF-8"]] [["action","save"]]"#),
+        "the entry list is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn request_submit_validates_and_fires_where_submit_does_neither() {
+    // The two differ in exactly the ways that matter, and implementing them as
+    // one function — the obvious shortcut — would make `form.submit()` called
+    // from inside a `submit` handler recurse.
+    let (text, console) = scripted_text(
+        r#"<form id="f"><input name="a" value="1"><button id="b">go</button></form>
+           <form id="bad"><input required><button id="bb">go</button></form>
+           <script>
+             const out = [];
+             const f = document.getElementById("f");
+             let fired = 0;
+             f.addEventListener("submit", (e) => { fired++; e.preventDefault(); });
+             f.requestSubmit();
+             out.push("afterRequest:" + fired);
+             f.submit();
+             out.push("afterSubmit:" + fired);
+
+             // A form that fails validation never fires `submit`.
+             const bad = document.getElementById("bad");
+             let badFired = 0, invalid = 0;
+             bad.addEventListener("submit", () => badFired++);
+             bad.querySelector("input").addEventListener("invalid", () => invalid++);
+             bad.requestSubmit();
+             out.push("invalidForm:" + badFired + ":" + invalid);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("afterRequest:1|afterSubmit:1|invalidForm:0:1"),
+        "requestSubmit and submit do not differ correctly:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn the_formdata_event_can_add_entries_to_the_list_being_built() {
+    // The documented replacement for the hidden inputs a page used to inject:
+    // the listener gets the list under construction, not a copy of it.
+    let (text, console) = scripted_text(
+        r#"<form id="f"><input name="a" value="1"></form>
+           <script>
+             const f = document.getElementById("f");
+             f.addEventListener("formdata", (e) => e.formData.append("added", "byEvent"));
+             document.getElementById("out").textContent =
+               JSON.stringify([...new FormData(f)]);
+           </script>"#,
+    );
+    assert!(
+        text.contains(r#"[["a","1"],["added","byEvent"]]"#),
+        "the formdata event does not reach the list:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_control_reports_its_validity_and_says_which_constraint_failed() {
+    // `html/semantics/forms/constraints` scored 1 of 920, and not because the
+    // feature is subtle: none of it existed, so every test failed on "the
+    // validity attribute doesn't exist" before reaching what it meant to check.
+    let (text, console) = scripted_text(
+        r#"<form id="f">
+             <input id="req" required>
+             <input id="em" type="email" value="nope">
+             <input id="num" type="number" min="5" max="10" step="2" value="12">
+             <input id="hid" type="hidden" required>
+             <input id="dis" required disabled>
+           </form>
+           <script>
+             const g = (id) => document.getElementById(id);
+             document.getElementById("out").textContent = [
+               g("req").validity.valueMissing,
+               g("req").willValidate,
+               g("em").validity.typeMismatch,
+               g("num").validity.rangeOverflow,
+               // Barred from validation, so always valid however required.
+               g("hid").willValidate,
+               g("dis").willValidate,
+               g("f").checkValidity(),
+             ].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|true|true|true|false|false|false"),
+        "constraint validation is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_custom_validity_message_sets_and_clears() {
+    // The empty string *clears* the error, which is how a page says "this is
+    // fine now" — storing "" as an error would leave the control permanently
+    // invalid and the form permanently unsubmittable.
+    let (text, console) = scripted_text(
+        r#"<input id="i" value="x">
+           <script>
+             const i = document.getElementById("i");
+             const out = [];
+             i.setCustomValidity("no good");
+             out.push(i.validity.customError, i.validity.valid, i.validationMessage);
+             i.setCustomValidity("");
+             out.push(i.validity.customError, i.validity.valid);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|false|no good|false|true"),
+        "setCustomValidity does not round-trip:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_text_field_has_a_selection_and_a_number_field_does_not() {
+    // `selectionStart` returning `null` rather than 0 for a control with no
+    // text selection is the distinction a page tests before using it.
+    let (text, console) = scripted_text(
+        r#"<input id="t" value="hello world"><input id="n" type="number" value="3">
+           <script>
+             const t = document.getElementById("t");
+             const out = [];
+             out.push(t.selectionStart, t.selectionEnd);
+             t.setSelectionRange(0, 5);
+             out.push(t.selectionStart, t.selectionEnd, t.selectionDirection);
+             t.setRangeText("HI");
+             out.push(t.value);
+             t.select();
+             out.push(t.selectionEnd);
+             out.push(String(document.getElementById("n").selectionStart));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("11|11|0|5|none|HI world|8|null"),
+        "text selection is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn an_empty_input_reads_as_empty_rather_than_as_a_space() {
+    // blitz seeds a laid-out input's editor with a single space, and the value
+    // getter applied the whitespace-is-unseeded rule to `<textarea>` only — so
+    // `if (!input.value)` was **false** for an empty field. Every page and
+    // every agent testing a form for emptiness got the wrong answer, and
+    // `required` could never fire.
+    let (text, console) = scripted_text(
+        r#"<form><input id="a" required></form>
+           <script>
+             const a = document.getElementById("a");
+             document.getElementById("out").textContent =
+               [JSON.stringify(a.value), a.value.length, a.validity.valueMissing].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains(r#"""|0|true"#),
+        "an empty input does not read as empty:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_clone_keeps_every_attribute_and_a_control_keeps_its_value() {
+    // `cloneNode` copied `class` and `style` and nothing else, so a clone lost
+    // its id, its href, its data-* and every hook a page had put on it. The
+    // cloning steps a form control carries were missing with them.
+    let (text, console) = scripted_text(
+        r#"<a id="src" href="/x" data-k="v" class="c" title="t">link</a>
+           <script>
+             const src = document.getElementById("src");
+             const copy = src.cloneNode(true);
+             const input = document.createElement("input");
+             input.value = "typed";
+             const inputCopy = input.cloneNode(true);
+             document.getElementById("out").textContent = [
+               copy.getAttribute("id"), copy.getAttribute("href"),
+               copy.getAttribute("data-k"), copy.className, copy.title,
+               inputCopy.value,
+             ].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("src|/x|v|c|t|typed"),
+        "cloneNode loses attributes or control state:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_disabled_control_dispatches_no_click() {
+    // `click()` on a disabled button fired a click event, so a page that
+    // disables a control to stop it being used still saw it used — with the
+    // form in whatever state the disabling was meant to protect.
+    let (text, console) = scripted_text(
+        r#"<button id="b" disabled>go</button><button id="ok">go</button>
+           <script>
+             let n = 0;
+             for (const id of ["b", "ok"]) {
+               document.getElementById(id).addEventListener("click", () => n++);
+             }
+             document.getElementById("b").click();
+             const afterDisabled = n;
+             document.getElementById("ok").click();
+             document.getElementById("out").textContent = afterDisabled + "|" + n;
+           </script>"#,
+    );
+    assert!(
+        text.contains("0|1"),
+        "a disabled control still dispatched:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_numeric_input_steps_and_reports_a_number_or_nan() {
+    // NaN rather than `undefined` for a type with no numeric form is the
+    // distinction `input-valueasnumber` checks on nearly every line:
+    // `undefined` says "this engine lacks the property", NaN says "this
+    // control holds no number".
+    let (text, console) = scripted_text(
+        r#"<input id="n" type="number" value="7" step="2">
+           <input id="t" type="text" value="7">
+           <input id="d" type="date" value="2020-01-02">
+           <script>
+             const g = (id) => document.getElementById(id);
+             const out = [];
+             out.push(g("n").valueAsNumber);
+             g("n").stepUp();
+             out.push(g("n").value);
+             g("n").stepDown(2);
+             out.push(g("n").value);
+             out.push(Number.isNaN(g("t").valueAsNumber));
+             out.push(g("d").valueAsDate.toISOString().slice(0, 10));
+             try { g("t").stepUp(); out.push("stepped"); }
+             catch (e) { out.push(e.name); }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("7|9|5|true|2020-01-02|InvalidStateError"),
+        "numeric input APIs are wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_token_list_replaces_indexes_and_refuses_a_token_it_cannot_hold() {
+    // Four gaps in one type. `replace` was absent (262 corpus asks), indexed
+    // access answered undefined, and the two validations were missing — so
+    // `classList.add("")` wrote a trailing space and `classList.add("a b")`
+    // wrote a token that read back as *two*, which meant a class a page added
+    // could not be removed again.
+    let (text, console) = scripted_text(
+        r#"<div id="d" class="a b c"></div>
+           <script>
+             const cl = document.getElementById("d").classList;
+             const out = [];
+             out.push(cl[0], String(cl[9]), cl.length);
+             out.push(cl.replace("b", "z"), cl.value, cl.replace("q", "w"));
+             for (const bad of ["", "x y"]) {
+               try { cl.add(bad); out.push("accepted"); }
+               catch (e) { out.push(e.name); }
+             }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("a|undefined|3|true|a z c|false|SyntaxError|InvalidCharacterError"),
+        "DOMTokenList is incomplete:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn create_element_ns_refuses_a_name_it_cannot_hold() {
+    // It accepted anything and returned an element, which is why
+    // `dom/nodes/Document-createElementNS.html` scored 1 of 596: the file is
+    // almost entirely a sweep of names that must be rejected.
+    //
+    // The two errors are different questions and pages catch them separately:
+    // `InvalidCharacterError` is "that is not a name", `NamespaceError` is
+    // "that name and that namespace may not go together".
+    let (text, console) = scripted_text(
+        r#"<script>
+             const NS = "http://www.w3.org/1999/xhtml";
+             const out = [];
+             const attempt = (ns, name) => {
+               try { return document.createElementNS(ns, name).tagName ? "ok" : "ok"; }
+               catch (e) { return e.name; }
+             };
+             out.push(attempt(NS, "div"));
+             out.push(attempt(NS, ""));
+             out.push(attempt(NS, "1bad"));
+             out.push(attempt(NS, "a b"));
+             out.push(attempt(NS, "a:b:c"));
+             out.push(attempt(null, "p:div"));
+             out.push(attempt(NS, "xml:div"));
+             out.push(attempt(NS, "xmlns"));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains(
+            "ok|InvalidCharacterError|InvalidCharacterError|InvalidCharacterError|InvalidCharacterError|NamespaceError|NamespaceError|NamespaceError"
+        ),
+        "createElementNS does not validate:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_popover_opens_closes_and_says_why_it_cannot() {
+    // The largest self-contained feature that was missing: `popover` reflected
+    // and nothing acted on it, so 3,846 subtests failed against 20 passing.
+    let (text, console) = scripted_text(
+        r#"<div id="pop" popover>hi</div><div id="plain">no</div>
+           <script>
+             const p = document.getElementById("pop");
+             const out = [];
+             out.push(String(p.popover));
+             out.push(String(document.getElementById("plain").popover));
+             p.showPopover();
+             out.push(p.matches("[popover]"));
+             try { p.showPopover(); out.push("second-show-allowed"); }
+             catch (e) { out.push(e.name); }
+             p.hidePopover();
+             try { p.hidePopover(); out.push("second-hide-allowed"); }
+             catch (e) { out.push(e.name); }
+             try { document.getElementById("plain").showPopover(); out.push("no-attr-allowed"); }
+             catch (e) { out.push(e.name); }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("auto|null|true|InvalidStateError|InvalidStateError|NotSupportedError"),
+        "popover state machine is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_popover_fires_beforetoggle_then_toggle_and_a_veto_stops_it() {
+    // The event pair is the half a page scripts against, and `beforetoggle`
+    // being cancelable *only* on the way open is the asymmetry that lets a page
+    // veto a show and never a hide.
+    let (text, console) = scripted_text(
+        r#"<div id="pop" popover>hi</div>
+           <script>
+             const p = document.getElementById("pop");
+             const seen = [];
+             p.addEventListener("beforetoggle", (e) => seen.push("before:" + e.oldState + ">" + e.newState));
+             p.addEventListener("toggle", (e) => seen.push("toggle:" + e.oldState + ">" + e.newState));
+             p.showPopover();
+             p.hidePopover();
+             p.addEventListener("beforetoggle", (e) => e.preventDefault(), { once: true });
+             p.showPopover();
+             seen.push("openAfterVeto:" + p.matches("[popover]"));
+             document.getElementById("out").textContent = seen.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("before:closed>open|toggle:closed>open|before:open>closed|toggle:open>closed"),
+        "the toggle event sequence is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_popovertarget_button_toggles_its_popover_unless_the_click_is_cancelled() {
+    // The invoker, and why it runs *after* the click rather than inside the
+    // dispatch: a handler calling `preventDefault()` suppresses the default
+    // activation behaviour, exactly as it does in a browser.
+    let (text, console) = scripted_text(
+        r#"<button id="b" popovertarget="pop">open</button>
+           <div id="pop" popover>hi</div>
+           <button id="c" popovertarget="pop">also</button>
+           <script>
+             const b = document.getElementById("b");
+             const pop = document.getElementById("pop");
+             const out = [];
+             out.push(b.popoverTargetElement === pop);
+             out.push(b.popoverTargetAction);
+             let open = 0;
+             pop.addEventListener("toggle", (e) => { if (e.newState === "open") open++; });
+             b.click();
+             out.push("opened:" + open);
+             b.click();
+             out.push("afterSecond:" + open);
+             document.getElementById("c").addEventListener("click", (e) => e.preventDefault());
+             document.getElementById("c").click();
+             out.push("afterCancelled:" + open);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|toggle|opened:1|afterSecond:1|afterCancelled:1"),
+        "the invoker did not behave:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_dialog_opens_closes_and_carries_its_return_value() {
+    // `open` reflected and nothing could change it, so a dialog could be
+    // described and never opened.
+    let (text, console) = scripted_text(
+        r#"<dialog id="d">hi</dialog>
+           <script>
+             const d = document.getElementById("d");
+             const out = [];
+             let closed = 0;
+             d.addEventListener("close", () => closed++);
+             out.push(d.open);
+             d.showModal();
+             out.push(d.open);
+             try { d.showModal(); out.push("reopen-allowed"); }
+             catch (e) { out.push(e.name); }
+             d.close("done");
+             out.push(d.open, d.returnValue, "close:" + closed);
+             d.close();
+             out.push("closeAgain:" + closed);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("false|true|InvalidStateError|false|done|close:1|closeAgain:1"),
+        "the dialog state machine is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn an_interface_object_answers_what_a_value_is_rather_than_throwing() {
+    // §B8.4 refuses a name that exists and answers wrongly, and that rule is
+    // about *feature detection*. This is the other case: a page writing
+    // `nodes instanceof NodeList` is asking what it holds, and the honest
+    // answers are yes and no — never `ReferenceError`, which is what 47
+    // interface names used to be.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const out = [
+               document instanceof Document,
+               document.querySelectorAll("p") instanceof NodeList,
+               [] instanceof NodeList,
+               localStorage instanceof Storage,
+               ({}) instanceof Storage,
+               customElements instanceof CustomElementRegistry,
+             ].join(",");
+             document.getElementById("out").textContent = out;
+           </script>"#,
+    );
+    assert!(
+        text.contains("true,true,false,true,false,true"),
+        "brand checks answered wrongly:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn an_interface_object_that_is_not_constructible_says_so() {
+    // The half that keeps this from being a stub: `new NodeList()` throws in a
+    // browser, and it throws here. A brand that quietly produced *something*
+    // would be the plausible lie the missing-API stubs were deleted for.
+    let (text, console) = scripted_text(
+        r#"<script>
+             let threw = false;
+             try { new NodeList(); } catch (e) { threw = true; }
+             document.getElementById("out").textContent =
+               threw + "|" + NodeList.name;
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|NodeList"),
+        "an interface object was constructible, or lost its name:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn interface_objects_are_not_enumerable_on_the_global() {
+    // WebIDL §3.7: an interface object is `enumerable: false`. Every one of
+    // ours was enumerable, because `Object.assign` creates enumerable data
+    // properties — and `idlharness` checks this first, per interface, before
+    // examining anything about the interface itself.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const d = Object.getOwnPropertyDescriptor(globalThis, "Element");
+             const p = Object.getOwnPropertyDescriptor(NodeList, "prototype");
+             document.getElementById("out").textContent =
+               d.enumerable + "|" + d.writable + "|" + p.writable;
+           </script>"#,
+    );
+    assert!(
+        text.contains("false|true|false"),
+        "interface object shape is wrong:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn a_comment_is_character_data() {
+    // It was not, and the cause was a duplicate key: the globals literal bound
+    // `CharacterData` twice, and the later `CharacterData: Text` won — so the
+    // name resolved to `Text` and `comment instanceof CharacterData` was false
+    // for a class the comment genuinely extends.
+    let (text, console) = scripted_text(
+        r#"<script>
+             document.getElementById("out").textContent = [
+               document.createComment("c") instanceof CharacterData,
+               document.createTextNode("t") instanceof CharacterData,
+               document.getElementById("out") instanceof CharacterData,
+               CharacterData === Text,
+             ].join(",");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true,true,false,false"),
+        "CharacterData is not the class it names:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn option_value_is_the_attribute_and_survives_being_set() {
+    // `option.value = x` went to the *editor* path, which an option does not
+    // have, so it landed in a field the option's own getter never reads and
+    // the write was silently lost — taking `new Option(label, value)` with it,
+    // which is most of why that constructor is still written.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const o = new Option("Label", "v1");
+             const plain = document.createElement("option");
+             plain.textContent = "T";
+             const before = plain.value;
+             plain.value = "v2";
+             document.getElementById("out").textContent =
+               [o.tagName, o.value, before, plain.value, plain.getAttribute("value")].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("OPTION|v1|T|v2|v2"),
+        "option value did not round-trip:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn fetch_resolves_a_response_a_page_can_recognise() {
+    // It resolved an object literal with the right fields, which reads
+    // identically until something asks what it is: `Response` was not a global
+    // at all, so `new Response(...)` was a ReferenceError and
+    // `res instanceof Response` could not be written.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const r = new Response("body", { status: 404 });
+             document.getElementById("out").textContent =
+               [r.status, r.ok, r instanceof Response, Response.error().type].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("404|false|true|error"),
+        "Response is not a usable class:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn get_html_is_inner_html_and_refuses_to_invent_a_shadow_serialisation() {
+    // The half this engine can answer, answered. The other half is recorded
+    // rather than faked: a shadow root here is a view of its host, so the
+    // `<template shadowrootmode>` string a browser produces cannot be
+    // reconstructed, and emitting the flattened content under that header
+    // would be markup describing a tree that never existed.
+    let (text, console) = scripted_text(
+        r#"<div id="host"><span>light</span></div>
+           <script>
+             const host = document.getElementById("host");
+             document.getElementById("out").textContent = [
+               host.getHTML() === host.innerHTML,
+               host.getHTML({ serializableShadowRoots: false }) === host.innerHTML,
+               host.getHTML({ serializableShadowRoots: true }) === host.innerHTML,
+             ].join(",");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true,true,true"),
+        "getHTML does not agree with innerHTML:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn an_attribute_is_found_by_the_name_the_idl_spells_it_with() {
+    // DOM §4.9: an element in the HTML namespace lowercases the qualified name
+    // before looking an attribute up. This engine lowercased on *write* and not
+    // on read, so `setAttribute("accessKey", v)` stored `accesskey` and
+    // `getAttribute("accessKey")` answered null for an attribute that was
+    // plainly there.
+    //
+    // It cost about 15,000 WPT subtests, which is the largest single cluster in
+    // the suite: the reflection harness passes the IDL name straight through
+    // (`domName = idlName`), so every camelCase reflected attribute failed on
+    // every element in all eleven `reflection-*.html` files.
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p><script>
+             const e = document.createElement("picture");
+             e.setAttribute("accessKey", "7");
+             const answers = [
+               e.getAttribute("accessKey"),
+               e.getAttribute("accesskey"),
+               String(e.hasAttribute("accessKey")),
+               e.attributes[0].name,
+             ];
+             document.getElementById("out").textContent = answers.join("|");
+           </script></body></html>"#,
+        &url::Url::parse("https://example.test/").unwrap(),
+    );
+    let text = page.snapshot().render();
+    assert!(
+        text.contains("7|7|true|accesskey"),
+        "read and write disagree about case:\n{text}\nconsole: {:?}",
+        page.console()
+    );
+}
+
+#[test]
+fn an_svg_attribute_keeps_the_case_the_parser_gave_it() {
+    // The other half, and the reason the fix is namespace-conditional rather
+    // than a blanket `to_lowercase`. The HTML parser case-corrects SVG
+    // attributes, so an `<svg>` really does hold one named `viewBox` —
+    // lowercasing there would trade one silent wrong answer for another.
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        r#"<html><body><svg id="s" viewBox="0 0 10 10"></svg><p id="out">before</p><script>
+             const s = document.getElementById("s");
+             s.setAttribute("preserveAspectRatio", "none");
+             document.getElementById("out").textContent = [
+               s.getAttribute("viewBox"),
+               String(s.getAttribute("viewbox")),
+               s.getAttribute("preserveAspectRatio"),
+             ].join("|");
+           </script></body></html>"#,
+        &url::Url::parse("https://example.test/").unwrap(),
+    );
+    let text = page.snapshot().render();
+    assert!(
+        text.contains("0 0 10 10|null|none"),
+        "SVG attribute case was not preserved:\n{text}\nconsole: {:?}",
+        page.console()
+    );
+}
+
+#[test]
+fn an_import_map_resolves_a_bare_specifier_the_page_named() {
+    // The other half of the test above, and the distinction the whole feature
+    // rests on: the refusal is about the *engine* choosing a destination. With
+    // a map the page chose it, in markup the parser already read, so the fetch
+    // happens and is recorded like any other subresource.
+    let (port, asked) = module_server(vec![
+        (
+            "/entry.js",
+            "import { mark } from 'toolkit';\
+             document.querySelector('#out').textContent = mark;",
+        ),
+        ("/vendor/toolkit.js", "export const mark = 'mapped';"),
+    ]);
+
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p>
+             <script type="importmap">
+               {"imports": {"toolkit": "/vendor/toolkit.js"}}
+             </script>
+             <script type="module" src="/entry.js"></script>
+           </body></html>"#,
+        &base,
+    );
+
+    assert!(
+        page.snapshot().render().contains("mapped"),
+        "the mapped module evaluated:\n{}\nconsole: {:?}",
+        page.snapshot().render(),
+        page.console()
+    );
+    // Exactly what the page named, and nothing else.
+    let mut paths = asked.lock().unwrap().clone();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec!["/entry.js".to_string(), "/vendor/toolkit.js".to_string()],
+        "{paths:?}"
+    );
+}
+
+#[test]
+fn an_import_map_is_not_executed_as_script() {
+    // It is a declaration, not code. Running it would parse JSON as JavaScript
+    // and fill the console with a syntax error blaming the page for something
+    // it never asked for — the same trap `type="application/json"` blocks.
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        r#"<html><body><p>here</p>
+             <script type="importmap">{"imports": {"a": "/a.js"}}</script>
+           </body></html>"#,
+        &url::Url::parse("https://example.test/").unwrap(),
+    );
+    assert!(
+        page.console().is_empty(),
+        "a map on its own says nothing: {:?}",
+        page.console()
+    );
+    assert!(page.snapshot().render().contains("here"));
+}
+
+#[test]
+fn a_map_that_does_not_mention_a_specifier_still_refuses_it() {
+    // The property that keeps the refusal meaningful: a map answers only what
+    // the page wrote in it. A loader that filled the gaps would be the
+    // CDN-inventing one under a new name.
+    let (port, asked) = module_server(vec![("/entry.js", "import _ from 'lodash';")]);
+
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html(
+        r#"<html><body>
+             <script type="importmap">{"imports": {"other": "/other.js"}}</script>
+             <script type="module" src="/entry.js"></script>
+           </body></html>"#,
+        &base,
+    );
+
+    assert!(
+        page.console().iter().any(|l| l.text.contains("lodash")),
+        "{:?}",
+        page.console()
+    );
+    let paths = asked.lock().unwrap().clone();
+    assert_eq!(paths, vec!["/entry.js".to_string()], "{paths:?}");
+}
+
+#[test]
+fn a_malformed_import_map_is_reported_and_ignored_whole() {
+    // Half a map resolves half a page's imports and leaves the rest failing
+    // for a reason nobody can see.
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p>
+             <script type="importmap">{ nope </script>
+             <script>document.querySelector('#out').textContent = 'ran';</script>
+           </body></html>"#,
+        &url::Url::parse("https://example.test/").unwrap(),
+    );
+    assert!(
+        page.console().iter().any(|l| l.text.contains("import map ignored")),
+        "the page is told: {:?}",
+        page.console()
+    );
+    // And the rest of the page is unaffected.
+    assert!(page.snapshot().render().contains("ran"), "{}", page.snapshot().render());
+}
+
 #[test]
 fn an_inline_module_resolves_imports_against_the_page() {
     let (port, _asked) = module_server(vec![(
@@ -3502,20 +4340,56 @@ fn a_component_whose_constructor_throws_does_not_take_the_page_with_it() {
 }
 
 #[test]
-fn a_custom_element_name_without_a_dash_is_refused() {
+fn an_invalid_custom_element_name_is_refused_by_all_eight_rules() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
 
-    // The spec's rule, and a real one: a name without a dash could collide with
-    // an element the parser already knows.
-    assert_eq!(
+    // HTML §4.13's name rules, of which this engine enforced one — the dash.
+    // The rest are not decoration: the name space is shared with the parser, so
+    // a name a browser refuses has to be refused here too, or a page gets a
+    // component in one engine and an unknown element in the other.
+    //
+    // A `DOMException` named `SyntaxError`, not a plain `SyntaxError`: that is
+    // what the spec throws and what `assert_throws_dom` checks. This assertion
+    // used to read `e.constructor.name`, which pinned the older, wrong shape.
+    let refused = |script: &mut crate::script::Script, name: &str| {
         script
-            .eval_value(
-                "(() => { try { customElements.define('card', class extends HTMLElement {}) } \
-                  catch (e) { return e.constructor.name } })()"
-            )
-            .unwrap(),
-        "SyntaxError"
-    );
+            .eval_value(&format!(
+                "(() => {{ try {{ customElements.define({name:?}, class extends HTMLElement {{}}) }} \
+                  catch (e) {{ return (e instanceof DOMException) + ':' + e.name }} \
+                  return 'accepted' }})()"
+            ))
+            .unwrap()
+    };
+
+    for name in [
+        "card",            // no dash
+        "",                // empty
+        "-leading",        // does not start with an ASCII lower alpha
+        "1-digit",         // ditto
+        "My-Element",      // uppercase
+        "font-face",       // reserved: SVG owns it
+        "annotation-xml",  // reserved: MathML owns it
+        "missing-glyph",   // reserved
+        "my element",      // space is not a name character
+    ] {
+        assert_eq!(
+            refused(&mut script, name),
+            "true:SyntaxError",
+            "`{name}` should have been refused as a custom element name"
+        );
+    }
+
+    // And the ones that are legal stay legal, including the awkward middle
+    // ground: a reserved *prefix* is fine, and digits after the first
+    // character are fine.
+    for name in ["ok-one", "font-faces-x", "x1-y2", "my-élement"] {
+        assert_eq!(
+            refused(&mut script, name),
+            "accepted",
+            "`{name}` is a valid custom element name and was refused"
+        );
+    }
+
     assert_eq!(
         script
             .eval_value(

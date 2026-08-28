@@ -52,8 +52,15 @@ h5i browser open http://localhost:3000   # -> br_7k2xqa, and it holds the page
 h5i browser snapshot  # the outline, with @refs
 h5i browser navigate /docs      # relative, like a click
 h5i browser click @e1
+h5i browser reload    # re-fetch where the session is now, after any redirect
 h5i browser status
 ```
+
+After acting, `h5i browser screenshot` writes a PNG of the page into the
+session's artifacts directory and prints the path. It is the only way to *see*
+the result of a click: the live view is the human's channel, not an answer to a
+verb. Reach for it when a snapshot says something surprising and you want to
+know whether the page really looks like that.
 
 The engine has its own CLI under `h5i __engine`, which is what `h5i browser`
 sits in front of. **Use `h5i browser`.** It is the surface that knows about
@@ -73,6 +80,13 @@ h5i browser requests  # what it fetched, and what was refused
 `requests` is the one no other engine can answer completely: this engine *is*
 the HTTP client, so the log is the decision record written before the bytes
 moved rather than an observation made beside the network.
+
+Carrying a login forward: a session mirrors its cookie jar into its own
+directory while it runs, so `h5i browser open <url> --restore <old-id>` starts a
+new session already signed in. A human logs in once at the live view (see
+"Handing the page to a human for a login") and later sessions inherit it. No verb ever returns a cookie
+value; the jar is handed to the next engine, never to you. A session that left
+no jar is refused by name rather than starting silently logged out.
 
 `h5i browser audit` is that log merged with the verbs you asked for, the moments
 a human took the controls, and how the session ended, in one ordered timeline.
@@ -202,22 +216,48 @@ The value is substituted on the way into the field and the reply echoes the
 placeholder, so it never enters your context. A password field reports a mask
 rather than what it holds, so a snapshot cannot read one back either.
 
-Cookies are held for the session and are **host-only** — a login at
-`example.com` does not carry to `www.example.com`, so if a site does that, use
-the Chromium engine. You cannot read a cookie's value; `session status` reports
+Cookies are held for the session, and `Domain=` is honoured over a compiled-in
+public suffix list — so a login at `example.com` that widens to the domain does
+carry to `www.example.com`. You cannot read a cookie's value; `status` reports
 only how many are held. Do not ask for one, and do not expect a password you
 typed to be echoed back.
 
+### Handing the page to a human for a login
+
+`h5i browser login` gives the wheel to the person at the live view, and
+**refuses every verb that reads the page** until `login --off`. That includes
+`screenshot`, and it is the strongest case for the rule: a password is pixels
+before it is anything else. `status` and `login` still answer, because a mode
+you cannot see or leave is a trap.
+
+The refusal covers the documented path, not an agent that goes looking: the live
+view keeps streaming, because the human typing has to see what they type, and
+the viewer socket is inside the box where there is no privilege boundary.
+
+Afterwards the session is signed in and you can see that it is without being
+able to read the cookie that says so. `--restore` carries it to the next
+session.
+
 Live connections work: `WebSocket` and `EventSource` are real, and every frame
 is receipted like any other traffic. A dev server's hot-reload channel is the
-case they are for. `wss://` is not built, and a page holding a live connection
+case they are for. `wss://` works too. A page holding a live connection
 is the one page here that is not deterministic — `snapshot` reports
 `open_sockets` when that is true.
 
-Not available: file uploads (dropped rather than read), iframes, and anything
-`capabilities` reports as absent. A page that needed a missing API says so by
-name in the snapshot's notes; take that as a routing signal to Chromium rather
-than retrying here.
+Frames are loaded **as content**: each frame's document is fetched through the
+policy (initiator `frame` in the request log) and appears in the outline
+flattened, so a form inside an iframe mints refs you can type into and click
+like any other. What a frame does not get is a life of its own — its scripts
+never run, its styles do not apply, and `contentDocument` answers null — so a
+frame whose content is built by its own JavaScript (many payment widgets)
+arrives empty; the snapshot's notes say which frames loaded and which were
+refused. `window.open` is refused with the recovery in the message: open the
+URL in another session and drive both.
+
+Not available: file uploads (dropped rather than read), frame scripts (above),
+and anything `capabilities` reports as absent. A page that needed a missing API
+says so by name in the snapshot's notes; take that as a routing signal to
+Chromium rather than retrying here.
 
 ## Driving Chromium
 

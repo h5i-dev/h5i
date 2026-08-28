@@ -43,11 +43,36 @@
 //! `b.example.com` are one site — rather than on bare host equality, which
 //! would have called every subdomain a third party.
 //!
-//! # In memory, never on disk
+//! # In memory unless h5i asks for a file, and it has to ask by name
 //!
-//! The jar lives in the process and dies with it. Nothing here writes a
-//! credential to a filesystem the box shares with anything, and "restart the
-//! session" is a complete logout.
+//! The jar lives in the process and dies with it. That was the whole story
+//! until `h5i browser open --restore` needed a jar to inherit and there was
+//! none to inherit — the flag copied a `cookies.json` that nothing wrote, so a
+//! login could never outlive the session that performed it and the help text
+//! said otherwise (ROADMAP §B19.6).
+//!
+//! So there is now exactly one way to put this on a disk: [`Jar::persist_to`],
+//! called by the engine only when h5i passed `--cookie-jar`, with a path h5i
+//! chose inside the session's own directory. Four properties keep that from
+//! being a hole:
+//!
+//! * **Nothing defaults it on.** No path, no file, and `open`/`read` never pass
+//!   one — a one-shot read is still a complete logout at exit.
+//! * **The file is owner-only** (`0600` on Unix), written through a temporary
+//!   file and renamed, so a reader never sees half a jar and a crash never
+//!   leaves a truncated one.
+//! * **It is written when it changes, not at shutdown.** A session that is
+//!   SIGKILLed — which is how `close` and `service_stop` end one — would lose a
+//!   shutdown hook entirely, and a jar that survives only a polite exit is a
+//!   jar that is missing exactly when it is needed.
+//! * **It stays unreadable to the agent.** No verb returns a cookie value, and
+//!   this adds none. The file is for the *next session*, reached through
+//!   `--restore`, which hands it back to another engine and never to a model.
+//!
+//! What is written is what the jar holds, and [`Jar::retain_origin`] means that
+//! is one origin's cookies rather than a browsing history. That is a narrower
+//! artifact than a browser's cookie store and it is the right size for what it
+//! is for.
 //!
 //! # Never readable by the agent
 //!
@@ -103,8 +128,13 @@ struct Cookie {
     host_only: bool,
     same_site: SameSite,
     path: String,
-    /// `None` is a session cookie, which in this engine means "until the
-    /// process exits" — the same thing, since nothing is persisted.
+    /// `None` is a session cookie: it lives until the process exits.
+    ///
+    /// It used to be true that this was "the same thing" as a browser's rule,
+    /// because nothing was persisted. With [`Jar::persist_to`] it is not: a
+    /// session cookie *is* written to the jar file, on purpose, because
+    /// `--restore` exists to carry a login forward and the cookie that says
+    /// "signed in" is usually this one. See [`StoredCookie::expires`].
     expires: Option<SystemTime>,
     secure: bool,
     /// Withheld from `document.cookie`, as a browser withholds it.
@@ -146,11 +176,194 @@ enum Setter {
 #[derive(Default)]
 pub struct Jar {
     cookies: Mutex<Vec<Cookie>>,
+    /// Where the jar is mirrored, when h5i named a file. See the module header.
+    file: Mutex<Option<std::path::PathBuf>>,
 }
+
+/// One cookie as it appears in the file.
+///
+/// A mirror of [`Cookie`] rather than a derive on it, so the on-disk shape is a
+/// deliberate thing that changes when someone edits *this* struct. A derive
+/// would make the format a side effect of a field rename, and this file is read
+/// back by a later process that may be a different build.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredCookie {
+    name: String,
+    value: String,
+    host: String,
+    host_only: bool,
+    /// `"strict"`, `"lax"` or `"none"`.
+    same_site: String,
+    path: String,
+    /// Unix seconds. Absent is a session cookie.
+    ///
+    /// Persisted rather than dropped, which is a deliberate difference from a
+    /// browser's disk jar. A browser discards session cookies on exit because
+    /// the user is closing a window; this file exists so `--restore` can carry
+    /// a login forward, and the cookie that says "you are signed in" is very
+    /// often exactly this one. Dropping it would make the feature not work
+    /// while looking like it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires: Option<u64>,
+    secure: bool,
+    http_only: bool,
+}
+
+/// The file itself.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct JarFile {
+    /// Bumped when the shape changes. A file from the future is refused rather
+    /// than half-read: a jar read wrongly is a login that half-works, which is
+    /// worse to debug than one that plainly did not.
+    version: u32,
+    cookies: Vec<StoredCookie>,
+}
+
+/// The only version this build writes and the only one it reads.
+const JAR_VERSION: u32 = 1;
 
 impl Jar {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Mirror this jar to `path` from now on, and read whatever is there.
+    ///
+    /// Called by the engine only when h5i passed `--cookie-jar`. Returns how
+    /// many cookies were loaded, or an error describing a file that could not
+    /// be read as a jar — never silence, because a `--restore` that silently
+    /// loaded nothing is the defect this whole feature exists to fix.
+    ///
+    /// A missing file is not an error: it is the first run.
+    pub fn persist_to(&self, path: &std::path::Path) -> Result<usize, String> {
+        let loaded = match std::fs::read_to_string(path) {
+            Ok(text) => self.load_json(&text)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(format!("could not read `{}`: {e}", path.display())),
+        };
+        if let Ok(mut slot) = self.file.lock() {
+            *slot = Some(path.to_path_buf());
+        }
+        // Write once now, so the file exists from the moment the session does.
+        // `--restore` asks "did this session leave a jar", and a session that
+        // ended before storing anything should answer "yes, an empty one"
+        // rather than look like a session that never had persistence on.
+        self.flush();
+        Ok(loaded)
+    }
+
+    /// Merge a jar file's contents into this jar, dropping what has expired.
+    fn load_json(&self, text: &str) -> Result<usize, String> {
+        if text.trim().is_empty() {
+            return Ok(0);
+        }
+        let parsed: JarFile =
+            serde_json::from_str(text).map_err(|e| format!("this is not a jar file: {e}"))?;
+        if parsed.version != JAR_VERSION {
+            return Err(format!(
+                "jar file version {} was written by a different build of this engine; \
+                 this one reads version {JAR_VERSION}",
+                parsed.version
+            ));
+        }
+        let now = SystemTime::now();
+        let Ok(mut jar) = self.cookies.lock() else {
+            return Err("the cookie jar is poisoned".to_string());
+        };
+        let mut loaded = 0;
+        for stored in parsed.cookies {
+            let cookie = Cookie {
+                name: stored.name,
+                value: stored.value,
+                host: stored.host.to_ascii_lowercase(),
+                host_only: stored.host_only,
+                same_site: match stored.same_site.as_str() {
+                    "strict" => SameSite::Strict,
+                    "none" => SameSite::None,
+                    // Anything unrecognised reads as the default a server that
+                    // said nothing would have got. Narrower than `None`, so an
+                    // unknown value cannot widen a cookie's reach.
+                    _ => SameSite::Lax,
+                },
+                path: stored.path,
+                expires: stored
+                    .expires
+                    .map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs)),
+                secure: stored.secure,
+                http_only: stored.http_only,
+            };
+            if cookie.is_expired(now) {
+                continue;
+            }
+            // Same identity rule the store path uses, so a reload does not
+            // duplicate a cookie the jar already holds.
+            jar.retain(|held| {
+                !(held.name == cookie.name
+                    && held.host == cookie.host
+                    && held.path == cookie.path)
+            });
+            jar.push(cookie);
+            loaded += 1;
+        }
+        Ok(loaded)
+    }
+
+    /// The jar as the file holds it. Public for the tests that check the shape.
+    fn to_json(&self) -> String {
+        let now = SystemTime::now();
+        let cookies = match self.cookies.lock() {
+            Ok(jar) => jar
+                .iter()
+                .filter(|c| !c.is_expired(now))
+                .map(|c| StoredCookie {
+                    name: c.name.clone(),
+                    value: c.value.clone(),
+                    host: c.host.clone(),
+                    host_only: c.host_only,
+                    same_site: match c.same_site {
+                        SameSite::Strict => "strict",
+                        SameSite::Lax => "lax",
+                        SameSite::None => "none",
+                    }
+                    .to_string(),
+                    path: c.path.clone(),
+                    expires: c.expires.and_then(|at| {
+                        at.duration_since(SystemTime::UNIX_EPOCH)
+                            .ok()
+                            .map(|d| d.as_secs())
+                    }),
+                    secure: c.secure,
+                    http_only: c.http_only,
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        serde_json::to_string_pretty(&JarFile {
+            version: JAR_VERSION,
+            cookies,
+        })
+        .unwrap_or_else(|_| String::from("{}"))
+    }
+
+    /// Write the jar out, if h5i named a file.
+    ///
+    /// Silent on failure and deliberately so: a jar that cannot be mirrored is
+    /// a session that will not be restorable, which is a loss of convenience,
+    /// and turning it into a failed navigation would trade the page an agent
+    /// asked for against a file nobody has asked for yet. The session's own
+    /// receipts are the fail-closed record; this is not one.
+    fn flush(&self) {
+        let Ok(slot) = self.file.lock() else { return };
+        let Some(path) = slot.as_ref() else { return };
+        let text = self.to_json();
+        // Temp-then-rename, so a reader never sees half a jar and a crash
+        // mid-write never leaves a truncated one where a whole one was.
+        let temporary = path.with_extension("json.tmp");
+        if std::fs::write(&temporary, text.as_bytes()).is_err() {
+            return;
+        }
+        restrict_to_owner(&temporary);
+        let _ = std::fs::rename(&temporary, path);
     }
 
     /// The `Cookie` header for this request, and how many it carries.
@@ -298,6 +511,11 @@ impl Jar {
             jar.push(cookie);
             stored += 1;
         }
+        // Dropped before the write: `flush` takes the same lock to serialise.
+        drop(jar);
+        if stored > 0 {
+            self.flush();
+        }
         stored
     }
 
@@ -328,6 +546,9 @@ impl Jar {
         if let Ok(mut jar) = self.cookies.lock() {
             jar.clear();
         }
+        // A logout has to reach the file too, or `--restore` would hand the
+        // next session a credential this one deliberately threw away.
+        self.flush();
     }
 
     /// Drop everything when a navigation leaves the origin that set it.
@@ -355,8 +576,31 @@ impl Jar {
         };
         let before = jar.len();
         jar.retain(|cookie| cookie.host == host);
-        before != jar.len()
+        let dropped = before != jar.len();
+        drop(jar);
+        if dropped {
+            self.flush();
+        }
+        dropped
     }
+}
+
+/// Make a file readable only by its owner.
+///
+/// The jar holds session credentials, so the default umask is not good enough:
+/// on a box whose `/tmp` is shared with the host (the `agent` profile does
+/// exactly this) a world-readable jar is a login anything on the machine can
+/// pick up. Best-effort on Unix and a no-op elsewhere, because Windows has no
+/// mode bits to set and pretending otherwise would be the more misleading of
+/// the two behaviours.
+fn restrict_to_owner(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// Loopback over http is still a first-party channel, and the dev server is
@@ -1094,5 +1338,164 @@ mod http_only_tests {
         let jar = Jar::new();
         jar.store(&url("https://app.example/"), ["sid=secret; HttpOnly"]);
         assert_eq!(jar.document_cookie(&url("https://app.example/")), "");
+    }
+}
+
+/// The jar as a file: what `--restore` reads and what `--cookie-jar` writes.
+///
+/// Its own module because the questions are different from the ones above.
+/// Those are about what a cookie *means*; these are about what survives a
+/// process boundary, which is where a jar can quietly undo a rule it was
+/// written beside.
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    fn url(text: &str) -> Url {
+        Url::parse(text).expect("test url")
+    }
+
+    // --- persistence (ROADMAP §B19.6, item 8) -----------------------------
+
+    #[test]
+    fn a_login_survives_into_the_next_session() {
+        // The whole feature, in one assertion. Before this, `--restore` copied
+        // a file nothing wrote, so the second jar came up empty and the flag
+        // was a silent no-op.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cookies.json");
+        let site = url("https://app.example/");
+
+        let first = Jar::new();
+        first.persist_to(&path).expect("first jar");
+        first.store(&site, ["sid=s3cr3t; HttpOnly"]);
+        assert!(path.exists(), "storing a cookie writes the jar");
+
+        let second = Jar::new();
+        let loaded = second.persist_to(&path).expect("second jar");
+        assert_eq!(loaded, 1, "the next session inherits the login");
+        let (header, count) = second.header_for(&site).expect("the cookie is sent");
+        assert_eq!(count, 1);
+        assert_eq!(header, "sid=s3cr3t");
+    }
+
+    #[test]
+    fn http_only_survives_the_round_trip_and_stays_hidden_from_script() {
+        // If `HttpOnly` were lost on the way through the file, a restored
+        // session would hand page script the credential the original refused
+        // it — persistence quietly undoing the flag it was written beside.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cookies.json");
+        let site = url("https://app.example/");
+
+        let first = Jar::new();
+        first.persist_to(&path).expect("first");
+        first.store(&site, ["sid=s3cr3t; HttpOnly", "theme=dark"]);
+
+        let second = Jar::new();
+        second.persist_to(&path).expect("second");
+        assert_eq!(second.document_cookie(&site), "theme=dark");
+    }
+
+    #[test]
+    fn an_expired_cookie_is_not_restored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cookies.json");
+        let site = url("https://app.example/");
+
+        let first = Jar::new();
+        first.persist_to(&path).expect("first");
+        first.store(&site, ["gone=1; Max-Age=1", "stays=1"]);
+        // Rewrite the file with the first cookie already in the past, which is
+        // what a jar read back tomorrow looks like.
+        let text = std::fs::read_to_string(&path).expect("written");
+        let text = text.replace(
+            &format!("\"expires\": {}", now_secs() + 1),
+            "\"expires\": 1000",
+        );
+        std::fs::write(&path, text).expect("rewritten");
+
+        let second = Jar::new();
+        second.persist_to(&path).expect("second");
+        let (header, _) = second.header_for(&site).expect("something survives");
+        assert!(!header.contains("gone"), "expired cookie restored: {header}");
+        assert!(header.contains("stays"), "{header}");
+    }
+
+    #[test]
+    fn a_logout_reaches_the_file() {
+        // Otherwise `--restore` would hand the next session a credential this
+        // one deliberately threw away, which is worse than not persisting.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cookies.json");
+        let site = url("https://app.example/");
+
+        let jar = Jar::new();
+        jar.persist_to(&path).expect("jar");
+        jar.store(&site, ["sid=s3cr3t"]);
+        jar.clear();
+
+        let next = Jar::new();
+        assert_eq!(next.persist_to(&path).expect("next"), 0);
+    }
+
+    #[test]
+    fn nothing_is_written_unless_a_file_was_named() {
+        // The default, and the reason this is safe to have: `open` and `read`
+        // pass no path, so a one-shot fetch is still a complete logout.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let jar = Jar::new();
+        jar.store(&url("https://app.example/"), ["sid=s3cr3t"]);
+        assert_eq!(
+            std::fs::read_dir(dir.path()).expect("readable").count(),
+            0,
+            "a jar with no file must leave nothing behind"
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_jar_is_a_failure_rather_than_an_empty_start() {
+        // Starting silently logged-out is exactly the defect the feature
+        // removes, so a corrupt file must not look like a fresh session.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cookies.json");
+        std::fs::write(&path, "not json at all").expect("write");
+        assert!(Jar::new().persist_to(&path).is_err());
+
+        std::fs::write(&path, r#"{"version": 99, "cookies": []}"#).expect("write");
+        let refused = Jar::new().persist_to(&path).unwrap_err();
+        assert!(refused.contains("version"), "{refused}");
+    }
+
+    #[test]
+    fn a_missing_file_is_a_first_run_and_creates_one() {
+        // `--restore` asks "did this session leave a jar", so a session that
+        // stored nothing must leave an empty jar rather than no jar.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cookies.json");
+        assert_eq!(Jar::new().persist_to(&path).expect("first run"), 0);
+        assert!(path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_jar_is_readable_only_by_its_owner() {
+        // It holds session credentials, and the `agent` profile shares /tmp
+        // with the host, so the umask is not good enough.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cookies.json");
+        let jar = Jar::new();
+        jar.persist_to(&path).expect("jar");
+        jar.store(&url("https://app.example/"), ["sid=s3cr3t"]);
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode();
+        assert_eq!(mode & 0o077, 0, "group/other can read the jar: {mode:o}");
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs()
     }
 }

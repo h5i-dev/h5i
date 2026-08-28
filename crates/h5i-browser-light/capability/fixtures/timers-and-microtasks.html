@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>the settle, on a virtual clock</title>
+<!--
+  A chain of timers and microtasks that a wall-clock engine has to actually
+  wait out. This engine's settle runs on a *virtual* clock (§B15.10), which is
+  what makes a replay deterministic — so this fixture should finish in
+  milliseconds and its timing is worth watching for that reason as much as for
+  correctness.
+-->
+<p id="out">before</p>
+<script>
+  var seen = [];
+  Promise.resolve().then(function () { seen.push('microtask'); });
+  setTimeout(function () {
+    seen.push('t1');
+    setTimeout(function () {
+      seen.push('t2');
+      Promise.resolve().then(function () {
+        seen.push('after');
+        document.getElementById('out').textContent = seen.join('>');
+      });
+    }, 250);
+  }, 250);
+</script>

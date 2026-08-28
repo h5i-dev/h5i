@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>server markup, client hydration</title>
+<!--
+  The shape most production sites actually have, and the one where a wrong
+  answer is hardest to see: the markup is already correct before any script
+  runs, so an engine that hydrates nothing still *renders* the right thing.
+  The assertion therefore reads a value only hydration can produce.
+-->
+<div id="root"><ul id="list"><li class="row">item 0</li></ul></div>
+<script src="../vendor/preact.umd.js"></script>
+<script>
+  var h = preact.h;
+  var rows = [];
+  for (var i = 0; i < 12; i++) rows.push(h('li', { class: 'row' }, 'item ' + i));
+  preact.hydrate(h('ul', { id: 'list' }, rows), document.getElementById('root'));
+</script>

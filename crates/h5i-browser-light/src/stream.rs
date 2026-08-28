@@ -1391,6 +1391,88 @@ fn control_verb_inner(
             }
         }
 
+        // Re-fetch where we already are.
+        //
+        // Deliberately routed through `navigate_to` rather than through a
+        // separate path: a reload is a navigation to the current URL, and the
+        // two must agree about policy, about dropping the served refs, and
+        // about how a refusal reads. A second implementation is a second set of
+        // answers to those questions.
+        //
+        // The URL is taken from the page rather than remembered from the
+        // request that got here, so a reload after a redirect re-fetches where
+        // the session actually is instead of replaying the hop.
+        Verb::Reload => {
+            let here = session.page.url().to_string();
+            match navigate_to(session, &here) {
+                Ok(()) => (
+                    json!({"ok": true, "url": session.page.url().to_string(), "reloaded": true}),
+                    true,
+                ),
+                Err(reply) => (reply, false),
+            }
+        }
+
+        // A picture of the page, written where the *caller* said.
+        //
+        // The path comes in on the request and is never derived here. h5i names
+        // every artifact a session produces (`browser_session::artifact_path`)
+        // for the reason that module gives: the engine, and anything a page
+        // talked it into, chooses the bytes and nothing else. An engine that
+        // picked its own filename would be the one place that rule did not
+        // hold.
+        //
+        // The bytes go to a file rather than into the reply because the reply
+        // is scrubbed and capped — a base64 PNG would be silently truncated at
+        // 256 KiB and arrive as a corrupt image, which is precisely the
+        // plausible-wrong answer this engine refuses to hand anyone.
+        Verb::Screenshot => {
+            let Some(path) = request.get("path").and_then(Value::as_str) else {
+                return (
+                    VerbError::bad_request(
+                        "`screenshot` needs a `path` to write to. h5i names it; the engine \
+                         does not choose one.",
+                    )
+                    .reply(),
+                    false,
+                );
+            };
+            let png = match session.page.screenshot_png() {
+                Ok(png) => png,
+                Err(error) => {
+                    return (
+                        VerbError::new(
+                            crate::verbs::Code::Internal,
+                            format!("could not paint the page: {error}"),
+                        )
+                        .reply(),
+                        false,
+                    );
+                }
+            };
+            let bytes = png.len();
+            if let Err(error) = std::fs::write(path, &png) {
+                return (
+                    VerbError::new(
+                        crate::verbs::Code::Internal,
+                        format!("could not write the screenshot to `{path}`: {error}"),
+                    )
+                    .reply(),
+                    false,
+                );
+            }
+            (
+                json!({
+                    "ok": true,
+                    "path": path,
+                    "bytes": bytes,
+                    "url": session.page.url().to_string(),
+                }),
+                // The page did not move. A screenshot reads it.
+                false,
+            )
+        }
+
         // Typing and submitting are the pair that make a login reachable: a
         // session an agent cannot type into stops at the first form, so these
         // ship together or neither is worth having.
@@ -2581,6 +2663,122 @@ mod tests {
         );
     }
 
+    // --- screenshot and reload (ROADMAP §B19.7, items 2 and 3) -----------
+
+    #[test]
+    fn a_screenshot_writes_a_png_where_the_caller_said() {
+        // The gap this closes: `open --screenshot` could always do this for a
+        // page it rendered and exited; a resident session could not, so an
+        // agent that had just clicked something had no way to look.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("shot.png");
+        let mut session = session_with(tall_page());
+        let (reply, moved) = control_verb(
+            &mut session,
+            &json!({"verb": "screenshot", "path": path.display().to_string()}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert!(!moved, "painting the page does not move it");
+        let bytes = std::fs::read(&path).expect("the file exists");
+        assert!(!bytes.is_empty(), "an empty PNG is not a picture");
+        // A real PNG, not a truncated buffer or an error page.
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "not a PNG header");
+        assert_eq!(reply["bytes"].as_u64(), Some(bytes.len() as u64));
+    }
+
+    #[test]
+    fn a_screenshot_without_a_path_is_refused_rather_than_named_here() {
+        // h5i names every artifact a session produces. An engine that picked
+        // its own filename would be the one place that rule did not hold.
+        let mut session = session_with(tall_page());
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "screenshot"}));
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "bad-request");
+        assert!(reply["error"].as_str().unwrap().contains("path"), "{reply:?}");
+    }
+
+    #[test]
+    fn a_screenshot_is_refused_while_a_human_is_typing_a_credential() {
+        // The strongest case for LOGIN mode there is: a password is *pixels*
+        // before it is anything else, and this hands them to the agent.
+        let mut session = session_with(tall_page());
+        session.login = true;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("shot.png");
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "screenshot", "path": path.display().to_string()}),
+        );
+        assert_eq!(reply["code"], "login-mode", "{reply:?}");
+        assert!(!path.exists(), "nothing may be written during login mode");
+    }
+
+    #[test]
+    fn a_reload_refetches_where_the_session_actually_is() {
+        // Three fetches: the navigation that gets there, the reload, and one
+        // spare so a retry does not make this flaky.
+        let port = one_page_server("<h1>served</h1><a href=/x>go</a>", 3);
+        let mut session = session_with("<p>start</p>");
+        let here = format!("http://127.0.0.1:{port}/page");
+        let (moved_reply, _) = control_verb(&mut session, &json!({"verb": "navigate", "url": here}));
+        assert_eq!(moved_reply["ok"], true, "{moved_reply:?}");
+        let before = session.page.url().to_string();
+
+        let (reply, moved) = control_verb(&mut session, &json!({"verb": "reload"}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(
+            reply["url"].as_str(),
+            Some(before.as_str()),
+            "a reload goes where the session is, not where it was told to go once"
+        );
+        assert!(moved, "a reload replaces the page, so watchers need a frame");
+    }
+
+    #[test]
+    fn a_reload_drops_the_refs_the_caller_was_holding() {
+        // It goes through `navigate_to`, which is the point of routing it
+        // there: a `@ref` from before a reload names a position in a reading
+        // of a document that has been replaced.
+        let port = one_page_server("<h1>served</h1><a href=/x>go</a>", 3);
+        let mut session = session_with("<p>start</p>");
+        let here = format!("http://127.0.0.1:{port}/page");
+        control_verb(&mut session, &json!({"verb": "navigate", "url": here}));
+        control_verb(&mut session, &json!({"verb": "snapshot"}));
+        assert!(session.served_refs.is_some(), "a snapshot mints refs");
+
+        control_verb(&mut session, &json!({"verb": "reload"}));
+        assert!(
+            session.served_refs.is_none(),
+            "refs survived a reload, so a later click would act on a reading nobody read"
+        );
+    }
+
+    #[test]
+    fn a_reload_is_policy_checked_like_any_navigation() {
+        // It is a navigation, so it is judged as one. Routing it through
+        // `navigate_to` is what buys this rather than a second code path with
+        // its own answer about the allowlist.
+        let mut session = session_with(tall_page());
+        let (reply, moved) = control_verb(&mut session, &json!({"verb": "reload"}));
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "refused");
+        assert!(
+            reply["error"].as_str().unwrap().contains("allowlist"),
+            "a refusal must name why: {reply:?}"
+        );
+        assert!(!moved, "a refused reload leaves the page where it was");
+    }
+
+    #[test]
+    fn a_reload_is_refused_while_a_human_is_typing_a_credential() {
+        // Not a read; refused anyway. Reloading the page somebody is halfway
+        // through a login form on destroys what they have typed.
+        let mut session = session_with(tall_page());
+        session.login = true;
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "reload"}));
+        assert_eq!(reply["code"], "login-mode", "{reply:?}");
+    }
+
     /// Which verbs may fuse a navigation is a property of the verb, and the
     /// exhaustive match makes a new verb answer the question. This pins the
     /// answer for the ones that exist: reads yes, actions and waits no.
@@ -2590,7 +2788,12 @@ mod tests {
         for verb in Verb::ALL {
             let expected = matches!(
                 verb,
-                Verb::Snapshot | Verb::Markdown | Verb::Extract | Verb::Structured | Verb::Find
+                Verb::Snapshot
+                    | Verb::Markdown
+                    | Verb::Extract
+                    | Verb::Structured
+                    | Verb::Find
+                    | Verb::Screenshot
             );
             assert_eq!(
                 verb.navigates_first(),
@@ -2691,6 +2894,7 @@ mod tests {
                     | Verb::SetChecked
                     | Verb::Select
                     | Verb::Press
+                    | Verb::Reload
             );
             assert_eq!(
                 verb.is_recorded(),

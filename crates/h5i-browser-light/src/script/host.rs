@@ -112,6 +112,18 @@ pub struct Host {
     /// The page this document was loaded from, for resolving relative fetches.
     pub base: url::Url,
 
+    /// The page's `<script type="importmap">`, if it declared one.
+    ///
+    /// Held here rather than on the loader because it is a property of the
+    /// *document*: the engine reads it out of the parsed tree before any script
+    /// runs, which is when the specification says it is locked in. A map that
+    /// arrived after the first import would change what earlier imports meant.
+    ///
+    /// `None` is "the page declared no map", which is the case the bare
+    /// specifier refusal was written for and still describes exactly. See
+    /// [`crate::script::import_map`].
+    pub import_map: RefCell<Option<crate::script::import_map::ImportMap>>,
+
     /// Set whenever script changed the tree, so the engine knows to re-resolve
     /// style and layout once rather than after every mutation.
     /// What the document is written in.
@@ -258,6 +270,7 @@ impl Host {
             dom,
             broker,
             base,
+            import_map: RefCell::new(None),
             encoding: RefCell::new(encoding_rs::UTF_8),
             dirty: RefCell::new(false),
             styles_stale: RefCell::new(false),

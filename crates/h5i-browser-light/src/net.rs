@@ -61,7 +61,9 @@ const ACCEPT_ENCODING: &str = "gzip, br, deflate";
 /// content-negotiates cannot serve a client that never says what it wants.
 fn accept_for(initiator: Initiator) -> &'static str {
     match initiator {
-        Initiator::Navigation | Initiator::Redirect => {
+        // A frame fetch is a document fetch: it negotiates like a navigation,
+        // because the server on the other end is serving a page.
+        Initiator::Navigation | Initiator::Redirect | Initiator::Frame => {
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         }
         Initiator::Subresource => "*/*",

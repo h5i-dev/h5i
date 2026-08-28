@@ -42,6 +42,13 @@ pub enum Initiator {
     Navigation,
     /// A subresource the document referenced (stylesheet, image, font).
     Subresource,
+    /// A frame's document, fetched to be flattened into the page (§B21).
+    ///
+    /// Its own name in the receipt rather than `subresource`, because an
+    /// auditor asking "did this page pull in another *document*" is asking a
+    /// different question from "did it load its stylesheet" — a frame is the
+    /// one subresource whose content is someone else's whole page.
+    Frame,
     /// A hop the server asked for via `Location`.
     Redirect,
 }

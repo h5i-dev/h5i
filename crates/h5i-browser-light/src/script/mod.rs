@@ -27,6 +27,7 @@
 
 pub(crate) mod dom_api;
 pub mod host;
+pub mod import_map;
 pub mod modules;
 
 use std::rc::Rc;
@@ -1041,6 +1042,26 @@ impl Script {
     /// bytes.
     pub fn set_encoding(&mut self, encoding: &'static encoding_rs::Encoding) {
         *self.host.encoding.borrow_mut() = encoding;
+    }
+
+    /// Install the page's `<script type="importmap">`, before anything imports.
+    ///
+    /// Set once, from the parsed tree, for the reason the specification gives:
+    /// a map that arrived after the first import would change what that import
+    /// had already meant. The engine reads it out of the document rather than
+    /// letting script register one, so nothing a page does at runtime can move
+    /// a module graph that is already resolving.
+    ///
+    /// A map that could not be parsed is reported on the console as an engine
+    /// line and then ignored whole, because half a map resolves half a page's
+    /// imports and leaves the rest failing for a reason nobody can see.
+    pub fn set_import_map(&mut self, source: &str) {
+        match crate::script::import_map::ImportMap::parse(source, &self.host.base) {
+            Ok(map) => {
+                *self.host.import_map.borrow_mut() = Some(map);
+            }
+            Err(reason) => self.note_error(&format!("import map ignored: {reason}")),
+        }
     }
 
     /// Fire an event at a node, the way a real click would.

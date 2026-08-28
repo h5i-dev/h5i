@@ -223,13 +223,103 @@
 
   const pendingDefinitions = new Map();
 
+  /// Whether a string is a valid custom element name, per HTML §4.13.
+  ///
+  /// Eight clauses, of which this engine enforced one (the dash). The rest
+  /// matter for the same reason the dash does: the name space is shared with
+  /// the parser, and a name a browser refuses must be refused here or a page
+  /// gets a component in one engine and an unknown element in the other.
+  ///
+  /// The reserved list is the awkward part and is not guessable: they are
+  /// hyphenated names SVG and MathML already own, so they look like valid
+  /// custom element names and are not.
+  /// XML's `Name` production, which `createElement` and friends validate
+  /// against before anything else happens.
+  ///
+  /// Two errors, kept apart because the spec keeps them apart and pages catch
+  /// them separately: this one is "that is not a name at all".
+  const NAME_START = /[:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/;
+  const NAME_CHAR = /[-.0-9\u00B7\u0300-\u036F\u203F-\u2040:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/;
+
+  function validateQualifiedName(name) {
+    const bad = (why) => {
+      throw new DOMException(why, "InvalidCharacterError");
+    };
+    if (name.length === 0) bad("the name must not be empty");
+    if (!NAME_START.test(name[0])) {
+      bad(`\`${name}\` does not start with a name character`);
+    }
+    for (const character of name.slice(1)) {
+      if (!NAME_CHAR.test(character)) {
+        bad(`\`${name}\` contains \`${character}\`, which is not a name character`);
+      }
+    }
+    // A qualified name is `prefix:local`, so at most one colon, and neither
+    // half may be empty.
+    const parts = name.split(":");
+    if (parts.length > 2) bad(`\`${name}\` has more than one colon`);
+    if (parts.length === 2 && (parts[0] === "" || parts[1] === "")) {
+      bad(`\`${name}\` has an empty prefix or local name`);
+    }
+    if (parts.length === 2 && !NAME_START.test(parts[1][0])) {
+      bad(`the local name in \`${name}\` does not start with a name character`);
+    }
+  }
+
+  const RESERVED_ELEMENT_NAMES = new Set([
+    "annotation-xml", "color-profile", "font-face", "font-face-src",
+    "font-face-uri", "font-face-format", "font-face-name", "missing-glyph",
+  ]);
+
+  /// The characters a name may hold, after the first.
+  ///
+  /// **This is the current rule, not the one that is in most write-ups.** The
+  /// old `PotentialCustomElementNameChar` production listed permitted ranges;
+  /// whatwg/html#7991 replaced it with "a valid element local name", which
+  /// *excludes* rather than includes — everything is allowed except NUL, the
+  /// four ASCII whitespace characters the parser uses, space, `/` and `>`.
+  ///
+  /// The difference is not academic. Implementing the superseded rule rejected
+  /// names like `a-\u0001`, which are legal now, and
+  /// `custom-elements/registries/valid-custom-element-names.html` builds
+  /// exactly those from a code-point sweep — so the old rule failed the file
+  /// in the *other* direction from the one it was written to fix.
+  const FORBIDDEN_IN_LOCAL_NAME = new Set([
+    0x00, 0x09, 0x0a, 0x0c, 0x0d, 0x20, 0x2f, 0x3e,
+  ]);
+
+  function isValidCustomElementName(name) {
+    if (typeof name !== "string" || name.length === 0) return false;
+    if (!name.includes("-")) return false;
+    if (RESERVED_ELEMENT_NAMES.has(name)) return false;
+    // Must begin with an ASCII lower alpha, which also settles which branch of
+    // "valid element local name" applies: the one that starts with a letter.
+    const first = name.codePointAt(0);
+    if (first < 0x61 || first > 0x7a) return false;
+    // Iterated by code *point*, so an astral character counts once and its
+    // surrogate halves are never tested on their own.
+    for (const character of name) {
+      const code = character.codePointAt(0);
+      if (code >= 0x41 && code <= 0x5a) return false;
+      if (FORBIDDEN_IN_LOCAL_NAME.has(code)) return false;
+    }
+    return true;
+  }
+
   const customElements = {
     define(name, ctor, options) {
-      const key = String(name).toLowerCase();
-      // The spec's rule, and worth keeping: a name without a dash could collide
-      // with an element the parser already knows.
-      if (!key.includes("-")) {
-        throw new SyntaxError(`custom element name \`${key}\` must contain a dash`);
+      // **The name is validated, not merely checked for a dash.** The dash rule
+      // is one clause of eight, and the others are not decoration: a name that
+      // is uppercase, or that starts with a digit, or that collides with one of
+      // the eight reserved SVG/MathML compound names, is a name a browser
+      // refuses and this engine used to accept — after which the page and the
+      // engine disagree about what `<font-face>` is.
+      const key = String(name);
+      if (!isValidCustomElementName(key)) {
+        throw new DOMException(
+          `\`${key}\` is not a valid custom element name`,
+          "SyntaxError",
+        );
       }
       if (definitions.has(key)) {
         throw new Error(`custom element \`${key}\` is already defined`);
@@ -272,7 +362,23 @@
       return null;
     },
     whenDefined(name) {
-      const key = String(name).toLowerCase();
+      const key = String(name);
+      // **An invalid name rejects rather than waiting forever.** `define` and
+      // `whenDefined` validate the same way, and a promise that never settles
+      // is the worst of the three possible answers: a caller cannot tell it
+      // from a component that has not loaded yet, so it waits out its own
+      // timeout instead of handling an error it could have handled at once.
+      //
+      // It is also how `valid-custom-element-names.html` hangs: every
+      // invalid-name case awaits this rejection, so a `whenDefined` that sits
+      // there takes the entire file with it — 5,900 subtests reporting nothing
+      // because one promise never settled.
+      if (!isValidCustomElementName(key)) {
+        return Promise.reject(new DOMException(
+          `\`${key}\` is not a valid custom element name`,
+          "SyntaxError",
+        ));
+      }
       const definition = definitions.get(key);
       if (definition) return Promise.resolve(definition.ctor);
       return new Promise((resolve) => {
@@ -378,13 +484,53 @@
     _write(list) {
       api.setAttr(this._node._id, this._attr, list.join(" "));
     }
+    /// Every mutating method validates first, and all of them the same way.
+    ///
+    /// An empty token and a token containing whitespace are both errors with
+    /// names the spec gives them, and they are not pedantry: `classList.add("")`
+    /// silently wrote a trailing space, and `classList.add("a b")` wrote a
+    /// token that then read back as *two* — so a page that added one class
+    /// could not remove it again.
+    _check(names) {
+      for (const raw of names) {
+        const name = String(raw);
+        if (name === "") {
+          throw new DOMException("the token must not be empty", "SyntaxError");
+        }
+        if (/[ \t\n\f\r]/.test(name)) {
+          throw new DOMException(
+            `the token \`${name}\` must not contain whitespace`,
+            "InvalidCharacterError",
+          );
+        }
+      }
+      return names.map(String);
+    }
     add(...names) {
+      const wanted = this._check(names);
       const list = this._all();
-      for (const n of names) if (!list.includes(n)) list.push(n);
+      for (const n of wanted) if (!list.includes(n)) list.push(n);
       this._write(list);
     }
     remove(...names) {
-      this._write(this._all().filter((n) => !names.includes(n)));
+      const unwanted = this._check(names);
+      this._write(this._all().filter((n) => !unwanted.includes(n)));
+    }
+    /// Swap one token for another, keeping its position.
+    ///
+    /// Absent, and asked for 262 times across the corpus: it is how a component
+    /// moves between states without a remove-then-add that briefly has neither
+    /// class, which matters when a stylesheet transitions on the change.
+    replace(oldToken, newToken) {
+      const [from, to] = this._check([oldToken, newToken]);
+      const list = this._all();
+      const at = list.indexOf(from);
+      if (at === -1) return false;
+      // A no-op when the replacement is already there, rather than a duplicate.
+      if (list.includes(to)) list.splice(at, 1);
+      else list[at] = to;
+      this._write(list);
+      return true;
     }
     contains(name) { return this._all().includes(name); }
     item(index) { return this._all()[index] ?? null; }
@@ -402,6 +548,29 @@
     values() { return this._all().values(); }
     entries() { return this._all().entries(); }
     [Symbol.iterator]() { return this._all()[Symbol.iterator](); }
+    /// `list[0]`, which is indexed access and not a property.
+    ///
+    /// A `DOMTokenList` is an indexed collection, so `classList[0]` is its
+    /// first token and `classList[-1]` is `undefined`. Both answered
+    /// `undefined` here, and the second is right for the wrong reason — the
+    /// reporting picked it up as `DOMTokenList.0` and `DOMTokenList.-1`, an
+    /// engine gap recorded under two names because nothing implemented either.
+    static _indexed(target) {
+      return new Proxy(target, {
+        get(list, key, receiver) {
+          if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
+            return list._all()[Number(key)];
+          }
+          return Reflect.get(list, key, receiver);
+        },
+        has(list, key) {
+          if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
+            return Number(key) < list._all().length;
+          }
+          return Reflect.has(list, key);
+        },
+      });
+    }
     toString() { return this.value; }
     toggle(name, force) {
       const has = this.contains(name);
@@ -683,9 +852,20 @@
         ? document.createTextNode(this.textContent)
         : document.createElement(this.tagName);
       if (this.nodeType === 1) {
-        if (this.className) copy.className = this.className;
-        const style = api.getAttr(this._id, "style");
-        if (style) copy.setAttribute("style", style);
+        // **Every attribute, not two of them.** This copied `class` and
+        // `style` and nothing else, so a cloned element lost its `id`, its
+        // `href`, its `data-*` and every hook a page had put on it — and a
+        // template cloned to be inserted came out stripped.
+        for (const name of this.getAttributeNames()) {
+          const value = api.getAttr(this._id, name);
+          if (value !== null) copy.setAttribute(name, value);
+        }
+        // The *cloning steps* a form control carries: an `<input>` clone takes
+        // the original's value and its dirty value flag, and a checkbox takes
+        // its checkedness. Without them a cloned control comes back to its
+        // markup default, which is not what the user had typed into it.
+        if (this._value !== undefined) copy._value = this._value;
+        if (this._checked !== undefined) copy._checked = this._checked;
         if (deep) copy.innerHTML = this.innerHTML;
       }
       return copy;
@@ -962,9 +1142,13 @@
     set id(v) { this.setAttribute("id", v); }
     get className() { return this.getAttribute("class") || ""; }
     set className(v) { this.setAttribute("class", v); }
-    get classList() { return observed(new DOMTokenList(this, "class"), "DOMTokenList"); }
+    get classList() {
+      return observed(DOMTokenList._indexed(new DOMTokenList(this, "class")), "DOMTokenList");
+    }
     set classList(v) { this.setAttribute("class", String(v)); }
-    get relList() { return observed(new DOMTokenList(this, "rel"), "DOMTokenList"); }
+    get relList() {
+      return observed(DOMTokenList._indexed(new DOMTokenList(this, "rel")), "DOMTokenList");
+    }
 
     // Setting a URL part rewrites the href it came from, which is how routing
     // code edits a link in place.
@@ -1207,6 +1391,133 @@
       adoptDeclarativeShadowRoots(this);
       globalThis.__h5iInstallInlineHandlers(this);
     }
+
+    /// `innerHTML`, plus any shadow roots the caller asked to have serialised.
+    ///
+    /// The half this engine can answer, answered; the half it cannot, reported.
+    ///
+    /// **What works.** With no options, with `serializableShadowRoots: false`,
+    /// or on an element that has no shadow root, `getHTML()` is defined to
+    /// equal `innerHTML` — and that is the overwhelming majority of real calls,
+    /// because the overwhelming majority of elements are not shadow hosts.
+    ///
+    /// **What does not, and why it is not faked.** Serialising a shadow root
+    /// means emitting `<template shadowrootmode=…>` holding the shadow tree,
+    /// *followed by* the light children. This engine has one tree: a shadow
+    /// root here is a view of its host (see `ShadowRoot`), the component's
+    /// output and the light content are siblings in the same element, and
+    /// nothing distinguishes them afterwards. So the string a browser would
+    /// produce cannot be reconstructed, and emitting the flattened content
+    /// under a `<template shadowrootmode>` header would be a plausible lie —
+    /// markup that parses, looks right, and describes a tree that never
+    /// existed. It is recorded through `unsupported()` instead, which is the
+    /// channel an agent already reads and the one that made this method
+    /// findable in the first place.
+    getHTML(options) {
+      const wants =
+        options != null &&
+        (options.serializableShadowRoots === true ||
+          (Array.isArray(options.shadowRoots) && options.shadowRoots.length > 0));
+      if (wants && this.shadowRoot) {
+        api.unsupported("Element.getHTML({ serializableShadowRoots })");
+      }
+      return api.innerHtml(this._id);
+    }
+    // ---- The popover API -------------------------------------------------
+    //
+    // A self-contained feature and the largest one missing: 3,846 unpassed
+    // subtests in `html/semantics/popovers` against 20 passing, because the
+    // `popover` attribute reflected and nothing acted on it.
+    //
+    // **What is real here and what is not.** The state machine, the
+    // exceptions, the event pair and the invoker wiring are all real: a page
+    // can open a popover, be told why it could not, and observe the same
+    // `beforetoggle`/`toggle` sequence a browser fires. What is missing is the
+    // *top layer* — this engine has no separate paint layer, so an open
+    // popover renders where it sits in the document rather than above
+    // everything else, and light-dismiss-on-outside-click has no hit testing
+    // to hang off. Those are rendering properties; the DOM contract is not,
+    // and it is the half a page scripts against.
+    _popoverState() {
+      const kind = this.popover;
+      return kind === null ? null : kind;
+    }
+    showPopover(options) {
+      const kind = this._popoverState();
+      if (kind === null) {
+        throw new DOMException(
+          "showPopover: this element has no `popover` attribute",
+          "NotSupportedError",
+        );
+      }
+      if (this.__h5iPopoverOpen) {
+        throw new DOMException("showPopover: already showing", "InvalidStateError");
+      }
+      if (!this.isConnected) {
+        throw new DOMException(
+          "showPopover: the element is not connected",
+          "InvalidStateError",
+        );
+      }
+      // `beforetoggle` is cancelable on the way *open* only, which is the
+      // asymmetry that lets a page veto a show and never a hide.
+      const before = new ToggleEvent("beforetoggle", {
+        cancelable: true, oldState: "closed", newState: "open",
+      });
+      this.dispatchEvent(before);
+      if (before.defaultPrevented) return;
+      // Re-checked after the handler: a `beforetoggle` listener may have
+      // removed the element or opened it itself, and acting on the state we
+      // read before running page script is how a double-open gets through.
+      if (this.__h5iPopoverOpen || !this.isConnected) return;
+      this.__h5iPopoverOpen = true;
+      // Auto popovers close their peers. Manual ones do not, which is the
+      // whole difference between the two keywords.
+      if (kind === "auto" || kind === "hint") {
+        for (const other of api.queryAll("[popover]", 0).map(wrap)) {
+          if (other && other !== this && other.__h5iPopoverOpen
+            && other.popover !== "manual") {
+            other.hidePopover();
+          }
+        }
+      }
+      this.dispatchEvent(new ToggleEvent("toggle", {
+        oldState: "closed", newState: "open",
+      }));
+      void options;
+    }
+    hidePopover() {
+      if (this._popoverState() === null) {
+        throw new DOMException(
+          "hidePopover: this element has no `popover` attribute",
+          "NotSupportedError",
+        );
+      }
+      if (!this.__h5iPopoverOpen) {
+        throw new DOMException("hidePopover: not showing", "InvalidStateError");
+      }
+      this.dispatchEvent(new ToggleEvent("beforetoggle", {
+        oldState: "open", newState: "closed",
+      }));
+      if (!this.__h5iPopoverOpen) return;
+      this.__h5iPopoverOpen = false;
+      this.dispatchEvent(new ToggleEvent("toggle", {
+        oldState: "open", newState: "closed",
+      }));
+    }
+    togglePopover(force) {
+      // `force` is a boolean *or* an options object, and both spellings are in
+      // use; the object form is what the current spec takes.
+      const wanted = force && typeof force === "object" ? force.force : force;
+      const open = !!this.__h5iPopoverOpen;
+      if (wanted === true || (wanted === undefined && !open)) {
+        if (!open) this.showPopover();
+      } else if (wanted === false || wanted === undefined) {
+        if (open) this.hidePopover();
+      }
+      return !!this.__h5iPopoverOpen;
+    }
+
     get outerHTML() { return api.outerHtml(this._id); }
     set outerHTML(html) {
       // Replacing an element with its own markup, which is how a component
@@ -1330,8 +1641,46 @@
         dispatch(this, new Event("change", { bubbles: true }));
         return;
       }
-      dispatch(this, new MouseEvent("click", { bubbles: true }));
+      // **A disabled control dispatches nothing.** `click()` on a disabled
+      // button fired a click event here, so a page that disables a control to
+      // stop it being used still saw it used — and the handler ran with the
+      // form in whatever state the disabling was meant to protect.
+      if (this.disabled) return;
+      // An invoker acts *after* its click, and only if the click was not
+      // cancelled: `preventDefault()` suppressing the default activation
+      // behaviour is the whole reason this is here rather than inside the
+      // dispatch. The event has to be held to be asked.
+      const activation = new MouseEvent("click", { bubbles: true, cancelable: true });
+      dispatch(this, activation);
+      if (!activation.defaultPrevented) this._runPopoverInvoker();
     }
+
+    /// Activation behaviour for `popovertarget`, which is what makes the
+    /// attribute do anything at all.
+    ///
+    /// Kept off the dispatch path deliberately: it runs after `click` has been
+    /// delivered, so a listener that calls `preventDefault()` suppresses it,
+    /// exactly as a browser's default activation behaviour works.
+    _runPopoverInvoker() {
+      if (this.tagName !== "BUTTON" && this.tagName !== "INPUT") return;
+      const target = this.popoverTargetElement;
+      if (!target || typeof target.togglePopover !== "function") return;
+      if (target.popover === null || target.popover === undefined) return;
+      const action = this.popoverTargetAction;
+      try {
+        if (action === "show") {
+          if (!target.__h5iPopoverOpen) target.showPopover();
+        } else if (action === "hide") {
+          if (target.__h5iPopoverOpen) target.hidePopover();
+        } else {
+          target.togglePopover();
+        }
+      } catch {
+        // An invoker aiming at something that cannot be opened is a no-op in a
+        // browser, not an exception thrown out of a click handler.
+      }
+    }
+
     /// Move focus here, and fire what a browser fires.
     ///
     /// Both were empty, so `document.activeElement` never moved: a page that
@@ -1434,6 +1783,9 @@
       adoptDeclarativeShadowRoots(this);
       this._project();
     }
+    // Same rule as the host's, and for the same reason: this root *is* the
+    // host, so its serialisation is the host's content.
+    getHTML(options) { return Element.prototype.getHTML.call(this, options); }
     appendChild(child) {
       const out = Element.prototype.appendChild.call(this, child);
       this._project();
@@ -1499,6 +1851,28 @@
   /// The interface table below is the right owner for the rest, and already
   /// declared all but three of them. `dir`, `slot` and `accessKey` stay because
   /// they really do belong to every element.
+  /// `[LegacyNullToEmptyString]`, which the legacy presentational colour
+  /// attributes carry: `body.bgColor = null` writes "" rather than "null".
+  /// Named once so the flag reads as the IDL annotation it is.
+  const NULL_IS_EMPTY = { nullAsEmpty: true };
+
+  /// `action` and `formAction` answer with the *document's* address when the
+  /// attribute is missing or empty, rather than with "". A form whose action
+  /// reads "" submits somewhere different from one that reads the page's URL,
+  /// so this is a behaviour difference and not a formatting one.
+  const DOCUMENT_URL_WHEN_EMPTY = { emptyIsDocumentUrl: true };
+
+  /// `crossOrigin` is a **nullable** enumerated attribute, and every element
+  /// that has it has the same one. It was spelled out on `<link>` and left as
+  /// a plain string on `<img>`, `<script>`, `<video>` and `<audio>`, so those
+  /// four reported the raw attribute where a browser reports `"anonymous"`,
+  /// and `null` where a browser reports `null` only by accident.
+  const CROSS_ORIGIN = ["crossOrigin", "crossorigin", "enumerated", {
+    keywords: ["anonymous", "use-credentials"],
+    missing: null,
+    invalid: "anonymous",
+  }];
+
   const REFLECTED_ATTRIBUTES = {
     dir: "dir",
     slot: "slot",
@@ -1533,7 +1907,19 @@
       const match = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(raw ?? "");
       if (!match) return null;
       const value = Number(match[1]);
-      return Number.isSafeInteger(value) ? value : null;
+      if (!Number.isSafeInteger(value)) return null;
+      // **`-0` is not a value a reflection may report.** `Number("-0")` is
+      // negative zero, and IDL longs are integers — there is one zero. It
+      // matters because testharness compares with `Object.is` semantics, so
+      // `-0` fails an `assert_equals(0)` that looks like it should pass, and
+      // `tabIndex` is reflected on *every* element: one `setAttribute("-0")`
+      // subtest per element in every `reflection-*.html` file.
+      if (value === 0) return 0;
+      // Out of the 32-bit range is "not a valid integer" for a reflection, not
+      // a large number: `marquee.hspace = 2147483648` reads back as the
+      // default in a browser and read back as 2147483648 here.
+      if (value < -2147483648 || value > 2147483647) return null;
+      return value;
     };
     const get = {
       string() { return api.getAttr(this._id, content) ?? ""; },
@@ -1549,6 +1935,17 @@
       ulong() {
         const value = parseInteger(api.getAttr(this._id, content));
         if (value === null || value < 0) return options.default ?? 0;
+        return value;
+      },
+      // A reflected `double`, for `<meter>` and `<progress>`. Not an integer
+      // parse: `min`, `max`, `low`, `high`, `optimum` and `value` are all
+      // floating point, and rounding them would make a half-full meter read as
+      // empty.
+      double() {
+        const raw = api.getAttr(this._id, content);
+        if (raw === null) return options.default ?? 0;
+        const value = Number(String(raw).trim());
+        if (!Number.isFinite(value)) return options.default ?? 0;
         return value;
       },
       enumerated() {
@@ -1570,6 +1967,14 @@
       },
       url() {
         const raw = api.getAttr(this._id, content);
+        // Some URL reflections answer with the *document's* address when the
+        // attribute is missing or empty, rather than with "": `form.action`
+        // and `input.formAction` are the ones that matter, and a form whose
+        // action reads "" submits somewhere different from one that reads the
+        // page's own URL.
+        if (options.emptyIsDocumentUrl && (raw === null || raw === "")) {
+          return currentAddress ?? "";
+        }
         if (raw === null) return "";
         // `currentAddress`, matching `_resolved` above: only Document carries a
         // `baseURI`, and resolving against `undefined` would hand back the raw
@@ -1596,12 +2001,29 @@
           if (type === "ulong" && written < 0) written = options.default ?? 0;
           this.setAttribute(content, String(written));
         }
-        : function (value) {
-          // `null` on a nullable reflection removes the attribute; everywhere
-          // else it stringifies, so `el.dir = null` really does write "null".
-          if (value === null && type === "nullable") this.removeAttribute(content);
-          else this.setAttribute(content, String(value));
-        };
+        : type === "double"
+          ? function (value) {
+            const number = Number(value);
+            this.setAttribute(content, String(Number.isFinite(number) ? number : 0));
+          }
+          : function (value) {
+            // `null` on a nullable reflection removes the attribute — and an
+            // enumerated attribute whose missing-value default is `null` is
+            // nullable too (`crossOrigin`), where `undefined` also means "no
+            // value" rather than the string "undefined".
+            const nullableEnum = type === "enumerated" && options.missing === null;
+            if (value === null && type === "nullable") this.removeAttribute(content);
+            else if (nullableEnum && (value === null || value === undefined)) {
+              this.removeAttribute(content);
+            }
+            // `[LegacyNullToEmptyString]`, which the legacy presentational
+            // attributes carry: `body.bgColor = null` writes "" and not the
+            // string "null". Marked per attribute rather than guessed at,
+            // because everywhere *else* `null` really does stringify —
+            // `el.dir = null` writes "null" and a browser agrees.
+            else if (value === null && options.nullAsEmpty) this.setAttribute(content, "");
+            else this.setAttribute(content, String(value));
+          };
     Object.defineProperty(proto, idl, { configurable: true, get, set });
   }
 
@@ -1623,7 +2045,16 @@
       const raw = api.getAttr(this._id, "tabindex");
       if (raw !== null) {
         const match = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(raw);
-        if (match) return Number(match[1]);
+        if (match) {
+          const value = Number(match[1]);
+          // Its own parser, so it needs the same two rules `parseInteger` has:
+          // one zero, and nothing outside the 32-bit range. `tabindex="-0"`
+          // reported `-0`, which fails `assert_equals(0)` on every element in
+          // the suite.
+          if (value === 0) return 0;
+          if (Number.isSafeInteger(value)
+            && value >= -2147483648 && value <= 2147483647) return value;
+        }
       }
       if (!FOCUSABLE_BY_DEFAULT.has(this.tagName)) return -1;
       // A link is only focusable if it actually links somewhere.
@@ -1652,8 +2083,18 @@
   reflect(Element.prototype, "enterKeyHint", "enterkeyhint", "enumerated", {
     keywords: ["enter", "done", "go", "next", "previous", "search", "send"],
   });
+  // Nullable, and three keywords rather than two: an element with no `popover`
+  // attribute reports `null`, which is how a page asks "is this a popover at
+  // all" — reporting "" made every element look like one.
   reflect(Element.prototype, "popover", "popover", "enumerated", {
-    keywords: ["auto", "manual"], invalid: "manual",
+    keywords: ["auto", "manual", "hint"],
+    missing: null,
+    invalid: "manual",
+    // `<div popover>` is the common spelling and its value is the empty
+    // string, which maps to the *auto* state. Without the alias it fell
+    // through to `invalid` and every bare popover reported "manual" — the
+    // one state that does not close its peers, so they all stacked up.
+    aliases: { "": "auto" },
   });
 
   // ARIA, which reflects mechanically: every one of these is `aria-` followed
@@ -1737,9 +2178,7 @@
         "iframe", "image", "json", "manifest", "object", "paintworklet",
         "report", "script", "serviceworker", "sharedworker", "style", "track",
         "video", "webidentity", "worker", "xslt"] }],
-      ["crossOrigin", "crossorigin", "enumerated", {
-        keywords: ["anonymous", "use-credentials"],
-        missing: null, invalid: "anonymous" }],
+      CROSS_ORIGIN,
       ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
         "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
         "origin", "strict-origin", "origin-when-cross-origin",
@@ -1750,8 +2189,12 @@
     ]],
     style: ["HTMLStyleElement", [["media", "media"]]],
     body: ["HTMLBodyElement", [
-      ["link", "link"], ["vLink", "vlink"], ["aLink", "alink"],
-      ["bgColor", "bgcolor"], ["background", "background"], ["text", "text"],
+      ["link", "link", "string", NULL_IS_EMPTY],
+      ["vLink", "vlink", "string", NULL_IS_EMPTY],
+      ["aLink", "alink", "string", NULL_IS_EMPTY],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
+      ["background", "background"],
+      ["text", "text", "string", NULL_IS_EMPTY],
     ]],
     a: ["HTMLAnchorElement", [
       ["target", "target"], ["download", "download"], ["ping", "ping"],
@@ -1774,7 +2217,7 @@
       ["width", "width", "ulong"], ["height", "height", "ulong"],
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
       ["decoding", "decoding"], ["loading", "loading"],
-      ["crossOrigin", "crossorigin"], ["referrerPolicy", "referrerpolicy"],
+      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy"],
     ]],
     embed: ["HTMLEmbedElement", [
       ["width", "width"], ["height", "height"], ["align", "align"],
@@ -1792,14 +2235,14 @@
       ["poster", "poster", "url"], ["preload", "preload"],
       ["autoplay", "autoplay", "bool"], ["loop", "loop", "bool"],
       ["controls", "controls", "bool"], ["defaultMuted", "muted", "bool"],
-      ["crossOrigin", "crossorigin"],
+      CROSS_ORIGIN,
       ["playsInline", "playsinline", "bool"],
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     audio: ["HTMLAudioElement", [
       ["preload", "preload"], ["autoplay", "autoplay", "bool"],
       ["loop", "loop", "bool"], ["controls", "controls", "bool"],
-      ["defaultMuted", "muted", "bool"], ["crossOrigin", "crossorigin"],
+      ["defaultMuted", "muted", "bool"], CROSS_ORIGIN,
     ]],
     source: ["HTMLSourceElement", [
       ["srcset", "srcset"], ["sizes", "sizes"], ["media", "media"],
@@ -1813,7 +2256,8 @@
     ]],
     map: ["HTMLMapElement", []],
     form: ["HTMLFormElement", [
-      ["acceptCharset", "accept-charset"], ["action", "action", "url"],
+      ["acceptCharset", "accept-charset"],
+      ["action", "action", "url", DOCUMENT_URL_WHEN_EMPTY],
       ["autocomplete", "autocomplete"], ["enctype", "enctype"],
       ["encoding", "enctype"], ["method", "method"],
       ["noValidate", "novalidate", "bool"], ["target", "target"], ["rel", "rel"],
@@ -1822,7 +2266,8 @@
     input: ["HTMLInputElement", [
       ["accept", "accept"], ["autocomplete", "autocomplete"],
       ["defaultChecked", "checked", "bool"], ["dirName", "dirname"],
-      ["formAction", "formaction", "url"], ["formEnctype", "formenctype"],
+      ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
+      ["formEnctype", "formenctype"],
       ["formMethod", "formmethod"], ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
       ["max", "max"], ["min", "min"], ["pattern", "pattern"],
@@ -1836,7 +2281,8 @@
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     button: ["HTMLButtonElement", [
-      ["formAction", "formaction", "url"], ["formEnctype", "formenctype"],
+      ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
+      ["formEnctype", "formenctype"],
       ["formMethod", "formmethod"], ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
     ]],
@@ -1863,7 +2309,7 @@
     table: ["HTMLTableElement", [
       ["align", "align"], ["border", "border"], ["frame", "frame"],
       ["rules", "rules"], ["summary", "summary"], ["width", "width"],
-      ["bgColor", "bgcolor"], ["cellPadding", "cellpadding"],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY], ["cellPadding", "cellpadding"],
       ["cellSpacing", "cellspacing"],
     ]],
     caption: ["HTMLTableCaptionElement", [["align", "align"]]],
@@ -1874,7 +2320,7 @@
     ]],
     tr: ["HTMLTableRowElement", [
       ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
-      ["vAlign", "valign"], ["bgColor", "bgcolor"],
+      ["vAlign", "valign"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     td: ["HTMLTableCellElement", [
       ["colSpan", "colspan", "ulong", { default: 1 }],
@@ -1882,7 +2328,8 @@
       ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
       ["align", "align"], ["axis", "axis"], ["height", "height"],
       ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
-      ["noWrap", "nowrap", "bool"], ["vAlign", "valign"], ["bgColor", "bgcolor"],
+      ["noWrap", "nowrap", "bool"], ["vAlign", "valign"],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     ol: ["HTMLOListElement", [
       ["reversed", "reversed", "bool"], ["compact", "compact", "bool"],
@@ -1897,10 +2344,10 @@
       ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
       ["defer", "defer", "bool"], ["integrity", "integrity"],
       ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
-      ["crossOrigin", "crossorigin"], ["referrerPolicy", "referrerpolicy"],
+      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy"],
     ]],
     marquee: ["HTMLMarqueeElement", [
-      ["behavior", "behavior"], ["bgColor", "bgcolor"],
+      ["behavior", "behavior"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
       ["direction", "direction"], ["height", "height"], ["width", "width"],
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
       ["trueSpeed", "truespeed", "bool"],
@@ -1940,6 +2387,54 @@
     data: ["HTMLDataElement", []],
     div: ["HTMLDivElement", [["align", "align"]]],
     h1: ["HTMLHeadingElement", [["align", "align"]]],
+    // Interfaces the table simply did not have. Each is reflected in full by
+    // `html/dom/reflection-*.html`, so a missing entry is not one attribute
+    // missing — it is every attribute of that element failing at once.
+    meter: ["HTMLMeterElement", [
+      ["value", "value", "double"], ["min", "min", "double"],
+      ["max", "max", "double", { default: 1 }],
+      ["low", "low", "double"], ["high", "high", "double"],
+      ["optimum", "optimum", "double"],
+    ]],
+    progress: ["HTMLProgressElement", [
+      ["max", "max", "double", { default: 1 }],
+    ]],
+    // `<iframe>` is not *loaded* here (§B6 refuses a second browsing context),
+    // and its IDL reflection is a different question: an attribute that
+    // reflects is testable and useful whether or not a document ever arrives
+    // in the frame.
+    iframe: ["HTMLIFrameElement", [
+      ["src", "src", "url"], ["srcdoc", "srcdoc"], ["name", "name"],
+      ["allow", "allow"], ["width", "width"], ["height", "height"],
+      ["align", "align"], ["scrolling", "scrolling"],
+      ["frameBorder", "frameborder"], ["longDesc", "longdesc", "url"],
+      ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
+      ["allowFullscreen", "allowfullscreen", "bool"],
+    ]],
+    del: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
+    q: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
+    th: ["HTMLTableCellElement", [
+      ["colSpan", "colspan", "ulong", { default: 1 }],
+      ["rowSpan", "rowspan", "ulong", { default: 1 }],
+      ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
+      ["align", "align"], ["axis", "axis"], ["height", "height"],
+      ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
+      ["noWrap", "nowrap", "bool"], ["vAlign", "valign"],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
+    ]],
+    thead: ["HTMLTableSectionElement", [
+      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      ["vAlign", "valign"],
+    ]],
+    tfoot: ["HTMLTableSectionElement", [
+      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      ["vAlign", "valign"],
+    ]],
+    colgroup: ["HTMLTableColElement", [
+      ["span", "span", "ulong", { default: 1 }], ["align", "align"],
+      ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
+      ["width", "width"],
+    ]],
     tbody: ["HTMLTableSectionElement", [
       ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"],
@@ -2040,6 +2535,16 @@
           const explicit = api.getAttr(this._id, "value");
           return explicit === null ? this.textContent : explicit;
         }
+        // `<input type=color>` has a *value sanitisation algorithm*, and it is
+        // the strictest one in HTML: the value is always a valid lowercase
+        // simple colour, and anything else — including the empty string a page
+        // just assigned — becomes `#000000`. A page reading it expects seven
+        // characters starting with `#`, always.
+        if (tag === "INPUT"
+          && (api.getAttr(this._id, "type") || "").toLowerCase() === "color") {
+          const raw = this._value ?? api.getAttr(this._id, "value") ?? "";
+          return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toLowerCase() : "#000000";
+        }
         const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
         if (kind === "checkbox" || kind === "radio") {
           const v = api.getAttr(this._id, "value");
@@ -2067,7 +2572,21 @@
           const written = this.textContent;
           if (written) return written;
         }
-        if (edited !== null && edited !== undefined) return edited;
+        // **A whitespace-only editor on an unedited control is empty.** This
+        // is the same rule the `<textarea>` branch above states, and it was
+        // being applied to textareas only — so a laid-out `<input>` that
+        // nobody had typed into reported `" "`, because that is what blitz
+        // seeds its editor with.
+        //
+        // It is not a validation detail. `if (!input.value)` was *false* for
+        // an empty field, so every page and every agent that tests a form for
+        // emptiness got the wrong answer, and `required` could never fire.
+        if (edited !== null && edited !== undefined) {
+          if (this._value === undefined && !edited.trim()) {
+            return api.getAttr(this._id, "value") ?? "";
+          }
+          return edited;
+        }
         // There is no editor — a detached control, or a `<textarea>`, which
         // blitz lays out as text rather than as an input. Falling back to the
         // markup is what a browser reports, and answering "" instead made a
@@ -2078,6 +2597,17 @@
       },
       set(v) {
         const text = String(v);
+        // `<option>` is not an editable control: its `value` reflects the
+        // content attribute, falling back to the text. The generic path below
+        // writes to the *editor*, which an option does not have, so the write
+        // landed in `this._value` — where this element's getter never looks.
+        // `option.value = "x"` was therefore silently lost, and with it
+        // `new Option(label, value)`, which is most of why the constructor is
+        // still written.
+        if (this.tagName === "OPTION") {
+          this.setAttribute("value", text);
+          return;
+        }
         // Remembered on this side when the write had nowhere to land, so a
         // page that builds a control and fills it in can read back what it
         // wrote. A page that sets `.value` from script does not get
@@ -2098,6 +2628,95 @@
     // which is why it is reflected separately as `defaultChecked` — writing to
     // it here made `getAttribute("checked")` change under a page that never
     // touched the markup, and made a box the user unticked look ticked still.
+    // The popover invoker pair, on the two elements that can be one.
+    //
+    // `popoverTargetElement` is not a reflection: it is an *element* reference
+    // resolved from the `popovertarget` attribute's id, and it is also
+    // settable directly — a page may hand it an element that has no id at all.
+    // That second half is why it needs its own storage rather than reading the
+    // attribute every time.
+    for (const tag of ["button", "input"]) {
+      on([tag], "popoverTargetElement", {
+        get() {
+          if (this.__h5iPopoverTarget !== undefined) return this.__h5iPopoverTarget;
+          const id = api.getAttr(this._id, "popovertarget");
+          if (id === null) return null;
+          return document.getElementById(id);
+        },
+        set(value) {
+          // Assigning an element detaches this from the attribute, which is
+          // what the spec means by the two being separate: the attribute stays
+          // whatever it was and the property wins.
+          this.__h5iPopoverTarget = value ?? null;
+        },
+      });
+      on([tag], "popoverTargetAction", {
+        get() {
+          const raw = (api.getAttr(this._id, "popovertargetaction") || "").toLowerCase();
+          return raw === "show" || raw === "hide" ? raw : "toggle";
+        },
+        set(value) { this.setAttribute("popovertargetaction", String(value)); },
+      });
+    }
+
+    // ---- `<dialog>` --------------------------------------------------------
+    //
+    // `open` reflected and nothing could change it: `show()`, `showModal()`
+    // and `close()` were all absent, so a dialog could be described and never
+    // opened. As with popovers the state machine and the events are real and
+    // the *modality* is not — there is no top layer and no inert subtree, so a
+    // modal dialog here does not block the page behind it. That difference is
+    // about rendering and focus, and the API contract a page scripts against
+    // is not.
+    on(["dialog"], "returnValue", {
+      get() { return this.__h5iReturnValue ?? ""; },
+      set(value) { this.__h5iReturnValue = String(value); },
+    });
+    for (const [name, modal] of [["show", false], ["showModal", true]]) {
+      Object.defineProperty(Element.prototype, name, {
+        configurable: true,
+        writable: true,
+        value: function () {
+          if (this.tagName !== "DIALOG") {
+            throw new TypeError(`${name} is only defined on <dialog>`);
+          }
+          if (this.hasAttribute("open")) {
+            // Re-showing an already-open dialog is a no-op for `show()` and an
+            // error for `showModal()`, which is the one asymmetry here.
+            if (!modal) return;
+            throw new DOMException(
+              "showModal: the dialog is already open",
+              "InvalidStateError",
+            );
+          }
+          if (modal && !this.isConnected) {
+            throw new DOMException(
+              "showModal: the dialog is not connected",
+              "InvalidStateError",
+            );
+          }
+          this.setAttribute("open", "");
+          this.__h5iModal = modal;
+        },
+      });
+    }
+    Object.defineProperty(Element.prototype, "close", {
+      configurable: true,
+      writable: true,
+      value: function (returnValue) {
+        if (this.tagName !== "DIALOG") {
+          throw new TypeError("close is only defined on <dialog>");
+        }
+        if (!this.hasAttribute("open")) return;
+        if (returnValue !== undefined) this.__h5iReturnValue = String(returnValue);
+        this.removeAttribute("open");
+        this.__h5iModal = false;
+        // `close` does not bubble, which is what a page delegating from an
+        // ancestor has to know and what makes this worth getting right.
+        this.dispatchEvent(new Event("close"));
+      },
+    });
+
     on(["input"], "checked", {
       get() {
         if (this._checked !== undefined) return this._checked;
@@ -2374,16 +2993,679 @@
     // `form.elements`, `table.rows`, `tr.cells` and `td.cellIndex` were all
     // absent, so a page that walks its own form or table — and a great deal of
     // page script does — got `undefined` and stopped.
-    on(["form"], "elements", {
+    // ---- Numeric and picker input APIs ------------------------------------
+
+    /// The input types that have a numeric interpretation, and how to move
+    /// through them.
+    ///
+    /// `stepUp`, `stepDown`, `valueAsNumber` and `valueAsDate` all key off this
+    /// one table, so a type is steppable in exactly one place rather than in
+    /// four that can disagree.
+    const STEPPABLE = {
+      number: { step: 1, base: 0 },
+      range: { step: 1, base: 0 },
+      date: { step: 86400000, base: 0 },
+      month: { step: 1, base: 0 },
+      week: { step: 604800000, base: -259200000 },
+      time: { step: 1000, base: 0 },
+      "datetime-local": { step: 1000, base: 0 },
+    };
+    const DATE_VALUED = new Set(["date", "month", "week", "time"]);
+
+    function inputType(el) {
+      return (api.getAttr(el._id, "type") || "text").toLowerCase();
+    }
+
+    /// `value` as a number, or NaN.
+    ///
+    /// NaN rather than `undefined` for a type that has no numeric form, which
+    /// is the distinction `input-valueasnumber` checks on nearly every line:
+    /// `undefined` says "this engine does not have the property", NaN says
+    /// "this control has no number in it".
+    function valueAsNumberOf(el) {
+      const type = inputType(el);
+      if (!(type in STEPPABLE)) return NaN;
+      const raw = String(el.value ?? "");
+      if (raw === "") return NaN;
+      if (type === "number" || type === "range") {
+        const n = Number(raw);
+        return Number.isNaN(n) ? NaN : n;
+      }
+      if (type === "month") {
+        const m = /^(\d{4,})-(\d{2})$/.exec(raw);
+        if (!m) return NaN;
+        // Months since 1970-01, which is what the spec defines this as — not
+        // a timestamp, which is why it has its own branch.
+        return (Number(m[1]) - 1970) * 12 + (Number(m[2]) - 1);
+      }
+      if (type === "time") {
+        const at = Date.parse(`1970-01-01T${raw}Z`);
+        return Number.isNaN(at) ? NaN : at;
+      }
+      if (type === "week") {
+        const m = /^(\d{4,})-W(\d{2})$/.exec(raw);
+        if (!m) return NaN;
+        const jan4 = Date.UTC(Number(m[1]), 0, 4);
+        const dow = (new Date(jan4).getUTCDay() + 6) % 7;
+        return jan4 - dow * 86400000 + (Number(m[2]) - 1) * 604800000;
+      }
+      const at = Date.parse(type === "date" ? `${raw}T00:00:00Z` : `${raw}Z`);
+      return Number.isNaN(at) ? NaN : at;
+    }
+
+    function numberToValue(el, number) {
+      const type = inputType(el);
+      if (type === "number" || type === "range") return String(number);
+      if (type === "month") {
+        const year = 1970 + Math.floor(number / 12);
+        const month = ((number % 12) + 12) % 12 + 1;
+        return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
+      }
+      const date = new Date(number);
+      if (Number.isNaN(date.getTime())) return "";
+      const iso = date.toISOString();
+      if (type === "date") return iso.slice(0, 10);
+      if (type === "time") return iso.slice(11, 19);
+      if (type === "datetime-local") return iso.slice(0, 19);
+      if (type === "week") {
+        const target = new Date(number);
+        const day = (target.getUTCDay() + 6) % 7;
+        target.setUTCDate(target.getUTCDate() - day + 3);
+        const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+        const week = 1 + Math.round(
+          (target - firstThursday) / 604800000
+          - ((firstThursday.getUTCDay() + 6) % 7 - 3) / 7,
+        );
+        return `${target.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+      }
+      return String(number);
+    }
+
+    on(["input"], "valueAsNumber", {
+      get() { return valueAsNumberOf(this); },
+      set(value) {
+        const type = inputType(this);
+        if (!(type in STEPPABLE)) {
+          throw new DOMException(
+            `valueAsNumber does not apply to input type=${type}`,
+            "InvalidStateError",
+          );
+        }
+        const n = Number(value);
+        this.value = Number.isNaN(n) ? "" : numberToValue(this, n);
+      },
+    });
+
+    on(["input"], "valueAsDate", {
       get() {
-        return collection(
-          this.querySelectorAll("input, select, textarea, button, fieldset, output")
-            .filter((el) => (api.getAttr(el._id, "type") || "").toLowerCase() !== "image"),
-          "HTMLFormControlsCollection",
+        const type = inputType(this);
+        // Deliberately narrower than `valueAsNumber`: `number`, `range` and
+        // `datetime-local` have no time zone, so a `Date` would be a value the
+        // control does not hold. The spec says null and so does this.
+        if (!DATE_VALUED.has(type)) return null;
+        const n = valueAsNumberOf(this);
+        if (Number.isNaN(n)) return null;
+        return new Date(type === "month" ? Date.UTC(1970 + Math.floor(n / 12), ((n % 12) + 12) % 12) : n);
+      },
+      set(value) {
+        const type = inputType(this);
+        if (!DATE_VALUED.has(type)) {
+          throw new DOMException(
+            `valueAsDate does not apply to input type=${type}`,
+            "InvalidStateError",
+          );
+        }
+        if (value === null) { this.value = ""; return; }
+        this.value = numberToValue(this, value.getTime());
+      },
+    });
+
+    for (const [name, sign] of [["stepUp", 1], ["stepDown", -1]]) {
+      Object.defineProperty(TAG_CLASSES.get("input").prototype, name, {
+        configurable: true, writable: true,
+        value(n) {
+          const type = inputType(this);
+          const spec = STEPPABLE[type];
+          if (!spec) {
+            throw new DOMException(
+              `${name} does not apply to input type=${type}`,
+              "InvalidStateError",
+            );
+          }
+          const rawStep = api.getAttr(this._id, "step");
+          if (rawStep !== null && rawStep.toLowerCase() === "any") {
+            // "any" means there is no step, so stepping is not defined — an
+            // error rather than a silent no-op, so a page stepping a slider it
+            // configured that way finds out.
+            throw new DOMException(`${name}: step is "any"`, "InvalidStateError");
+          }
+          const step = rawStep !== null && Number.isFinite(Number(rawStep)) && Number(rawStep) > 0
+            ? Number(rawStep) * (type === "number" || type === "range" ? 1 : spec.step)
+            : spec.step;
+          const current = valueAsNumberOf(this);
+          const from = Number.isNaN(current) ? spec.base : current;
+          this.valueAsNumber = from + sign * step * (n === undefined ? 1 : Number(n));
+        },
+      });
+    }
+
+    /// `showPicker`, which is almost entirely its refusals.
+    ///
+    /// There is no picker to show here, so the useful half is the part a test
+    /// actually checks: it throws for a type that has no picker, for a disabled
+    /// or read-only control, and without a user gesture. Answering nothing at
+    /// all made every one of those assertions fail.
+    const PICKER_TYPES = new Set([
+      "date", "month", "week", "time", "datetime-local", "color", "file",
+    ]);
+    Object.defineProperty(TAG_CLASSES.get("input").prototype, "showPicker", {
+      configurable: true, writable: true,
+      value() {
+        const type = inputType(this);
+        if (this.disabled || this.readOnly) {
+          throw new DOMException(
+            "showPicker: the control is disabled or read-only",
+            "InvalidStateError",
+          );
+        }
+        if (!PICKER_TYPES.has(type)) {
+          // A type with no picker is a no-op in a browser rather than an
+          // error — the exception below is for the *gesture*, which is a
+          // different refusal.
+          return;
+        }
+        throw new DOMException(
+          "showPicker: this engine has no picker to show, and there is no user "
+          + "gesture to attribute one to",
+          "NotAllowedError",
         );
       },
     });
+
+    // `files` is null for every type but `file`, and was undefined for all of
+    // them — so a page testing `input.files` before reading it took the wrong
+    // branch on a control that genuinely has no files.
+    on(["input"], "files", {
+      get() { return inputType(this) === "file" ? collection([], "FileList") : null; },
+    });
+
+    // ---- Text field selection ---------------------------------------------
+    //
+    // `selectionStart`, `selectionEnd`, `selectionDirection`,
+    // `setSelectionRange`, `setRangeText` and `select` were all absent, which
+    // is 464 unpassed subtests and, more to the point, the API anything that
+    // edits text in a field reaches for first.
+    //
+    // The selection is held here rather than in the layout engine: blitz has an
+    // editor for a laid-out input and this has to answer for a detached one
+    // too, so the property is the truth and the editor follows it.
+
+    /// Which controls have a selection at all.
+    ///
+    /// The list is exact and the exclusions are the interesting half: a
+    /// `<input type=number>` reports `null` for `selectionStart` rather than 0,
+    /// because it has no text selection to report — and a page that tested for
+    /// `!== null` before using it was getting the wrong answer.
+    const SELECTABLE_INPUT_TYPES = new Set([
+      "text", "search", "url", "tel", "password",
+    ]);
+
+    function hasTextSelection(el) {
+      if (el.tagName === "TEXTAREA") return true;
+      if (el.tagName !== "INPUT") return false;
+      return SELECTABLE_INPUT_TYPES.has((api.getAttr(el._id, "type") || "text").toLowerCase());
+    }
+
+    function selectionOf(el) {
+      if (!el.__h5iSelection) {
+        const end = String(el.value ?? "").length;
+        el.__h5iSelection = { start: end, end, direction: "none" };
+      }
+      return el.__h5iSelection;
+    }
+
+    function clampSelection(el) {
+      const length = String(el.value ?? "").length;
+      const sel = selectionOf(el);
+      sel.start = Math.min(sel.start, length);
+      sel.end = Math.min(sel.end, length);
+      if (sel.end < sel.start) sel.end = sel.start;
+      return sel;
+    }
+
+    for (const [name, key] of [["selectionStart", "start"], ["selectionEnd", "end"]]) {
+      on(["input", "textarea"], name, {
+        get() {
+          if (!hasTextSelection(this)) return null;
+          return clampSelection(this)[key];
+        },
+        set(value) {
+          if (!hasTextSelection(this)) {
+            throw new DOMException(
+              `${name} does not apply to this control`,
+              "InvalidStateError",
+            );
+          }
+          const sel = clampSelection(this);
+          const at = Math.max(0, Math.min(Number(value) || 0, String(this.value ?? "").length));
+          sel[key] = at;
+          // Setting the start past the end collapses the selection there,
+          // rather than leaving a range that runs backwards.
+          if (sel.end < sel.start) sel.end = sel.start;
+        },
+      });
+    }
+
+    on(["input", "textarea"], "selectionDirection", {
+      get() {
+        if (!hasTextSelection(this)) return null;
+        return selectionOf(this).direction;
+      },
+      set(value) {
+        if (!hasTextSelection(this)) return;
+        const wanted = String(value).toLowerCase();
+        selectionOf(this).direction =
+          wanted === "forward" || wanted === "backward" ? wanted : "none";
+      },
+    });
+
+    for (const tag of ["input", "textarea"]) {
+      const Interface = TAG_CLASSES.get(tag);
+      if (!Interface) continue;
+      Object.defineProperty(Interface.prototype, "setSelectionRange", {
+        configurable: true, writable: true,
+        value(start, end, direction) {
+          if (!hasTextSelection(this)) {
+            throw new DOMException(
+              "setSelectionRange does not apply to this control",
+              "InvalidStateError",
+            );
+          }
+          const length = String(this.value ?? "").length;
+          const clamp = (n) => Math.max(0, Math.min(Number(n) || 0, length));
+          const from = clamp(start);
+          const to = Math.max(from, clamp(end));
+          this.__h5iSelection = {
+            start: from,
+            end: to,
+            direction: direction === "forward" || direction === "backward"
+              ? direction
+              : "none",
+          };
+          this.dispatchEvent(new Event("select", { bubbles: true }));
+        },
+      });
+      Object.defineProperty(Interface.prototype, "select", {
+        configurable: true, writable: true,
+        value() {
+          if (!hasTextSelection(this)) return;
+          this.setSelectionRange(0, String(this.value ?? "").length);
+        },
+      });
+      Object.defineProperty(Interface.prototype, "setRangeText", {
+        configurable: true, writable: true,
+        value(replacement, start, end, selectMode) {
+          if (!hasTextSelection(this)) {
+            throw new DOMException(
+              "setRangeText does not apply to this control",
+              "InvalidStateError",
+            );
+          }
+          const text = String(this.value ?? "");
+          const sel = clampSelection(this);
+          // Two arities: with no range it replaces the current selection,
+          // which is what an editor toolbar calls.
+          const from = start === undefined ? sel.start : Math.max(0, Math.min(Number(start) || 0, text.length));
+          const to = end === undefined ? sel.end : Math.max(0, Math.min(Number(end) || 0, text.length));
+          if (from > to) {
+            throw new DOMException("setRangeText: start is past end", "IndexSizeError");
+          }
+          const inserted = String(replacement ?? "");
+          this.value = text.slice(0, from) + inserted + text.slice(to);
+          const mode = String(selectMode ?? "preserve").toLowerCase();
+          if (mode === "select") {
+            this.__h5iSelection = { start: from, end: from + inserted.length, direction: "none" };
+          } else if (mode === "start") {
+            this.__h5iSelection = { start: from, end: from, direction: "none" };
+          } else if (mode === "end") {
+            const at = from + inserted.length;
+            this.__h5iSelection = { start: at, end: at, direction: "none" };
+          } else {
+            // `preserve`: the selection moves with the text around it, which
+            // is why the offsets are shifted rather than reset.
+            const delta = inserted.length - (to - from);
+            this.__h5iSelection = {
+              start: sel.start > to ? sel.start + delta : Math.min(sel.start, from),
+              end: sel.end > to ? sel.end + delta : Math.min(sel.end, from + inserted.length),
+              direction: sel.direction,
+            };
+          }
+        },
+      });
+    }
+
+    // ---- Constraint validation ------------------------------------------
+    //
+    // `html/semantics/forms/constraints` scored **1 of 920**, and the reason
+    // was not that the feature is subtle: none of it existed. `validity`,
+    // `willValidate`, `checkValidity`, `reportValidity`, `setCustomValidity`
+    // and `validationMessage` were all absent, so every test failed on
+    // "The validity attribute doesn't exist" before reaching what it meant to
+    // check.
+    //
+    // It is also the API a page uses to decide whether to submit, which makes
+    // it one an agent driving a form needs to be able to read.
+
+    /// Which elements are *candidates* for constraint validation.
+    ///
+    /// The barred cases are not an optimisation: a disabled control that
+    /// reported itself invalid would block a form the user cannot even reach,
+    /// and a `<button type=button>` is not submitted at all.
+    const NEVER_VALIDATED_INPUT_TYPES = new Set(["hidden", "reset", "button"]);
+
+    function isSubmittable(el) {
+      return ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(el.tagName);
+    }
+
+    function isBarredFromValidation(el) {
+      if (!isSubmittable(el)) return true;
+      if (el.disabled) return true;
+      if (el.tagName === "INPUT") {
+        const type = (api.getAttr(el._id, "type") || "text").toLowerCase();
+        if (NEVER_VALIDATED_INPUT_TYPES.has(type)) return true;
+        if (el.readOnly) return true;
+      }
+      if (el.tagName === "TEXTAREA" && el.readOnly) return true;
+      if (el.tagName === "BUTTON") {
+        const type = (api.getAttr(el._id, "type") || "submit").toLowerCase();
+        if (type !== "submit") return true;
+      }
+      // A control inside a `<datalist>` is a suggestion, not an entry.
+      for (let node = el.parentNode; node; node = node.parentNode) {
+        if (node.tagName === "DATALIST") return true;
+      }
+      return false;
+    }
+
+    const EMAIL = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+    /// The numeric value of a control, for the range and step constraints.
+    ///
+    /// `null` when the type has no numeric interpretation, which is what keeps
+    /// `min`/`max` from being applied to a plain text field.
+    function numericValue(el, raw) {
+      const type = (api.getAttr(el._id, "type") || "text").toLowerCase();
+      if (["number", "range"].includes(type)) {
+        const n = Number(raw);
+        return raw === "" || Number.isNaN(n) ? null : n;
+      }
+      if (["date", "month", "week", "time", "datetime-local"].includes(type)) {
+        const at = Date.parse(type === "time" ? `1970-01-01T${raw}Z` : raw);
+        return Number.isNaN(at) ? null : at;
+      }
+      return null;
+    }
+
+    function computeValidity(el) {
+      const flags = {
+        valueMissing: false, typeMismatch: false, patternMismatch: false,
+        tooLong: false, tooShort: false, rangeUnderflow: false,
+        rangeOverflow: false, stepMismatch: false, badInput: false,
+        customError: !!el.__h5iCustomError,
+      };
+      if (isBarredFromValidation(el)) {
+        // Barred elements are always valid, *including* when a custom error
+        // was set: the element is not a candidate, so nothing about it is
+        // checked. This is the clause that stops a hidden field blocking a
+        // form nobody can fix.
+        return { ...flags, customError: false, valid: true };
+      }
+
+      const type = el.tagName === "INPUT"
+        ? (api.getAttr(el._id, "type") || "text").toLowerCase()
+        : el.tagName.toLowerCase();
+      const value = el.tagName === "SELECT" || el.tagName === "BUTTON" ? el.value : (el.value ?? "");
+      const required = api.getAttr(el._id, "required") !== null;
+
+      if (required) {
+        if (type === "checkbox") flags.valueMissing = !el.checked;
+        else if (type === "radio") {
+          const name = el.name;
+          const group = name
+            ? document.querySelectorAll(`input[type=radio][name="${name}"]`)
+            : [el];
+          flags.valueMissing = !group.some((other) => other.checked);
+        } else flags.valueMissing = value === "";
+      }
+
+      if (value !== "") {
+        if (type === "email") flags.typeMismatch = !EMAIL.test(value);
+        else if (type === "url") {
+          flags.typeMismatch = api.parseUrl(value, "") === null;
+        }
+
+        const pattern = api.getAttr(el._id, "pattern");
+        if (pattern !== null && ["text", "search", "url", "tel", "email", "password"].includes(type)) {
+          try {
+            // Anchored, and `v` rather than `u` is not available here — the
+            // whole value must match, which is the difference between
+            // `pattern` and a search.
+            flags.patternMismatch = !new RegExp(`^(?:${pattern})$`, "u").test(value);
+          } catch {
+            // An unparseable pattern is ignored rather than treated as a
+            // mismatch, which is what the spec says and stops one typo in an
+            // attribute making a form unsubmittable.
+          }
+        }
+
+        // Length constraints apply only once the value has been edited, which
+        // is what the spec's "dirty value flag" means. `_value` is set by the
+        // property setter and by `Page::type_into`, so it is exactly that flag.
+        const dirty = el._value !== undefined;
+        const maxLength = Number(api.getAttr(el._id, "maxlength"));
+        const minLength = Number(api.getAttr(el._id, "minlength"));
+        if (dirty && Number.isInteger(maxLength) && maxLength >= 0) {
+          flags.tooLong = value.length > maxLength;
+        }
+        if (dirty && Number.isInteger(minLength) && minLength >= 0) {
+          flags.tooShort = value.length < minLength;
+        }
+
+        const numeric = numericValue(el, value);
+        if (numeric !== null) {
+          const min = numericValue(el, api.getAttr(el._id, "min") ?? "");
+          const max = numericValue(el, api.getAttr(el._id, "max") ?? "");
+          if (min !== null) flags.rangeUnderflow = numeric < min;
+          if (max !== null) flags.rangeOverflow = numeric > max;
+          const stepRaw = api.getAttr(el._id, "step");
+          if (stepRaw !== null && stepRaw.toLowerCase() !== "any") {
+            const step = Number(stepRaw);
+            if (Number.isFinite(step) && step > 0) {
+              const base = min ?? 0;
+              const offset = Math.abs((numeric - base) % step);
+              // A floating-point remainder is never exactly zero, so the
+              // comparison has to have a tolerance or every decimal step
+              // mismatches.
+              flags.stepMismatch = offset > 1e-9 && Math.abs(offset - step) > 1e-9;
+            }
+          }
+        }
+      }
+
+      const valid = !Object.keys(flags).some((k) => flags[k]);
+      return { ...flags, valid };
+    }
+
+    on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
+      "willValidate", { get() { return !isBarredFromValidation(this); } });
+
+    on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
+      "validity", {
+        get() {
+          // Computed fresh each time rather than cached: validity is a
+          // function of the element's current state, and a cached one would
+          // go stale the moment a page typed into the field.
+          const flags = computeValidity(this);
+          return Object.freeze({ ...flags });
+        },
+      });
+
+    const VALIDATION_MESSAGES = {
+      valueMissing: "Please fill out this field.",
+      typeMismatch: "Please enter a value of the correct type.",
+      patternMismatch: "Please match the requested format.",
+      tooLong: "Please shorten this text.",
+      tooShort: "Please lengthen this text.",
+      rangeUnderflow: "Value must be greater than or equal to the minimum.",
+      rangeOverflow: "Value must be less than or equal to the maximum.",
+      stepMismatch: "Please enter a valid value.",
+      badInput: "Please enter a valid value.",
+    };
+
+    on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
+      "validationMessage", {
+        get() {
+          if (isBarredFromValidation(this)) return "";
+          const flags = computeValidity(this);
+          if (flags.valid) return "";
+          if (flags.customError) return this.__h5iCustomError || "";
+          for (const key of Object.keys(VALIDATION_MESSAGES)) {
+            if (flags[key]) return VALIDATION_MESSAGES[key];
+          }
+          return "";
+        },
+      });
+
+    for (const tag of ["input", "select", "textarea", "button", "fieldset", "output", "object"]) {
+      const Interface = TAG_CLASSES.get(tag);
+      if (!Interface) continue;
+      Object.defineProperty(Interface.prototype, "setCustomValidity", {
+        configurable: true, writable: true,
+        value(message) {
+          // The empty string clears it, which is how a page says "this is fine
+          // now" — storing "" as an error would leave the control permanently
+          // invalid.
+          this.__h5iCustomError = String(message ?? "") || undefined;
+        },
+      });
+      Object.defineProperty(Interface.prototype, "checkValidity", {
+        configurable: true, writable: true,
+        value() {
+          if (isBarredFromValidation(this)) return true;
+          if (computeValidity(this).valid) return true;
+          // `invalid` is cancelable and does not bubble. A page listens for it
+          // to put its own message beside the field, which is most of what
+          // this API is used for.
+          this.dispatchEvent(new Event("invalid", { cancelable: true }));
+          return false;
+        },
+      });
+      Object.defineProperty(Interface.prototype, "reportValidity", {
+        configurable: true, writable: true,
+        // Identical to `checkValidity` here: the difference is that a browser
+        // *shows* the message, and this engine has no UI to show it in. Said
+        // rather than left implicit, because a page calling this expects the
+        // return value and not the bubble.
+        value() { return this.checkValidity(); },
+      });
+    }
+
+    on(["form"], "elements", {
+      get() {
+        // Ownership, not containment. A control with `form="thisId"` belongs
+        // here however far away it sits, and a descendant with `form=` naming
+        // something else does not — which is exactly what the attribute is
+        // for, and what a descendant-only query gets backwards both ways.
+        const owned = document
+          .querySelectorAll("input, select, textarea, button, fieldset, output")
+          .filter((el) => sameNode(formOwnerOf(el), this))
+          .filter((el) => (api.getAttr(el._id, "type") || "").toLowerCase() !== "image");
+        return collection(owned, "HTMLFormControlsCollection");
+      },
+    });
     on(["form"], "length", { get() { return this.elements.length; } });
+    // Enumerated, and its missing-value default is `on` rather than "": a page
+    // branching on it has two states to handle, not three.
+    on(["form"], "autocomplete", {
+      get() {
+        return (api.getAttr(this._id, "autocomplete") || "").toLowerCase() === "off"
+          ? "off"
+          : "on";
+      },
+      set(value) { this.setAttribute("autocomplete", String(value)); },
+    });
+
+    /// `requestSubmit` and `submit`, which differ in the two ways that matter.
+    ///
+    /// `requestSubmit()` is what a button does: it **validates**, and it fires
+    /// a cancelable `submit` event that a page can `preventDefault()`.
+    /// `submit()` is the escape hatch: it does **neither**, which is exactly
+    /// why a page that calls `form.submit()` from inside its own `submit`
+    /// handler does not recurse. Implementing them as the same function — the
+    /// obvious shortcut — would make that recursion real.
+    ///
+    /// Neither *navigates* here. This engine drives navigation through its own
+    /// verbs so an agent and a receipt see it, and a form submitting itself out
+    /// from under that would be a request nothing decided on. What both do is
+    /// build the entry list and fire the events, which is the half a page
+    /// observes and the half these tests check.
+    Object.defineProperty(TAG_CLASSES.get("form").prototype, "requestSubmit", {
+      configurable: true, writable: true,
+      value(submitter) {
+        if (submitter !== undefined && submitter !== null) {
+          const type = submitter.tagName === "BUTTON"
+            ? (api.getAttr(submitter._id, "type") || "submit").toLowerCase()
+            : (api.getAttr(submitter._id, "type") || "").toLowerCase();
+          if (!(submitter.tagName === "BUTTON" && type === "submit")
+            && !(submitter.tagName === "INPUT" && (type === "submit" || type === "image"))) {
+            throw new TypeError("requestSubmit: the submitter is not a submit button");
+          }
+          const owner = submitter.form;
+          if (!owner || owner._id !== this._id) {
+            throw new DOMException(
+              "requestSubmit: the submitter is not owned by this form",
+              "NotFoundError",
+            );
+          }
+        }
+        // Interactively validate, unless the form opted out. A form that fails
+        // here fires `invalid` on each bad control and never fires `submit`,
+        // which is the sequence a page listening for both depends on.
+        if (!this.noValidate && !this.reportValidity()) return;
+        const event = new SubmitEvent("submit", {
+          bubbles: true, cancelable: true, submitter: submitter ?? null,
+        });
+        this.dispatchEvent(event);
+        if (event.defaultPrevented) return;
+        this.__h5iEntryList = buildEntryList(this, submitter ?? null);
+      },
+    });
+    Object.defineProperty(TAG_CLASSES.get("form").prototype, "submit", {
+      configurable: true, writable: true,
+      value() {
+        // No validation and no `submit` event, deliberately. See above.
+        this.__h5iEntryList = buildEntryList(this, null);
+      },
+    });
+
+    // A form validates by asking each of its controls, and the *statically
+    // validate* step is what makes this more than a loop: every control is
+    // checked and every invalid one gets its `invalid` event, rather than
+    // stopping at the first. A page that highlights all its bad fields at once
+    // depends on that.
+    for (const name of ["checkValidity", "reportValidity"]) {
+      Object.defineProperty(TAG_CLASSES.get("form").prototype, name, {
+        configurable: true, writable: true,
+        value() {
+          let ok = true;
+          for (const control of this.elements) {
+            if (typeof control.checkValidity !== "function") continue;
+            if (!control.checkValidity()) ok = false;
+          }
+          return ok;
+        },
+      });
+    }
     // A form's default method is `get`, not the empty string: code branches on
     // it, and "" is not one of the branches.
     on(["form"], "method", {
@@ -2396,16 +3678,41 @@
 
     // The form a control belongs to: its `form` attribute if it names one,
     // otherwise the form it sits inside.
-    on(["input", "select", "textarea", "button", "fieldset", "output", "label"], "form", {
-      get() {
-        const named = api.getAttr(this._id, "form");
-        if (named) return wrap(api.query("#" + cssEscapeIdent(named), 0));
-        for (let n = this.parentNode; n; n = n.parentNode) {
-          if (n.nodeType === 1 && n.tagName === "FORM") return n;
-        }
-        return null;
-      },
-    });
+    /// Whether two wrappers name the same node.
+    ///
+    /// **Not `===`.** `wrap()` hands back the `observed` proxy while a getter
+    /// runs with the raw target as `this` (see `observed`, which passes the
+    /// target as the receiver deliberately), so a proxy and its target are two
+    /// objects for the same node. Comparing them by identity silently answered
+    /// "different" for every element — `form.elements` came back empty, and an
+    /// empty entry list is a form that submits nothing.
+    const sameNode = (a, b) => !!a && !!b && a._id === b._id;
+
+    /// A control's *form owner*, which is not simply its nearest ancestor form.
+    ///
+    /// **A present `form` attribute wins outright, even when it names
+    /// nothing.** This read the attribute for truthiness, so `form=""` — which
+    /// matches no id and therefore has no owner — fell through to the ancestor
+    /// search and reported the surrounding form. That is the opposite answer:
+    /// the whole point of the attribute is to take a control *out* of the form
+    /// it sits in.
+    ///
+    /// It must also name a `<form>`: `form="some-div"` has no owner either.
+    function formOwnerOf(el) {
+      const named = api.getAttr(el._id, "form");
+      if (named !== null) {
+        if (named === "") return null;
+        const found = wrap(api.query("#" + cssEscapeIdent(named), 0));
+        return found && found.tagName === "FORM" ? found : null;
+      }
+      for (let n = el.parentNode; n; n = n.parentNode) {
+        if (n.nodeType === 1 && n.tagName === "FORM") return n;
+      }
+      return null;
+    }
+
+    on(["input", "select", "textarea", "button", "fieldset", "output", "label", "object"],
+      "form", { get() { return formOwnerOf(this); } });
 
     // `<option>.text` is its text with whitespace collapsed, which is what a
     // `<select>` actually shows.
@@ -2833,6 +4140,133 @@
     }
   }
 
+  // The rest of the event types a page constructs by name.
+  //
+  // Each of these was a `ReferenceError` — `new SubmitEvent("submit", …)` did
+  // not merely lose a field, it threw and took the handler with it. They are
+  // cheap because an event *is* its fields: the dispatch machinery is shared,
+  // and what distinguishes a `StorageEvent` from an `ErrorEvent` is which
+  // properties it carries. Adding the ones a page actually constructs is the
+  // difference between a listener that reads `event.submitter` and a page that
+  // stopped at the constructor.
+  class FocusEvent extends UIEvent {
+    constructor(type, init) { super(type, init); this.relatedTarget = (init && init.relatedTarget) ?? null; }
+  }
+  class WheelEvent extends MouseEvent {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.deltaX = i.deltaX || 0; this.deltaY = i.deltaY || 0;
+      this.deltaZ = i.deltaZ || 0; this.deltaMode = i.deltaMode || 0;
+    }
+  }
+  class PointerEvent extends MouseEvent {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.pointerId = i.pointerId || 0;
+      this.pointerType = i.pointerType || "";
+      this.isPrimary = !!i.isPrimary;
+      this.pressure = i.pressure || 0;
+      this.width = i.width === undefined ? 1 : i.width;
+      this.height = i.height === undefined ? 1 : i.height;
+    }
+  }
+  class CompositionEvent extends UIEvent {
+    constructor(type, init) { super(type, init); this.data = (init && init.data) || ""; }
+  }
+  class ErrorEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.message = i.message || ""; this.filename = i.filename || "";
+      this.lineno = i.lineno || 0; this.colno = i.colno || 0;
+      this.error = i.error ?? null;
+    }
+  }
+  class PromiseRejectionEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.promise = i.promise ?? null; this.reason = i.reason;
+    }
+  }
+  class ProgressEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.lengthComputable = !!i.lengthComputable;
+      this.loaded = i.loaded || 0; this.total = i.total || 0;
+    }
+  }
+  class MessageEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.data = i.data ?? null; this.origin = i.origin || "";
+      this.lastEventId = i.lastEventId || ""; this.source = i.source ?? null;
+      this.ports = i.ports || [];
+    }
+  }
+  class CloseEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.wasClean = !!i.wasClean; this.code = i.code || 0; this.reason = i.reason || "";
+    }
+  }
+  class StorageEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.key = i.key ?? null; this.oldValue = i.oldValue ?? null;
+      this.newValue = i.newValue ?? null; this.url = i.url || "";
+      this.storageArea = i.storageArea ?? null;
+    }
+  }
+  class PopStateEvent extends Event {
+    constructor(type, init) { super(type, init); this.state = (init && init.state) ?? null; }
+  }
+  class HashChangeEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.oldURL = i.oldURL || ""; this.newURL = i.newURL || "";
+    }
+  }
+  class PageTransitionEvent extends Event {
+    constructor(type, init) { super(type, init); this.persisted = !!(init && init.persisted); }
+  }
+  class SubmitEvent extends Event {
+    constructor(type, init) { super(type, init); this.submitter = (init && init.submitter) ?? null; }
+  }
+  class FormDataEvent extends Event {
+    constructor(type, init) { super(type, init); this.formData = (init && init.formData) ?? null; }
+  }
+  class ToggleEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.oldState = i.oldState || ""; this.newState = i.newState || "";
+    }
+  }
+  class AnimationEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.animationName = i.animationName || ""; this.elapsedTime = i.elapsedTime || 0;
+      this.pseudoElement = i.pseudoElement || "";
+    }
+  }
+  class TransitionEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.propertyName = i.propertyName || ""; this.elapsedTime = i.elapsedTime || 0;
+      this.pseudoElement = i.pseudoElement || "";
+    }
+  }
+
   function path(node) {
     const chain = [];
     for (let n = node; n; n = n.parentNode) chain.push(n);
@@ -2917,7 +4351,25 @@
                             decodeURIComponent(v.replace(/\+/g, " "))]);
         }
       } else if (init && typeof init === "object") {
-        for (const k of Object.keys(init)) this._pairs.push([k, String(init[k])]);
+        // Three shapes, and only the third was handled. `new
+        // URLSearchParams(otherParams)` walked the *object's own keys*, so it
+        // copied the internal `_pairs` field and produced `_pairs=a%2Cb` —
+        // a params object serialising its own implementation.
+        if (typeof init[Symbol.iterator] === "function") {
+          // A sequence of pairs, which covers another URLSearchParams, a Map,
+          // and the `[["a","b"]]` literal form.
+          for (const pair of init) {
+            const entry = Array.from(pair);
+            if (entry.length !== 2) {
+              throw new TypeError(
+                "URLSearchParams: each entry must have exactly two elements",
+              );
+            }
+            this._pairs.push([String(entry[0]), String(entry[1])]);
+          }
+        } else {
+          for (const k of Object.keys(init)) this._pairs.push([k, String(init[k])]);
+        }
       }
     }
     get(k) { const hit = this._pairs.find(([n]) => n === String(k)); return hit ? hit[1] : null; }
@@ -2927,14 +4379,28 @@
     append(k, v) { this._pairs.push([String(k), String(v)]); }
     delete(k) { this._pairs = this._pairs.filter(([n]) => n !== String(k)); }
     forEach(fn) { for (const [k, v] of this._pairs) fn(v, k, this); }
+    get size() { return this._pairs.length; }
+    // Stable, and by *code unit* rather than by `<` on strings, which is what
+    // the spec says and what makes the order the same in every engine.
+    sort() {
+      this._pairs = this._pairs
+        .map((pair, index) => [pair, index])
+        .sort(([a, i], [b, j]) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : i - j))
+        .map(([pair]) => pair);
+    }
     keys() { return this._pairs.map(([k]) => k)[Symbol.iterator](); }
     values() { return this._pairs.map(([, v]) => v)[Symbol.iterator](); }
     entries() { return this._pairs[Symbol.iterator](); }
     [Symbol.iterator]() { return this.entries(); }
     toString() {
-      return this._pairs
-        .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
-        .join("&");
+      // `application/x-www-form-urlencoded` serialisation, which is not
+      // `encodeURIComponent`: a space is `+`, and `!'()~*` are escaped where
+      // `encodeURIComponent` leaves them alone.
+      const encode = (text) =>
+        encodeURIComponent(text)
+          .replace(/%20/g, "+")
+          .replace(/[!'()~*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+      return this._pairs.map(([k, v]) => encode(k) + "=" + encode(v)).join("&");
     }
   }
 
@@ -2947,6 +4413,19 @@
     }
     toString() { return this.href; }
     toJSON() { return this.href; }
+    /// The two statics, which are the non-throwing way to ask. A page testing
+    /// a URL had to build one in a `try`, which is the idiom these exist to
+    /// replace.
+    static parse(href, base) {
+      try {
+        return new URL(href, base);
+      } catch {
+        return null;
+      }
+    }
+    static canParse(href, base) {
+      return URL.parse(href, base) !== null;
+    }
   }
 
   // A case-insensitive header map, which is what `Headers` is: `get("ETag")`
@@ -2983,7 +4462,11 @@
       this.method = (i.method || "GET").toUpperCase();
       this.headers = new Headers(i.headers);
       this.body = i.body ?? null;
-      this.signal = i.signal || null;
+      // Every Request carries a signal, minted here when the caller brought
+      // none — that is the spec's shape, and `request.signal` being null sent
+      // every page that wires its own abort through the request object down
+      // the wrong branch.
+      this.signal = i.signal || (input instanceof Request ? input.signal : null) || new AbortSignal();
       // The two that decide what happens at an origin boundary. Defaults are
       // the spec's — `cors` and `same-origin` — so a page that says nothing
       // gets what a browser gives it: the request may cross, and it does not
@@ -2991,13 +4474,100 @@
       this.mode = i.mode || (input instanceof Request ? input.mode : "cors");
       this.credentials =
         i.credentials || (input instanceof Request ? input.credentials : "same-origin");
+      this.bodyUsed = false;
     }
+    // A request carries a body too, and reading it back is how a service
+    // worker or a test inspects one. Same readers as `Response`, over the same
+    // kind of value.
+    _text() { return this.body == null ? "" : String(this.body); }
+    text() { this.bodyUsed = true; return Promise.resolve(this._text()); }
+    json() { this.bodyUsed = true; return Promise.resolve(JSON.parse(this._text())); }
+    formData() {
+      this.bodyUsed = true;
+      const form = new FormData();
+      for (const [k, v] of new URLSearchParams(this._text())) form.append(k, v);
+      return Promise.resolve(form);
+    }
+    arrayBuffer() {
+      this.bodyUsed = true;
+      return Promise.resolve(new TextEncoder().encode(this._text()).buffer);
+    }
+    blob() {
+      this.bodyUsed = true;
+      return Promise.resolve(new Blob([this._text()],
+        { type: this.headers.get("content-type") || "" }));
+    }
+    clone() { return new Request(this.url, this); }
+  }
+
+  // What `fetch` resolves to, and what a page constructs to mock one.
+  //
+  // It was a plain object literal built inside `responseFrom`, which worked for
+  // every page that only reads it and failed for the two that ask *what it is*:
+  // `Response` was not a global, so `new Response(...)` was a ReferenceError and
+  // `res instanceof Response` could not be written at all. Both are ordinary
+  // things for a page to do, and a mocked fetch does the first.
+  class Response {
+    constructor(body, init) {
+      const i = init || {};
+      this._body = body == null ? "" : String(body);
+      this.status = i.status === undefined ? 200 : Number(i.status);
+      this.statusText = i.statusText === undefined ? "" : String(i.statusText);
+      this.ok = this.status >= 200 && this.status < 300;
+      this.headers = i.headers instanceof Headers ? i.headers : new Headers(i.headers);
+      this.type = i.type || "basic";
+      this.url = i.url || "";
+      this.redirected = !!i.redirected;
+      this.bodyUsed = false;
+    }
+    text() { this.bodyUsed = true; return Promise.resolve(this._body); }
+    json() { this.bodyUsed = true; return Promise.resolve(JSON.parse(this._body)); }
+    // The other two body readers. `formData` is how anything that posts a form
+    // reads one back, and it is what `url/urlencoded-parser` tests against.
+    formData() {
+      this.bodyUsed = true;
+      const form = new FormData();
+      for (const [k, v] of new URLSearchParams(this._body)) form.append(k, v);
+      return Promise.resolve(form);
+    }
+    arrayBuffer() {
+      this.bodyUsed = true;
+      const text = this._body;
+      const bytes = new TextEncoder().encode(text);
+      return Promise.resolve(bytes.buffer);
+    }
+    blob() {
+      this.bodyUsed = true;
+      const type = this.headers.get("content-type") || "";
+      return Promise.resolve(new Blob([this._body], { type }));
+    }
+    clone() {
+      return new Response(this._body, {
+        status: this.status, statusText: this.statusText, headers: this.headers,
+        type: this.type, url: this.url, redirected: this.redirected,
+      });
+    }
+    static json(data, init) {
+      const response = new Response(JSON.stringify(data), init);
+      response.headers.set("content-type", "application/json");
+      return response;
+    }
+    static error() { return new Response("", { status: 0, type: "error" }); }
   }
 
   // Real enough to be useful: a fetch already aborted is refused, and abort
   // fires its listeners. It cannot cancel a request in flight, because this
   // engine's fetch is synchronous underneath — that limit is stated rather
   // than papered over with a promise that never settles.
+  /// The default abort reason, which is not `new Error`.
+  ///
+  /// Every consumer that distinguishes an abort from a failure does it by
+  /// `e.name === "AbortError"` — that is the documented idiom, and rejecting
+  /// with a plain Error made every such branch take the failure path.
+  function abortError() {
+    return new DOMException("The operation was aborted.", "AbortError");
+  }
+
   class AbortSignal {
     constructor() { this.aborted = false; this.reason = undefined; this._listeners = []; }
     addEventListener(type, handler) { if (type === "abort") this._listeners.push(handler); }
@@ -3007,41 +4577,145 @@
       if (at >= 0) this._listeners.splice(at, 1);
     }
     throwIfAborted() { if (this.aborted) throw this.reason; }
+    /// Deliver the abort: flip the state, then tell every listener.
+    ///
+    /// On the signal rather than the controller, because three producers need
+    /// it now — the controller, `AbortSignal.timeout`, and `AbortSignal.any` —
+    /// and the delivery has to be identical from all three or a listener's
+    /// behaviour depends on who aborted it.
+    _fire(reason) {
+      if (this.aborted) return;
+      this.aborted = true;
+      this.reason = reason === undefined ? abortError() : reason;
+      const event = new Event("abort", { bubbles: false });
+      for (const handler of this._listeners.slice()) {
+        try { handler.call(this, event); } catch (e) { console.error("abort listener threw: " + e); }
+      }
+      if (typeof this.onabort === "function") this.onabort(event);
+    }
     static abort(reason) {
       const s = new AbortSignal();
       s.aborted = true;
-      s.reason = reason ?? new Error("aborted");
+      s.reason = reason === undefined ? abortError() : reason;
+      return s;
+    }
+    /// A signal that aborts itself after `ms`, with the *timeout* name.
+    ///
+    /// On this engine's virtual clock, which is the interesting part: a page
+    /// racing a fetch against `AbortSignal.timeout(5000)` settles
+    /// deterministically here, where a wall-clock engine gives a different
+    /// answer under load.
+    static timeout(ms) {
+      const s = new AbortSignal();
+      setTimeout(() => s._fire(new DOMException("The operation timed out.", "TimeoutError")), ms);
+      return s;
+    }
+    /// Aborted when any input is. Already-aborted inputs win immediately, and
+    /// the reason is the *first* input's, both per spec.
+    static any(signals) {
+      const s = new AbortSignal();
+      for (const input of signals) {
+        if (input.aborted) { s.aborted = true; s.reason = input.reason; return s; }
+      }
+      for (const input of signals) {
+        input.addEventListener("abort", () => s._fire(input.reason));
+      }
       return s;
     }
   }
 
   class AbortController {
     constructor() { this.signal = new AbortSignal(); }
-    abort(reason) {
-      if (this.signal.aborted) return;
-      this.signal.aborted = true;
-      this.signal.reason = reason ?? new Error("aborted");
-      const event = new Event("abort", { bubbles: false });
-      for (const handler of this.signal._listeners.slice()) {
-        try { handler.call(this.signal, event); } catch (e) { console.error("abort listener threw: " + e); }
+    abort(reason) { this.signal._fire(reason); }
+  }
+
+  /// Build a form's *entry list*, which is the algorithm submission is made of.
+  ///
+  /// It was a `querySelectorAll` over the form's descendants that skipped a
+  /// handful of types. Four things were wrong with that, and each is a
+  /// different wrong answer rather than a missing nicety:
+  ///
+  /// * **Ownership, not containment** (see `formOwnerOf`): a control with
+  ///   `form="thisId"` is submitted from anywhere on the page, and a descendant
+  ///   pointing elsewhere is not submitted here at all.
+  /// * **The submitter is an entry.** `<button name=action value=save>` is the
+  ///   whole reason a form can have two buttons, and skipping every button
+  ///   meant the server could not tell which one was pressed.
+  /// * **`_charset_`** is filled in with the encoding rather than with the
+  ///   control's own value, which is the one field whose value the *browser*
+  ///   supplies.
+  /// * **The `formdata` event** fires while the list is being built, which is
+  ///   how a page adds entries that no control holds — the documented
+  ///   replacement for the hidden inputs it used to inject.
+  function buildEntryList(form, submitter) {
+    const entries = [];
+    for (const field of form.elements) {
+      const tag = field.tagName;
+      if (tag === "FIELDSET" || tag === "OUTPUT") continue;
+      if (field.disabled) continue;
+      // A control inside a `<datalist>` is a suggestion, never an entry.
+      let inDatalist = false;
+      for (let n = field.parentNode; n; n = n.parentNode) {
+        if (n.tagName === "DATALIST") { inDatalist = true; break; }
       }
-      if (typeof this.signal.onabort === "function") this.signal.onabort(event);
+      if (inDatalist) continue;
+
+      const type = tag === "INPUT"
+        ? (api.getAttr(field._id, "type") || "text").toLowerCase()
+        : "";
+      // Buttons are entries only when they are the one that submitted.
+      if (tag === "BUTTON" || type === "submit" || type === "reset"
+        || type === "button" || type === "image") {
+        if (!submitter || field._id !== submitter._id) continue;
+        if (type === "reset" || type === "button"
+          || (tag === "BUTTON" && (api.getAttr(field._id, "type") || "submit").toLowerCase() !== "submit")) {
+          continue;
+        }
+      }
+      const name = field.name;
+      if (!name) continue;
+      if ((type === "checkbox" || type === "radio") && !field.checked) continue;
+      if (type === "file") {
+        // No file can have been chosen here, and the spec's own answer for an
+        // empty file control is an entry with an empty filename rather than no
+        // entry at all — a server counting fields would otherwise see one
+        // fewer than the form has.
+        entries.push([name, ""]);
+        continue;
+      }
+      // The one field whose value the *browser* supplies.
+      if (type === "hidden" && name.toLowerCase() === "_charset_") {
+        entries.push([name, "UTF-8"]);
+        continue;
+      }
+      entries.push([name, field.value]);
     }
+    return entries;
   }
 
   class FormData {
-    constructor(form) {
+    constructor(form, submitter) {
       this._entries = [];
       if (form) {
-        for (const field of form.querySelectorAll("input, select, textarea")) {
-          const name = field.name;
-          if (!name || field.disabled) continue;
-          const kind = field.type;
-          if ((kind === "checkbox" || kind === "radio") && !field.checked) continue;
-          if (kind === "submit" || kind === "button" || kind === "file") continue;
-          this._entries.push([name, field.value]);
+        if (submitter !== undefined && submitter !== null) {
+          const owner = submitter.form;
+          if (!owner || !form || owner._id !== form._id) {
+            throw new DOMException(
+              "FormData: the submitter is not owned by this form",
+              "NotFoundError",
+            );
+          }
         }
+        this._entries = buildEntryList(form, submitter ?? null);
+        // `formdata` fires with this object, so a listener adding entries adds
+        // them to the list being constructed rather than to a copy.
+        form.dispatchEvent(new FormDataEvent("formdata", {
+          bubbles: true, formData: this,
+        }));
       }
+    }
+    forEach(fn, thisArg) {
+      for (const [k, v] of this._entries.slice()) fn.call(thisArg, v, k, this);
     }
     append(k, v) { this._entries.push([String(k), String(v)]); }
     set(k, v) {
@@ -3896,6 +5570,19 @@
 
   const documentImpl = {
     get documentElement() { return wrap(api.root()); },
+
+    // `document.dir` is not the document's own attribute: it reflects
+    // `<html dir>`, so reading it off the document and reading it off
+    // `documentElement` have to agree. It was absent, and the reflection suite
+    // tests it as `#document.dir (<html dir>)`.
+    get dir() {
+      const root = wrap(api.root());
+      return root ? root.dir : "";
+    },
+    set dir(value) {
+      const root = wrap(api.root());
+      if (root) root.dir = value;
+    },
     get body() { return wrap(api.body()); },
     get head() { return wrap(api.query("head", 0)); },
     createElement(tag) { return wrap(api.createElement(String(tag))); },
@@ -3903,7 +5590,46 @@
     // icon calls it. The namespace is dropped because this engine models one:
     // the element is created under its local name, which is what the renderer
     // can do something with.
-    createElementNS(_namespace, tag) { return wrap(api.createElement(String(tag))); },
+    /// `createElementNS`, with the two validations that are most of what it is.
+    ///
+    /// It accepted anything and returned an element, so
+    /// `dom/nodes/Document-createElementNS.html` scored **1 of 596**: the file
+    /// is almost entirely a sweep of names that must be rejected, and every one
+    /// of them succeeded.
+    ///
+    /// The two errors are different questions and the spec keeps them apart:
+    /// `InvalidCharacterError` is "that is not a name", and `NamespaceError` is
+    /// "that name and that namespace may not go together". A page catching one
+    /// and not the other is relying on the difference.
+    createElementNS(namespace, qualifiedName) {
+      const ns = namespace === null || namespace === undefined ? null : String(namespace);
+      const name = String(qualifiedName);
+      validateQualifiedName(name);
+      const colon = name.indexOf(":");
+      const prefix = colon === -1 ? null : name.slice(0, colon);
+      if (prefix !== null && ns === null) {
+        throw new DOMException(
+          `\`${name}\` has a prefix, so it needs a namespace`,
+          "NamespaceError",
+        );
+      }
+      if (prefix === "xml" && ns !== "http://www.w3.org/XML/1998/namespace") {
+        throw new DOMException(
+          "the `xml` prefix belongs to the XML namespace",
+          "NamespaceError",
+        );
+      }
+      if ((name === "xmlns" || prefix === "xmlns")
+        !== (ns === "http://www.w3.org/2000/xmlns/")) {
+        throw new DOMException(
+          "`xmlns` and the XMLNS namespace may only be used with each other",
+          "NamespaceError",
+        );
+      }
+      // The local name is what this engine's single element class is built on;
+      // the namespace is validated above and then, honestly, not carried.
+      return wrap(api.createElement(colon === -1 ? name : name.slice(colon + 1)));
+    },
     // `document.write`, emulated where it can be and refused where it cannot.
     //
     // A browser inserts the markup at the parser's position, which is right
@@ -5516,6 +7242,131 @@
     },
   }, "CSS");
 
+  /// `new Document()`, which the DOM genuinely defines.
+  ///
+  /// Separate from `brand` because the brand's contract is "this is not
+  /// constructible", and for `Document` that would be a lie with teeth: see the
+  /// comment at its call site.
+  function documentConstructor(name) {
+    const ctor = function () {
+      return new DOMParser().parseFromString("", "text/html");
+    };
+    Object.defineProperty(ctor, "name", { value: name });
+    Object.defineProperty(ctor, "prototype", {
+      value: ctor.prototype, writable: false, enumerable: false, configurable: false,
+    });
+    Object.defineProperty(ctor, Symbol.hasInstance, {
+      value: (value) => {
+        try {
+          return !!value && value.nodeType === 9;
+        } catch {
+          return false;
+        }
+      },
+    });
+    return ctor;
+  }
+
+  /// A legacy factory constructor: `new Image(w, h)` and friends.
+  ///
+  /// Positional arguments map onto properties in the order the spec gives, so
+  /// `new Option("label", "value")` sets the text and the value — which is the
+  /// whole reason anyone still writes it.
+  function makeElementFactory(tag, positional) {
+    const ctor = function (...args) {
+      const element = document.createElement(tag);
+      for (let i = 0; i < positional.length && i < args.length; i++) {
+        if (args[i] === undefined) continue;
+        element[positional[i]] = args[i];
+      }
+      return element;
+    };
+    Object.defineProperty(ctor, "name", { value: `HTML${tag}` });
+    return ctor;
+  }
+
+  /// Interface objects for shapes this engine builds without a class.
+  ///
+  /// One factory rather than twenty literals, so the brand-check rule is
+  /// written once. `brand(name, test)` builds a constructor that:
+  ///
+  ///   * **throws when called**, because none of these is constructible here
+  ///     and a constructor that silently produced something else would be the
+  ///     plausible lie §B8.4 refuses;
+  ///   * answers `instanceof` through `test`, which inspects the real shape;
+  ///   * carries the right `name`, because `assert_class_string` and every
+  ///     `Object.prototype.toString` check reads it.
+  function interfaceObjects() {
+    const brand = (name, test) => {
+      const ctor = function () {
+        throw new TypeError(`Illegal constructor: ${name} is not constructible`);
+      };
+      Object.defineProperty(ctor, "name", { value: name });
+      // WebIDL §3.7.1: an interface object's `prototype` is
+      // { writable: false, enumerable: false, configurable: false }. A plain
+      // function's is writable, which `idlharness` checks on its second
+      // assertion for every interface — so getting this wrong costs a subtest
+      // per interface before anything about the interface is examined.
+      Object.defineProperty(ctor, "prototype", {
+        value: ctor.prototype,
+        writable: false,
+        enumerable: false,
+        configurable: false,
+      });
+      Object.defineProperty(ctor, Symbol.hasInstance, {
+        value: (value) => {
+          try {
+            return !!value && test(value);
+          } catch {
+            return false;
+          }
+        },
+      });
+      return ctor;
+    };
+
+    // A live-ish list: `collection()` hands back an array carrying `item` and
+    // `namedItem`, so those two plus array-ness are the brand.
+    const isCollection = (v) => Array.isArray(v) && typeof v.item === "function";
+    const isStorage = (v) =>
+      typeof v === "object" && typeof v.getItem === "function" &&
+      typeof v.setItem === "function" && typeof v.key === "function";
+
+    return {
+      NodeList: brand("NodeList", isCollection),
+      HTMLCollection: brand("HTMLCollection", (v) => isCollection(v) && typeof v.namedItem === "function"),
+      NamedNodeMap: brand("NamedNodeMap", isCollection),
+      Storage: brand("Storage", isStorage),
+      // **Constructible, unlike its neighbours here.** `new Document()` is
+      // legal — DOM §4.5 gives Document a constructor — and getting that wrong
+      // is not a small error: `html/dom/idlharness` builds one in its setup,
+      // so a `Document` that threw took the whole file from 269 passing
+      // subtests to reporting nothing at all. A name that exists and answers
+      // wrongly is worse than one that is absent (§B8.4), and "not
+      // constructible" was exactly such a wrong answer.
+      //
+      // What comes back is a parsed empty document, which is what this engine
+      // can honestly produce: there is one live tree and it is the page, so a
+      // second *live* document is out of reach, but a detached one to hold
+      // nodes and answer `nodeType === 9` is not.
+      Document: documentConstructor("Document"),
+      HTMLDocument: documentConstructor("HTMLDocument"),
+      DocumentType: brand("DocumentType", (v) => v && v.nodeType === 10),
+      ProcessingInstruction: brand("ProcessingInstruction", (v) => v && v.nodeType === 7),
+      Attr: brand("Attr", (v) => v && typeof v.name === "string" && "value" in v && !v.nodeType),
+      Window: brand("Window", (v) => v === globalThis),
+      Navigator: brand("Navigator", (v) => v && typeof v.userAgent === "string"),
+      Location: brand("Location", (v) => v && typeof v.href === "string" && typeof v.assign === "function"),
+      History: brand("History", (v) => v && typeof v.pushState === "function"),
+      Performance: brand("Performance", (v) => v && typeof v.now === "function"),
+      DOMImplementation: brand("DOMImplementation", (v) => v && typeof v.createHTMLDocument === "function"),
+      CustomElementRegistry: brand("CustomElementRegistry", (v) => v && typeof v.define === "function" && typeof v.get === "function"),
+      DOMStringMap: brand("DOMStringMap", (v) => typeof v === "object"),
+      StyleSheet: brand("StyleSheet", (v) => v && "cssRules" in v),
+      MediaList: brand("MediaList", (v) => v && typeof v.mediaText === "string"),
+    };
+  }
+
   Object.assign(globalThis, {
     CSS,
     addEventListener, removeEventListener, dispatchEvent,
@@ -5536,6 +7387,31 @@
     length: 0,
     frameElement: null,
     opener: null,
+
+    /// `window.open`: a named refusal carrying the recovery, per §B15.6.
+    ///
+    /// A popup is a second page, and h5i's answer to a second page is a second
+    /// *session* — the boundary an agent can see, drive and audit. Returning
+    /// `null` is what a browser does when a popup blocker fires, so every page
+    /// already has a code path for this answer; the difference is that this
+    /// engine also says why on the console and in the unsupported list, where
+    /// the agent reads it and can act: open the URL in another session.
+    ///
+    /// Deliberately not a silent stub and not a same-realm fake window. A fake
+    /// window that shared this realm would hand the opened page's globals to
+    /// the opener, which is the two-origins-one-realm hazard §B20.15 keeps the
+    /// iframe refusal for.
+    open(url, target, features) {
+      void target; void features;
+      const named = url === undefined || url === null || url === "" ? "about:blank" : String(url);
+      api.unsupported(`window.open(${named})`);
+      console.warn(
+        `window.open(${JSON.stringify(named)}) refused: this engine has one page per session. ` +
+        `Open it in another session (h5i browser open ${named} --session <name> --new) ` +
+        `and drive both.`,
+      );
+      return null;
+    },
     document,
     console,
     // Same reporting rule as `document`: a method missing from one of these was
@@ -5643,8 +7519,64 @@
       ].map((name) => [`HTML${name}Element`, Element]),
     ),
     SVGElement: Element,
-    CharacterData: Text,
     customElements, NodeFilter, NodeIterator, TreeWalker,
+
+    // Interface objects for the shapes this engine builds without a class.
+    //
+    // **Why these are not stubs, and why they are not lies.** §B8.4's rule is
+    // that a name which exists but answers wrongly is worse than a name that is
+    // absent: `'x' in navigator` answering true for a property we do not have
+    // sends a page down a branch it can never recover from. That rule is about
+    // *feature detection*, and it is why `missingApi` was deleted.
+    //
+    // These are the opposite case. A page writing `nodes instanceof NodeList`
+    // is not detecting a feature, it is asking what it is holding — and the
+    // honest answers are "yes" or "no", not `ReferenceError`. So each carries a
+    // `Symbol.hasInstance` that performs the real brand check against the shape
+    // this engine actually builds. Nothing claims to be constructible that is
+    // not, and `new NodeList()` still throws, as it does in a browser.
+    //
+    // The shapes are genuinely ours: `collection()` returns an array with
+    // `item`/`namedItem`, `makeStorage()` returns a proxy over a Map, and the
+    // document is an object literal. Each check tests for what that shape
+    // actually has rather than for a marker we could have set anywhere.
+    ...interfaceObjects(),
+
+    // The three legacy factory constructors, which are real and are the only
+    // way a great deal of code creates these elements: `new Image()` predates
+    // `createElement` in practice and is still what image preloaders write.
+    // These *are* constructible, unlike the brands above, so they are
+    // functions that build the element they name.
+    Image: makeElementFactory("img", ["width", "height"]),
+    Audio: makeElementFactory("audio", ["src"]),
+    Option: makeElementFactory("option", ["text", "value", "defaultSelected", "selected"]),
+
+    // Serialising a node to a string. `XMLSerializer` is how a page turns a
+    // subtree back into markup without going through `innerHTML` on a parent
+    // it may not have, and it is what `DOMParser`'s round trip is usually
+    // paired with — we shipped the parser and not the serialiser.
+    XMLSerializer: class XMLSerializer {
+      serializeToString(node) {
+        if (!node) return "";
+        if (node.nodeType === 9) return node.documentElement ? node.documentElement.outerHTML : "";
+        if (node.outerHTML !== undefined) return node.outerHTML;
+        if (node.innerHTML !== undefined) return node.innerHTML;
+        return String(node.textContent ?? "");
+      }
+    },
+
+    // Classes this engine already had and never exposed. Each has a real
+    // implementation above; the only thing missing was the name, so
+    // `rule instanceof CSSStyleRule` was a ReferenceError over an object that
+    // was exactly that.
+    CSSRule, CSSStyleRule, CSSGroupingRule,
+    CSSStyleDeclaration: StyleDeclaration,
+    Response,
+    // The event types added beside `InputEvent`.
+    FocusEvent, WheelEvent, PointerEvent, CompositionEvent, ErrorEvent,
+    PromiseRejectionEvent, ProgressEvent, MessageEvent, CloseEvent, StorageEvent,
+    PopStateEvent, HashChangeEvent, PageTransitionEvent, SubmitEvent,
+    FormDataEvent, ToggleEvent, AnimationEvent, TransitionEvent,
 
     crypto: observed(crypto, "crypto"),
     TextEncoder, TextDecoder, XMLHttpRequest, Blob, File, DOMException,
@@ -5688,13 +7620,41 @@
     IntersectionObserver, ResizeObserver,
   });
 
+  // Interface objects are **not enumerable** on the global, and every one of
+  // ours was.
+  //
+  // WebIDL §3.7 puts an interface object on the global as
+  // { writable: true, enumerable: false, configurable: true }, and
+  // `Object.assign` above creates enumerable data properties — so `Node`,
+  // `Element`, `Event` and the rest were all wrong, long before this pass
+  // added any. `idlharness` asserts it once per interface as its *first*
+  // check, so the cost was a subtest per interface across every `idlharness`
+  // file in the suite, spent before anything about the interface was examined.
+  //
+  // Applied by shape rather than by a list: a capitalised name bound to a
+  // function is an interface object, and nothing else on the global is. A list
+  // would be a second place that has to agree with the one above.
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    if (!/^[A-Z]/.test(name)) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    if (!descriptor || !descriptor.enumerable || typeof descriptor.value !== "function") {
+      continue;
+    }
+    Object.defineProperty(globalThis, name, {
+      value: descriptor.value,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+
   // `fetch`, over the host's broker. Every request is policy-checked and
   // receipted before it moves, which is the property this engine exists for.
   function fetch(input, init) {
     const request = input instanceof Request ? input : new Request(input, init);
     const signal = (init && init.signal) || request.signal;
     if (signal && signal.aborted) {
-      return Promise.reject(signal.reason ?? new Error("aborted"));
+      return Promise.reject(signal.reason ?? abortError());
     }
 
     let body = request.body ?? "";
@@ -5719,6 +7679,22 @@
     );
     return new Promise((resolve, reject) => {
       pendingFetches.set(id, { resolve, reject, request, signal });
+      // **Abort rejects now, not when the network answers.** The old shape
+      // checked `signal.aborted` only at drain time, so an `abort()` against a
+      // slow server rejected whenever the server got around to it — and
+      // against one that never answers, never. 260 of 467 fetch files timed
+      // out on exactly this. The wire request is not cancelled — the thread
+      // runs to completion and its receipt stands, because the request *was*
+      // made — but the page's promise settles the moment the page said stop,
+      // which is the half of abort a page can observe.
+      if (signal) {
+        signal.addEventListener("abort", () => {
+          const waiting = pendingFetches.get(id);
+          if (!waiting) return;
+          pendingFetches.delete(id);
+          waiting.reject(signal.reason ?? abortError());
+        });
+      }
     });
   }
   globalThis.fetch = fetch;
@@ -5728,22 +7704,20 @@
   function responseFrom(res, request) {
     const headers = new Headers();
     for (const [name, value] of res.headers || []) headers.append(name, value);
-    const response = {
-      ok: res.ok,
+    // A real `Response`, so `res instanceof Response` answers the way a page
+    // expects. It used to be an object literal with the same fields, which
+    // reads identically until something asks what it is.
+    return new Response(res.text, {
       status: res.status,
-      // What a page checks to find out it was handed an opaque response
-      // rather than a failed one. Reported rather than left to be inferred
-      // from an empty body with status 0, which reads as a network error.
-      type: res.opaque ? "opaque" : "basic",
       statusText: res.status === 200 ? "OK" : "",
+      headers,
+      // What a page checks to find out it was handed an opaque response rather
+      // than a failed one. Reported rather than left to be inferred from an
+      // empty body with status 0, which reads as a network error.
+      type: res.opaque ? "opaque" : "basic",
       url: res.url,
       redirected: res.url !== request.url,
-      headers,
-      text: () => Promise.resolve(res.text),
-      json: () => Promise.resolve(JSON.parse(res.text)),
-      clone() { return { ...response }; },
-    };
-    return response;
+    });
   }
 
   // Driven by the settle loop, so a page's promises resolve as the network
@@ -5755,7 +7729,7 @@
       if (!waiting) continue;
       pendingFetches.delete(id);
       if (waiting.signal && waiting.signal.aborted) {
-        waiting.reject(waiting.signal.reason ?? new Error("aborted"));
+        waiting.reject(waiting.signal.reason ?? abortError());
       } else if (res.error) {
         waiting.reject(new Error(res.error));
       } else {

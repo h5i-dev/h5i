@@ -193,32 +193,85 @@ def panic_reason(stderr: bytes, returncode: int) -> str:
 
 
 def run_one(args):
-    """Run one test file. Returns a dict that always names its own outcome."""
-    rel, port, timeout, mem_mb = args
-    url = f"http://127.0.0.1:{port}/{rel}"
+    """Run one test file. Returns a dict that always names its own outcome.
+
+    One process per file, and ROADMAP §B19.3 proposed changing that. It was
+    built, measured, and reverted; the measurement is worth more than the
+    feature would have been.
+
+    The idea was that `open` takes several URLs in one invocation, so batching
+    twelve test files per process would amortise process start and font
+    loading. It produced **identical scores** and was slower almost everywhere:
+
+        dom          (587 files, 4 jobs)   75s -> 392s
+        url          ( 34 files, 4 jobs)  1.7s -> 2.2s
+        domparsing   ( 60 files, 4 jobs)  2.6s -> 3.1s
+        css/cssom    (190 files, 4 jobs)   23s -> 20s
+
+    The `dom` figure is the one that settles it, and the cause is structural
+    rather than a matter of tuning. A batch shares one process, so a batch that
+    crashes loses every file in it — which means a crashed batch has to be
+    re-run one file at a time for the survivors to keep their real outcomes.
+    WPT is a corpus where crashing and hanging files are *common*, so on `dom`
+    most batches split and most files ran twice. Batching also takes the
+    harness's per-file timeout away: the ceiling becomes per-process, so one
+    hanging file holds eleven others instead of being killed on its own worker.
+
+    And the ceiling was never large. At four jobs `dom` runs about 7.9 files/s,
+    so a file costs ~0.5s and process start is well under a tenth of that.
+    Nothing batching could have recovered was worth this.
+
+    This is §B15.12a's lesson arriving a fourth time, and it is the same shape
+    every time: an optimisation reasoned from what the *code* looks like rather
+    than from a measurement. The rule that keeps being relearned is that the
+    rule against building what no page asked for applies to performance too.
+    """
+    rel, base, timeout, mem_mb, grants, script_seconds = args
+    url = base + rel
     started = time.monotonic()
     try:
         proc = subprocess.run(
             capped(
-                [str(BINARY), *ENGINE_ARGS, "open", "--script", "--json", "--max-snapshot-lines", "1", url],
+                [str(BINARY), *ENGINE_ARGS, "open", "--script", "--json",
+                 "--max-snapshot-lines", "1",
+                 # A conformance file is allowed to be slow. The engine's
+                 # default script ceiling exists to stop a runaway page, and
+                 # `html/dom/idlharness` sits exactly on it — so its 1,896
+                 # passing subtests appeared or vanished with machine load,
+                 # which is a score that depends on the other processes on the
+                 # box. See `--script-seconds`.
+                 "--script-seconds", str(int(script_seconds)),
+                 *grants, url],
                 mem_mb,
             ),
             capture_output=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return {"test": rel, "outcome": "engine_timeout", "elapsed": time.monotonic() - started}
+        return {"test": rel, "outcome": "engine_timeout",
+                "elapsed": time.monotonic() - started}
 
     elapsed = time.monotonic() - started
     if proc.returncode != 0 and not proc.stdout:
-        return {
-            "test": rel, "outcome": "engine_crash", "elapsed": elapsed,
-            "detail": panic_reason(proc.stderr, proc.returncode),
-        }
+        return {"test": rel, "outcome": "engine_crash", "elapsed": elapsed,
+                "detail": panic_reason(proc.stderr, proc.returncode)}
 
     try:
         payload = json.loads(proc.stdout.decode("utf8", "replace"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        return {"test": rel, "outcome": "engine_crash", "elapsed": elapsed, "detail": str(exc)}
+        return {"test": rel, "outcome": "engine_crash", "elapsed": elapsed,
+                "detail": str(exc)}
+
+    return _score(rel, payload, elapsed)
+
+
+def _score(rel, payload, elapsed):
+    """Turn one page's JSON into the outcome record the report is built from."""
+    # A page the engine could not open at all carries `ok: false` instead of a
+    # snapshot. That is the engine reporting a refusal or a load failure, which
+    # is a measured outcome and not a crash.
+    if payload.get("ok") is False:
+        return {"test": rel, "outcome": "no_report", "elapsed": elapsed,
+                "unsupported": {}, "detail": str(payload.get("error", ""))[:300]}
 
     unsupported = {u["api"]: u["calls"] for u in payload.get("unsupported", [])}
 
@@ -283,6 +336,20 @@ def main():
     parser.add_argument("--out", default=None)
     parser.add_argument("--mem-mb", type=int, default=1200,
                         help="address-space cap per test process")
+    # Comfortably above the engine's own 20s default, so a heavy conformance
+    # file finishes rather than landing on the ceiling. Still finite: a file
+    # that needs more than this is a file the engine cannot run, and the
+    # per-test `--timeout` is the outer bound either way.
+    parser.add_argument("--script-seconds", type=int, default=60,
+                        help="per-page script ceiling handed to the engine")
+    # The other server. See `wptserve.py` for what it buys, what it costs, and
+    # why the https variants stay out.
+    parser.add_argument("--wptserve", action="store_true",
+                        help="run against WPT's own server (real subdomains, "
+                             ".py handlers) instead of the static one")
+    parser.add_argument("--keep-overlay", action="store_true",
+                        help="with --wptserve, leave our reporter installed in "
+                             "the checkout afterwards (for debugging)")
     opts = parser.parse_args()
 
     if not BINARY.exists():
@@ -295,23 +362,60 @@ def main():
     if not tests:
         sys.exit("no tests found")
 
-    httpd, port = serve.start()
+    httpd = process = None
+    if opts.wptserve:
+        import wptserve as wptserve_backend
+
+        # The https and worker variants are dropped by name rather than run and
+        # failed: they fail on a certificate this engine cannot be told to
+        # trust, and a trust decision recorded as a conformance result is the
+        # kind of plausible-wrong number this whole harness exists to avoid.
+        before = len(tests)
+        tests = [t for t in tests if wptserve_backend.reachable(t)]
+        dropped = before - len(tests)
+        wptserve_backend.install_overlay(root)
+        process = wptserve_backend.start(root)
+        base, grants = wptserve_backend.BASE, []
+        for origin in wptserve_backend.GRANTS:
+            grants += ["--allow", origin]
+        print(f"  {dropped} https/worker variant(s) left out: no way to trust "
+              f"WPT's certificate authority (see wptserve.py)", flush=True)
+    else:
+        httpd, port = serve.start()
+        base = f"http://127.0.0.1:{port}/"
+        # The static server hands out 127.0.0.x as distinct origins, and
+        # loopback is reachable by default, so nothing has to be granted.
+        grants = []
+
     print(f"{len(tests)} testharness files, {opts.jobs} jobs | skipped: "
           f"{generated} generated endpoints, {unscoreable} files that load no testharness",
           flush=True)
 
     results = []
     started = time.monotonic()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=opts.jobs) as pool:
-        work = [(t, port, opts.timeout, opts.mem_mb) for t in tests]
-        for i, result in enumerate(pool.map(run_one, work), 1):
-            results.append(result)
-            if i % 50 == 0 or i == len(tests):
-                passed = sum(r.get("subtests", {}).get("PASS", 0) for r in results)
-                rate = i / (time.monotonic() - started)
-                print(f"  {i}/{len(tests)}  {passed} subtests passing  {rate:.1f} files/s",
-                      flush=True)
-    httpd.shutdown()
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=opts.jobs) as pool:
+            work = [(t, base, opts.timeout, opts.mem_mb, grants, opts.script_seconds)
+                    for t in tests]
+            for i, result in enumerate(pool.map(run_one, work), 1):
+                results.append(result)
+                if i % 50 == 0 or i == len(tests):
+                    passed = sum(r.get("subtests", {}).get("PASS", 0) for r in results)
+                    rate = i / (time.monotonic() - started)
+                    print(f"  {i}/{len(tests)}  {passed} subtests passing  {rate:.1f} files/s",
+                          flush=True)
+    finally:
+        # The checkout is put back whatever happened, Ctrl-C included. A run
+        # that dies leaving our reporter in `resources/` turns the next
+        # `git status` in that tree into a mystery.
+        if httpd is not None:
+            httpd.shutdown()
+        if opts.wptserve:
+            import wptserve as wptserve_backend
+
+            wptserve_backend.stop(process)
+            if not opts.keep_overlay:
+                wptserve_backend.restore(root)
 
     summary = summarise(results, generated, unscoreable, time.monotonic() - started)
     report(summary, results)

@@ -1573,6 +1573,50 @@ Print help
 .TP
 <\fIURL\fR>
 
+.SH "H5I BROWSER SCREENSHOT"
+Write a PNG of the page this session is on
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBscreenshot\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-out\fR] [\fB\-\-url\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-out\fR \fI<PATH>\fR
+Where to write it. Defaults to a host\-named file in the session\*(Aqs own artifacts directory.
+
+For a session in a box this path is resolved **inside the box**, because that is the filesystem the engine has.
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then paint
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER RELOAD"
+Fetch the current URL again
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBreload\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER CLICK"
 Follow a `@ref` from the last snapshot
 .ie \n(.g .ds Aq \(aq

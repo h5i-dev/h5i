@@ -75,6 +75,19 @@ pub enum Verb {
     Press,
     /// Locate elements by role and name, the way the outline names them.
     Find,
+    /// A PNG of the page as it is right now.
+    ///
+    /// The one thing an agent driving a session could not do: `open` has
+    /// `--screenshot` and a resident session had only the live view, which is
+    /// aimed at a human. An agent that has just clicked something and wants to
+    /// know what happened had no way to look.
+    Screenshot,
+    /// Fetch the current URL again.
+    ///
+    /// The cheap half of history. `navigate` to the URL the session is already
+    /// on does the same fetch, but the agent has to hold the URL and re-derive
+    /// it after a redirect; this needs neither.
+    Reload,
 }
 
 impl Verb {
@@ -100,6 +113,8 @@ impl Verb {
         Verb::Select,
         Verb::Press,
         Verb::Find,
+        Verb::Screenshot,
+        Verb::Reload,
     ];
 
     /// The name on the wire.
@@ -125,6 +140,8 @@ impl Verb {
             Verb::Select => "select",
             Verb::Press => "press",
             Verb::Find => "find",
+            Verb::Screenshot => "screenshot",
+            Verb::Reload => "reload",
         }
     }
 
@@ -170,7 +187,17 @@ impl Verb {
             | Verb::SetChecked
             | Verb::Select
             | Verb::Press
-            | Verb::Find => false,
+            | Verb::Find
+            // The most literal page read there is. A password is *pixels*
+            // before it is anything else, and the live view is already showing
+            // them to the human who typed them; a PNG hands the same pixels to
+            // the agent, which is exactly the transfer this mode exists to
+            // stop. Refused before any of the text verbs would have been.
+            | Verb::Screenshot
+            // Not a read, and refused anyway: reloading the page a human is
+            // halfway through typing a credential into destroys the form they
+            // are filling. LOGIN mode means the human has the wheel.
+            | Verb::Reload => false,
         }
     }
 
@@ -204,7 +231,9 @@ impl Verb {
             | Verb::Script
             | Verb::Structured
             // It produces handles rather than consuming one.
-            | Verb::Find => false,
+            | Verb::Find
+            | Verb::Screenshot
+            | Verb::Reload => false,
         }
     }
 
@@ -238,7 +267,9 @@ impl Verb {
             | Verb::SetChecked
             | Verb::Select
             | Verb::Press
-            | Verb::Find => false,
+            | Verb::Find
+            | Verb::Screenshot
+            | Verb::Reload => false,
         }
     }
 
@@ -277,7 +308,11 @@ impl Verb {
             | Verb::SetChecked
             | Verb::Select
             | Verb::Press
-            | Verb::Find => false,
+            | Verb::Find
+            // It paints whatever is there. A page with no script renders as
+            // the server sent it, which is a picture of something real.
+            | Verb::Screenshot
+            | Verb::Reload => false,
         }
     }
 
@@ -305,10 +340,20 @@ impl Verb {
             // same one.
             | Verb::SetChecked
             | Verb::Select
-            | Verb::Press => true,
+            | Verb::Press
+            // A navigation, and a state change: a reload re-runs the page's
+            // script and discards whatever was typed into it. A replay that
+            // skipped it would carry form state the recorded session did not
+            // have at that point.
+            | Verb::Reload => true,
 
             Verb::Status
             | Verb::Snapshot
+            // A replay reaches a state; it does not produce artifacts. A
+            // recorded screenshot would write a file on every replay, at a
+            // path the recording chose, which is a side effect a script the
+            // reader skimmed should not have.
+            | Verb::Screenshot
             | Verb::Requests
             | Verb::WaitFor
             | Verb::WaitForScript
@@ -343,10 +388,17 @@ impl Verb {
             | Verb::Markdown
             | Verb::Extract
             | Verb::Structured
-            | Verb::Find => true,
+            | Verb::Find
+            // "Go here and show me" in one round trip, for the same reason
+            // `snapshot` has it: the intervening reply is a turn through a
+            // model that reads it only to send the next request.
+            | Verb::Screenshot => true,
 
-            // Already a navigation; a second URL would be ambiguous.
+            // Already a navigation; a second URL would be ambiguous. For
+            // `reload` doubly so: a reload that took a URL would be `navigate`
+            // wearing a name that says it is not going anywhere.
             Verb::Navigate
+            | Verb::Reload
             // Acts on a ref, which must come from a reading the caller has
             // actually seen.
             | Verb::Type

@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>vue 3 mount</title>
+<div id="root"></div>
+<script src="../vendor/vue.global.js"></script>
+<script>
+  var rows = [];
+  for (var i = 0; i < 100; i++) rows.push(i);
+  Vue.createApp({
+    data: function () { return { rows: rows }; },
+    template: '<ul id="list"><li class="row" v-for="n in rows">item {{ n }}</li></ul>',
+  }).mount('#root');
+</script>

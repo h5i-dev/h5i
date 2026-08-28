@@ -256,6 +256,105 @@ def generated_source(root: str, path: str):
     return None
 
 
+# The *second* empty vendor seam, and the reason it is worth filling.
+#
+# `resources/testdriver-vendor.js` ships as a zero-byte file for exactly the
+# same reason `testharnessreport.js` does: it is where a vendor plugs its own
+# automation in. Unfilled, `test_driver.click()` rejects with "not implemented
+# by testdriver-vendor.js" and every test built on it fails on a missing
+# harness rather than on anything about the engine — 633 files in the core tier
+# (ROADMAP §B19).
+#
+# **What is implemented, and why from inside the page.** testdriver's contract
+# is "the user agent performs this action". A browser routes it out through
+# WebDriver; a headless engine can perform it directly, and that is what the
+# functions below do — dispatch the events the action would produce, on the
+# element named. That is the action, not a simulation of it: the page's
+# listeners run, in order, with the fields they expect.
+#
+#   click        552 uses directly, and `bless` (706 more) is built on it, so
+#                this one function unlocks both.
+#   send_keys    457 uses. Focus, then per-character key events, then `input`.
+#
+# **What is refused, and refused loudly.** Anything needing authority this
+# engine does not have — permissions, virtual sensors, virtual authenticators,
+# a second browsing context — keeps testdriver's own rejection. A shim that
+# resolved those would turn "the harness cannot do this" into "the engine got
+# the wrong answer", which is the same plausible lie the engine refuses
+# everywhere else. `action_sequence` is refused for a narrower reason: it is a
+# pointer/key state machine with its own tick semantics, and approximating it
+# would make a class of failures untraceable.
+TESTDRIVER = """
+(function () {
+  function fire(element, type, init) {
+    var Ctor = window.MouseEvent || window.Event;
+    var event = type.indexOf('key') === 0
+      ? new (window.KeyboardEvent || window.Event)(type, init)
+      : new Ctor(type, init);
+    element.dispatchEvent(event);
+    return event;
+  }
+
+  function refuse(name) {
+    return Promise.reject(new Error(
+      name + '() needs automation authority this engine does not have, and is ' +
+      'refused rather than approximated (h5i testdriver-vendor shim).'));
+  }
+
+  window.test_driver_internal = Object.assign(window.test_driver_internal || {}, {
+    // Says the harness is driving, which several tests branch on.
+    in_automation: true,
+
+    async click(element) {
+      if (!element) throw new Error('click: no element');
+      // Scroll-into-view and hit-testing are what a real driver does first.
+      // There is nothing here that can be occluded, so the click is delivered
+      // to the element the test named — which is what the test is asserting on.
+      var init = { bubbles: true, cancelable: true, composed: true, detail: 1 };
+      fire(element, 'pointerdown', init);
+      fire(element, 'mousedown', init);
+      fire(element, 'pointerup', init);
+      fire(element, 'mouseup', init);
+      if (typeof element.click === 'function') element.click();
+      else fire(element, 'click', init);
+      return null;
+    },
+
+    async send_keys(element, keys) {
+      if (!element) throw new Error('send_keys: no element');
+      if (typeof element.focus === 'function') element.focus();
+      var text = String(keys);
+      for (var i = 0; i < text.length; i++) {
+        var key = text[i];
+        var init = { bubbles: true, cancelable: true, key: key, composed: true };
+        fire(element, 'keydown', init);
+        fire(element, 'keypress', init);
+        if ('value' in element) element.value = (element.value || '') + key;
+        fire(element, 'input', { bubbles: true, composed: true });
+        fire(element, 'keyup', init);
+      }
+      return null;
+    },
+
+    // A driver's "release everything held". Nothing is held here, so this is
+    // honestly a no-op rather than a refusal: the postcondition is already met.
+    async release_actions() { return null; },
+
+    async action_sequence() { return refuse('action_sequence'); },
+    async set_permission() { return refuse('set_permission'); },
+    async get_computed_role() { return refuse('get_computed_role'); },
+    async get_computed_label() { return refuse('get_computed_label'); },
+    async delete_all_cookies() { return refuse('delete_all_cookies'); },
+    async get_named_cookie() { return refuse('get_named_cookie'); },
+    async minimize_window() { return refuse('minimize_window'); },
+    async set_window_rect() { return refuse('set_window_rect'); },
+    async add_virtual_authenticator() { return refuse('add_virtual_authenticator'); },
+    async create_virtual_sensor() { return refuse('create_virtual_sensor'); },
+  });
+})();
+"""
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=WPT_ROOT, **kw)
@@ -333,6 +432,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+        if path == "/resources/testdriver-vendor.js":
+            body = TESTDRIVER.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/resources/testharnessreport.js":
             body = REPORTER.encode()
             self.send_response(200)

@@ -1,0 +1,93 @@
+{
+  "note": [
+    "Each stage names a fixture, a regular expression, and how many lines of",
+    "the page's rendered text must match it. Deliberately an assertion about",
+    "the DOM after script has run rather than about the framework: a row reads",
+    "'item 0' and appears in the served HTML nowhere, so the count is a claim",
+    "that a component tree was built and committed, and it stays true if React",
+    "changes how it gets there.",
+    "",
+    "Text rather than a CSS selector because `open --json` has no selector",
+    "engine on the far side. An earlier draft said 'selector' and matched text",
+    "anyway, which is a harness lying about what it checks.",
+    "",
+    "There are no timing bounds here on purpose. Timing is reported and never",
+    "gated: a latency gate in CI is a flake factory, and ROADMAP B15.12a's",
+    "lesson was 'measure before optimising', which a report satisfies and a",
+    "gate does not."
+  ],
+  "stages": [
+    {
+      "name": "react",
+      "file": "react-app.html",
+      "count": 100,
+      "first": "item 0",
+      "why": "React 18 createRoot render. The <li>s are not in the served HTML.",
+      "match": "^item \\d+$"
+    },
+    {
+      "name": "preact",
+      "file": "preact-app.html",
+      "count": 100,
+      "first": "item 0",
+      "why": "Preact h()/render().",
+      "match": "^item \\d+$"
+    },
+    {
+      "name": "vue",
+      "file": "vue-app.html",
+      "count": 100,
+      "first": "item 0",
+      "why": "Vue 3 createApp/mount, including its runtime template compiler.",
+      "match": "^item \\d+$"
+    },
+    {
+      "name": "ssr-hydrate",
+      "file": "ssr-hydrate.html",
+      "count": 12,
+      "first": "item 0",
+      "why": "The served markup has one row; twelve means hydration ran. An engine that hydrates nothing still renders something correct here, which is why the count is the assertion.",
+      "match": "^item \\d+$"
+    },
+    {
+      "name": "spa-router",
+      "file": "spa-router.html",
+      "count": 3,
+      "first": "alpha (1)",
+      "why": "fetch of a same-origin JSON resource, then a render. Composite with pushState.",
+      "match": "^\\w+ \\(\\d+\\)$"
+    },
+    {
+      "name": "spa-route-state",
+      "file": "spa-router.html",
+      "count": 1,
+      "first": "route #/list",
+      "why": "history.pushState actually moved location.hash, rather than the render merely happening.",
+      "match": "^route "
+    },
+    {
+      "name": "modern-js",
+      "file": "modern-js.html",
+      "count": 1,
+      "first": "3|nullish|3|2|v|bigint|fulfilled|clone|utf8|uuid",
+      "why": "The language and platform constructs a current bundle assumes. A gap here kills a page on line one.",
+      "match": "\\|"
+    },
+    {
+      "name": "timers",
+      "file": "timers-and-microtasks.html",
+      "count": 1,
+      "first": "microtask>t1>t2>after",
+      "why": "Timer and microtask ordering through the settle. On a virtual clock this costs no wall time, which the reported latency should show.",
+      "match": ">"
+    },
+    {
+      "name": "import-map",
+      "file": "import-map.html",
+      "count": 1,
+      "first": "hello world",
+      "why": "ROADMAP B19.8: a bare specifier resolves because the page declared where it goes, not because the engine invented a CDN.",
+      "match": "^hello "
+    }
+  ]
+}

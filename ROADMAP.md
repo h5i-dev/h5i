@@ -7498,9 +7498,17 @@ claim is made from.
 A second, cheaper borrow from the same runner: it has **two engine backends**,
 one process per test (`fetch`) and a persistent CDP connection with a worker
 pool. Ours is one process per test only, which is why a full sweep is measured
-in hours. We have had a resident session with a control socket since 2026-08-27.
-Pointing `run.py` at one would cost a flag and would be the single largest
-speedup available to that harness.
+in hours. The first idea here was to point `run.py` at a resident session, and
+it does not survive contact with the code: the harness reads its results out of
+`open --json`'s console channel, and a session does not expose console output
+per navigation, so that backend would first need a new verb. The next idea was
+batching: `open` takes several URLs in one process, one JSON object per page,
+with the shared broker's records already sliced per page (`cli.rs:1885`), so N
+test files per invocation would amortise process start and font loading and is
+a change to `run.py` alone. **That was built, measured and reverted: identical
+scores, and 5x slower on `dom`, for a structural reason.** See §B19.12. Both
+speedups proposed in this section turned out to be wrong, and neither was timed
+before it was written down.
 
 ### B19.4 The four instruments they have and we do not
 
@@ -7574,8 +7582,19 @@ start, for the same reason, and neither says so anywhere:
 That binary was removed when the engine became a library reached through
 `h5i __engine` (see `Cargo.toml`'s comment, and `wpt/run.py`'s docstring, which
 records this exact path as "a trap now" and was updated). Both scripts also
-invoke `<bin> open <url> --json`, which is the argv the engine still takes, so
-the fix is the path plus one argument (`h5i __engine open ...`), not a rewrite.
+invoke `<bin> open <url> --json`, which is the argv the engine still takes.
+
+**Checked again while writing the todo list: the fix is not "the path plus one
+argument".** The path is the visible half. The other half is that the engine's
+policy now denies every remote origin unless `--allow` grants it
+(`Policy::new()` permits nothing but loopback, `cli.rs:703`), there is no
+allow-everything spelling (`*.host` is the widest wildcard, `policy.rs:83`),
+and the corpus scripts pass no `--allow` at all — they were written when the
+engine's default was open. So with the path fixed, every remote page is refused
+before the first byte, and per-URL wildcard grants would still refuse the
+third-party subresources whose behaviour is half of what the corpus measures.
+An instrument that points the engine at the open web needs an explicit,
+loudly-named grant — a decision, not a patch, and it is item 1 of §B19.10.
 
 The consequence is worth stating rather than just the bug: **§B8's corpus, the
 instrument this document credits with finding most of the engine's real work,
@@ -7688,39 +7707,896 @@ correct. Three additions, since this pass read further:
   not to and we did anyway, and here is the line that says so" is a thing only a
   receipts engine can offer.
 
-### B19.10 The queue
+### B19.10 The todo list, made concrete, 2026-08-27 (second pass)
 
-Ordered by what each buys divided by what it costs. The first two are repairs to
-instruments this document already relies on, which is why they are first.
+Rewritten the same day it was first drafted, after checking each item against
+the code instead of against the section that proposed it. Two claims did not
+survive the check and are corrected above (§B19.3's session backend, §B19.5's
+"one argument"). Grouped by shape rather than ranked 1–9, because the first
+group is measured in hours and the last in weeks, and a flat ranking hid that.
 
-1. **Fix `corpus/run.py` and `corpus/compare.py`** (§B19.5). Two paths and one
-   argument. Until this lands, §B8's corpus is not an instrument, it is a
-   description of one.
-2. **Make `--restore` honest** (§B19.6). Refuse it or implement it; do not ship
-   a flag that copies a file nothing writes.
-3. **A `screenshot` verb on the session** (§B19.7). The page exists, the encoder
-   exists, the verb table is where it goes.
-4. **A reliability sweep with named outcome classes** (§B19.4). The one
-   instrument on the list with no substitute here, and the one whose findings
-   are not reachable any other way: a crash on the 900th real page is not a
-   thing 35 corpus pages or a WPT directory will ever show.
-5. **A tiers file for the WPT report** (§B19.2). Turns §B13.3's caveat from a
-   paragraph a reader has to trust into a table a reader can check.
-6. **A wptserve backend for `wpt/run.py`, off by default** (§B19.3). This is
-   what puts CORS, PSL cookies and compression under external test. Pair it with
-   the resident-session backend, which is the same file and pays for the sweep
-   time.
-7. **An offline capability suite with vendored frameworks** (§B19.4). Ours
-   should be smaller than 33 stages and should test what §B6 says we support,
-   which makes it a companion to the tiers file rather than a second corpus.
-8. **Import maps** (§B19.8).
-9. **`reload`, then history** (§B19.7).
+**Small and immediate — each is one sitting, none blocks another:**
 
-Not queued, decided: no `--proxy` flag, no `--user-agent` flag, no cookie
-read/write verbs, no stealth layer (§B19.9). CDP and MCP stay where §B15.11 put
-them, and nothing in this pass moves either: what changed is that the verb table
-§B15.3 asked for now exists, so the cost estimate in §B15.11 is if anything
-lower than it was.
+1. **Refuse `--restore`** (§B19.6). One check in `src/cli/browser.rs`: if the
+   source jar does not exist — and today it never does — fail with *"session
+   `<id>` left no storage to restore"* instead of silently seeding nothing.
+   The real persistence work is item 8; this stops the false promise today.
+2. **A `screenshot` verb on the session** (§B19.7). `Page::screenshot_png`
+   exists (`engine.rs:1277`); the verb goes into the §B15.3 table, which forces
+   the two answers that matter: it does not mutate, and it is **refused during
+   LOGIN mode** — it reads the page, and the page during LOGIN holds what the
+   human is typing. The PNG lands as a host-named artifact in the session
+   directory, like every other session artifact; the reply carries the path.
+3. **`reload`** (§B19.7). The cheap half of history: re-navigate to the current
+   URL through the existing `navigate` machinery. `back`/`forward` are
+   deliberately deferred until an agent transcript shows one stalling for lack
+   of them — §B8's rule, applied to verbs.
+4. **Batch WPT files per process in `wpt/run.py`** (§B19.3, corrected).
+   `open` already takes several URLs in one invocation with per-page records;
+   the runner change is grouping and splitting the JSON array. No engine work.
+   *(Built 2026-08-27, measured, reverted: identical scores and 5x slower on
+   `dom`. §B19.12 has the numbers and the reason.)*
+
+**The instrument decision, then the instruments it unblocks:**
+
+5. **An instrument-grade grant** (§B19.5). The corpus and any future sweep need
+   the engine pointed at the open web, and the policy deliberately has no
+   spelling for that. The options: (a) per-URL wildcard grants, which still
+   refuse third-party subresources and so change what the corpus measures; or
+   (b) an explicit engine flag — `--allow-any-remote` or similar — that is loud
+   in the name, prints on the placement line, and is receipted like every
+   grant. (b) is the honest one: the corpus's whole point is watching what a
+   page asks for, and an instrument that pre-filters the asks is measuring its
+   own allowlist. The flag does not weaken the product default; it names a mode
+   the instruments were silently assuming.
+6. **Repair `corpus/run.py` and `corpus/compare.py`** (§B19.5). The path
+   (`h5i __engine open ...`) plus the item-5 grant. Until both land, §B8's
+   corpus is a description of an instrument, and every memory number against
+   Chromium in this file predates the broker split.
+7. **The reliability sweep** (§B19.4). Same grant dependency as item 6 —
+   without it, 1,500 pages of refused subresources drown the classes in THIN.
+   Outcome classes for this engine: CRASH / PANIC / HANG / HANG_HARD / THIN /
+   OK, plus **REFUSED** — main document stopped by policy — which their sweep
+   does not need and ours does, because a refusal is a correct outcome here and
+   must not be counted as a failure. Seeds: the corpus lists plus a one-level
+   crawl, per their `sweep.py`.
+8. **Jar persistence, designed rather than patched** (§B19.6's second option).
+   The session writes its jar into its own directory on clean end (0600, owner
+   only), `--restore` reads it, and the inheritance line the help text already
+   promises becomes true. The design questions to settle before code: HttpOnly
+   cookies must be included or a restored login is no login, which makes the
+   file credential material — so it gets the scrubber's treatment on any path
+   that prints it, and a decision about whether a box-placed session may write
+   it at all. `browser_storage_state`'s shape (state as a value, named and
+   handed back) is the model, not `--storage-dir`'s (state as a shared
+   directory).
+
+**The reporting work — independent of everything above:**
+
+9. **A tiers file for the WPT report, plus the triage rollup** (§B19.2, and
+   §B19.4's item 3, merged because they touch the same two scripts).
+   `wpt/tiers.list` in their format — one `<tier> <prefix>` per line, first
+   match wins, exclusion only by capability with §B6 as the source of the
+   exclusions — read by `check.py` and `merge.py`; and `merge.py` learns to
+   merge the per-directory `unsupported` maps so the top asks across a whole
+   sweep are one table instead of 191 files. Scoped tiers plus an explicit
+   unscoped remainder; no "Full" percentage.
+10. **The wptserve backend, http-only** (§B19.3). `./wpt manifest` +
+    `./wpt serve` behind a `--wptserve` flag on `run.py`, grants spelled
+    `http://web-platform.test:8000` and `http://*.web-platform.test:8000`,
+    which the wildcard grammar already carries scheme and port through
+    (`policy.rs`'s `wildcards`). **HTTPS variants are out of scope and the reason
+    is structural:** the engine trusts `webpki-roots` and deliberately exposes
+    no way to add a root (the hermetic-build rule), and WPT serves its own CA.
+    The http half still covers most of what §B19.3 wants it for — the
+    cross-origin CORS suites, cookie scoping across subdomains, and the
+    `Content-Encoding` handlers.
+
+**The feature work, in the order the instruments would justify it:**
+
+11. **Import maps** (§B19.8). Parse `<script type="importmap">` before module
+    resolution in `script/modules.rs`; a mapped specifier resolves and goes
+    through the broker like any URL, a bare one without a map keeps today's
+    refusal verbatim.
+12. **Offline capability fixtures, timed** (§B19.4's items 2 and 4, merged).
+    A handful of stages, not 33: React 18 UMD render, Vue 3 mount,
+    SSR-hydrate, and a `pushState` mini-SPA, vendored pinned, each asserting a
+    deterministic value through `--json`. Each stage timed, **reported and not
+    gated** — a timing gate in CI is a flake factory, and §B15.12a's lesson was
+    "measure before optimising", which a report satisfies and a gate does not.
+
+Not queued, decided, unchanged from the first draft: no `--proxy` flag, no
+`--user-agent` flag, no cookie read/write verbs, no stealth layer (§B19.9).
+CDP and MCP stay where §B15.11 put them; the §B15.3 verb table now exists, so
+the MCP estimate is if anything lower than when it was written.
+
+### B19.11 What was built, 2026-08-27
+
+All twelve items were taken. **Eleven shipped and one was measured and
+reverted**, which is the outcome that earned its place in this file: item 4 was
+reasoned from the shape of the code, built, measured, and was wrong in the same
+way §B15.12a's three optimisations were wrong.
+
+**The engine (items 1, 2, 3, 5, 8, 11).** 576 tests pass, from 552; the 24 new
+ones are named below by what they pin rather than by what they cover.
+
+* **`--allow-any-remote`** (`policy.rs`, item 5). The instrument grant, and the
+  keystone the corpus and the sweep were both blocked on. It widens the *name*
+  check and nothing else, which took one more change than expected:
+  `check_address` sends an IP-literal host back to the allowlist, so a blanket
+  grant would have become a route into RFC 1918 space by spelling. The
+  allowlist match is now split out as `Policy::listed`, and `check_address`
+  asks that narrower question. Four tests hold the line: a public name
+  resolving inward is still refused, `http://10.0.0.7` is still refused unless
+  somebody named it, a web page still may not reach loopback, and the default
+  still reaches nothing.
+* **`screenshot`** (item 2), the first user of `browser_session::artifact_path`,
+  which was written for exactly this and had no caller. h5i names the file, the
+  engine chooses only the bytes, and the PNG goes to a path rather than into the
+  reply — a base64 image would have been silently truncated at the scrubber's
+  256 KiB cap and arrived as a corrupt file, which is the plausible-wrong answer
+  this engine exists to refuse. Verified end to end: 19,352 bytes, 1280x720,
+  and **refused during LOGIN mode**, which is the answer the verb table forced.
+* **`reload`** (item 3), routed through `navigate_to` rather than given its own
+  path, so it is policy-checked, drops the served refs, and reports a refusal
+  exactly as `navigate` does. `back`/`forward` stay unbuilt: §B8's rule.
+* **The cookie jar persists** (`cookies.rs`, item 8) when and only when h5i
+  passes `--cookie-jar`. Written on change rather than at exit, because `close`
+  and `service_stop` end a session with a signal and a shutdown hook would
+  never run; `0600`; temp-then-rename. The flag lives on `NetArgs` beside
+  `--receipts`, not on `serve`, because after the §B18 split the renderer holds
+  no jar and `local_broker` is the one place both halves reach.
+* **`--restore` is honest** (item 1) and now has something to restore. Verified
+  the whole way round: log in on one session, close it, `--restore` into a new
+  one, and the server sees `sid=s3cr3t`. A session that left no jar is refused
+  by name with the three reasons it could be missing.
+* **Import maps** (`script/import_map.rs`, item 11). `imports` and `scopes`,
+  longest-prefix-wins, values resolved against the document. The refusal keeps
+  its exact target — a bare specifier with *no* map still names what would have
+  to exist — and the map is read from the parsed tree before the first script,
+  so nothing at runtime can move a graph that is already resolving. Ten unit
+  tests plus four through the real pipeline, including that a map is never
+  executed as script (it is JSON, and running it is the `application/json`
+  trap) and that a malformed one is reported and ignored *whole*.
+
+**The instruments (items 6, 7, 9, 10, 12).**
+
+* **`harness.py`** is new and is the actual fix for §B19.5. The bug was not
+  three wrong paths, it was that there were three of them; one module now owns
+  where the engine is, how it is invoked, and what an instrument is granted.
+* **The corpus runs again** (item 6), for the first time since the self-exec
+  change. Its hand-built allowlist is gone with it: a site's host, a wildcard,
+  and six named CDNs meant a page pulling from a seventh looked like an engine
+  failure. First run found real work — `Element.jquery` 826 calls on one page,
+  `selector :has()`, `document.compatMode`.
+* **`reliability/sweep.py`** (item 7) crawls one level from the corpus seeds and
+  sorts outcomes into CRASH / PANIC / HANG / HANG_HARD / REFUSED / THIN / OK.
+  **REFUSED is ours and is not in Obscura's sweep**, because a policy refusal is
+  this engine working; counting it as a failure would make a narrow allowlist
+  look like an unstable engine. First run: 60 URLs, 0 engine bugs, 0 REFUSED.
+* **`wpt/tiers.list` and `wpt/tiers.py`** (item 9) do what §B13.3 asked for in
+  prose. Run against the August sweep the table says, by construction:
+  **core 59,953 passing, encoding 225,786, and the headline is 79% encoding.**
+  Nobody has to remember the caveat any more. One thing was got wrong first and
+  is worth keeping: the fold was per *directory*, which is wrong for `css` —
+  one result file, 75,000 subtests, straddling core (`css/cssom`), excluded
+  (`css/css-animations`) and unscoped. Classified as a directory it matched
+  nothing and the remainder became the second-largest row in a table whose
+  whole purpose is that the remainder is small. It folds per test now, and the
+  unscoped remainder is 175 of 2,491 across 111 named areas.
+* **The triage rollup** in `merge.py` (item 9) groups failure *messages* by
+  shape across a whole sweep. It paid for itself on the first run: 8,425
+  subtests failing on one unhandled-rejection shape, 3,460 on `cannot convert
+  'X' or 'X' to object`, 2,396 on `not a callable function`. That is §B12.2's
+  "twenty files, four bugs" mechanised.
+* **`wpt/wptserve.py`** (item 10) runs against WPT's own server, with the real
+  subdomains and the `.py` handlers — which is what puts §B17's CORS, §B16.5's
+  PSL cookies and §B17.4's compression under external test for the first time.
+  The overlay is installed into the checkout and restored in a `finally`,
+  including on Ctrl-C. **The https variants are dropped by name**, because
+  wptserve serves them under its own CA and this engine trusts `webpki-roots`
+  with no way to add a root: a trust decision recorded as a conformance result
+  would be exactly the kind of number this harness exists to avoid.
+* **`capability/`** (item 12), nine stages, offline, frameworks vendored.
+  **9/9 pass**: React 18, Preact, Vue 3 including its runtime template
+  compiler, Preact hydration, a fetch+pushState SPA, the modern-language and
+  platform surface, timer/microtask ordering, and the import map from item 11.
+  Median 169 ms. Timing is printed and **not gated** — a latency gate in CI is
+  a flake factory, and §B15.12a asked for a measurement, not a tripwire.
+
+### B19.12 Item 4, measured and reverted, which is the useful half
+
+Batching WPT files into one engine process was the "speedup that needs
+nothing": `open` already takes several URLs and slices its records per page, so
+twelve files per process would amortise process start and font loading. It was
+built, and it produced **identical scores** and was slower nearly everywhere.
+
+| directory | files | one per process | batched (12) |
+| --- | --- | --- | --- |
+| `dom` | 587 | **75.3s** | 392.0s |
+| `css/cssom` | 190 | 22.8s | **20.5s** |
+| `domparsing` | 60 | **2.6s** | 3.1s |
+| `url` | 34 | **1.7s** | 2.2s |
+
+`dom` settles it, and the cause is structural rather than a matter of tuning:
+
+* **A batch shares a process, so a batch that crashes loses every file in it.**
+  Correctness therefore requires re-running a failed batch one file at a time —
+  and WPT is a corpus where crashing and hanging files are common, so on `dom`
+  most batches split and most files ran twice.
+* **Batching takes the harness's per-file timeout away.** The ceiling becomes
+  per-process, so one hanging file holds eleven others instead of being killed
+  on its own worker while the rest proceed.
+* **The ceiling was never large.** `dom` runs at about 7.9 files/s on four
+  jobs, so a file costs ~0.5s and process start is well under a tenth of that.
+  Nothing batching could have recovered was worth either of the above.
+
+So the code is reverted and the measurement is kept, on `run_one`, where the
+next person to have this idea will read it before having it. §B19.3 claimed
+this was "the speedup that needs nothing"; it needed a measurement, and the
+claim above it — that pointing `run.py` at a resident session would be the
+largest speedup — had already been withdrawn for a different reason on the same
+day. Two speedups proposed, two wrong, neither measured before being written
+down.
+
+**This is the fourth time.** §B15.12a recorded three optimisations reasoned from
+the shape of the code — realm reuse, prelude bytecode caching, and a combined
+settle hook — of which two were dangerous and one was useless. The lesson it
+drew was that the rule against building what no page asked for applies to
+performance too. It applies to *instruments* as well, and the tell is the same
+every time: a sentence in this file that says a change will be fast, written
+before anything was timed.
+
+
+## B20. Chasing 80%, and what the concentration actually looks like, 2026-08-27
+
+The question was how to get WPT coverage to 80%. The first thing the data said
+is that "80% of what" has three answers and only one of them is honest, and the
+second is that the gap is far more concentrated than anyone had assumed.
+
+### B20.1 What 80% means, given §B19.2's tiers
+
+| tier | before this work | to reach 80% |
+| --- | --- | --- |
+| core | 59,953 / 120,522 (49.7%) | +36,464 |
+| encoding | 225,786 / 229,349 (98.4%) | already past |
+| relevant | 985 / 19,020 (5.2%) | +14,231 |
+| **scoped total** | **286,724 / 368,891 (77.7%)** | **+8,388** |
+
+The scoped total is *already* 77.7%, and reaching 80% by that reading needs
+almost nothing — which is precisely the §B13.3 trap the tiers file was built to
+close: the encoding block is carrying it, and adding encoding subtests would be
+gaming a number rather than improving an engine. **Core at 80% is the honest
+target**, and it is the one everything below is measured against.
+
+### B20.2 The gap is thirty files
+
+Sorting core's unpassed subtests by file:
+
+| | share of the core gap |
+| --- | --- |
+| top 30 files | **52.8%** |
+| top 100 files | 65.5% |
+| top 400 files | 79.9% |
+
+Half the work is in thirty files. That is the §B12.2 shape again — a large
+cluster with few causes — and it means the productive move is never "implement
+more of the platform", it is "read what those thirty files say".
+
+### B20.3 The reader did not lowercase what the writer did (+10,847)
+
+Eleven of the top fifteen files shared one failure message, verbatim:
+
+    assert_equals: getAttribute() expected (string) "" but got (object) null
+
+DOM §4.9 lowercases the qualified name for an element in the HTML namespace, on
+`getAttribute`, `hasAttribute`, `setAttribute` and `removeAttribute` alike.
+`set_attr` and `remove_attr` did; `get_attr` did not, and `hasAttribute`
+inherited the bug through the same op.
+
+It stayed invisible until the *harness* was read rather than the engine: WPT's
+reflection harness passes the **IDL** name straight through to both calls
+(`html/dom/reflection.js`: `domName = idlName`), so `setAttribute("accessKey")`
+stored `accesskey` and `getAttribute("accessKey")` answered null. Every
+camelCase reflected attribute failed on every element in all eleven
+`reflection-*.html` files.
+
+    html/dom  43,744 -> 54,591 of 60,514 scored  (72.3% -> 90.2%)
+
+The fix is namespace-conditional, and that is not pedantry: the HTML parser
+case-corrects SVG attributes, so an `<svg>` really does hold one named
+`viewBox`, and a blanket lowercase would have traded one silent wrong answer
+for another. `set_attr` lowercasing *unconditionally* was the same bug pointing
+the other way — `svg.setAttribute("viewBox", …)` stored `viewbox` and rendered
+nothing. All three share one normaliser now, because `guard_mutation` two
+hundred lines below records what happened the last time a defect of this shape
+was patched at each call site as it was found.
+
+### B20.4 An instrument that was fine, and an analysis that was not
+
+The first read of the data said 27% of the core gap sat behind
+`TypeError: not a callable function`, which does not name the callee — and
+therefore that the instrument had to be fixed before anything else, per §B8.
+
+**That was wrong, and the correction is the useful part.** 87% of those
+subtests already carry the name, in the `unsupported` side-channel the engine
+has had since §B8.4. The analysis was reading `failures[].message` and never
+joining the two channels. The engine names `Element.getHTML`,
+`Element.setSelectionRange`, `document.createProcessingInstruction` and the
+rest perfectly well; the script asking the question was the blind one.
+
+Joined, and weighted by the unpassed subtests of the files that ask (calls
+alone rank a hot loop above a blocker), the demand list is the ranked work
+queue this section is built on. The genuine blind spot — named in neither
+channel — is 292 files and 1,813 subtests.
+
+### B20.5 `getHTML`, and a 6,908-subtest file that is not a 6,908-subtest win
+
+`shadow-dom/declarative/gethtml.html` is the largest single file in core: 6,908
+unpassed, zero passing. It was queued as the biggest available win. It is not,
+and the breakdown says so exactly:
+
+* **380 subtests** need only `getHTML()` to equal `innerHTML`. Built, and
+  measured at exactly +380.
+* **6,528 subtests** need a shadow root serialised as `<template
+  shadowrootmode=…>` followed by the light children — and this engine has one
+  tree. A shadow root here is a *view of its host*, the component's output and
+  the light content are siblings in the same element, and nothing distinguishes
+  them afterwards.
+
+So the string a browser produces cannot be reconstructed, and emitting the
+flattened content under a `<template shadowrootmode>` header would be markup
+that parses, looks right, and describes a tree that never existed. It is
+recorded through `unsupported()` instead.
+
+The lesson is §B12.8's, inverted. That entry says a large failure cluster
+usually has one cheap structural cause; this one has a single *expensive*
+structural cause, and the file's size said nothing about which. **A subtest
+count is a measure of how much a test file repeats itself, not of how much work
+its failure represents.**
+
+### B20.6 Interface objects: forty-seven names, and three bugs behind them
+
+Forty-seven interface globals were missing — `Document`, `Response`,
+`NodeList`, `HTMLCollection`, `Storage`, `CSSRule` and the rest — of which
+several had full implementations behind them and only lacked the name.
+
+**Why this is not the `missingApi` stub §B8.4 deleted.** That rule is about
+*feature detection*: a name that exists and answers wrongly sends a page down a
+branch it cannot recover from. A page writing `nodes instanceof NodeList` is
+not detecting a feature, it is asking what it is holding, and the honest
+answers are yes and no — never `ReferenceError`. So each interface object
+carries a `Symbol.hasInstance` performing the real brand check against the
+shape this engine builds, and `new NodeList()` still throws exactly as it does
+in a browser.
+
+Adding them surfaced three real bugs that had nothing to do with WPT:
+
+* **`CharacterData` was `Text`.** A duplicate key in the globals literal, so
+  the later binding won and `comment instanceof CharacterData` was **false**
+  for a class the comment genuinely extends.
+* **`option.value = x` was silently lost.** The setter took the editor path,
+  which an option does not have, and stashed the value where the option's own
+  getter never looks — taking `new Option(label, value)` with it.
+* **`fetch` resolved an object literal.** It had the right fields, which reads
+  identically until something asks what it is: `Response` was not a global, so
+  `new Response(...)` was a ReferenceError and `res instanceof Response` could
+  not be written at all.
+
+And one that was ours all along: **interface objects were enumerable on the
+global.** WebIDL §3.7 says otherwise, `Object.assign` creates enumerable data
+properties, and `idlharness` checks it *first* for every interface — so the
+cost was a subtest per interface across every `idlharness` file in the suite,
+spent before anything about the interface was examined.
+
+### B20.7 `new Document()`, and a score that depended on machine load
+
+Exposing `Document` as non-constructible took `html/dom/idlharness.https.html`
+from 269 passing to reporting **nothing at all**. `new Document()` is legal —
+DOM §4.5 gives Document a constructor — and the test builds one in its setup,
+so a brand that threw killed the file. That is §B8.4's own hazard in a new
+costume: a name that exists and answers wrongly, added by the change that was
+supposed to stop names being absent.
+
+Made constructible, the file went from 373 subtests to **6,408, with 1,896
+passing**. And then it became *unstable*: sometimes `ok`, sometimes
+`no_report`, depending on nothing but how loaded the machine was.
+
+The cause is `SCRIPT_PHASE_BUDGET`, a twenty-second wall-clock ceiling on a
+page's script. The file legitimately needs about twenty seconds to parse the
+IDL and build its tests, so it lands exactly on the line. The guard is right —
+it is what stops a page whose promise chain never settles — and a conformance
+harness is precisely where a runaway and a merely slow page are hard to tell
+apart from outside.
+
+**A run whose score depends on the other processes on the box is not a
+measurement**, so `--script-seconds` lets an instrument say so, for the same
+reason and with the same limits as §B19.5's `--allow-any-remote`: it announces
+itself, it changes nothing for anyone who does not pass it, and the navigation
+deadline still bounds the whole load. `wpt/run.py` passes 60.
+
+    html/dom  54,591 -> 56,241 of 66,549 scored
+
+### B20.8 `testdriver-vendor.js`: the second empty seam
+
+`resources/testdriver-vendor.js` ships as a **zero-byte file**, for exactly the
+reason `testharnessreport.js` does: it is where a vendor plugs its automation
+in. Unfilled, `test_driver.click()` rejects with "not implemented by
+testdriver-vendor.js" and every test built on it fails on a missing harness
+rather than on anything about the engine — 633 files in core.
+
+Filled in `wpt/serve.py`, beside the reporter, with no engine change at all.
+`click` and `send_keys` are implemented by dispatching the events the action
+would produce, which is the action rather than a simulation of it; `bless` (706
+call sites) is built on `click` upstream, so one function unlocks both.
+Everything needing authority this engine does not have — permissions, virtual
+sensors, virtual authenticators, a second browsing context — keeps testdriver's
+own rejection, because a shim that resolved those would turn "the harness
+cannot do this" into "the engine got the wrong answer".
+
+`action_sequence` is refused for a narrower reason: it is a pointer and key
+state machine with its own tick semantics, and approximating it would make a
+class of failures untraceable.
+
+### B20.9 A comparison that was measured against the wrong thing
+
+Partway through, `shadow-dom` appeared to have regressed by 192 subtests and
+three `reference-target` files by 587. Bisecting found the same directory
+scoring 41 of 473 both with and without every change in this section: the
+comparison was against `results-2026-08-10`, and the difference was a month of
+drift in the engine and in the WPT checkout.
+
+The rule this earns is small and was being broken all day: **a before/after
+comparison needs a before taken from the current commit.** A stale artifact is
+a different engine and a different corpus, and it will attribute someone else's
+work — in either direction — to yours. Every number in this section is against
+a freshly measured baseline for that reason.
+
+### B20.10 The second pass: types, names, and two features that were declared and never acted on
+
+Four more rounds, each found the same way — read what the failures say, fix the
+cause rather than the file.
+
+**The reflection *type system*, which is per-element and therefore never
+small.** Four bugs, all of them repeating on every element in every
+`reflection-*.html`:
+
+* **`-0`.** `Number("-0")` is negative zero, an IDL long is an integer, and
+  testharness compares with `Object.is` semantics — so `tabindex="-0"` failed
+  `assert_equals(0)` everywhere. `tabIndex` has its own parser and needed the
+  same fix twice.
+* **Out of the 32-bit range is "not a valid integer"**, not a large number.
+* **`[LegacyNullToEmptyString]`** on the legacy colour attributes: `bgColor =
+  null` writes `""`. Marked per attribute, because everywhere else `null`
+  really does stringify.
+* **`action`/`formAction` answer with the document's address** when unset. A
+  form whose action reads `""` submits somewhere different from one that reads
+  the page's URL.
+
+Plus nine element interfaces the table never had — meter, progress, iframe,
+del, q, th, thead, tfoot, colgroup — where `ins` was present and `del` was not,
+`td` was present and `th` was not. A missing entry is not one attribute
+missing; it is every attribute of that element failing at once.
+
+    html/dom  56,241 -> 57,080
+
+**Custom element names, and two wrong turns worth more than the fix.**
+`define` enforced one rule of eight. Implementing the rest took
+`valid-custom-element-names.html` from 222 of 1,975 to **1,975 of 1,975** — but
+only after two mistakes:
+
+1. The first implementation used `PotentialCustomElementNameChar`, which is
+   the **superseded** production. whatwg/html#7991 replaced it with "a valid
+   element local name", which *excludes* rather than includes. So the old rule
+   rejected names that are now legal, and failed the file in the opposite
+   direction from the one it was written to fix. **Implementing from memory of
+   a spec is implementing a spec that may have moved.**
+2. `whenDefined` did not validate. Once `define` threw correctly, the test
+   reached `await promise_rejects_dom(t, 'SyntaxError', whenDefined(bad))` and
+   hung there — taking all 5,900 subtests with it, and turning a +1,753 into a
+   -222 until it was found. **A promise that never settles is the worst of the
+   three answers**: a caller cannot tell it from a component that has not
+   loaded, so it waits out its own timeout instead of handling an error it
+   could have handled at once.
+
+**Popovers and `<dialog>`: declared and never acted on.**
+`html/semantics/popovers` was 3,846 unpassed against 20 passing, and the reason
+was not that the feature is large: the `popover` attribute *reflected*, and
+nothing anywhere did anything with it. `<dialog>` was the same shape — `open`
+reflected, and `show`, `showModal` and `close` were all absent, so a dialog
+could be described and never opened.
+
+Both are now real as far as the DOM goes: the state machine, the exceptions,
+the `beforetoggle`/`toggle` pair with its cancel-on-open-only asymmetry, the
+`popovertarget` invoker, `returnValue`. What is deliberately not real is the
+**top layer** — this engine has no separate paint layer, so an open popover
+renders where it sits and a modal dialog does not block the page behind it.
+That is a rendering property; the API contract a page scripts against is not,
+and the two halves are worth separating rather than refusing the feature whole.
+
+Three things fell out of building it that the tests would not have said
+directly:
+
+* `<div popover>` has the value `""`, which maps to the **auto** state. Without
+  the alias it fell through to `invalid` and every bare popover reported
+  `"manual"` — the one state that does *not* close its peers, so they stacked.
+* `popover` is **nullable**: an element without the attribute reports `null`,
+  which is how a page asks "is this a popover at all". Reporting `""` made
+  every element look like one.
+* An invoker runs **after** the click and only if it was not cancelled, so the
+  click event has to be held and asked. Dispatching and discarding it made
+  `preventDefault()` in a handler do nothing.
+
+**URL and body plumbing.** `new URLSearchParams(otherParams)` walked the
+object's own keys, copied the internal `_pairs` field, and serialised as
+`_pairs=a%2Cb` — a params object emitting its own implementation. It takes any
+iterable of pairs now, plus `sort()`, `size`, proper form-urlencoded output
+(`+` for space and the escapes `encodeURIComponent` leaves alone), the
+`URL.parse`/`canParse` statics, and `formData`/`arrayBuffer`/`blob` on both
+`Request` and `Response`.
+
+    url  68 -> 148 of 499
+
+### B20.11 Four more, and the shape of what is left
+
+**Popovers and `<dialog>`, measured.** `html/semantics` 2,839 -> **4,642**, and
+`html/dom` +418 alongside. The feature was not large; it was unwired.
+
+**`DOMTokenList`, four gaps in one type.** `replace()` was absent — 262 corpus
+asks — indexed access answered `undefined`, and neither validation existed, so
+`classList.add("")` wrote a trailing space and `classList.add("a b")` wrote a
+token that read back as *two*. That last one is the bad kind of bug: a class a
+page added could not be removed again.
+
+**`createElementNS` accepted anything**, which is why
+`dom/nodes/Document-createElementNS.html` scored **1 of 596** — the file is
+almost entirely a sweep of names that must be rejected. It validates the XML
+`Name` production now and keeps `InvalidCharacterError` ("that is not a name")
+apart from `NamespaceError` ("that name and that namespace may not go
+together"), because pages catch them separately.
+
+    dom  2,022 -> 2,629
+
+### B20.12 Forms, which was the one large block that was just work
+
+§B20.11 named `html/semantics/forms` as the only big remaining cluster that
+needed no design reversal. It was **723 passing of 4,870**, and the reason was
+not subtlety: the constraint validation API did not exist at all. Nine files
+scored 1 of 920 between them, every one failing on *"the validity attribute
+doesn't exist"* before reaching what it meant to check.
+
+**Built, in the order the failures ranked them:**
+
+* **Constraint validation.** `validity`, `willValidate`, `validationMessage`,
+  `checkValidity`, `reportValidity`, `setCustomValidity`, and the form-level
+  pair. The barred-from-validation clause is the part worth reading: a disabled
+  control that reported itself invalid would block a form the user cannot even
+  reach, so barred elements are always valid *including* when a custom error
+  was set. `reportValidity` is identical to `checkValidity` here and says so —
+  the difference is that a browser shows the message, and there is no UI to
+  show it in.
+* **Text-field selection.** `selectionStart`/`End`/`Direction`,
+  `setSelectionRange`, `setRangeText` with all four select modes, `select`. The
+  selection lives on this side rather than in the layout engine, because it has
+  to answer for a detached control too. `<input type=number>` reports `null`
+  rather than 0, which is the distinction a page tests before using it.
+* **Numeric inputs.** `valueAsNumber`, `valueAsDate`, `stepUp`, `stepDown`,
+  `showPicker`, all keyed off one table so a type is steppable in one place
+  rather than four that can disagree. NaN rather than `undefined` for a type
+  with no numeric form: `undefined` says "this engine lacks the property", NaN
+  says "this control holds no number".
+* **`<input type=color>` sanitisation**, `files` returning `null` off a
+  non-file input, and `form.autocomplete` defaulting to `on`.
+
+**Three bugs that had nothing to do with forms fell out of it.**
+
+* **An empty `<input>` read as `" "`.** blitz seeds a laid-out input's editor
+  with a single space, and the value getter applied its whitespace-is-unseeded
+  rule to `<textarea>` only. So `if (!input.value)` was **false** for an empty
+  field: every page and every agent testing a form for emptiness got the wrong
+  answer, and `required` could never fire. Found only because constraint
+  validation asked the question a different way.
+* **`cloneNode` copied `class` and `style` and nothing else.** A clone lost its
+  `id`, its `href`, its `data-*` and every hook a page had put on it — so a
+  cloned `<template>` came out stripped. The form-control cloning steps (the
+  value and the dirty value flag) were missing with them.
+* **`click()` on a disabled control dispatched a click.** A page that disables
+  a control to stop it being used still saw it used, with the form in whatever
+  state the disabling was meant to protect.
+
+    html/semantics/forms  723 -> 2,012 of 4,655
+    html/dom              57,498 -> 58,073
+    dom                   2,629 -> 2,651
+    gate                  288,183 -> 288,780, no regression
+
+What is left in forms is genuinely different in kind: form *submission*
+(`multipart/form-data`, `text/plain`, the submission algorithm), `:focus` in
+the selector engine, and `color()` CSS parsing. Submission is the largest and
+is the one worth taking next — it is the half of a form this engine can
+observe better than anything else, because it *is* the HTTP client.
+
+### B20.13 Submission, and the boundary it ran into
+
+The rest of forms was submission, and §B20.12 said it was worth taking because
+this engine *is* the HTTP client. Built:
+
+* **Form ownership, which is not containment.** `formOwnerOf` honours the
+  `form` content attribute, and the bug it fixes is a wrong answer rather than
+  a missing one: `form=""` names no id and therefore has no owner, but the old
+  code read the attribute for truthiness and fell through to the ancestor
+  search — reporting the surrounding form, when taking a control *out* of the
+  form it sits in is the entire purpose of the attribute. `form.elements` now
+  asks the same question, so a control with `form="thisId"` is submitted from
+  anywhere on the page.
+* **The entry list**, properly: the submitter is an entry (skipping every
+  button meant a server could not tell which one was pressed), `_charset_` is
+  filled in by the engine, a `<datalist>` descendant is a suggestion and never
+  an entry, and disabled and unnamed controls are excluded.
+* **The `formdata` event**, which fires with the list under construction rather
+  than a copy — that is the documented replacement for the hidden inputs a page
+  used to inject.
+* **`requestSubmit` and `submit`**, which differ in the two ways that matter:
+  the first validates and fires a cancelable `submit`, the second does neither.
+  Implementing them as one function is the obvious shortcut and would make
+  `form.submit()` called from inside a `submit` handler recurse.
+
+Neither *navigates*, and that is deliberate rather than unfinished: this engine
+drives navigation through its own verbs so that an agent and a receipt both see
+it, and a form submitting itself out from under that would be a request nothing
+decided on.
+
+**A bug found by this that had nothing to do with forms.** `form.elements` came
+back empty, because it compared `formOwnerOf(el) === this` — and `wrap()` hands
+back the `observed` proxy while a getter runs with the raw target as `this`, by
+design (`observed` passes the target as receiver to avoid paying a trap per
+field read). So a proxy and its target are two objects for the same node, and
+identity comparison silently answers "different" for **every element**. Any
+code anywhere comparing two wrappers with `===` has the same defect; there is
+now a `sameNode` helper saying so.
+
+    html/semantics/forms  2,012 -> 2,051 of 4,655
+
+**And the boundary.** The remaining mass in `form-submission-0` is three
+enctype files at 62 subtests each plus the double-submit pair, and every one of
+them submits into an `<iframe>` and waits for its load. That is §B6's refusal,
+reached from a third direction — after declarative shadow DOM (§B20.5) and
+`html/browsers/origin`. The submission *algorithm* is now implemented and
+observable; what is not reachable is being navigated by it.
+
+### B20.14 Where core stands, and what 80% would actually take
+
+**58.5%** — 76,760 of 131,201 — from 49.7%, measured across all nineteen core
+directories, 9,492 files, on a freshly built binary. The session moved roughly
+15,000 subtests.
+
+80% is +28,200 from here, and the honest reading of the remaining mass is that
+**the cheap shared causes are spent.** Four blocks hold most of it, and two of
+them are decisions rather than work:
+
+| block | unpassed | what it is |
+| --- | --- | --- |
+| `gethtml.html` + declarative shadow DOM | ~7,100 | needs a real shadow tree. §B6 chose flattening, and §B20.5 is where that choice becomes a number. |
+| `html/dom/idlharness` | 4,496 | correct IDL shapes — prototypes, descriptors, inheritance — on every interface. Grind, not design. |
+| `html/semantics/forms` | 4,147 | validity API, text-field selection, submission. **The one large block that is just work.** |
+| `fetch` | 4,539 | 260 of 467 files time out on abort semantics, which a synchronous fetch cannot provide. |
+
+So the path to 80% runs through two product decisions — whether a shadow root
+is a real tree, and whether `fetch` stays synchronous underneath — plus the
+forms block and a long tail. None of that is discovered by pointing the harness
+at more directories; it was discovered by reading what the failures said, which
+is the only method in this section that has worked at all.
+
+**A caution on the number itself.** 58.5% is the core tier as `tiers.list`
+defines it, and §B12.6's three ways to move a score all applied today:
+implementing more (most of it), measuring more (`idlharness` becoming
+reportable at all, which added 6,000 subtests to the denominator as well as
+1,896 to the numerator), and counting more honestly. The first is the only one
+that is engineering, and the tier table is what keeps the three visible.
+
+### B20.15 The three boundaries, decided, 2026-08-28
+
+§B20.14 ended on three blocks that were "blocked on a product decision, not on
+effort", holding roughly 19,000 of the 23,600 subtests between the engine and
+80%. The decision was put, and made, and this entry is the record — argued on
+the product's terms, because §B20.5 already established that a WPT subtest
+count measures how much a test file repeats itself, not how much a gap costs.
+The question for each was: *what does an agent driving a real page lose?*
+
+**1. No second browsing context — kept, with one carve-out.** The real-web
+cost is concentrated and real: payment iframes, OAuth popups, embedded
+CAPTCHAs are exactly the tasks agents get asked to do. But supporting it
+honestly is the most expensive item in the engine: two origins in one realm is
+precisely the hazard `cookies.rs` documents — the box protects the host from
+the page and says nothing about two origins sharing an address space, which is
+why `retain_origin` drops the jar on every origin change. A cross-origin
+iframe reintroduces the problem that rule exists to bound, and doing it right
+is what Chromium calls site isolation. For an engine whose thesis is
+auditability, "two origins, one process, one realm" is a worse position than
+"no iframes".
+
+The carve-out: **`window.open` is not an iframe problem — it maps onto h5i's
+own session model.** A popup is a second page, and h5i already has named
+sessions. So `window.open` should become a *named refusal carrying a recovery*
+("this page wants a second page; open one with `--session`"), per §B15.6's
+rule that a denial an agent cannot branch on is a denial it cannot recover
+from. Queued.
+
+*Revisit trigger:* the corpus's `unsupported` counts — real agent tasks dying
+on iframes — never WPT. And the first step if it fires is same-origin
+`srcdoc` iframes only, which raise no isolation question, not the full
+feature.
+
+**2. Flattened shadow root — kept, and this is the one defended hardest.**
+The 7,140-subtest figure is the most misleading number on the table: 6,528 of
+it is one file serialising `<template shadowrootmode>` strings. The
+flattening is not a shortcut but an *aligned* choice — it is what the
+accessibility tree does, and the accessibility tree is what the snapshot is
+modeled on. An agent wants the component's rendered output, readable, in the
+page; a real shadow tree would break the one-tree invariant that snapshot,
+paint and events all rely on, to buy encapsulation — a property that serves
+page authors and actively hurts page readers.
+
+The one real cost is **style scoping**: a component-heavy page can misrender
+because styles leak across the boundary. *Revisit trigger:* corpus pages
+visibly misrendering from leakage — and the fix would be scoping in the
+cascade, not a second tree. Never `gethtml.html`.
+
+**3. Synchronous fetch — not a boundary at all, reclassified.** The other two
+are derived from the product's claims; this one is an implementation ceiling
+wearing a boundary's clothes. Fail-closed requires *decide and record before
+the bytes move* — nothing in that forces the transport to block. The
+`Cargo.toml` comment defends synchrony with "receipt order is request order",
+but decision order can be preserved without serialised transport. The
+real-web costs are already on the record from §B16: serial subresource
+fetching is one of the three load-path costs the Lightpanda study named, and
+an abort that cancels nothing is why 260 of 467 fetch files time out.
+
+The decision is **do not build it for WPT**: run the repaired
+`corpus/compare.py` first (§B19.5's own unfinished business) and see whether
+serial fetch is where real-page latency actually goes. If it is, concurrent
+brokered fetch with real abort is ordinary engineering that *strengthens* the
+receipts story. If it is not, leave it. §B15.12a, applied before the mistake
+this time instead of after.
+
+#### The tiers.list edits, and the number moving for the third reason
+
+With 1 and 2 kept on purpose, 80% of the old core tier is not this engine's
+number — and the honest response is the one `tiers.list` was built for:
+declare the refusals as scope, with the reasons on the line, and let core
+measure what the engine actually claims to be. Three entries moved to
+`exclude`:
+
+| entry | reason on the line |
+| --- | --- |
+| `html/browsers/origin` | needs several live browsing contexts talking to each other |
+| `fetch/metadata` | observed through `window.open` + wptserve `.py` handlers; **the feature is still wanted** — this engine *is* the client and should send `Sec-Fetch-*` for real sites. Excluding the tests does not excuse the feature. |
+| `shadow-dom/declarative/gethtml.html` | one file, by exact path, so the rest of shadow-dom stays measured |
+
+And two that look like candidates and are **not** excluded, because excluding
+either would be exclusion by outcome wearing a capability's name: the
+form-submission enctype files (their *subject* is entry-list serialisation,
+which this engine claims — only the harness observes it through an iframe),
+and the fetch abort timeouts (an implementation ceiling, per decision 3, not a
+declared boundary). Both stay in core as honest losses.
+
+The effect, stated the way §B12.6 requires because this is its third way of
+moving a number — counting differently, not engineering:
+
+    core, old scope   81,120 / 130,958 = 61.9%
+    core, new scope   80,738 / 121,987 = 66.2%
+    moved out         8,971 scored, of which only 382 passed
+    80% now needs     +16,851
+
+Nothing got better; the denominator now says what the engine is. The moved-out
+block was 4% passing, which is exactly what a capability hole looks like from
+the outside — and also exactly why the exclusion had to be argued from the
+product rather than read off the score, since excluding your worst directory
+is what a gamed number looks like too. The difference between those two is
+that the reasons are on the line in `tiers.list`, where moving a line and
+re-running is the audit.
+
+## B21. Reopening two boundaries on task evidence, 2026-08-28
+
+§B20.15's revisit triggers fired the day they were written: task evidence — the
+operator's own agent runs, not WPT — showed real work blocked on frames and on
+fetch's abort behaviour. This section records what was reopened, how far, and
+where the line now is.
+
+### B21.1 Abort, made observable
+
+The claim in §B20.15 that "fetch is synchronous underneath" turned out to be
+half stale: script fetches have run on a thread pool (six slots) since the
+ticket queue landed. What was real is that **abort only took effect when the
+network answered** — the drain checked `signal.aborted` on arrival, so an
+`abort()` against a slow server rejected whenever the server got around to it,
+and against one that never answers, never. 260 of 467 fetch files timed out on
+exactly this shape.
+
+The fix distinguishes the two halves of abort, and implements the one a page
+can observe: **the promise rejects the moment the page says stop**, while the
+wire request runs to completion on its thread and its receipt stands — because
+the request *was* made, and a receipt that vanished when the page changed its
+mind would be a log of intentions rather than of traffic.
+
+Also corrected while there: the rejection reason is now a `DOMException` named
+`AbortError` — every consumer that distinguishes an abort from a failure does
+it by `e.name === "AbortError"`, and rejecting with a plain `Error` sent all of
+them down the failure branch. `AbortSignal.timeout()` (on the virtual clock,
+so a fetch-versus-timeout race settles deterministically here) and
+`AbortSignal.any()` came with it.
+
+**Measured.** `fetch/api/abort` goes from hanging its files to 32 of 96
+scored with three files still timing out — and the remainder is the static
+server's, not the engine's: the mid-download abort tests stream from
+wptserve's `infinite-slow-response.py`, a handler `wpt/serve.py` cannot run
+(§B19.3's wptserve backend is the road to those). Two shape fixes came out of
+reading the failures: every `Request` now mints a `signal` when the caller
+brings none — `request.signal` being null sent every page that wires abort
+through the request object down the wrong branch — and the whole gate moved
++23 alongside.
+
+### B21.2 `window.open`: the named refusal, built
+
+The §B20.15 carve-out, as specified: `window.open` returns `null` — the answer
+every page already handles, because it is what a popup blocker produces — and
+says why on the console and in the unsupported list, naming the recovery: open
+the URL in another session and drive both. Deliberately not a same-realm fake
+window, which would hand the opened page's globals to the opener — the
+two-origins-one-realm hazard wearing a friendlier face.
+
+### B21.3 Frames as content: the narrow reopening
+
+The decision §B20.15 kept — no second browsing context — stands. What task
+evidence forced is narrower and turns out to be buildable without touching the
+boundary: **a frame's document is fetched and its content flattened into the
+page**, exactly as a shadow root is flattened, readable in the snapshot and
+actionable by the verbs. The payment form inside the iframe mints refs like
+any other form.
+
+What crosses, and what does not:
+
+* Every frame fetch goes through the broker under its own initiator —
+  **`frame` in the request log** — so an auditor asking "did this page pull in
+  another document" gets the answer by name. The allowlist applies unchanged;
+  a refused frame is a *note the agent reads*, never an empty box.
+* **Its scripts never run** (stripped after the graft, and `javascript:`
+  frames are refused by name — script by another road). Running a second
+  document's script in this realm is the hazard the boundary exists for.
+* **Its styles do not apply** (also stripped): the host cascade applying a
+  foreign document's rules to the whole page would be a worse lie than
+  unstyled frame content.
+* **`contentDocument` still answers null.** A flattened frame is content, not
+  a browsing context.
+* Bounded at eight frames per page, nested included, and the bound is *said*
+  (§B16.10) — ad cascades nest without limit and every fetch spends the
+  page's own budget.
+
+Three findings from building it, each worth more than the feature:
+
+* **Fragment parsing inside `<iframe>` is raw text.** The first graft set the
+  frame's own innerHTML and produced one text node of escaped markup — the
+  HTML parser's rule, not a bug. The graft goes into a `<div>` container.
+* **Blitz styles nothing it will not render**, so the snapshot's
+  hidden-content defence — "no styles means hidden" — silently dropped every
+  grafted subtree. Inside a frame that inference is wrong: no styles means
+  *outside the styled tree*. The walk now carries an `in_frame` flag, and the
+  hiding vectors a page actually controls there — the `hidden` attribute,
+  inline `display:none`, `aria-hidden` — keep their teeth, verified by test.
+  What is lost is stylesheet-based hiding, whose stylesheet was stripped at
+  the graft and whose absence the frame note declares.
+* **The document-origin loopback rule fired on the first test draft**, refusing
+  a web page's frame from reaching the dev server. §B3.1 doing its job on a
+  road that did not exist when it was written; the test suite now pins it.
+
+### B21.4 What this did not reopen
+
+`tiers.list` is unchanged. `html/browsers/origin` still needs several live
+browsing contexts *scripting each other*; `fetch/metadata` still needs
+`window.open` that opens; the enctype files still observe submission through a
+frame's *load*, which a flattened frame does not perform. Frames-as-content
+moves what an agent can read and drive, which is what the task evidence asked
+for — it does not move what the excluded tests measure.
+
 
 ---
 

@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>react 18 client render</title>
+<!--
+  The question a user asks on day one and `tests/corpus.rs` cannot answer.
+  That suite holds reductions of bugs we have already had, so by construction
+  it only contains regressions; this asks whether a framework nobody has
+  reduced yet actually mounts.
+
+  The assertion is deliberately about the DOM after the fact, not about React:
+  the `<li>` elements are not in the served HTML, so counting them proves the
+  component tree was built and committed rather than that a script ran.
+-->
+<div id="root"></div>
+<script src="../vendor/react.min.js"></script>
+<script src="../vendor/react-dom.min.js"></script>
+<script>
+  var e = React.createElement;
+  function Item(props) { return e('li', { className: 'row' }, 'item ' + props.n); }
+  function App() {
+    var rows = [];
+    for (var i = 0; i < 100; i++) rows.push(e(Item, { key: i, n: i }));
+    return e('ul', { id: 'list' }, rows);
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+</script>

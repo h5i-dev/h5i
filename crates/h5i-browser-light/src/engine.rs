@@ -54,6 +54,24 @@ pub struct PageOptions {
     /// and is pinned to its thread; moving script into a killable worker means
     /// moving the document with it.
     pub navigation_budget: std::time::Duration,
+
+    /// How long the script realm's job queue may run before it is cancelled.
+    ///
+    /// `None` keeps `SCRIPT_PHASE_BUDGET`, the wall-clock ceiling on how long a
+    /// page's script may run. It is a guard against a *runaway*, and a
+    /// conformance harness is exactly where a runaway and a slow page are hard
+    /// to tell apart from outside: `html/dom/idlharness` legitimately spends
+    /// about twenty seconds parsing IDL and building 6,408 tests, lands right
+    /// on the twenty-second ceiling, and is then recorded as having reported
+    /// nothing at all — so 1,896 passing subtests appear or vanish depending on
+    /// how loaded the machine was.
+    ///
+    /// A run whose score depends on the other processes on the box is not a
+    /// measurement, so an instrument can raise this — for the same reason
+    /// `--allow-any-remote` exists, and with the same limit: it says what it is
+    /// doing, and it changes nothing for anyone who does not pass it. The
+    /// navigation deadline still bounds the whole load either way.
+    pub script_budget: Option<std::time::Duration>,
 }
 
 impl Default for PageOptions {
@@ -64,6 +82,7 @@ impl Default for PageOptions {
             scale: 1.0,
             max_snapshot_lines: 500,
             script: false,
+            script_budget: None,
             // Above what a slow real page takes and far below what a stuck one
             // would, which is the shape every ceiling in this engine has.
             navigation_budget: std::time::Duration::from_secs(45),
@@ -236,6 +255,220 @@ const INLINE_HANDLER_SELECTOR: &str = "[onload],[onclick],[onerror],[onchange],[
     [onpagehide],[onhashchange],[onpopstate],[onresize],[onmessage],[onunload],\
     [onbeforeunload],[onanimationend],[ontransitionend],[onpointerdown],[onpointerup]";
 
+/// How many frame documents one page may pull in, including nested ones.
+///
+/// A bound, and a *said* bound (§B16.10): ad-stuffed pages carry dozens of
+/// frames, each of which may carry more, and every fetch spends the page's
+/// own network budget. Eight is far above what a page an agent is driving
+/// legitimately embeds and far below what an ad cascade produces.
+const MAX_FRAMES: usize = 8;
+
+/// Load each frame's document and graft it under the frame element (§B21).
+///
+/// # What this is, and the boundary it does not cross
+///
+/// §B6 refused a second browsing context and §B20.15 kept the refusal — two
+/// origins in one realm is the hazard the cookie jar's retain-on-navigation
+/// rule exists to bound. Task evidence then showed agents genuinely need what
+/// is *inside* frames (payment forms, embedded login pages), so this is the
+/// narrow reopening: a frame's document is fetched and its **content** is
+/// flattened into the page, exactly as a shadow root is flattened — readable
+/// in the snapshot, actionable by the verbs.
+///
+/// What deliberately does not happen:
+///
+/// * **Its scripts never run.** They are stripped after the graft. Running a
+///   second document's script in this realm is the two-origins-one-realm
+///   problem, and stage 1 does not have a realm to give each frame.
+/// * **Its styles do not apply.** Also stripped: the host's cascade would
+///   otherwise apply a foreign document's rules to the whole page, which is a
+///   worse lie than unstyled frame content.
+/// * **`contentDocument` still answers null.** A flattened frame is content,
+///   not a browsing context; handing script a document facade would claim a
+///   boundary this engine has not built.
+///
+/// Every fetch goes through the broker with `Initiator::Frame`, so the
+/// receipt says "this page pulled in another document" in so many words, the
+/// allowlist applies unchanged, and a web page embedding the box's dev server
+/// is refused by the same loopback rule as any other cross-origin reach.
+fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
+    // Worklist rather than one pass, because a grafted document may itself
+    // hold frames. The cap bounds the whole tree, and being over it is noted
+    // rather than silent.
+    let mut loaded: usize = 0;
+    let mut stripped_scripts: usize = 0;
+    let mut failures: Vec<String> = Vec::new();
+    let mut seen: Vec<usize> = Vec::new();
+    let mut capped = false;
+
+    loop {
+        // One frame per iteration: the graft invalidates any longer list of
+        // ids collected up front.
+        let next = {
+            let doc = page.doc.borrow();
+            doc.query_selector_all("iframe, frame")
+                .map(|ids| ids.into_iter().collect::<Vec<usize>>())
+                .unwrap_or_default()
+                .into_iter()
+                .find(|id| !seen.contains(id))
+        };
+        let Some(frame_id) = next else { break };
+        seen.push(frame_id);
+        if loaded >= MAX_FRAMES {
+            capped = true;
+            continue;
+        }
+
+        let (srcdoc, src) = {
+            let doc = page.doc.borrow();
+            let attr = |name: &str| {
+                doc.get_node(frame_id).and_then(|node| {
+                    node.attrs().and_then(|attrs| {
+                        attrs
+                            .iter()
+                            .find(|a| a.name.local.as_ref() == name)
+                            .map(|a| a.value.to_string())
+                    })
+                })
+            };
+            (attr("srcdoc"), attr("src"))
+        };
+
+        // `srcdoc` wins over `src`, per spec, and needs no fetch: it is inline
+        // content the parser already carried, like a `data:` URL.
+        let html = if let Some(inline) = srcdoc {
+            inline
+        } else {
+            let Some(raw) = src else { continue };
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || trimmed.starts_with("about:") {
+                continue;
+            }
+            if trimmed.starts_with("javascript:") {
+                // A javascript: frame is script by another road, and script in
+                // frames is the boundary. Skipped by name.
+                failures.push("a frame with a javascript: source was not run".to_string());
+                continue;
+            }
+            let Ok(resolved) = page.url.join(trimmed) else {
+                failures.push(format!("`{trimmed}` is not a resolvable frame URL"));
+                continue;
+            };
+            let outcome = broker.send_from(
+                &resolved,
+                Initiator::Frame,
+                "GET",
+                &[],
+                None,
+                Some(&page.url),
+            );
+            if let Some(error) = &outcome.error {
+                // A policy refusal is the engine working; it is reported in
+                // the note rather than silently rendering as an empty frame.
+                failures.push(format!("{resolved}: {error}"));
+                continue;
+            }
+            let status = outcome.status.unwrap_or(0);
+            if !(200..300).contains(&status) {
+                failures.push(format!("{resolved}: the server answered {status}"));
+                continue;
+            }
+            let content_type = declared_content_type(&outcome);
+            if let Some(kind) = &content_type
+                && !kind.contains("html")
+            {
+                // An image or a PDF in a frame is content this engine cannot
+                // flatten into an outline; saying so beats grafting bytes.
+                failures.push(format!("{resolved}: `{kind}` is not a document"));
+                continue;
+            }
+            let encoding = crate::encoding::sniff(&outcome.body, content_type.as_deref());
+            crate::encoding::decode(&outcome.body, encoding)
+        };
+
+        // Graft, then strip. Stripping *after* the graft rather than editing
+        // the string, because removing markup with a regex is how a
+        // `<script>` inside a comment ends up half-removed.
+        //
+        // The graft goes into a `<div>` appended under the frame, not into the
+        // frame element itself — and the difference is the HTML parser's, not
+        // style: fragment parsing in an `<iframe>` context treats the input as
+        // *raw text*, so setting the frame's own innerHTML produced one text
+        // node holding escaped markup. A div is a neutral parsing context.
+        {
+            let mut doc = page.doc.borrow_mut();
+            let mut mutator = doc.mutate();
+            let container = mutator.create_element(
+                blitz_dom::QualName::new(
+                    None,
+                    blitz_dom::ns!(html),
+                    blitz_dom::LocalName::from("div"),
+                ),
+                Vec::new(),
+            );
+            mutator.set_inner_html(container, &html);
+            mutator.append_children(frame_id, &[container]);
+        }
+        {
+            let mut doomed: Vec<usize> = Vec::new();
+            {
+                let doc = page.doc.borrow();
+                let mut stack = vec![frame_id];
+                while let Some(at) = stack.pop() {
+                    let Some(node) = doc.get_node(at) else { continue };
+                    if at != frame_id
+                        && let Some(el) = node.element_data()
+                    {
+                        let name = el.name.local.as_ref();
+                        if name == "script" || name == "style" || name == "link" {
+                            if name == "script" {
+                                stripped_scripts += 1;
+                            }
+                            doomed.push(at);
+                            continue;
+                        }
+                    }
+                    for child in node.children.clone() {
+                        stack.push(child);
+                    }
+                }
+            }
+            if !doomed.is_empty() {
+                let mut doc = page.doc.borrow_mut();
+                let mut mutator = doc.mutate();
+                for id in doomed {
+                    mutator.remove_node(id);
+                }
+            }
+        }
+        loaded += 1;
+    }
+
+    if loaded > 0 {
+        page.note(&format!(
+            "{loaded} frame(s) were loaded as content: each document was fetched through \
+             the policy (initiator `frame` in the request log) and appears in the outline \
+             below, flattened. Their scripts do not run ({stripped_scripts} stripped) and \
+             their styles do not apply — a frame here is content, not a second page — and \
+             `contentDocument` answers null."
+        ));
+    }
+    if capped {
+        page.note(&format!(
+            "this page has more than {MAX_FRAMES} frames; the rest were not loaded. The \
+             bound exists because ad cascades nest frames without limit, and it is said \
+             here rather than silently applied."
+        ));
+    }
+    if !failures.is_empty() {
+        page.note(&format!(
+            "{} frame(s) could not be loaded: {}",
+            failures.len(),
+            failures.join("; ")
+        ));
+    }
+}
+
 impl Page {
     /// Fetch a URL and load it.
     ///
@@ -284,7 +517,7 @@ impl Page {
                 continue;
             }
 
-            let mut page = Self::from_html(&html, &final_url, broker, fonts, options);
+            let mut page = Self::from_html(&html, &final_url, broker.clone(), fonts, options);
             page.encoding = encoding;
 
             // An HTTP error still has a body, and rendering it silently is how
@@ -298,24 +531,12 @@ impl Page {
                 ));
             }
 
-            // Frames are not loaded, and `contentDocument` answers null for
-            // them exactly as a browser does for a frame it will not let you
-            // into. Null is the right answer to give *script*; it is the wrong
-            // thing to leave an agent to infer, because the missing content
-            // looks like content the page never had.
-            let frames = {
-                let doc = page.doc.borrow();
-                doc.query_selector_all("iframe, frame")
-                    .map(|ids| ids.len())
-                    .unwrap_or(0)
-            };
-            if frames > 0 {
-                page.note(&format!(
-                    "this page has {frames} frame(s), whose content this engine does not load: \
-                     anything inside them is absent from the outline below, and script reading \
-                     `contentDocument` gets null"
-                ));
-            }
+            // Frames are loaded as *content*: each frame's document is
+            // fetched through the broker — policy-checked and receipted under
+            // its own initiator — and grafted under the frame element, with
+            // its scripts and styles stripped. See `load_frames` for the
+            // boundary this deliberately does not cross (§B21).
+            load_frames(&mut page, &broker);
 
             // A challenge is not the page, and an outline of one reads as a
             // page that is simply empty. Naming it is the difference between an
@@ -586,6 +807,9 @@ impl Page {
             /// script, in their own document order.
             ModuleInline(String),
             ModuleExternal(String),
+            /// `type="importmap"`. Never executed: it is read once, before the
+            /// first script, and tells the loader where bare specifiers go.
+            ImportMap(String),
         }
 
         /// A script and the element it came from, so `document.currentScript`
@@ -618,6 +842,18 @@ impl Page {
                             // pointing this at github.com.
                             let kind = attr("type").unwrap_or_default();
                             let kind = kind.trim().to_ascii_lowercase();
+                            // Not script, and not data either: it is a
+                            // declaration the module loader reads. Collected in
+                            // the same walk so document order decides which one
+                            // wins, and returned as its own `Source` so the
+                            // partition below cannot mistake it for code.
+                            if kind == "importmap" {
+                                let text = node.text_content();
+                                if text.trim().is_empty() {
+                                    return None;
+                                }
+                                return Some((*id, Source::ImportMap(text)));
+                            }
                             let is_module = kind == "module";
                             let is_classic = kind.is_empty()
                                 || matches!(
@@ -677,7 +913,14 @@ impl Page {
         // 15ms — the prelude is 113 KiB of JavaScript, parsed and evaluated from
         // scratch — and a page with no script elements was paying all of it for
         // a realm that would never be asked a question.
-        if sources.is_empty() && !has_inline_handler() {
+        // A page whose only `<script>` is an import map has no code to run: the
+        // map is a declaration for imports that never happen. Filtered here
+        // rather than in the walk, so the walk stays one pass and this stays
+        // one question.
+        let has_code = sources
+            .iter()
+            .any(|(_, source)| !matches!(source, Source::ImportMap(_)));
+        if !has_code && !has_inline_handler() {
             self.ran_scripts = true;
             // Trivially settled, and said so rather than left null: a page with
             // no script has finished by definition, and "we do not know" is a
@@ -696,6 +939,28 @@ impl Page {
             .map_err(H5iError::Metadata)?;
         script.set_encoding(self.encoding);
 
+        // The map, before anything can import. First one wins and the rest are
+        // ignored, which is what the specification says to do with a second:
+        // an import map that took effect after resolution had begun would
+        // change what an already-resolved import had meant.
+        let mut maps = sources.iter().filter_map(|(_, source)| match source {
+            Source::ImportMap(text) => Some(text),
+            _ => None,
+        });
+        if let Some(text) = maps.next() {
+            script.set_import_map(text);
+            let extra = maps.count();
+            if extra > 0 {
+                // Said, not swallowed. A page with two maps is a page whose
+                // author believes both are in effect, and the second one
+                // silently doing nothing is a long debugging session.
+                script.note_error(&format!(
+                    "{extra} further import map(s) ignored: only the first in document order \
+                     is used"
+                ));
+            }
+        }
+
         // `<div id="x">` makes `x` a global, which is legacy and is also how a
         // great deal of test and older page script finds its subject. Installed
         // before the first script rather than after, because the first script is
@@ -710,8 +975,11 @@ impl Page {
         // module never runs before a classic script that follows it in the
         // markup, and a page that relies on that ordering breaks if we run them
         // as they appear.
-        let (classic, modules): (Vec<Pending>, Vec<Pending>) =
-            sources.into_iter().partition(|(_, source)| {
+        let (classic, modules): (Vec<Pending>, Vec<Pending>) = sources
+            .into_iter()
+            // The map has been read; it is not code and must reach neither list.
+            .filter(|(_, source)| !matches!(source, Source::ImportMap(_)))
+            .partition(|(_, source)| {
                 matches!(source, Source::Inline(_) | Source::External(_))
             });
 
@@ -719,7 +987,14 @@ impl Page {
         // Whichever runs out first. The script phase has its own ceiling, and
         // the navigation has one over the whole load; a page that spent thirty
         // seconds fetching does not then get a fresh twenty to run in.
-        let phase_budget = SCRIPT_PHASE_BUDGET.min(self.deadline.remaining());
+        // The ceiling the script phase actually runs under. An instrument may
+        // raise it (`--script-seconds`); nothing else does, and the navigation
+        // deadline still bounds the whole load either way.
+        let phase_budget = self
+            .options
+            .script_budget
+            .unwrap_or(SCRIPT_PHASE_BUDGET)
+            .min(self.deadline.remaining());
         let mut skipped = 0usize;
         // The origin every `src` below is fetched on behalf of. Cloned once so
         // the loops do not have to hold a borrow of `self` across the calls
@@ -2625,6 +2900,211 @@ mod tests {
         let text = page.text();
         assert!(text.contains("Title"));
         assert!(text.contains("Body copy."));
+    }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    use crate::policy::Policy;
+    use crate::receipt::MemorySink;
+
+    fn page_with(html: &str, policy: Policy) -> (Page, Arc<crate::net::LocalBroker>) {
+        let broker =
+            crate::net::LocalBroker::new(policy, Arc::new(MemorySink::new()), None).expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+        let mut page = Page::from_bytes(
+            html.as_bytes(),
+            Some("text/html"),
+            &Url::parse("https://host.example/").unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let dyn_broker: Arc<dyn Broker> = broker.clone();
+        load_frames(&mut page, &dyn_broker);
+        (factory.finish(page).expect("finish"), broker)
+    }
+
+    /// One line per request, so a hung test names the request it hung on.
+    fn one_shot_server(body: &'static str) -> u16 {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..4 {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                }
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_srcdoc_frame_is_flattened_and_its_script_never_runs() {
+        // §B21: the frame's *content* is readable and actionable; its script
+        // is the boundary and is stripped, not executed.
+        let (page, _broker) = page_with(
+            r#"<html><body><p>host</p>
+               <iframe srcdoc="<form><input name=card><button>Pay</button></form><script>document.title='ran'</script>"></iframe>
+               </body></html>"#,
+            Policy::new(),
+        );
+        let rendered = page.snapshot().render();
+        assert!(rendered.contains("Pay"), "frame content missing:\n{rendered}");
+        assert!(
+            !rendered.contains("document.title"),
+            "script text leaked into the outline:\n{rendered}"
+        );
+        assert!(
+            page.notes.iter().any(|n| n.contains("loaded as content")),
+            "the flattening is stated, not silent: {:?}",
+            page.notes
+        );
+    }
+
+    #[test]
+    fn a_frame_fetch_is_receipted_under_its_own_initiator() {
+        let body = "<p>inner page</p>";
+        let port = one_shot_server(body);
+        // The host page is itself on loopback, because the document-origin
+        // rule is part of what is under test: a *web* page's frame may not
+        // reach the dev server (the sibling test proves that side), while the
+        // dev server's own page framing itself is the everyday case.
+        let html = format!(
+            r#"<html><body><iframe src="http://127.0.0.1:{port}/inner"></iframe></body></html>"#
+        );
+        let broker = crate::net::LocalBroker::new(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory =
+            PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+        let mut page = Page::from_bytes(
+            html.as_bytes(),
+            Some("text/html"),
+            &Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let dyn_broker: Arc<dyn Broker> = broker.clone();
+        load_frames(&mut page, &dyn_broker);
+        let page = factory.finish(page).expect("finish");
+        let rendered = page.snapshot().render();
+        assert!(rendered.contains("inner page"), "{rendered}");
+        let records = broker.records();
+        let frame_record = records
+            .iter()
+            .find(|r| r.url.contains("/inner"))
+            .expect("the frame fetch is in the log");
+        assert_eq!(
+            serde_json::to_value(frame_record.initiator).unwrap(),
+            serde_json::json!("frame"),
+            "an auditor asking \"did this page pull in another document\" gets the answer by name"
+        );
+    }
+
+    #[test]
+    fn a_cross_origin_frame_is_refused_by_the_allowlist_and_says_so() {
+        let (page, broker) = page_with(
+            r#"<html><body><p>host</p>
+               <iframe src="https://tracker.example/pixel.html"></iframe></body></html>"#,
+            Policy::new(),
+        );
+        // The note *names* the refused URL — that is the point — so the check
+        // for leaked content has to look inside the fence, not at the render
+        // as a whole, which carries the note.
+        let rendered = page.snapshot().render();
+        let fenced = rendered
+            .split("BEGIN UNTRUSTED PAGE CONTENT")
+            .nth(1)
+            .unwrap_or(&rendered);
+        assert!(!fenced.contains("pixel"), "refused content leaked:\n{rendered}");
+        assert!(
+            page.notes
+                .iter()
+                .any(|n| n.contains("could not be loaded") && n.contains("tracker.example")),
+            "the refusal is a note the agent reads, not an empty frame: {:?}",
+            page.notes
+        );
+        // And it is a *recorded* refusal: the deny is in the log.
+        assert!(
+            broker.records().iter().any(|r| r.url.contains("tracker.example") && !r.allowed),
+            "the refusal must be receipted"
+        );
+    }
+
+    #[test]
+    fn a_web_pages_frame_may_not_reach_the_dev_server() {
+        // Found by this test suite's own first draft, which put a loopback
+        // frame under a web-origin host page and watched the document-origin
+        // rule refuse it. That is §B3.1 doing its job on a new road: a page
+        // from the open web embedding `<iframe src=http://127.0.0.1:3000>`
+        // would otherwise read the box's dev server through the graft.
+        let (page, _broker) = page_with(
+            r#"<html><body><iframe src="http://127.0.0.1:3000/source"></iframe></body></html>"#,
+            Policy::new(),
+        );
+        assert!(
+            page.notes
+                .iter()
+                .any(|n| n.contains("could not be loaded") && n.contains("loopback")),
+            "{:?}",
+            page.notes
+        );
+    }
+
+    #[test]
+    fn a_javascript_frame_is_refused_by_name() {
+        // Script by another road, and the boundary applies to the road too.
+        let (page, _broker) = page_with(
+            r#"<html><body><iframe src="javascript:document.title='owned'"></iframe></body></html>"#,
+            Policy::new(),
+        );
+        assert!(
+            page.notes.iter().any(|n| n.contains("javascript:")),
+            "{:?}",
+            page.notes
+        );
+    }
+
+    #[test]
+    fn hidden_content_inside_a_frame_stays_hidden() {
+        // The injection defence must survive the styling gap: Blitz styles
+        // nothing inside a frame, so "no styles" cannot mean "hidden" there —
+        // but the vectors a page controls (`hidden`, inline display:none,
+        // aria-hidden) keep their teeth.
+        let (page, _broker) = page_with(
+            r#"<html><body>
+               <iframe srcdoc="<p>shown</p><p hidden>h-attr</p><p style='display: none'>h-style</p><div aria-hidden=true>h-aria</div>"></iframe>
+               </body></html>"#,
+            Policy::new(),
+        );
+        let rendered = page.snapshot().render();
+        assert!(rendered.contains("shown"), "{rendered}");
+        for leaked in ["h-attr", "h-style", "h-aria"] {
+            assert!(!rendered.contains(leaked), "`{leaked}` leaked:\n{rendered}");
+        }
     }
 }
 
