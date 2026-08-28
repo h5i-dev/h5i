@@ -96,9 +96,11 @@ pub fn resolve(specifier: &str, base: &Url) -> Result<Url, String> {
     }
 
     Err(format!(
-        "bare specifier `{trimmed}` cannot be resolved: this engine has no import map and will \
-         not invent a CDN for it. Serve the module at a path the page can name (`./{trimmed}.js`), \
-         or ship a bundle with its imports already resolved."
+        "bare specifier `{trimmed}` cannot be resolved: this page declares no import map \
+         entry for it, and this engine will not invent a CDN. Declare it in a \
+         `<script type=\"importmap\">` (the page chooses the destination, and the fetch is \
+         then policy-checked and receipted like any other), serve the module at a path the \
+         page can name (`./{trimmed}.js`), or ship a bundle with its imports resolved."
     ))
 }
 
@@ -137,7 +139,17 @@ impl ModuleLoader for BrokerModuleLoader {
         let specifier = request.specifier().to_std_string_escaped();
         let base = self.base_for(&referrer);
 
-        let resolved = match resolve(&specifier, &base) {
+        // The page's own mapping, first. Nothing here chooses a destination:
+        // an answer means the document wrote one down, and it goes through the
+        // same broker and the same policy as any other subresource.
+        let mapped = self
+            .host
+            .import_map
+            .borrow()
+            .as_ref()
+            .and_then(|map| map.resolve(specifier.trim(), &base));
+
+        let resolved = match mapped.map(Ok).unwrap_or_else(|| resolve(&specifier, &base)) {
             Ok(url) => url,
             Err(reason) => {
                 // Recorded as well as thrown: a page that fails on a bare

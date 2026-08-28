@@ -59,6 +59,30 @@ pub struct Policy {
     /// on the same host a downgrade the allowlist waved through.
     wildcards: BTreeSet<String>,
     allow_loopback: bool,
+    /// Every remote origin is granted. **For instruments, not for agents.**
+    ///
+    /// The corpus (§B8) and the reliability sweep (§B19.4) point this engine at
+    /// the open web and measure what a page *asks for*. An allowlist built one
+    /// URL at a time cannot serve them: the third-party subresources are most
+    /// of what there is to see, and a run that refuses them is measuring its own
+    /// allowlist rather than the page. So the instruments need a mode, and the
+    /// choice is between giving them one that says what it is and letting them
+    /// grow a wildcard list that quietly means the same thing.
+    ///
+    /// Three properties keep this from being a hole:
+    ///
+    /// * **It widens the name check only.** [`Self::check_address`] is
+    ///   untouched, so a public name that resolves into private space is still
+    ///   refused. This grants the open web, not the network.
+    /// * **Loopback still follows the document rule** in [`Self::check_from`]:
+    ///   a page from the web may not reach the dev server, whatever this says.
+    /// * **It is visible.** [`Self::allows_any_remote`] is what the doctor line
+    ///   and the placement line read, so a run in this mode says so rather than
+    ///   looking like a run with a very long allowlist.
+    ///
+    /// The sandbox underneath is unaffected either way: a box's own egress
+    /// enforcement is the boundary, and this flag cannot widen it.
+    any_remote: bool,
     max_redirects: usize,
     max_response_bytes: u64,
 }
@@ -72,6 +96,7 @@ impl Default for Policy {
             // egress allowlist and is the whole point of a dev loop, so it is
             // opt-out rather than opt-in — matching the sandbox's own handling.
             allow_loopback: true,
+            any_remote: false,
             max_redirects: 5,
             max_response_bytes: 8 * 1024 * 1024,
         }
@@ -135,6 +160,22 @@ impl Policy {
     pub fn set_allow_loopback(mut self, allow: bool) -> Self {
         self.allow_loopback = allow;
         self
+    }
+
+    /// Grant every remote origin. See the `any_remote` field for what this does
+    /// *not* grant, which is the part that matters.
+    pub fn set_any_remote(mut self, allow: bool) -> Self {
+        self.any_remote = allow;
+        self
+    }
+
+    /// Whether this policy is in the instrument mode, so a caller can say so.
+    ///
+    /// Read by the doctor line and by `open`'s placement reporting. A mode this
+    /// wide that does not announce itself is the kind of quiet difference
+    /// between a measurement and the thing measured that §B19 is about.
+    pub fn allows_any_remote(&self) -> bool {
+        self.any_remote
     }
 
     pub fn set_max_redirects(mut self, max: usize) -> Self {
@@ -222,9 +263,16 @@ impl Policy {
         if self.allow_loopback && is_loopback(host) {
             return Verdict::Allow;
         }
-        // An address written directly into the URL was itself what `check`
-        // decided about, so it is not a rebinding: the caller asked for this
-        // address by name and the allowlist answered about it.
+        // An address written directly into the URL was itself what the
+        // allowlist decided about, so it is not a rebinding: the caller asked
+        // for this address by name and the allowlist answered about it.
+        //
+        // **`any_remote` deliberately does not answer here.** The instrument
+        // mode grants the open web, and an RFC 1918 literal is not the open
+        // web; letting the blanket grant reach one would turn a measurement
+        // flag into a private-network flag, which is a different decision and
+        // not one the corpus needs. An explicit `--allow http://10.0.0.1:8080`
+        // still works, because that is somebody naming it.
         if host
             .strip_prefix('[')
             .and_then(|h| h.strip_suffix(']'))
@@ -232,7 +280,7 @@ impl Policy {
             .parse::<std::net::IpAddr>()
             .is_ok()
         {
-            return self.check(url);
+            return self.listed(url);
         }
         Verdict::Deny(format!(
             "`{host}` resolved to {addr}, which is an internal address. A public name \
@@ -271,6 +319,27 @@ impl Policy {
             return Verdict::Allow;
         }
 
+        // The instrument mode. Deliberately *after* the scheme check, so it
+        // grants origins and not schemes: `file:` is still refused here, and a
+        // name that resolves into private space is still refused by
+        // `check_address`, which this does not touch.
+        if self.any_remote {
+            return Verdict::Allow;
+        }
+
+        self.listed(url)
+    }
+
+    /// The allowlist proper: exact origins and wildcards, and nothing else.
+    ///
+    /// Split out of [`Self::check`] so [`Self::check_address`] can ask the
+    /// narrower question. `check` is "may this run reach it", which the
+    /// instrument mode answers yes to; this is "did somebody name it", which
+    /// only a grant answers.
+    fn listed(&self, url: &Url) -> Verdict {
+        let Some(host) = url.host_str() else {
+            return Verdict::Deny("request has no host".to_string());
+        };
         let Some(origin) = normalize_origin(url.as_str()) else {
             return Verdict::Deny(format!("could not derive an origin from `{url}`"));
         };
@@ -700,5 +769,71 @@ mod tests {
             listed,
             vec!["http://localhost:9999", "https://docs.rs", "https://example.com"]
         );
+    }
+
+    // --- the instrument mode (ROADMAP §B19.5, item 5) ---------------------
+
+    #[test]
+    fn any_remote_grants_the_open_web_and_nothing_else_changes() {
+        let open = Policy::new().set_any_remote(true);
+        assert!(open.check(&url("https://anything.test/x")).is_allowed());
+        assert!(open.check(&url("http://plain.test/x")).is_allowed());
+        assert!(open.allows_any_remote(), "the mode has to be reportable");
+
+        // Still not a scheme grant. `file:` was never fetchable and this does
+        // not make it one.
+        assert!(!open.check(&url("file:///etc/passwd")).is_allowed());
+    }
+
+    #[test]
+    fn any_remote_does_not_disable_the_rebinding_guard() {
+        // The property that makes this a measurement flag rather than a
+        // private-network flag: the *name* check is what widens, and where the
+        // name actually went is still decided separately.
+        let open = Policy::new().set_any_remote(true);
+        let verdict = open.check_address(
+            &url("https://public.test/x"),
+            "10.0.0.7".parse().expect("addr"),
+        );
+        assert!(!verdict.is_allowed(), "a public name into RFC1918 must still be refused");
+        assert!(verdict.reason().unwrap().contains("internal address"));
+    }
+
+    #[test]
+    fn any_remote_does_not_reach_a_private_address_written_literally() {
+        // `check_address` sends an IP-literal host back to the allowlist, and
+        // the allowlist under this flag would otherwise say yes to everything.
+        // It asks the narrower question instead, so the blanket grant cannot
+        // become a route into private space by spelling.
+        let open = Policy::new().set_any_remote(true);
+        let literal = url("http://10.0.0.7:8080/x");
+        let addr = "10.0.0.7".parse().expect("addr");
+        assert!(!open.check_address(&literal, addr).is_allowed());
+
+        // Naming it explicitly still works, because that is somebody deciding.
+        let named = Policy::new()
+            .set_any_remote(true)
+            .allow("http://10.0.0.7:8080");
+        assert!(named.check_address(&literal, addr).is_allowed());
+    }
+
+    #[test]
+    fn any_remote_does_not_let_a_web_page_reach_the_dev_server() {
+        // The document rule lives in `check_from` and is untouched: a page the
+        // web served may not talk to loopback however wide the allowlist is.
+        let open = Policy::new().set_any_remote(true);
+        let verdict = open.check_from(
+            &url("http://127.0.0.1:3000/secret"),
+            Some(&url("https://evil.test/page")),
+        );
+        assert!(!verdict.is_allowed(), "loopback is still document-scoped: {verdict:?}");
+    }
+
+    #[test]
+    fn without_the_flag_nothing_remote_is_reachable() {
+        // The default this exists to leave alone.
+        let closed = Policy::new();
+        assert!(!closed.check(&url("https://anything.test/x")).is_allowed());
+        assert!(!closed.allows_any_remote());
     }
 }

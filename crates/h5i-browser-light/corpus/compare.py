@@ -22,10 +22,10 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OURS = os.path.join(HERE, "..", "..", "..", "target", "release", "h5i-browser-light")
+sys.path.insert(0, os.path.dirname(HERE))
+import harness  # noqa: E402
 
 PAGES = [
     ("a documentation page", "https://doc.rust-lang.org/book/ch01-00-getting-started.html"),
@@ -36,14 +36,10 @@ PAGES = [
     ("a framework docs site", "https://vuejs.org/guide/introduction.html"),
 ]
 
-ASSET_HOSTS = ["cdn.jsdelivr.net", "unpkg.com", "fonts.googleapis.com", "fonts.gstatic.com"]
-
-
-def allows(url):
-    host = urllib.parse.urlparse(url).hostname or ""
-    parts = host.split(".")
-    registrable = ".".join(parts[-2:]) if len(parts) >= 2 else host
-    return sorted({host, f"*.{registrable}", registrable}) + ASSET_HOSTS
+# Chromium is given no allowlist at all, so this engine must not be given a
+# narrow one: a comparison in which one side is refused half its subresources
+# is measuring the harness. `harness.ENGINE_GRANT` is the mode that makes the
+# two sides answerable to the same question (ROADMAP §B19.5).
 
 
 def tree_rss_kib(root_pid):
@@ -97,8 +93,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--chrome", required=True)
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--binary", default=None)
     parser.add_argument("--json-out")
     args = parser.parse_args()
+
+    ours = harness.engine_binary(args.binary)
+    harness.check_engine(ours)
 
     profile = "/tmp/h5i-compare-profile"
     rows = []
@@ -109,9 +109,10 @@ def main():
             for _ in range(args.runs):
                 shutil.rmtree(profile, ignore_errors=True)
                 if engine == "h5i":
-                    cmd = [OURS, "open", url, "--json", "--script", "--max-snapshot-lines", "300"]
-                    for host in allows(url):
-                        cmd += ["--allow", host]
+                    cmd = harness.instrument_argv(
+                        ours, "open", url, "--json", "--script",
+                        "--max-snapshot-lines", "300",
+                    )
                 else:
                     cmd = [
                         args.chrome, "--headless", "--disable-gpu", "--no-sandbox",

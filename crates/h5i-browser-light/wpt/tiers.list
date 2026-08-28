@@ -1,0 +1,278 @@
+# What a WPT number here counts, declared rather than described.
+#
+# ROADMAP §B19.2. §B13.3 records the caveat this file exists to replace: 70% of
+# every passing subtest comes from twenty files, all of them one behaviour
+# (encode a character into a URL) repeated once per codepoint. That is true, it
+# was correctly stated, and it lived only in a paragraph of prose — so it
+# travelled exactly as far as somebody reading that paragraph. A headline of
+# "333,690 subtests passing" carried none of it.
+#
+# A tiers file makes the caveat structural. The encoding directory becomes one
+# tier among several instead of a footnote, and a reader checks the claim by
+# reading a table rather than by trusting us.
+#
+# ## The rule this file is built on
+#
+# **Exclusion is by capability, never by outcome.** A directory is out because
+# this engine does not implement the thing it tests, and the reason is on the
+# line. A directory is never out because it scores badly. Anyone can check that
+# by moving a line and re-running: if a tier's number jumps, the line was doing
+# the wrong job.
+#
+# The exclusions are not invented here. §B6 decided what this engine is not,
+# years before there was an instrument that would use the decision — no
+# iframes, no popups, no workers, no media pipeline, no hardware — and this file
+# is that decision written in the form a report can read.
+#
+# ## Format
+#
+#   <tier> <prefix>            one rule per line, first match wins
+#
+# A test matches when its path equals <prefix> or starts with "<prefix>/".
+# Rules are read top to bottom, so specific exclusions come before the broad
+# tier globs. A test matching nothing falls into the **unscoped remainder**,
+# which is counted and printed and never folded into a percentage.
+#
+# ## Tiers
+#
+#   core       what an agent reading a page depends on: parse the document,
+#              run its script, resolve URLs, fetch subresources, read the DOM
+#              back. The headline. A regression here is a product regression.
+#   relevant   JS-observable correctness that needs no layout, no media and no
+#              second browsing context. Reported as core + relevant.
+#   encoding   **its own tier, and that is the whole point.** It is real
+#              engineering (§B13.1: a legacy Japanese page now reads correctly)
+#              and it is 220,000 subtests of one behaviour. Folded into `core`
+#              it would swamp every other capability; dropped it would hide
+#              work that was done. So it is named, and the report prints core
+#              with and without it.
+#   exclude    out of scope by capability, with the reason on the line.
+#
+# There is deliberately **no "full" tier**. Obscura publishes one and it invites
+# the reading their own header warns against: a "60% of everything" that mixes
+# what an engine cannot do with what it does badly. The unscoped remainder is
+# printed as a count instead, so the denominator is always visible and never
+# rounded into a score.
+
+# ---- Excluded: no second browsing context (§B6) -----------------------------
+# No iframes and no popups, so anything whose subject is a second context is
+# testing a thing this engine refuses to have.
+exclude html/browsers/windows
+exclude html/browsers/the-window-object
+exclude html/browsers/browsing-the-web
+exclude html/browsers/history
+exclude html/browsers/sandboxing
+exclude html/semantics/embedded-content/the-iframe-element
+exclude html/semantics/embedded-content/the-object-element
+exclude html/semantics/embedded-content/the-embed-element
+
+# ---- Excluded: no workers (§B6) ---------------------------------------------
+exclude workers
+exclude service-workers
+exclude shared-workers
+exclude worklets
+exclude background-fetch
+exclude background-sync
+exclude push-api
+exclude notifications
+
+# ---- CSS: the parts with a scriptable surface, before the broad exclusion ---
+# Read first, because first match wins and the catch-all below would otherwise
+# swallow them. These three are what an agent actually touches: the object model
+# over stylesheets, the geometry queries, and selector matching.
+core css/cssom
+core css/cssom-view
+core css/selectors
+core css/css-conditional
+core css/css-syntax
+core css/css-variables
+
+# ---- Excluded: no layout, paint or animation surface ------------------------
+# Blitz lays the page out and this engine reads the result, but nothing here
+# exposes a layout API to script or drives an animation timeline.
+exclude css/css-animations
+exclude css/css-transitions
+exclude css/motion
+exclude web-animations
+exclude scroll-animations
+exclude css-animations
+exclude css-transitions
+exclude intersection-observer
+exclude resize-observer
+exclude layout-instability
+exclude visual-viewport
+exclude scroll-to-text-fragment
+exclude html/rendering
+exclude html/canvas
+exclude mathml
+exclude svg/painting
+exclude svg/animations
+# Everything else under `css/` is layout, paint, fonts and typography — Blitz
+# and Stylo do that work and this engine reads the result rather than exposing
+# it to script. 75,000 subtests, and leaving them unscoped made the remainder
+# the second-largest row in the table.
+exclude css
+
+# ---- Excluded: no input devices ---------------------------------------------
+# The engine synthesises the events its own verbs need and nothing else. A
+# pointer-event suite is testing hardware this process does not have.
+exclude pointerevents
+exclude pointerlock
+exclude touch-events
+exclude uievents/mouse
+exclude input-events
+exclude editing
+exclude html/editing
+exclude html/interaction
+exclude fullscreen
+exclude picture-in-picture
+
+# ---- Excluded: no media pipeline --------------------------------------------
+exclude media-source
+exclude mediacapture-streams
+exclude mediacapture-record
+exclude mediacapture-image
+exclude mediacapture-fromelement
+exclude mediasession
+exclude media-capabilities
+exclude media-playback-quality
+exclude encrypted-media
+exclude webaudio
+exclude webcodecs
+exclude webvtt
+exclude remote-playback
+exclude presentation-api
+
+# ---- Excluded: no GPU, no hardware, no device APIs --------------------------
+exclude webgl
+exclude webgpu
+exclude webrtc
+exclude webrtc-encoded-transform
+exclude webrtc-extensions
+exclude webrtc-stats
+exclude webrtc-svc
+exclude webxr
+exclude webusb
+exclude web-bluetooth
+exclude bluetooth
+exclude web-nfc
+exclude webauthn
+exclude gamepad
+exclude vibration
+exclude accelerometer
+exclude ambient-light
+exclude gyroscope
+exclude magnetometer
+exclude orientation-event
+exclude compute-pressure
+exclude screen-orientation
+exclude screen-wake-lock
+exclude geolocation
+exclude netinfo
+exclude battery-status
+exclude idle-detection
+
+# ---- Excluded: no chrome around the page ------------------------------------
+# There is no UI, so there is nothing for these to act on.
+exclude payment-request
+exclude payment-handler
+exclude credential-management
+exclude digital-credentials
+exclude clipboard-apis
+exclude speech-api
+exclude web-share
+exclude badging
+exclude window-management
+
+# ---- Excluded: timing surfaces this engine reports differently ---------------
+# The settle runs on a *virtual* clock (§B15.10), which is the property that
+# makes a replay deterministic and is deliberately not what these measure.
+exclude paint-timing
+exclude largest-contentful-paint
+exclude element-timing
+exclude long-animation-frame
+exclude longtask-timing
+exclude navigation-timing
+exclude event-timing
+
+# ---- Excluded: storage and platform surfaces this engine does not have ------
+# §B6 commits web storage to memory, so there is no storage engine for an
+# indexed database to sit on, and no origin-scoped filesystem.
+exclude IndexedDB
+exclude fs
+exclude file-system-access
+exclude web-locks
+exclude cookiestore
+exclude storage-access-api
+# No second browsing context, so nothing to message between, and no navigation
+# API over a history this engine does not keep.
+exclude webmessaging
+exclude navigation-api
+exclude fenced-frame
+exclude close-watcher
+exclude soft-navigation-heuristics
+# Transports and platform APIs with no implementation here.
+exclude webtransport
+exclude webnn
+exclude ai
+exclude fedcm
+exclude beacon
+exclude selection
+exclude resource-timing
+exclude connection-allowlist
+exclude webmcp
+
+# ---- The encoding tier: named, so a headline cannot hide inside it ----------
+encoding encoding
+encoding encoding-detection
+
+# ---- Core: what an agent reading a page depends on --------------------------
+core dom
+core domparsing
+core domxpath
+core html
+core url
+core urlpattern
+core fetch
+core xhr
+core cors
+core webstorage
+core custom-elements
+core shadow-dom
+core mimesniff
+core css/cssom
+core css/cssom-view
+core css/selectors
+
+# ---- Relevant: JS-observable correctness needing none of the above ----------
+relevant webidl
+relevant streams
+relevant compression
+relevant FileAPI
+relevant uievents
+relevant trusted-types
+relevant sanitizer-api
+relevant WebCryptoAPI
+relevant hr-time
+relevant user-timing
+relevant performance-timeline
+relevant console
+relevant referrer-policy
+relevant content-security-policy
+relevant subresource-integrity
+relevant secure-contexts
+relevant cookies
+relevant storage
+relevant websockets
+relevant eventsource
+relevant import-maps
+relevant js
+relevant ecmascript
+relevant wai-aria
+relevant accname
+relevant html-aam
+relevant page-visibility
+relevant requestidlecallback
+relevant permissions-policy
+relevant svg
+relevant wasm

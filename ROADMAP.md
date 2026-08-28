@@ -7498,9 +7498,17 @@ claim is made from.
 A second, cheaper borrow from the same runner: it has **two engine backends**,
 one process per test (`fetch`) and a persistent CDP connection with a worker
 pool. Ours is one process per test only, which is why a full sweep is measured
-in hours. We have had a resident session with a control socket since 2026-08-27.
-Pointing `run.py` at one would cost a flag and would be the single largest
-speedup available to that harness.
+in hours. The first idea here was to point `run.py` at a resident session, and
+it does not survive contact with the code: the harness reads its results out of
+`open --json`'s console channel, and a session does not expose console output
+per navigation, so that backend would first need a new verb. The next idea was
+batching: `open` takes several URLs in one process, one JSON object per page,
+with the shared broker's records already sliced per page (`cli.rs:1885`), so N
+test files per invocation would amortise process start and font loading and is
+a change to `run.py` alone. **That was built, measured and reverted: identical
+scores, and 5x slower on `dom`, for a structural reason.** See §B19.12. Both
+speedups proposed in this section turned out to be wrong, and neither was timed
+before it was written down.
 
 ### B19.4 The four instruments they have and we do not
 
@@ -7574,8 +7582,19 @@ start, for the same reason, and neither says so anywhere:
 That binary was removed when the engine became a library reached through
 `h5i __engine` (see `Cargo.toml`'s comment, and `wpt/run.py`'s docstring, which
 records this exact path as "a trap now" and was updated). Both scripts also
-invoke `<bin> open <url> --json`, which is the argv the engine still takes, so
-the fix is the path plus one argument (`h5i __engine open ...`), not a rewrite.
+invoke `<bin> open <url> --json`, which is the argv the engine still takes.
+
+**Checked again while writing the todo list: the fix is not "the path plus one
+argument".** The path is the visible half. The other half is that the engine's
+policy now denies every remote origin unless `--allow` grants it
+(`Policy::new()` permits nothing but loopback, `cli.rs:703`), there is no
+allow-everything spelling (`*.host` is the widest wildcard, `policy.rs:83`),
+and the corpus scripts pass no `--allow` at all — they were written when the
+engine's default was open. So with the path fixed, every remote page is refused
+before the first byte, and per-URL wildcard grants would still refuse the
+third-party subresources whose behaviour is half of what the corpus measures.
+An instrument that points the engine at the open web needs an explicit,
+loudly-named grant — a decision, not a patch, and it is item 1 of §B19.10.
 
 The consequence is worth stating rather than just the bug: **§B8's corpus, the
 instrument this document credits with finding most of the engine's real work,
@@ -7688,39 +7707,246 @@ correct. Three additions, since this pass read further:
   not to and we did anyway, and here is the line that says so" is a thing only a
   receipts engine can offer.
 
-### B19.10 The queue
+### B19.10 The todo list, made concrete, 2026-08-27 (second pass)
 
-Ordered by what each buys divided by what it costs. The first two are repairs to
-instruments this document already relies on, which is why they are first.
+Rewritten the same day it was first drafted, after checking each item against
+the code instead of against the section that proposed it. Two claims did not
+survive the check and are corrected above (§B19.3's session backend, §B19.5's
+"one argument"). Grouped by shape rather than ranked 1–9, because the first
+group is measured in hours and the last in weeks, and a flat ranking hid that.
 
-1. **Fix `corpus/run.py` and `corpus/compare.py`** (§B19.5). Two paths and one
-   argument. Until this lands, §B8's corpus is not an instrument, it is a
-   description of one.
-2. **Make `--restore` honest** (§B19.6). Refuse it or implement it; do not ship
-   a flag that copies a file nothing writes.
-3. **A `screenshot` verb on the session** (§B19.7). The page exists, the encoder
-   exists, the verb table is where it goes.
-4. **A reliability sweep with named outcome classes** (§B19.4). The one
-   instrument on the list with no substitute here, and the one whose findings
-   are not reachable any other way: a crash on the 900th real page is not a
-   thing 35 corpus pages or a WPT directory will ever show.
-5. **A tiers file for the WPT report** (§B19.2). Turns §B13.3's caveat from a
-   paragraph a reader has to trust into a table a reader can check.
-6. **A wptserve backend for `wpt/run.py`, off by default** (§B19.3). This is
-   what puts CORS, PSL cookies and compression under external test. Pair it with
-   the resident-session backend, which is the same file and pays for the sweep
-   time.
-7. **An offline capability suite with vendored frameworks** (§B19.4). Ours
-   should be smaller than 33 stages and should test what §B6 says we support,
-   which makes it a companion to the tiers file rather than a second corpus.
-8. **Import maps** (§B19.8).
-9. **`reload`, then history** (§B19.7).
+**Small and immediate — each is one sitting, none blocks another:**
 
-Not queued, decided: no `--proxy` flag, no `--user-agent` flag, no cookie
-read/write verbs, no stealth layer (§B19.9). CDP and MCP stay where §B15.11 put
-them, and nothing in this pass moves either: what changed is that the verb table
-§B15.3 asked for now exists, so the cost estimate in §B15.11 is if anything
-lower than it was.
+1. **Refuse `--restore`** (§B19.6). One check in `src/cli/browser.rs`: if the
+   source jar does not exist — and today it never does — fail with *"session
+   `<id>` left no storage to restore"* instead of silently seeding nothing.
+   The real persistence work is item 8; this stops the false promise today.
+2. **A `screenshot` verb on the session** (§B19.7). `Page::screenshot_png`
+   exists (`engine.rs:1277`); the verb goes into the §B15.3 table, which forces
+   the two answers that matter: it does not mutate, and it is **refused during
+   LOGIN mode** — it reads the page, and the page during LOGIN holds what the
+   human is typing. The PNG lands as a host-named artifact in the session
+   directory, like every other session artifact; the reply carries the path.
+3. **`reload`** (§B19.7). The cheap half of history: re-navigate to the current
+   URL through the existing `navigate` machinery. `back`/`forward` are
+   deliberately deferred until an agent transcript shows one stalling for lack
+   of them — §B8's rule, applied to verbs.
+4. **Batch WPT files per process in `wpt/run.py`** (§B19.3, corrected).
+   `open` already takes several URLs in one invocation with per-page records;
+   the runner change is grouping and splitting the JSON array. No engine work.
+   *(Built 2026-08-27, measured, reverted: identical scores and 5x slower on
+   `dom`. §B19.12 has the numbers and the reason.)*
+
+**The instrument decision, then the instruments it unblocks:**
+
+5. **An instrument-grade grant** (§B19.5). The corpus and any future sweep need
+   the engine pointed at the open web, and the policy deliberately has no
+   spelling for that. The options: (a) per-URL wildcard grants, which still
+   refuse third-party subresources and so change what the corpus measures; or
+   (b) an explicit engine flag — `--allow-any-remote` or similar — that is loud
+   in the name, prints on the placement line, and is receipted like every
+   grant. (b) is the honest one: the corpus's whole point is watching what a
+   page asks for, and an instrument that pre-filters the asks is measuring its
+   own allowlist. The flag does not weaken the product default; it names a mode
+   the instruments were silently assuming.
+6. **Repair `corpus/run.py` and `corpus/compare.py`** (§B19.5). The path
+   (`h5i __engine open ...`) plus the item-5 grant. Until both land, §B8's
+   corpus is a description of an instrument, and every memory number against
+   Chromium in this file predates the broker split.
+7. **The reliability sweep** (§B19.4). Same grant dependency as item 6 —
+   without it, 1,500 pages of refused subresources drown the classes in THIN.
+   Outcome classes for this engine: CRASH / PANIC / HANG / HANG_HARD / THIN /
+   OK, plus **REFUSED** — main document stopped by policy — which their sweep
+   does not need and ours does, because a refusal is a correct outcome here and
+   must not be counted as a failure. Seeds: the corpus lists plus a one-level
+   crawl, per their `sweep.py`.
+8. **Jar persistence, designed rather than patched** (§B19.6's second option).
+   The session writes its jar into its own directory on clean end (0600, owner
+   only), `--restore` reads it, and the inheritance line the help text already
+   promises becomes true. The design questions to settle before code: HttpOnly
+   cookies must be included or a restored login is no login, which makes the
+   file credential material — so it gets the scrubber's treatment on any path
+   that prints it, and a decision about whether a box-placed session may write
+   it at all. `browser_storage_state`'s shape (state as a value, named and
+   handed back) is the model, not `--storage-dir`'s (state as a shared
+   directory).
+
+**The reporting work — independent of everything above:**
+
+9. **A tiers file for the WPT report, plus the triage rollup** (§B19.2, and
+   §B19.4's item 3, merged because they touch the same two scripts).
+   `wpt/tiers.list` in their format — one `<tier> <prefix>` per line, first
+   match wins, exclusion only by capability with §B6 as the source of the
+   exclusions — read by `check.py` and `merge.py`; and `merge.py` learns to
+   merge the per-directory `unsupported` maps so the top asks across a whole
+   sweep are one table instead of 191 files. Scoped tiers plus an explicit
+   unscoped remainder; no "Full" percentage.
+10. **The wptserve backend, http-only** (§B19.3). `./wpt manifest` +
+    `./wpt serve` behind a `--wptserve` flag on `run.py`, grants spelled
+    `http://web-platform.test:8000` and `http://*.web-platform.test:8000`,
+    which the wildcard grammar already carries scheme and port through
+    (`policy.rs`'s `wildcards`). **HTTPS variants are out of scope and the reason
+    is structural:** the engine trusts `webpki-roots` and deliberately exposes
+    no way to add a root (the hermetic-build rule), and WPT serves its own CA.
+    The http half still covers most of what §B19.3 wants it for — the
+    cross-origin CORS suites, cookie scoping across subdomains, and the
+    `Content-Encoding` handlers.
+
+**The feature work, in the order the instruments would justify it:**
+
+11. **Import maps** (§B19.8). Parse `<script type="importmap">` before module
+    resolution in `script/modules.rs`; a mapped specifier resolves and goes
+    through the broker like any URL, a bare one without a map keeps today's
+    refusal verbatim.
+12. **Offline capability fixtures, timed** (§B19.4's items 2 and 4, merged).
+    A handful of stages, not 33: React 18 UMD render, Vue 3 mount,
+    SSR-hydrate, and a `pushState` mini-SPA, vendored pinned, each asserting a
+    deterministic value through `--json`. Each stage timed, **reported and not
+    gated** — a timing gate in CI is a flake factory, and §B15.12a's lesson was
+    "measure before optimising", which a report satisfies and a gate does not.
+
+Not queued, decided, unchanged from the first draft: no `--proxy` flag, no
+`--user-agent` flag, no cookie read/write verbs, no stealth layer (§B19.9).
+CDP and MCP stay where §B15.11 put them; the §B15.3 verb table now exists, so
+the MCP estimate is if anything lower than when it was written.
+
+### B19.11 What was built, 2026-08-27
+
+All twelve items were taken. **Eleven shipped and one was measured and
+reverted**, which is the outcome that earned its place in this file: item 4 was
+reasoned from the shape of the code, built, measured, and was wrong in the same
+way §B15.12a's three optimisations were wrong.
+
+**The engine (items 1, 2, 3, 5, 8, 11).** 576 tests pass, from 552; the 24 new
+ones are named below by what they pin rather than by what they cover.
+
+* **`--allow-any-remote`** (`policy.rs`, item 5). The instrument grant, and the
+  keystone the corpus and the sweep were both blocked on. It widens the *name*
+  check and nothing else, which took one more change than expected:
+  `check_address` sends an IP-literal host back to the allowlist, so a blanket
+  grant would have become a route into RFC 1918 space by spelling. The
+  allowlist match is now split out as `Policy::listed`, and `check_address`
+  asks that narrower question. Four tests hold the line: a public name
+  resolving inward is still refused, `http://10.0.0.7` is still refused unless
+  somebody named it, a web page still may not reach loopback, and the default
+  still reaches nothing.
+* **`screenshot`** (item 2), the first user of `browser_session::artifact_path`,
+  which was written for exactly this and had no caller. h5i names the file, the
+  engine chooses only the bytes, and the PNG goes to a path rather than into the
+  reply — a base64 image would have been silently truncated at the scrubber's
+  256 KiB cap and arrived as a corrupt file, which is the plausible-wrong answer
+  this engine exists to refuse. Verified end to end: 19,352 bytes, 1280x720,
+  and **refused during LOGIN mode**, which is the answer the verb table forced.
+* **`reload`** (item 3), routed through `navigate_to` rather than given its own
+  path, so it is policy-checked, drops the served refs, and reports a refusal
+  exactly as `navigate` does. `back`/`forward` stay unbuilt: §B8's rule.
+* **The cookie jar persists** (`cookies.rs`, item 8) when and only when h5i
+  passes `--cookie-jar`. Written on change rather than at exit, because `close`
+  and `service_stop` end a session with a signal and a shutdown hook would
+  never run; `0600`; temp-then-rename. The flag lives on `NetArgs` beside
+  `--receipts`, not on `serve`, because after the §B18 split the renderer holds
+  no jar and `local_broker` is the one place both halves reach.
+* **`--restore` is honest** (item 1) and now has something to restore. Verified
+  the whole way round: log in on one session, close it, `--restore` into a new
+  one, and the server sees `sid=s3cr3t`. A session that left no jar is refused
+  by name with the three reasons it could be missing.
+* **Import maps** (`script/import_map.rs`, item 11). `imports` and `scopes`,
+  longest-prefix-wins, values resolved against the document. The refusal keeps
+  its exact target — a bare specifier with *no* map still names what would have
+  to exist — and the map is read from the parsed tree before the first script,
+  so nothing at runtime can move a graph that is already resolving. Ten unit
+  tests plus four through the real pipeline, including that a map is never
+  executed as script (it is JSON, and running it is the `application/json`
+  trap) and that a malformed one is reported and ignored *whole*.
+
+**The instruments (items 6, 7, 9, 10, 12).**
+
+* **`harness.py`** is new and is the actual fix for §B19.5. The bug was not
+  three wrong paths, it was that there were three of them; one module now owns
+  where the engine is, how it is invoked, and what an instrument is granted.
+* **The corpus runs again** (item 6), for the first time since the self-exec
+  change. Its hand-built allowlist is gone with it: a site's host, a wildcard,
+  and six named CDNs meant a page pulling from a seventh looked like an engine
+  failure. First run found real work — `Element.jquery` 826 calls on one page,
+  `selector :has()`, `document.compatMode`.
+* **`reliability/sweep.py`** (item 7) crawls one level from the corpus seeds and
+  sorts outcomes into CRASH / PANIC / HANG / HANG_HARD / REFUSED / THIN / OK.
+  **REFUSED is ours and is not in Obscura's sweep**, because a policy refusal is
+  this engine working; counting it as a failure would make a narrow allowlist
+  look like an unstable engine. First run: 60 URLs, 0 engine bugs, 0 REFUSED.
+* **`wpt/tiers.list` and `wpt/tiers.py`** (item 9) do what §B13.3 asked for in
+  prose. Run against the August sweep the table says, by construction:
+  **core 59,953 passing, encoding 225,786, and the headline is 79% encoding.**
+  Nobody has to remember the caveat any more. One thing was got wrong first and
+  is worth keeping: the fold was per *directory*, which is wrong for `css` —
+  one result file, 75,000 subtests, straddling core (`css/cssom`), excluded
+  (`css/css-animations`) and unscoped. Classified as a directory it matched
+  nothing and the remainder became the second-largest row in a table whose
+  whole purpose is that the remainder is small. It folds per test now, and the
+  unscoped remainder is 175 of 2,491 across 111 named areas.
+* **The triage rollup** in `merge.py` (item 9) groups failure *messages* by
+  shape across a whole sweep. It paid for itself on the first run: 8,425
+  subtests failing on one unhandled-rejection shape, 3,460 on `cannot convert
+  'X' or 'X' to object`, 2,396 on `not a callable function`. That is §B12.2's
+  "twenty files, four bugs" mechanised.
+* **`wpt/wptserve.py`** (item 10) runs against WPT's own server, with the real
+  subdomains and the `.py` handlers — which is what puts §B17's CORS, §B16.5's
+  PSL cookies and §B17.4's compression under external test for the first time.
+  The overlay is installed into the checkout and restored in a `finally`,
+  including on Ctrl-C. **The https variants are dropped by name**, because
+  wptserve serves them under its own CA and this engine trusts `webpki-roots`
+  with no way to add a root: a trust decision recorded as a conformance result
+  would be exactly the kind of number this harness exists to avoid.
+* **`capability/`** (item 12), nine stages, offline, frameworks vendored.
+  **9/9 pass**: React 18, Preact, Vue 3 including its runtime template
+  compiler, Preact hydration, a fetch+pushState SPA, the modern-language and
+  platform surface, timer/microtask ordering, and the import map from item 11.
+  Median 169 ms. Timing is printed and **not gated** — a latency gate in CI is
+  a flake factory, and §B15.12a asked for a measurement, not a tripwire.
+
+### B19.12 Item 4, measured and reverted, which is the useful half
+
+Batching WPT files into one engine process was the "speedup that needs
+nothing": `open` already takes several URLs and slices its records per page, so
+twelve files per process would amortise process start and font loading. It was
+built, and it produced **identical scores** and was slower nearly everywhere.
+
+| directory | files | one per process | batched (12) |
+| --- | --- | --- | --- |
+| `dom` | 587 | **75.3s** | 392.0s |
+| `css/cssom` | 190 | 22.8s | **20.5s** |
+| `domparsing` | 60 | **2.6s** | 3.1s |
+| `url` | 34 | **1.7s** | 2.2s |
+
+`dom` settles it, and the cause is structural rather than a matter of tuning:
+
+* **A batch shares a process, so a batch that crashes loses every file in it.**
+  Correctness therefore requires re-running a failed batch one file at a time —
+  and WPT is a corpus where crashing and hanging files are common, so on `dom`
+  most batches split and most files ran twice.
+* **Batching takes the harness's per-file timeout away.** The ceiling becomes
+  per-process, so one hanging file holds eleven others instead of being killed
+  on its own worker while the rest proceed.
+* **The ceiling was never large.** `dom` runs at about 7.9 files/s on four
+  jobs, so a file costs ~0.5s and process start is well under a tenth of that.
+  Nothing batching could have recovered was worth either of the above.
+
+So the code is reverted and the measurement is kept, on `run_one`, where the
+next person to have this idea will read it before having it. §B19.3 claimed
+this was "the speedup that needs nothing"; it needed a measurement, and the
+claim above it — that pointing `run.py` at a resident session would be the
+largest speedup — had already been withdrawn for a different reason on the same
+day. Two speedups proposed, two wrong, neither measured before being written
+down.
+
+**This is the fourth time.** §B15.12a recorded three optimisations reasoned from
+the shape of the code — realm reuse, prelude bytecode caching, and a combined
+settle hook — of which two were dangerous and one was useless. The lesson it
+drew was that the rule against building what no page asked for applies to
+performance too. It applies to *instruments* as well, and the tell is the same
+every time: a sentence in this file that says a change will be fast, written
+before anything was timed.
+
 
 ---
 

@@ -586,6 +586,9 @@ impl Page {
             /// script, in their own document order.
             ModuleInline(String),
             ModuleExternal(String),
+            /// `type="importmap"`. Never executed: it is read once, before the
+            /// first script, and tells the loader where bare specifiers go.
+            ImportMap(String),
         }
 
         /// A script and the element it came from, so `document.currentScript`
@@ -618,6 +621,18 @@ impl Page {
                             // pointing this at github.com.
                             let kind = attr("type").unwrap_or_default();
                             let kind = kind.trim().to_ascii_lowercase();
+                            // Not script, and not data either: it is a
+                            // declaration the module loader reads. Collected in
+                            // the same walk so document order decides which one
+                            // wins, and returned as its own `Source` so the
+                            // partition below cannot mistake it for code.
+                            if kind == "importmap" {
+                                let text = node.text_content();
+                                if text.trim().is_empty() {
+                                    return None;
+                                }
+                                return Some((*id, Source::ImportMap(text)));
+                            }
                             let is_module = kind == "module";
                             let is_classic = kind.is_empty()
                                 || matches!(
@@ -677,7 +692,14 @@ impl Page {
         // 15ms — the prelude is 113 KiB of JavaScript, parsed and evaluated from
         // scratch — and a page with no script elements was paying all of it for
         // a realm that would never be asked a question.
-        if sources.is_empty() && !has_inline_handler() {
+        // A page whose only `<script>` is an import map has no code to run: the
+        // map is a declaration for imports that never happen. Filtered here
+        // rather than in the walk, so the walk stays one pass and this stays
+        // one question.
+        let has_code = sources
+            .iter()
+            .any(|(_, source)| !matches!(source, Source::ImportMap(_)));
+        if !has_code && !has_inline_handler() {
             self.ran_scripts = true;
             // Trivially settled, and said so rather than left null: a page with
             // no script has finished by definition, and "we do not know" is a
@@ -696,6 +718,28 @@ impl Page {
             .map_err(H5iError::Metadata)?;
         script.set_encoding(self.encoding);
 
+        // The map, before anything can import. First one wins and the rest are
+        // ignored, which is what the specification says to do with a second:
+        // an import map that took effect after resolution had begun would
+        // change what an already-resolved import had meant.
+        let mut maps = sources.iter().filter_map(|(_, source)| match source {
+            Source::ImportMap(text) => Some(text),
+            _ => None,
+        });
+        if let Some(text) = maps.next() {
+            script.set_import_map(text);
+            let extra = maps.count();
+            if extra > 0 {
+                // Said, not swallowed. A page with two maps is a page whose
+                // author believes both are in effect, and the second one
+                // silently doing nothing is a long debugging session.
+                script.note_error(&format!(
+                    "{extra} further import map(s) ignored: only the first in document order \
+                     is used"
+                ));
+            }
+        }
+
         // `<div id="x">` makes `x` a global, which is legacy and is also how a
         // great deal of test and older page script finds its subject. Installed
         // before the first script rather than after, because the first script is
@@ -710,8 +754,11 @@ impl Page {
         // module never runs before a classic script that follows it in the
         // markup, and a page that relies on that ordering breaks if we run them
         // as they appear.
-        let (classic, modules): (Vec<Pending>, Vec<Pending>) =
-            sources.into_iter().partition(|(_, source)| {
+        let (classic, modules): (Vec<Pending>, Vec<Pending>) = sources
+            .into_iter()
+            // The map has been read; it is not code and must reach neither list.
+            .filter(|(_, source)| !matches!(source, Source::ImportMap(_)))
+            .partition(|(_, source)| {
                 matches!(source, Source::Inline(_) | Source::External(_))
             });
 

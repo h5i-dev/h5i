@@ -2551,6 +2551,124 @@ fn a_bare_specifier_is_refused_and_the_page_is_told_why() {
 }
 
 #[test]
+fn an_import_map_resolves_a_bare_specifier_the_page_named() {
+    // The other half of the test above, and the distinction the whole feature
+    // rests on: the refusal is about the *engine* choosing a destination. With
+    // a map the page chose it, in markup the parser already read, so the fetch
+    // happens and is recorded like any other subresource.
+    let (port, asked) = module_server(vec![
+        (
+            "/entry.js",
+            "import { mark } from 'toolkit';\
+             document.querySelector('#out').textContent = mark;",
+        ),
+        ("/vendor/toolkit.js", "export const mark = 'mapped';"),
+    ]);
+
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p>
+             <script type="importmap">
+               {"imports": {"toolkit": "/vendor/toolkit.js"}}
+             </script>
+             <script type="module" src="/entry.js"></script>
+           </body></html>"#,
+        &base,
+    );
+
+    assert!(
+        page.snapshot().render().contains("mapped"),
+        "the mapped module evaluated:\n{}\nconsole: {:?}",
+        page.snapshot().render(),
+        page.console()
+    );
+    // Exactly what the page named, and nothing else.
+    let mut paths = asked.lock().unwrap().clone();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec!["/entry.js".to_string(), "/vendor/toolkit.js".to_string()],
+        "{paths:?}"
+    );
+}
+
+#[test]
+fn an_import_map_is_not_executed_as_script() {
+    // It is a declaration, not code. Running it would parse JSON as JavaScript
+    // and fill the console with a syntax error blaming the page for something
+    // it never asked for — the same trap `type="application/json"` blocks.
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        r#"<html><body><p>here</p>
+             <script type="importmap">{"imports": {"a": "/a.js"}}</script>
+           </body></html>"#,
+        &url::Url::parse("https://example.test/").unwrap(),
+    );
+    assert!(
+        page.console().is_empty(),
+        "a map on its own says nothing: {:?}",
+        page.console()
+    );
+    assert!(page.snapshot().render().contains("here"));
+}
+
+#[test]
+fn a_map_that_does_not_mention_a_specifier_still_refuses_it() {
+    // The property that keeps the refusal meaningful: a map answers only what
+    // the page wrote in it. A loader that filled the gaps would be the
+    // CDN-inventing one under a new name.
+    let (port, asked) = module_server(vec![("/entry.js", "import _ from 'lodash';")]);
+
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+    let page = factory.from_html(
+        r#"<html><body>
+             <script type="importmap">{"imports": {"other": "/other.js"}}</script>
+             <script type="module" src="/entry.js"></script>
+           </body></html>"#,
+        &base,
+    );
+
+    assert!(
+        page.console().iter().any(|l| l.text.contains("lodash")),
+        "{:?}",
+        page.console()
+    );
+    let paths = asked.lock().unwrap().clone();
+    assert_eq!(paths, vec!["/entry.js".to_string()], "{paths:?}");
+}
+
+#[test]
+fn a_malformed_import_map_is_reported_and_ignored_whole() {
+    // Half a map resolves half a page's imports and leaves the rest failing
+    // for a reason nobody can see.
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p>
+             <script type="importmap">{ nope </script>
+             <script>document.querySelector('#out').textContent = 'ran';</script>
+           </body></html>"#,
+        &url::Url::parse("https://example.test/").unwrap(),
+    );
+    assert!(
+        page.console().iter().any(|l| l.text.contains("import map ignored")),
+        "the page is told: {:?}",
+        page.console()
+    );
+    // And the rest of the page is unaffected.
+    assert!(page.snapshot().render().contains("ran"), "{}", page.snapshot().render());
+}
+
+#[test]
 fn an_inline_module_resolves_imports_against_the_page() {
     let (port, _asked) = module_server(vec![(
         "/lib.js",

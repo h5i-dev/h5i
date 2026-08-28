@@ -299,6 +299,50 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// Write a PNG of the page this session is on.
+    ///
+    /// `open --screenshot` could always do this for a page it rendered and
+    /// exited; a resident session could not, so an agent that had just clicked
+    /// something had no way to look at the result. The live view is the human's
+    /// channel and is not an answer to a verb.
+    ///
+    /// **Refused while `login` is on.** A password is pixels before it is
+    /// anything else, and handing those to the agent is the transfer that mode
+    /// exists to stop.
+    Screenshot {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// Where to write it. Defaults to a host-named file in the session's
+        /// own artifacts directory.
+        ///
+        /// For a session in a box this path is resolved **inside the box**,
+        /// because that is the filesystem the engine has.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+        /// Go here first, then paint.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Fetch the current URL again.
+    ///
+    /// Takes no URL. After a redirect it re-fetches where the session actually
+    /// is, which is the thing `navigate` to a remembered URL gets wrong.
+    Reload {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Follow a `@ref` from the last snapshot.
     Click {
         /// Which session, when more than one is open. A name from
@@ -722,6 +766,15 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         }
         BrowserCommands::Navigate { session, url, json } => {
             verb(&root, session.as_deref(), vec!["navigate".into(), url], true, json)
+        }
+        BrowserCommands::Screenshot {
+            session,
+            out,
+            url,
+            json,
+        } => screenshot(&root, session.as_deref(), out, url, json),
+        BrowserCommands::Reload { session, json } => {
+            verb(&root, session.as_deref(), vec!["reload".into()], true, json)
         }
         BrowserCommands::Click {
             session,
@@ -1261,6 +1314,11 @@ fn spawn_on_host(
         dir.join(bs::RECEIPTS_FILE).display().to_string(),
         "--actions".into(),
         dir.join(bs::ACTIONS_FILE).display().to_string(),
+        // The jar h5i names, and the file `--restore` reads back. h5i chooses
+        // the path; the engine only chooses the bytes, which is the same rule
+        // every other session artifact follows.
+        "--cookie-jar".into(),
+        dir.join(bs::COOKIES_FILE).display().to_string(),
         "--width".into(),
         opts.width.to_string(),
         "--height".into(),
@@ -1621,6 +1679,13 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         in_box_base.with_extension("requests.jsonl").display().to_string(),
         "--actions".into(),
         in_box_base.with_extension("actions.jsonl").display().to_string(),
+        // Inside the box, beside the receipts, for the same reason: this is the
+        // filesystem the engine has. Whether this machine can read it back
+        // afterwards is the `control_on_host` question above, and a tier that
+        // keeps its /tmp in an image is a tier whose jar does not survive the
+        // box — which is a narrowing of `--restore`, not of the session.
+        "--cookie-jar".into(),
+        in_box_base.with_extension("cookies.json").display().to_string(),
         "--width".into(),
         opts.width.to_string(),
         "--height".into(),
@@ -1900,12 +1965,127 @@ fn tail_of(log: &Path) -> String {
 /// Deliberately narrow: cookies only, and by copy. Nothing about the old
 /// session's process, port or box comes across, because none of it is still
 /// true — this is an inheritance of state, not a resumption of a run.
+/// **It refuses rather than seeding nothing.** For most of this flag's life
+/// there was no `cookies.json` anywhere: the engine's jar lived in the process
+/// and died with it, so `source.exists()` was always false, the copy never
+/// happened, and `--restore` was a silent no-op wearing help text that promised
+/// an inherited login. That is the defect ROADMAP §B19.6 records, and the fix
+/// has two halves — the engine now writes a jar (`--cookie-jar`), and this says
+/// so when there is none instead of continuing as though there were.
+///
+/// Three reasons a session can leave no jar, and the caller needs to tell them
+/// apart, so the message names which one it is rather than saying "not found":
+///
+/// * it predates the jar file,
+/// * it ran in a box whose `/tmp` this machine cannot read,
+/// * it never stored a cookie.
+///
+/// The last is indistinguishable from the first two by inspection, so the
+/// message says what is missing and what that means, and lets the caller decide.
 fn seed_storage(root: &Path, from: &str, into: &Path) -> anyhow::Result<()> {
-    let source = bs::dir(root, from).join("cookies.json");
-    if source.exists() {
-        std::fs::copy(&source, into.join("cookies.json"))?;
+    let source = bs::dir(root, from).join(bs::COOKIES_FILE);
+    if !source.exists() {
+        anyhow::bail!(
+            "session {from} left no cookie jar at {}, so there is nothing for `--restore` to \
+             carry forward.\n\n  \
+             A session writes one only while it is running, and only when it is placed \
+             somewhere this machine can read — a box that keeps its /tmp inside its image \
+             does not qualify. A session that stored no cookies leaves an empty jar, not no \
+             jar, so a missing file means the session predates this or ran out of reach.\n\n  \
+             Drop `--restore` to start a fresh session, and log in once more in this one.",
+            source.display()
+        );
     }
+    std::fs::copy(&source, into.join(bs::COOKIES_FILE))?;
     Ok(())
+}
+
+/// Take a PNG of the page, into a file **h5i names**.
+///
+/// The naming is the whole reason this is not one more line in `run`'s match.
+/// `bs::artifact_path` reduces a name to one component of a known-safe
+/// alphabet before joining it, so a session cannot write through `..`, through
+/// a symlink it planted, or onto a dotfile — and the engine is never asked to
+/// choose, it is told. That rule was written for exactly this verb and this is
+/// its first user.
+///
+/// Two placements, two filesystems:
+///
+/// * **Host.** The artifacts directory under the session's own record, which is
+///   where a reviewer already looks for what a session produced.
+/// * **Box.** The engine can only write inside the box, so the default goes
+///   beside the control socket — the one path the record already knows is
+///   writable there — and the reply says it is inside the box rather than
+///   printing a host path that does not exist.
+///
+/// An explicit `--out` is taken as given in both cases, because a caller who
+/// named a path named it for a reason.
+fn screenshot(
+    root: &Path,
+    selector: Option<&str>,
+    out: Option<PathBuf>,
+    url: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let session = match bs::resolve(root, selector) {
+        Ok(session) => session,
+        Err(gone) => {
+            eprintln!("{}", gone);
+            std::process::exit(bs::EXIT_SESSION_GONE);
+        }
+    };
+
+    let path = match out {
+        Some(path) => path,
+        None => {
+            // Milliseconds, so two shots in one second are two files. A
+            // screenshot that silently replaced the previous one would lose the
+            // before-and-after that is most of why an agent takes two.
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let name = format!("screenshot-{stamp}.png");
+            match &session.placement {
+                bs::Placement::Host => {
+                    let path = bs::artifact_path(root, &session.id, &name);
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    path
+                }
+                bs::Placement::Box { name: box_name } => {
+                    // The box's own /tmp, via the socket the record already
+                    // holds. Nothing here can create the directory: it is on
+                    // the far side of the boundary, and it exists because the
+                    // socket is bound in it.
+                    let control = session.control.file.clone().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "this session in `{box_name}` names no control socket, so there is \
+                             no path inside the box to default to. Pass `--out <path>` naming \
+                             a file the box can write."
+                        )
+                    })?;
+                    let dir = control
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| PathBuf::from("/tmp"));
+                    dir.join(bs::safe_name(&name))
+                }
+            }
+        }
+    };
+
+    let mut argv = vec![
+        "screenshot".to_string(),
+        "--path".to_string(),
+        path.display().to_string(),
+    ];
+    argv.extend(url_arg(url));
+    // Painting does not move the page. Going somewhere first does, and the
+    // control lock exists so a human at the wheel is not steered from under.
+    let moves_the_page = argv.iter().any(|a| a == "--url");
+    verb(root, selector, argv, moves_the_page, json)
 }
 
 /// Send one verb to a session and print what came back.

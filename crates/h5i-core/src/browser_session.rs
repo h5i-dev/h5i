@@ -91,6 +91,15 @@ pub const RECEIPTS_FILE: &str = "requests.jsonl";
 /// The verbs an agent asked for, as the session recorded them.
 pub const ACTIONS_FILE: &str = "actions.jsonl";
 
+/// The session's cookie jar, mirrored by the engine and read by `--restore`.
+///
+/// The one file in a session directory that is **credential material**, and the
+/// only one h5i copies from a session to its successor. It is written `0600`,
+/// no verb returns what is in it, and it exists so a login a human performed
+/// once does not have to be performed again on every session — which is what
+/// `--restore` promised before there was anything to restore (ROADMAP §B19.6).
+pub const COOKIES_FILE: &str = "cookies.json";
+
 /// The handover journal: one line per `take` or `release`.
 ///
 /// Separate from `control.json`, which holds only *who holds it now*. A current

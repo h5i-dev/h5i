@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>the language and platform a bundle assumes</title>
+<!--
+  Boa is an interpreter and its coverage is the thing most likely to surprise
+  someone. These are the constructs a 2020s bundle uses without thinking, so a
+  gap here is a page that dies on line one for a reason the console reports as
+  a syntax error in someone else's minified code.
+-->
+<p id="out">before</p>
+<script>
+  (async function () {
+    const parts = [];
+    const maybe = { a: { b: [1, 2, 3] } };
+    parts.push(maybe?.a?.b?.at(-1));                       // optional chain + at
+    parts.push(maybe.x ?? 'nullish');                      // nullish coalescing
+    const { a: { b: [first, ...rest] } } = maybe;          // destructuring
+    parts.push(first + rest.length);
+    parts.push([...new Set([1, 1, 2])].flatMap(n => [n]).length);
+    parts.push(Object.fromEntries([['k', 'v']]).k);
+    parts.push(typeof 1n);                                 // BigInt
+    parts.push((await Promise.allSettled([Promise.resolve(1)]))[0].status);
+    parts.push(typeof structuredClone === 'function' ? 'clone' : 'no-clone');
+    parts.push(new TextDecoder().decode(new TextEncoder().encode('utf8')));
+    parts.push(typeof crypto.randomUUID === 'function' ? 'uuid' : 'no-uuid');
+    document.getElementById('out').textContent = parts.join('|');
+  })();
+</script>

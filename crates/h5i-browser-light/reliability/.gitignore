@@ -1,0 +1,4 @@
+# The discovered corpus is a cache, not a fixture: it is machine-built from a
+# live crawl and is regenerated with --rediscover. Committing it would freeze
+# one afternoon's web into the repository.
+corpus.txt

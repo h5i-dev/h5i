@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>preact render</title>
+<div id="root"></div>
+<script src="../vendor/preact.umd.js"></script>
+<script>
+  var h = preact.h;
+  var rows = [];
+  for (var i = 0; i < 100; i++) rows.push(h('li', { class: 'row' }, 'item ' + i));
+  preact.render(h('ul', { id: 'list' }, rows), document.getElementById('root'));
+</script>

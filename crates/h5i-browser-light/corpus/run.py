@@ -28,10 +28,11 @@ import json
 import os
 import resource
 import subprocess
-import urllib.parse
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_BIN = os.path.join(HERE, "..", "..", "..", "target", "debug", "h5i-browser-light")
+sys.path.insert(0, os.path.dirname(HERE))
+import harness  # noqa: E402
 
 # Where agents actually spend their time. Plus a few script-heavy ones, so the
 # corpus is not all easy and the failures are honest.
@@ -129,13 +130,13 @@ APPLICATIONS = [
     "https://material-web.dev/components/button/",
 ]
 
-# Hosts nearly every site pulls from. Allowed so that a page failing for want of
-# its own bundle is a finding about this engine rather than about the policy the
-# harness happened to set.
-COMMON_ASSET_HOSTS = [
-    "cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com",
-    "fonts.googleapis.com", "fonts.gstatic.com", "ajax.googleapis.com",
-]
+# The allowlist this harness used to build by hand is gone, and the reason is
+# worth keeping. It granted the site's own host, a wildcard over its registrable
+# domain, and six named CDNs — which meant a page pulling from a *seventh* CDN
+# came back short and looked like an engine failure. The corpus exists to see
+# what pages ask for, so an instrument that pre-filters the asks is measuring
+# its own configuration. `harness.ENGINE_GRANT` is that decision made once, out
+# loud, and it widens the name check only (ROADMAP §B19.5).
 
 # A per-child address-space ceiling. One enormous page rendered without a cap
 # took the whole machine down mid-run. A child that hits this dies with a status
@@ -144,21 +145,14 @@ COMMON_ASSET_HOSTS = [
 MEMORY_CAP = 2 * 1024 * 1024 * 1024
 
 
-def allows(url):
-    host = urllib.parse.urlparse(url).hostname or ""
-    parts = host.split(".")
-    registrable = ".".join(parts[-2:]) if len(parts) >= 2 else host
-    return sorted({host, f"*.{registrable}", registrable}) + COMMON_ASSET_HOSTS
-
-
 def cap():
     resource.setrlimit(resource.RLIMIT_AS, (MEMORY_CAP, MEMORY_CAP))
 
 
 def run(binary, url, script):
-    cmd = [binary, "open", url, "--json", "--max-snapshot-lines", "300"]
-    for host in allows(url):
-        cmd += ["--allow", host]
+    cmd = harness.instrument_argv(
+        binary, "open", url, "--json", "--max-snapshot-lines", "300"
+    )
     if script:
         cmd.append("--script")
     try:
@@ -306,7 +300,7 @@ def measure(binary, name, sites):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", default=DEFAULT_BIN)
+    parser.add_argument("--binary", default=None)
     parser.add_argument(
         "--only", choices=["documents", "applications", "international", "structures"]
     )
@@ -322,7 +316,11 @@ def main():
     if args.only:
         corpora = {args.only: corpora[args.only]}
 
-    results = {name: measure(args.binary, name, sites) for name, sites in corpora.items()}
+    binary = harness.engine_binary(args.binary)
+    harness.check_engine(binary)
+    print(f"engine: {binary} (grant: {harness.ENGINE_GRANT})")
+
+    results = {name: measure(binary, name, sites) for name, sites in corpora.items()}
     if args.json_out:
         with open(args.json_out, "w") as f:
             json.dump(results, f, indent=2)

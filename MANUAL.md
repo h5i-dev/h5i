@@ -159,9 +159,16 @@ the ordinary case, the session itself.
 h5i browser open https://example.com
 h5i browser snapshot            # the page as a model should read it
 h5i browser click @e3
+h5i browser screenshot          # a PNG of the page, into the session's artifacts
+h5i browser reload              # re-fetch where the session actually is
 h5i browser requests            # what it asked for, and what was refused
 h5i browser close
 ```
+
+`screenshot` writes into the session's own artifacts directory under a name
+**h5i chooses**; the engine picks only the bytes. `--out` names a file instead.
+Like every other verb that reads the page, it is refused while `login` is on: a
+password is pixels before it is anything else.
 
 ### The id is internal
 
@@ -625,6 +632,26 @@ lost it.
 
 `--restore` is an inheritance, not a resurrection: it produces a **new id**, and
 writes `restored_from` into the new record.
+
+What it carries is the **cookie jar**, and only that. A session mirrors its jar
+into its own directory while it runs — owner-only, written whenever the jar
+changes rather than at exit, because a session is stopped with a signal and a
+shutdown hook would never run. So a login a human performed once at the live
+view survives into the next session:
+
+```bash
+h5i browser open https://example.com/login --session auth
+h5i browser login --session auth        # the human types the password
+h5i browser login --session auth --off
+h5i browser close --session auth
+
+h5i browser open https://example.com/app --restore br_7k2xqa   # still signed in
+```
+
+No verb returns a cookie value, and this adds none: the file is handed to the
+next engine, never to a model. A session that left no jar — one that ran in a
+box whose `/tmp` this machine cannot read, or one from before this existed — is
+**refused by name** rather than silently seeding nothing.
 
 ### Everything a session returns is untrusted
 

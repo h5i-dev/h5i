@@ -598,6 +598,33 @@ enum SessionVerb {
         at: SessionArgs,
     },
 
+    /// Write a PNG of the page as it is right now.
+    ///
+    /// The path is required and is not defaulted here: h5i names every artifact
+    /// a session produces, and an engine that picked its own filename would be
+    /// the one place that rule did not hold. `h5i browser screenshot` is what
+    /// supplies it.
+    Screenshot {
+        /// Where to write the PNG. Named by the caller, always.
+        #[arg(long, value_name = "PATH")]
+        path: PathBuf,
+        /// Go here first, then paint.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
+    /// Fetch the current URL again.
+    ///
+    /// Takes no URL: a reload that went somewhere else would be `navigate`
+    /// wearing a name that says it is not going anywhere. After a redirect it
+    /// re-fetches where the session actually is, not the hop that got it there.
+    Reload {
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// What the page publishes about itself: JSON-LD, OpenGraph, `<meta>`.
     ///
     /// The cheapest read there is. An outline is the page's content and costs
@@ -707,9 +734,41 @@ struct NetArgs {
     #[arg(long)]
     no_loopback: bool,
 
+    /// Grant every remote origin. **For instruments, not for agents.**
+    ///
+    /// The corpus and the reliability sweep point this engine at the open web
+    /// and measure what pages ask for; an allowlist built one URL at a time
+    /// refuses the third-party subresources that are most of what there is to
+    /// see, so such a run measures its own allowlist rather than the page.
+    ///
+    /// It widens the *name* check only. A public name that resolves into
+    /// private space is still refused, a page from the web still may not reach
+    /// loopback, and a box's own egress enforcement is untouched — this cannot
+    /// widen that. Every run in this mode says so on the placement line and in
+    /// `doctor`.
+    #[arg(long)]
+    allow_any_remote: bool,
+
     /// Append the request log here as JSON lines.
     #[arg(long, value_name = "PATH")]
     receipts: Option<PathBuf>,
+
+    /// Mirror the cookie jar to a file, and read it at start.
+    ///
+    /// **Off unless h5i names one**, and it belongs here rather than on `serve`
+    /// because the jar is the broker's, beside the policy and the receipts —
+    /// in split mode the renderer has no jar to mirror, and this is the one
+    /// argument list both halves parse.
+    ///
+    /// This is what makes `h5i browser open --restore` able to carry a login
+    /// forward; h5i chooses the path, inside the session's own directory. The
+    /// file is written when the jar changes rather than at exit, because a
+    /// session is stopped with a signal and a shutdown hook would never run.
+    ///
+    /// A file that exists and cannot be read as a jar is a startup failure, not
+    /// a warning: starting silently logged-out is the failure this removes.
+    #[arg(long, value_name = "PATH")]
+    cookie_jar: Option<PathBuf>,
 
     /// The egress proxy to route through. Defaults to $H5I_EGRESS_PROXY.
     #[arg(long, value_name = "URL")]
@@ -1008,7 +1067,7 @@ impl Command {
 /// exactly what a whole process would have built, so the two shapes cannot
 /// drift into applying different policies or different ceilings.
 fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError> {
-    crate::net::LocalBroker::with_limits(
+    let broker = crate::net::LocalBroker::with_limits(
         build_policy(net),
         receipts_sink(net)?,
         proxy_of(net).as_deref(),
@@ -1022,7 +1081,30 @@ fn local_broker(net: &NetArgs) -> Result<Arc<crate::net::LocalBroker>, H5iError>
             max_decoded_bytes: net.max_wire_bytes.saturating_mul(4),
             max_network_time: std::time::Duration::from_secs(net.max_network_seconds),
         },
-    )
+    )?;
+
+    // The jar, if h5i named a file for it. Done here rather than in `serve`
+    // because this is the function both halves reach: in split mode `serve`
+    // runs in the renderer, which holds no jar at all.
+    //
+    // A failure here stops the session. The alternative is a browser that came
+    // up logged out and said so in a warning nobody reads, which is the exact
+    // shape of the defect this feature was written to remove.
+    if let Some(path) = &net.cookie_jar {
+        let loaded = broker.jar().persist_to(path).map_err(|reason| {
+            H5iError::Metadata(format!(
+                "the cookie jar at `{}` could not be used: {reason}",
+                path.display()
+            ))
+        })?;
+        if loaded > 0 {
+            eprintln!(
+                "h5i-browser-light: restored {loaded} cookie(s) from {}",
+                path.display()
+            );
+        }
+    }
+    Ok(broker)
 }
 
 fn factory_for(half: &Half, net: &NetArgs, view: &ViewArgs) -> Result<PageFactory, H5iError> {
@@ -1455,6 +1537,15 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                 "verb": Verb::Find.name(), "role": role, "name": name, "url": url,
             }),
         ),
+        SessionVerb::Screenshot { path, url, at } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::Screenshot.name(),
+                "path": path.display().to_string(),
+                "url": url,
+            }),
+        ),
+        SessionVerb::Reload { at } => (at, serde_json::json!({"verb": Verb::Reload.name()})),
         SessionVerb::Structured { url, at } => (
             at,
             serde_json::json!({"verb": Verb::Structured.name(), "url": url}),
@@ -1779,6 +1870,7 @@ fn build_policy(net: &NetArgs) -> Policy {
         .allow_all_of(&net.allow)
         .allow_all_of(&from_env)
         .set_allow_loopback(!net.no_loopback)
+        .set_any_remote(net.allow_any_remote)
         .set_max_redirects(net.max_redirects)
         .set_max_response_bytes(net.max_response_bytes)
 }
@@ -1845,7 +1937,17 @@ fn doctor(net: &NetArgs) -> Result<(), H5iError> {
     );
 
     let origins: Vec<_> = policy.origins().collect();
-    if origins.is_empty() {
+    if policy.allows_any_remote() {
+        // Said first and said plainly. A mode this wide reported as a long
+        // allowlist would read as a careful configuration.
+        println!(
+            "allowlist  : ANY REMOTE ORIGIN (--allow-any-remote; instrument mode) — \
+             internal addresses are still refused"
+        );
+        if !origins.is_empty() {
+            println!("             (also granted by name: {})", origins.join(", "));
+        }
+    } else if origins.is_empty() {
         println!("allowlist  : empty — nothing remote is reachable");
     } else {
         println!("allowlist  : {}", origins.join(", "));

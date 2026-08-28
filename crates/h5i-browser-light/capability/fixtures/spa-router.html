@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fetch + pushState + render</title>
+<!--
+  A composite on purpose: a same-origin fetch, a history entry, a store, and a
+  list-to-detail render. Each of those has its own fixture elsewhere; a page
+  that passes all four separately and fails when they are combined is the case
+  the corpus keeps finding on real sites.
+-->
+<div id="app">loading</div>
+<script>
+  (async function () {
+    var response = await fetch('./data/items.json');
+    var items = await response.json();
+    history.pushState({ view: 'list' }, '', '#/list');
+    var app = document.getElementById('app');
+    var ul = document.createElement('ul');
+    ul.id = 'list';
+    items.forEach(function (item) {
+      var li = document.createElement('li');
+      li.className = 'row';
+      li.textContent = item.name + ' (' + item.id + ')';
+      ul.appendChild(li);
+    });
+    app.textContent = '';
+    app.appendChild(ul);
+    var where = document.createElement('p');
+    where.id = 'route';
+    where.textContent = 'route ' + location.hash;
+    app.appendChild(where);
+  })();
+</script>
