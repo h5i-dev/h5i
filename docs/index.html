@@ -334,12 +334,12 @@
       <div class="feat-card">
         <div class="feat-name">Web app testing runs code on your machine</div>
         <div class="feat-desc">Testing an app often means running agent-written code, third-party
-          dependencies, a development server, and a browser on the same host. Without isolation, they share
+          dependencies, and a browser on the same host. Without isolation, they share
           access to your files and network.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">Ordinary browser logs are incomplete</div>
-        <div class="feat-desc">A list of clicks is not a complete record. Background requests, redirects,
+        <div class="feat-desc">A list of clicks, background requests, redirects,
           blocked connections, crashes, and restarts may be missing when you need to understand what
           happened.</div>
       </div>
@@ -369,9 +369,8 @@
       </div>
       <div class="feat-card">
         <div class="feat-name">Limit the damage of prompt injection</div>
-        <div class="feat-desc">Page content is marked as untrusted, and you can run both the agent and
-          browser inside a sandbox. If a page still manipulates the agent, it can reach only the files and
-          network destinations allowed by the sandbox policy.</div>
+        <div class="feat-desc">Page content is marked as untrusted. Even if a page still manipulates the agent, 
+	  it can reach only the files and network destinations allowed by the sandbox policy.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">Isolate web app testing from your machine</div>
