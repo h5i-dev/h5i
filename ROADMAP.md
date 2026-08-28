@@ -8393,6 +8393,108 @@ reportable at all, which added 6,000 subtests to the denominator as well as
 1,896 to the numerator), and counting more honestly. The first is the only one
 that is engineering, and the tier table is what keeps the three visible.
 
+### B20.15 The three boundaries, decided, 2026-08-28
+
+§B20.14 ended on three blocks that were "blocked on a product decision, not on
+effort", holding roughly 19,000 of the 23,600 subtests between the engine and
+80%. The decision was put, and made, and this entry is the record — argued on
+the product's terms, because §B20.5 already established that a WPT subtest
+count measures how much a test file repeats itself, not how much a gap costs.
+The question for each was: *what does an agent driving a real page lose?*
+
+**1. No second browsing context — kept, with one carve-out.** The real-web
+cost is concentrated and real: payment iframes, OAuth popups, embedded
+CAPTCHAs are exactly the tasks agents get asked to do. But supporting it
+honestly is the most expensive item in the engine: two origins in one realm is
+precisely the hazard `cookies.rs` documents — the box protects the host from
+the page and says nothing about two origins sharing an address space, which is
+why `retain_origin` drops the jar on every origin change. A cross-origin
+iframe reintroduces the problem that rule exists to bound, and doing it right
+is what Chromium calls site isolation. For an engine whose thesis is
+auditability, "two origins, one process, one realm" is a worse position than
+"no iframes".
+
+The carve-out: **`window.open` is not an iframe problem — it maps onto h5i's
+own session model.** A popup is a second page, and h5i already has named
+sessions. So `window.open` should become a *named refusal carrying a recovery*
+("this page wants a second page; open one with `--session`"), per §B15.6's
+rule that a denial an agent cannot branch on is a denial it cannot recover
+from. Queued.
+
+*Revisit trigger:* the corpus's `unsupported` counts — real agent tasks dying
+on iframes — never WPT. And the first step if it fires is same-origin
+`srcdoc` iframes only, which raise no isolation question, not the full
+feature.
+
+**2. Flattened shadow root — kept, and this is the one defended hardest.**
+The 7,140-subtest figure is the most misleading number on the table: 6,528 of
+it is one file serialising `<template shadowrootmode>` strings. The
+flattening is not a shortcut but an *aligned* choice — it is what the
+accessibility tree does, and the accessibility tree is what the snapshot is
+modeled on. An agent wants the component's rendered output, readable, in the
+page; a real shadow tree would break the one-tree invariant that snapshot,
+paint and events all rely on, to buy encapsulation — a property that serves
+page authors and actively hurts page readers.
+
+The one real cost is **style scoping**: a component-heavy page can misrender
+because styles leak across the boundary. *Revisit trigger:* corpus pages
+visibly misrendering from leakage — and the fix would be scoping in the
+cascade, not a second tree. Never `gethtml.html`.
+
+**3. Synchronous fetch — not a boundary at all, reclassified.** The other two
+are derived from the product's claims; this one is an implementation ceiling
+wearing a boundary's clothes. Fail-closed requires *decide and record before
+the bytes move* — nothing in that forces the transport to block. The
+`Cargo.toml` comment defends synchrony with "receipt order is request order",
+but decision order can be preserved without serialised transport. The
+real-web costs are already on the record from §B16: serial subresource
+fetching is one of the three load-path costs the Lightpanda study named, and
+an abort that cancels nothing is why 260 of 467 fetch files time out.
+
+The decision is **do not build it for WPT**: run the repaired
+`corpus/compare.py` first (§B19.5's own unfinished business) and see whether
+serial fetch is where real-page latency actually goes. If it is, concurrent
+brokered fetch with real abort is ordinary engineering that *strengthens* the
+receipts story. If it is not, leave it. §B15.12a, applied before the mistake
+this time instead of after.
+
+#### The tiers.list edits, and the number moving for the third reason
+
+With 1 and 2 kept on purpose, 80% of the old core tier is not this engine's
+number — and the honest response is the one `tiers.list` was built for:
+declare the refusals as scope, with the reasons on the line, and let core
+measure what the engine actually claims to be. Three entries moved to
+`exclude`:
+
+| entry | reason on the line |
+| --- | --- |
+| `html/browsers/origin` | needs several live browsing contexts talking to each other |
+| `fetch/metadata` | observed through `window.open` + wptserve `.py` handlers; **the feature is still wanted** — this engine *is* the client and should send `Sec-Fetch-*` for real sites. Excluding the tests does not excuse the feature. |
+| `shadow-dom/declarative/gethtml.html` | one file, by exact path, so the rest of shadow-dom stays measured |
+
+And two that look like candidates and are **not** excluded, because excluding
+either would be exclusion by outcome wearing a capability's name: the
+form-submission enctype files (their *subject* is entry-list serialisation,
+which this engine claims — only the harness observes it through an iframe),
+and the fetch abort timeouts (an implementation ceiling, per decision 3, not a
+declared boundary). Both stay in core as honest losses.
+
+The effect, stated the way §B12.6 requires because this is its third way of
+moving a number — counting differently, not engineering:
+
+    core, old scope   81,120 / 130,958 = 61.9%
+    core, new scope   80,738 / 121,987 = 66.2%
+    moved out         8,971 scored, of which only 382 passed
+    80% now needs     +16,851
+
+Nothing got better; the denominator now says what the engine is. The moved-out
+block was 4% passing, which is exactly what a capability hole looks like from
+the outside — and also exactly why the exclusion had to be argued from the
+product rather than read off the score, since excluding your worst directory
+is what a gamed number looks like too. The difference between those two is
+that the reasons are on the line in `tiers.list`, where moving a line and
+re-running is the audit.
+
 ---
 
 # Formal verification: a Lean model beside the Rust

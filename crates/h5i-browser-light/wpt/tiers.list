@@ -62,6 +62,35 @@ exclude html/browsers/the-window-object
 exclude html/browsers/browsing-the-web
 exclude html/browsers/history
 exclude html/browsers/sandboxing
+# Decided rather than discovered, 2026-08-28 (§B20.15). Three subtrees kept
+# falling out of every work queue for the same two reasons, so the reasons are
+# now on the line here instead of in a caveat nobody reads:
+#
+#   * origin isolation tests need several live browsing contexts talking to
+#     each other, which is the capability §B6 refuses — two origins in one
+#     realm is the hazard the cookie jar's retain-on-navigation rule exists to
+#     bound, and h5i's answer to "a second page" is a second session.
+exclude html/browsers/origin
+#   * fetch/metadata observes Sec-Fetch-* headers through window.open plus
+#     wptserve .py handlers. **The feature is still wanted** — this engine IS
+#     the HTTP client and should send these headers for real sites — it is the
+#     tests that need a capability the engine refuses. Excluding the tests does
+#     not excuse the feature.
+exclude fetch/metadata
+#   * gethtml.html is 6,528 subtests of serialising a shadow tree as
+#     `<template shadowrootmode>` markup. A shadow root here is a view of its
+#     host by design — the flattening the accessibility tree performs, and the
+#     shape the snapshot is built on — so the string a browser would produce
+#     describes a tree this engine deliberately does not have. One file,
+#     excluded by exact path so the rest of shadow-dom stays measured.
+exclude shadow-dom/declarative/gethtml.html
+#
+# Two things that look like candidates and are NOT excluded, deliberately:
+# the form-submission enctype files (their *subject* is entry-list
+# serialisation, which this engine claims — only the harness observes it
+# through an iframe), and the fetch abort timeouts (an implementation ceiling
+# §B20.15 reclassifies as a performance item, not a declared boundary).
+# Excluding either would be exclusion by outcome wearing a capability's name.
 exclude html/semantics/embedded-content/the-iframe-element
 exclude html/semantics/embedded-content/the-object-element
 exclude html/semantics/embedded-content/the-embed-element
