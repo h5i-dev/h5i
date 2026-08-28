@@ -2563,6 +2563,117 @@ fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) 
 }
 
 #[test]
+fn a_form_owns_by_attribute_and_not_only_by_containment() {
+    // `form=""` names no id and therefore has no owner. This read the
+    // attribute for truthiness, so an empty one fell through to the ancestor
+    // search and reported the surrounding form — the opposite answer, since
+    // taking a control *out* of the form it sits in is the whole point.
+    let (text, console) = scripted_text(
+        r#"<form id="f"><input id="inside" name="a"><input id="opted" name="b" form=""></form>
+           <input id="outside" name="c" form="f">
+           <input id="nosuch" name="d" form="missing">
+           <script>
+             const g = (id) => document.getElementById(id);
+             const f = g("f");
+             const names = [...f.elements].map((e) => e.name).sort().join(",");
+             document.getElementById("out").textContent = [
+               g("inside").form === f,
+               String(g("opted").form),
+               g("outside").form === f,
+               String(g("nosuch").form),
+               names,
+             ].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|null|true|null|a,c"),
+        "form ownership is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn an_entry_list_carries_the_submitter_charset_and_nothing_disabled() {
+    // The entry list is the algorithm submission is made of, and each of these
+    // was a different wrong answer rather than a missing nicety: a skipped
+    // submitter means the server cannot tell which button was pressed, and
+    // `_charset_` is the one field whose value the browser supplies.
+    let (text, console) = scripted_text(
+        r#"<form id="f">
+             <input name="a" value="1">
+             <input name="off" value="x" disabled>
+             <input name="cb" type="checkbox" value="on">
+             <input name="_charset_" type="hidden">
+             <button id="b" name="action" value="save">save</button>
+             <button id="b2" name="action" value="del">del</button>
+           </form>
+           <script>
+             const f = document.getElementById("f");
+             const plain = JSON.stringify([...new FormData(f)]);
+             const withSubmitter = JSON.stringify(
+               [...new FormData(f, document.getElementById("b"))].filter((e) => e[0] === "action"));
+             document.getElementById("out").textContent = plain + " " + withSubmitter;
+           </script>"#,
+    );
+    assert!(
+        text.contains(r#"[["a","1"],["_charset_","UTF-8"]] [["action","save"]]"#),
+        "the entry list is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn request_submit_validates_and_fires_where_submit_does_neither() {
+    // The two differ in exactly the ways that matter, and implementing them as
+    // one function — the obvious shortcut — would make `form.submit()` called
+    // from inside a `submit` handler recurse.
+    let (text, console) = scripted_text(
+        r#"<form id="f"><input name="a" value="1"><button id="b">go</button></form>
+           <form id="bad"><input required><button id="bb">go</button></form>
+           <script>
+             const out = [];
+             const f = document.getElementById("f");
+             let fired = 0;
+             f.addEventListener("submit", (e) => { fired++; e.preventDefault(); });
+             f.requestSubmit();
+             out.push("afterRequest:" + fired);
+             f.submit();
+             out.push("afterSubmit:" + fired);
+
+             // A form that fails validation never fires `submit`.
+             const bad = document.getElementById("bad");
+             let badFired = 0, invalid = 0;
+             bad.addEventListener("submit", () => badFired++);
+             bad.querySelector("input").addEventListener("invalid", () => invalid++);
+             bad.requestSubmit();
+             out.push("invalidForm:" + badFired + ":" + invalid);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("afterRequest:1|afterSubmit:1|invalidForm:0:1"),
+        "requestSubmit and submit do not differ correctly:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn the_formdata_event_can_add_entries_to_the_list_being_built() {
+    // The documented replacement for the hidden inputs a page used to inject:
+    // the listener gets the list under construction, not a copy of it.
+    let (text, console) = scripted_text(
+        r#"<form id="f"><input name="a" value="1"></form>
+           <script>
+             const f = document.getElementById("f");
+             f.addEventListener("formdata", (e) => e.formData.append("added", "byEvent"));
+             document.getElementById("out").textContent =
+               JSON.stringify([...new FormData(f)]);
+           </script>"#,
+    );
+    assert!(
+        text.contains(r#"[["a","1"],["added","byEvent"]]"#),
+        "the formdata event does not reach the list:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
 fn a_control_reports_its_validity_and_says_which_constraint_failed() {
     // `html/semantics/forms/constraints` scored 1 of 920, and not because the
     // feature is subtle: none of it existed, so every test failed on "the

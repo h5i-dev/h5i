@@ -8315,7 +8315,55 @@ the selector engine, and `color()` CSS parsing. Submission is the largest and
 is the one worth taking next — it is the half of a form this engine can
 observe better than anything else, because it *is* the HTTP client.
 
-### B20.13 Where core stands, and what 80% would actually take
+### B20.13 Submission, and the boundary it ran into
+
+The rest of forms was submission, and §B20.12 said it was worth taking because
+this engine *is* the HTTP client. Built:
+
+* **Form ownership, which is not containment.** `formOwnerOf` honours the
+  `form` content attribute, and the bug it fixes is a wrong answer rather than
+  a missing one: `form=""` names no id and therefore has no owner, but the old
+  code read the attribute for truthiness and fell through to the ancestor
+  search — reporting the surrounding form, when taking a control *out* of the
+  form it sits in is the entire purpose of the attribute. `form.elements` now
+  asks the same question, so a control with `form="thisId"` is submitted from
+  anywhere on the page.
+* **The entry list**, properly: the submitter is an entry (skipping every
+  button meant a server could not tell which one was pressed), `_charset_` is
+  filled in by the engine, a `<datalist>` descendant is a suggestion and never
+  an entry, and disabled and unnamed controls are excluded.
+* **The `formdata` event**, which fires with the list under construction rather
+  than a copy — that is the documented replacement for the hidden inputs a page
+  used to inject.
+* **`requestSubmit` and `submit`**, which differ in the two ways that matter:
+  the first validates and fires a cancelable `submit`, the second does neither.
+  Implementing them as one function is the obvious shortcut and would make
+  `form.submit()` called from inside a `submit` handler recurse.
+
+Neither *navigates*, and that is deliberate rather than unfinished: this engine
+drives navigation through its own verbs so that an agent and a receipt both see
+it, and a form submitting itself out from under that would be a request nothing
+decided on.
+
+**A bug found by this that had nothing to do with forms.** `form.elements` came
+back empty, because it compared `formOwnerOf(el) === this` — and `wrap()` hands
+back the `observed` proxy while a getter runs with the raw target as `this`, by
+design (`observed` passes the target as receiver to avoid paying a trap per
+field read). So a proxy and its target are two objects for the same node, and
+identity comparison silently answers "different" for **every element**. Any
+code anywhere comparing two wrappers with `===` has the same defect; there is
+now a `sameNode` helper saying so.
+
+    html/semantics/forms  2,012 -> 2,051 of 4,655
+
+**And the boundary.** The remaining mass in `form-submission-0` is three
+enctype files at 62 subtests each plus the double-submit pair, and every one of
+them submits into an `<iframe>` and waits for its load. That is §B6's refusal,
+reached from a third direction — after declarative shadow DOM (§B20.5) and
+`html/browsers/origin`. The submission *algorithm* is now implemented and
+observable; what is not reachable is being navigated by it.
+
+### B20.14 Where core stands, and what 80% would actually take
 
 **58.5%** — 76,760 of 131,201 — from 49.7%, measured across all nineteen core
 directories, 9,492 files, on a freshly built binary. The session moved roughly

@@ -3572,11 +3572,15 @@
 
     on(["form"], "elements", {
       get() {
-        return collection(
-          this.querySelectorAll("input, select, textarea, button, fieldset, output")
-            .filter((el) => (api.getAttr(el._id, "type") || "").toLowerCase() !== "image"),
-          "HTMLFormControlsCollection",
-        );
+        // Ownership, not containment. A control with `form="thisId"` belongs
+        // here however far away it sits, and a descendant with `form=` naming
+        // something else does not — which is exactly what the attribute is
+        // for, and what a descendant-only query gets backwards both ways.
+        const owned = document
+          .querySelectorAll("input, select, textarea, button, fieldset, output")
+          .filter((el) => sameNode(formOwnerOf(el), this))
+          .filter((el) => (api.getAttr(el._id, "type") || "").toLowerCase() !== "image");
+        return collection(owned, "HTMLFormControlsCollection");
       },
     });
     on(["form"], "length", { get() { return this.elements.length; } });
@@ -3589,6 +3593,59 @@
           : "on";
       },
       set(value) { this.setAttribute("autocomplete", String(value)); },
+    });
+
+    /// `requestSubmit` and `submit`, which differ in the two ways that matter.
+    ///
+    /// `requestSubmit()` is what a button does: it **validates**, and it fires
+    /// a cancelable `submit` event that a page can `preventDefault()`.
+    /// `submit()` is the escape hatch: it does **neither**, which is exactly
+    /// why a page that calls `form.submit()` from inside its own `submit`
+    /// handler does not recurse. Implementing them as the same function — the
+    /// obvious shortcut — would make that recursion real.
+    ///
+    /// Neither *navigates* here. This engine drives navigation through its own
+    /// verbs so an agent and a receipt see it, and a form submitting itself out
+    /// from under that would be a request nothing decided on. What both do is
+    /// build the entry list and fire the events, which is the half a page
+    /// observes and the half these tests check.
+    Object.defineProperty(TAG_CLASSES.get("form").prototype, "requestSubmit", {
+      configurable: true, writable: true,
+      value(submitter) {
+        if (submitter !== undefined && submitter !== null) {
+          const type = submitter.tagName === "BUTTON"
+            ? (api.getAttr(submitter._id, "type") || "submit").toLowerCase()
+            : (api.getAttr(submitter._id, "type") || "").toLowerCase();
+          if (!(submitter.tagName === "BUTTON" && type === "submit")
+            && !(submitter.tagName === "INPUT" && (type === "submit" || type === "image"))) {
+            throw new TypeError("requestSubmit: the submitter is not a submit button");
+          }
+          const owner = submitter.form;
+          if (!owner || owner._id !== this._id) {
+            throw new DOMException(
+              "requestSubmit: the submitter is not owned by this form",
+              "NotFoundError",
+            );
+          }
+        }
+        // Interactively validate, unless the form opted out. A form that fails
+        // here fires `invalid` on each bad control and never fires `submit`,
+        // which is the sequence a page listening for both depends on.
+        if (!this.noValidate && !this.reportValidity()) return;
+        const event = new SubmitEvent("submit", {
+          bubbles: true, cancelable: true, submitter: submitter ?? null,
+        });
+        this.dispatchEvent(event);
+        if (event.defaultPrevented) return;
+        this.__h5iEntryList = buildEntryList(this, submitter ?? null);
+      },
+    });
+    Object.defineProperty(TAG_CLASSES.get("form").prototype, "submit", {
+      configurable: true, writable: true,
+      value() {
+        // No validation and no `submit` event, deliberately. See above.
+        this.__h5iEntryList = buildEntryList(this, null);
+      },
     });
 
     // A form validates by asking each of its controls, and the *statically
@@ -3621,16 +3678,41 @@
 
     // The form a control belongs to: its `form` attribute if it names one,
     // otherwise the form it sits inside.
-    on(["input", "select", "textarea", "button", "fieldset", "output", "label"], "form", {
-      get() {
-        const named = api.getAttr(this._id, "form");
-        if (named) return wrap(api.query("#" + cssEscapeIdent(named), 0));
-        for (let n = this.parentNode; n; n = n.parentNode) {
-          if (n.nodeType === 1 && n.tagName === "FORM") return n;
-        }
-        return null;
-      },
-    });
+    /// Whether two wrappers name the same node.
+    ///
+    /// **Not `===`.** `wrap()` hands back the `observed` proxy while a getter
+    /// runs with the raw target as `this` (see `observed`, which passes the
+    /// target as the receiver deliberately), so a proxy and its target are two
+    /// objects for the same node. Comparing them by identity silently answered
+    /// "different" for every element — `form.elements` came back empty, and an
+    /// empty entry list is a form that submits nothing.
+    const sameNode = (a, b) => !!a && !!b && a._id === b._id;
+
+    /// A control's *form owner*, which is not simply its nearest ancestor form.
+    ///
+    /// **A present `form` attribute wins outright, even when it names
+    /// nothing.** This read the attribute for truthiness, so `form=""` — which
+    /// matches no id and therefore has no owner — fell through to the ancestor
+    /// search and reported the surrounding form. That is the opposite answer:
+    /// the whole point of the attribute is to take a control *out* of the form
+    /// it sits in.
+    ///
+    /// It must also name a `<form>`: `form="some-div"` has no owner either.
+    function formOwnerOf(el) {
+      const named = api.getAttr(el._id, "form");
+      if (named !== null) {
+        if (named === "") return null;
+        const found = wrap(api.query("#" + cssEscapeIdent(named), 0));
+        return found && found.tagName === "FORM" ? found : null;
+      }
+      for (let n = el.parentNode; n; n = n.parentNode) {
+        if (n.nodeType === 1 && n.tagName === "FORM") return n;
+      }
+      return null;
+    }
+
+    on(["input", "select", "textarea", "button", "fieldset", "output", "label", "object"],
+      "form", { get() { return formOwnerOf(this); } });
 
     // `<option>.text` is its text with whitespace collapsed, which is what a
     // `<select>` actually shows.
@@ -4504,19 +4586,93 @@
     }
   }
 
-  class FormData {
-    constructor(form) {
-      this._entries = [];
-      if (form) {
-        for (const field of form.querySelectorAll("input, select, textarea")) {
-          const name = field.name;
-          if (!name || field.disabled) continue;
-          const kind = field.type;
-          if ((kind === "checkbox" || kind === "radio") && !field.checked) continue;
-          if (kind === "submit" || kind === "button" || kind === "file") continue;
-          this._entries.push([name, field.value]);
+  /// Build a form's *entry list*, which is the algorithm submission is made of.
+  ///
+  /// It was a `querySelectorAll` over the form's descendants that skipped a
+  /// handful of types. Four things were wrong with that, and each is a
+  /// different wrong answer rather than a missing nicety:
+  ///
+  /// * **Ownership, not containment** (see `formOwnerOf`): a control with
+  ///   `form="thisId"` is submitted from anywhere on the page, and a descendant
+  ///   pointing elsewhere is not submitted here at all.
+  /// * **The submitter is an entry.** `<button name=action value=save>` is the
+  ///   whole reason a form can have two buttons, and skipping every button
+  ///   meant the server could not tell which one was pressed.
+  /// * **`_charset_`** is filled in with the encoding rather than with the
+  ///   control's own value, which is the one field whose value the *browser*
+  ///   supplies.
+  /// * **The `formdata` event** fires while the list is being built, which is
+  ///   how a page adds entries that no control holds — the documented
+  ///   replacement for the hidden inputs it used to inject.
+  function buildEntryList(form, submitter) {
+    const entries = [];
+    for (const field of form.elements) {
+      const tag = field.tagName;
+      if (tag === "FIELDSET" || tag === "OUTPUT") continue;
+      if (field.disabled) continue;
+      // A control inside a `<datalist>` is a suggestion, never an entry.
+      let inDatalist = false;
+      for (let n = field.parentNode; n; n = n.parentNode) {
+        if (n.tagName === "DATALIST") { inDatalist = true; break; }
+      }
+      if (inDatalist) continue;
+
+      const type = tag === "INPUT"
+        ? (api.getAttr(field._id, "type") || "text").toLowerCase()
+        : "";
+      // Buttons are entries only when they are the one that submitted.
+      if (tag === "BUTTON" || type === "submit" || type === "reset"
+        || type === "button" || type === "image") {
+        if (!submitter || field._id !== submitter._id) continue;
+        if (type === "reset" || type === "button"
+          || (tag === "BUTTON" && (api.getAttr(field._id, "type") || "submit").toLowerCase() !== "submit")) {
+          continue;
         }
       }
+      const name = field.name;
+      if (!name) continue;
+      if ((type === "checkbox" || type === "radio") && !field.checked) continue;
+      if (type === "file") {
+        // No file can have been chosen here, and the spec's own answer for an
+        // empty file control is an entry with an empty filename rather than no
+        // entry at all — a server counting fields would otherwise see one
+        // fewer than the form has.
+        entries.push([name, ""]);
+        continue;
+      }
+      // The one field whose value the *browser* supplies.
+      if (type === "hidden" && name.toLowerCase() === "_charset_") {
+        entries.push([name, "UTF-8"]);
+        continue;
+      }
+      entries.push([name, field.value]);
+    }
+    return entries;
+  }
+
+  class FormData {
+    constructor(form, submitter) {
+      this._entries = [];
+      if (form) {
+        if (submitter !== undefined && submitter !== null) {
+          const owner = submitter.form;
+          if (!owner || !form || owner._id !== form._id) {
+            throw new DOMException(
+              "FormData: the submitter is not owned by this form",
+              "NotFoundError",
+            );
+          }
+        }
+        this._entries = buildEntryList(form, submitter ?? null);
+        // `formdata` fires with this object, so a listener adding entries adds
+        // them to the list being constructed rather than to a copy.
+        form.dispatchEvent(new FormDataEvent("formdata", {
+          bubbles: true, formData: this,
+        }));
+      }
+    }
+    forEach(fn, thisArg) {
+      for (const [k, v] of this._entries.slice()) fn.call(thisArg, v, k, this);
     }
     append(k, v) { this._entries.push([String(k), String(v)]); }
     set(k, v) {
