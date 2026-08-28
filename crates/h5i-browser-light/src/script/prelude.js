@@ -5409,6 +5409,17 @@
       if (typeof key !== "string" || key in target) return Reflect.get(target, key);
       return target.getPropertyValue(camelToDash(key));
     },
+    // `"color" in el.style` is how pages feature-detect a CSS property, and
+    // WPT cross-checks the answer against `CSS.supports` — so both are
+    // answered by the same authority: Stylo's parser, asked with `inherit`
+    // (valid for every real property). The vendor dance maps `WebkitFoo`
+    // back to `-webkit-foo`, which camel-to-dash alone cannot know.
+    has(target, key) {
+      if (typeof key !== "string" || key in target) return Reflect.has(target, key);
+      const dash = camelToDash(key);
+      if (api.supportsCss(dash, "inherit")) return true;
+      return /^(webkit|moz|ms|o)-/.test(dash) && api.supportsCss(`-${dash}`, "inherit");
+    },
     set(target, key, value) {
       if (typeof key === "string" && !(key in target)) {
         target.setProperty(camelToDash(key), value);

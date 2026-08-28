@@ -701,6 +701,27 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     Ok(JsValue::undefined())
 }
 
+/// Ask the next restyle to re-match the whole tree, not just the changed
+/// element and its parent.
+///
+/// Blitz's `set_attribute` hints the element and one level up, which is
+/// exactly as far as plain selectors reach — and exactly not far enough for
+/// `:has()` and sibling combinators, which carry a change *upward and
+/// sideways*: `.a:has(.test)` on a grandparent must restyle when the
+/// grandchild's class flips, and Blitz's hint never gets there. The hint here
+/// is the blunt correct answer: root-subtree re-match on the next resolve.
+/// The cost is bounded by the settle loop — however many attributes a script
+/// flips, `styles_stale` folds them into one resolve.
+fn hint_whole_document_restyle(doc: &mut blitz_dom::BaseDocument) {
+    use style::invalidation::element::restyle_hints::RestyleHint;
+    let root_id = doc.root_element().id;
+    if let Some(node) = doc.get_node_mut(root_id) {
+        if let Some(mut data) = node.stylo_element_data.get_mut() {
+            data.hint.insert(RestyleHint::restyle_subtree());
+        }
+    }
+}
+
 fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let raw = arg_string(args, 1, context)?;
@@ -718,6 +739,8 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         );
         let mut mutator = doc.mutate();
         mutator.set_attribute(id, qual, &value);
+        drop(mutator);
+        hint_whole_document_restyle(&mut doc);
     });
     host.mark_dirty();
     Ok(JsValue::undefined())
@@ -737,6 +760,8 @@ fn remove_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         );
         let mut mutator = doc.mutate();
         mutator.clear_attribute(id, qual);
+        drop(mutator);
+        hint_whole_document_restyle(&mut doc);
     }
     host.mark_dirty();
     Ok(JsValue::undefined())
@@ -2235,9 +2260,15 @@ fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
         Default::default(),
     );
 
-    let Ok(property_id) = PropertyId::parse(&property, &parser_context) else {
+    // `parse_enabled_for_all_content`, not plain `parse`: the plain form
+    // accepts pref-gated and internal properties (`-moz-*`), and answering
+    // "supported" for a property no page rule could ever use is exactly the
+    // misrouting `CSS.supports` exists to avoid. WPT cross-checks this answer
+    // against the style declaration's own surface, which uses the same gate.
+    let Ok(property_id) = PropertyId::parse_enabled_for_all_content(&property) else {
         return Ok(JsValue::from(false));
     };
+    let _ = &parser_context;
     let mut declaration = SourcePropertyDeclaration::default();
     let mut input = cssparser::ParserInput::new(&value);
     let mut parser = cssparser::Parser::new(&mut input);
