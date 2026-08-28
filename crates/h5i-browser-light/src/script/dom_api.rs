@@ -715,10 +715,10 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 fn hint_whole_document_restyle(doc: &mut blitz_dom::BaseDocument) {
     use style::invalidation::element::restyle_hints::RestyleHint;
     let root_id = doc.root_element().id;
-    if let Some(node) = doc.get_node_mut(root_id) {
-        if let Some(mut data) = node.stylo_element_data.get_mut() {
-            data.hint.insert(RestyleHint::restyle_subtree());
-        }
+    if let Some(node) = doc.get_node_mut(root_id)
+        && let Some(mut data) = node.stylo_element_data.get_mut()
+    {
+        data.hint.insert(RestyleHint::restyle_subtree());
     }
 }
 
@@ -2037,7 +2037,7 @@ fn assemble_inner_text(segments: Vec<TextSegment>) -> String {
                             result.pop();
                         }
                     }
-                    result.extend(std::iter::repeat('\n').take(breaks));
+                    result.extend(std::iter::repeat_n('\n', breaks));
                 } else if result.is_empty() && !preserved {
                     piece = piece.trim_start_matches(' ').to_string();
                 }
