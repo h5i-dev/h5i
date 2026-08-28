@@ -295,56 +295,34 @@ fn a_reflected_property_belongs_to_its_interface_and_not_to_every_element() {
 }
 
 #[test]
-fn an_unsupported_selector_is_not_reported_as_an_invalid_one() {
-    // `:has()` does not parse here — stylo's servo selector parser answers
-    // `parse_has() -> false` and it is hardcoded — and throwing is right: an
-    // unsupported pseudo-class makes a selector invalid, and a browser without
-    // `:has()` throws too.
-    //
-    // The sentence was the wrong part. "`.x:has(.y)` is not a valid selector"
-    // is false, and it sends whoever reads it looking for a typo that is not
-    // there. A selector this engine merely lacks says so.
-    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
-    let message = script
-        .eval_value(
-            "(() => { try { document.querySelector('.x:has(.y)'); return 'accepted' } \
-             catch (e) { return e.message } })()",
-        )
-        .unwrap();
-    assert!(
-        message.contains(":has()") && message.contains("does not support"),
-        "names the missing feature: {message}"
+fn has_selectors_parse_and_match() {
+    // This test used to pin the refusal: stylo's servo parser hardcoded
+    // `parse_has() -> false`, so `:has()` threw with a message naming the
+    // missing feature. The vendored one-bool patch (vendor/stylo) turns the
+    // parser on, and the matching machinery underneath is the code Gecko
+    // ships — which is the bet this asserts: not merely "no longer throws",
+    // but the right elements come back.
+    let (_page, mut script) = page_and_script(
+        "<html><body>\
+           <div id=\"a\"><span class=\"flag\">x</span></div>\
+           <div id=\"b\"><span>y</span></div>\
+         </body></html>",
     );
-    assert!(
-        !message.contains("is not a valid selector"),
-        "and does not call a valid selector invalid: {message}"
+    assert_eq!(
+        script
+            .eval_value(
+                "[...document.querySelectorAll('div:has(.flag)')].map(e => e.id).join(',')",
+            )
+            .unwrap(),
+        "a",
+        ":has must match the container that has the flag and not the one that lacks it"
     );
-
-    // Every shape of what precedes `:has`, because the first version of this
-    // guard excluded word characters before the colon — which is exactly what a
-    // tag or class name is. `.row:has(.y)` was told it was malformed.
-    for selector in [".w:has(.y)", "div:has(.y)", ".row:has(.y)", "a:has(img)"] {
-        let asked = format!(
-            "(() => {{ try {{ document.querySelector('{selector}'); return 'accepted' }} \
-             catch (e) {{ return e.message }} }})()"
-        );
-        let said = script.eval_value(&asked).unwrap();
-        assert!(
-            said.contains("does not support"),
-            "{selector} names the missing feature: {said}"
-        );
-    }
-
-    // A selector that really is malformed still gets the plain answer.
-    let broken = script
-        .eval_value(
-            "(() => { try { document.querySelector('!!!'); return 'accepted' } \
-             catch (e) { return e.message } })()",
-        )
-        .unwrap();
-    assert!(
-        broken.contains("is not a valid selector"),
-        "a typo is still a typo: {broken}"
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('div:has(> .flag)').id")
+            .unwrap(),
+        "a",
+        "the relative-combinator form must work too"
     );
 }
 
@@ -502,14 +480,18 @@ fn reflection_carries_the_type_the_spec_gives_it() {
     assert_eq!(script.eval_value("String(td.colSpan)").unwrap(), "1");
     assert_eq!(script.eval_value("td.getAttribute('colspan')").unwrap(), "1");
 
-    // ARIA is enumerated too, with three states: keyword, invalid, absent.
+    // ARIA is enumerated too, and the states are *per attribute* rather than
+    // one rule: an invalid `aria-checked` answers null (there is no
+    // checkedness to report), and a missing `aria-sort` answers its own
+    // missing-value default, "none". This assertion used to pin the uniform
+    // `invalid -> ""` rule, which was the bug the per-attribute table fixed.
     script.eval("d.setAttribute('aria-checked', 'MIXED')").expect("runs");
     assert_eq!(script.eval_value("d.ariaChecked").unwrap(), "mixed");
     script.eval("d.setAttribute('aria-checked', 'bogus')").expect("runs");
-    assert_eq!(script.eval_value("d.ariaChecked").unwrap(), "");
+    assert_eq!(script.eval_value("String(d.ariaChecked)").unwrap(), "null");
     assert_eq!(
         script.eval_value("String(document.createElement('div').ariaSort)").unwrap(),
-        "null"
+        "none"
     );
 }
 
@@ -2560,6 +2542,138 @@ fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) 
     );
     let page = factory.from_html(&html, &url::Url::parse("https://example.test/").unwrap());
     (page.snapshot().render(), page.console())
+}
+
+#[test]
+fn create_event_follows_the_legacy_table_in_both_directions() {
+    // Both directions matter: an alias constructs the *mapped* interface, and
+    // a name off the table throws NotSupportedError even when the interface
+    // exists — createEvent is a legacy door the spec stopped widening.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const out = [];
+             const ev = document.createEvent("MouseEvents");
+             out.push(Object.getPrototypeOf(ev) === MouseEvent.prototype);
+             out.push(ev.type === "" && ev.bubbles === false && ev.eventPhase === 0);
+             ev.initEvent("click", true, true);
+             out.push(ev.type + ":" + ev.bubbles);
+             out.push(Object.getPrototypeOf(document.createEvent("htmlevents")) === Event.prototype);
+             for (const bad of ["foo", "CloseEvent", "Eventss"]) {
+               try { document.createEvent(bad); out.push("allowed:" + bad); }
+               catch (e) { out.push(e.name); }
+             }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|true|click:true|true|NotSupportedError|NotSupportedError|NotSupportedError"),
+        "createEvent table is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_doctype_and_a_processing_instruction_can_be_made_and_read() {
+    let (text, console) = scripted_text(
+        r#"<script>
+             const out = [];
+             const dt = document.implementation.createDocumentType("svg", "pub", "sys");
+             out.push(dt.nodeType, dt.name, dt.publicId, dt.systemId, dt instanceof DocumentType);
+             try { document.implementation.createDocumentType("", "", ""); out.push("empty-ok"); }
+             catch (e) { out.push(e.name); }
+             const pi = document.createProcessingInstruction("xml-stylesheet", "href='a.css'");
+             out.push(pi.nodeType, pi.target, pi.data);
+             try { document.createProcessingInstruction("t", "a?>b"); out.push("data-ok"); }
+             catch (e) { out.push(e.name); }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("10|svg|pub|sys|true|InvalidCharacterError|7|xml-stylesheet|href='a.css'|InvalidCharacterError"),
+        "doctype/PI construction is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn the_namespace_trio_answers_what_an_html_document_answers() {
+    let (text, console) = scripted_text(
+        r#"<div id="d">x</div>
+           <script>
+             const d = document.getElementById("d");
+             const XHTML = "http://www.w3.org/1999/xhtml";
+             const out = [];
+             out.push(d.lookupNamespaceURI(null) === XHTML);
+             out.push(d.lookupNamespaceURI("xml") === "http://www.w3.org/XML/1998/namespace");
+             out.push(String(d.lookupNamespaceURI("nope")));
+             out.push(String(d.lookupPrefix(XHTML)));
+             out.push(d.isDefaultNamespace(XHTML), d.isDefaultNamespace(null));
+             const frag = document.createDocumentFragment();
+             out.push(String(frag.lookupNamespaceURI(null)), frag.isDefaultNamespace(null));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|true|null|null|true|false|null|true"),
+        "namespace lookups are wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn create_element_ns_carries_its_namespace_on_the_wrapper() {
+    // The one tree is an HTML tree, so the namespace lives on the JS wrapper —
+    // which is cached by id, so the facts hold for the node's lifetime. An SVG
+    // circle reports lowercase, its namespace, and its prefix, none of which
+    // the HTML-parsed name underneath can say.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const SVG = "http://www.w3.org/2000/svg";
+             const c = document.createElementNS(SVG, "circle");
+             const p = document.createElementNS(SVG, "s:rect");
+             const h = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+             document.getElementById("out").textContent = [
+               c.namespaceURI === SVG, c.tagName, c.localName, String(c.prefix),
+               p.prefix, p.tagName,
+               h.tagName,
+             ].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|circle|circle|null|s|s:rect|DIV"),
+        "createElementNS drops its namespace:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn aria_enumerated_attributes_follow_the_per_attribute_table() {
+    // The first cut declared all twenty as `{missing: null, invalid: ""}`, and
+    // that uniformity was the bug: the states are per attribute. ariaHidden's
+    // missing value *means* not-hidden ("false"); ariaChecked's means there is
+    // no checkedness to report (null); ariaCurrent preserves any claim of
+    // currency as "true".
+    let (text, console) = scripted_text(
+        r#"<div id="d">x</div>
+           <script>
+             const d = document.getElementById("d");
+             const out = [];
+             out.push(String(d.ariaHidden));                   // missing -> "false"
+             out.push(String(d.ariaChecked));                  // missing -> null
+             d.setAttribute("aria-hidden", "");
+             out.push(d.ariaHidden);                           // "" -> "false"
+             d.setAttribute("aria-checked", "");
+             out.push(String(d.ariaChecked));                  // "" -> null
+             d.setAttribute("aria-current", "bogus");
+             out.push(d.ariaCurrent);                          // invalid -> "true"
+             d.setAttribute("aria-checked", "MIXED");
+             out.push(d.ariaChecked);                          // canonical case
+             d.ariaHidden = null;                              // null removes
+             out.push(d.hasAttribute("aria-hidden"));
+             out.push(String(d.ariaAutoComplete));             // missing -> "none"
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("false|null|false|null|true|mixed|false|none"),
+        "the ARIA enumerated table is wrong:\n{text}\nconsole: {console:?}"
+    );
 }
 
 #[test]

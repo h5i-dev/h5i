@@ -870,6 +870,54 @@
       }
       return copy;
     }
+    /// The namespace lookup trio, with the answers an HTML document gives.
+    ///
+    /// This engine parses HTML and nothing else, and in an HTML parse every
+    /// element lands in the XHTML namespace with no prefix, and `xmlns`
+    /// attributes are ordinary attributes with no namespace of their own —
+    /// which the spec's locate-a-namespace algorithm therefore ignores. So
+    /// the walk collapses to a table: the two reserved prefixes, the default
+    /// namespace for elements, null for everything else. Not a stub — this is
+    /// what the full algorithm computes over the only tree shape this engine
+    /// can hold.
+    lookupNamespaceURI(prefix) {
+      const p = prefix === undefined || prefix === null || prefix === "" ? null : String(prefix);
+      if (p === "xml") return "http://www.w3.org/XML/1998/namespace";
+      if (p === "xmlns") return "http://www.w3.org/2000/xmlns/";
+      if (this.nodeType === 1) {
+        if (this._nsuri !== undefined) {
+          // A createElementNS element knows its own namespace and prefix.
+          if (p === (this._prefix ?? null)) return this._nsuri;
+        } else if (p === null) {
+          return "http://www.w3.org/1999/xhtml";
+        }
+        const parent = this.parentNode;
+        return parent && parent.nodeType === 1 ? parent.lookupNamespaceURI(p) : null;
+      }
+      if (this.nodeType === 9) {
+        return p === null ? "http://www.w3.org/1999/xhtml" : null;
+      }
+      // Fragments, doctypes, PIs: no element to inherit from.
+      if (this.nodeType === 11 || this.nodeType === 10 || this.nodeType === 7) return null;
+      const parent = this.parentNode;
+      return parent ? parent.lookupNamespaceURI(p) : null;
+    }
+    lookupPrefix(namespace) {
+      if (namespace === null || namespace === undefined || namespace === "") return null;
+      const ns = String(namespace);
+      if (this.nodeType === 1) {
+        const mine = this._nsuri !== undefined ? this._nsuri : "http://www.w3.org/1999/xhtml";
+        if (mine === ns && this._prefix) return this._prefix;
+        const parent = this.parentNode;
+        return parent && parent.nodeType === 1 ? parent.lookupPrefix(ns) : null;
+      }
+      return null;
+    }
+    isDefaultNamespace(namespace) {
+      const ns = namespace === undefined || namespace === "" ? null : namespace;
+      return this.lookupNamespaceURI(null) === ns;
+    }
+
     get nextSibling() {
       const kids = this.parentNode ? this.parentNode.childNodes : [];
       const at = kids.findIndex((n) => n._id === this._id);
@@ -981,6 +1029,13 @@
   // until the fragment is inserted, and then they move.
   class DocumentFragment {
     constructor() { this._children = []; this.nodeType = 11; }
+    // The namespace trio: a fragment has no element to inherit from, so every
+    // branch of the spec's algorithm lands on null. Spelled here because this
+    // class does not extend Node and would otherwise answer with a TypeError,
+    // which is a different (and wrong) fact.
+    lookupNamespaceURI() { return null; }
+    lookupPrefix() { return null; }
+    isDefaultNamespace(ns) { return ns === null || ns === undefined || ns === ""; }
     get childNodes() { return this._children.slice(); }
     get firstChild() { return this._children[0] || null; }
     appendChild(child) { this._children.push(child); return child; }
@@ -1022,6 +1077,53 @@
       if (deep) for (const kid of this._children) copy.appendChild(kid.cloneNode(true));
       return copy;
     }
+  }
+
+  /// A doctype node: three strings, `nodeType` 10, and nothing else.
+  ///
+  /// Detached-only, like a created PI: it is not backed by a node in the one
+  /// real tree, because blitz holds the document's own doctype and a second
+  /// one has nowhere to go. What a page does with these is *inspect* them —
+  /// `createDocumentType` then reading name/publicId/systemId back — and the
+  /// insertion path says no honestly rather than pretending.
+  class DocumentTypeNode {
+    constructor(name, publicId, systemId) {
+      this.name = name;
+      this.publicId = publicId;
+      this.systemId = systemId;
+    }
+    get nodeType() { return 10; }
+    get nodeName() { return this.name; }
+    get ownerDocument() { return document; }
+    get parentNode() { return null; }
+    get childNodes() { return []; }
+    get textContent() { return null; }
+    // The namespace trio answers null for a doctype in every branch, which is
+    // the spec's own table.
+    lookupNamespaceURI() { return null; }
+    lookupPrefix() { return null; }
+    isDefaultNamespace(ns) { return ns === null || ns === ""; }
+  }
+
+  /// A processing instruction, which this engine's parser never produces —
+  /// blitz reads `<?pi?>` as a comment — but pages construct to inspect, and
+  /// the demand list counted 195 asks for exactly that.
+  class ProcessingInstructionNode {
+    constructor(target, data) {
+      this.target = target;
+      this.data = data;
+    }
+    get nodeType() { return 7; }
+    get nodeName() { return this.target; }
+    get textContent() { return this.data; }
+    set textContent(v) { this.data = String(v); }
+    get length() { return this.data.length; }
+    get ownerDocument() { return document; }
+    get parentNode() { return null; }
+    get childNodes() { return []; }
+    lookupNamespaceURI() { return null; }
+    lookupPrefix() { return null; }
+    isDefaultNamespace(ns) { return ns === null || ns === ""; }
   }
 
   /// The `CharacterData` interface, shared by text and comment nodes.
@@ -1085,7 +1187,14 @@
   }
 
   class Element extends Node {
-    get tagName() { return api.tagName(this._id); }
+    get tagName() {
+      // Uppercasing is an HTML-namespace privilege: `createElementNS`'s SVG
+      // circle reports `circle`, and its prefixed name keeps the prefix.
+      if (this._nsuri !== undefined && this._nsuri !== "http://www.w3.org/1999/xhtml") {
+        return this._prefix ? `${this._prefix}:${this._localName}` : this._localName;
+      }
+      return api.tagName(this._id);
+    }
     get nodeName() { return this.tagName; }
     get children() { return collection(this.childNodes.filter((n) => n.nodeType === 1), "HTMLCollection"); }
 
@@ -1195,7 +1304,10 @@
     // HTML, always: this engine parses HTML and nothing else. `document` has no
     // such property in the DOM at all, which is why it is *defined as undefined*
     // there rather than left to report itself as a gap.
-    get namespaceURI() { return "http://www.w3.org/1999/xhtml"; }
+    get namespaceURI() {
+      // Stored by `createElementNS`; everything the parser made is HTML.
+      return this._nsuri !== undefined ? this._nsuri : "http://www.w3.org/1999/xhtml";
+    }
 
     // What a reset button restores, and what `dirty` checks compare against.
     // The attribute for an input, the original text for a textarea — the two
@@ -1273,14 +1385,17 @@
 
     // Lowercase, always: this engine parses HTML, where the local name is
     // case-insensitive and canonically lower, while `tagName` is upper.
-    get localName() { return this.tagName.toLowerCase(); }
+    get localName() {
+      if (this._localName !== undefined) return this._localName;
+      return this.tagName.toLowerCase();
+    }
     /// Always null, and that is the answer rather than a gap: this engine
     /// parses HTML and nothing else (`document.contentType` says so), and every
     /// element in an HTML document is in the HTML namespace with no prefix.
     /// It was being *reported* as missing, which is the reverse of the mistake
     /// the reporting proxy exists to catch — naming as absent something no
     /// browser would answer differently.
-    get prefix() { return null; }
+    get prefix() { return this._prefix !== undefined ? this._prefix : null; }
 
     get contentEditable() {
       const raw = api.getAttr(this._id, "contenteditable");
@@ -2011,7 +2126,8 @@
             // enumerated attribute whose missing-value default is `null` is
             // nullable too (`crossOrigin`), where `undefined` also means "no
             // value" rather than the string "undefined".
-            const nullableEnum = type === "enumerated" && options.missing === null;
+            const nullableEnum =
+              type === "enumerated" && (options.nullable || options.missing === null);
             if (value === null && type === "nullable") this.removeAttribute(content);
             else if (nullableEnum && (value === null || value === undefined)) {
               this.removeAttribute(content);
@@ -2116,37 +2232,72 @@
   }
   reflect(Element.prototype, "role", "role", "nullable");
 
-  // The ARIA properties that are *enumerated* rather than free strings. Their
-  // getters answer a canonical keyword and reject anything else, exactly as
-  // `dir` does — declaring them as plain strings passed every hostile value
-  // straight back and cost roughly six hundred subtests in one file.
+  // The ARIA properties that are *enumerated* rather than free strings —
+  // with the spec's own table, not a uniform rule.
   //
-  // `missing: null` on purpose: an absent ARIA attribute reflects as null, and
-  // an invalid one as the empty string. Three states, not two.
-  for (const [name, keywords] of [
-    ["ariaAutoComplete", ["inline", "list", "both", "none"]],
-    ["ariaChecked", ["true", "false", "mixed", "undefined"]],
-    ["ariaCurrent", ["page", "step", "location", "date", "time", "true", "false"]],
-    ["ariaDisabled", ["true", "false"]],
-    ["ariaExpanded", ["true", "false", "undefined"]],
-    ["ariaHasPopup", ["false", "true", "menu", "listbox", "tree", "grid", "dialog"]],
-    ["ariaHidden", ["true", "false", "undefined"]],
-    ["ariaInvalid", ["grammar", "false", "spelling", "true"]],
-    ["ariaLive", ["assertive", "off", "polite"]],
-    ["ariaModal", ["true", "false"]],
-    ["ariaMultiLine", ["true", "false"]],
-    ["ariaMultiSelectable", ["true", "false"]],
-    ["ariaOrientation", ["horizontal", "vertical", "undefined"]],
-    ["ariaPressed", ["true", "false", "mixed", "undefined"]],
-    ["ariaReadOnly", ["true", "false"]],
-    ["ariaRequired", ["true", "false"]],
-    ["ariaSelected", ["true", "false", "undefined"]],
-    ["ariaSort", ["ascending", "descending", "none", "other"]],
-    ["ariaAtomic", ["true", "false"]],
-    ["ariaBusy", ["true", "false"]],
+  // The first cut of this declared every one as `{missing: null, invalid: ""}`
+  // and that uniformity was the bug: the states are per attribute. Three
+  // shapes actually occur, and the table below is transcribed from the
+  // reflection spec (WPT `html/dom/elements-aria-enumerated.js` is the same
+  // table in test form):
+  //
+  //   * `ariaHidden`-like: missing and invalid both answer "false" — absence
+  //     of the attribute *means* not-hidden, so null would be a lie.
+  //   * `ariaChecked`-like: missing, invalid and the bare `aria-checked=""`
+  //     all answer null — there is no checkedness to report.
+  //   * `ariaCurrent`: invalid answers "true", because writing *anything*
+  //     there is a claim of currency the spec preserves.
+  //
+  // Every one is nullable on the way in — assigning null removes the
+  // attribute — including the ones whose *reading* of a missing attribute is
+  // "false" rather than null, which is why `nullable: true` is its own flag
+  // rather than inferred from the missing value.
+  const EMPTY_IS_FALSE = { "": "false" };
+  const EMPTY_IS_NULL = { "": null };
+  for (const [name, keywords, options] of [
+    ["ariaAtomic", ["true", "false"],
+      { missing: null, invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaAutoComplete", ["inline", "list", "both", "none"],
+      { missing: "none", invalid: "none" }],
+    ["ariaBusy", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaChecked", ["true", "false", "mixed"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaCurrent", ["page", "step", "location", "date", "time", "true", "false"],
+      { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE }],
+    ["ariaDisabled", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaExpanded", ["true", "false"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaHasPopup", ["true", "false", "menu", "dialog", "listbox", "tree", "grid"],
+      { missing: null, invalid: "false" }],
+    ["ariaHidden", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaInvalid", ["true", "false", "spelling", "grammar"],
+      { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE }],
+    ["ariaLive", ["polite", "assertive", "off"],
+      { missing: "off", invalid: "off" }],
+    ["ariaModal", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaMultiLine", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaMultiSelectable", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaOrientation", ["horizontal", "vertical"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaPressed", ["true", "false", "mixed"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaReadOnly", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaRequired", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaSelected", ["true", "false"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaSort", ["ascending", "descending", "other", "none"],
+      { missing: "none", invalid: "none" }],
   ]) {
     reflect(Element.prototype, name, "aria-" + name.slice(4).toLowerCase(),
-      "enumerated", { keywords, missing: null, invalid: "" });
+      "enumerated", { keywords, nullable: true, ...options });
   }
 
   // ── per-tag interfaces ───────────────────────────────────────────────────
@@ -3951,34 +4102,17 @@
   /// `querySelector("!!!")` throws `SyntaxError` in a browser and returned
   /// `null` here — the same answer as "no such element", so a page with a typo
   /// took its not-found branch and never learned why.
-  /// The selectors this engine cannot parse but which are not the page's fault.
   ///
-  /// `:has()` is the whole list today. Stylo's servo selector parser answers
-  /// `parse_has() -> false` and it is hardcoded, not a preference, so `:has()`
-  /// has never parsed here — in a stylesheet or in `querySelector`. That is a
-  /// missing feature, and the throw below is right either way: an unsupported
-  /// pseudo-class makes a selector invalid, and a browser without `:has()`
-  /// throws too.
-  ///
-  /// What was wrong was the sentence. "`.x:has(.y)` is not a valid selector"
-  /// is false — it is a valid selector, and it is 2026. Someone reading that
-  /// goes looking for a typo they will not find, which is the most expensive
-  /// thing a diagnostic can do. Naming it as unsupported also files it through
-  /// `api.unsupported`, so it appears in the counted gaps beside every other
-  /// feature this engine does not have rather than hiding inside a parse error.
-  const UNSUPPORTED_SELECTOR = /:has\s*\(/i;
-
+  /// There used to be a second branch here for `:has()`, throwing with a
+  /// message that named it as this engine's limitation rather than the page's
+  /// mistake — stylo's servo parser hardcoded `parse_has() -> false`. The
+  /// vendored one-bool patch (`vendor/stylo`, §B22) turned the parser on, the
+  /// matching underneath is the code Gecko ships, and the corpus's
+  /// `selector :has()` entry retires with the branch. A parse failure here is
+  /// once again what it says: a selector no browser would accept.
   function checkSelector(selector) {
     const text = String(selector);
     if (!api.validSelector(text)) {
-      if (UNSUPPORTED_SELECTOR.test(text)) {
-        api.unsupported("selector :has()");
-        throw new DOMException(
-          `${text} uses :has(), which this engine does not support yet. ` +
-            "It is a valid selector; the engine is the limitation.",
-          "SyntaxError",
-        );
-      }
       throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
     }
     return text;
@@ -4140,6 +4274,47 @@
     }
   }
 
+  // `initEvent`, which is how pre-constructor code configures an event —
+  // and what `document.createEvent` hands back is useless without it.
+  Object.assign(Event.prototype, {
+    initEvent(type, bubbles, cancelable) {
+      this.type = String(type);
+      this.bubbles = !!bubbles;
+      this.cancelable = !!cancelable;
+    },
+  });
+  Object.assign(CustomEvent.prototype, {
+    initCustomEvent(type, bubbles, cancelable, detail) {
+      Event.prototype.initEvent.call(this, type, bubbles, cancelable);
+      this.detail = detail ?? null;
+    },
+  });
+  Object.assign(UIEvent.prototype, {
+    initUIEvent(type, bubbles, cancelable, view, detail) {
+      Event.prototype.initEvent.call(this, type, bubbles, cancelable);
+      void view;
+      this.detail = detail || 0;
+    },
+  });
+  Object.assign(MouseEvent.prototype, {
+    initMouseEvent(type, bubbles, cancelable, view, detail, sx, sy, cx, cy,
+      ctrl, alt, shift, meta, button, related) {
+      UIEvent.prototype.initUIEvent.call(this, type, bubbles, cancelable, view, detail);
+      this.screenX = sx || 0; this.screenY = sy || 0;
+      this.clientX = cx || 0; this.clientY = cy || 0;
+      this.ctrlKey = !!ctrl; this.altKey = !!alt;
+      this.shiftKey = !!shift; this.metaKey = !!meta;
+      this.button = button || 0; this.relatedTarget = related ?? null;
+    },
+  });
+  Object.assign(KeyboardEvent.prototype, {
+    initKeyboardEvent(type, bubbles, cancelable, view, key) {
+      Event.prototype.initEvent.call(this, type, bubbles, cancelable);
+      void view;
+      if (key !== undefined) this.key = String(key);
+    },
+  });
+
   // The rest of the event types a page constructs by name.
   //
   // Each of these was a `ReferenceError` — `new SubmitEvent("submit", …)` did
@@ -4258,6 +4433,42 @@
       this.pseudoElement = i.pseudoElement || "";
     }
   }
+  // The interfaces that exist mostly *because* `document.createEvent` names
+  // them. Nobody constructs a DeviceMotionEvent by hand in 2026, but the
+  // createEvent alias table is spec text and every row of it is tested.
+  class BeforeUnloadEvent extends Event {
+    constructor(type, init) { super(type, init); this.returnValue = ""; }
+  }
+  class DragEvent extends MouseEvent {
+    constructor(type, init) { super(type, init); this.dataTransfer = (init && init.dataTransfer) ?? null; }
+  }
+  class TextEvent extends UIEvent {
+    constructor(type, init) { super(type, init); this.data = (init && init.data) || ""; }
+    initTextEvent(type, bubbles, cancelable, view, data) {
+      Event.prototype.initEvent.call(this, type, bubbles, cancelable);
+      void view;
+      this.data = data === undefined ? "" : String(data);
+    }
+  }
+  class DeviceMotionEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.acceleration = i.acceleration ?? null;
+      this.accelerationIncludingGravity = i.accelerationIncludingGravity ?? null;
+      this.rotationRate = i.rotationRate ?? null;
+      this.interval = i.interval ?? 0;
+    }
+  }
+  class DeviceOrientationEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.alpha = i.alpha ?? null; this.beta = i.beta ?? null;
+      this.gamma = i.gamma ?? null; this.absolute = !!i.absolute;
+    }
+  }
+
   class TransitionEvent extends Event {
     constructor(type, init) {
       super(type, init);
@@ -5626,9 +5837,19 @@
           "NamespaceError",
         );
       }
-      // The local name is what this engine's single element class is built on;
-      // the namespace is validated above and then, honestly, not carried.
-      return wrap(api.createElement(colon === -1 ? name : name.slice(colon + 1)));
+      // The wrapper carries what the tree cannot: this engine's one tree is
+      // an HTML tree, so the namespace, prefix and original-case local name
+      // live on the JS wrapper (wrappers are cached by id, so the expandos
+      // hold for the node's lifetime). That is enough for everything a page
+      // reads back — `namespaceURI`, `prefix`, `localName`, a `tagName` that
+      // is *not* uppercased outside the HTML namespace — while layout keeps
+      // treating the element as the HTML-parsed name it stored.
+      const local = colon === -1 ? name : name.slice(colon + 1);
+      const wrapper = wrap(api.createElement(local));
+      wrapper._nsuri = ns;
+      wrapper._prefix = prefix;
+      wrapper._localName = local;
+      return wrapper;
     },
     // `document.write`, emulated where it can be and refused where it cannot.
     //
@@ -5711,14 +5932,55 @@
     // The pre-constructor way of making an event, still emitted by older
     // libraries and by anything compiled for old targets. The event is inert
     // until `initEvent` names it, which is exactly how the legacy API works.
+    /// `createEvent`, with the table the spec carries rather than a generic
+    /// Event for every name.
+    ///
+    /// Both directions of the table matter. An alias constructs the *mapped*
+    /// interface — `createEvent("MouseEvents")` has MouseEvent.prototype, and
+    /// the test asserts exactly that — and a name **off** the table throws
+    /// NotSupportedError even when the interface exists (`CloseEvent` is
+    /// constructible and still refused here, because createEvent is a legacy
+    /// door the spec deliberately stopped widening). Returning a plain Event
+    /// for everything got both directions wrong at once: 207 subtests in one
+    /// file, all of them table rows.
+    ///
+    /// Matched case-insensitively by ASCII lowercase, which is the spec's rule
+    /// and also why `"U\u0130Event"` must not match "uievent" — Unicode
+    /// case-folding would say it does.
     createEvent(kind) {
-      const event = new Event("", {});
-      event.initEvent = (type, bubbles, cancelable) => {
-        event.type = String(type);
-        event.bubbles = !!bubbles;
-        event.cancelable = !!cancelable;
+      const table = {
+        "beforeunloadevent": BeforeUnloadEvent,
+        "compositionevent": CompositionEvent,
+        "customevent": CustomEvent,
+        "devicemotionevent": DeviceMotionEvent,
+        "deviceorientationevent": DeviceOrientationEvent,
+        "dragevent": DragEvent,
+        "event": Event,
+        "events": Event,
+        "focusevent": FocusEvent,
+        "hashchangeevent": HashChangeEvent,
+        "htmlevents": Event,
+        "keyboardevent": KeyboardEvent,
+        "messageevent": MessageEvent,
+        "mouseevent": MouseEvent,
+        "mouseevents": MouseEvent,
+        "storageevent": StorageEvent,
+        "svgevents": Event,
+        "textevent": TextEvent,
+        "uievent": UIEvent,
+        "uievents": UIEvent,
       };
-      void kind;
+      const key = String(kind).replace(/[A-Z]/g, (c) => c.toLowerCase());
+      const Ctor = table[key];
+      if (!Ctor) {
+        throw new DOMException(
+          `createEvent(${String(kind)}) is not on the legacy table; construct the ` +
+            "event with `new` instead",
+          "NotSupportedError",
+        );
+      }
+      const event = new Ctor("", {});
+      event.type = "";
       return event;
     },
     elementFromPoint(x, y) { return wrap(api.elementFromPoint(Number(x), Number(y))); },
@@ -5732,6 +5994,22 @@
     },
     createTextNode(text) { return wrap(api.createText(String(text))); },
     createDocumentFragment() { return new DocumentFragment(); },
+    /// Validated twice, because the two rules guard different attacks: the
+    /// target must be a Name (`InvalidCharacterError`), and the data must not
+    /// contain `?>` — which would end the instruction early on serialisation
+    /// and turn the rest of the data into markup.
+    createProcessingInstruction(target, data) {
+      const name = String(target);
+      validateQualifiedName(name);
+      const text = String(data);
+      if (text.includes("?>")) {
+        throw new DOMException(
+          "the data of a processing instruction must not contain \"?>\"",
+          "InvalidCharacterError",
+        );
+      }
+      return new ProcessingInstructionNode(name, text);
+    },
     createComment(text) {
       const id = api.createComment(String(text));
       comments.add(id);
@@ -5857,6 +6135,13 @@
     get implementation() {
       return observed({
         hasFeature: () => true,
+        /// A doctype is three strings and a nodeType; refusing it was never a
+        /// capability question. Validated like any qualified name — the test
+        /// file is mostly a sweep of names that must be rejected.
+        createDocumentType: (name, publicId, systemId) => {
+          validateQualifiedName(String(name));
+          return new DocumentTypeNode(String(name), String(publicId), String(systemId));
+        },
         // The same shape `DOMParser` produces, which is what this is for: a
         // detached document to build markup in. It shares this engine's one
         // tree, so it is a subtree presented as a document rather than a second

@@ -8598,6 +8598,71 @@ moves what an agent can read and drive, which is what the task evidence asked
 for — it does not move what the excluded tests measure.
 
 
+## B22. One bool in a vendored stylo, and the mechanical clusters, 2026-08-28
+
+The 80% campaign's second front, on the branch after #569 merged. Gate:
+288,807 -> 290,137. Two kinds of work, and the first is one line long.
+
+### B22.1 `:has()`: parse was the only gate
+
+§B20's probe found selector invalidation working for descendants, siblings and
+`:not` — and `:has()` never matching. The cause sits in stylo 0.19's Servo
+selector parser: `parse_has()` is **hardcoded to `false`**. Not a preference,
+a constant; nothing outside a patch can turn it on.
+
+So `vendor/stylo` now exists: the crates.io tarball, byte-identical except for
+that one bool, pinned by `[patch.crates-io]` so Blitz's own stylo — the copy
+that parses stylesheets — is the same copy. The pattern is Obscura's
+taffy/cosmic-text one, the crate is 5.6MB, and `vendor/stylo/README-h5i.md`
+carries the exit condition: diff against the tarball on every bump, and drop
+the copy when upstream flips the bet.
+
+The bet was that the matching machinery underneath — the code Gecko ships —
+needed nothing. It held on every axis at once: `querySelector(':has()')`
+matches, the relative form (`:has(> .flag)`) matches, **stylesheet rules
+match, and invalidation works** — a class added by script restyles the
+`:has()` container. The corpus's `selector :has()` entry retires, and the
+refusal branch in `checkSelector` goes with it: a parse failure there is once
+again what it says, a selector no browser would accept.
+
+    css/selectors  2,115 -> 2,620
+
+### B22.2 The mechanical clusters: tables transcribed, not invented
+
+Everything else in the round is a spec table this engine had approximated:
+
+* **The ARIA enumerated table, per attribute.** The first cut (§B20) declared
+  all twenty as `{missing: null, invalid: ""}`, and the uniformity was the
+  bug: `ariaHidden`'s missing value *means* not-hidden ("false"),
+  `ariaChecked`'s means there is no checkedness to report (null), and
+  `ariaCurrent` preserves any claim of currency as "true". Transcribed from
+  the spec, with `nullable` as its own flag because several attributes remove
+  on null while reading a missing attribute as "false".
+  `html/dom`: 58,079 -> 59,078.
+* **`createEvent`, both directions of the table.** An alias constructs the
+  *mapped* interface — `createEvent("MouseEvents")` has MouseEvent.prototype —
+  and a name off the table throws NotSupportedError even when the interface
+  exists, because createEvent is a legacy door the spec stopped widening.
+  Returning a generic Event for every name got both directions wrong at once.
+  With it came the interfaces the table names (BeforeUnloadEvent, DragEvent,
+  TextEvent, the Device* pair) and the `init*Event` methods.
+* **Doctypes and processing instructions construct.** Three strings and a
+  nodeType each; refusing them was never a capability question. Both validate
+  their names, and a PI's data may not contain `?>` — which would end the
+  instruction early on serialisation and turn the rest into markup.
+* **The namespace trio** (`lookupNamespaceURI`, `lookupPrefix`,
+  `isDefaultNamespace`), with the answers an HTML document gives — the spec's
+  walk collapses to a table over the only tree shape this engine holds, which
+  is not a stub, it is what the full algorithm computes here.
+* **`createElementNS` carries its namespace on the wrapper.** The one tree is
+  an HTML tree, so `namespaceURI`, `prefix` and the original-case local name
+  live on the cached JS wrapper: an SVG `circle` reports `circle` (not
+  `CIRCLE`), its namespace, and its prefix, while layout keeps treating the
+  node as the HTML-parsed name underneath.
+
+    dom  2,672 -> 3,003
+
+
 ---
 
 # Formal verification: a Lean model beside the Rust
