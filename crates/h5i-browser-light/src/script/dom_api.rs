@@ -284,11 +284,54 @@ fn get_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     })
 }
 
+/// The qualified name an attribute lookup should actually use.
+///
+/// **DOM §4.9's rule, and the bug it was found by.** `getAttribute`,
+/// `hasAttribute`, `setAttribute` and `removeAttribute` all begin the same way:
+/// *if this element is in the HTML namespace and its node document is an HTML
+/// document, lowercase the qualified name.* Not doing it makes
+/// `getAttribute("accessKey")` answer `null` for an attribute the very next
+/// call to `getAttribute("accesskey")` returns — which is exactly what this
+/// engine did.
+///
+/// It is worth being precise about how much that cost, because the size is the
+/// argument for a *class* fix rather than a third patch. WPT's reflection
+/// harness passes the **IDL** name straight through to `setAttribute` and
+/// `getAttribute` (`html/dom/reflection.js`: `domName = idlName`), so every
+/// camelCase reflected attribute — `accessKey` on every element, `tabIndex`,
+/// `readOnly`, `maxLength`, `dateTime`, `useMap`, `cellPadding` and the rest —
+/// failed on every element in every one of the eleven `reflection-*.html`
+/// files. Together those files held about 15,000 unpassed subtests, the
+/// largest single cluster in the suite, and it was one missing `.to_lowercase()`
+/// on the read path.
+///
+/// **Namespace-conditional, and that is not pedantry.** The HTML parser
+/// case-corrects SVG attributes to their canonical camelCase, so an `<svg>`
+/// really does hold an attribute named `viewBox`, and lowercasing there would
+/// break `getAttribute("viewBox")` — trading one silent wrong answer for
+/// another. `set_attr` and `remove_attr` lowercased *unconditionally*, which
+/// was the same bug pointing the other way: `svg.setAttribute("viewBox", …)`
+/// stored `viewbox` and rendered nothing. Both are fixed here, in one place,
+/// because `guard_mutation` records what happens when a defect like this is
+/// fixed three times at three call sites instead.
+fn attr_name_for(doc: &blitz_dom::BaseDocument, id: usize, name: &str) -> String {
+    let html_element = doc
+        .get_node(id)
+        .and_then(|node| node.element_data())
+        .is_some_and(|el| el.name.ns == blitz_dom::ns!(html));
+    if html_element {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_string()
+    }
+}
+
 fn get_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let name = arg_string(args, 1, context)?;
     let host = host(context)?;
     let doc = host.dom.borrow();
+    let name = attr_name_for(&doc, id, &name);
     let found = doc.get_node(id).and_then(|node| {
         node.attrs().and_then(|attrs| {
             attrs
@@ -660,9 +703,12 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 
 fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
-    let name = arg_string(args, 1, context)?.to_lowercase();
+    let raw = arg_string(args, 1, context)?;
     let value = arg_string(args, 2, context)?;
     let host = host(context)?;
+    // Same rule as the read path, and it has to be the same rule: a writer that
+    // lowercases where the reader does not is how `accessKey` went missing.
+    let name = attr_name_for(&host.dom.borrow(), id, &raw);
     guard_mutation(&host, &format!("setting `{name}`"), || {
         let mut doc = host.dom.borrow_mut();
         let qual = blitz_dom::QualName::new(
@@ -679,8 +725,9 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 
 fn remove_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
-    let name = arg_string(args, 1, context)?.to_lowercase();
+    let raw = arg_string(args, 1, context)?;
     let host = host(context)?;
+    let name = attr_name_for(&host.dom.borrow(), id, &raw);
     {
         let mut doc = host.dom.borrow_mut();
         let qual = blitz_dom::QualName::new(

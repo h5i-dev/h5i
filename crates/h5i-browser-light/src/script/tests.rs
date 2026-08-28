@@ -2551,6 +2551,72 @@ fn a_bare_specifier_is_refused_and_the_page_is_told_why() {
 }
 
 #[test]
+fn an_attribute_is_found_by_the_name_the_idl_spells_it_with() {
+    // DOM §4.9: an element in the HTML namespace lowercases the qualified name
+    // before looking an attribute up. This engine lowercased on *write* and not
+    // on read, so `setAttribute("accessKey", v)` stored `accesskey` and
+    // `getAttribute("accessKey")` answered null for an attribute that was
+    // plainly there.
+    //
+    // It cost about 15,000 WPT subtests, which is the largest single cluster in
+    // the suite: the reflection harness passes the IDL name straight through
+    // (`domName = idlName`), so every camelCase reflected attribute failed on
+    // every element in all eleven `reflection-*.html` files.
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p><script>
+             const e = document.createElement("picture");
+             e.setAttribute("accessKey", "7");
+             const answers = [
+               e.getAttribute("accessKey"),
+               e.getAttribute("accesskey"),
+               String(e.hasAttribute("accessKey")),
+               e.attributes[0].name,
+             ];
+             document.getElementById("out").textContent = answers.join("|");
+           </script></body></html>"#,
+        &url::Url::parse("https://example.test/").unwrap(),
+    );
+    let text = page.snapshot().render();
+    assert!(
+        text.contains("7|7|true|accesskey"),
+        "read and write disagree about case:\n{text}\nconsole: {:?}",
+        page.console()
+    );
+}
+
+#[test]
+fn an_svg_attribute_keeps_the_case_the_parser_gave_it() {
+    // The other half, and the reason the fix is namespace-conditional rather
+    // than a blanket `to_lowercase`. The HTML parser case-corrects SVG
+    // attributes, so an `<svg>` really does hold one named `viewBox` —
+    // lowercasing there would trade one silent wrong answer for another.
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let page = factory.from_html(
+        r#"<html><body><svg id="s" viewBox="0 0 10 10"></svg><p id="out">before</p><script>
+             const s = document.getElementById("s");
+             s.setAttribute("preserveAspectRatio", "none");
+             document.getElementById("out").textContent = [
+               s.getAttribute("viewBox"),
+               String(s.getAttribute("viewbox")),
+               s.getAttribute("preserveAspectRatio"),
+             ].join("|");
+           </script></body></html>"#,
+        &url::Url::parse("https://example.test/").unwrap(),
+    );
+    let text = page.snapshot().render();
+    assert!(
+        text.contains("0 0 10 10|null|none"),
+        "SVG attribute case was not preserved:\n{text}\nconsole: {:?}",
+        page.console()
+    );
+}
+
+#[test]
 fn an_import_map_resolves_a_bare_specifier_the_page_named() {
     // The other half of the test above, and the distinction the whole feature
     // rests on: the refusal is about the *engine* choosing a destination. With

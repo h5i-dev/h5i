@@ -1,11 +1,11 @@
 {
  "note": "Committed floor for the WPT gate. Raise with wpt/check.py --write.",
- "total": 273796,
+ "total": 284655,
  "per_dir": {
-  "css_cssom": 2100,
-  "dom": 1995,
+  "css_cssom": 2109,
+  "dom": 1998,
   "domparsing": 172,
   "encoding": 225785,
-  "html_dom": 43744
+  "html_dom": 54591
  }
 }
