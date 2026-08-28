@@ -223,13 +223,70 @@
 
   const pendingDefinitions = new Map();
 
+  /// Whether a string is a valid custom element name, per HTML §4.13.
+  ///
+  /// Eight clauses, of which this engine enforced one (the dash). The rest
+  /// matter for the same reason the dash does: the name space is shared with
+  /// the parser, and a name a browser refuses must be refused here or a page
+  /// gets a component in one engine and an unknown element in the other.
+  ///
+  /// The reserved list is the awkward part and is not guessable: they are
+  /// hyphenated names SVG and MathML already own, so they look like valid
+  /// custom element names and are not.
+  const RESERVED_ELEMENT_NAMES = new Set([
+    "annotation-xml", "color-profile", "font-face", "font-face-src",
+    "font-face-uri", "font-face-format", "font-face-name", "missing-glyph",
+  ]);
+
+  /// The characters a name may hold, after the first.
+  ///
+  /// **This is the current rule, not the one that is in most write-ups.** The
+  /// old `PotentialCustomElementNameChar` production listed permitted ranges;
+  /// whatwg/html#7991 replaced it with "a valid element local name", which
+  /// *excludes* rather than includes — everything is allowed except NUL, the
+  /// four ASCII whitespace characters the parser uses, space, `/` and `>`.
+  ///
+  /// The difference is not academic. Implementing the superseded rule rejected
+  /// names like `a-\u0001`, which are legal now, and
+  /// `custom-elements/registries/valid-custom-element-names.html` builds
+  /// exactly those from a code-point sweep — so the old rule failed the file
+  /// in the *other* direction from the one it was written to fix.
+  const FORBIDDEN_IN_LOCAL_NAME = new Set([
+    0x00, 0x09, 0x0a, 0x0c, 0x0d, 0x20, 0x2f, 0x3e,
+  ]);
+
+  function isValidCustomElementName(name) {
+    if (typeof name !== "string" || name.length === 0) return false;
+    if (!name.includes("-")) return false;
+    if (RESERVED_ELEMENT_NAMES.has(name)) return false;
+    // Must begin with an ASCII lower alpha, which also settles which branch of
+    // "valid element local name" applies: the one that starts with a letter.
+    const first = name.codePointAt(0);
+    if (first < 0x61 || first > 0x7a) return false;
+    // Iterated by code *point*, so an astral character counts once and its
+    // surrogate halves are never tested on their own.
+    for (const character of name) {
+      const code = character.codePointAt(0);
+      if (code >= 0x41 && code <= 0x5a) return false;
+      if (FORBIDDEN_IN_LOCAL_NAME.has(code)) return false;
+    }
+    return true;
+  }
+
   const customElements = {
     define(name, ctor, options) {
-      const key = String(name).toLowerCase();
-      // The spec's rule, and worth keeping: a name without a dash could collide
-      // with an element the parser already knows.
-      if (!key.includes("-")) {
-        throw new SyntaxError(`custom element name \`${key}\` must contain a dash`);
+      // **The name is validated, not merely checked for a dash.** The dash rule
+      // is one clause of eight, and the others are not decoration: a name that
+      // is uppercase, or that starts with a digit, or that collides with one of
+      // the eight reserved SVG/MathML compound names, is a name a browser
+      // refuses and this engine used to accept — after which the page and the
+      // engine disagree about what `<font-face>` is.
+      const key = String(name);
+      if (!isValidCustomElementName(key)) {
+        throw new DOMException(
+          `\`${key}\` is not a valid custom element name`,
+          "SyntaxError",
+        );
       }
       if (definitions.has(key)) {
         throw new Error(`custom element \`${key}\` is already defined`);
@@ -272,7 +329,23 @@
       return null;
     },
     whenDefined(name) {
-      const key = String(name).toLowerCase();
+      const key = String(name);
+      // **An invalid name rejects rather than waiting forever.** `define` and
+      // `whenDefined` validate the same way, and a promise that never settles
+      // is the worst of the three possible answers: a caller cannot tell it
+      // from a component that has not loaded yet, so it waits out its own
+      // timeout instead of handling an error it could have handled at once.
+      //
+      // It is also how `valid-custom-element-names.html` hangs: every
+      // invalid-name case awaits this rejection, so a `whenDefined` that sits
+      // there takes the entire file with it — 5,900 subtests reporting nothing
+      // because one promise never settled.
+      if (!isValidCustomElementName(key)) {
+        return Promise.reject(new DOMException(
+          `\`${key}\` is not a valid custom element name`,
+          "SyntaxError",
+        ));
+      }
       const definition = definitions.get(key);
       if (definition) return Promise.resolve(definition.ctor);
       return new Promise((resolve) => {
@@ -1534,6 +1607,28 @@
   /// The interface table below is the right owner for the rest, and already
   /// declared all but three of them. `dir`, `slot` and `accessKey` stay because
   /// they really do belong to every element.
+  /// `[LegacyNullToEmptyString]`, which the legacy presentational colour
+  /// attributes carry: `body.bgColor = null` writes "" rather than "null".
+  /// Named once so the flag reads as the IDL annotation it is.
+  const NULL_IS_EMPTY = { nullAsEmpty: true };
+
+  /// `action` and `formAction` answer with the *document's* address when the
+  /// attribute is missing or empty, rather than with "". A form whose action
+  /// reads "" submits somewhere different from one that reads the page's URL,
+  /// so this is a behaviour difference and not a formatting one.
+  const DOCUMENT_URL_WHEN_EMPTY = { emptyIsDocumentUrl: true };
+
+  /// `crossOrigin` is a **nullable** enumerated attribute, and every element
+  /// that has it has the same one. It was spelled out on `<link>` and left as
+  /// a plain string on `<img>`, `<script>`, `<video>` and `<audio>`, so those
+  /// four reported the raw attribute where a browser reports `"anonymous"`,
+  /// and `null` where a browser reports `null` only by accident.
+  const CROSS_ORIGIN = ["crossOrigin", "crossorigin", "enumerated", {
+    keywords: ["anonymous", "use-credentials"],
+    missing: null,
+    invalid: "anonymous",
+  }];
+
   const REFLECTED_ATTRIBUTES = {
     dir: "dir",
     slot: "slot",
@@ -1568,7 +1663,19 @@
       const match = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(raw ?? "");
       if (!match) return null;
       const value = Number(match[1]);
-      return Number.isSafeInteger(value) ? value : null;
+      if (!Number.isSafeInteger(value)) return null;
+      // **`-0` is not a value a reflection may report.** `Number("-0")` is
+      // negative zero, and IDL longs are integers — there is one zero. It
+      // matters because testharness compares with `Object.is` semantics, so
+      // `-0` fails an `assert_equals(0)` that looks like it should pass, and
+      // `tabIndex` is reflected on *every* element: one `setAttribute("-0")`
+      // subtest per element in every `reflection-*.html` file.
+      if (value === 0) return 0;
+      // Out of the 32-bit range is "not a valid integer" for a reflection, not
+      // a large number: `marquee.hspace = 2147483648` reads back as the
+      // default in a browser and read back as 2147483648 here.
+      if (value < -2147483648 || value > 2147483647) return null;
+      return value;
     };
     const get = {
       string() { return api.getAttr(this._id, content) ?? ""; },
@@ -1584,6 +1691,17 @@
       ulong() {
         const value = parseInteger(api.getAttr(this._id, content));
         if (value === null || value < 0) return options.default ?? 0;
+        return value;
+      },
+      // A reflected `double`, for `<meter>` and `<progress>`. Not an integer
+      // parse: `min`, `max`, `low`, `high`, `optimum` and `value` are all
+      // floating point, and rounding them would make a half-full meter read as
+      // empty.
+      double() {
+        const raw = api.getAttr(this._id, content);
+        if (raw === null) return options.default ?? 0;
+        const value = Number(String(raw).trim());
+        if (!Number.isFinite(value)) return options.default ?? 0;
         return value;
       },
       enumerated() {
@@ -1605,6 +1723,14 @@
       },
       url() {
         const raw = api.getAttr(this._id, content);
+        // Some URL reflections answer with the *document's* address when the
+        // attribute is missing or empty, rather than with "": `form.action`
+        // and `input.formAction` are the ones that matter, and a form whose
+        // action reads "" submits somewhere different from one that reads the
+        // page's own URL.
+        if (options.emptyIsDocumentUrl && (raw === null || raw === "")) {
+          return currentAddress ?? "";
+        }
         if (raw === null) return "";
         // `currentAddress`, matching `_resolved` above: only Document carries a
         // `baseURI`, and resolving against `undefined` would hand back the raw
@@ -1631,12 +1757,29 @@
           if (type === "ulong" && written < 0) written = options.default ?? 0;
           this.setAttribute(content, String(written));
         }
-        : function (value) {
-          // `null` on a nullable reflection removes the attribute; everywhere
-          // else it stringifies, so `el.dir = null` really does write "null".
-          if (value === null && type === "nullable") this.removeAttribute(content);
-          else this.setAttribute(content, String(value));
-        };
+        : type === "double"
+          ? function (value) {
+            const number = Number(value);
+            this.setAttribute(content, String(Number.isFinite(number) ? number : 0));
+          }
+          : function (value) {
+            // `null` on a nullable reflection removes the attribute — and an
+            // enumerated attribute whose missing-value default is `null` is
+            // nullable too (`crossOrigin`), where `undefined` also means "no
+            // value" rather than the string "undefined".
+            const nullableEnum = type === "enumerated" && options.missing === null;
+            if (value === null && type === "nullable") this.removeAttribute(content);
+            else if (nullableEnum && (value === null || value === undefined)) {
+              this.removeAttribute(content);
+            }
+            // `[LegacyNullToEmptyString]`, which the legacy presentational
+            // attributes carry: `body.bgColor = null` writes "" and not the
+            // string "null". Marked per attribute rather than guessed at,
+            // because everywhere *else* `null` really does stringify —
+            // `el.dir = null` writes "null" and a browser agrees.
+            else if (value === null && options.nullAsEmpty) this.setAttribute(content, "");
+            else this.setAttribute(content, String(value));
+          };
     Object.defineProperty(proto, idl, { configurable: true, get, set });
   }
 
@@ -1658,7 +1801,16 @@
       const raw = api.getAttr(this._id, "tabindex");
       if (raw !== null) {
         const match = /^[ \t\n\f\r]*([+-]?[0-9]+)/.exec(raw);
-        if (match) return Number(match[1]);
+        if (match) {
+          const value = Number(match[1]);
+          // Its own parser, so it needs the same two rules `parseInteger` has:
+          // one zero, and nothing outside the 32-bit range. `tabindex="-0"`
+          // reported `-0`, which fails `assert_equals(0)` on every element in
+          // the suite.
+          if (value === 0) return 0;
+          if (Number.isSafeInteger(value)
+            && value >= -2147483648 && value <= 2147483647) return value;
+        }
       }
       if (!FOCUSABLE_BY_DEFAULT.has(this.tagName)) return -1;
       // A link is only focusable if it actually links somewhere.
@@ -1772,9 +1924,7 @@
         "iframe", "image", "json", "manifest", "object", "paintworklet",
         "report", "script", "serviceworker", "sharedworker", "style", "track",
         "video", "webidentity", "worker", "xslt"] }],
-      ["crossOrigin", "crossorigin", "enumerated", {
-        keywords: ["anonymous", "use-credentials"],
-        missing: null, invalid: "anonymous" }],
+      CROSS_ORIGIN,
       ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
         "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
         "origin", "strict-origin", "origin-when-cross-origin",
@@ -1785,8 +1935,12 @@
     ]],
     style: ["HTMLStyleElement", [["media", "media"]]],
     body: ["HTMLBodyElement", [
-      ["link", "link"], ["vLink", "vlink"], ["aLink", "alink"],
-      ["bgColor", "bgcolor"], ["background", "background"], ["text", "text"],
+      ["link", "link", "string", NULL_IS_EMPTY],
+      ["vLink", "vlink", "string", NULL_IS_EMPTY],
+      ["aLink", "alink", "string", NULL_IS_EMPTY],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
+      ["background", "background"],
+      ["text", "text", "string", NULL_IS_EMPTY],
     ]],
     a: ["HTMLAnchorElement", [
       ["target", "target"], ["download", "download"], ["ping", "ping"],
@@ -1809,7 +1963,7 @@
       ["width", "width", "ulong"], ["height", "height", "ulong"],
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
       ["decoding", "decoding"], ["loading", "loading"],
-      ["crossOrigin", "crossorigin"], ["referrerPolicy", "referrerpolicy"],
+      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy"],
     ]],
     embed: ["HTMLEmbedElement", [
       ["width", "width"], ["height", "height"], ["align", "align"],
@@ -1827,14 +1981,14 @@
       ["poster", "poster", "url"], ["preload", "preload"],
       ["autoplay", "autoplay", "bool"], ["loop", "loop", "bool"],
       ["controls", "controls", "bool"], ["defaultMuted", "muted", "bool"],
-      ["crossOrigin", "crossorigin"],
+      CROSS_ORIGIN,
       ["playsInline", "playsinline", "bool"],
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     audio: ["HTMLAudioElement", [
       ["preload", "preload"], ["autoplay", "autoplay", "bool"],
       ["loop", "loop", "bool"], ["controls", "controls", "bool"],
-      ["defaultMuted", "muted", "bool"], ["crossOrigin", "crossorigin"],
+      ["defaultMuted", "muted", "bool"], CROSS_ORIGIN,
     ]],
     source: ["HTMLSourceElement", [
       ["srcset", "srcset"], ["sizes", "sizes"], ["media", "media"],
@@ -1848,7 +2002,8 @@
     ]],
     map: ["HTMLMapElement", []],
     form: ["HTMLFormElement", [
-      ["acceptCharset", "accept-charset"], ["action", "action", "url"],
+      ["acceptCharset", "accept-charset"],
+      ["action", "action", "url", DOCUMENT_URL_WHEN_EMPTY],
       ["autocomplete", "autocomplete"], ["enctype", "enctype"],
       ["encoding", "enctype"], ["method", "method"],
       ["noValidate", "novalidate", "bool"], ["target", "target"], ["rel", "rel"],
@@ -1857,7 +2012,8 @@
     input: ["HTMLInputElement", [
       ["accept", "accept"], ["autocomplete", "autocomplete"],
       ["defaultChecked", "checked", "bool"], ["dirName", "dirname"],
-      ["formAction", "formaction", "url"], ["formEnctype", "formenctype"],
+      ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
+      ["formEnctype", "formenctype"],
       ["formMethod", "formmethod"], ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
       ["max", "max"], ["min", "min"], ["pattern", "pattern"],
@@ -1871,7 +2027,8 @@
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     button: ["HTMLButtonElement", [
-      ["formAction", "formaction", "url"], ["formEnctype", "formenctype"],
+      ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
+      ["formEnctype", "formenctype"],
       ["formMethod", "formmethod"], ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
     ]],
@@ -1898,7 +2055,7 @@
     table: ["HTMLTableElement", [
       ["align", "align"], ["border", "border"], ["frame", "frame"],
       ["rules", "rules"], ["summary", "summary"], ["width", "width"],
-      ["bgColor", "bgcolor"], ["cellPadding", "cellpadding"],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY], ["cellPadding", "cellpadding"],
       ["cellSpacing", "cellspacing"],
     ]],
     caption: ["HTMLTableCaptionElement", [["align", "align"]]],
@@ -1909,7 +2066,7 @@
     ]],
     tr: ["HTMLTableRowElement", [
       ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
-      ["vAlign", "valign"], ["bgColor", "bgcolor"],
+      ["vAlign", "valign"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     td: ["HTMLTableCellElement", [
       ["colSpan", "colspan", "ulong", { default: 1 }],
@@ -1917,7 +2074,8 @@
       ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
       ["align", "align"], ["axis", "axis"], ["height", "height"],
       ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
-      ["noWrap", "nowrap", "bool"], ["vAlign", "valign"], ["bgColor", "bgcolor"],
+      ["noWrap", "nowrap", "bool"], ["vAlign", "valign"],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     ol: ["HTMLOListElement", [
       ["reversed", "reversed", "bool"], ["compact", "compact", "bool"],
@@ -1932,10 +2090,10 @@
       ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
       ["defer", "defer", "bool"], ["integrity", "integrity"],
       ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
-      ["crossOrigin", "crossorigin"], ["referrerPolicy", "referrerpolicy"],
+      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy"],
     ]],
     marquee: ["HTMLMarqueeElement", [
-      ["behavior", "behavior"], ["bgColor", "bgcolor"],
+      ["behavior", "behavior"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
       ["direction", "direction"], ["height", "height"], ["width", "width"],
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
       ["trueSpeed", "truespeed", "bool"],
@@ -1975,6 +2133,54 @@
     data: ["HTMLDataElement", []],
     div: ["HTMLDivElement", [["align", "align"]]],
     h1: ["HTMLHeadingElement", [["align", "align"]]],
+    // Interfaces the table simply did not have. Each is reflected in full by
+    // `html/dom/reflection-*.html`, so a missing entry is not one attribute
+    // missing — it is every attribute of that element failing at once.
+    meter: ["HTMLMeterElement", [
+      ["value", "value", "double"], ["min", "min", "double"],
+      ["max", "max", "double", { default: 1 }],
+      ["low", "low", "double"], ["high", "high", "double"],
+      ["optimum", "optimum", "double"],
+    ]],
+    progress: ["HTMLProgressElement", [
+      ["max", "max", "double", { default: 1 }],
+    ]],
+    // `<iframe>` is not *loaded* here (§B6 refuses a second browsing context),
+    // and its IDL reflection is a different question: an attribute that
+    // reflects is testable and useful whether or not a document ever arrives
+    // in the frame.
+    iframe: ["HTMLIFrameElement", [
+      ["src", "src", "url"], ["srcdoc", "srcdoc"], ["name", "name"],
+      ["allow", "allow"], ["width", "width"], ["height", "height"],
+      ["align", "align"], ["scrolling", "scrolling"],
+      ["frameBorder", "frameborder"], ["longDesc", "longdesc", "url"],
+      ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
+      ["allowFullscreen", "allowfullscreen", "bool"],
+    ]],
+    del: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
+    q: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
+    th: ["HTMLTableCellElement", [
+      ["colSpan", "colspan", "ulong", { default: 1 }],
+      ["rowSpan", "rowspan", "ulong", { default: 1 }],
+      ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
+      ["align", "align"], ["axis", "axis"], ["height", "height"],
+      ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
+      ["noWrap", "nowrap", "bool"], ["vAlign", "valign"],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
+    ]],
+    thead: ["HTMLTableSectionElement", [
+      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      ["vAlign", "valign"],
+    ]],
+    tfoot: ["HTMLTableSectionElement", [
+      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      ["vAlign", "valign"],
+    ]],
+    colgroup: ["HTMLTableColElement", [
+      ["span", "span", "ulong", { default: 1 }], ["align", "align"],
+      ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
+      ["width", "width"],
+    ]],
     tbody: ["HTMLTableSectionElement", [
       ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"],
@@ -3090,7 +3296,25 @@
                             decodeURIComponent(v.replace(/\+/g, " "))]);
         }
       } else if (init && typeof init === "object") {
-        for (const k of Object.keys(init)) this._pairs.push([k, String(init[k])]);
+        // Three shapes, and only the third was handled. `new
+        // URLSearchParams(otherParams)` walked the *object's own keys*, so it
+        // copied the internal `_pairs` field and produced `_pairs=a%2Cb` —
+        // a params object serialising its own implementation.
+        if (typeof init[Symbol.iterator] === "function") {
+          // A sequence of pairs, which covers another URLSearchParams, a Map,
+          // and the `[["a","b"]]` literal form.
+          for (const pair of init) {
+            const entry = Array.from(pair);
+            if (entry.length !== 2) {
+              throw new TypeError(
+                "URLSearchParams: each entry must have exactly two elements",
+              );
+            }
+            this._pairs.push([String(entry[0]), String(entry[1])]);
+          }
+        } else {
+          for (const k of Object.keys(init)) this._pairs.push([k, String(init[k])]);
+        }
       }
     }
     get(k) { const hit = this._pairs.find(([n]) => n === String(k)); return hit ? hit[1] : null; }
@@ -3100,14 +3324,28 @@
     append(k, v) { this._pairs.push([String(k), String(v)]); }
     delete(k) { this._pairs = this._pairs.filter(([n]) => n !== String(k)); }
     forEach(fn) { for (const [k, v] of this._pairs) fn(v, k, this); }
+    get size() { return this._pairs.length; }
+    // Stable, and by *code unit* rather than by `<` on strings, which is what
+    // the spec says and what makes the order the same in every engine.
+    sort() {
+      this._pairs = this._pairs
+        .map((pair, index) => [pair, index])
+        .sort(([a, i], [b, j]) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : i - j))
+        .map(([pair]) => pair);
+    }
     keys() { return this._pairs.map(([k]) => k)[Symbol.iterator](); }
     values() { return this._pairs.map(([, v]) => v)[Symbol.iterator](); }
     entries() { return this._pairs[Symbol.iterator](); }
     [Symbol.iterator]() { return this.entries(); }
     toString() {
-      return this._pairs
-        .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
-        .join("&");
+      // `application/x-www-form-urlencoded` serialisation, which is not
+      // `encodeURIComponent`: a space is `+`, and `!'()~*` are escaped where
+      // `encodeURIComponent` leaves them alone.
+      const encode = (text) =>
+        encodeURIComponent(text)
+          .replace(/%20/g, "+")
+          .replace(/[!'()~*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+      return this._pairs.map(([k, v]) => encode(k) + "=" + encode(v)).join("&");
     }
   }
 
@@ -3120,6 +3358,19 @@
     }
     toString() { return this.href; }
     toJSON() { return this.href; }
+    /// The two statics, which are the non-throwing way to ask. A page testing
+    /// a URL had to build one in a `try`, which is the idiom these exist to
+    /// replace.
+    static parse(href, base) {
+      try {
+        return new URL(href, base);
+      } catch {
+        return null;
+      }
+    }
+    static canParse(href, base) {
+      return URL.parse(href, base) !== null;
+    }
   }
 
   // A case-insensitive header map, which is what `Headers` is: `get("ETag")`
@@ -3164,7 +3415,30 @@
       this.mode = i.mode || (input instanceof Request ? input.mode : "cors");
       this.credentials =
         i.credentials || (input instanceof Request ? input.credentials : "same-origin");
+      this.bodyUsed = false;
     }
+    // A request carries a body too, and reading it back is how a service
+    // worker or a test inspects one. Same readers as `Response`, over the same
+    // kind of value.
+    _text() { return this.body == null ? "" : String(this.body); }
+    text() { this.bodyUsed = true; return Promise.resolve(this._text()); }
+    json() { this.bodyUsed = true; return Promise.resolve(JSON.parse(this._text())); }
+    formData() {
+      this.bodyUsed = true;
+      const form = new FormData();
+      for (const [k, v] of new URLSearchParams(this._text())) form.append(k, v);
+      return Promise.resolve(form);
+    }
+    arrayBuffer() {
+      this.bodyUsed = true;
+      return Promise.resolve(new TextEncoder().encode(this._text()).buffer);
+    }
+    blob() {
+      this.bodyUsed = true;
+      return Promise.resolve(new Blob([this._text()],
+        { type: this.headers.get("content-type") || "" }));
+    }
+    clone() { return new Request(this.url, this); }
   }
 
   // What `fetch` resolves to, and what a page constructs to mock one.
@@ -3189,6 +3463,25 @@
     }
     text() { this.bodyUsed = true; return Promise.resolve(this._body); }
     json() { this.bodyUsed = true; return Promise.resolve(JSON.parse(this._body)); }
+    // The other two body readers. `formData` is how anything that posts a form
+    // reads one back, and it is what `url/urlencoded-parser` tests against.
+    formData() {
+      this.bodyUsed = true;
+      const form = new FormData();
+      for (const [k, v] of new URLSearchParams(this._body)) form.append(k, v);
+      return Promise.resolve(form);
+    }
+    arrayBuffer() {
+      this.bodyUsed = true;
+      const text = this._body;
+      const bytes = new TextEncoder().encode(text);
+      return Promise.resolve(bytes.buffer);
+    }
+    blob() {
+      this.bodyUsed = true;
+      const type = this.headers.get("content-type") || "";
+      return Promise.resolve(new Blob([this._body], { type }));
+    }
     clone() {
       return new Response(this._body, {
         status: this.status, statusText: this.statusText, headers: this.headers,
@@ -4105,6 +4398,19 @@
 
   const documentImpl = {
     get documentElement() { return wrap(api.root()); },
+
+    // `document.dir` is not the document's own attribute: it reflects
+    // `<html dir>`, so reading it off the document and reading it off
+    // `documentElement` have to agree. It was absent, and the reflection suite
+    // tests it as `#document.dir (<html dir>)`.
+    get dir() {
+      const root = wrap(api.root());
+      return root ? root.dir : "";
+    },
+    set dir(value) {
+      const root = wrap(api.root());
+      if (root) root.dir = value;
+    },
     get body() { return wrap(api.body()); },
     get head() { return wrap(api.query("head", 0)); },
     createElement(tag) { return wrap(api.createElement(String(tag))); },

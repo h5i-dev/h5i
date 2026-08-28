@@ -3865,20 +3865,56 @@ fn a_component_whose_constructor_throws_does_not_take_the_page_with_it() {
 }
 
 #[test]
-fn a_custom_element_name_without_a_dash_is_refused() {
+fn an_invalid_custom_element_name_is_refused_by_all_eight_rules() {
     let (_page, mut script) = page_and_script("<html><body></body></html>");
 
-    // The spec's rule, and a real one: a name without a dash could collide with
-    // an element the parser already knows.
-    assert_eq!(
+    // HTML §4.13's name rules, of which this engine enforced one — the dash.
+    // The rest are not decoration: the name space is shared with the parser, so
+    // a name a browser refuses has to be refused here too, or a page gets a
+    // component in one engine and an unknown element in the other.
+    //
+    // A `DOMException` named `SyntaxError`, not a plain `SyntaxError`: that is
+    // what the spec throws and what `assert_throws_dom` checks. This assertion
+    // used to read `e.constructor.name`, which pinned the older, wrong shape.
+    let refused = |script: &mut crate::script::Script, name: &str| {
         script
-            .eval_value(
-                "(() => { try { customElements.define('card', class extends HTMLElement {}) } \
-                  catch (e) { return e.constructor.name } })()"
-            )
-            .unwrap(),
-        "SyntaxError"
-    );
+            .eval_value(&format!(
+                "(() => {{ try {{ customElements.define({name:?}, class extends HTMLElement {{}}) }} \
+                  catch (e) {{ return (e instanceof DOMException) + ':' + e.name }} \
+                  return 'accepted' }})()"
+            ))
+            .unwrap()
+    };
+
+    for name in [
+        "card",            // no dash
+        "",                // empty
+        "-leading",        // does not start with an ASCII lower alpha
+        "1-digit",         // ditto
+        "My-Element",      // uppercase
+        "font-face",       // reserved: SVG owns it
+        "annotation-xml",  // reserved: MathML owns it
+        "missing-glyph",   // reserved
+        "my element",      // space is not a name character
+    ] {
+        assert_eq!(
+            refused(&mut script, name),
+            "true:SyntaxError",
+            "`{name}` should have been refused as a custom element name"
+        );
+    }
+
+    // And the ones that are legal stay legal, including the awkward middle
+    // ground: a reserved *prefix* is fine, and digits after the first
+    // character are fine.
+    for name in ["ok-one", "font-faces-x", "x1-y2", "my-élement"] {
+        assert_eq!(
+            refused(&mut script, name),
+            "accepted",
+            "`{name}` is a valid custom element name and was refused"
+        );
+    }
+
     assert_eq!(
         script
             .eval_value(
