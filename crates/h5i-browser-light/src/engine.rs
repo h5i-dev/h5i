@@ -661,7 +661,12 @@ impl Page {
         // the handler, so the page loaded, sat there, and reported itself
         // settled with `timers_run: 0` — which reads as "nothing to do" rather
         // than "nothing was run".
-        let has_inline_handler = {
+        // Asked only when the answer can change the outcome. Every page with a
+        // script element already builds the realm, and running a
+        // thirty-five-selector query over its whole tree to reach a value that
+        // is then discarded is the shortcut paying for the case it exists to
+        // avoid.
+        let has_inline_handler = || {
             let doc = self.doc.borrow();
             doc.query_selector_all(INLINE_HANDLER_SELECTOR)
                 .map(|ids| !ids.is_empty())
@@ -672,7 +677,7 @@ impl Page {
         // 15ms — the prelude is 113 KiB of JavaScript, parsed and evaluated from
         // scratch — and a page with no script elements was paying all of it for
         // a realm that would never be asked a question.
-        if sources.is_empty() && !has_inline_handler {
+        if sources.is_empty() && !has_inline_handler() {
             self.ran_scripts = true;
             // Trivially settled, and said so rather than left null: a page with
             // no script has finished by definition, and "we do not know" is a
