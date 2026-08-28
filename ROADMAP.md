@@ -8257,7 +8257,65 @@ together"), because pages catch them separately.
 
     dom  2,022 -> 2,629
 
-### B20.12 Where core stands, and what 80% would actually take
+### B20.12 Forms, which was the one large block that was just work
+
+§B20.11 named `html/semantics/forms` as the only big remaining cluster that
+needed no design reversal. It was **723 passing of 4,870**, and the reason was
+not subtlety: the constraint validation API did not exist at all. Nine files
+scored 1 of 920 between them, every one failing on *"the validity attribute
+doesn't exist"* before reaching what it meant to check.
+
+**Built, in the order the failures ranked them:**
+
+* **Constraint validation.** `validity`, `willValidate`, `validationMessage`,
+  `checkValidity`, `reportValidity`, `setCustomValidity`, and the form-level
+  pair. The barred-from-validation clause is the part worth reading: a disabled
+  control that reported itself invalid would block a form the user cannot even
+  reach, so barred elements are always valid *including* when a custom error
+  was set. `reportValidity` is identical to `checkValidity` here and says so —
+  the difference is that a browser shows the message, and there is no UI to
+  show it in.
+* **Text-field selection.** `selectionStart`/`End`/`Direction`,
+  `setSelectionRange`, `setRangeText` with all four select modes, `select`. The
+  selection lives on this side rather than in the layout engine, because it has
+  to answer for a detached control too. `<input type=number>` reports `null`
+  rather than 0, which is the distinction a page tests before using it.
+* **Numeric inputs.** `valueAsNumber`, `valueAsDate`, `stepUp`, `stepDown`,
+  `showPicker`, all keyed off one table so a type is steppable in one place
+  rather than four that can disagree. NaN rather than `undefined` for a type
+  with no numeric form: `undefined` says "this engine lacks the property", NaN
+  says "this control holds no number".
+* **`<input type=color>` sanitisation**, `files` returning `null` off a
+  non-file input, and `form.autocomplete` defaulting to `on`.
+
+**Three bugs that had nothing to do with forms fell out of it.**
+
+* **An empty `<input>` read as `" "`.** blitz seeds a laid-out input's editor
+  with a single space, and the value getter applied its whitespace-is-unseeded
+  rule to `<textarea>` only. So `if (!input.value)` was **false** for an empty
+  field: every page and every agent testing a form for emptiness got the wrong
+  answer, and `required` could never fire. Found only because constraint
+  validation asked the question a different way.
+* **`cloneNode` copied `class` and `style` and nothing else.** A clone lost its
+  `id`, its `href`, its `data-*` and every hook a page had put on it — so a
+  cloned `<template>` came out stripped. The form-control cloning steps (the
+  value and the dirty value flag) were missing with them.
+* **`click()` on a disabled control dispatched a click.** A page that disables
+  a control to stop it being used still saw it used, with the form in whatever
+  state the disabling was meant to protect.
+
+    html/semantics/forms  723 -> 2,012 of 4,655
+    html/dom              57,498 -> 58,073
+    dom                   2,629 -> 2,651
+    gate                  288,183 -> 288,780, no regression
+
+What is left in forms is genuinely different in kind: form *submission*
+(`multipart/form-data`, `text/plain`, the submission algorithm), `:focus` in
+the selector engine, and `color()` CSS parsing. Submission is the largest and
+is the one worth taking next — it is the half of a form this engine can
+observe better than anything else, because it *is* the HTTP client.
+
+### B20.13 Where core stands, and what 80% would actually take
 
 **58.5%** — 76,760 of 131,201 — from 49.7%, measured across all nineteen core
 directories, 9,492 files, on a freshly built binary. The session moved roughly

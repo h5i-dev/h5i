@@ -2563,6 +2563,190 @@ fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) 
 }
 
 #[test]
+fn a_control_reports_its_validity_and_says_which_constraint_failed() {
+    // `html/semantics/forms/constraints` scored 1 of 920, and not because the
+    // feature is subtle: none of it existed, so every test failed on "the
+    // validity attribute doesn't exist" before reaching what it meant to check.
+    let (text, console) = scripted_text(
+        r#"<form id="f">
+             <input id="req" required>
+             <input id="em" type="email" value="nope">
+             <input id="num" type="number" min="5" max="10" step="2" value="12">
+             <input id="hid" type="hidden" required>
+             <input id="dis" required disabled>
+           </form>
+           <script>
+             const g = (id) => document.getElementById(id);
+             document.getElementById("out").textContent = [
+               g("req").validity.valueMissing,
+               g("req").willValidate,
+               g("em").validity.typeMismatch,
+               g("num").validity.rangeOverflow,
+               // Barred from validation, so always valid however required.
+               g("hid").willValidate,
+               g("dis").willValidate,
+               g("f").checkValidity(),
+             ].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|true|true|true|false|false|false"),
+        "constraint validation is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_custom_validity_message_sets_and_clears() {
+    // The empty string *clears* the error, which is how a page says "this is
+    // fine now" — storing "" as an error would leave the control permanently
+    // invalid and the form permanently unsubmittable.
+    let (text, console) = scripted_text(
+        r#"<input id="i" value="x">
+           <script>
+             const i = document.getElementById("i");
+             const out = [];
+             i.setCustomValidity("no good");
+             out.push(i.validity.customError, i.validity.valid, i.validationMessage);
+             i.setCustomValidity("");
+             out.push(i.validity.customError, i.validity.valid);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|false|no good|false|true"),
+        "setCustomValidity does not round-trip:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_text_field_has_a_selection_and_a_number_field_does_not() {
+    // `selectionStart` returning `null` rather than 0 for a control with no
+    // text selection is the distinction a page tests before using it.
+    let (text, console) = scripted_text(
+        r#"<input id="t" value="hello world"><input id="n" type="number" value="3">
+           <script>
+             const t = document.getElementById("t");
+             const out = [];
+             out.push(t.selectionStart, t.selectionEnd);
+             t.setSelectionRange(0, 5);
+             out.push(t.selectionStart, t.selectionEnd, t.selectionDirection);
+             t.setRangeText("HI");
+             out.push(t.value);
+             t.select();
+             out.push(t.selectionEnd);
+             out.push(String(document.getElementById("n").selectionStart));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("11|11|0|5|none|HI world|8|null"),
+        "text selection is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn an_empty_input_reads_as_empty_rather_than_as_a_space() {
+    // blitz seeds a laid-out input's editor with a single space, and the value
+    // getter applied the whitespace-is-unseeded rule to `<textarea>` only — so
+    // `if (!input.value)` was **false** for an empty field. Every page and
+    // every agent testing a form for emptiness got the wrong answer, and
+    // `required` could never fire.
+    let (text, console) = scripted_text(
+        r#"<form><input id="a" required></form>
+           <script>
+             const a = document.getElementById("a");
+             document.getElementById("out").textContent =
+               [JSON.stringify(a.value), a.value.length, a.validity.valueMissing].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains(r#"""|0|true"#),
+        "an empty input does not read as empty:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_clone_keeps_every_attribute_and_a_control_keeps_its_value() {
+    // `cloneNode` copied `class` and `style` and nothing else, so a clone lost
+    // its id, its href, its data-* and every hook a page had put on it. The
+    // cloning steps a form control carries were missing with them.
+    let (text, console) = scripted_text(
+        r#"<a id="src" href="/x" data-k="v" class="c" title="t">link</a>
+           <script>
+             const src = document.getElementById("src");
+             const copy = src.cloneNode(true);
+             const input = document.createElement("input");
+             input.value = "typed";
+             const inputCopy = input.cloneNode(true);
+             document.getElementById("out").textContent = [
+               copy.getAttribute("id"), copy.getAttribute("href"),
+               copy.getAttribute("data-k"), copy.className, copy.title,
+               inputCopy.value,
+             ].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("src|/x|v|c|t|typed"),
+        "cloneNode loses attributes or control state:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_disabled_control_dispatches_no_click() {
+    // `click()` on a disabled button fired a click event, so a page that
+    // disables a control to stop it being used still saw it used — with the
+    // form in whatever state the disabling was meant to protect.
+    let (text, console) = scripted_text(
+        r#"<button id="b" disabled>go</button><button id="ok">go</button>
+           <script>
+             let n = 0;
+             for (const id of ["b", "ok"]) {
+               document.getElementById(id).addEventListener("click", () => n++);
+             }
+             document.getElementById("b").click();
+             const afterDisabled = n;
+             document.getElementById("ok").click();
+             document.getElementById("out").textContent = afterDisabled + "|" + n;
+           </script>"#,
+    );
+    assert!(
+        text.contains("0|1"),
+        "a disabled control still dispatched:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_numeric_input_steps_and_reports_a_number_or_nan() {
+    // NaN rather than `undefined` for a type with no numeric form is the
+    // distinction `input-valueasnumber` checks on nearly every line:
+    // `undefined` says "this engine lacks the property", NaN says "this
+    // control holds no number".
+    let (text, console) = scripted_text(
+        r#"<input id="n" type="number" value="7" step="2">
+           <input id="t" type="text" value="7">
+           <input id="d" type="date" value="2020-01-02">
+           <script>
+             const g = (id) => document.getElementById(id);
+             const out = [];
+             out.push(g("n").valueAsNumber);
+             g("n").stepUp();
+             out.push(g("n").value);
+             g("n").stepDown(2);
+             out.push(g("n").value);
+             out.push(Number.isNaN(g("t").valueAsNumber));
+             out.push(g("d").valueAsDate.toISOString().slice(0, 10));
+             try { g("t").stepUp(); out.push("stepped"); }
+             catch (e) { out.push(e.name); }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("7|9|5|true|2020-01-02|InvalidStateError"),
+        "numeric input APIs are wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
 fn a_token_list_replaces_indexes_and_refuses_a_token_it_cannot_hold() {
     // Four gaps in one type. `replace` was absent (262 corpus asks), indexed
     // access answered undefined, and the two validations were missing — so

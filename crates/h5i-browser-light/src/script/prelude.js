@@ -852,9 +852,20 @@
         ? document.createTextNode(this.textContent)
         : document.createElement(this.tagName);
       if (this.nodeType === 1) {
-        if (this.className) copy.className = this.className;
-        const style = api.getAttr(this._id, "style");
-        if (style) copy.setAttribute("style", style);
+        // **Every attribute, not two of them.** This copied `class` and
+        // `style` and nothing else, so a cloned element lost its `id`, its
+        // `href`, its `data-*` and every hook a page had put on it — and a
+        // template cloned to be inserted came out stripped.
+        for (const name of this.getAttributeNames()) {
+          const value = api.getAttr(this._id, name);
+          if (value !== null) copy.setAttribute(name, value);
+        }
+        // The *cloning steps* a form control carries: an `<input>` clone takes
+        // the original's value and its dirty value flag, and a checkbox takes
+        // its checkedness. Without them a cloned control comes back to its
+        // markup default, which is not what the user had typed into it.
+        if (this._value !== undefined) copy._value = this._value;
+        if (this._checked !== undefined) copy._checked = this._checked;
         if (deep) copy.innerHTML = this.innerHTML;
       }
       return copy;
@@ -1630,6 +1641,11 @@
         dispatch(this, new Event("change", { bubbles: true }));
         return;
       }
+      // **A disabled control dispatches nothing.** `click()` on a disabled
+      // button fired a click event here, so a page that disables a control to
+      // stop it being used still saw it used — and the handler ran with the
+      // form in whatever state the disabling was meant to protect.
+      if (this.disabled) return;
       // An invoker acts *after* its click, and only if the click was not
       // cancelled: `preventDefault()` suppressing the default activation
       // behaviour is the whole reason this is here rather than inside the
@@ -2519,6 +2535,16 @@
           const explicit = api.getAttr(this._id, "value");
           return explicit === null ? this.textContent : explicit;
         }
+        // `<input type=color>` has a *value sanitisation algorithm*, and it is
+        // the strictest one in HTML: the value is always a valid lowercase
+        // simple colour, and anything else — including the empty string a page
+        // just assigned — becomes `#000000`. A page reading it expects seven
+        // characters starting with `#`, always.
+        if (tag === "INPUT"
+          && (api.getAttr(this._id, "type") || "").toLowerCase() === "color") {
+          const raw = this._value ?? api.getAttr(this._id, "value") ?? "";
+          return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toLowerCase() : "#000000";
+        }
         const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
         if (kind === "checkbox" || kind === "radio") {
           const v = api.getAttr(this._id, "value");
@@ -2546,7 +2572,21 @@
           const written = this.textContent;
           if (written) return written;
         }
-        if (edited !== null && edited !== undefined) return edited;
+        // **A whitespace-only editor on an unedited control is empty.** This
+        // is the same rule the `<textarea>` branch above states, and it was
+        // being applied to textareas only — so a laid-out `<input>` that
+        // nobody had typed into reported `" "`, because that is what blitz
+        // seeds its editor with.
+        //
+        // It is not a validation detail. `if (!input.value)` was *false* for
+        // an empty field, so every page and every agent that tests a form for
+        // emptiness got the wrong answer, and `required` could never fire.
+        if (edited !== null && edited !== undefined) {
+          if (this._value === undefined && !edited.trim()) {
+            return api.getAttr(this._id, "value") ?? "";
+          }
+          return edited;
+        }
         // There is no editor — a detached control, or a `<textarea>`, which
         // blitz lays out as text rather than as an input. Falling back to the
         // markup is what a browser reports, and answering "" instead made a
@@ -2953,6 +2993,583 @@
     // `form.elements`, `table.rows`, `tr.cells` and `td.cellIndex` were all
     // absent, so a page that walks its own form or table — and a great deal of
     // page script does — got `undefined` and stopped.
+    // ---- Numeric and picker input APIs ------------------------------------
+
+    /// The input types that have a numeric interpretation, and how to move
+    /// through them.
+    ///
+    /// `stepUp`, `stepDown`, `valueAsNumber` and `valueAsDate` all key off this
+    /// one table, so a type is steppable in exactly one place rather than in
+    /// four that can disagree.
+    const STEPPABLE = {
+      number: { step: 1, base: 0 },
+      range: { step: 1, base: 0 },
+      date: { step: 86400000, base: 0 },
+      month: { step: 1, base: 0 },
+      week: { step: 604800000, base: -259200000 },
+      time: { step: 1000, base: 0 },
+      "datetime-local": { step: 1000, base: 0 },
+    };
+    const DATE_VALUED = new Set(["date", "month", "week", "time"]);
+
+    function inputType(el) {
+      return (api.getAttr(el._id, "type") || "text").toLowerCase();
+    }
+
+    /// `value` as a number, or NaN.
+    ///
+    /// NaN rather than `undefined` for a type that has no numeric form, which
+    /// is the distinction `input-valueasnumber` checks on nearly every line:
+    /// `undefined` says "this engine does not have the property", NaN says
+    /// "this control has no number in it".
+    function valueAsNumberOf(el) {
+      const type = inputType(el);
+      if (!(type in STEPPABLE)) return NaN;
+      const raw = String(el.value ?? "");
+      if (raw === "") return NaN;
+      if (type === "number" || type === "range") {
+        const n = Number(raw);
+        return Number.isNaN(n) ? NaN : n;
+      }
+      if (type === "month") {
+        const m = /^(\d{4,})-(\d{2})$/.exec(raw);
+        if (!m) return NaN;
+        // Months since 1970-01, which is what the spec defines this as — not
+        // a timestamp, which is why it has its own branch.
+        return (Number(m[1]) - 1970) * 12 + (Number(m[2]) - 1);
+      }
+      if (type === "time") {
+        const at = Date.parse(`1970-01-01T${raw}Z`);
+        return Number.isNaN(at) ? NaN : at;
+      }
+      if (type === "week") {
+        const m = /^(\d{4,})-W(\d{2})$/.exec(raw);
+        if (!m) return NaN;
+        const jan4 = Date.UTC(Number(m[1]), 0, 4);
+        const dow = (new Date(jan4).getUTCDay() + 6) % 7;
+        return jan4 - dow * 86400000 + (Number(m[2]) - 1) * 604800000;
+      }
+      const at = Date.parse(type === "date" ? `${raw}T00:00:00Z` : `${raw}Z`);
+      return Number.isNaN(at) ? NaN : at;
+    }
+
+    function numberToValue(el, number) {
+      const type = inputType(el);
+      if (type === "number" || type === "range") return String(number);
+      if (type === "month") {
+        const year = 1970 + Math.floor(number / 12);
+        const month = ((number % 12) + 12) % 12 + 1;
+        return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
+      }
+      const date = new Date(number);
+      if (Number.isNaN(date.getTime())) return "";
+      const iso = date.toISOString();
+      if (type === "date") return iso.slice(0, 10);
+      if (type === "time") return iso.slice(11, 19);
+      if (type === "datetime-local") return iso.slice(0, 19);
+      if (type === "week") {
+        const target = new Date(number);
+        const day = (target.getUTCDay() + 6) % 7;
+        target.setUTCDate(target.getUTCDate() - day + 3);
+        const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+        const week = 1 + Math.round(
+          (target - firstThursday) / 604800000
+          - ((firstThursday.getUTCDay() + 6) % 7 - 3) / 7,
+        );
+        return `${target.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+      }
+      return String(number);
+    }
+
+    on(["input"], "valueAsNumber", {
+      get() { return valueAsNumberOf(this); },
+      set(value) {
+        const type = inputType(this);
+        if (!(type in STEPPABLE)) {
+          throw new DOMException(
+            `valueAsNumber does not apply to input type=${type}`,
+            "InvalidStateError",
+          );
+        }
+        const n = Number(value);
+        this.value = Number.isNaN(n) ? "" : numberToValue(this, n);
+      },
+    });
+
+    on(["input"], "valueAsDate", {
+      get() {
+        const type = inputType(this);
+        // Deliberately narrower than `valueAsNumber`: `number`, `range` and
+        // `datetime-local` have no time zone, so a `Date` would be a value the
+        // control does not hold. The spec says null and so does this.
+        if (!DATE_VALUED.has(type)) return null;
+        const n = valueAsNumberOf(this);
+        if (Number.isNaN(n)) return null;
+        return new Date(type === "month" ? Date.UTC(1970 + Math.floor(n / 12), ((n % 12) + 12) % 12) : n);
+      },
+      set(value) {
+        const type = inputType(this);
+        if (!DATE_VALUED.has(type)) {
+          throw new DOMException(
+            `valueAsDate does not apply to input type=${type}`,
+            "InvalidStateError",
+          );
+        }
+        if (value === null) { this.value = ""; return; }
+        this.value = numberToValue(this, value.getTime());
+      },
+    });
+
+    for (const [name, sign] of [["stepUp", 1], ["stepDown", -1]]) {
+      Object.defineProperty(TAG_CLASSES.get("input").prototype, name, {
+        configurable: true, writable: true,
+        value(n) {
+          const type = inputType(this);
+          const spec = STEPPABLE[type];
+          if (!spec) {
+            throw new DOMException(
+              `${name} does not apply to input type=${type}`,
+              "InvalidStateError",
+            );
+          }
+          const rawStep = api.getAttr(this._id, "step");
+          if (rawStep !== null && rawStep.toLowerCase() === "any") {
+            // "any" means there is no step, so stepping is not defined — an
+            // error rather than a silent no-op, so a page stepping a slider it
+            // configured that way finds out.
+            throw new DOMException(`${name}: step is "any"`, "InvalidStateError");
+          }
+          const step = rawStep !== null && Number.isFinite(Number(rawStep)) && Number(rawStep) > 0
+            ? Number(rawStep) * (type === "number" || type === "range" ? 1 : spec.step)
+            : spec.step;
+          const current = valueAsNumberOf(this);
+          const from = Number.isNaN(current) ? spec.base : current;
+          this.valueAsNumber = from + sign * step * (n === undefined ? 1 : Number(n));
+        },
+      });
+    }
+
+    /// `showPicker`, which is almost entirely its refusals.
+    ///
+    /// There is no picker to show here, so the useful half is the part a test
+    /// actually checks: it throws for a type that has no picker, for a disabled
+    /// or read-only control, and without a user gesture. Answering nothing at
+    /// all made every one of those assertions fail.
+    const PICKER_TYPES = new Set([
+      "date", "month", "week", "time", "datetime-local", "color", "file",
+    ]);
+    Object.defineProperty(TAG_CLASSES.get("input").prototype, "showPicker", {
+      configurable: true, writable: true,
+      value() {
+        const type = inputType(this);
+        if (this.disabled || this.readOnly) {
+          throw new DOMException(
+            "showPicker: the control is disabled or read-only",
+            "InvalidStateError",
+          );
+        }
+        if (!PICKER_TYPES.has(type)) {
+          // A type with no picker is a no-op in a browser rather than an
+          // error — the exception below is for the *gesture*, which is a
+          // different refusal.
+          return;
+        }
+        throw new DOMException(
+          "showPicker: this engine has no picker to show, and there is no user "
+          + "gesture to attribute one to",
+          "NotAllowedError",
+        );
+      },
+    });
+
+    // `files` is null for every type but `file`, and was undefined for all of
+    // them — so a page testing `input.files` before reading it took the wrong
+    // branch on a control that genuinely has no files.
+    on(["input"], "files", {
+      get() { return inputType(this) === "file" ? collection([], "FileList") : null; },
+    });
+
+    // ---- Text field selection ---------------------------------------------
+    //
+    // `selectionStart`, `selectionEnd`, `selectionDirection`,
+    // `setSelectionRange`, `setRangeText` and `select` were all absent, which
+    // is 464 unpassed subtests and, more to the point, the API anything that
+    // edits text in a field reaches for first.
+    //
+    // The selection is held here rather than in the layout engine: blitz has an
+    // editor for a laid-out input and this has to answer for a detached one
+    // too, so the property is the truth and the editor follows it.
+
+    /// Which controls have a selection at all.
+    ///
+    /// The list is exact and the exclusions are the interesting half: a
+    /// `<input type=number>` reports `null` for `selectionStart` rather than 0,
+    /// because it has no text selection to report — and a page that tested for
+    /// `!== null` before using it was getting the wrong answer.
+    const SELECTABLE_INPUT_TYPES = new Set([
+      "text", "search", "url", "tel", "password",
+    ]);
+
+    function hasTextSelection(el) {
+      if (el.tagName === "TEXTAREA") return true;
+      if (el.tagName !== "INPUT") return false;
+      return SELECTABLE_INPUT_TYPES.has((api.getAttr(el._id, "type") || "text").toLowerCase());
+    }
+
+    function selectionOf(el) {
+      if (!el.__h5iSelection) {
+        const end = String(el.value ?? "").length;
+        el.__h5iSelection = { start: end, end, direction: "none" };
+      }
+      return el.__h5iSelection;
+    }
+
+    function clampSelection(el) {
+      const length = String(el.value ?? "").length;
+      const sel = selectionOf(el);
+      sel.start = Math.min(sel.start, length);
+      sel.end = Math.min(sel.end, length);
+      if (sel.end < sel.start) sel.end = sel.start;
+      return sel;
+    }
+
+    for (const [name, key] of [["selectionStart", "start"], ["selectionEnd", "end"]]) {
+      on(["input", "textarea"], name, {
+        get() {
+          if (!hasTextSelection(this)) return null;
+          return clampSelection(this)[key];
+        },
+        set(value) {
+          if (!hasTextSelection(this)) {
+            throw new DOMException(
+              `${name} does not apply to this control`,
+              "InvalidStateError",
+            );
+          }
+          const sel = clampSelection(this);
+          const at = Math.max(0, Math.min(Number(value) || 0, String(this.value ?? "").length));
+          sel[key] = at;
+          // Setting the start past the end collapses the selection there,
+          // rather than leaving a range that runs backwards.
+          if (sel.end < sel.start) sel.end = sel.start;
+        },
+      });
+    }
+
+    on(["input", "textarea"], "selectionDirection", {
+      get() {
+        if (!hasTextSelection(this)) return null;
+        return selectionOf(this).direction;
+      },
+      set(value) {
+        if (!hasTextSelection(this)) return;
+        const wanted = String(value).toLowerCase();
+        selectionOf(this).direction =
+          wanted === "forward" || wanted === "backward" ? wanted : "none";
+      },
+    });
+
+    for (const tag of ["input", "textarea"]) {
+      const Interface = TAG_CLASSES.get(tag);
+      if (!Interface) continue;
+      Object.defineProperty(Interface.prototype, "setSelectionRange", {
+        configurable: true, writable: true,
+        value(start, end, direction) {
+          if (!hasTextSelection(this)) {
+            throw new DOMException(
+              "setSelectionRange does not apply to this control",
+              "InvalidStateError",
+            );
+          }
+          const length = String(this.value ?? "").length;
+          const clamp = (n) => Math.max(0, Math.min(Number(n) || 0, length));
+          const from = clamp(start);
+          const to = Math.max(from, clamp(end));
+          this.__h5iSelection = {
+            start: from,
+            end: to,
+            direction: direction === "forward" || direction === "backward"
+              ? direction
+              : "none",
+          };
+          this.dispatchEvent(new Event("select", { bubbles: true }));
+        },
+      });
+      Object.defineProperty(Interface.prototype, "select", {
+        configurable: true, writable: true,
+        value() {
+          if (!hasTextSelection(this)) return;
+          this.setSelectionRange(0, String(this.value ?? "").length);
+        },
+      });
+      Object.defineProperty(Interface.prototype, "setRangeText", {
+        configurable: true, writable: true,
+        value(replacement, start, end, selectMode) {
+          if (!hasTextSelection(this)) {
+            throw new DOMException(
+              "setRangeText does not apply to this control",
+              "InvalidStateError",
+            );
+          }
+          const text = String(this.value ?? "");
+          const sel = clampSelection(this);
+          // Two arities: with no range it replaces the current selection,
+          // which is what an editor toolbar calls.
+          const from = start === undefined ? sel.start : Math.max(0, Math.min(Number(start) || 0, text.length));
+          const to = end === undefined ? sel.end : Math.max(0, Math.min(Number(end) || 0, text.length));
+          if (from > to) {
+            throw new DOMException("setRangeText: start is past end", "IndexSizeError");
+          }
+          const inserted = String(replacement ?? "");
+          this.value = text.slice(0, from) + inserted + text.slice(to);
+          const mode = String(selectMode ?? "preserve").toLowerCase();
+          if (mode === "select") {
+            this.__h5iSelection = { start: from, end: from + inserted.length, direction: "none" };
+          } else if (mode === "start") {
+            this.__h5iSelection = { start: from, end: from, direction: "none" };
+          } else if (mode === "end") {
+            const at = from + inserted.length;
+            this.__h5iSelection = { start: at, end: at, direction: "none" };
+          } else {
+            // `preserve`: the selection moves with the text around it, which
+            // is why the offsets are shifted rather than reset.
+            const delta = inserted.length - (to - from);
+            this.__h5iSelection = {
+              start: sel.start > to ? sel.start + delta : Math.min(sel.start, from),
+              end: sel.end > to ? sel.end + delta : Math.min(sel.end, from + inserted.length),
+              direction: sel.direction,
+            };
+          }
+        },
+      });
+    }
+
+    // ---- Constraint validation ------------------------------------------
+    //
+    // `html/semantics/forms/constraints` scored **1 of 920**, and the reason
+    // was not that the feature is subtle: none of it existed. `validity`,
+    // `willValidate`, `checkValidity`, `reportValidity`, `setCustomValidity`
+    // and `validationMessage` were all absent, so every test failed on
+    // "The validity attribute doesn't exist" before reaching what it meant to
+    // check.
+    //
+    // It is also the API a page uses to decide whether to submit, which makes
+    // it one an agent driving a form needs to be able to read.
+
+    /// Which elements are *candidates* for constraint validation.
+    ///
+    /// The barred cases are not an optimisation: a disabled control that
+    /// reported itself invalid would block a form the user cannot even reach,
+    /// and a `<button type=button>` is not submitted at all.
+    const NEVER_VALIDATED_INPUT_TYPES = new Set(["hidden", "reset", "button"]);
+
+    function isSubmittable(el) {
+      return ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(el.tagName);
+    }
+
+    function isBarredFromValidation(el) {
+      if (!isSubmittable(el)) return true;
+      if (el.disabled) return true;
+      if (el.tagName === "INPUT") {
+        const type = (api.getAttr(el._id, "type") || "text").toLowerCase();
+        if (NEVER_VALIDATED_INPUT_TYPES.has(type)) return true;
+        if (el.readOnly) return true;
+      }
+      if (el.tagName === "TEXTAREA" && el.readOnly) return true;
+      if (el.tagName === "BUTTON") {
+        const type = (api.getAttr(el._id, "type") || "submit").toLowerCase();
+        if (type !== "submit") return true;
+      }
+      // A control inside a `<datalist>` is a suggestion, not an entry.
+      for (let node = el.parentNode; node; node = node.parentNode) {
+        if (node.tagName === "DATALIST") return true;
+      }
+      return false;
+    }
+
+    const EMAIL = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+    /// The numeric value of a control, for the range and step constraints.
+    ///
+    /// `null` when the type has no numeric interpretation, which is what keeps
+    /// `min`/`max` from being applied to a plain text field.
+    function numericValue(el, raw) {
+      const type = (api.getAttr(el._id, "type") || "text").toLowerCase();
+      if (["number", "range"].includes(type)) {
+        const n = Number(raw);
+        return raw === "" || Number.isNaN(n) ? null : n;
+      }
+      if (["date", "month", "week", "time", "datetime-local"].includes(type)) {
+        const at = Date.parse(type === "time" ? `1970-01-01T${raw}Z` : raw);
+        return Number.isNaN(at) ? null : at;
+      }
+      return null;
+    }
+
+    function computeValidity(el) {
+      const flags = {
+        valueMissing: false, typeMismatch: false, patternMismatch: false,
+        tooLong: false, tooShort: false, rangeUnderflow: false,
+        rangeOverflow: false, stepMismatch: false, badInput: false,
+        customError: !!el.__h5iCustomError,
+      };
+      if (isBarredFromValidation(el)) {
+        // Barred elements are always valid, *including* when a custom error
+        // was set: the element is not a candidate, so nothing about it is
+        // checked. This is the clause that stops a hidden field blocking a
+        // form nobody can fix.
+        return { ...flags, customError: false, valid: true };
+      }
+
+      const type = el.tagName === "INPUT"
+        ? (api.getAttr(el._id, "type") || "text").toLowerCase()
+        : el.tagName.toLowerCase();
+      const value = el.tagName === "SELECT" || el.tagName === "BUTTON" ? el.value : (el.value ?? "");
+      const required = api.getAttr(el._id, "required") !== null;
+
+      if (required) {
+        if (type === "checkbox") flags.valueMissing = !el.checked;
+        else if (type === "radio") {
+          const name = el.name;
+          const group = name
+            ? document.querySelectorAll(`input[type=radio][name="${name}"]`)
+            : [el];
+          flags.valueMissing = !group.some((other) => other.checked);
+        } else flags.valueMissing = value === "";
+      }
+
+      if (value !== "") {
+        if (type === "email") flags.typeMismatch = !EMAIL.test(value);
+        else if (type === "url") {
+          flags.typeMismatch = api.parseUrl(value, "") === null;
+        }
+
+        const pattern = api.getAttr(el._id, "pattern");
+        if (pattern !== null && ["text", "search", "url", "tel", "email", "password"].includes(type)) {
+          try {
+            // Anchored, and `v` rather than `u` is not available here — the
+            // whole value must match, which is the difference between
+            // `pattern` and a search.
+            flags.patternMismatch = !new RegExp(`^(?:${pattern})$`, "u").test(value);
+          } catch {
+            // An unparseable pattern is ignored rather than treated as a
+            // mismatch, which is what the spec says and stops one typo in an
+            // attribute making a form unsubmittable.
+          }
+        }
+
+        // Length constraints apply only once the value has been edited, which
+        // is what the spec's "dirty value flag" means. `_value` is set by the
+        // property setter and by `Page::type_into`, so it is exactly that flag.
+        const dirty = el._value !== undefined;
+        const maxLength = Number(api.getAttr(el._id, "maxlength"));
+        const minLength = Number(api.getAttr(el._id, "minlength"));
+        if (dirty && Number.isInteger(maxLength) && maxLength >= 0) {
+          flags.tooLong = value.length > maxLength;
+        }
+        if (dirty && Number.isInteger(minLength) && minLength >= 0) {
+          flags.tooShort = value.length < minLength;
+        }
+
+        const numeric = numericValue(el, value);
+        if (numeric !== null) {
+          const min = numericValue(el, api.getAttr(el._id, "min") ?? "");
+          const max = numericValue(el, api.getAttr(el._id, "max") ?? "");
+          if (min !== null) flags.rangeUnderflow = numeric < min;
+          if (max !== null) flags.rangeOverflow = numeric > max;
+          const stepRaw = api.getAttr(el._id, "step");
+          if (stepRaw !== null && stepRaw.toLowerCase() !== "any") {
+            const step = Number(stepRaw);
+            if (Number.isFinite(step) && step > 0) {
+              const base = min ?? 0;
+              const offset = Math.abs((numeric - base) % step);
+              // A floating-point remainder is never exactly zero, so the
+              // comparison has to have a tolerance or every decimal step
+              // mismatches.
+              flags.stepMismatch = offset > 1e-9 && Math.abs(offset - step) > 1e-9;
+            }
+          }
+        }
+      }
+
+      const valid = !Object.keys(flags).some((k) => flags[k]);
+      return { ...flags, valid };
+    }
+
+    on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
+      "willValidate", { get() { return !isBarredFromValidation(this); } });
+
+    on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
+      "validity", {
+        get() {
+          // Computed fresh each time rather than cached: validity is a
+          // function of the element's current state, and a cached one would
+          // go stale the moment a page typed into the field.
+          const flags = computeValidity(this);
+          return Object.freeze({ ...flags });
+        },
+      });
+
+    const VALIDATION_MESSAGES = {
+      valueMissing: "Please fill out this field.",
+      typeMismatch: "Please enter a value of the correct type.",
+      patternMismatch: "Please match the requested format.",
+      tooLong: "Please shorten this text.",
+      tooShort: "Please lengthen this text.",
+      rangeUnderflow: "Value must be greater than or equal to the minimum.",
+      rangeOverflow: "Value must be less than or equal to the maximum.",
+      stepMismatch: "Please enter a valid value.",
+      badInput: "Please enter a valid value.",
+    };
+
+    on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
+      "validationMessage", {
+        get() {
+          if (isBarredFromValidation(this)) return "";
+          const flags = computeValidity(this);
+          if (flags.valid) return "";
+          if (flags.customError) return this.__h5iCustomError || "";
+          for (const key of Object.keys(VALIDATION_MESSAGES)) {
+            if (flags[key]) return VALIDATION_MESSAGES[key];
+          }
+          return "";
+        },
+      });
+
+    for (const tag of ["input", "select", "textarea", "button", "fieldset", "output", "object"]) {
+      const Interface = TAG_CLASSES.get(tag);
+      if (!Interface) continue;
+      Object.defineProperty(Interface.prototype, "setCustomValidity", {
+        configurable: true, writable: true,
+        value(message) {
+          // The empty string clears it, which is how a page says "this is fine
+          // now" — storing "" as an error would leave the control permanently
+          // invalid.
+          this.__h5iCustomError = String(message ?? "") || undefined;
+        },
+      });
+      Object.defineProperty(Interface.prototype, "checkValidity", {
+        configurable: true, writable: true,
+        value() {
+          if (isBarredFromValidation(this)) return true;
+          if (computeValidity(this).valid) return true;
+          // `invalid` is cancelable and does not bubble. A page listens for it
+          // to put its own message beside the field, which is most of what
+          // this API is used for.
+          this.dispatchEvent(new Event("invalid", { cancelable: true }));
+          return false;
+        },
+      });
+      Object.defineProperty(Interface.prototype, "reportValidity", {
+        configurable: true, writable: true,
+        // Identical to `checkValidity` here: the difference is that a browser
+        // *shows* the message, and this engine has no UI to show it in. Said
+        // rather than left implicit, because a page calling this expects the
+        // return value and not the bubble.
+        value() { return this.checkValidity(); },
+      });
+    }
+
     on(["form"], "elements", {
       get() {
         return collection(
@@ -2963,6 +3580,35 @@
       },
     });
     on(["form"], "length", { get() { return this.elements.length; } });
+    // Enumerated, and its missing-value default is `on` rather than "": a page
+    // branching on it has two states to handle, not three.
+    on(["form"], "autocomplete", {
+      get() {
+        return (api.getAttr(this._id, "autocomplete") || "").toLowerCase() === "off"
+          ? "off"
+          : "on";
+      },
+      set(value) { this.setAttribute("autocomplete", String(value)); },
+    });
+
+    // A form validates by asking each of its controls, and the *statically
+    // validate* step is what makes this more than a loop: every control is
+    // checked and every invalid one gets its `invalid` event, rather than
+    // stopping at the first. A page that highlights all its bad fields at once
+    // depends on that.
+    for (const name of ["checkValidity", "reportValidity"]) {
+      Object.defineProperty(TAG_CLASSES.get("form").prototype, name, {
+        configurable: true, writable: true,
+        value() {
+          let ok = true;
+          for (const control of this.elements) {
+            if (typeof control.checkValidity !== "function") continue;
+            if (!control.checkValidity()) ok = false;
+          }
+          return ok;
+        },
+      });
+    }
     // A form's default method is `get`, not the empty string: code branches on
     // it, and "" is not one of the branches.
     on(["form"], "method", {
