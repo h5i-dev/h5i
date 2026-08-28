@@ -233,6 +233,39 @@
   /// The reserved list is the awkward part and is not guessable: they are
   /// hyphenated names SVG and MathML already own, so they look like valid
   /// custom element names and are not.
+  /// XML's `Name` production, which `createElement` and friends validate
+  /// against before anything else happens.
+  ///
+  /// Two errors, kept apart because the spec keeps them apart and pages catch
+  /// them separately: this one is "that is not a name at all".
+  const NAME_START = /[:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/;
+  const NAME_CHAR = /[-.0-9\u00B7\u0300-\u036F\u203F-\u2040:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/;
+
+  function validateQualifiedName(name) {
+    const bad = (why) => {
+      throw new DOMException(why, "InvalidCharacterError");
+    };
+    if (name.length === 0) bad("the name must not be empty");
+    if (!NAME_START.test(name[0])) {
+      bad(`\`${name}\` does not start with a name character`);
+    }
+    for (const character of name.slice(1)) {
+      if (!NAME_CHAR.test(character)) {
+        bad(`\`${name}\` contains \`${character}\`, which is not a name character`);
+      }
+    }
+    // A qualified name is `prefix:local`, so at most one colon, and neither
+    // half may be empty.
+    const parts = name.split(":");
+    if (parts.length > 2) bad(`\`${name}\` has more than one colon`);
+    if (parts.length === 2 && (parts[0] === "" || parts[1] === "")) {
+      bad(`\`${name}\` has an empty prefix or local name`);
+    }
+    if (parts.length === 2 && !NAME_START.test(parts[1][0])) {
+      bad(`the local name in \`${name}\` does not start with a name character`);
+    }
+  }
+
   const RESERVED_ELEMENT_NAMES = new Set([
     "annotation-xml", "color-profile", "font-face", "font-face-src",
     "font-face-uri", "font-face-format", "font-face-name", "missing-glyph",
@@ -451,13 +484,53 @@
     _write(list) {
       api.setAttr(this._node._id, this._attr, list.join(" "));
     }
+    /// Every mutating method validates first, and all of them the same way.
+    ///
+    /// An empty token and a token containing whitespace are both errors with
+    /// names the spec gives them, and they are not pedantry: `classList.add("")`
+    /// silently wrote a trailing space, and `classList.add("a b")` wrote a
+    /// token that then read back as *two* — so a page that added one class
+    /// could not remove it again.
+    _check(names) {
+      for (const raw of names) {
+        const name = String(raw);
+        if (name === "") {
+          throw new DOMException("the token must not be empty", "SyntaxError");
+        }
+        if (/[ \t\n\f\r]/.test(name)) {
+          throw new DOMException(
+            `the token \`${name}\` must not contain whitespace`,
+            "InvalidCharacterError",
+          );
+        }
+      }
+      return names.map(String);
+    }
     add(...names) {
+      const wanted = this._check(names);
       const list = this._all();
-      for (const n of names) if (!list.includes(n)) list.push(n);
+      for (const n of wanted) if (!list.includes(n)) list.push(n);
       this._write(list);
     }
     remove(...names) {
-      this._write(this._all().filter((n) => !names.includes(n)));
+      const unwanted = this._check(names);
+      this._write(this._all().filter((n) => !unwanted.includes(n)));
+    }
+    /// Swap one token for another, keeping its position.
+    ///
+    /// Absent, and asked for 262 times across the corpus: it is how a component
+    /// moves between states without a remove-then-add that briefly has neither
+    /// class, which matters when a stylesheet transitions on the change.
+    replace(oldToken, newToken) {
+      const [from, to] = this._check([oldToken, newToken]);
+      const list = this._all();
+      const at = list.indexOf(from);
+      if (at === -1) return false;
+      // A no-op when the replacement is already there, rather than a duplicate.
+      if (list.includes(to)) list.splice(at, 1);
+      else list[at] = to;
+      this._write(list);
+      return true;
     }
     contains(name) { return this._all().includes(name); }
     item(index) { return this._all()[index] ?? null; }
@@ -475,6 +548,29 @@
     values() { return this._all().values(); }
     entries() { return this._all().entries(); }
     [Symbol.iterator]() { return this._all()[Symbol.iterator](); }
+    /// `list[0]`, which is indexed access and not a property.
+    ///
+    /// A `DOMTokenList` is an indexed collection, so `classList[0]` is its
+    /// first token and `classList[-1]` is `undefined`. Both answered
+    /// `undefined` here, and the second is right for the wrong reason — the
+    /// reporting picked it up as `DOMTokenList.0` and `DOMTokenList.-1`, an
+    /// engine gap recorded under two names because nothing implemented either.
+    static _indexed(target) {
+      return new Proxy(target, {
+        get(list, key, receiver) {
+          if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
+            return list._all()[Number(key)];
+          }
+          return Reflect.get(list, key, receiver);
+        },
+        has(list, key) {
+          if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
+            return Number(key) < list._all().length;
+          }
+          return Reflect.has(list, key);
+        },
+      });
+    }
     toString() { return this.value; }
     toggle(name, force) {
       const has = this.contains(name);
@@ -1035,9 +1131,13 @@
     set id(v) { this.setAttribute("id", v); }
     get className() { return this.getAttribute("class") || ""; }
     set className(v) { this.setAttribute("class", v); }
-    get classList() { return observed(new DOMTokenList(this, "class"), "DOMTokenList"); }
+    get classList() {
+      return observed(DOMTokenList._indexed(new DOMTokenList(this, "class")), "DOMTokenList");
+    }
     set classList(v) { this.setAttribute("class", String(v)); }
-    get relList() { return observed(new DOMTokenList(this, "rel"), "DOMTokenList"); }
+    get relList() {
+      return observed(DOMTokenList._indexed(new DOMTokenList(this, "rel")), "DOMTokenList");
+    }
 
     // Setting a URL part rewrites the href it came from, which is how routing
     // code edits a link in place.
@@ -4645,7 +4745,46 @@
     // icon calls it. The namespace is dropped because this engine models one:
     // the element is created under its local name, which is what the renderer
     // can do something with.
-    createElementNS(_namespace, tag) { return wrap(api.createElement(String(tag))); },
+    /// `createElementNS`, with the two validations that are most of what it is.
+    ///
+    /// It accepted anything and returned an element, so
+    /// `dom/nodes/Document-createElementNS.html` scored **1 of 596**: the file
+    /// is almost entirely a sweep of names that must be rejected, and every one
+    /// of them succeeded.
+    ///
+    /// The two errors are different questions and the spec keeps them apart:
+    /// `InvalidCharacterError` is "that is not a name", and `NamespaceError` is
+    /// "that name and that namespace may not go together". A page catching one
+    /// and not the other is relying on the difference.
+    createElementNS(namespace, qualifiedName) {
+      const ns = namespace === null || namespace === undefined ? null : String(namespace);
+      const name = String(qualifiedName);
+      validateQualifiedName(name);
+      const colon = name.indexOf(":");
+      const prefix = colon === -1 ? null : name.slice(0, colon);
+      if (prefix !== null && ns === null) {
+        throw new DOMException(
+          `\`${name}\` has a prefix, so it needs a namespace`,
+          "NamespaceError",
+        );
+      }
+      if (prefix === "xml" && ns !== "http://www.w3.org/XML/1998/namespace") {
+        throw new DOMException(
+          "the `xml` prefix belongs to the XML namespace",
+          "NamespaceError",
+        );
+      }
+      if ((name === "xmlns" || prefix === "xmlns")
+        !== (ns === "http://www.w3.org/2000/xmlns/")) {
+        throw new DOMException(
+          "`xmlns` and the XMLNS namespace may only be used with each other",
+          "NamespaceError",
+        );
+      }
+      // The local name is what this engine's single element class is built on;
+      // the namespace is validated above and then, honestly, not carried.
+      return wrap(api.createElement(colon === -1 ? name : name.slice(colon + 1)));
+    },
     // `document.write`, emulated where it can be and refused where it cannot.
     //
     // A browser inserts the markup at the parser's position, which is right

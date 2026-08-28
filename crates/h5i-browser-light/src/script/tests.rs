@@ -2563,6 +2563,69 @@ fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) 
 }
 
 #[test]
+fn a_token_list_replaces_indexes_and_refuses_a_token_it_cannot_hold() {
+    // Four gaps in one type. `replace` was absent (262 corpus asks), indexed
+    // access answered undefined, and the two validations were missing — so
+    // `classList.add("")` wrote a trailing space and `classList.add("a b")`
+    // wrote a token that read back as *two*, which meant a class a page added
+    // could not be removed again.
+    let (text, console) = scripted_text(
+        r#"<div id="d" class="a b c"></div>
+           <script>
+             const cl = document.getElementById("d").classList;
+             const out = [];
+             out.push(cl[0], String(cl[9]), cl.length);
+             out.push(cl.replace("b", "z"), cl.value, cl.replace("q", "w"));
+             for (const bad of ["", "x y"]) {
+               try { cl.add(bad); out.push("accepted"); }
+               catch (e) { out.push(e.name); }
+             }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("a|undefined|3|true|a z c|false|SyntaxError|InvalidCharacterError"),
+        "DOMTokenList is incomplete:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn create_element_ns_refuses_a_name_it_cannot_hold() {
+    // It accepted anything and returned an element, which is why
+    // `dom/nodes/Document-createElementNS.html` scored 1 of 596: the file is
+    // almost entirely a sweep of names that must be rejected.
+    //
+    // The two errors are different questions and pages catch them separately:
+    // `InvalidCharacterError` is "that is not a name", `NamespaceError` is
+    // "that name and that namespace may not go together".
+    let (text, console) = scripted_text(
+        r#"<script>
+             const NS = "http://www.w3.org/1999/xhtml";
+             const out = [];
+             const attempt = (ns, name) => {
+               try { return document.createElementNS(ns, name).tagName ? "ok" : "ok"; }
+               catch (e) { return e.name; }
+             };
+             out.push(attempt(NS, "div"));
+             out.push(attempt(NS, ""));
+             out.push(attempt(NS, "1bad"));
+             out.push(attempt(NS, "a b"));
+             out.push(attempt(NS, "a:b:c"));
+             out.push(attempt(null, "p:div"));
+             out.push(attempt(NS, "xml:div"));
+             out.push(attempt(NS, "xmlns"));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains(
+            "ok|InvalidCharacterError|InvalidCharacterError|InvalidCharacterError|InvalidCharacterError|NamespaceError|NamespaceError|NamespaceError"
+        ),
+        "createElementNS does not validate:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
 fn a_popover_opens_closes_and_says_why_it_cannot() {
     // The largest self-contained feature that was missing: `popover` reflected
     // and nothing acted on it, so 3,846 subtests failed against 20 passing.

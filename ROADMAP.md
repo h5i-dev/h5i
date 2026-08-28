@@ -8237,24 +8237,55 @@ iterable of pairs now, plus `sort()`, `size`, proper form-urlencoded output
 
     url  68 -> 148 of 499
 
-### B20.11 Where core stands, and what is left
+### B20.11 Four more, and the shape of what is left
 
-Core moved 49.7% -> roughly 59%, almost all of it §B20.3. The remaining
-distance to 80% is about +25,000 subtests, and the ranked demand list (§B20.4)
-now says where it is rather than leaving it to be guessed at. The largest
-entries left, with the caveat §B20.5 attaches to all of them — a subtest count
-measures repetition, not work:
+**Popovers and `<dialog>`, measured.** `html/semantics` 2,839 -> **4,642**, and
+`html/dom` +418 alongside. The feature was not large; it was unwired.
 
-1. **Declarative shadow DOM**, 7,630 unpassed at 2%. Structural: it needs a
-   real shadow tree, which is the decision §B6 made and §B20.5 ran into.
-2. **`html/semantics`**, 11,176 unpassed at 16%. Broad rather than clustered —
-   forms, dialogs, popovers — and the honest estimate is many small features.
-3. **Text-field selection** (`setSelectionRange`, `selectionStart/End`,
-   `setRangeText`, `select`), top of the demand list after `getHTML`.
-4. **`custom-elements/registries`**, 2,011 at 10%, mostly scoped registries.
-5. **`fetch/metadata`**, 1,447 at 0.1%: `Sec-Fetch-*` request headers, which
-   this engine is uniquely well placed to get right because it *is* the client.
+**`DOMTokenList`, four gaps in one type.** `replace()` was absent — 262 corpus
+asks — indexed access answered `undefined`, and neither validation existed, so
+`classList.add("")` wrote a trailing space and `classList.add("a b")` wrote a
+token that read back as *two*. That last one is the bad kind of bug: a class a
+page added could not be removed again.
 
+**`createElementNS` accepted anything**, which is why
+`dom/nodes/Document-createElementNS.html` scored **1 of 596** — the file is
+almost entirely a sweep of names that must be rejected. It validates the XML
+`Name` production now and keeps `InvalidCharacterError` ("that is not a name")
+apart from `NamespaceError` ("that name and that namespace may not go
+together"), because pages catch them separately.
+
+    dom  2,022 -> 2,629
+
+### B20.12 Where core stands, and what 80% would actually take
+
+**58.5%** — 76,760 of 131,201 — from 49.7%, measured across all nineteen core
+directories, 9,492 files, on a freshly built binary. The session moved roughly
+15,000 subtests.
+
+80% is +28,200 from here, and the honest reading of the remaining mass is that
+**the cheap shared causes are spent.** Four blocks hold most of it, and two of
+them are decisions rather than work:
+
+| block | unpassed | what it is |
+| --- | --- | --- |
+| `gethtml.html` + declarative shadow DOM | ~7,100 | needs a real shadow tree. §B6 chose flattening, and §B20.5 is where that choice becomes a number. |
+| `html/dom/idlharness` | 4,496 | correct IDL shapes — prototypes, descriptors, inheritance — on every interface. Grind, not design. |
+| `html/semantics/forms` | 4,147 | validity API, text-field selection, submission. **The one large block that is just work.** |
+| `fetch` | 4,539 | 260 of 467 files time out on abort semantics, which a synchronous fetch cannot provide. |
+
+So the path to 80% runs through two product decisions — whether a shadow root
+is a real tree, and whether `fetch` stays synchronous underneath — plus the
+forms block and a long tail. None of that is discovered by pointing the harness
+at more directories; it was discovered by reading what the failures said, which
+is the only method in this section that has worked at all.
+
+**A caution on the number itself.** 58.5% is the core tier as `tiers.list`
+defines it, and §B12.6's three ways to move a score all applied today:
+implementing more (most of it), measuring more (`idlharness` becoming
+reportable at all, which added 6,000 subtests to the denominator as well as
+1,896 to the numerator), and counting more honestly. The first is the only one
+that is engineering, and the tier table is what keeps the three visible.
 
 ---
 
