@@ -295,17 +295,18 @@ fn a_reflected_property_belongs_to_its_interface_and_not_to_every_element() {
 }
 
 #[test]
-fn has_selectors_parse_and_match() {
-    // This test used to pin the refusal: stylo's servo parser hardcoded
-    // `parse_has() -> false`, so `:has()` threw with a message naming the
-    // missing feature. The vendored one-bool patch (vendor/stylo) turns the
-    // parser on, and the matching machinery underneath is the code Gecko
-    // ships — which is the bet this asserts: not merely "no longer throws",
-    // but the right elements come back.
+fn has_selectors_match_through_the_prelude_without_a_stylo_fork() {
+    // Stylo's servo parser hardcodes `parse_has() -> false`, and the vendored
+    // one-bool patch that once changed that was removed by owner decision. So
+    // `:has()` on the *query* paths is evaluated in the prelude instead:
+    // each group becomes a transient marker class computed with the engine's
+    // own matcher, and the markers are gone again before the call returns —
+    // which is the second half of what this pins.
     let (_page, mut script) = page_and_script(
         "<html><body>\
            <div id=\"a\"><span class=\"flag\">x</span></div>\
            <div id=\"b\"><span>y</span></div>\
+           <div id=\"c\"></div>\
          </body></html>",
     );
     assert_eq!(
@@ -315,15 +316,52 @@ fn has_selectors_parse_and_match() {
             )
             .unwrap(),
         "a",
-        ":has must match the container that has the flag and not the one that lacks it"
+        ":has must match the container that has the flag and not the ones that lack it"
     );
     assert_eq!(
         script
             .eval_value("document.querySelector('div:has(> .flag)').id")
             .unwrap(),
         "a",
-        "the relative-combinator form must work too"
+        "the child-combinator relative form must work"
     );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('div:has(+ #c)').id")
+            .unwrap(),
+        "b",
+        "the sibling relative form must work"
+    );
+    assert_eq!(
+        script
+            .eval_value("String(document.getElementById('a').matches('div:has(.flag)'))")
+            .unwrap(),
+        "true",
+        "matches() takes the same path"
+    );
+    // No marker may survive the call: the page's own view of `class` is
+    // untouched afterwards.
+    assert_eq!(
+        script
+            .eval_value("JSON.stringify(document.getElementById('a').className)")
+            .unwrap(),
+        "\"\"",
+        "the transient marker classes are cleaned up"
+    );
+
+    // A selector that really is malformed still gets the plain answer, and a
+    // nested `:has()` is invalid per the spec's own grammar.
+    for bad in ["!!!", "div:has(:has(.x))"] {
+        let asked = format!(
+            "(() => {{ try {{ document.querySelector('{bad}'); return 'accepted' }} \
+             catch (e) {{ return e.message }} }})()"
+        );
+        let said = script.eval_value(&asked).unwrap();
+        assert!(
+            said.contains("is not a valid selector"),
+            "{bad} must be refused: {said}"
+        );
+    }
 }
 
 #[test]

@@ -8627,6 +8627,28 @@ again what it says, a selector no browser would accept.
 
     css/selectors  2,115 -> 2,620
 
+> **Reversed, 2026-08-28, by owner decision.** The technical bet held; the
+> maintenance bet did not survive review. A 5.6MB in-tree copy of a
+> rendering-engine crate is a fork this project would have to carry across
+> every stylo bump, and the owner's judgment is that no WPT arithmetic pays
+> for that. `vendor/stylo` is deleted and the `[patch.crates-io]` entry with
+> it.
+>
+> **What replaces it:** the *query* half of `:has()` is evaluated in the
+> prelude (`withHasMarkers`), no fork required: each `:has(ARG)` group is
+> computed into a transient marker class — the engine's own matcher does the
+> matching, a leading `>`/`+`/`~` anchors through a scope marker, the
+> descendant form takes an ancestors-of-matches fast path — the selector is
+> rewritten to the marker, the ordinary query runs, and the markers are
+> removed before the call returns, invisible to observers and reactions. So
+> `querySelector`/`querySelectorAll`/`matches`/`closest` keep `:has()`.
+> **Stylesheet rules** using `:has()` are the half that stays lost: they go
+> through Stylo's parser inside Blitz and are dropped there, which takes the
+> `has-in-*` styling/invalidation suites with them (§B22.11's root-restyle
+> hint stays — sibling combinators still need it). The clean exit for that
+> half is the first Blitz release that depends on stylo >= 0.20 (0.20.0 is
+> published; check `parse_has` there when Blitz moves).
+
 ### B22.2 The mechanical clusters: tables transcribed, not invented
 
 Everything else in the round is a spec table this engine had approximated:
@@ -8773,11 +8795,13 @@ setter borrowed onto a doctype wrapper panicked the engine from page script;
 it now throws the TypeError it owed.
 
     core tier   66.2% at branch start -> 75.7% (88,199 / 116,471, full fresh
-                sweep 2026-08-28); the 80% mark needs ~5,000 more and is the
-                next branch's target
+                sweep 2026-08-28) measured with the vendored :has() stylo;
+                ~74.5% after its removal (see the §B22.1 reversal note) —
+                the 80% mark is the next branch's target
     html/semantics 5,999 -> 9,623 · html/dom 59,435 -> 62,092
-    css/selectors 2,115 -> 3,090 · css-conditional 881 -> 1,601
-    custom-elements 2,217 -> 2,414 · domparsing 172 -> 384 · dom 2,672 -> 3,278
+    css/selectors 2,115 -> 3,090, then the :has() share given back
+    css-conditional 881 -> 1,601 · custom-elements 2,217 -> 2,414
+    domparsing 172 -> 384 · dom 2,672 -> 3,278
 
 The pools where the next ~5,000 live, measured and ranked: the idlharness
 file itself (2,628 still failing — the missing-global family is mostly

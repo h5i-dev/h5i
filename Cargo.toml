@@ -122,10 +122,9 @@ fastrand = "2.3.0"
 [profile.dev]
 debug = false
 
-# One-bool fork: upstream stylo hard-codes Servo's `parse_has()` to `false`,
-# which makes `:has()` a parse error everywhere. See vendor/stylo/README-h5i.md
-# for the whole argument and the exit condition. Patched here rather than in
-# the browser crate so Blitz's own stylo — the one that parses stylesheets —
-# is the same copy.
-[patch.crates-io]
-stylo = { path = "vendor/stylo" }
+# There was a `[patch.crates-io]` here pointing stylo at a vendored one-bool
+# fork that enabled `:has()` parsing. Removed by owner decision (2026-08-28):
+# an in-tree copy of a rendering-engine crate is not something this project
+# will maintain, whatever the WPT arithmetic says. `:has()` is a named gap
+# again (`selector :has()` in the unsupported channel) until a Blitz release
+# depends on stylo >= 0.20, which is where to check `parse_has` next.
