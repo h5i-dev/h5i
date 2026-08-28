@@ -1990,7 +1990,9 @@
       if (!invokee) return;
       const command = this.command;
       if (command === "") return;
-      const event = new CommandEvent("command", { cancelable: true, command, source: this });
+      const event = new CommandEvent("command", {
+        cancelable: true, composed: true, command, source: this,
+      });
       invokee.dispatchEvent(event);
       // A custom `--command` is *only* the event: its meaning belongs to the
       // page. The built-in verbs carry defaults, each gated on the kind of
@@ -3164,6 +3166,18 @@
           this.setAttribute("value", text);
           return;
         }
+        // Assigning a select's value selects the first option that carries
+        // it — and deselects everything when nothing does, which is how a
+        // page discovers it assigned a value that is not on the menu.
+        if (this.tagName === "SELECT") {
+          let taken = false;
+          for (const option of this.querySelectorAll("option")) {
+            const hit = !taken && option.value === text;
+            option._selected = hit;
+            if (hit) taken = true;
+          }
+          return;
+        }
         // The value modes again, on the write side: attribute-backed modes
         // write the attribute, a file input refuses anything but "", and a
         // value-mode write is sanitized on the way in with the caret moved to
@@ -3386,6 +3400,21 @@
     on(["select"], "type", {
       get() { return api.getAttr(this._id, "multiple") !== null ? "select-multiple" : "select-one"; },
     });
+    on(["select"], "selectedIndex", {
+      get() {
+        const options = Array.from(this.querySelectorAll("option"));
+        const chosen = selectedOptionsOf(this)[0];
+        if (!chosen) return -1;
+        return options.findIndex((o) => o._id === chosen._id);
+      },
+      set(index) {
+        const options = Array.from(this.querySelectorAll("option"));
+        const at = Number(index);
+        for (let i = 0; i < options.length; i += 1) {
+          options[i]._selected = i === at;
+        }
+      },
+    });
     on(["textarea"], "type", { get() { return "textarea"; } });
     on(["textarea"], "textLength", { get() { return this.value.length; } });
     on(["output"], "type", { get() { return "output"; } });
@@ -3405,6 +3434,102 @@
     // True always: by the time script runs, any load this engine was going to
     // do has happened — success or failure, both of which are "complete".
     on(["img"], "complete", { get() { return true; } });
+    // The srcset microsyntax, parsed as the spec parses it: spec whitespace
+    // is exactly TAB/LF/FF/CR/SPACE (a NBSP is part of the URL), a trailing
+    // comma ends a candidate but an embedded one is a split, parentheses
+    // swallow commas inside a descriptor, and a candidate with any invalid
+    // descriptor is dropped whole. WPT walks every one of those edges.
+    function parseSrcset(input) {
+      const ws = (c) => c === "\t" || c === "\n" || c === "\f" || c === "\r" || c === " ";
+      const candidates = [];
+      let pos = 0;
+      const len = input.length;
+      while (pos < len) {
+        while (pos < len && (ws(input[pos]) || input[pos] === ",")) pos += 1;
+        if (pos >= len) break;
+        const start = pos;
+        while (pos < len && !ws(input[pos])) pos += 1;
+        let url = input.slice(start, pos);
+        const descriptors = [];
+        if (url.endsWith(",")) {
+          url = url.replace(/,+$/, "");
+          if (url === "") continue;
+        } else {
+          while (pos < len && ws(input[pos])) pos += 1;
+          let current = "";
+          let inParens = false;
+          let splitting = true;
+          while (pos < len && splitting) {
+            const c = input[pos];
+            if (inParens) {
+              if (c === ")") inParens = false;
+              current += c;
+              pos += 1;
+            } else if (c === ",") {
+              pos += 1;
+              splitting = false;
+            } else if (c === "(") {
+              inParens = true;
+              current += c;
+              pos += 1;
+            } else if (ws(c)) {
+              if (current) { descriptors.push(current); current = ""; }
+              pos += 1;
+            } else {
+              current += c;
+              pos += 1;
+            }
+          }
+          if (current) descriptors.push(current);
+        }
+        let width = null;
+        let density = null;
+        let height = null;
+        let valid = true;
+        for (const desc of descriptors) {
+          const unit = desc[desc.length - 1];
+          const number = desc.slice(0, -1);
+          const isInt = /^\d+$/.test(number);
+          const isFloat = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(number);
+          if (unit === "w" && isInt && Number(number) > 0
+            && width === null && density === null) {
+            width = Number(number);
+          } else if (unit === "x" && isFloat && Number(number) >= 0
+            && width === null && density === null && height === null) {
+            density = Number(number);
+          } else if (unit === "h" && isInt && Number(number) > 0
+            && height === null && density === null) {
+            height = Number(number);
+          } else {
+            valid = false;
+            break;
+          }
+        }
+        if (height !== null && width === null) valid = false;
+        if (valid) candidates.push({ url, width, density });
+      }
+      return candidates;
+    }
+    // What the engine chose to load: the first valid srcset candidate — this
+    // engine renders at 1x on one viewport, so the elaborate density and
+    // width selection collapses to document order — else the plain src,
+    // else "".
+    on(["img"], "currentSrc", {
+      get() {
+        const srcset = api.getAttr(this._id, "srcset");
+        if (srcset !== null && srcset !== "") {
+          const candidates = parseSrcset(srcset);
+          if (candidates.length > 0) {
+            const chosen = candidates[0].url;
+            const parts = api.parseUrl(chosen, currentAddress);
+            return parts ? parts.href : chosen;
+          }
+        }
+        const src = api.getAttr(this._id, "src");
+        if (src === null || src === "") return "";
+        return this._resolved("src");
+      },
+    });
     on(["a"], "text", {
       get() { return this.textContent; },
       set(value) { this.textContent = String(value); },
@@ -3477,6 +3602,7 @@
           }
           this.setAttribute("open", "");
           this.__h5iModal = modal;
+          if (modal) this.classList.add(MODAL_OPEN_CLASS);
         },
       });
     }
@@ -3491,6 +3617,7 @@
         if (returnValue !== undefined) this.__h5iReturnValue = String(returnValue);
         this.removeAttribute("open");
         this.__h5iModal = false;
+        this.classList.remove(MODAL_OPEN_CLASS);
         // `close` does not bubble, which is what a page delegating from an
         // ancestor has to know and what makes this worth getting right.
         this.dispatchEvent(new Event("close"));
@@ -3711,11 +3838,50 @@
       },
       set(on_) { this._checked = !!on_; },
     });
+    // Selectedness is *state*: the attribute is only the default. In a
+    // single select the last default-selected option wins, and when nothing
+    // is selected the first non-disabled option is — that fallback is why a
+    // dropdown always shows something.
+    function selectAncestorOf(option) {
+      for (let n = option.parentNode; n; n = n.parentNode) {
+        if (n.tagName === "SELECT") return n;
+      }
+      return null;
+    }
+    function selectedOptionsOf(sel) {
+      const options = Array.from(sel.querySelectorAll("option"));
+      const multiple = api.getAttr(sel._id, "multiple") !== null;
+      const isOn = (o) => o._selected !== undefined
+        ? o._selected
+        : api.getAttr(o._id, "selected") !== null;
+      const explicit = options.filter(isOn);
+      if (multiple) return explicit;
+      if (explicit.length > 0) return [explicit[explicit.length - 1]];
+      const size = Number(api.getAttr(sel._id, "size")) || 1;
+      if (size <= 1) {
+        const first = options.find((o) => !o.disabled);
+        return first ? [first] : [];
+      }
+      return [];
+    }
     on(["option"], "selected", {
-      get() { return api.getAttr(this._id, "selected") !== null; },
+      get() {
+        if (this._selected !== undefined) return this._selected;
+        const sel = selectAncestorOf(this);
+        if (!sel) return api.getAttr(this._id, "selected") !== null;
+        return selectedOptionsOf(sel).some((o) => o._id === this._id);
+      },
       set(on_) {
-        if (on_) api.setAttr(this._id, "selected", "");
-        else api.removeAttr(this._id, "selected");
+        // State, not markup: `defaultSelected` is the attribute's reflection
+        // and stays untouched. Selecting in a single select deselects peers.
+        const want = !!on_;
+        const sel = selectAncestorOf(this);
+        if (want && sel && api.getAttr(sel._id, "multiple") === null) {
+          for (const other of sel.querySelectorAll("option")) {
+            if (other._id !== this._id) other._selected = false;
+          }
+        }
+        this._selected = want;
       },
     });
 
@@ -5150,9 +5316,13 @@
   /// pseudo-class would not be; the alternative was every closed menu on every
   /// page sitting in the agent's outline as if it were open.
   const POPOVER_OPEN_CLASS = "__h5i_popover_open__";
+  /// Same arrangement for `:modal`: `showModal` stamps it, `close` lifts it.
+  const MODAL_OPEN_CLASS = "__h5i_modal_open__";
 
   function checkSelector(selector) {
-    const text = String(selector).replace(/:popover-open\b/g, "." + POPOVER_OPEN_CLASS);
+    const text = String(selector)
+      .replace(/:popover-open\b/g, "." + POPOVER_OPEN_CLASS)
+      .replace(/:modal\b/g, "." + MODAL_OPEN_CLASS);
     if (!api.validSelector(text)) {
       throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
     }
