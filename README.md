@@ -52,10 +52,6 @@ h5i browser read https://example.com          # or: one page, no session
 
 <a href="https://trendshift.io/repositories/46160?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-46160" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/46160/daily?language=Rust" alt="h5i on Trendshift" width="250" height="55"/></a>
 
-<p align="center">
-  <img src="./docs/_static/browser-demo.gif" alt="An agent reading and acting on a page through h5i" width="99%" />
-</p>
-
 ---
 
 ## 1. Install
@@ -116,6 +112,18 @@ h5i browser audit              # the whole session: verbs, fetches, handovers, e
 h5i browser status             # placement, policy digest, who saw the network
 h5i browser list               # every session on this machine, and which is default
 ```
+
+Watch the browser it drives:
+
+```bash
+h5i box view <name>            # the box's page, through a loopback-only forward
+h5i box view <name> --term     # draw it in this terminal instead (needs kitty)
+```
+
+<p align="center">
+  <img src="./docs/_static/browser-demo.gif" alt="An agent reading and acting on a page through h5i" width="99%" />
+</p>
+
 
 ### 2.2. The configurable sandbox
 
