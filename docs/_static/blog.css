@@ -245,7 +245,7 @@ main > section > .container { padding: 0; max-width: none; margin: 0; }
 .section-title {
   font-family: var(--disp); font-weight: 900;
   font-size: clamp(30px, 3.8vw, 54px);
-  letter-spacing: -0.025em; line-height: 0.98;
+  letter-spacing: -0.045em; line-height: 0.95;
   margin: 20px 0 0; max-width: 20ch; color: var(--ink);
 }
 .section-title br { display: none; }
