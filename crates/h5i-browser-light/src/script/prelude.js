@@ -93,6 +93,20 @@
           configurable: true, enumerable: true, writable: true, value: fn,
         });
       }
+      // A `length` accessor on the prototype, for the interface's shape; an
+      // instance's own array `length` shadows it, so this is only ever
+      // reached by inspection — or by the wrong `this`, which gets the brand
+      // TypeError idlharness expects.
+      const lengthGetter = function () {
+        if (!(this instanceof Interface) || this === Interface.prototype) {
+          throw new TypeError(`Illegal invocation: length needs a ${name}`);
+        }
+        return Array.prototype.slice.call(this).length;
+      };
+      Object.defineProperty(lengthGetter, "name", { value: "get length" });
+      Object.defineProperty(Interface.prototype, "length", {
+        configurable: true, enumerable: true, get: lengthGetter,
+      });
       COLLECTION_CLASSES[name] = Interface;
       return Interface;
     };
@@ -1257,7 +1271,20 @@
           && l.handler === handler && l.capture === capture,
       );
       if (already) return;
-      listeners.push({ id: this._id, type: String(type), handler, capture, once });
+      // The passive-by-default set: touch and wheel listeners on the
+      // document's scrolling surfaces cannot block scrolling, so their
+      // `preventDefault` is ignored unless the page explicitly asked with
+      // `passive: false` — the same rule browsers adopted for jank.
+      let passive = options && typeof options === "object" && "passive" in options
+        ? !!options.passive
+        : undefined;
+      if (passive === undefined) {
+        const scrollBlocking = ["touchstart", "touchmove", "wheel", "mousewheel"];
+        passive = scrollBlocking.includes(String(type))
+          && (this._id === 0 || this.tagName === "HTML" || this.tagName === "BODY"
+            || this.nodeType === 9);
+      }
+      listeners.push({ id: this._id, type: String(type), handler, capture, once, passive });
     }
     removeEventListener(type, handler) {
       for (let i = listeners.length - 1; i >= 0; i--) {
@@ -3481,7 +3508,21 @@
       on(media, "duration", { get() { return NaN; } });
       on(media, "networkState", { get() { return 0; } });
       on(media, "readyState", { get() { return 0; } });
-      on(media, "error", { get() { return null; } });
+      // A real MediaError, and honestly earned: this engine decodes nothing,
+      // so any media element *with a source* is an element whose source is
+      // not supported — code 4, the same answer a browser gives for a codec
+      // it lacks. No source, no error, exactly as the spec has it.
+      on(media, "error", {
+        get() {
+          const src = api.getAttr(this._id, "src");
+          const hasSource = (src !== null && src !== "")
+            || this.querySelector("source") !== null;
+          if (!hasSource) return null;
+          const error = Object.create(MediaError.prototype);
+          Object.defineProperty(error, "__h5iCode", { value: 4 });
+          return error;
+        },
+      });
       on(media, "currentSrc", { get() { return this._resolved("src"); } });
       on(media, "buffered", { get() { return emptyTimeRanges(); } });
       on(media, "played", { get() { return emptyTimeRanges(); } });
@@ -3735,6 +3776,13 @@
           this.setAttribute("open", "");
           this.__h5iModal = modal;
           if (modal) this.classList.add(MODAL_OPEN_CLASS);
+          // The dialog focusing steps: an `autofocus` descendant wins, then
+          // the first focusable control, then the dialog itself — which is
+          // how `document.activeElement` knows a dialog opened.
+          const preferred = this.querySelector("[autofocus]")
+            ?? this.querySelector("input, button, select, textarea, a[href], [tabindex]")
+            ?? this;
+          if (typeof preferred.focus === "function") preferred.focus();
         },
       });
     }
@@ -5583,7 +5631,12 @@
       this.isTrusted = false;
       this._stopped = false;
     }
-    preventDefault() { if (this.cancelable !== false) this.defaultPrevented = true; }
+    preventDefault() {
+      // A passive listener's preventDefault is a no-op by definition — that
+      // is the whole contract of passive.
+      if (this.__h5iInPassive) return;
+      if (this.cancelable !== false) this.defaultPrevented = true;
+    }
     stopPropagation() { this._stopped = true; }
     stopImmediatePropagation() { this._stopped = true; }
     composedPath() { return path(this.target || null); }
@@ -5918,12 +5971,15 @@
           if (at >= 0) listeners.splice(at, 1);
         }
         try {
+          if (l.passive) event.__h5iInPassive = true;
           if (typeof l.handler === "function") l.handler.call(node, event);
           else if (l.handler && typeof l.handler.handleEvent === "function") {
             l.handler.handleEvent(event);
           }
         } catch (error) {
           console.error("listener for " + event.type + " threw: " + withStack(error));
+        } finally {
+          event.__h5iInPassive = false;
         }
       }
     };
@@ -9208,6 +9264,127 @@
     };
   }
 
+  // ── data-shape interfaces ────────────────────────────────────────────────
+  //
+  // Interfaces that are *shapes over data this engine really has* — a media
+  // error code, an empty plugin list, pixel bytes — as opposed to the
+  // capability interfaces (Worker, Navigation, Sanitizer) that stay absent
+  // deliberately: declaring one of those would send feature detection down a
+  // branch whose machinery does not exist, which is the lie this engine
+  // refuses everywhere. An empty PluginArray is what a plugin-less browser
+  // shows; a Worker that cannot run is not what a worker-less page expects.
+  class MediaError {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get code() {
+      if (!this || this.__h5iCode === undefined) {
+        throw new TypeError("Illegal invocation: code needs a MediaError");
+      }
+      return this.__h5iCode;
+    }
+    get message() { return ""; }
+  }
+  Object.defineProperty(MediaError.prototype, Symbol.toStringTag, {
+    value: "MediaError", configurable: true,
+  });
+  class TimeRanges {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    start() { throw new DOMException("no ranges", "IndexSizeError"); }
+    end() { throw new DOMException("no ranges", "IndexSizeError"); }
+  }
+  class DOMStringList {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    item() { return null; }
+    contains() { return false; }
+  }
+  class ImageData {
+    constructor(dataOrWidth, widthOrHeight, height) {
+      if (dataOrWidth instanceof Uint8ClampedArray) {
+        this.data = dataOrWidth;
+        this.width = widthOrHeight;
+        this.height = height ?? (dataOrWidth.length / 4 / widthOrHeight);
+      } else {
+        this.width = Number(dataOrWidth);
+        this.height = Number(widthOrHeight);
+        if (!(this.width > 0) || !(this.height > 0)) {
+          throw new DOMException("ImageData: zero dimensions", "IndexSizeError");
+        }
+        this.data = new Uint8ClampedArray(this.width * this.height * 4);
+      }
+      this.colorSpace = "srgb";
+    }
+  }
+  class DataTransferItemList {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    add() { return null; }
+    remove() {}
+    clear() {}
+  }
+  class DataTransferItem {
+    constructor() { throw new TypeError("Illegal constructor"); }
+  }
+  class DataTransfer {
+    constructor() {
+      this.dropEffect = "none";
+      this.effectAllowed = "none";
+      this.types = [];
+      this.files = collection([], "FileList");
+      this.items = Object.create(DataTransferItemList.prototype);
+      this.__h5iData = new Map();
+    }
+    setData(format, data) { this.__h5iData.set(String(format), String(data)); }
+    getData(format) { return this.__h5iData.get(String(format)) ?? ""; }
+    clearData(format) {
+      if (format === undefined) this.__h5iData.clear();
+      else this.__h5iData.delete(String(format));
+    }
+    setDragImage() {}
+  }
+  class Plugin { constructor() { throw new TypeError("Illegal constructor"); } }
+  class PluginArray {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    item() { return null; }
+    namedItem() { return null; }
+    refresh() {}
+  }
+  class MimeType { constructor() { throw new TypeError("Illegal constructor"); } }
+  class MimeTypeArray {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    item() { return null; }
+    namedItem() { return null; }
+  }
+  class RadioNodeList extends COLLECTION_CLASSES.NodeList {}
+  class HTMLAllCollection {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    item() { return null; }
+    namedItem() { return null; }
+  }
+  class TextMetrics {
+    constructor() { throw new TypeError("Illegal constructor"); }
+  }
+  Object.assign(globalThis, {
+    MediaError, TimeRanges, DOMStringList, ImageData, DataTransfer,
+    DataTransferItem, DataTransferItemList, Plugin, PluginArray, MimeType,
+    MimeTypeArray, RadioNodeList, HTMLAllCollection, TextMetrics,
+  });
+  {
+    const CONSTS = {
+      MEDIA_ERR_ABORTED: 1, MEDIA_ERR_NETWORK: 2,
+      MEDIA_ERR_DECODE: 3, MEDIA_ERR_SRC_NOT_SUPPORTED: 4,
+    };
+    for (const target of [MediaError, MediaError.prototype]) {
+      for (const [name, value] of Object.entries(CONSTS)) {
+        Object.defineProperty(target, name, {
+          value, writable: false, enumerable: true, configurable: false,
+        });
+      }
+    }
+  }
+
   // Every `<script>` the parser delivered belongs to the Rust runner, which
   // collected them before any code ran. Marked here so the script-inserted
   // path above never mistakes one for new — inserting a fragment *near* an
@@ -9287,7 +9464,10 @@
         if (desc.get) {
           const inner = desc.get;
           desc.get = function () {
-            if (this === proto) {
+            // The WebIDL brand check: the prototype itself and any object
+            // that is not an instance of this interface both get the
+            // TypeError — `desc.get.call({})` is idlharness's own probe.
+            if (this === proto || !(this instanceof Interface)) {
               throw new TypeError(`Illegal invocation: ${key} needs an instance`);
             }
             return inner.call(this);
@@ -9297,7 +9477,7 @@
         if (desc.set) {
           const inner = desc.set;
           desc.set = function (value) {
-            if (this === proto) {
+            if (this === proto || !(this instanceof Interface)) {
               throw new TypeError(`Illegal invocation: ${key} needs an instance`);
             }
             return inner.call(this, value);
@@ -9410,6 +9590,12 @@
       platform: "", language: "en-US", languages: ["en-US"],
       onLine: true, cookieEnabled: false, maxTouchPoints: 0,
       hardwareConcurrency: 1,
+      productSub: "20030107", vendorSub: "", oscpu: "",
+      pdfViewerEnabled: false,
+      // Empty, which is what a plugin-less browser shows — the interfaces
+      // are real, the lists have nothing in them.
+      plugins: Object.create(PluginArray.prototype),
+      mimeTypes: Object.create(MimeTypeArray.prototype),
       // False, and true: this is not a driven browser in the WebDriver sense.
       // A page fingerprinting for automation gets the same answer a person's
       // browser gives, because the answer is not about who is asking.

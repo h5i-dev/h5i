@@ -8733,6 +8733,60 @@ joined the handler set.
     dom              2,672 -> 3,003  (the getClientRects half)
     core tier        69.2% at the start of this entry, recompute pending
 
+### B22.5–B22.13 The grind from 69% to the high seventies
+
+Nine commits, each its own story in the log; what belongs here is the
+pattern. Almost every point of coverage in this stretch came from one of
+three shapes of gap, and knowing the shapes made the next gap cheaper to
+find than the last:
+
+**Contracts the engine had half of.** The popover state machine existed but
+threw where the spec stays silent (§B22.4's follow-through); `<input>` had
+`value` but not the four value modes or a single sanitizer; options had a
+`selected` attribute but no selectedness *state*; scripts ran when the
+parser saw them but never when a page inserted one — the single largest
+real-web gap found in this campaign, since every script-loader works by
+injecting tags. In each case the feature "was there" and pages still broke,
+because the contract is the edges, not the middle.
+
+**Answers coming from the wrong authority.** `getClientRects()` said
+"visible" for hidden elements; `CSS.supports` and `'prop' in el.style`
+disagreed until both asked Stylo's content-gated parser; enumerated
+reflections folded Unicode case when the spec folds ASCII (WPT plants
+U+212A to catch exactly this); `innerText` ignored computed `white-space`
+until the walker read it. The recurring fix: find the one place that
+already knows, and ask it.
+
+**WebIDL shape, mechanically.** Interface constants, accessor names
+(`get title`), enumerability, brand guards (`this instanceof Interface`),
+collections as real classes over real arrays (prototype swapped, so array
+ergonomics survive), event-init fields as prototype accessors, ValidityState
+and ElementInternals as live interfaces. Individually tiny; ~2,000 subtests
+in aggregate, because idlharness checks every member of every interface.
+
+One engine-level find deserves its own line: Blitz hints the element and
+one parent on attribute flips, which is exactly not far enough for `:has()`
+and sibling combinators — a root-subtree re-match hint on every attribute
+mutation (folded into one resolve per settle by `styles_stale`) lit up the
+whole has-invalidation suite. And one crash: `Element.prototype.innerHTML`'s
+setter borrowed onto a doctype wrapper panicked the engine from page script;
+it now throws the TypeError it owed.
+
+    core tier   66.2% at branch start -> 75.7% (88,199 / 116,471, full fresh
+                sweep 2026-08-28); the 80% mark needs ~5,000 more and is the
+                next branch's target
+    html/semantics 5,999 -> 9,623 · html/dom 59,435 -> 62,092
+    css/selectors 2,115 -> 3,090 · css-conditional 881 -> 1,601
+    custom-elements 2,217 -> 2,414 · domparsing 172 -> 384 · dom 2,672 -> 3,278
+
+The pools where the next ~5,000 live, measured and ranked: the idlharness
+file itself (2,628 still failing — the missing-global family is mostly
+capability interfaces this engine deliberately refuses to fake),
+html/semantics' script/img/media/dialog clusters (~6,400), dom's XML-document
+family (`createDocument` and the case rules, ~600), cssom/cssom-view
+serialization and scroll geometry, and the fetch/api JS surface
+(Headers/Request/Response conformance, ~400 reachable without wptserve).
+
 
 ---
 
