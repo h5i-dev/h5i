@@ -619,7 +619,10 @@
     constructor(node, attribute) { this._node = node; this._attr = attribute; }
     _all() {
       const raw = api.getAttr(this._node._id, this._attr) || "";
-      return raw.split(/\s+/).filter(Boolean);
+      // An ordered *set*: `class="a a b"` is two tokens, not three, and
+      // `length`, iteration and indexing all see the deduplicated view. Only
+      // `value` reports the raw attribute.
+      return [...new Set(raw.split(/\s+/).filter(Boolean))];
     }
     _write(list) {
       api.setAttr(this._node._id, this._attr, list.join(" "));
@@ -679,9 +682,17 @@
     // none of them. Answering true would send a page down a path expecting
     // behaviour that will not happen, which is the plausible-wrong answer this
     // engine keeps having to refuse.
-    supports() { return false; }
+    supports(token) {
+      // `class` defines no supported tokens at all, and the spec's answer to
+      // asking is a TypeError, not a polite false.
+      if (this._attr === "class") {
+        throw new TypeError("classList.supports: class has no supported tokens");
+      }
+      void token;
+      return false;
+    }
     get length() { return this._all().length; }
-    get value() { return this._all().join(" "); }
+    get value() { return api.getAttr(this._node._id, this._attr) || ""; }
     set value(v) { api.setAttr(this._node._id, this._attr, String(v)); }
     forEach(fn, thisArg) { this._all().forEach(fn, thisArg); }
     keys() { return this._all().keys(); }
@@ -1503,11 +1514,20 @@
     get className() { return this.getAttribute("class") || ""; }
     set className(v) { this.setAttribute("class", v); }
     get classList() {
-      return observed(DOMTokenList._indexed(new DOMTokenList(this, "class")), "DOMTokenList");
+      // [SameObject]: the identical list every read — pages compare them.
+      if (!this.__h5iClassList) {
+        this.__h5iClassList =
+          observed(DOMTokenList._indexed(new DOMTokenList(this, "class")), "DOMTokenList");
+      }
+      return this.__h5iClassList;
     }
     set classList(v) { this.setAttribute("class", String(v)); }
     get relList() {
-      return observed(DOMTokenList._indexed(new DOMTokenList(this, "rel")), "DOMTokenList");
+      if (!this.__h5iRelList) {
+        this.__h5iRelList =
+          observed(DOMTokenList._indexed(new DOMTokenList(this, "rel")), "DOMTokenList");
+      }
+      return this.__h5iRelList;
     }
 
     // Setting a URL part rewrites the href it came from, which is how routing
@@ -6012,9 +6032,95 @@
     constructor(href, base) {
       const parts = api.parseUrl(String(href), base === undefined ? "" : String(base));
       if (!parts) throw new TypeError(`Invalid URL: ${href}`);
-      Object.assign(this, parts);
+      this._parts = parts;
       this.searchParams = new URLSearchParams(parts.search);
     }
+    /// Every component setter follows the same shape the URL Standard gives
+    /// them: strip tab and newline (the parser eats those anywhere), rebuild
+    /// the serialisation with the one component swapped, and re-parse — a
+    /// candidate the parser refuses leaves the URL exactly as it was, which
+    /// is why `url.protocol = "\0https"` changes nothing instead of storing
+    /// garbage.
+    _serializeWith(overrides) {
+      const p = this._parts;
+      const protocol = overrides.protocol ?? p.protocol;
+      const host = overrides.host ?? p.host;
+      const pathname = overrides.pathname ?? p.pathname;
+      const search = overrides.search ?? p.search;
+      const hash = overrides.hash ?? p.hash;
+      if (!p.host && !p.href.startsWith(`${p.protocol}//`)) {
+        // An opaque path (`data:`, `mailto:`) has no authority to edit.
+        return `${protocol}${pathname}${search}${hash}`;
+      }
+      return `${protocol}//${host}${pathname}${search}${hash}`;
+    }
+    _tryAdopt(candidate) {
+      const p = api.parseUrl(String(candidate), "");
+      if (!p) return;
+      this._parts = p;
+      if (this.searchParams) {
+        this.searchParams._pairs = new URLSearchParams(p.search)._pairs;
+      }
+    }
+    get href() { return this._parts.href; }
+    set href(value) {
+      const p = api.parseUrl(String(value), "");
+      if (!p) throw new TypeError(`Invalid URL: ${value}`);
+      this._parts = p;
+      this.searchParams._pairs = new URLSearchParams(p.search)._pairs;
+    }
+    get protocol() { return this._parts.protocol; }
+    set protocol(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      const m = /^[A-Za-z][A-Za-z0-9+.\-]*/.exec(cleaned);
+      if (!m) return;
+      const rest = this._parts.href.slice(this._parts.protocol.length);
+      this._tryAdopt(`${m[0]}:${rest}`);
+    }
+    get host() { return this._parts.host; }
+    set host(value) {
+      this._tryAdopt(this._serializeWith({ host: String(value).replace(/[\t\n\r]/g, "") }));
+    }
+    get hostname() { return this._parts.hostname; }
+    set hostname(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      const port = this._parts.port;
+      this._tryAdopt(this._serializeWith({ host: port ? `${cleaned}:${port}` : cleaned }));
+    }
+    get port() { return this._parts.port; }
+    set port(value) {
+      const digits = /^\d*/.exec(String(value).replace(/[\t\n\r]/g, ""))[0];
+      const host = digits === ""
+        ? this._parts.hostname
+        : `${this._parts.hostname}:${digits}`;
+      this._tryAdopt(this._serializeWith({ host }));
+    }
+    get pathname() { return this._parts.pathname; }
+    set pathname(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      this._tryAdopt(this._serializeWith({
+        pathname: cleaned.startsWith("/") ? cleaned : `/${cleaned}`,
+      }));
+    }
+    get search() { return this._parts.search; }
+    set search(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      const search = cleaned === "" ? "" : (cleaned.startsWith("?") ? cleaned : `?${cleaned}`);
+      this._tryAdopt(this._serializeWith({ search }));
+    }
+    get hash() { return this._parts.hash; }
+    set hash(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      const hash = cleaned === "" ? "" : (cleaned.startsWith("#") ? cleaned : `#${cleaned}`);
+      this._tryAdopt(this._serializeWith({ hash }));
+    }
+    get origin() { return this._parts.origin; }
+    // The userinfo half this engine's parser does not surface: read as the
+    // empty string, writes are dropped rather than mangled into the host.
+    get username() { return ""; }
+    set username(value) { void value; }
+    get password() { return ""; }
+    set password(value) { void value; }
     toString() { return this.href; }
     toJSON() { return this.href; }
     /// The two statics, which are the non-throwing way to ask. A page testing
