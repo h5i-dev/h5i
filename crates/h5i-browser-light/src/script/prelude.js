@@ -222,7 +222,10 @@
     if (!Array.isArray(observedNames) || !observedNames.includes(name)) return;
     try {
       if (typeof node.attributeChangedCallback === "function") {
-        node.attributeChangedCallback(name, oldValue, newValue);
+        // Four arguments: the namespace rides along, and it is `null` — not
+        // absent — for the attributes this engine writes. WPT logs all four
+        // and compares each against null.
+        node.attributeChangedCallback(name, oldValue, newValue, null);
       }
     } catch (error) {
       console.error(`custom element attributeChangedCallback threw: ${withStack(error)}`);
@@ -3450,6 +3453,135 @@
         userActivation.active = false;
       },
     });
+
+    // ---- ElementInternals --------------------------------------------------
+    //
+    // The half of the custom-elements contract that lives *behind* the
+    // element: default ARIA that never touches the host's attributes, and
+    // form participation for `formAssociated` classes. The ARIA state here is
+    // storage with the right names — this engine computes no accessibility
+    // tree — and the validity half is real: `setValidity` feeds the same
+    // answers a built-in control's constraint validation gives.
+    {
+      class ElementInternals {
+        constructor() { throw new TypeError("Illegal constructor"); }
+        setValidity(flags = {}, message, anchor) {
+          const any = Object.keys(flags).some((k) => flags[k]);
+          if (any && !message) {
+            throw new TypeError(
+              "setValidity: a message is required when any flag is set",
+            );
+          }
+          this.__h5iValidity = { ...flags };
+          this.__h5iValidationMessage = any ? String(message) : "";
+          void anchor;
+        }
+        checkValidity() { return this.validity.valid; }
+        reportValidity() { return this.checkValidity(); }
+        setFormValue(value, state) {
+          this.__h5iRequireFormAssociated("setFormValue");
+          this.__h5iFormValue = value;
+          void state;
+        }
+        __h5iRequireFormAssociated(op) {
+          const host = this.__h5iHost;
+          if (!host || !host.constructor || host.constructor.formAssociated !== true) {
+            throw new DOMException(
+              `${op}: the element is not form-associated`,
+              "NotSupportedError",
+            );
+          }
+        }
+        get shadowRoot() { return this.__h5iHost.shadowRoot ?? null; }
+        get form() {
+          this.__h5iRequireFormAssociated("form");
+          return this.__h5iHost.form ?? null;
+        }
+        get willValidate() {
+          this.__h5iRequireFormAssociated("willValidate");
+          return true;
+        }
+        get validity() {
+          const flags = this.__h5iValidity ?? {};
+          const valid = !Object.keys(flags).some((k) => flags[k]);
+          return Object.freeze({
+            valueMissing: false, typeMismatch: false, patternMismatch: false,
+            tooLong: false, tooShort: false, rangeUnderflow: false,
+            rangeOverflow: false, stepMismatch: false, badInput: false,
+            customError: false,
+            ...flags, valid,
+          });
+        }
+        get validationMessage() { return this.__h5iValidationMessage ?? ""; }
+        get labels() {
+          this.__h5iRequireFormAssociated("labels");
+          return this.__h5iHost.labels ?? collection([], "NodeList");
+        }
+        get states() {
+          if (!this.__h5iStates) this.__h5iStates = new Set();
+          return this.__h5iStates;
+        }
+      }
+      // The ARIA mixin, as internal state with the IDL names: null until set,
+      // never reflected into the host's markup — that separation is the
+      // feature.
+      for (const name of [
+        "role", "ariaAtomic", "ariaAutoComplete", "ariaBrailleLabel",
+        "ariaBrailleRoleDescription", "ariaBusy", "ariaChecked", "ariaColCount",
+        "ariaColIndex", "ariaColIndexText", "ariaColSpan", "ariaCurrent",
+        "ariaDescription", "ariaDisabled", "ariaExpanded", "ariaHasPopup",
+        "ariaHidden", "ariaInvalid", "ariaKeyShortcuts", "ariaLabel",
+        "ariaLevel", "ariaLive", "ariaModal", "ariaMultiLine",
+        "ariaMultiSelectable", "ariaOrientation", "ariaPlaceholder",
+        "ariaPosInSet", "ariaPressed", "ariaReadOnly", "ariaRelevant",
+        "ariaRequired", "ariaRoleDescription", "ariaRowCount", "ariaRowIndex",
+        "ariaRowIndexText", "ariaRowSpan", "ariaSelected", "ariaSetSize",
+        "ariaSort", "ariaValueMax", "ariaValueMin", "ariaValueNow",
+        "ariaValueText",
+      ]) {
+        const slot = `__h5iAria_${name}`;
+        const getter = function () { return this[slot] ?? null; };
+        const setter = function (value) {
+          this[slot] = value === null || value === undefined ? null : String(value);
+        };
+        Object.defineProperty(getter, "name", { value: `get ${name}` });
+        Object.defineProperty(setter, "name", { value: `set ${name}` });
+        Object.defineProperty(ElementInternals.prototype, name, {
+          configurable: true, enumerable: true, get: getter, set: setter,
+        });
+      }
+      Object.defineProperty(ElementInternals.prototype, Symbol.toStringTag, {
+        value: "ElementInternals", configurable: true,
+      });
+      globalThis.ElementInternals = ElementInternals;
+
+      Object.defineProperty(Element.prototype, "attachInternals", {
+        configurable: true, writable: true,
+        value: function attachInternals() {
+          if (!this || this._id === undefined) {
+            throw new TypeError("Illegal invocation: attachInternals needs an element");
+          }
+          // Only an autonomous custom element has internals to attach, and
+          // only once — both refusals are the spec's.
+          if (!String(this.tagName).includes("-")) {
+            throw new DOMException(
+              "attachInternals: not a custom element",
+              "NotSupportedError",
+            );
+          }
+          if (this.__h5iInternals) {
+            throw new DOMException(
+              "attachInternals: already attached",
+              "NotSupportedError",
+            );
+          }
+          const internals = Object.create(ElementInternals.prototype);
+          Object.defineProperty(internals, "__h5iHost", { value: this });
+          Object.defineProperty(this, "__h5iInternals", { value: internals });
+          return internals;
+        },
+      });
+    }
 
     // `indeterminate` is pure state — never reflected, cleared by a user
     // click, drawn as the dash a page uses for "some but not all selected".
