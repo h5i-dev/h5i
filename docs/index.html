@@ -390,10 +390,10 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The browser</span>
-      <h2 class="section-title">A session an agent drives, and you can read back.</h2>
-      <p class="section-sub">Start a session, get an id, use it on every verb. What comes back is an outline
-        with <code>@ref</code> handles rather than pixels or raw HTML, which is the shape an agent loop
-        actually wants. What you get afterwards is the decision record the engine wrote as it went.</p>
+      <h2 class="section-title">Built for agents. Still under your control.</h2>
+      <p class="section-sub">Agents browse with simple commands and receive compact, structured snapshots
+        instead of raw HTML. You can review the complete session, take control when needed, and keep
+        credentials out of the model's context.</p>
     </div>
     <div class="terminal"><div class="terminal-bar"><span class="terminal-path">one session, start to close</span></div>
 <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --allow docs.rs</span>
@@ -415,33 +415,21 @@
 <span class="t-ai">  host  </span> <span class="t-out">session closed</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
-        <div class="feat-name">Endings are recorded</div>
-        <div class="feat-desc">A session directory outlives the session, so "how did this end" stays
-          answerable: <code>closed</code>, <code>died</code>, <code>expired</code>, <code>evicted</code>.
-          A verb sent to one that is not live is refused with <strong>exit code 69</strong> and never
-          silently restarted, because an agent that cannot tell "gone" from "failed" quietly starts a
-          second browser.</div>
+        <div class="feat-name">Pages in a format agents can use</div>
+        <div class="feat-desc">h5i returns a compact page outline with <code>@ref</code> handles. Agents
+          can read, click, type, and extract data without processing screenshots or noisy HTML.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">A human can take the wheel</div>
-        <div class="feat-desc">The agent holds control by default; a person takes it, never asks for it.
-          Mutating verbs pause, reads keep working, and handing control back forces a re-snapshot because
-          the page moved. In a box that pause is enforced, since every verb is carried in from the host.</div>
+        <div class="feat-name">A complete session history</div>
+        <div class="feat-desc">Browser actions, network requests, blocked connections, human takeovers,
+          crashes, and how the session ended are kept in one timeline. Failed sessions are never silently
+          restarted.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">One timeline, two lanes</div>
-        <div class="feat-desc"><code>h5i browser audit</code> merges the verbs the agent asked for, the
-          decision the engine made about every fetch, the moments a human took the controls, and how
-          the session ended. Every row says whether it is the engine describing <em>itself</em> or
-          something h5i saw from <em>outside</em>, and the summary names any log it could not read at
-          all: an empty timeline over a log nobody could see is not a quiet session.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">Credentials are named, never read</div>
-        <div class="feat-desc">The model names a secret, the engine substitutes it on the way into the
-          field, and the reply echoes the placeholder. <code>login</code> hands the page to a person for as
-          long as a password takes: the session it establishes stays in the jar, and the agent can see
-          <em>that</em> it is logged in without reading the cookie that says so.</div>
+        <div class="feat-name">Human control for sensitive steps</div>
+        <div class="feat-desc">Take control for logins, payments, or approvals, then hand the session back
+          to the agent. Credentials are entered or substituted without being returned to the model, and the
+          agent continues with the authenticated session.</div>
       </div>
     </div>
   </div>
