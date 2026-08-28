@@ -244,10 +244,20 @@ case they are for. `wss://` works too. A page holding a live connection
 is the one page here that is not deterministic — `snapshot` reports
 `open_sockets` when that is true.
 
-Not available: file uploads (dropped rather than read), iframes, and anything
-`capabilities` reports as absent. A page that needed a missing API says so by
-name in the snapshot's notes; take that as a routing signal to Chromium rather
-than retrying here.
+Frames are loaded **as content**: each frame's document is fetched through the
+policy (initiator `frame` in the request log) and appears in the outline
+flattened, so a form inside an iframe mints refs you can type into and click
+like any other. What a frame does not get is a life of its own — its scripts
+never run, its styles do not apply, and `contentDocument` answers null — so a
+frame whose content is built by its own JavaScript (many payment widgets)
+arrives empty; the snapshot's notes say which frames loaded and which were
+refused. `window.open` is refused with the recovery in the message: open the
+URL in another session and drive both.
+
+Not available: file uploads (dropped rather than read), frame scripts (above),
+and anything `capabilities` reports as absent. A page that needed a missing API
+says so by name in the snapshot's notes; take that as a routing signal to
+Chromium rather than retrying here.
 
 ## Driving Chromium
 
