@@ -240,7 +240,7 @@
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
-  <link rel="stylesheet" href="/_static/blog.css?v=98424fdf62">
+  <link rel="stylesheet" href="/_static/blog.css?v=1b8a51343b">
   <link rel="stylesheet" href="/_static/console-mock.css?v=f390229c34">
   <link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
   <style>
@@ -351,39 +351,33 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">What h5i gives you</span>
-      <h2 class="section-title">Auditable by default. Containable on demand.</h2>
-      <p class="section-sub">A browser an agent drives by session id, whose whole network activity is in a
-        log you can read. Run it here like any headless browser, or place the same session inside a sandbox
-        without changing a single verb.</p>
+      <h2 class="section-title">A browser you can control, isolate, and audit.</h2>
+      <p class="section-sub">h5i lets agents browse and test web apps under rules you set. Control where
+        they can connect, review what they did, take over sensitive steps, and isolate the browser, or the
+        entire testing workflow, from your machine.</p>
     </div>
     <div class="feat-grid feat-grid-four">
       <div class="feat-card">
-        <div class="feat-name">A request log that cannot be incomplete</div>
-        <div class="feat-desc">Policy first, record second, wire third. The engine <strong>refuses the fetch</strong>
-          when it cannot write the record, and a denied request is logged with its reason, so the log shows
-          what was attempted and not only what succeeded.</div>
-        <div class="feat-proves">browser requests &#183; fail-closed &#183; refusals recorded</div>
+        <div class="feat-name">Review the complete browser session</div>
+        <div class="feat-desc">See every browser action and network request, including blocked requests and
+          why they were denied. Crashes, human takeovers, and how the session ended are recorded too.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">One noun an agent has to learn</div>
-        <div class="feat-desc">A <strong>session</strong> holds the page, the cookie jar, the request log and
-          the policy. <code>open</code> makes one, every verb that follows acts on it, <code>close</code> ends it.
-          Not the process, not the port, not whether it is in a box.</div>
-        <div class="feat-proves">start &#183; snapshot &#183; click &#183; close</div>
+        <div class="feat-name">Control where the agent can connect</div>
+        <div class="feat-desc">Allow only the websites and services required for the task. h5i blocks every
+          other request before it leaves and records the attempt.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Page text that stays data</div>
-        <div class="feat-desc">A snapshot arrives fenced for the model, escape sequences never reach your
-          terminal, and page JavaScript is off unless you ask for it. h5i does not classify what a page says.
-          It limits what a persuaded agent can <strong>reach</strong>.</div>
-        <div class="feat-proves">untrusted-content fence &#183; scrubbed relay</div>
+        <div class="feat-name">Limit the damage of prompt injection</div>
+        <div class="feat-desc">Page content is marked as untrusted, terminal escape sequences are removed,
+          and JavaScript is disabled by default. If a page still misleads the agent, network rules limit
+          what it can reach.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">A sandbox, when you want one</div>
-        <div class="feat-desc"><code>--in &lt;box&gt;</code> puts the same session inside a boundary. The verbs
-          and the answers are identical; what changes is <strong>who saw the network</strong>, and whether a
-          human takeover is a boundary or a request.</div>
-        <div class="feat-proves">process &#183; supervised &#183; container &#183; microVM</div>
+        <div class="feat-name">Isolate web app testing from your machine</div>
+        <div class="feat-desc">Sandbox only the browser, or isolate the agent, generated code, dependencies,
+          development server, and browser together. Choose lightweight process isolation, a container, or a
+          microVM.</div>
       </div>
     </div>
   </div>

@@ -245,7 +245,7 @@ main > section > .container { padding: 0; max-width: none; margin: 0; }
 .section-title {
   font-family: var(--disp); font-weight: 900;
   font-size: clamp(30px, 3.8vw, 54px);
-  letter-spacing: -0.045em; line-height: 0.95;
+  letter-spacing: -0.025em; line-height: 0.98;
   margin: 20px 0 0; max-width: 20ch; color: var(--ink);
 }
 .section-title br { display: none; }
@@ -767,7 +767,7 @@ body > footer {
 .hero-title {
   font-family: var(--disp); font-weight: 900;
   font-size: clamp(38px, 6.4vw, 100px);
-  letter-spacing: -0.055em; line-height: 0.88;
+  letter-spacing: -0.03em; line-height: 0.92;
   margin: 24px 0 0; max-width: 22ch; color: var(--ink);
 }
 .hero-title .hl { color: var(--ink); }
