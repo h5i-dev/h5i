@@ -320,6 +320,21 @@ fn an_unsupported_selector_is_not_reported_as_an_invalid_one() {
         "and does not call a valid selector invalid: {message}"
     );
 
+    // Every shape of what precedes `:has`, because the first version of this
+    // guard excluded word characters before the colon — which is exactly what a
+    // tag or class name is. `.row:has(.y)` was told it was malformed.
+    for selector in [".w:has(.y)", "div:has(.y)", ".row:has(.y)", "a:has(img)"] {
+        let asked = format!(
+            "(() => {{ try {{ document.querySelector('{selector}'); return 'accepted' }} \
+             catch (e) {{ return e.message }} }})()"
+        );
+        let said = script.eval_value(&asked).unwrap();
+        assert!(
+            said.contains("does not support"),
+            "{selector} names the missing feature: {said}"
+        );
+    }
+
     // A selector that really is malformed still gets the plain answer.
     let broken = script
         .eval_value(

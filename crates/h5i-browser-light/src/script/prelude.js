@@ -2659,7 +2659,7 @@
   /// thing a diagnostic can do. Naming it as unsupported also files it through
   /// `api.unsupported`, so it appears in the counted gaps beside every other
   /// feature this engine does not have rather than hiding inside a parse error.
-  const UNSUPPORTED_SELECTOR = /(^|[^\\w-])::?has\s*\(/i;
+  const UNSUPPORTED_SELECTOR = /:has\s*\(/i;
 
   function checkSelector(selector) {
     const text = String(selector);
