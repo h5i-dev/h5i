@@ -2550,6 +2550,185 @@ fn a_bare_specifier_is_refused_and_the_page_is_told_why() {
     assert_eq!(paths, vec!["/entry.js".to_string()], "{paths:?}");
 }
 
+/// Read a page's text after script, for the interface-object tests below.
+fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) {
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let html = format!(
+        "<html><body><p id=\"out\">before</p>{body}</body></html>"
+    );
+    let page = factory.from_html(&html, &url::Url::parse("https://example.test/").unwrap());
+    (page.snapshot().render(), page.console())
+}
+
+#[test]
+fn an_interface_object_answers_what_a_value_is_rather_than_throwing() {
+    // §B8.4 refuses a name that exists and answers wrongly, and that rule is
+    // about *feature detection*. This is the other case: a page writing
+    // `nodes instanceof NodeList` is asking what it holds, and the honest
+    // answers are yes and no — never `ReferenceError`, which is what 47
+    // interface names used to be.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const out = [
+               document instanceof Document,
+               document.querySelectorAll("p") instanceof NodeList,
+               [] instanceof NodeList,
+               localStorage instanceof Storage,
+               ({}) instanceof Storage,
+               customElements instanceof CustomElementRegistry,
+             ].join(",");
+             document.getElementById("out").textContent = out;
+           </script>"#,
+    );
+    assert!(
+        text.contains("true,true,false,true,false,true"),
+        "brand checks answered wrongly:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn an_interface_object_that_is_not_constructible_says_so() {
+    // The half that keeps this from being a stub: `new NodeList()` throws in a
+    // browser, and it throws here. A brand that quietly produced *something*
+    // would be the plausible lie the missing-API stubs were deleted for.
+    let (text, console) = scripted_text(
+        r#"<script>
+             let threw = false;
+             try { new NodeList(); } catch (e) { threw = true; }
+             document.getElementById("out").textContent =
+               threw + "|" + NodeList.name;
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|NodeList"),
+        "an interface object was constructible, or lost its name:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn interface_objects_are_not_enumerable_on_the_global() {
+    // WebIDL §3.7: an interface object is `enumerable: false`. Every one of
+    // ours was enumerable, because `Object.assign` creates enumerable data
+    // properties — and `idlharness` checks this first, per interface, before
+    // examining anything about the interface itself.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const d = Object.getOwnPropertyDescriptor(globalThis, "Element");
+             const p = Object.getOwnPropertyDescriptor(NodeList, "prototype");
+             document.getElementById("out").textContent =
+               d.enumerable + "|" + d.writable + "|" + p.writable;
+           </script>"#,
+    );
+    assert!(
+        text.contains("false|true|false"),
+        "interface object shape is wrong:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn a_comment_is_character_data() {
+    // It was not, and the cause was a duplicate key: the globals literal bound
+    // `CharacterData` twice, and the later `CharacterData: Text` won — so the
+    // name resolved to `Text` and `comment instanceof CharacterData` was false
+    // for a class the comment genuinely extends.
+    let (text, console) = scripted_text(
+        r#"<script>
+             document.getElementById("out").textContent = [
+               document.createComment("c") instanceof CharacterData,
+               document.createTextNode("t") instanceof CharacterData,
+               document.getElementById("out") instanceof CharacterData,
+               CharacterData === Text,
+             ].join(",");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true,true,false,false"),
+        "CharacterData is not the class it names:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn option_value_is_the_attribute_and_survives_being_set() {
+    // `option.value = x` went to the *editor* path, which an option does not
+    // have, so it landed in a field the option's own getter never reads and
+    // the write was silently lost — taking `new Option(label, value)` with it,
+    // which is most of why that constructor is still written.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const o = new Option("Label", "v1");
+             const plain = document.createElement("option");
+             plain.textContent = "T";
+             const before = plain.value;
+             plain.value = "v2";
+             document.getElementById("out").textContent =
+               [o.tagName, o.value, before, plain.value, plain.getAttribute("value")].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("OPTION|v1|T|v2|v2"),
+        "option value did not round-trip:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn fetch_resolves_a_response_a_page_can_recognise() {
+    // It resolved an object literal with the right fields, which reads
+    // identically until something asks what it is: `Response` was not a global
+    // at all, so `new Response(...)` was a ReferenceError and
+    // `res instanceof Response` could not be written.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const r = new Response("body", { status: 404 });
+             document.getElementById("out").textContent =
+               [r.status, r.ok, r instanceof Response, Response.error().type].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("404|false|true|error"),
+        "Response is not a usable class:
+{text}
+console: {console:?}"
+    );
+}
+
+#[test]
+fn get_html_is_inner_html_and_refuses_to_invent_a_shadow_serialisation() {
+    // The half this engine can answer, answered. The other half is recorded
+    // rather than faked: a shadow root here is a view of its host, so the
+    // `<template shadowrootmode>` string a browser produces cannot be
+    // reconstructed, and emitting the flattened content under that header
+    // would be markup describing a tree that never existed.
+    let (text, console) = scripted_text(
+        r#"<div id="host"><span>light</span></div>
+           <script>
+             const host = document.getElementById("host");
+             document.getElementById("out").textContent = [
+               host.getHTML() === host.innerHTML,
+               host.getHTML({ serializableShadowRoots: false }) === host.innerHTML,
+               host.getHTML({ serializableShadowRoots: true }) === host.innerHTML,
+             ].join(",");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true,true,true"),
+        "getHTML does not agree with innerHTML:
+{text}
+console: {console:?}"
+    );
+}
+
 #[test]
 fn an_attribute_is_found_by_the_name_the_idl_spells_it_with() {
     // DOM §4.9: an element in the HTML namespace lowercases the qualified name

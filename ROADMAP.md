@@ -7948,6 +7948,229 @@ every time: a sentence in this file that says a change will be fast, written
 before anything was timed.
 
 
+## B20. Chasing 80%, and what the concentration actually looks like, 2026-08-27
+
+The question was how to get WPT coverage to 80%. The first thing the data said
+is that "80% of what" has three answers and only one of them is honest, and the
+second is that the gap is far more concentrated than anyone had assumed.
+
+### B20.1 What 80% means, given §B19.2's tiers
+
+| tier | before this work | to reach 80% |
+| --- | --- | --- |
+| core | 59,953 / 120,522 (49.7%) | +36,464 |
+| encoding | 225,786 / 229,349 (98.4%) | already past |
+| relevant | 985 / 19,020 (5.2%) | +14,231 |
+| **scoped total** | **286,724 / 368,891 (77.7%)** | **+8,388** |
+
+The scoped total is *already* 77.7%, and reaching 80% by that reading needs
+almost nothing — which is precisely the §B13.3 trap the tiers file was built to
+close: the encoding block is carrying it, and adding encoding subtests would be
+gaming a number rather than improving an engine. **Core at 80% is the honest
+target**, and it is the one everything below is measured against.
+
+### B20.2 The gap is thirty files
+
+Sorting core's unpassed subtests by file:
+
+| | share of the core gap |
+| --- | --- |
+| top 30 files | **52.8%** |
+| top 100 files | 65.5% |
+| top 400 files | 79.9% |
+
+Half the work is in thirty files. That is the §B12.2 shape again — a large
+cluster with few causes — and it means the productive move is never "implement
+more of the platform", it is "read what those thirty files say".
+
+### B20.3 The reader did not lowercase what the writer did (+10,847)
+
+Eleven of the top fifteen files shared one failure message, verbatim:
+
+    assert_equals: getAttribute() expected (string) "" but got (object) null
+
+DOM §4.9 lowercases the qualified name for an element in the HTML namespace, on
+`getAttribute`, `hasAttribute`, `setAttribute` and `removeAttribute` alike.
+`set_attr` and `remove_attr` did; `get_attr` did not, and `hasAttribute`
+inherited the bug through the same op.
+
+It stayed invisible until the *harness* was read rather than the engine: WPT's
+reflection harness passes the **IDL** name straight through to both calls
+(`html/dom/reflection.js`: `domName = idlName`), so `setAttribute("accessKey")`
+stored `accesskey` and `getAttribute("accessKey")` answered null. Every
+camelCase reflected attribute failed on every element in all eleven
+`reflection-*.html` files.
+
+    html/dom  43,744 -> 54,591 of 60,514 scored  (72.3% -> 90.2%)
+
+The fix is namespace-conditional, and that is not pedantry: the HTML parser
+case-corrects SVG attributes, so an `<svg>` really does hold one named
+`viewBox`, and a blanket lowercase would have traded one silent wrong answer
+for another. `set_attr` lowercasing *unconditionally* was the same bug pointing
+the other way — `svg.setAttribute("viewBox", …)` stored `viewbox` and rendered
+nothing. All three share one normaliser now, because `guard_mutation` two
+hundred lines below records what happened the last time a defect of this shape
+was patched at each call site as it was found.
+
+### B20.4 An instrument that was fine, and an analysis that was not
+
+The first read of the data said 27% of the core gap sat behind
+`TypeError: not a callable function`, which does not name the callee — and
+therefore that the instrument had to be fixed before anything else, per §B8.
+
+**That was wrong, and the correction is the useful part.** 87% of those
+subtests already carry the name, in the `unsupported` side-channel the engine
+has had since §B8.4. The analysis was reading `failures[].message` and never
+joining the two channels. The engine names `Element.getHTML`,
+`Element.setSelectionRange`, `document.createProcessingInstruction` and the
+rest perfectly well; the script asking the question was the blind one.
+
+Joined, and weighted by the unpassed subtests of the files that ask (calls
+alone rank a hot loop above a blocker), the demand list is the ranked work
+queue this section is built on. The genuine blind spot — named in neither
+channel — is 292 files and 1,813 subtests.
+
+### B20.5 `getHTML`, and a 6,908-subtest file that is not a 6,908-subtest win
+
+`shadow-dom/declarative/gethtml.html` is the largest single file in core: 6,908
+unpassed, zero passing. It was queued as the biggest available win. It is not,
+and the breakdown says so exactly:
+
+* **380 subtests** need only `getHTML()` to equal `innerHTML`. Built, and
+  measured at exactly +380.
+* **6,528 subtests** need a shadow root serialised as `<template
+  shadowrootmode=…>` followed by the light children — and this engine has one
+  tree. A shadow root here is a *view of its host*, the component's output and
+  the light content are siblings in the same element, and nothing distinguishes
+  them afterwards.
+
+So the string a browser produces cannot be reconstructed, and emitting the
+flattened content under a `<template shadowrootmode>` header would be markup
+that parses, looks right, and describes a tree that never existed. It is
+recorded through `unsupported()` instead.
+
+The lesson is §B12.8's, inverted. That entry says a large failure cluster
+usually has one cheap structural cause; this one has a single *expensive*
+structural cause, and the file's size said nothing about which. **A subtest
+count is a measure of how much a test file repeats itself, not of how much work
+its failure represents.**
+
+### B20.6 Interface objects: forty-seven names, and three bugs behind them
+
+Forty-seven interface globals were missing — `Document`, `Response`,
+`NodeList`, `HTMLCollection`, `Storage`, `CSSRule` and the rest — of which
+several had full implementations behind them and only lacked the name.
+
+**Why this is not the `missingApi` stub §B8.4 deleted.** That rule is about
+*feature detection*: a name that exists and answers wrongly sends a page down a
+branch it cannot recover from. A page writing `nodes instanceof NodeList` is
+not detecting a feature, it is asking what it is holding, and the honest
+answers are yes and no — never `ReferenceError`. So each interface object
+carries a `Symbol.hasInstance` performing the real brand check against the
+shape this engine builds, and `new NodeList()` still throws exactly as it does
+in a browser.
+
+Adding them surfaced three real bugs that had nothing to do with WPT:
+
+* **`CharacterData` was `Text`.** A duplicate key in the globals literal, so
+  the later binding won and `comment instanceof CharacterData` was **false**
+  for a class the comment genuinely extends.
+* **`option.value = x` was silently lost.** The setter took the editor path,
+  which an option does not have, and stashed the value where the option's own
+  getter never looks — taking `new Option(label, value)` with it.
+* **`fetch` resolved an object literal.** It had the right fields, which reads
+  identically until something asks what it is: `Response` was not a global, so
+  `new Response(...)` was a ReferenceError and `res instanceof Response` could
+  not be written at all.
+
+And one that was ours all along: **interface objects were enumerable on the
+global.** WebIDL §3.7 says otherwise, `Object.assign` creates enumerable data
+properties, and `idlharness` checks it *first* for every interface — so the
+cost was a subtest per interface across every `idlharness` file in the suite,
+spent before anything about the interface was examined.
+
+### B20.7 `new Document()`, and a score that depended on machine load
+
+Exposing `Document` as non-constructible took `html/dom/idlharness.https.html`
+from 269 passing to reporting **nothing at all**. `new Document()` is legal —
+DOM §4.5 gives Document a constructor — and the test builds one in its setup,
+so a brand that threw killed the file. That is §B8.4's own hazard in a new
+costume: a name that exists and answers wrongly, added by the change that was
+supposed to stop names being absent.
+
+Made constructible, the file went from 373 subtests to **6,408, with 1,896
+passing**. And then it became *unstable*: sometimes `ok`, sometimes
+`no_report`, depending on nothing but how loaded the machine was.
+
+The cause is `SCRIPT_PHASE_BUDGET`, a twenty-second wall-clock ceiling on a
+page's script. The file legitimately needs about twenty seconds to parse the
+IDL and build its tests, so it lands exactly on the line. The guard is right —
+it is what stops a page whose promise chain never settles — and a conformance
+harness is precisely where a runaway and a merely slow page are hard to tell
+apart from outside.
+
+**A run whose score depends on the other processes on the box is not a
+measurement**, so `--script-seconds` lets an instrument say so, for the same
+reason and with the same limits as §B19.5's `--allow-any-remote`: it announces
+itself, it changes nothing for anyone who does not pass it, and the navigation
+deadline still bounds the whole load. `wpt/run.py` passes 60.
+
+    html/dom  54,591 -> 56,241 of 66,549 scored
+
+### B20.8 `testdriver-vendor.js`: the second empty seam
+
+`resources/testdriver-vendor.js` ships as a **zero-byte file**, for exactly the
+reason `testharnessreport.js` does: it is where a vendor plugs its automation
+in. Unfilled, `test_driver.click()` rejects with "not implemented by
+testdriver-vendor.js" and every test built on it fails on a missing harness
+rather than on anything about the engine — 633 files in core.
+
+Filled in `wpt/serve.py`, beside the reporter, with no engine change at all.
+`click` and `send_keys` are implemented by dispatching the events the action
+would produce, which is the action rather than a simulation of it; `bless` (706
+call sites) is built on `click` upstream, so one function unlocks both.
+Everything needing authority this engine does not have — permissions, virtual
+sensors, virtual authenticators, a second browsing context — keeps testdriver's
+own rejection, because a shim that resolved those would turn "the harness
+cannot do this" into "the engine got the wrong answer".
+
+`action_sequence` is refused for a narrower reason: it is a pointer and key
+state machine with its own tick semantics, and approximating it would make a
+class of failures untraceable.
+
+### B20.9 A comparison that was measured against the wrong thing
+
+Partway through, `shadow-dom` appeared to have regressed by 192 subtests and
+three `reference-target` files by 587. Bisecting found the same directory
+scoring 41 of 473 both with and without every change in this section: the
+comparison was against `results-2026-08-10`, and the difference was a month of
+drift in the engine and in the WPT checkout.
+
+The rule this earns is small and was being broken all day: **a before/after
+comparison needs a before taken from the current commit.** A stale artifact is
+a different engine and a different corpus, and it will attribute someone else's
+work — in either direction — to yours. Every number in this section is against
+a freshly measured baseline for that reason.
+
+### B20.10 Where core stands, and what is left
+
+Core moved 49.7% -> roughly 59%, almost all of it §B20.3. The remaining
+distance to 80% is about +25,000 subtests, and the ranked demand list (§B20.4)
+now says where it is rather than leaving it to be guessed at. The largest
+entries left, with the caveat §B20.5 attaches to all of them — a subtest count
+measures repetition, not work:
+
+1. **Declarative shadow DOM**, 7,630 unpassed at 2%. Structural: it needs a
+   real shadow tree, which is the decision §B6 made and §B20.5 ran into.
+2. **`html/semantics`**, 11,176 unpassed at 16%. Broad rather than clustered —
+   forms, dialogs, popovers — and the honest estimate is many small features.
+3. **Text-field selection** (`setSelectionRange`, `selectionStart/End`,
+   `setRangeText`, `select`), top of the demand list after `getHTML`.
+4. **`custom-elements/registries`**, 2,011 at 10%, mostly scoped registries.
+5. **`fetch/metadata`**, 1,447 at 0.1%: `Sec-Fetch-*` request headers, which
+   this engine is uniquely well placed to get right because it *is* the client.
+
+
 ---
 
 # Formal verification: a Lean model beside the Rust

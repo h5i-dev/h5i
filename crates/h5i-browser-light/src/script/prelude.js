@@ -1207,6 +1207,38 @@
       adoptDeclarativeShadowRoots(this);
       globalThis.__h5iInstallInlineHandlers(this);
     }
+
+    /// `innerHTML`, plus any shadow roots the caller asked to have serialised.
+    ///
+    /// The half this engine can answer, answered; the half it cannot, reported.
+    ///
+    /// **What works.** With no options, with `serializableShadowRoots: false`,
+    /// or on an element that has no shadow root, `getHTML()` is defined to
+    /// equal `innerHTML` — and that is the overwhelming majority of real calls,
+    /// because the overwhelming majority of elements are not shadow hosts.
+    ///
+    /// **What does not, and why it is not faked.** Serialising a shadow root
+    /// means emitting `<template shadowrootmode=…>` holding the shadow tree,
+    /// *followed by* the light children. This engine has one tree: a shadow
+    /// root here is a view of its host (see `ShadowRoot`), the component's
+    /// output and the light content are siblings in the same element, and
+    /// nothing distinguishes them afterwards. So the string a browser would
+    /// produce cannot be reconstructed, and emitting the flattened content
+    /// under a `<template shadowrootmode>` header would be a plausible lie —
+    /// markup that parses, looks right, and describes a tree that never
+    /// existed. It is recorded through `unsupported()` instead, which is the
+    /// channel an agent already reads and the one that made this method
+    /// findable in the first place.
+    getHTML(options) {
+      const wants =
+        options != null &&
+        (options.serializableShadowRoots === true ||
+          (Array.isArray(options.shadowRoots) && options.shadowRoots.length > 0));
+      if (wants && this.shadowRoot) {
+        api.unsupported("Element.getHTML({ serializableShadowRoots })");
+      }
+      return api.innerHtml(this._id);
+    }
     get outerHTML() { return api.outerHtml(this._id); }
     set outerHTML(html) {
       // Replacing an element with its own markup, which is how a component
@@ -1434,6 +1466,9 @@
       adoptDeclarativeShadowRoots(this);
       this._project();
     }
+    // Same rule as the host's, and for the same reason: this root *is* the
+    // host, so its serialisation is the host's content.
+    getHTML(options) { return Element.prototype.getHTML.call(this, options); }
     appendChild(child) {
       const out = Element.prototype.appendChild.call(this, child);
       this._project();
@@ -2078,6 +2113,17 @@
       },
       set(v) {
         const text = String(v);
+        // `<option>` is not an editable control: its `value` reflects the
+        // content attribute, falling back to the text. The generic path below
+        // writes to the *editor*, which an option does not have, so the write
+        // landed in `this._value` — where this element's getter never looks.
+        // `option.value = "x"` was therefore silently lost, and with it
+        // `new Option(label, value)`, which is most of why the constructor is
+        // still written.
+        if (this.tagName === "OPTION") {
+          this.setAttribute("value", text);
+          return;
+        }
         // Remembered on this side when the write had nowhere to land, so a
         // page that builds a control and fills it in can read back what it
         // wrote. A page that sets `.value` from script does not get
@@ -2833,6 +2879,133 @@
     }
   }
 
+  // The rest of the event types a page constructs by name.
+  //
+  // Each of these was a `ReferenceError` — `new SubmitEvent("submit", …)` did
+  // not merely lose a field, it threw and took the handler with it. They are
+  // cheap because an event *is* its fields: the dispatch machinery is shared,
+  // and what distinguishes a `StorageEvent` from an `ErrorEvent` is which
+  // properties it carries. Adding the ones a page actually constructs is the
+  // difference between a listener that reads `event.submitter` and a page that
+  // stopped at the constructor.
+  class FocusEvent extends UIEvent {
+    constructor(type, init) { super(type, init); this.relatedTarget = (init && init.relatedTarget) ?? null; }
+  }
+  class WheelEvent extends MouseEvent {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.deltaX = i.deltaX || 0; this.deltaY = i.deltaY || 0;
+      this.deltaZ = i.deltaZ || 0; this.deltaMode = i.deltaMode || 0;
+    }
+  }
+  class PointerEvent extends MouseEvent {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.pointerId = i.pointerId || 0;
+      this.pointerType = i.pointerType || "";
+      this.isPrimary = !!i.isPrimary;
+      this.pressure = i.pressure || 0;
+      this.width = i.width === undefined ? 1 : i.width;
+      this.height = i.height === undefined ? 1 : i.height;
+    }
+  }
+  class CompositionEvent extends UIEvent {
+    constructor(type, init) { super(type, init); this.data = (init && init.data) || ""; }
+  }
+  class ErrorEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.message = i.message || ""; this.filename = i.filename || "";
+      this.lineno = i.lineno || 0; this.colno = i.colno || 0;
+      this.error = i.error ?? null;
+    }
+  }
+  class PromiseRejectionEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.promise = i.promise ?? null; this.reason = i.reason;
+    }
+  }
+  class ProgressEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.lengthComputable = !!i.lengthComputable;
+      this.loaded = i.loaded || 0; this.total = i.total || 0;
+    }
+  }
+  class MessageEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.data = i.data ?? null; this.origin = i.origin || "";
+      this.lastEventId = i.lastEventId || ""; this.source = i.source ?? null;
+      this.ports = i.ports || [];
+    }
+  }
+  class CloseEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.wasClean = !!i.wasClean; this.code = i.code || 0; this.reason = i.reason || "";
+    }
+  }
+  class StorageEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.key = i.key ?? null; this.oldValue = i.oldValue ?? null;
+      this.newValue = i.newValue ?? null; this.url = i.url || "";
+      this.storageArea = i.storageArea ?? null;
+    }
+  }
+  class PopStateEvent extends Event {
+    constructor(type, init) { super(type, init); this.state = (init && init.state) ?? null; }
+  }
+  class HashChangeEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.oldURL = i.oldURL || ""; this.newURL = i.newURL || "";
+    }
+  }
+  class PageTransitionEvent extends Event {
+    constructor(type, init) { super(type, init); this.persisted = !!(init && init.persisted); }
+  }
+  class SubmitEvent extends Event {
+    constructor(type, init) { super(type, init); this.submitter = (init && init.submitter) ?? null; }
+  }
+  class FormDataEvent extends Event {
+    constructor(type, init) { super(type, init); this.formData = (init && init.formData) ?? null; }
+  }
+  class ToggleEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.oldState = i.oldState || ""; this.newState = i.newState || "";
+    }
+  }
+  class AnimationEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.animationName = i.animationName || ""; this.elapsedTime = i.elapsedTime || 0;
+      this.pseudoElement = i.pseudoElement || "";
+    }
+  }
+  class TransitionEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.propertyName = i.propertyName || ""; this.elapsedTime = i.elapsedTime || 0;
+      this.pseudoElement = i.pseudoElement || "";
+    }
+  }
+
   function path(node) {
     const chain = [];
     for (let n = node; n; n = n.parentNode) chain.push(n);
@@ -2992,6 +3165,42 @@
       this.credentials =
         i.credentials || (input instanceof Request ? input.credentials : "same-origin");
     }
+  }
+
+  // What `fetch` resolves to, and what a page constructs to mock one.
+  //
+  // It was a plain object literal built inside `responseFrom`, which worked for
+  // every page that only reads it and failed for the two that ask *what it is*:
+  // `Response` was not a global, so `new Response(...)` was a ReferenceError and
+  // `res instanceof Response` could not be written at all. Both are ordinary
+  // things for a page to do, and a mocked fetch does the first.
+  class Response {
+    constructor(body, init) {
+      const i = init || {};
+      this._body = body == null ? "" : String(body);
+      this.status = i.status === undefined ? 200 : Number(i.status);
+      this.statusText = i.statusText === undefined ? "" : String(i.statusText);
+      this.ok = this.status >= 200 && this.status < 300;
+      this.headers = i.headers instanceof Headers ? i.headers : new Headers(i.headers);
+      this.type = i.type || "basic";
+      this.url = i.url || "";
+      this.redirected = !!i.redirected;
+      this.bodyUsed = false;
+    }
+    text() { this.bodyUsed = true; return Promise.resolve(this._body); }
+    json() { this.bodyUsed = true; return Promise.resolve(JSON.parse(this._body)); }
+    clone() {
+      return new Response(this._body, {
+        status: this.status, statusText: this.statusText, headers: this.headers,
+        type: this.type, url: this.url, redirected: this.redirected,
+      });
+    }
+    static json(data, init) {
+      const response = new Response(JSON.stringify(data), init);
+      response.headers.set("content-type", "application/json");
+      return response;
+    }
+    static error() { return new Response("", { status: 0, type: "error" }); }
   }
 
   // Real enough to be useful: a fetch already aborted is refused, and abort
@@ -5516,6 +5725,131 @@
     },
   }, "CSS");
 
+  /// `new Document()`, which the DOM genuinely defines.
+  ///
+  /// Separate from `brand` because the brand's contract is "this is not
+  /// constructible", and for `Document` that would be a lie with teeth: see the
+  /// comment at its call site.
+  function documentConstructor(name) {
+    const ctor = function () {
+      return new DOMParser().parseFromString("", "text/html");
+    };
+    Object.defineProperty(ctor, "name", { value: name });
+    Object.defineProperty(ctor, "prototype", {
+      value: ctor.prototype, writable: false, enumerable: false, configurable: false,
+    });
+    Object.defineProperty(ctor, Symbol.hasInstance, {
+      value: (value) => {
+        try {
+          return !!value && value.nodeType === 9;
+        } catch {
+          return false;
+        }
+      },
+    });
+    return ctor;
+  }
+
+  /// A legacy factory constructor: `new Image(w, h)` and friends.
+  ///
+  /// Positional arguments map onto properties in the order the spec gives, so
+  /// `new Option("label", "value")` sets the text and the value — which is the
+  /// whole reason anyone still writes it.
+  function makeElementFactory(tag, positional) {
+    const ctor = function (...args) {
+      const element = document.createElement(tag);
+      for (let i = 0; i < positional.length && i < args.length; i++) {
+        if (args[i] === undefined) continue;
+        element[positional[i]] = args[i];
+      }
+      return element;
+    };
+    Object.defineProperty(ctor, "name", { value: `HTML${tag}` });
+    return ctor;
+  }
+
+  /// Interface objects for shapes this engine builds without a class.
+  ///
+  /// One factory rather than twenty literals, so the brand-check rule is
+  /// written once. `brand(name, test)` builds a constructor that:
+  ///
+  ///   * **throws when called**, because none of these is constructible here
+  ///     and a constructor that silently produced something else would be the
+  ///     plausible lie §B8.4 refuses;
+  ///   * answers `instanceof` through `test`, which inspects the real shape;
+  ///   * carries the right `name`, because `assert_class_string` and every
+  ///     `Object.prototype.toString` check reads it.
+  function interfaceObjects() {
+    const brand = (name, test) => {
+      const ctor = function () {
+        throw new TypeError(`Illegal constructor: ${name} is not constructible`);
+      };
+      Object.defineProperty(ctor, "name", { value: name });
+      // WebIDL §3.7.1: an interface object's `prototype` is
+      // { writable: false, enumerable: false, configurable: false }. A plain
+      // function's is writable, which `idlharness` checks on its second
+      // assertion for every interface — so getting this wrong costs a subtest
+      // per interface before anything about the interface is examined.
+      Object.defineProperty(ctor, "prototype", {
+        value: ctor.prototype,
+        writable: false,
+        enumerable: false,
+        configurable: false,
+      });
+      Object.defineProperty(ctor, Symbol.hasInstance, {
+        value: (value) => {
+          try {
+            return !!value && test(value);
+          } catch {
+            return false;
+          }
+        },
+      });
+      return ctor;
+    };
+
+    // A live-ish list: `collection()` hands back an array carrying `item` and
+    // `namedItem`, so those two plus array-ness are the brand.
+    const isCollection = (v) => Array.isArray(v) && typeof v.item === "function";
+    const isStorage = (v) =>
+      typeof v === "object" && typeof v.getItem === "function" &&
+      typeof v.setItem === "function" && typeof v.key === "function";
+
+    return {
+      NodeList: brand("NodeList", isCollection),
+      HTMLCollection: brand("HTMLCollection", (v) => isCollection(v) && typeof v.namedItem === "function"),
+      NamedNodeMap: brand("NamedNodeMap", isCollection),
+      Storage: brand("Storage", isStorage),
+      // **Constructible, unlike its neighbours here.** `new Document()` is
+      // legal — DOM §4.5 gives Document a constructor — and getting that wrong
+      // is not a small error: `html/dom/idlharness` builds one in its setup,
+      // so a `Document` that threw took the whole file from 269 passing
+      // subtests to reporting nothing at all. A name that exists and answers
+      // wrongly is worse than one that is absent (§B8.4), and "not
+      // constructible" was exactly such a wrong answer.
+      //
+      // What comes back is a parsed empty document, which is what this engine
+      // can honestly produce: there is one live tree and it is the page, so a
+      // second *live* document is out of reach, but a detached one to hold
+      // nodes and answer `nodeType === 9` is not.
+      Document: documentConstructor("Document"),
+      HTMLDocument: documentConstructor("HTMLDocument"),
+      DocumentType: brand("DocumentType", (v) => v && v.nodeType === 10),
+      ProcessingInstruction: brand("ProcessingInstruction", (v) => v && v.nodeType === 7),
+      Attr: brand("Attr", (v) => v && typeof v.name === "string" && "value" in v && !v.nodeType),
+      Window: brand("Window", (v) => v === globalThis),
+      Navigator: brand("Navigator", (v) => v && typeof v.userAgent === "string"),
+      Location: brand("Location", (v) => v && typeof v.href === "string" && typeof v.assign === "function"),
+      History: brand("History", (v) => v && typeof v.pushState === "function"),
+      Performance: brand("Performance", (v) => v && typeof v.now === "function"),
+      DOMImplementation: brand("DOMImplementation", (v) => v && typeof v.createHTMLDocument === "function"),
+      CustomElementRegistry: brand("CustomElementRegistry", (v) => v && typeof v.define === "function" && typeof v.get === "function"),
+      DOMStringMap: brand("DOMStringMap", (v) => typeof v === "object"),
+      StyleSheet: brand("StyleSheet", (v) => v && "cssRules" in v),
+      MediaList: brand("MediaList", (v) => v && typeof v.mediaText === "string"),
+    };
+  }
+
   Object.assign(globalThis, {
     CSS,
     addEventListener, removeEventListener, dispatchEvent,
@@ -5643,8 +5977,64 @@
       ].map((name) => [`HTML${name}Element`, Element]),
     ),
     SVGElement: Element,
-    CharacterData: Text,
     customElements, NodeFilter, NodeIterator, TreeWalker,
+
+    // Interface objects for the shapes this engine builds without a class.
+    //
+    // **Why these are not stubs, and why they are not lies.** §B8.4's rule is
+    // that a name which exists but answers wrongly is worse than a name that is
+    // absent: `'x' in navigator` answering true for a property we do not have
+    // sends a page down a branch it can never recover from. That rule is about
+    // *feature detection*, and it is why `missingApi` was deleted.
+    //
+    // These are the opposite case. A page writing `nodes instanceof NodeList`
+    // is not detecting a feature, it is asking what it is holding — and the
+    // honest answers are "yes" or "no", not `ReferenceError`. So each carries a
+    // `Symbol.hasInstance` that performs the real brand check against the shape
+    // this engine actually builds. Nothing claims to be constructible that is
+    // not, and `new NodeList()` still throws, as it does in a browser.
+    //
+    // The shapes are genuinely ours: `collection()` returns an array with
+    // `item`/`namedItem`, `makeStorage()` returns a proxy over a Map, and the
+    // document is an object literal. Each check tests for what that shape
+    // actually has rather than for a marker we could have set anywhere.
+    ...interfaceObjects(),
+
+    // The three legacy factory constructors, which are real and are the only
+    // way a great deal of code creates these elements: `new Image()` predates
+    // `createElement` in practice and is still what image preloaders write.
+    // These *are* constructible, unlike the brands above, so they are
+    // functions that build the element they name.
+    Image: makeElementFactory("img", ["width", "height"]),
+    Audio: makeElementFactory("audio", ["src"]),
+    Option: makeElementFactory("option", ["text", "value", "defaultSelected", "selected"]),
+
+    // Serialising a node to a string. `XMLSerializer` is how a page turns a
+    // subtree back into markup without going through `innerHTML` on a parent
+    // it may not have, and it is what `DOMParser`'s round trip is usually
+    // paired with — we shipped the parser and not the serialiser.
+    XMLSerializer: class XMLSerializer {
+      serializeToString(node) {
+        if (!node) return "";
+        if (node.nodeType === 9) return node.documentElement ? node.documentElement.outerHTML : "";
+        if (node.outerHTML !== undefined) return node.outerHTML;
+        if (node.innerHTML !== undefined) return node.innerHTML;
+        return String(node.textContent ?? "");
+      }
+    },
+
+    // Classes this engine already had and never exposed. Each has a real
+    // implementation above; the only thing missing was the name, so
+    // `rule instanceof CSSStyleRule` was a ReferenceError over an object that
+    // was exactly that.
+    CSSRule, CSSStyleRule, CSSGroupingRule,
+    CSSStyleDeclaration: StyleDeclaration,
+    Response,
+    // The event types added beside `InputEvent`.
+    FocusEvent, WheelEvent, PointerEvent, CompositionEvent, ErrorEvent,
+    PromiseRejectionEvent, ProgressEvent, MessageEvent, CloseEvent, StorageEvent,
+    PopStateEvent, HashChangeEvent, PageTransitionEvent, SubmitEvent,
+    FormDataEvent, ToggleEvent, AnimationEvent, TransitionEvent,
 
     crypto: observed(crypto, "crypto"),
     TextEncoder, TextDecoder, XMLHttpRequest, Blob, File, DOMException,
@@ -5688,6 +6078,34 @@
     IntersectionObserver, ResizeObserver,
   });
 
+  // Interface objects are **not enumerable** on the global, and every one of
+  // ours was.
+  //
+  // WebIDL §3.7 puts an interface object on the global as
+  // { writable: true, enumerable: false, configurable: true }, and
+  // `Object.assign` above creates enumerable data properties — so `Node`,
+  // `Element`, `Event` and the rest were all wrong, long before this pass
+  // added any. `idlharness` asserts it once per interface as its *first*
+  // check, so the cost was a subtest per interface across every `idlharness`
+  // file in the suite, spent before anything about the interface was examined.
+  //
+  // Applied by shape rather than by a list: a capitalised name bound to a
+  // function is an interface object, and nothing else on the global is. A list
+  // would be a second place that has to agree with the one above.
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    if (!/^[A-Z]/.test(name)) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    if (!descriptor || !descriptor.enumerable || typeof descriptor.value !== "function") {
+      continue;
+    }
+    Object.defineProperty(globalThis, name, {
+      value: descriptor.value,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+
   // `fetch`, over the host's broker. Every request is policy-checked and
   // receipted before it moves, which is the property this engine exists for.
   function fetch(input, init) {
@@ -5728,22 +6146,20 @@
   function responseFrom(res, request) {
     const headers = new Headers();
     for (const [name, value] of res.headers || []) headers.append(name, value);
-    const response = {
-      ok: res.ok,
+    // A real `Response`, so `res instanceof Response` answers the way a page
+    // expects. It used to be an object literal with the same fields, which
+    // reads identically until something asks what it is.
+    return new Response(res.text, {
       status: res.status,
-      // What a page checks to find out it was handed an opaque response
-      // rather than a failed one. Reported rather than left to be inferred
-      // from an empty body with status 0, which reads as a network error.
-      type: res.opaque ? "opaque" : "basic",
       statusText: res.status === 200 ? "OK" : "",
+      headers,
+      // What a page checks to find out it was handed an opaque response rather
+      // than a failed one. Reported rather than left to be inferred from an
+      // empty body with status 0, which reads as a network error.
+      type: res.opaque ? "opaque" : "basic",
       url: res.url,
       redirected: res.url !== request.url,
-      headers,
-      text: () => Promise.resolve(res.text),
-      json: () => Promise.resolve(JSON.parse(res.text)),
-      clone() { return { ...response }; },
-    };
-    return response;
+    });
   }
 
   // Driven by the settle loop, so a page's promises resolve as the network

@@ -226,14 +226,22 @@ def run_one(args):
     than from a measurement. The rule that keeps being relearned is that the
     rule against building what no page asked for applies to performance too.
     """
-    rel, base, timeout, mem_mb, grants = args
+    rel, base, timeout, mem_mb, grants, script_seconds = args
     url = base + rel
     started = time.monotonic()
     try:
         proc = subprocess.run(
             capped(
                 [str(BINARY), *ENGINE_ARGS, "open", "--script", "--json",
-                 "--max-snapshot-lines", "1", *grants, url],
+                 "--max-snapshot-lines", "1",
+                 # A conformance file is allowed to be slow. The engine's
+                 # default script ceiling exists to stop a runaway page, and
+                 # `html/dom/idlharness` sits exactly on it — so its 1,896
+                 # passing subtests appeared or vanished with machine load,
+                 # which is a score that depends on the other processes on the
+                 # box. See `--script-seconds`.
+                 "--script-seconds", str(int(script_seconds)),
+                 *grants, url],
                 mem_mb,
             ),
             capture_output=True, timeout=timeout,
@@ -328,6 +336,12 @@ def main():
     parser.add_argument("--out", default=None)
     parser.add_argument("--mem-mb", type=int, default=1200,
                         help="address-space cap per test process")
+    # Comfortably above the engine's own 20s default, so a heavy conformance
+    # file finishes rather than landing on the ceiling. Still finite: a file
+    # that needs more than this is a file the engine cannot run, and the
+    # per-test `--timeout` is the outer bound either way.
+    parser.add_argument("--script-seconds", type=int, default=60,
+                        help="per-page script ceiling handed to the engine")
     # The other server. See `wptserve.py` for what it buys, what it costs, and
     # why the https variants stay out.
     parser.add_argument("--wptserve", action="store_true",
@@ -381,7 +395,8 @@ def main():
     started = time.monotonic()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=opts.jobs) as pool:
-            work = [(t, base, opts.timeout, opts.mem_mb, grants) for t in tests]
+            work = [(t, base, opts.timeout, opts.mem_mb, grants, opts.script_seconds)
+                    for t in tests]
             for i, result in enumerate(pool.map(run_one, work), 1):
                 results.append(result)
                 if i % 50 == 0 or i == len(tests):

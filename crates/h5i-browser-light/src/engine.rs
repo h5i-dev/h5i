@@ -54,6 +54,24 @@ pub struct PageOptions {
     /// and is pinned to its thread; moving script into a killable worker means
     /// moving the document with it.
     pub navigation_budget: std::time::Duration,
+
+    /// How long the script realm's job queue may run before it is cancelled.
+    ///
+    /// `None` keeps `SCRIPT_PHASE_BUDGET`, the wall-clock ceiling on how long a
+    /// page's script may run. It is a guard against a *runaway*, and a
+    /// conformance harness is exactly where a runaway and a slow page are hard
+    /// to tell apart from outside: `html/dom/idlharness` legitimately spends
+    /// about twenty seconds parsing IDL and building 6,408 tests, lands right
+    /// on the twenty-second ceiling, and is then recorded as having reported
+    /// nothing at all — so 1,896 passing subtests appear or vanish depending on
+    /// how loaded the machine was.
+    ///
+    /// A run whose score depends on the other processes on the box is not a
+    /// measurement, so an instrument can raise this — for the same reason
+    /// `--allow-any-remote` exists, and with the same limit: it says what it is
+    /// doing, and it changes nothing for anyone who does not pass it. The
+    /// navigation deadline still bounds the whole load either way.
+    pub script_budget: Option<std::time::Duration>,
 }
 
 impl Default for PageOptions {
@@ -64,6 +82,7 @@ impl Default for PageOptions {
             scale: 1.0,
             max_snapshot_lines: 500,
             script: false,
+            script_budget: None,
             // Above what a slow real page takes and far below what a stuck one
             // would, which is the shape every ceiling in this engine has.
             navigation_budget: std::time::Duration::from_secs(45),
@@ -766,7 +785,14 @@ impl Page {
         // Whichever runs out first. The script phase has its own ceiling, and
         // the navigation has one over the whole load; a page that spent thirty
         // seconds fetching does not then get a fresh twenty to run in.
-        let phase_budget = SCRIPT_PHASE_BUDGET.min(self.deadline.remaining());
+        // The ceiling the script phase actually runs under. An instrument may
+        // raise it (`--script-seconds`); nothing else does, and the navigation
+        // deadline still bounds the whole load either way.
+        let phase_budget = self
+            .options
+            .script_budget
+            .unwrap_or(SCRIPT_PHASE_BUDGET)
+            .min(self.deadline.remaining());
         let mut skipped = 0usize;
         // The origin every `src` below is fetched on behalf of. Cloned once so
         // the loops do not have to hold a borrow of `self` across the calls

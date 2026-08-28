@@ -814,6 +814,21 @@ struct ViewArgs {
     #[arg(long, default_value_t = 45, value_name = "SECONDS")]
     navigation_seconds: u64,
 
+    /// How long a page's script may run, in seconds. 0 keeps the default.
+    ///
+    /// **For instruments.** The default ceiling stops a runaway page, and a
+    /// conformance harness is where a runaway and a merely slow page are hard
+    /// to tell apart: `html/dom/idlharness` legitimately needs about twenty
+    /// seconds to parse the IDL and build its 6,408 tests, lands on the
+    /// twenty-second default, and then reports nothing at all — so a score
+    /// swings by 1,896 subtests depending on how loaded the machine was. A run
+    /// that depends on that is not a measurement.
+    ///
+    /// Raising it changes nothing for anyone who does not pass it, and the
+    /// navigation deadline still bounds the whole load.
+    #[arg(long, default_value_t = 0, value_name = "SECONDS")]
+    script_seconds: u64,
+
     #[arg(long, default_value_t = 1280)]
     width: u32,
 
@@ -1130,6 +1145,8 @@ fn factory_for(half: &Half, net: &NetArgs, view: &ViewArgs) -> Result<PageFactor
             scale: view.scale,
             max_snapshot_lines: view.max_snapshot_lines,
             script: view.script,
+            script_budget: (view.script_seconds > 0)
+                .then(|| std::time::Duration::from_secs(view.script_seconds)),
             navigation_budget: std::time::Duration::from_secs(view.navigation_seconds),
         },
     );
