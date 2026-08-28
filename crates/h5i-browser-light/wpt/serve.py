@@ -307,6 +307,10 @@ TESTDRIVER = """
 
     async click(element) {
       if (!element) throw new Error('click: no element');
+      // A testdriver click *is* the user gesture the test asked for, so it
+      // arms transient user activation the way a real click would — this is
+      // what makes `test_driver.bless()` mean something here.
+      if (window.__h5iNoteUserActivation) window.__h5iNoteUserActivation();
       // Scroll-into-view and hit-testing are what a real driver does first.
       // There is nothing here that can be occluded, so the click is delivered
       // to the element the test named — which is what the test is asserting on.

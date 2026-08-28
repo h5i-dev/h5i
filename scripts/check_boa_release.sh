@@ -19,6 +19,14 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 ua='User-Agent: h5i-boa-release-check'
 
+# The check exists to force the git pin out the moment a published boa works.
+# Once the pin is gone, its job is done: boa arriving from crates.io is the
+# state this script was pushing toward, not something to fail about.
+if ! grep -q 'boa-dev/boa' "$here/crates/h5i-browser-light/Cargo.toml"; then
+  echo "boa is a plain crates.io dependency; the workaround this check guarded is gone."
+  exit 0
+fi
+
 # What parley actually needs, read from the lockfile rather than assumed, so
 # this stays true when blitz moves.
 parley_version="$(grep -A 1 '^name = "parley"' "$here/Cargo.lock" | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/')"

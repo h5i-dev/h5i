@@ -20,6 +20,14 @@
   /// a `const` still in its temporal dead zone.
   const TAG_CLASSES = new Map();
 
+  /// Transient user activation, the spec's gate on gesture-guarded APIs.
+  ///
+  /// No real user drives this engine, so the flag is armed by the paths that
+  /// stand in for one — the testdriver shim's click, `h5i browser click` —
+  /// and consumed by the APIs that spend it (`showPicker`). `hasBeen` never
+  /// goes back down, which is exactly `navigator.userActivation`'s pair.
+  const userActivation = { active: false, hasBeen: false };
+
   /// Which node has focus, or null for none.
   ///
   /// Held here rather than on the tree because focus is a property of the
@@ -57,12 +65,72 @@
   /// code. An array already answers everything a `NodeList` does except `item`
   /// and `namedItem`, which are right here, so the naming it bought was small
   /// and the price was not.
+  /// The collection interfaces, as real classes over real arrays.
+  ///
+  /// An instance is a genuine Array whose prototype has been re-pointed at
+  /// the interface's — so indexing, `length`, iteration and the array methods
+  /// this file itself leans on all keep working, while `instanceof NodeList`,
+  /// the class string, and `item`/`namedItem` on the *prototype* are what
+  /// idlharness (and pages) can finally observe. `Symbol.species` is Array so
+  /// a `filter` over a collection hands back a plain array instead of asking
+  /// the throwing constructor for a new one.
+  const COLLECTION_CLASSES = {};
+  {
+    const declare = (name, Parent, members) => {
+      const Interface = { [name]: class extends Parent {
+        constructor() {
+          super();
+          throw new TypeError("Illegal constructor");
+        }
+        static get [Symbol.species]() { return Array; }
+      } }[name];
+      Object.defineProperty(Interface.prototype, Symbol.toStringTag, {
+        value: name, configurable: true,
+      });
+      for (const [member, fn] of Object.entries(members ?? {})) {
+        Object.defineProperty(fn, "name", { value: member });
+        Object.defineProperty(Interface.prototype, member, {
+          configurable: true, enumerable: true, writable: true, value: fn,
+        });
+      }
+      // A `length` accessor on the prototype, for the interface's shape; an
+      // instance's own array `length` shadows it, so this is only ever
+      // reached by inspection — or by the wrong `this`, which gets the brand
+      // TypeError idlharness expects.
+      const lengthGetter = function () {
+        if (!(this instanceof Interface) || this === Interface.prototype) {
+          throw new TypeError(`Illegal invocation: length needs a ${name}`);
+        }
+        return Array.prototype.slice.call(this).length;
+      };
+      Object.defineProperty(lengthGetter, "name", { value: "get length" });
+      Object.defineProperty(Interface.prototype, "length", {
+        configurable: true, enumerable: true, get: lengthGetter,
+      });
+      COLLECTION_CLASSES[name] = Interface;
+      return Interface;
+    };
+    const item = function (index) {
+      const at = Math.trunc(Number(index)) || 0;
+      return this[at] ?? null;
+    };
+    const namedItem = function (name) {
+      const wanted = String(name);
+      return this.find(
+        (n) => n.id === wanted || n.getAttribute?.("name") === wanted,
+      ) ?? null;
+    };
+    declare("NodeList", Array, { item });
+    const HTMLCollection = declare("HTMLCollection", Array, { item, namedItem });
+    declare("HTMLFormControlsCollection", HTMLCollection, {});
+    declare("HTMLOptionsCollection", HTMLCollection, {});
+    declare("FileList", Array, { item });
+  }
+
   function collection(nodes, label) {
-    void label;
     const list = nodes.slice();
-    list.item = (index) => list[index] ?? null;
-    list.namedItem = (name) =>
-      list.find((n) => n.id === String(name) || n.getAttribute?.("name") === String(name)) ?? null;
+    const Interface = COLLECTION_CLASSES[label] ?? COLLECTION_CLASSES.NodeList;
+    Object.setPrototypeOf(list, Interface.prototype);
     return list;
   }
 
@@ -188,6 +256,89 @@
     for (const found of collectCustom(node)) fireConnected(found);
   }
 
+  /// HTML's JavaScript MIME type essence list — the exact sixteen. Note what
+  /// is missing: `javascript1.6` and `1.7` never made the standard, and the
+  /// WPT type/language files assert both directions of that history.
+  const JS_MIME_TYPES = new Set([
+    "application/ecmascript", "application/javascript",
+    "application/x-ecmascript", "application/x-javascript",
+    "text/ecmascript", "text/javascript", "text/javascript1.0",
+    "text/javascript1.1", "text/javascript1.2", "text/javascript1.3",
+    "text/javascript1.4", "text/javascript1.5", "text/jscript",
+    "text/livescript", "text/x-ecmascript", "text/x-javascript",
+  ]);
+
+  /// Prepare-a-script's type decision: "classic", "module", or null for a
+  /// block that is data, not code. The legacy `language` attribute is the
+  /// spec's rule, not a guess: absent-or-empty type with a non-empty language
+  /// means `text/<language>`, which then faces the same sixteen-entry list.
+  function scriptKindOf(el) {
+    const typeAttr = api.getAttr(el._id, "type");
+    const langAttr = api.getAttr(el._id, "language");
+    let type;
+    if (typeAttr !== null && typeAttr.trim() !== "") type = typeAttr.trim();
+    else if (typeAttr === null && langAttr !== null && langAttr !== "") {
+      type = `text/${langAttr}`;
+    } else type = "text/javascript";
+    const lower = type.toLowerCase();
+    if (lower === "module") return "module";
+    return JS_MIME_TYPES.has(lower) ? "classic" : null;
+  }
+
+  /// Script-inserted scripts run — synchronously for inline code, as a fetch
+  /// for external, never for `innerHTML` (which does not come through here,
+  /// exactly as the spec has it). This is the other half of `run_scripts` on
+  /// the Rust side, which executes what the *parser* saw: a `<script>` a page
+  /// builds and appends afterwards was collected by nobody, so a loader that
+  /// works by injecting script tags did nothing at all.
+  function runInsertedScripts(root) {
+    if (!root || root.nodeType !== 1 || !root.isConnected) return;
+    const found = root.tagName === "SCRIPT" ? [root] : [];
+    if (typeof root.querySelectorAll === "function") {
+      found.push(...root.querySelectorAll("script"));
+    }
+    for (const el of found) prepareInsertedScript(el);
+  }
+
+  function prepareInsertedScript(el) {
+    if (el.__h5iScriptStarted || !el.isConnected) return;
+    const kind = scriptKindOf(el);
+    if (kind === null) return;
+    const src = api.getAttr(el._id, "src");
+    if (src !== null) {
+      el.__h5iScriptStarted = true;
+      if (src === "") {
+        // An empty src is an error the element reports, not a fetch.
+        queueMicrotask(() => el.dispatchEvent(new Event("error")));
+        return;
+      }
+      // Fetched and then run in global scope, with the load/error event the
+      // element owes its page. The ordering guarantees of parser-time
+      // scripts (async/defer) do not apply to a script-inserted external
+      // script anyway: it runs when it arrives.
+      fetch(el._resolved("src"))
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.text();
+        })
+        .then((code) => {
+          if (kind === "classic") (0, eval)(code);
+          el.dispatchEvent(new Event("load"));
+        })
+        .catch(() => el.dispatchEvent(new Event("error")));
+      return;
+    }
+    const code = el.textContent;
+    if (!code || !code.trim()) return;
+    if (kind !== "classic") return;
+    el.__h5iScriptStarted = true;
+    try {
+      (0, eval)(code);
+    } catch (error) {
+      console.error(`inserted script threw: ${withStack(error)}`);
+    }
+  }
+
   function fireConnected(node) {
     if (connected.has(node._id)) return;
     connected.add(node._id);
@@ -214,7 +365,10 @@
     if (!Array.isArray(observedNames) || !observedNames.includes(name)) return;
     try {
       if (typeof node.attributeChangedCallback === "function") {
-        node.attributeChangedCallback(name, oldValue, newValue);
+        // Four arguments: the namespace rides along, and it is `null` — not
+        // absent — for the attributes this engine writes. WPT logs all four
+        // and compares each against null.
+        node.attributeChangedCallback(name, oldValue, newValue, null);
       }
     } catch (error) {
       console.error(`custom element attributeChangedCallback threw: ${withStack(error)}`);
@@ -479,7 +633,10 @@
     constructor(node, attribute) { this._node = node; this._attr = attribute; }
     _all() {
       const raw = api.getAttr(this._node._id, this._attr) || "";
-      return raw.split(/\s+/).filter(Boolean);
+      // An ordered *set*: `class="a a b"` is two tokens, not three, and
+      // `length`, iteration and indexing all see the deduplicated view. Only
+      // `value` reports the raw attribute.
+      return [...new Set(raw.split(/\s+/).filter(Boolean))];
     }
     _write(list) {
       api.setAttr(this._node._id, this._attr, list.join(" "));
@@ -539,9 +696,17 @@
     // none of them. Answering true would send a page down a path expecting
     // behaviour that will not happen, which is the plausible-wrong answer this
     // engine keeps having to refuse.
-    supports() { return false; }
+    supports(token) {
+      // `class` defines no supported tokens at all, and the spec's answer to
+      // asking is a TypeError, not a polite false.
+      if (this._attr === "class") {
+        throw new TypeError("classList.supports: class has no supported tokens");
+      }
+      void token;
+      return false;
+    }
     get length() { return this._all().length; }
-    get value() { return this._all().join(" "); }
+    get value() { return api.getAttr(this._node._id, this._attr) || ""; }
     set value(v) { api.setAttr(this._node._id, this._attr, String(v)); }
     forEach(fn, thisArg) { this._all().forEach(fn, thisArg); }
     keys() { return this._all().keys(); }
@@ -795,7 +960,40 @@
     /// page against `textContent`'s 6ms, because every level built an array of
     /// wrapped nodes and every read paid a proxy trap.
     get innerText() { return api.innerText(this._id); }
-    set innerText(value) { this.textContent = String(value); }
+    // The setter is not `textContent`: each line break in the string becomes
+    // a real `<br>`, because innerText round-trips through the *rendered*
+    // form — write "a\nb", read "a\nb" — and only a break element renders as
+    // a break.
+    set innerText(value) { this._replaceWithRenderedText(value, false); }
+    get outerText() { return api.innerText(this._id); }
+    set outerText(value) { this._replaceWithRenderedText(value, true); }
+    _replaceWithRenderedText(value, replaceSelf) {
+      const parts = String(value).split(/\r\n|\r|\n/);
+      const nodes = [];
+      parts.forEach((part, i) => {
+        if (i > 0) nodes.push(document.createElement("br"));
+        if (part !== "") nodes.push(document.createTextNode(part));
+      });
+      if (replaceSelf) {
+        const parent = this.parentNode;
+        if (!parent) {
+          throw new DOMException(
+            "outerText: the element has no parent",
+            "NoModificationAllowedError",
+          );
+        }
+        // An empty string still leaves a text node behind — the spec keeps a
+        // merge point where the element was.
+        if (nodes.length === 0) nodes.push(document.createTextNode(""));
+        for (const node of nodes) parent.insertBefore(node, this);
+        this.remove();
+      } else {
+        // Not `textContent = ""`, which parks an empty text node where the
+        // content was — WPT counts the children afterwards.
+        while (this.firstChild) this.removeChild(this.firstChild);
+        for (const node of nodes) this.appendChild(node);
+      }
+    }
 
     appendChild(child) {
       // Inserting a fragment inserts its children and leaves the fragment
@@ -806,12 +1004,14 @@
         if (child._children) child._children.length = 0;
         childListRecord(this, moved, []);
         notifyConnection(this);
+        runInsertedScripts(this);
         return child;
       }
       detachFromParent(child);
       api.append(this._id, child._id);
       childListRecord(this, [child], []);
       notifyConnection(child);
+      runInsertedScripts(child);
       return child;
     }
     insertBefore(child, anchor) {
@@ -830,12 +1030,14 @@
         for (const kid of child.childNodes) api.insertBefore(anchor._id, kid._id);
         if (child._children) child._children.length = 0;
         notifyConnection(this);
+        runInsertedScripts(this);
         return child;
       }
       detachFromParent(child);
       api.insertBefore(anchor._id, child._id);
       childListRecord(this, [child], []);
       notifyConnection(child);
+      runInsertedScripts(child);
       return child;
     }
     cloneNode(deep) {
@@ -866,10 +1068,63 @@
         // markup default, which is not what the user had typed into it.
         if (this._value !== undefined) copy._value = this._value;
         if (this._checked !== undefined) copy._checked = this._checked;
+        // `indeterminate` and `dirty checkedness` ride along too — WPT's
+        // cloning-steps file checks each piece of control state by name.
+        if (this.__h5iIndeterminate !== undefined) {
+          copy.__h5iIndeterminate = this.__h5iIndeterminate;
+        }
         if (deep) copy.innerHTML = this.innerHTML;
       }
       return copy;
     }
+    /// The namespace lookup trio, with the answers an HTML document gives.
+    ///
+    /// This engine parses HTML and nothing else, and in an HTML parse every
+    /// element lands in the XHTML namespace with no prefix, and `xmlns`
+    /// attributes are ordinary attributes with no namespace of their own —
+    /// which the spec's locate-a-namespace algorithm therefore ignores. So
+    /// the walk collapses to a table: the two reserved prefixes, the default
+    /// namespace for elements, null for everything else. Not a stub — this is
+    /// what the full algorithm computes over the only tree shape this engine
+    /// can hold.
+    lookupNamespaceURI(prefix) {
+      const p = prefix === undefined || prefix === null || prefix === "" ? null : String(prefix);
+      if (p === "xml") return "http://www.w3.org/XML/1998/namespace";
+      if (p === "xmlns") return "http://www.w3.org/2000/xmlns/";
+      if (this.nodeType === 1) {
+        if (this._nsuri !== undefined) {
+          // A createElementNS element knows its own namespace and prefix.
+          if (p === (this._prefix ?? null)) return this._nsuri;
+        } else if (p === null) {
+          return "http://www.w3.org/1999/xhtml";
+        }
+        const parent = this.parentNode;
+        return parent && parent.nodeType === 1 ? parent.lookupNamespaceURI(p) : null;
+      }
+      if (this.nodeType === 9) {
+        return p === null ? "http://www.w3.org/1999/xhtml" : null;
+      }
+      // Fragments, doctypes, PIs: no element to inherit from.
+      if (this.nodeType === 11 || this.nodeType === 10 || this.nodeType === 7) return null;
+      const parent = this.parentNode;
+      return parent ? parent.lookupNamespaceURI(p) : null;
+    }
+    lookupPrefix(namespace) {
+      if (namespace === null || namespace === undefined || namespace === "") return null;
+      const ns = String(namespace);
+      if (this.nodeType === 1) {
+        const mine = this._nsuri !== undefined ? this._nsuri : "http://www.w3.org/1999/xhtml";
+        if (mine === ns && this._prefix) return this._prefix;
+        const parent = this.parentNode;
+        return parent && parent.nodeType === 1 ? parent.lookupPrefix(ns) : null;
+      }
+      return null;
+    }
+    isDefaultNamespace(namespace) {
+      const ns = namespace === undefined || namespace === "" ? null : namespace;
+      return this.lookupNamespaceURI(null) === ns;
+    }
+
     get nextSibling() {
       const kids = this.parentNode ? this.parentNode.childNodes : [];
       const at = kids.findIndex((n) => n._id === this._id);
@@ -945,10 +1200,64 @@
         this.appendChild(item instanceof Node ? item : document.createTextNode(String(item)));
       }
     }
+
+    /// The HTML partial-update family: parse a string, drop what the caller
+    /// asked dropped, and place the nodes with the positional verb the name
+    /// carries. The safe spellings remove `<script>` outright; the unsafe
+    /// ones keep it and run it only when `runScripts` says so — which is why
+    /// each parsed script is pre-marked as started unless it is meant to run,
+    /// keeping the generic insertion hook's hands off it.
+    _insertParsedHTML(position, html, options, safe) {
+      const host = document.createElement("div");
+      host.innerHTML = String(html);
+      const sanitizer = options && options.sanitizer;
+      const removed = new Set(
+        ((sanitizer && sanitizer.removeElements) || []).map((s) => String(s).toLowerCase()),
+      );
+      const banned = (el) =>
+        (safe && el.tagName === "SCRIPT") || removed.has(el.tagName.toLowerCase());
+      const nodes = [];
+      for (const node of Array.from(host.childNodes)) {
+        if (node.nodeType === 1) {
+          if (banned(node)) continue;
+          for (const kid of Array.from(node.querySelectorAll("*"))) {
+            if (banned(kid)) kid.remove();
+          }
+        }
+        nodes.push(node);
+      }
+      const runScripts = !safe && !!(options && options.runScripts);
+      for (const node of nodes) {
+        const scripts = [];
+        if (node.tagName === "SCRIPT") scripts.push(node);
+        if (typeof node.querySelectorAll === "function") {
+          scripts.push(...node.querySelectorAll("script"));
+        }
+        for (const s of scripts) {
+          if (!runScripts) s.__h5iScriptStarted = true;
+        }
+      }
+      if (position === "append") this.append(...nodes);
+      else if (position === "prepend") this.prepend(...nodes);
+      else if (position === "before") this.before(...nodes);
+      else if (position === "after") this.after(...nodes);
+      else if (position === "replaceWith") this.replaceWith(...nodes);
+    }
+
     contains(other) {
       for (let n = other; n; n = n.parentNode) if (n._id === this._id) return true;
       return false;
     }
+    appendHTML(html, options) { this._insertParsedHTML("append", html, options, true); }
+    appendHTMLUnsafe(html, options) { this._insertParsedHTML("append", html, options, false); }
+    prependHTML(html, options) { this._insertParsedHTML("prepend", html, options, true); }
+    prependHTMLUnsafe(html, options) { this._insertParsedHTML("prepend", html, options, false); }
+    beforeHTML(html, options) { this._insertParsedHTML("before", html, options, true); }
+    beforeHTMLUnsafe(html, options) { this._insertParsedHTML("before", html, options, false); }
+    afterHTML(html, options) { this._insertParsedHTML("after", html, options, true); }
+    afterHTMLUnsafe(html, options) { this._insertParsedHTML("after", html, options, false); }
+    replaceWithHTML(html, options) { this._insertParsedHTML("replaceWith", html, options, true); }
+    replaceWithHTMLUnsafe(html, options) { this._insertParsedHTML("replaceWith", html, options, false); }
 
     addEventListener(type, handler, options) {
       if (!handler) return;
@@ -962,7 +1271,20 @@
           && l.handler === handler && l.capture === capture,
       );
       if (already) return;
-      listeners.push({ id: this._id, type: String(type), handler, capture, once });
+      // The passive-by-default set: touch and wheel listeners on the
+      // document's scrolling surfaces cannot block scrolling, so their
+      // `preventDefault` is ignored unless the page explicitly asked with
+      // `passive: false` — the same rule browsers adopted for jank.
+      let passive = options && typeof options === "object" && "passive" in options
+        ? !!options.passive
+        : undefined;
+      if (passive === undefined) {
+        const scrollBlocking = ["touchstart", "touchmove", "wheel", "mousewheel"];
+        passive = scrollBlocking.includes(String(type))
+          && (this._id === 0 || this.tagName === "HTML" || this.tagName === "BODY"
+            || this.nodeType === 9);
+      }
+      listeners.push({ id: this._id, type: String(type), handler, capture, once, passive });
     }
     removeEventListener(type, handler) {
       for (let i = listeners.length - 1; i >= 0; i--) {
@@ -981,6 +1303,13 @@
   // until the fragment is inserted, and then they move.
   class DocumentFragment {
     constructor() { this._children = []; this.nodeType = 11; }
+    // The namespace trio: a fragment has no element to inherit from, so every
+    // branch of the spec's algorithm lands on null. Spelled here because this
+    // class does not extend Node and would otherwise answer with a TypeError,
+    // which is a different (and wrong) fact.
+    lookupNamespaceURI() { return null; }
+    lookupPrefix() { return null; }
+    isDefaultNamespace(ns) { return ns === null || ns === undefined || ns === ""; }
     get childNodes() { return this._children.slice(); }
     get firstChild() { return this._children[0] || null; }
     appendChild(child) { this._children.push(child); return child; }
@@ -989,6 +1318,18 @@
         this.appendChild(item instanceof Node ? item : document.createTextNode(String(item)));
       }
     }
+    prepend(...items) {
+      for (const item of items.reverse()) {
+        const node = item instanceof Node ? item : document.createTextNode(String(item));
+        this._children.unshift(node);
+      }
+    }
+    // The partial-update spellings a fragment can honour — a fragment has no
+    // siblings, so the before/after family stays off it, as in the spec.
+    appendHTML(html, options) { Node.prototype._insertParsedHTML.call(this, "append", html, options, true); }
+    appendHTMLUnsafe(html, options) { Node.prototype._insertParsedHTML.call(this, "append", html, options, false); }
+    prependHTML(html, options) { Node.prototype._insertParsedHTML.call(this, "prepend", html, options, true); }
+    prependHTMLUnsafe(html, options) { Node.prototype._insertParsedHTML.call(this, "prepend", html, options, false); }
     removeChild(child) {
       const at = this._children.indexOf(child);
       if (at >= 0) this._children.splice(at, 1);
@@ -1022,6 +1363,53 @@
       if (deep) for (const kid of this._children) copy.appendChild(kid.cloneNode(true));
       return copy;
     }
+  }
+
+  /// A doctype node: three strings, `nodeType` 10, and nothing else.
+  ///
+  /// Detached-only, like a created PI: it is not backed by a node in the one
+  /// real tree, because blitz holds the document's own doctype and a second
+  /// one has nowhere to go. What a page does with these is *inspect* them —
+  /// `createDocumentType` then reading name/publicId/systemId back — and the
+  /// insertion path says no honestly rather than pretending.
+  class DocumentTypeNode {
+    constructor(name, publicId, systemId) {
+      this.name = name;
+      this.publicId = publicId;
+      this.systemId = systemId;
+    }
+    get nodeType() { return 10; }
+    get nodeName() { return this.name; }
+    get ownerDocument() { return document; }
+    get parentNode() { return null; }
+    get childNodes() { return []; }
+    get textContent() { return null; }
+    // The namespace trio answers null for a doctype in every branch, which is
+    // the spec's own table.
+    lookupNamespaceURI() { return null; }
+    lookupPrefix() { return null; }
+    isDefaultNamespace(ns) { return ns === null || ns === ""; }
+  }
+
+  /// A processing instruction, which this engine's parser never produces —
+  /// blitz reads `<?pi?>` as a comment — but pages construct to inspect, and
+  /// the demand list counted 195 asks for exactly that.
+  class ProcessingInstructionNode {
+    constructor(target, data) {
+      this.target = target;
+      this.data = data;
+    }
+    get nodeType() { return 7; }
+    get nodeName() { return this.target; }
+    get textContent() { return this.data; }
+    set textContent(v) { this.data = String(v); }
+    get length() { return this.data.length; }
+    get ownerDocument() { return document; }
+    get parentNode() { return null; }
+    get childNodes() { return []; }
+    lookupNamespaceURI() { return null; }
+    lookupPrefix() { return null; }
+    isDefaultNamespace(ns) { return ns === null || ns === ""; }
   }
 
   /// The `CharacterData` interface, shared by text and comment nodes.
@@ -1085,7 +1473,17 @@
   }
 
   class Element extends Node {
-    get tagName() { return api.tagName(this._id); }
+    // The class string for an element whose tag has no interface of its own.
+    // Per-tag prototypes override this with their real name.
+    get [Symbol.toStringTag]() { return "HTMLElement"; }
+    get tagName() {
+      // Uppercasing is an HTML-namespace privilege: `createElementNS`'s SVG
+      // circle reports `circle`, and its prefixed name keeps the prefix.
+      if (this._nsuri !== undefined && this._nsuri !== "http://www.w3.org/1999/xhtml") {
+        return this._prefix ? `${this._prefix}:${this._localName}` : this._localName;
+      }
+      return api.tagName(this._id);
+    }
     get nodeName() { return this.tagName; }
     get children() { return collection(this.childNodes.filter((n) => n.nodeType === 1), "HTMLCollection"); }
 
@@ -1143,11 +1541,20 @@
     get className() { return this.getAttribute("class") || ""; }
     set className(v) { this.setAttribute("class", v); }
     get classList() {
-      return observed(DOMTokenList._indexed(new DOMTokenList(this, "class")), "DOMTokenList");
+      // [SameObject]: the identical list every read — pages compare them.
+      if (!this.__h5iClassList) {
+        this.__h5iClassList =
+          observed(DOMTokenList._indexed(new DOMTokenList(this, "class")), "DOMTokenList");
+      }
+      return this.__h5iClassList;
     }
     set classList(v) { this.setAttribute("class", String(v)); }
     get relList() {
-      return observed(DOMTokenList._indexed(new DOMTokenList(this, "rel")), "DOMTokenList");
+      if (!this.__h5iRelList) {
+        this.__h5iRelList =
+          observed(DOMTokenList._indexed(new DOMTokenList(this, "rel")), "DOMTokenList");
+      }
+      return this.__h5iRelList;
     }
 
     // Setting a URL part rewrites the href it came from, which is how routing
@@ -1195,7 +1602,10 @@
     // HTML, always: this engine parses HTML and nothing else. `document` has no
     // such property in the DOM at all, which is why it is *defined as undefined*
     // there rather than left to report itself as a gap.
-    get namespaceURI() { return "http://www.w3.org/1999/xhtml"; }
+    get namespaceURI() {
+      // Stored by `createElementNS`; everything the parser made is HTML.
+      return this._nsuri !== undefined ? this._nsuri : "http://www.w3.org/1999/xhtml";
+    }
 
     // What a reset button restores, and what `dirty` checks compare against.
     // The attribute for an input, the original text for a textarea — the two
@@ -1273,14 +1683,17 @@
 
     // Lowercase, always: this engine parses HTML, where the local name is
     // case-insensitive and canonically lower, while `tagName` is upper.
-    get localName() { return this.tagName.toLowerCase(); }
+    get localName() {
+      if (this._localName !== undefined) return this._localName;
+      return this.tagName.toLowerCase();
+    }
     /// Always null, and that is the answer rather than a gap: this engine
     /// parses HTML and nothing else (`document.contentType` says so), and every
     /// element in an HTML document is in the HTML namespace with no prefix.
     /// It was being *reported* as missing, which is the reverse of the mistake
     /// the reporting proxy exists to catch — naming as absent something no
     /// browser would answer differently.
-    get prefix() { return null; }
+    get prefix() { return this._prefix !== undefined ? this._prefix : null; }
 
     get contentEditable() {
       const raw = api.getAttr(this._id, "contenteditable");
@@ -1450,9 +1863,12 @@
           "NotSupportedError",
         );
       }
-      if (this.__h5iPopoverOpen) {
-        throw new DOMException("showPopover: already showing", "InvalidStateError");
-      }
+      // A visibility mismatch is the one validity failure that stays silent:
+      // showing what is already shown is a no-op, not an error. The order
+      // matters — this returns *before* the connectivity check, because the
+      // spec's "check popover validity" tests visibility second and never
+      // throws for it.
+      if (this.__h5iPopoverOpen) return;
       if (!this.isConnected) {
         throw new DOMException(
           "showPopover: the element is not connected",
@@ -1471,6 +1887,7 @@
       // read before running page script is how a double-open gets through.
       if (this.__h5iPopoverOpen || !this.isConnected) return;
       this.__h5iPopoverOpen = true;
+      this.classList.add(POPOVER_OPEN_CLASS);
       // Auto popovers close their peers. Manual ones do not, which is the
       // whole difference between the two keywords.
       if (kind === "auto" || kind === "hint") {
@@ -1493,14 +1910,16 @@
           "NotSupportedError",
         );
       }
-      if (!this.__h5iPopoverOpen) {
-        throw new DOMException("hidePopover: not showing", "InvalidStateError");
-      }
+      // Hiding what is already hidden is a no-op — and that quietly covers the
+      // disconnected case too, since removal closed it. Same silent-visibility
+      // rule as `showPopover`.
+      if (!this.__h5iPopoverOpen) return;
       this.dispatchEvent(new ToggleEvent("beforetoggle", {
         oldState: "open", newState: "closed",
       }));
       if (!this.__h5iPopoverOpen) return;
       this.__h5iPopoverOpen = false;
+      this.classList.remove(POPOVER_OPEN_CLASS);
       this.dispatchEvent(new ToggleEvent("toggle", {
         oldState: "open", newState: "closed",
       }));
@@ -1556,12 +1975,12 @@
       });
     }
 
-    querySelector(sel) { return wrap(api.query(checkSelector(sel), this._id)); }
-    querySelectorAll(sel) { return collection(api.queryAll(checkSelector(sel), this._id).map(wrap)); }
+    querySelector(sel) { return withHasMarkers(sel, (t) => wrap(api.query(t, this._id))); }
+    querySelectorAll(sel) { return withHasMarkers(sel, (t) => collection(api.queryAll(t, this._id).map(wrap))); }
     getElementsByTagName(tag) { return collection(api.queryAll(String(tag), this._id).map(wrap), "HTMLCollection"); }
     getElementsByClassName(cls) { return collection(api.queryAll("." + String(cls), this._id).map(wrap), "HTMLCollection"); }
 
-    matches(sel) { return api.matchesSelector(this._id, checkSelector(sel)); }
+    matches(sel) { return withHasMarkers(sel, (t) => api.matchesSelector(this._id, t)); }
     closest(sel) {
       for (let n = this; n; n = n.parentNode) {
         if (n.nodeType === 1 && n.matches(sel)) return n;
@@ -1652,7 +2071,39 @@
       // dispatch. The event has to be held to be asked.
       const activation = new MouseEvent("click", { bubbles: true, cancelable: true });
       dispatch(this, activation);
-      if (!activation.defaultPrevented) this._runPopoverInvoker();
+      if (!activation.defaultPrevented) {
+        this._runPopoverInvoker();
+        this._runCommandInvoker();
+        this._runFormButton();
+      }
+    }
+
+    /// Activation behaviour for submit and reset buttons: clicking one *does
+    /// something to the form*. Without this a `<button type=submit>` fired its
+    /// click and nothing else — the form sat unsubmitted, which reads as a
+    /// page that ignored the button.
+    _runFormButton() {
+      const tag = this.tagName;
+      if (tag !== "BUTTON" && tag !== "INPUT") return;
+      const form = this.form;
+      if (!form) return;
+      // A button's missing or invalid `type` is `submit`; an input's is `text`.
+      const type = tag === "BUTTON"
+        ? (() => {
+            const raw = (api.getAttr(this._id, "type") || "").toLowerCase();
+            return raw === "reset" || raw === "button" ? raw : "submit";
+          })()
+        : this.type;
+      if (type === "submit" || type === "image") {
+        try {
+          form.requestSubmit(this);
+        } catch {
+          // A submitter the form refuses is a click that did nothing, not an
+          // exception out of the page's own handler.
+        }
+      } else if (type === "reset") {
+        form.reset();
+      }
     }
 
     /// Activation behaviour for `popovertarget`, which is what makes the
@@ -1663,6 +2114,13 @@
     /// exactly as a browser's default activation behaviour works.
     _runPopoverInvoker() {
       if (this.tagName !== "BUTTON" && this.tagName !== "INPUT") return;
+      // Only the button-like input types are invokers. A text field with a
+      // `popovertarget` attribute is inert: clicking into it to type must not
+      // toggle anything.
+      if (this.tagName === "INPUT") {
+        const type = (api.getAttr(this._id, "type") || "").toLowerCase();
+        if (!["button", "reset", "submit", "image"].includes(type)) return;
+      }
       const target = this.popoverTargetElement;
       if (!target || typeof target.togglePopover !== "function") return;
       if (target.popover === null || target.popover === undefined) return;
@@ -1678,6 +2136,44 @@
       } catch {
         // An invoker aiming at something that cannot be opened is a no-op in a
         // browser, not an exception thrown out of a click handler.
+      }
+    }
+
+    /// Activation behaviour for `commandfor`/`command` — the Invoker Commands
+    /// API, which is `popovertarget` generalised: the button names an element
+    /// and a verb, the element hears a `command` event, and the built-in verbs
+    /// act on dialogs and popovers unless a listener cancels.
+    _runCommandInvoker() {
+      if (this.tagName !== "BUTTON") return;
+      const invokee = this.commandForElement;
+      if (!invokee) return;
+      const command = this.command;
+      if (command === "") return;
+      const event = new CommandEvent("command", {
+        cancelable: true, composed: true, command, source: this,
+      });
+      invokee.dispatchEvent(event);
+      // A custom `--command` is *only* the event: its meaning belongs to the
+      // page. The built-in verbs carry defaults, each gated on the kind of
+      // element that understands it.
+      if (event.defaultPrevented || command.startsWith("--")) return;
+      try {
+        if (invokee.tagName === "DIALOG") {
+          if (command === "show-modal") {
+            if (!invokee.hasAttribute("open")) invokee.showModal();
+          } else if (command === "close") {
+            invokee.close();
+          } else if (command === "request-close") {
+            invokee.requestClose();
+          }
+        } else if (invokee.popover !== null) {
+          if (command === "toggle-popover") invokee.togglePopover();
+          else if (command === "show-popover") invokee.showPopover();
+          else if (command === "hide-popover") invokee.hidePopover();
+        }
+      } catch {
+        // Same rule as the popover invoker: a verb aimed at something that
+        // cannot take it is a no-op, not an exception out of a click handler.
       }
     }
 
@@ -1718,7 +2214,17 @@
         toJSON() { return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height }; },
       };
     }
-    getClientRects() { return [this.getBoundingClientRect()]; }
+    // Empty for an element that generates no boxes — that emptiness *is* the
+    // signal: `offsetWidth || getClientRects().length` is the visibility idiom
+    // half the web uses, and a rect handed out for a `display: none` element
+    // makes everything hidden read as visible. The `display` answer already
+    // folds in ancestors (an unstyled node reports "none"), so one read covers
+    // both "this is hidden" and "something above it is".
+    getClientRects() {
+      if (!this.isConnected) return [];
+      if ((api.computedStyle(this._id, "display") || "") === "none") return [];
+      return [this.getBoundingClientRect()];
+    }
     get offsetWidth() { return this.getBoundingClientRect().width; }
     get offsetHeight() { return this.getBoundingClientRect().height; }
     /// Position relative to `offsetParent`, which for this engine is the page.
@@ -1855,6 +2361,32 @@
   /// attributes carry: `body.bgColor = null` writes "" rather than "null".
   /// Named once so the flag reads as the IDL annotation it is.
   const NULL_IS_EMPTY = { nullAsEmpty: true };
+  // The form-submission enumerations. `enctype` on the form falls back to
+  // urlencoded whether missing or garbage; the per-button `form*` overrides
+  // report "" when absent — absent means "defer to the form" — but garbage
+  // still snaps to the invalid-value default.
+  const ENCTYPE_KEYWORDS = [
+    "application/x-www-form-urlencoded", "multipart/form-data", "text/plain",
+  ];
+  const ENCTYPE = {
+    keywords: ENCTYPE_KEYWORDS,
+    missing: "application/x-www-form-urlencoded",
+    invalid: "application/x-www-form-urlencoded",
+  };
+  const FORM_ENCTYPE = {
+    keywords: ENCTYPE_KEYWORDS,
+    missing: "",
+    invalid: "application/x-www-form-urlencoded",
+  };
+  const FORM_METHOD = {
+    keywords: ["get", "post", "dialog"], missing: "", invalid: "get",
+  };
+  // Shared by every element that carries `referrerpolicy`: same keywords, and
+  // garbage reads as the empty string (the default policy), not as itself.
+  const REFERRER_POLICY = { keywords: [
+    "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
+    "origin", "strict-origin", "origin-when-cross-origin",
+    "strict-origin-when-cross-origin", "unsafe-url"] };
 
   /// `action` and `formAction` answer with the *document's* address when the
   /// attribute is missing or empty, rather than with "". A form whose action
@@ -1930,11 +2462,25 @@
       bool() { return api.getAttr(this._id, content) !== null; },
       long() {
         const value = parseInteger(api.getAttr(this._id, content));
-        return value === null ? (options.default ?? 0) : value;
+        if (value === null) return options.default ?? 0;
+        // "Limited to only non-negative numbers": a negative in the markup is
+        // not a value, it is the default — `maxlength="-36"` reads -1.
+        if (options.nonNegative && value < 0) return options.default ?? 0;
+        return value;
       },
       ulong() {
         const value = parseInteger(api.getAttr(this._id, content));
         if (value === null || value < 0) return options.default ?? 0;
+        // "Limited to only positive numbers": zero is out of range, so
+        // `size="0"` falls back rather than reporting an impossible size.
+        if (options.positive && value === 0) return options.default ?? 0;
+        // "Clamped to the range": `colgroup.span` reads 0 as 1 and the
+        // 32-bit maximum as 1000 — clamping, unlike the rules above, keeps
+        // the out-of-range value's *direction*.
+        if (options.clamp) {
+          const [lo, hi] = options.clamp;
+          return Math.min(Math.max(value, lo), hi);
+        }
         return value;
       },
       // A reflected `double`, for `<meter>` and `<progress>`. Not an integer
@@ -1954,7 +2500,11 @@
         // — `crossOrigin` reports null for an absent attribute — and `??` would
         // quietly turn that into "".
         if (raw === null) return "missing" in options ? options.missing : "";
-        const lower = String(raw).toLowerCase();
+        // ASCII lowercase, not `toLowerCase()`: keyword matching is defined
+        // over ASCII, and Unicode lowering is *wider* — it folds U+212A
+        // (kelvin) to "k" and U+017F (long s) to "s", making garbage match.
+        // WPT plants exactly those characters to catch it.
+        const lower = String(raw).replace(/[A-Z]/g, (c) => c.toLowerCase());
         // Aliases first: a keyword can have more than one spelling that maps to
         // the same state, and the empty string is the one that matters —
         // `<div contenteditable>` is the "true" state, so an implementation
@@ -1994,11 +2544,19 @@
         ? function (value) {
           const number = Number(value);
           let written = Number.isFinite(number) ? Math.trunc(number) : 0;
-          // An unsigned reflection cannot hold a negative, and writing one
-          // anyway left `td.colSpan = -3` reading back as 1 while
-          // `getAttribute("colspan")` said "-3" — the property and the
-          // attribute disagreeing about the same element.
-          if (type === "ulong" && written < 0) written = options.default ?? 0;
+          // WebIDL conversion happens *before* the reflection rules see the
+          // value: a long wraps modulo 2^32 into signed range (`|0`), an
+          // unsigned long wraps into unsigned range (`>>>0`) and anything the
+          // attribute still cannot hold — above 2147483647, which includes
+          // every negative after wrapping — becomes the default. Without the
+          // wrap, `img.width = 2147483648` wrote "2147483648" into markup
+          // where a browser writes "0".
+          if (type === "long") {
+            written |= 0;
+          } else {
+            written >>>= 0;
+            if (written > 2147483647) written = options.default ?? 0;
+          }
           this.setAttribute(content, String(written));
         }
         : type === "double"
@@ -2011,7 +2569,8 @@
             // enumerated attribute whose missing-value default is `null` is
             // nullable too (`crossOrigin`), where `undefined` also means "no
             // value" rather than the string "undefined".
-            const nullableEnum = type === "enumerated" && options.missing === null;
+            const nullableEnum =
+              type === "enumerated" && (options.nullable || options.missing === null);
             if (value === null && type === "nullable") this.removeAttribute(content);
             else if (nullableEnum && (value === null || value === undefined)) {
               this.removeAttribute(content);
@@ -2024,7 +2583,34 @@
             else if (value === null && options.nullAsEmpty) this.setAttribute(content, "");
             else this.setAttribute(content, String(value));
           };
-    Object.defineProperty(proto, idl, { configurable: true, get, set });
+    // WebIDL's brand check: reading `HTMLElement.prototype.title` — the
+    // accessor invoked with the prototype itself as `this` — throws TypeError
+    // rather than reaching for an `_id` the prototype does not have.
+    // idlharness probes exactly this on every attribute of every interface.
+    const guardedGet = function () {
+      if (!this || this._id === undefined) {
+        throw new TypeError(`Illegal invocation: ${idl} needs an element`);
+      }
+      return get.call(this);
+    };
+    const guardedSet = function (value) {
+      if (!this || this._id === undefined) {
+        throw new TypeError(`Illegal invocation: ${idl} needs an element`);
+      }
+      return set.call(this, value);
+    };
+    // WebIDL names accessor functions `get title`/`set title` — the same
+    // spelling class syntax produces — and idlharness reads the name back.
+    Object.defineProperty(guardedGet, "name", { value: `get ${idl}` });
+    Object.defineProperty(guardedSet, "name", { value: `set ${idl}` });
+    Object.defineProperty(proto, idl, {
+      configurable: true,
+      // WebIDL interface members are enumerable, which idlharness also
+      // checks; class syntax and defineProperty both default the other way.
+      enumerable: true,
+      get: guardedGet,
+      set: guardedSet,
+    });
   }
 
   // The attributes every HTML element carries. `hidden` and `tabIndex` were
@@ -2032,6 +2618,56 @@
   // at the engine.
   reflect(Element.prototype, "hidden", "hidden", "bool");
   reflect(Element.prototype, "autofocus", "autofocus", "bool");
+  reflect(Element.prototype, "inert", "inert", "bool");
+  // Three booleans whose attribute form is a keyword pair rather than
+  // presence: `translate` speaks yes/no, `autocorrect` on/off, `draggable`
+  // true/false — and each has its own reading of "absent".
+  Object.defineProperty(Element.prototype, "translate", {
+    configurable: true, enumerable: true,
+    get: Object.defineProperty(function () {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      return (api.getAttr(this._id, "translate") || "").toLowerCase() !== "no";
+    }, "name", { value: "get translate" }),
+    set: Object.defineProperty(function (value) {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      this.setAttribute("translate", value ? "yes" : "no");
+    }, "name", { value: "set translate" }),
+  });
+  Object.defineProperty(Element.prototype, "autocorrect", {
+    configurable: true, enumerable: true,
+    get: Object.defineProperty(function () {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      return (api.getAttr(this._id, "autocorrect") || "").toLowerCase() !== "off";
+    }, "name", { value: "get autocorrect" }),
+    set: Object.defineProperty(function (value) {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      this.setAttribute("autocorrect", value ? "on" : "off");
+    }, "name", { value: "set autocorrect" }),
+  });
+  Object.defineProperty(Element.prototype, "draggable", {
+    configurable: true, enumerable: true,
+    get: Object.defineProperty(function () {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      const raw = (api.getAttr(this._id, "draggable") || "").toLowerCase();
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      // The absent default is per element: images and links drag, text does not.
+      return this.tagName === "IMG"
+        || (this.tagName === "A" && api.getAttr(this._id, "href") !== null);
+    }, "name", { value: "get draggable" }),
+    set: Object.defineProperty(function (value) {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      this.setAttribute("draggable", value ? "true" : "false");
+    }, "name", { value: "set draggable" }),
+  });
+  Object.defineProperty(Element.prototype, "accessKeyLabel", {
+    configurable: true, enumerable: true,
+    get: Object.defineProperty(function () {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      // No keyboard here, so no label — the honest constant.
+      return "";
+    }, "name", { value: "get accessKeyLabel" }),
+  });
   // `tabIndex` has no single default: an element the user can reach with the
   // keyboard reports 0, everything else -1. Answering -1 for a link or a button
   // tells a page nothing is focusable, which is the opposite of true.
@@ -2116,37 +2752,72 @@
   }
   reflect(Element.prototype, "role", "role", "nullable");
 
-  // The ARIA properties that are *enumerated* rather than free strings. Their
-  // getters answer a canonical keyword and reject anything else, exactly as
-  // `dir` does — declaring them as plain strings passed every hostile value
-  // straight back and cost roughly six hundred subtests in one file.
+  // The ARIA properties that are *enumerated* rather than free strings —
+  // with the spec's own table, not a uniform rule.
   //
-  // `missing: null` on purpose: an absent ARIA attribute reflects as null, and
-  // an invalid one as the empty string. Three states, not two.
-  for (const [name, keywords] of [
-    ["ariaAutoComplete", ["inline", "list", "both", "none"]],
-    ["ariaChecked", ["true", "false", "mixed", "undefined"]],
-    ["ariaCurrent", ["page", "step", "location", "date", "time", "true", "false"]],
-    ["ariaDisabled", ["true", "false"]],
-    ["ariaExpanded", ["true", "false", "undefined"]],
-    ["ariaHasPopup", ["false", "true", "menu", "listbox", "tree", "grid", "dialog"]],
-    ["ariaHidden", ["true", "false", "undefined"]],
-    ["ariaInvalid", ["grammar", "false", "spelling", "true"]],
-    ["ariaLive", ["assertive", "off", "polite"]],
-    ["ariaModal", ["true", "false"]],
-    ["ariaMultiLine", ["true", "false"]],
-    ["ariaMultiSelectable", ["true", "false"]],
-    ["ariaOrientation", ["horizontal", "vertical", "undefined"]],
-    ["ariaPressed", ["true", "false", "mixed", "undefined"]],
-    ["ariaReadOnly", ["true", "false"]],
-    ["ariaRequired", ["true", "false"]],
-    ["ariaSelected", ["true", "false", "undefined"]],
-    ["ariaSort", ["ascending", "descending", "none", "other"]],
-    ["ariaAtomic", ["true", "false"]],
-    ["ariaBusy", ["true", "false"]],
+  // The first cut of this declared every one as `{missing: null, invalid: ""}`
+  // and that uniformity was the bug: the states are per attribute. Three
+  // shapes actually occur, and the table below is transcribed from the
+  // reflection spec (WPT `html/dom/elements-aria-enumerated.js` is the same
+  // table in test form):
+  //
+  //   * `ariaHidden`-like: missing and invalid both answer "false" — absence
+  //     of the attribute *means* not-hidden, so null would be a lie.
+  //   * `ariaChecked`-like: missing, invalid and the bare `aria-checked=""`
+  //     all answer null — there is no checkedness to report.
+  //   * `ariaCurrent`: invalid answers "true", because writing *anything*
+  //     there is a claim of currency the spec preserves.
+  //
+  // Every one is nullable on the way in — assigning null removes the
+  // attribute — including the ones whose *reading* of a missing attribute is
+  // "false" rather than null, which is why `nullable: true` is its own flag
+  // rather than inferred from the missing value.
+  const EMPTY_IS_FALSE = { "": "false" };
+  const EMPTY_IS_NULL = { "": null };
+  for (const [name, keywords, options] of [
+    ["ariaAtomic", ["true", "false"],
+      { missing: null, invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaAutoComplete", ["inline", "list", "both", "none"],
+      { missing: "none", invalid: "none" }],
+    ["ariaBusy", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaChecked", ["true", "false", "mixed"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaCurrent", ["page", "step", "location", "date", "time", "true", "false"],
+      { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE }],
+    ["ariaDisabled", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaExpanded", ["true", "false"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaHasPopup", ["true", "false", "menu", "dialog", "listbox", "tree", "grid"],
+      { missing: null, invalid: "false" }],
+    ["ariaHidden", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaInvalid", ["true", "false", "spelling", "grammar"],
+      { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE }],
+    ["ariaLive", ["polite", "assertive", "off"],
+      { missing: "off", invalid: "off" }],
+    ["ariaModal", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaMultiLine", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaMultiSelectable", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaOrientation", ["horizontal", "vertical"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaPressed", ["true", "false", "mixed"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaReadOnly", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaRequired", ["true", "false"],
+      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+    ["ariaSelected", ["true", "false"],
+      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+    ["ariaSort", ["ascending", "descending", "other", "none"],
+      { missing: "none", invalid: "none" }],
   ]) {
     reflect(Element.prototype, name, "aria-" + name.slice(4).toLowerCase(),
-      "enumerated", { keywords, missing: null, invalid: "" });
+      "enumerated", { keywords, nullable: true, ...options });
   }
 
   // ── per-tag interfaces ───────────────────────────────────────────────────
@@ -2179,10 +2850,7 @@
         "report", "script", "serviceworker", "sharedworker", "style", "track",
         "video", "webidentity", "worker", "xslt"] }],
       CROSS_ORIGIN,
-      ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
-        "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
-        "origin", "strict-origin", "origin-when-cross-origin",
-        "strict-origin-when-cross-origin", "unsafe-url"] }],
+      ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     meta: ["HTMLMetaElement", [
       ["httpEquiv", "http-equiv"], ["media", "media"], ["scheme", "scheme"],
@@ -2200,15 +2868,12 @@
       ["target", "target"], ["download", "download"], ["ping", "ping"],
       ["rel", "rel"], ["hreflang", "hreflang"], ["charset", "charset"],
       ["rev", "rev"], ["shape", "shape"], ["coords", "coords"],
-      ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
-        "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
-        "origin", "strict-origin", "origin-when-cross-origin",
-        "strict-origin-when-cross-origin", "unsafe-url"] }],
+      ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     area: ["HTMLAreaElement", [
       ["coords", "coords"], ["download", "download"], ["ping", "ping"],
       ["rel", "rel"], ["shape", "shape"], ["target", "target"],
-      ["noHref", "nohref", "bool"], ["referrerPolicy", "referrerpolicy"],
+      ["noHref", "nohref", "bool"], ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     img: ["HTMLImageElement", [
       ["srcset", "srcset"], ["sizes", "sizes"], ["useMap", "usemap"],
@@ -2216,8 +2881,11 @@
       ["lowsrc", "lowsrc", "url"], ["longDesc", "longdesc", "url"],
       ["width", "width", "ulong"], ["height", "height", "ulong"],
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
-      ["decoding", "decoding"], ["loading", "loading"],
-      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy"],
+      ["decoding", "decoding", "enumerated",
+        { keywords: ["sync", "async", "auto"], missing: "auto", invalid: "auto" }],
+      ["loading", "loading", "enumerated",
+        { keywords: ["lazy", "eager"], missing: "eager", invalid: "eager" }],
+      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     embed: ["HTMLEmbedElement", [
       ["width", "width"], ["height", "height"], ["align", "align"],
@@ -2258,8 +2926,9 @@
     form: ["HTMLFormElement", [
       ["acceptCharset", "accept-charset"],
       ["action", "action", "url", DOCUMENT_URL_WHEN_EMPTY],
-      ["autocomplete", "autocomplete"], ["enctype", "enctype"],
-      ["encoding", "enctype"], ["method", "method"],
+      ["autocomplete", "autocomplete"],
+      ["enctype", "enctype", "enumerated", ENCTYPE],
+      ["encoding", "enctype", "enumerated", ENCTYPE],
       ["noValidate", "novalidate", "bool"], ["target", "target"], ["rel", "rel"],
     ]],
     label: ["HTMLLabelElement", [["htmlFor", "for"]]],
@@ -2267,23 +2936,25 @@
       ["accept", "accept"], ["autocomplete", "autocomplete"],
       ["defaultChecked", "checked", "bool"], ["dirName", "dirname"],
       ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
-      ["formEnctype", "formenctype"],
-      ["formMethod", "formmethod"], ["formTarget", "formtarget"],
+      ["formEnctype", "formenctype", "enumerated", FORM_ENCTYPE],
+      ["formMethod", "formmethod", "enumerated", FORM_METHOD],
+      ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
       ["max", "max"], ["min", "min"], ["pattern", "pattern"],
       ["placeholder", "placeholder"], ["step", "step"], ["useMap", "usemap"],
       ["align", "align"], ["defaultValue", "value"],
       ["multiple", "multiple", "bool"], ["required", "required", "bool"],
       ["readOnly", "readonly", "bool"],
-      ["maxLength", "maxlength", "long", { default: -1 }],
-      ["minLength", "minlength", "long", { default: -1 }],
-      ["size", "size", "ulong", { default: 20 }],
+      ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
+      ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
+      ["size", "size", "ulong", { default: 20, positive: true }],
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     button: ["HTMLButtonElement", [
       ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
-      ["formEnctype", "formenctype"],
-      ["formMethod", "formmethod"], ["formTarget", "formtarget"],
+      ["formEnctype", "formenctype", "enumerated", FORM_ENCTYPE],
+      ["formMethod", "formmethod", "enumerated", FORM_METHOD],
+      ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
     ]],
     select: ["HTMLSelectElement", [
@@ -2298,8 +2969,8 @@
       ["autocomplete", "autocomplete"], ["dirName", "dirname"],
       ["placeholder", "placeholder"], ["wrap", "wrap"],
       ["required", "required", "bool"], ["readOnly", "readonly", "bool"],
-      ["maxLength", "maxlength", "long", { default: -1 }],
-      ["minLength", "minlength", "long", { default: -1 }],
+      ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
+      ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
       ["cols", "cols", "ulong", { default: 20 }],
       ["rows", "rows", "ulong", { default: 2 }],
     ]],
@@ -2309,12 +2980,13 @@
     table: ["HTMLTableElement", [
       ["align", "align"], ["border", "border"], ["frame", "frame"],
       ["rules", "rules"], ["summary", "summary"], ["width", "width"],
-      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY], ["cellPadding", "cellpadding"],
-      ["cellSpacing", "cellspacing"],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
+      ["cellPadding", "cellpadding", "string", NULL_IS_EMPTY],
+      ["cellSpacing", "cellspacing", "string", NULL_IS_EMPTY],
     ]],
     caption: ["HTMLTableCaptionElement", [["align", "align"]]],
     col: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1 }], ["align", "align"],
+      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], ["align", "align"],
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
       ["width", "width"],
     ]],
@@ -2323,8 +2995,8 @@
       ["vAlign", "valign"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     td: ["HTMLTableCellElement", [
-      ["colSpan", "colspan", "ulong", { default: 1 }],
-      ["rowSpan", "rowspan", "ulong", { default: 1 }],
+      ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
+      ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
       ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
       ["align", "align"], ["axis", "axis"], ["height", "height"],
       ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
@@ -2344,7 +3016,7 @@
       ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
       ["defer", "defer", "bool"], ["integrity", "integrity"],
       ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
-      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy"],
+      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     marquee: ["HTMLMarqueeElement", [
       ["behavior", "behavior"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
@@ -2410,12 +3082,15 @@
       ["frameBorder", "frameborder"], ["longDesc", "longdesc", "url"],
       ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
       ["allowFullscreen", "allowfullscreen", "bool"],
+      ["loading", "loading", "enumerated",
+        { keywords: ["lazy", "eager"], missing: "eager", invalid: "eager" }],
+      ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     del: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
     q: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
     th: ["HTMLTableCellElement", [
-      ["colSpan", "colspan", "ulong", { default: 1 }],
-      ["rowSpan", "rowspan", "ulong", { default: 1 }],
+      ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
+      ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
       ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
       ["align", "align"], ["axis", "axis"], ["height", "height"],
       ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
@@ -2431,7 +3106,7 @@
       ["vAlign", "valign"],
     ]],
     colgroup: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1 }], ["align", "align"],
+      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], ["align", "align"],
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
       ["width", "width"],
     ]],
@@ -2461,10 +3136,24 @@
   {
     const interfaces = {};
     for (const [tag, [name, attributes]] of Object.entries(REFLECTIONS)) {
-      const Interface = { [name]: class extends Element {} }[name];
+      // One class per interface *name*, however many tags share it. Two
+      // entries both declaring HTMLTableColElement used to mint two distinct
+      // classes — elements constructed with one while the global was the
+      // other, so `col instanceof HTMLTableColElement` was false for a col
+      // whose constructor.name said otherwise. The union of the two entries'
+      // attributes lands on the one prototype, which is also what the spec's
+      // single interface holds.
+      const Interface =
+        interfaces[name] ?? { [name]: class extends Element {} }[name];
       for (const [idl, content, type, options] of attributes) {
         reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
       }
+      // `Object.prototype.toString` on a `<p>` says `[object
+      // HTMLParagraphElement]`, and the class string comes from here.
+      Object.defineProperty(Interface.prototype, Symbol.toStringTag, {
+        configurable: true,
+        get() { return name; },
+      });
       interfaces[name] = Interface;
       TAG_CLASSES.set(tag, Interface);
     }
@@ -2491,12 +3180,35 @@
   // mechanisms.
   {
     const on = (tags, name, descriptor) => {
+      // Same brand rule as `reflect`: an accessor reached on the prototype
+      // itself throws rather than dereferencing an `_id` that is not there.
+      const guarded = { configurable: true, enumerable: true };
+      if (descriptor.get) {
+        guarded.get = function () {
+          if (!this || this._id === undefined) {
+            throw new TypeError(`Illegal invocation: ${name} needs an element`);
+          }
+          return descriptor.get.call(this);
+        };
+        Object.defineProperty(guarded.get, "name", { value: `get ${name}` });
+      }
+      if (descriptor.set) {
+        guarded.set = function (value) {
+          if (!this || this._id === undefined) {
+            throw new TypeError(`Illegal invocation: ${name} needs an element`);
+          }
+          return descriptor.set.call(this, value);
+        };
+        Object.defineProperty(guarded.set, "name", { value: `set ${name}` });
+      }
+      if ("value" in descriptor) {
+        guarded.value = descriptor.value;
+        guarded.writable = descriptor.writable ?? true;
+      }
       for (const tag of tags) {
         const Interface = TAG_CLASSES.get(tag);
         if (!Interface) continue;
-        Object.defineProperty(Interface.prototype, name, {
-          configurable: true, ...descriptor,
-        });
+        Object.defineProperty(Interface.prototype, name, guarded);
       }
     };
     const reflectOn = (tags, idl, content, type, options) => {
@@ -2535,65 +3247,70 @@
           const explicit = api.getAttr(this._id, "value");
           return explicit === null ? this.textContent : explicit;
         }
-        // `<input type=color>` has a *value sanitisation algorithm*, and it is
-        // the strictest one in HTML: the value is always a valid lowercase
-        // simple colour, and anything else — including the empty string a page
-        // just assigned — becomes `#000000`. A page reading it expects seven
-        // characters starting with `#`, always.
-        if (tag === "INPUT"
-          && (api.getAttr(this._id, "type") || "").toLowerCase() === "color") {
-          const raw = this._value ?? api.getAttr(this._id, "value") ?? "";
-          return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toLowerCase() : "#000000";
-        }
-        const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
-        if (kind === "checkbox" || kind === "radio") {
-          const v = api.getAttr(this._id, "value");
-          return v === null ? "on" : v;
-        }
-        // The editor is the truth when there is one and it holds something:
-        // typing updates it and leaves the `value` attribute at whatever the
-        // HTML said.
-        const edited = api.getValue(this._id);
-        if (edited && edited.trim()) return edited;
-
-        // A blank editor on a `<textarea>` is the case worth handling. A
-        // textarea's default value is its text content, and blitz lays one out
-        // with an editor holding a single space rather than that content — so a
-        // page whose comment box arrives filled in read back as blank, which is
-        // a filled form reported as empty. Whitespace-only counts as unseeded
-        // for that reason: the space is blitz's, not the page's.
-        //
-        // The limitation this leaves is small and stated: a textarea a user
-        // has explicitly *cleared* also has an empty editor, and reports its
-        // original text rather than "". Wrong in that one case, right in the
-        // far commoner one, and it fails toward showing content that exists
-        // rather than hiding it.
-        if (tag === "TEXTAREA" && this._value === undefined) {
-          const written = this.textContent;
-          if (written) return written;
-        }
-        // **A whitespace-only editor on an unedited control is empty.** This
-        // is the same rule the `<textarea>` branch above states, and it was
-        // being applied to textareas only — so a laid-out `<input>` that
-        // nobody had typed into reported `" "`, because that is what blitz
-        // seeds its editor with.
-        //
-        // It is not a validation detail. `if (!input.value)` was *false* for
-        // an empty field, so every page and every agent that tests a form for
-        // emptiness got the wrong answer, and `required` could never fire.
-        if (edited !== null && edited !== undefined) {
-          if (this._value === undefined && !edited.trim()) {
-            return api.getAttr(this._id, "value") ?? "";
+        // For `<input>` the *value mode* routes the read before any editor is
+        // consulted: attribute-backed modes never see the dirty value, a file
+        // input never has one, and every value-mode read passes through the
+        // type's own sanitizer — which is why a `color` always answers seven
+        // lowercase characters and a `number` never answers garbage.
+        if (tag === "INPUT") {
+          const kind = inputType(this);
+          const mode = inputValueMode(kind);
+          if (mode === "filename") return "";
+          if (mode === "default") return api.getAttr(this._id, "value") ?? "";
+          if (mode === "default/on") {
+            const v = api.getAttr(this._id, "value");
+            return v === null ? "on" : v;
           }
-          return edited;
         }
-        // There is no editor — a detached control, or a `<textarea>`, which
-        // blitz lays out as text rather than as an input. Falling back to the
-        // markup is what a browser reports, and answering "" instead made a
-        // filled-in comment box look empty to the agent reading it.
-        if (this._value !== undefined) return this._value;
-        if (tag === "TEXTAREA") return this.textContent;
-        return api.getAttr(this._id, "value") ?? "";
+        const raw = (() => {
+          // The editor is the truth when there is one and it holds something:
+          // typing updates it and leaves the `value` attribute at whatever the
+          // HTML said.
+          const edited = api.getValue(this._id);
+          if (edited && edited.trim()) return edited;
+
+          // A blank editor on a `<textarea>` is the case worth handling. A
+          // textarea's default value is its text content, and blitz lays one
+          // out with an editor holding a single space rather than that content
+          // — so a page whose comment box arrives filled in read back as
+          // blank, which is a filled form reported as empty. Whitespace-only
+          // counts as unseeded for that reason: the space is blitz's, not the
+          // page's.
+          //
+          // The limitation this leaves is small and stated: a textarea a user
+          // has explicitly *cleared* also has an empty editor, and reports its
+          // original text rather than "". Wrong in that one case, right in the
+          // far commoner one, and it fails toward showing content that exists
+          // rather than hiding it.
+          if (tag === "TEXTAREA" && this._value === undefined) {
+            const written = this.textContent;
+            if (written) return written;
+          }
+          // **A whitespace-only editor on an unedited control is empty.** This
+          // is the same rule the `<textarea>` branch above states, and it was
+          // being applied to textareas only — so a laid-out `<input>` that
+          // nobody had typed into reported `" "`, because that is what blitz
+          // seeds its editor with.
+          //
+          // It is not a validation detail. `if (!input.value)` was *false* for
+          // an empty field, so every page and every agent that tests a form
+          // for emptiness got the wrong answer, and `required` could never
+          // fire.
+          if (edited !== null && edited !== undefined) {
+            if (this._value === undefined && !edited.trim()) {
+              return api.getAttr(this._id, "value") ?? "";
+            }
+            return edited;
+          }
+          // There is no editor — a detached control, or a `<textarea>`, which
+          // blitz lays out as text rather than as an input. Falling back to
+          // the markup is what a browser reports, and answering "" instead
+          // made a filled-in comment box look empty to the agent reading it.
+          if (this._value !== undefined) return this._value;
+          if (tag === "TEXTAREA") return this.textContent;
+          return api.getAttr(this._id, "value") ?? "";
+        })();
+        return tag === "INPUT" ? sanitizeInputValue(inputType(this), raw) : raw;
       },
       set(v) {
         const text = String(v);
@@ -2608,18 +3325,65 @@
           this.setAttribute("value", text);
           return;
         }
+        // Assigning a select's value selects the first option that carries
+        // it — and deselects everything when nothing does, which is how a
+        // page discovers it assigned a value that is not on the menu.
+        if (this.tagName === "SELECT") {
+          let taken = false;
+          for (const option of this.querySelectorAll("option")) {
+            const hit = !taken && option.value === text;
+            option._selected = hit;
+            if (hit) taken = true;
+          }
+          return;
+        }
+        // The value modes again, on the write side: attribute-backed modes
+        // write the attribute, a file input refuses anything but "", and a
+        // value-mode write is sanitized on the way in with the caret moved to
+        // the end — assigning `value` is the one write that parks the cursor
+        // after the text.
+        let stored = text;
+        if (this.tagName === "INPUT") {
+          const kind = inputType(this);
+          const mode = inputValueMode(kind);
+          if (mode === "filename") {
+            if (text !== "") {
+              throw new DOMException(
+                "value: a file input's value can only be cleared",
+                "InvalidStateError",
+              );
+            }
+            delete this._value;
+            return;
+          }
+          if (mode === "default" || mode === "default/on") {
+            this.setAttribute("value", text);
+            return;
+          }
+          stored = sanitizeInputValue(kind, text);
+          if (["text", "search", "url", "tel", "password"].includes(kind)) {
+            this.__h5iSelection =
+              { start: stored.length, end: stored.length, direction: "none" };
+          }
+        } else if (this.tagName === "TEXTAREA") {
+          this.__h5iSelection =
+            { start: text.length, end: text.length, direction: "none" };
+        }
         // Remembered on this side when the write had nowhere to land, so a
         // page that builds a control and fills it in can read back what it
         // wrote. A page that sets `.value` from script does not get
         // input/change: the spec fires those for *user* edits, and a framework
         // that re-rendered on its own write would loop. `Page::type_into` is
         // the user path.
-        const landed = api.setValue(this._id, text);
+        const landed = api.setValue(this._id, stored);
         if (!landed) {
-          this._value = text;
-          if (this.tagName === "TEXTAREA") this.textContent = text;
+          this._value = stored;
+          if (this.tagName === "TEXTAREA") this.textContent = stored;
         } else {
-          delete this._value;
+          // The dirty flag must survive even when the editor took the write:
+          // a later type change asks "was this control's value ever set by
+          // script or typing", and the editor cannot answer that.
+          this._value = stored;
         }
       },
     });
@@ -2638,16 +3402,34 @@
     for (const tag of ["button", "input"]) {
       on([tag], "popoverTargetElement", {
         get() {
-          if (this.__h5iPopoverTarget !== undefined) return this.__h5iPopoverTarget;
+          // The explicitly-assigned element wins over the attribute, but only
+          // while it is actually in the document: a reference to a detached
+          // element answers null, and comes back when the element is inserted.
+          // That is the spec's "descendant of a shadow-including ancestor"
+          // condition collapsed onto this engine's one flattened tree.
+          const explicit = this.__h5iPopoverTarget;
+          if (explicit !== undefined && explicit !== null) {
+            return explicit.isConnected ? explicit : null;
+          }
           const id = api.getAttr(this._id, "popovertarget");
-          if (id === null) return null;
+          if (id === null || id === "") return null;
           return document.getElementById(id);
         },
         set(value) {
-          // Assigning an element detaches this from the attribute, which is
-          // what the spec means by the two being separate: the attribute stays
-          // whatever it was and the property wins.
-          this.__h5iPopoverTarget = value ?? null;
+          // Assigning null clears both halves; assigning an element stores the
+          // reference and stamps the attribute to "" — the attribute records
+          // *that* a target is set, the reference records *which*, so an id
+          // lookup never shadows the assignment.
+          if (value === null || value === undefined) {
+            this.__h5iPopoverTarget = null;
+            this.removeAttribute("popovertarget");
+            return;
+          }
+          if (value._id === undefined) {
+            throw new TypeError("popoverTargetElement must be an Element or null");
+          }
+          this.__h5iPopoverTarget = value;
+          this.setAttribute("popovertarget", "");
         },
       });
       on([tag], "popoverTargetAction", {
@@ -2658,6 +3440,302 @@
         set(value) { this.setAttribute("popovertargetaction", String(value)); },
       });
     }
+
+    // The Invoker Commands pair, `popovertarget` generalised to any element
+    // and an explicit verb. `commandForElement` follows the same
+    // reflected-element rules as `popoverTargetElement` above — explicit
+    // reference wins while connected, otherwise the attribute's id resolves.
+    on(["button"], "commandForElement", {
+      get() {
+        const explicit = this.__h5iCommandFor;
+        if (explicit !== undefined && explicit !== null) {
+          return explicit.isConnected ? explicit : null;
+        }
+        const id = api.getAttr(this._id, "commandfor");
+        if (id === null || id === "") return null;
+        return document.getElementById(id);
+      },
+      set(value) {
+        if (value === null || value === undefined) {
+          this.__h5iCommandFor = null;
+          this.removeAttribute("commandfor");
+          return;
+        }
+        if (value._id === undefined) {
+          throw new TypeError("commandForElement must be an Element or null");
+        }
+        this.__h5iCommandFor = value;
+        this.setAttribute("commandfor", "");
+      },
+    });
+    // `command` is not a plain reflection: unknown verbs read back as "", and
+    // a page-defined `--verb` reads back exactly as written — that prefix is
+    // the namespace the built-ins can never grow into.
+    const KNOWN_COMMANDS = [
+      "toggle-popover", "show-popover", "hide-popover",
+      "close", "request-close", "show-modal",
+    ];
+    on(["button"], "command", {
+      get() {
+        const raw = api.getAttr(this._id, "command");
+        if (raw === null) return "";
+        if (raw.startsWith("--")) return raw;
+        const low = raw.toLowerCase();
+        return KNOWN_COMMANDS.includes(low) ? low : "";
+      },
+      set(value) { this.setAttribute("command", String(value)); },
+    });
+
+    // ---- media state -------------------------------------------------------
+    //
+    // This engine does not play media, and the surface below says so honestly
+    // rather than pretending: nothing is ever playing (`paused` true, `ended`
+    // false, `currentTime` wherever the page last put it), no data ever
+    // arrives (`readyState` HAVE_NOTHING, empty `buffered`), and `play()`
+    // rejects with the NotSupportedError a browser uses for a source it
+    // cannot decode. A page that branches on these gets the no-media branch,
+    // which is the true one.
+    {
+      const emptyTimeRanges = () => ({
+        length: 0,
+        start() { throw new DOMException("no ranges", "IndexSizeError"); },
+        end() { throw new DOMException("no ranges", "IndexSizeError"); },
+      });
+      const media = ["audio", "video"];
+      on(media, "paused", { get() { return true; } });
+      on(media, "ended", { get() { return false; } });
+      on(media, "seeking", { get() { return false; } });
+      on(media, "duration", { get() { return NaN; } });
+      on(media, "networkState", { get() { return 0; } });
+      on(media, "readyState", { get() { return 0; } });
+      // A real MediaError, and honestly earned: this engine decodes nothing,
+      // so any media element *with a source* is an element whose source is
+      // not supported — code 4, the same answer a browser gives for a codec
+      // it lacks. No source, no error, exactly as the spec has it.
+      on(media, "error", {
+        get() {
+          const src = api.getAttr(this._id, "src");
+          const hasSource = (src !== null && src !== "")
+            || this.querySelector("source") !== null;
+          if (!hasSource) return null;
+          const error = Object.create(MediaError.prototype);
+          Object.defineProperty(error, "__h5iCode", { value: 4 });
+          return error;
+        },
+      });
+      on(media, "currentSrc", { get() { return this._resolved("src"); } });
+      on(media, "buffered", { get() { return emptyTimeRanges(); } });
+      on(media, "played", { get() { return emptyTimeRanges(); } });
+      on(media, "seekable", { get() { return emptyTimeRanges(); } });
+      on(media, "currentTime", {
+        get() { return this.__h5iMediaTime ?? 0; },
+        set(value) { this.__h5iMediaTime = Number(value) || 0; },
+      });
+      on(media, "playbackRate", {
+        get() { return this.__h5iMediaRate ?? 1; },
+        set(value) { this.__h5iMediaRate = Number(value); },
+      });
+      on(media, "defaultPlaybackRate", {
+        get() { return this.__h5iMediaDefaultRate ?? 1; },
+        set(value) { this.__h5iMediaDefaultRate = Number(value); },
+      });
+      on(media, "volume", {
+        get() { return this.__h5iMediaVolume ?? 1; },
+        set(value) { this.__h5iMediaVolume = Number(value); },
+      });
+      on(media, "muted", {
+        get() { return this.__h5iMediaMuted ?? (api.getAttr(this._id, "muted") !== null); },
+        set(value) { this.__h5iMediaMuted = !!value; },
+      });
+      on(media, "play", {
+        value() {
+          return Promise.reject(
+            new DOMException("play: this engine does not decode media", "NotSupportedError"),
+          );
+        },
+      });
+      on(media, "pause", { value() {} });
+      on(media, "load", { value() {} });
+      on(media, "canPlayType", { value() { return ""; } });
+      on(["video"], "videoWidth", { get() { return 0; } });
+      on(["video"], "videoHeight", { get() { return 0; } });
+    }
+
+    // Small read sides pages and idlharness both reach for.
+    on(["select"], "selectedOptions", {
+      get() {
+        return collection(
+          Array.from(this.querySelectorAll("option")).filter((o) => o.selected),
+          "HTMLCollection",
+        );
+      },
+    });
+    on(["select"], "type", {
+      get() { return api.getAttr(this._id, "multiple") !== null ? "select-multiple" : "select-one"; },
+    });
+    on(["select"], "selectedIndex", {
+      get() {
+        const options = Array.from(this.querySelectorAll("option"));
+        const chosen = selectedOptionsOf(this)[0];
+        if (!chosen) return -1;
+        return options.findIndex((o) => o._id === chosen._id);
+      },
+      set(index) {
+        const options = Array.from(this.querySelectorAll("option"));
+        const at = Number(index);
+        for (let i = 0; i < options.length; i += 1) {
+          options[i]._selected = i === at;
+        }
+      },
+    });
+    on(["textarea"], "type", { get() { return "textarea"; } });
+    on(["textarea"], "textLength", { get() { return this.value.length; } });
+    on(["output"], "type", { get() { return "output"; } });
+    on(["fieldset"], "type", { get() { return "fieldset"; } });
+    on(["fieldset"], "elements", {
+      get() {
+        return collection(
+          Array.from(this.querySelectorAll("input,button,select,textarea,output,object,fieldset")),
+          "HTMLCollection",
+        );
+      },
+    });
+    // An image that never loaded has no natural size, and `complete` is true
+    // for the no-src case exactly as the spec says.
+    on(["img"], "naturalWidth", { get() { return this.width; } });
+    on(["img"], "naturalHeight", { get() { return this.height; } });
+    // True always: by the time script runs, any load this engine was going to
+    // do has happened — success or failure, both of which are "complete".
+    on(["img"], "complete", { get() { return true; } });
+    // The srcset microsyntax, parsed as the spec parses it: spec whitespace
+    // is exactly TAB/LF/FF/CR/SPACE (a NBSP is part of the URL), a trailing
+    // comma ends a candidate but an embedded one is a split, parentheses
+    // swallow commas inside a descriptor, and a candidate with any invalid
+    // descriptor is dropped whole. WPT walks every one of those edges.
+    function parseSrcset(input) {
+      const ws = (c) => c === "\t" || c === "\n" || c === "\f" || c === "\r" || c === " ";
+      const candidates = [];
+      let pos = 0;
+      const len = input.length;
+      while (pos < len) {
+        while (pos < len && (ws(input[pos]) || input[pos] === ",")) pos += 1;
+        if (pos >= len) break;
+        const start = pos;
+        while (pos < len && !ws(input[pos])) pos += 1;
+        let url = input.slice(start, pos);
+        const descriptors = [];
+        if (url.endsWith(",")) {
+          url = url.replace(/,+$/, "");
+          if (url === "") continue;
+        } else {
+          while (pos < len && ws(input[pos])) pos += 1;
+          let current = "";
+          let inParens = false;
+          let splitting = true;
+          while (pos < len && splitting) {
+            const c = input[pos];
+            if (inParens) {
+              if (c === ")") inParens = false;
+              current += c;
+              pos += 1;
+            } else if (c === ",") {
+              pos += 1;
+              splitting = false;
+            } else if (c === "(") {
+              inParens = true;
+              current += c;
+              pos += 1;
+            } else if (ws(c)) {
+              if (current) { descriptors.push(current); current = ""; }
+              pos += 1;
+            } else {
+              current += c;
+              pos += 1;
+            }
+          }
+          if (current) descriptors.push(current);
+        }
+        let width = null;
+        let density = null;
+        let height = null;
+        let valid = true;
+        for (const desc of descriptors) {
+          const unit = desc[desc.length - 1];
+          const number = desc.slice(0, -1);
+          const isInt = /^\d+$/.test(number);
+          const isFloat = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(number);
+          if (unit === "w" && isInt && Number(number) > 0
+            && width === null && density === null) {
+            width = Number(number);
+          } else if (unit === "x" && isFloat && Number(number) >= 0
+            && width === null && density === null && height === null) {
+            density = Number(number);
+          } else if (unit === "h" && isInt && Number(number) > 0
+            && height === null && density === null) {
+            height = Number(number);
+          } else {
+            valid = false;
+            break;
+          }
+        }
+        if (height !== null && width === null) valid = false;
+        if (valid) candidates.push({ url, width, density });
+      }
+      return candidates;
+    }
+    // What the engine chose to load: the first valid srcset candidate — this
+    // engine renders at 1x on one viewport, so the elaborate density and
+    // width selection collapses to document order — else the plain src,
+    // else "".
+    on(["img"], "currentSrc", {
+      get() {
+        const srcset = api.getAttr(this._id, "srcset");
+        if (srcset !== null && srcset !== "") {
+          const candidates = parseSrcset(srcset);
+          if (candidates.length > 0) {
+            const chosen = candidates[0].url;
+            const parts = api.parseUrl(chosen, currentAddress);
+            return parts ? parts.href : chosen;
+          }
+        }
+        const src = api.getAttr(this._id, "src");
+        if (src === null || src === "") return "";
+        return this._resolved("src");
+      },
+    });
+    on(["a"], "text", {
+      get() { return this.textContent; },
+      set(value) { this.textContent = String(value); },
+    });
+    on(["title"], "text", {
+      get() { return this.textContent; },
+      set(value) { this.textContent = String(value); },
+    });
+    on(["script"], "text", {
+      get() { return this.textContent; },
+      set(value) { this.textContent = String(value); },
+    });
+    on(["map"], "areas", {
+      get() { return collection(Array.from(this.querySelectorAll("area")), "HTMLCollection"); },
+    });
+    on(["label"], "control", {
+      get() {
+        const forId = api.getAttr(this._id, "for");
+        if (forId !== null) {
+          return forId === "" ? null : document.getElementById(forId);
+        }
+        return this.querySelector("input,button,select,textarea,output,meter,progress") ?? null;
+      },
+    });
+    on(["progress"], "position", {
+      get() {
+        const max = Number(api.getAttr(this._id, "max")) || 1;
+        const raw = api.getAttr(this._id, "value");
+        if (raw === null) return -1;
+        const value = Number(raw) || 0;
+        return Math.min(Math.max(value / max, 0), 1);
+      },
+    });
 
     // ---- `<dialog>` --------------------------------------------------------
     //
@@ -2697,6 +3775,14 @@
           }
           this.setAttribute("open", "");
           this.__h5iModal = modal;
+          if (modal) this.classList.add(MODAL_OPEN_CLASS);
+          // The dialog focusing steps: an `autofocus` descendant wins, then
+          // the first focusable control, then the dialog itself — which is
+          // how `document.activeElement` knows a dialog opened.
+          const preferred = this.querySelector("[autofocus]")
+            ?? this.querySelector("input, button, select, textarea, a[href], [tabindex]")
+            ?? this;
+          if (typeof preferred.focus === "function") preferred.focus();
         },
       });
     }
@@ -2711,11 +3797,219 @@
         if (returnValue !== undefined) this.__h5iReturnValue = String(returnValue);
         this.removeAttribute("open");
         this.__h5iModal = false;
+        this.classList.remove(MODAL_OPEN_CLASS);
         // `close` does not bubble, which is what a page delegating from an
         // ancestor has to know and what makes this worth getting right.
         this.dispatchEvent(new Event("close"));
       },
     });
+    // The polite `close`: asks first. `cancel` is the asking — a listener that
+    // prevents it keeps the dialog open, which is exactly what pressing
+    // Escape runs through in a browser.
+    Object.defineProperty(Element.prototype, "requestClose", {
+      configurable: true,
+      writable: true,
+      value: function (returnValue) {
+        if (this.tagName !== "DIALOG") {
+          throw new TypeError("requestClose is only defined on <dialog>");
+        }
+        if (!this.hasAttribute("open")) return;
+        const cancel = new Event("cancel", { cancelable: true });
+        this.dispatchEvent(cancel);
+        if (cancel.defaultPrevented) return;
+        this.close(returnValue);
+      },
+    });
+
+    // `showPicker` opens nothing here — there is no picker to draw — but the
+    // *guards* are the API's contract and are what WPT exercises: disabled
+    // and readonly controls refuse with InvalidStateError, and without a user
+    // gesture nothing opens anywhere, which is NotAllowedError. A permitted
+    // call spends the activation, exactly as a real picker would.
+    on(["input", "select"], "showPicker", {
+      value() {
+        if (this.disabled) {
+          throw new DOMException("showPicker: the control is disabled", "InvalidStateError");
+        }
+        if (this.tagName === "INPUT") {
+          const kind = inputType(this);
+          const readonlyApplies = ![
+            "button", "checkbox", "color", "file", "hidden", "image", "radio",
+            "range", "reset", "submit",
+          ].includes(kind);
+          if (readonlyApplies && api.getAttr(this._id, "readonly") !== null) {
+            throw new DOMException("showPicker: the control is readonly", "InvalidStateError");
+          }
+        }
+        if (!userActivation.active) {
+          throw new DOMException("showPicker: needs a user gesture", "NotAllowedError");
+        }
+        userActivation.active = false;
+      },
+    });
+
+    // ---- ElementInternals --------------------------------------------------
+    //
+    // The half of the custom-elements contract that lives *behind* the
+    // element: default ARIA that never touches the host's attributes, and
+    // form participation for `formAssociated` classes. The ARIA state here is
+    // storage with the right names — this engine computes no accessibility
+    // tree — and the validity half is real: `setValidity` feeds the same
+    // answers a built-in control's constraint validation gives.
+    {
+      class ElementInternals {
+        constructor() { throw new TypeError("Illegal constructor"); }
+        setValidity(flags = {}, message, anchor) {
+          const any = Object.keys(flags).some((k) => flags[k]);
+          if (any && !message) {
+            throw new TypeError(
+              "setValidity: a message is required when any flag is set",
+            );
+          }
+          this.__h5iValidity = { ...flags };
+          this.__h5iValidationMessage = any ? String(message) : "";
+          void anchor;
+        }
+        checkValidity() { return this.validity.valid; }
+        reportValidity() { return this.checkValidity(); }
+        setFormValue(value, state) {
+          this.__h5iRequireFormAssociated("setFormValue");
+          this.__h5iFormValue = value;
+          void state;
+        }
+        __h5iRequireFormAssociated(op) {
+          const host = this.__h5iHost;
+          if (!host || !host.constructor || host.constructor.formAssociated !== true) {
+            throw new DOMException(
+              `${op}: the element is not form-associated`,
+              "NotSupportedError",
+            );
+          }
+        }
+        get shadowRoot() { return this.__h5iHost.shadowRoot ?? null; }
+        get form() {
+          this.__h5iRequireFormAssociated("form");
+          return this.__h5iHost.form ?? null;
+        }
+        get willValidate() {
+          this.__h5iRequireFormAssociated("willValidate");
+          return true;
+        }
+        get validity() {
+          const flags = this.__h5iValidity ?? {};
+          const valid = !Object.keys(flags).some((k) => flags[k]);
+          return Object.freeze({
+            valueMissing: false, typeMismatch: false, patternMismatch: false,
+            tooLong: false, tooShort: false, rangeUnderflow: false,
+            rangeOverflow: false, stepMismatch: false, badInput: false,
+            customError: false,
+            ...flags, valid,
+          });
+        }
+        get validationMessage() { return this.__h5iValidationMessage ?? ""; }
+        get labels() {
+          this.__h5iRequireFormAssociated("labels");
+          return this.__h5iHost.labels ?? collection([], "NodeList");
+        }
+        get states() {
+          if (!this.__h5iStates) this.__h5iStates = new Set();
+          return this.__h5iStates;
+        }
+      }
+      // The ARIA mixin, as internal state with the IDL names: null until set,
+      // never reflected into the host's markup — that separation is the
+      // feature.
+      for (const name of [
+        "role", "ariaAtomic", "ariaAutoComplete", "ariaBrailleLabel",
+        "ariaBrailleRoleDescription", "ariaBusy", "ariaChecked", "ariaColCount",
+        "ariaColIndex", "ariaColIndexText", "ariaColSpan", "ariaCurrent",
+        "ariaDescription", "ariaDisabled", "ariaExpanded", "ariaHasPopup",
+        "ariaHidden", "ariaInvalid", "ariaKeyShortcuts", "ariaLabel",
+        "ariaLevel", "ariaLive", "ariaModal", "ariaMultiLine",
+        "ariaMultiSelectable", "ariaOrientation", "ariaPlaceholder",
+        "ariaPosInSet", "ariaPressed", "ariaReadOnly", "ariaRelevant",
+        "ariaRequired", "ariaRoleDescription", "ariaRowCount", "ariaRowIndex",
+        "ariaRowIndexText", "ariaRowSpan", "ariaSelected", "ariaSetSize",
+        "ariaSort", "ariaValueMax", "ariaValueMin", "ariaValueNow",
+        "ariaValueText",
+      ]) {
+        const slot = `__h5iAria_${name}`;
+        const getter = function () { return this[slot] ?? null; };
+        const setter = function (value) {
+          this[slot] = value === null || value === undefined ? null : String(value);
+        };
+        Object.defineProperty(getter, "name", { value: `get ${name}` });
+        Object.defineProperty(setter, "name", { value: `set ${name}` });
+        Object.defineProperty(ElementInternals.prototype, name, {
+          configurable: true, enumerable: true, get: getter, set: setter,
+        });
+      }
+      Object.defineProperty(ElementInternals.prototype, Symbol.toStringTag, {
+        value: "ElementInternals", configurable: true,
+      });
+      globalThis.ElementInternals = ElementInternals;
+
+      Object.defineProperty(Element.prototype, "attachInternals", {
+        configurable: true, writable: true,
+        value: function attachInternals() {
+          if (!this || this._id === undefined) {
+            throw new TypeError("Illegal invocation: attachInternals needs an element");
+          }
+          // Only an autonomous custom element has internals to attach, and
+          // only once — both refusals are the spec's.
+          if (!String(this.tagName).includes("-")) {
+            throw new DOMException(
+              "attachInternals: not a custom element",
+              "NotSupportedError",
+            );
+          }
+          if (this.__h5iInternals) {
+            throw new DOMException(
+              "attachInternals: already attached",
+              "NotSupportedError",
+            );
+          }
+          const internals = Object.create(ElementInternals.prototype);
+          Object.defineProperty(internals, "__h5iHost", { value: this });
+          Object.defineProperty(this, "__h5iInternals", { value: internals });
+          return internals;
+        },
+      });
+    }
+
+    // `indeterminate` is pure state — never reflected, cleared by a user
+    // click, drawn as the dash a page uses for "some but not all selected".
+    on(["input"], "indeterminate", {
+      get() { return !!this.__h5iIndeterminate; },
+      set(value) { this.__h5iIndeterminate = !!value; },
+    });
+    // The `<datalist>` the `list` attribute points at — the element, not the
+    // id, and only when it really is a datalist.
+    on(["input"], "list", {
+      get() {
+        const id = api.getAttr(this._id, "list");
+        if (id === null || id === "") return null;
+        const el = document.getElementById(id);
+        return el && el.tagName === "DATALIST" ? el : null;
+      },
+    });
+    // The labels pointing at a control: `<label for>` by id, or the label an
+    // element sits inside. A hidden input answers null — it is not labelable.
+    on(["input", "button", "select", "textarea", "output", "meter", "progress"],
+      "labels", {
+        get() {
+          if (this.tagName === "INPUT" && this.type === "hidden") return null;
+          const id = this.id;
+          const out = [];
+          for (const label of document.querySelectorAll("label")) {
+            const forId = api.getAttr(label._id, "for");
+            if (forId !== null ? (id !== "" && forId === id) : label.contains(this)) {
+              out.push(label);
+            }
+          }
+          return collection(out, "NodeList");
+        },
+      });
 
     on(["input"], "checked", {
       get() {
@@ -2724,20 +4018,154 @@
       },
       set(on_) { this._checked = !!on_; },
     });
+    // Selectedness is *state*: the attribute is only the default. In a
+    // single select the last default-selected option wins, and when nothing
+    // is selected the first non-disabled option is — that fallback is why a
+    // dropdown always shows something.
+    function selectAncestorOf(option) {
+      for (let n = option.parentNode; n; n = n.parentNode) {
+        if (n.tagName === "SELECT") return n;
+      }
+      return null;
+    }
+    function selectedOptionsOf(sel) {
+      const options = Array.from(sel.querySelectorAll("option"));
+      const multiple = api.getAttr(sel._id, "multiple") !== null;
+      const isOn = (o) => o._selected !== undefined
+        ? o._selected
+        : api.getAttr(o._id, "selected") !== null;
+      const explicit = options.filter(isOn);
+      if (multiple) return explicit;
+      if (explicit.length > 0) return [explicit[explicit.length - 1]];
+      const size = Number(api.getAttr(sel._id, "size")) || 1;
+      if (size <= 1) {
+        const first = options.find((o) => !o.disabled);
+        return first ? [first] : [];
+      }
+      return [];
+    }
     on(["option"], "selected", {
-      get() { return api.getAttr(this._id, "selected") !== null; },
+      get() {
+        if (this._selected !== undefined) return this._selected;
+        const sel = selectAncestorOf(this);
+        if (!sel) return api.getAttr(this._id, "selected") !== null;
+        return selectedOptionsOf(sel).some((o) => o._id === this._id);
+      },
       set(on_) {
-        if (on_) api.setAttr(this._id, "selected", "");
-        else api.removeAttr(this._id, "selected");
+        // State, not markup: `defaultSelected` is the attribute's reflection
+        // and stays untouched. Selecting in a single select deselects peers.
+        const want = !!on_;
+        const sel = selectAncestorOf(this);
+        if (want && sel && api.getAttr(sel._id, "multiple") === null) {
+          for (const other of sel.querySelectorAll("option")) {
+            if (other._id !== this._id) other._selected = false;
+          }
+        }
+        this._selected = want;
       },
     });
 
     // `<input>` is the one element whose missing `type` is not the empty
     // string: an input with no type attribute is a text input, and code reads
     // `input.type` to decide how to treat it.
+    const KNOWN_INPUT_TYPES = new Set([
+      "hidden", "text", "search", "tel", "url", "email", "password", "date",
+      "month", "week", "time", "datetime-local", "number", "range", "color",
+      "checkbox", "radio", "file", "submit", "image", "reset", "button",
+    ]);
+    function inputType(el) {
+      const raw = (api.getAttr(el._id, "type") || "").toLowerCase();
+      return KNOWN_INPUT_TYPES.has(raw) ? raw : "text";
+    }
+    // Which of the spec's four *value modes* a type is in — the axis that
+    // decides where `value` lives: the dirty value, the attribute, "on", or a
+    // filename this engine will never have.
+    function inputValueMode(type) {
+      if (type === "file") return "filename";
+      if (type === "checkbox" || type === "radio") return "default/on";
+      if (["hidden", "submit", "image", "reset", "button"].includes(type)) {
+        return "default";
+      }
+      return "value";
+    }
+    // The per-type *value sanitization algorithm*. Every value-mode-value type
+    // has one, and the tests change type mid-flight precisely to watch the
+    // new type's rules bite the old type's value.
+    function sanitizeInputValue(type, raw) {
+      const value = String(raw);
+      const isFiniteNumber = (s) => s !== "" && /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s);
+      const validDate = (s) => {
+        const m = /^(\d{4,})-(\d{2})-(\d{2})$/.exec(s);
+        if (!m) return false;
+        const [, y, mo, d] = m.map(Number);
+        if (y < 1 || mo < 1 || mo > 12) return false;
+        const days = new Date(y, mo, 0).getDate();
+        return d >= 1 && d <= days;
+      };
+      const validTime = (s) => /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?$/.test(s);
+      switch (type) {
+        case "text": case "search": case "tel": case "password":
+          return value.replace(/[\r\n]/g, "");
+        case "url": case "email":
+          return value.replace(/[\r\n]/g, "").trim();
+        case "number":
+          return isFiniteNumber(value) ? value : "";
+        case "range": {
+          if (isFiniteNumber(value)) return value;
+          // The default of a range is the middle of its track.
+          return "50";
+        }
+        case "color":
+          return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : "#000000";
+        case "date":
+          return validDate(value) ? value : "";
+        case "time":
+          return validTime(value) ? value : "";
+        case "month":
+          return /^(\d{4,})-(0[1-9]|1[0-2])$/.test(value) ? value : "";
+        case "week":
+          return /^(\d{4,})-W(0[1-9]|[1-4]\d|5[0-3])$/.test(value) ? value : "";
+        case "datetime-local": {
+          const parts = value.split("T");
+          return parts.length === 2 && validDate(parts[0]) && validTime(parts[1])
+            ? value : "";
+        }
+        default:
+          return value;
+      }
+    }
     on(["input"], "type", {
-      get() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); },
-      set(v) { this.setAttribute("type", v); },
+      get() { return inputType(this); },
+      set(v) {
+        // A type change is a *state* change, and the spec walks the value
+        // between modes: a dirty value entering an attribute-backed mode is
+        // written into the attribute, a value entering filename mode is gone,
+        // and whatever arrives in a value-mode type meets that type's
+        // sanitizer. Selection resets to the start when the control becomes
+        // selectable.
+        const oldType = inputType(this);
+        const wasSelectable =
+          this.tagName === "INPUT" && ["text", "search", "url", "tel", "password"].includes(oldType);
+        const oldMode = inputValueMode(oldType);
+        const dirty = this._value !== undefined;
+        const oldDirty = dirty ? this._value : null;
+        this.setAttribute("type", v);
+        const newType = inputType(this);
+        const newMode = inputValueMode(newType);
+        if (oldMode === "value" && dirty
+          && (newMode === "default" || newMode === "default/on")) {
+          api.setAttr(this._id, "value", oldDirty);
+          delete this._value;
+        } else if (newMode === "filename") {
+          delete this._value;
+        } else if (newMode === "value" && dirty) {
+          this._value = sanitizeInputValue(newType, oldDirty);
+        }
+        const nowSelectable = ["text", "search", "url", "tel", "password"].includes(newType);
+        if (!wasSelectable && nowSelectable) {
+          this.__h5iSelection = { start: 0, end: 0, direction: "none" };
+        }
+      },
     });
     reflectOn(["a", "link", "script", "style", "embed", "object", "source",
                "param", "ol", "ul", "li", "button"], "type", "type");
@@ -3012,9 +4440,8 @@
     };
     const DATE_VALUED = new Set(["date", "month", "week", "time"]);
 
-    function inputType(el) {
-      return (api.getAttr(el._id, "type") || "text").toLowerCase();
-    }
+    // (`inputType` — the known-types-or-text read — is declared once, beside
+    // the value-mode table above.)
 
     /// `value` as a number, or NaN.
     ///
@@ -3218,8 +4645,9 @@
 
     function selectionOf(el) {
       if (!el.__h5iSelection) {
-        const end = String(el.value ?? "").length;
-        el.__h5iSelection = { start: end, end, direction: "none" };
+        // 0,0 — the caret moves to the end when script assigns `value`, not
+        // because the markup seeded one.
+        el.__h5iSelection = { start: 0, end: 0, direction: "none" };
       }
       return el.__h5iSelection;
     }
@@ -3499,14 +4927,41 @@
     on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
       "willValidate", { get() { return !isBarredFromValidation(this); } });
 
+    // A real interface, not a frozen snapshot: `ValidityState` is a global
+    // idlharness checks by name, and its getters are *live* — a page that
+    // holds `input.validity` and types into the field reads the new answer
+    // through the old reference, exactly as in a browser.
+    class ValidityState {
+      constructor() { throw new TypeError("Illegal constructor"); }
+    }
+    for (const flag of [
+      "valueMissing", "typeMismatch", "patternMismatch", "tooLong", "tooShort",
+      "rangeUnderflow", "rangeOverflow", "stepMismatch", "badInput",
+      "customError", "valid",
+    ]) {
+      const getter = function () {
+        const el = this && this.__h5iControl;
+        if (!el) {
+          throw new TypeError(`Illegal invocation: ${flag} needs a ValidityState`);
+        }
+        return computeValidity(el)[flag] ?? false;
+      };
+      Object.defineProperty(getter, "name", { value: `get ${flag}` });
+      Object.defineProperty(ValidityState.prototype, flag, {
+        configurable: true, enumerable: true, get: getter,
+      });
+    }
+    Object.defineProperty(ValidityState.prototype, Symbol.toStringTag, {
+      value: "ValidityState", configurable: true,
+    });
+    globalThis.ValidityState = ValidityState;
+
     on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
       "validity", {
         get() {
-          // Computed fresh each time rather than cached: validity is a
-          // function of the element's current state, and a cached one would
-          // go stale the moment a page typed into the field.
-          const flags = computeValidity(this);
-          return Object.freeze({ ...flags });
+          const state = Object.create(ValidityState.prototype);
+          Object.defineProperty(state, "__h5iControl", { value: this });
+          return state;
         },
       });
 
@@ -3648,6 +5103,24 @@
       },
     });
 
+    // Reset fires its event first and asks: a `reset` listener that calls
+    // `preventDefault()` keeps every field as it is. The reset itself is
+    // dropping the dirty state — `_value` and `_checked` are the overlays
+    // script and typing put over the attributes, and the attributes *are* the
+    // defaults the spec says to return to.
+    Object.defineProperty(TAG_CLASSES.get("form").prototype, "reset", {
+      configurable: true,
+      writable: true,
+      value() {
+        const ev = new Event("reset", { bubbles: true, cancelable: true });
+        this.dispatchEvent(ev);
+        if (ev.defaultPrevented) return;
+        for (const control of this.elements) {
+          delete control._value;
+          delete control._checked;
+        }
+      },
+    });
     // A form validates by asking each of its controls, and the *statically
     // validate* step is what makes this more than a loop: every control is
     // checked and every invalid one gets its `invalid` event, rather than
@@ -3791,6 +5264,28 @@
     "input", "change", "submit", "focus", "blur", "keydown", "keyup", "keypress",
     "load", "error", "scroll", "wheel", "contextmenu", "pointerdown", "pointerup",
     "touchstart", "touchend", "animationend", "transitionend",
+    // The open/close vocabulary: popovers and dialogs announce themselves
+    // through these four, and `command` is how an invoker button reaches the
+    // element it points at.
+    "toggle", "beforetoggle", "cancel", "close", "command",
+    // The rest of GlobalEventHandlers. Declaring the property is not claiming
+    // the engine *fires* the event — most of these never fire here — but the
+    // accessor pair is what `el.onpaste = fn` needs to at least register, and
+    // idlharness checks every name on every element interface.
+    "abort", "auxclick", "beforeinput", "beforematch", "canplay",
+    "canplaythrough", "contextlost", "contextrestored", "copy", "cuechange",
+    "cut", "drag", "dragend", "dragenter", "dragleave", "dragover",
+    "dragstart", "drop", "durationchange", "emptied", "ended", "formdata",
+    "invalid", "loadeddata", "loadedmetadata", "loadstart", "mouseenter",
+    "mouseleave", "paste", "pause", "play", "playing", "progress",
+    "ratechange", "reset", "resize", "scrollend", "securitypolicyviolation",
+    "seeked", "seeking", "select", "slotchange", "stalled", "suspend",
+    "timeupdate", "volumechange", "waiting", "pointermove",
+    "pointerover", "pointerout", "pointerenter", "pointerleave",
+    "pointercancel", "gotpointercapture", "lostpointercapture",
+    "animationstart", "animationiteration", "animationcancel",
+    "transitionrun", "transitionstart", "transitioncancel", "selectstart",
+    "selectionchange", "touchmove", "touchcancel",
   ];
   for (const type of HANDLER_EVENTS) {
     const slot = `__on_${type}`;
@@ -3827,6 +5322,9 @@
     const slot = `__on_window_${type}`;
     Object.defineProperty(globalThis, `on${type}`, {
       configurable: true,
+      // Enumerable like every other WebIDL attribute — the window's handler
+      // properties are members of Window, not engine internals.
+      enumerable: true,
       get() { return globalThis[slot] ?? null; },
       set(handler) {
         if (globalThis[slot]) removeEventListener(type, globalThis[slot]);
@@ -3834,6 +5332,34 @@
         if (globalThis[slot]) addEventListener(type, globalThis[slot]);
       },
     });
+  }
+  // `window.name` is a plain settable string here. In a browser it names the
+  // browsing context for `target=`; this engine has one context (§B20.15), so
+  // the value round-trips and nothing else reads it.
+  {
+    let windowName = "";
+    Object.defineProperty(globalThis, "name", {
+      configurable: true,
+      enumerable: true,
+      get() { return windowName; },
+      set(value) { windowName = String(value); },
+    });
+  }
+  // The WindowEventHandlers accessors that `<body>` and `<frameset>` carry on
+  // their *prototypes* but hold on behalf of the window — the IDL-attribute
+  // half of BODY_FORWARDED below: assigning `document.body.onhashchange` and
+  // assigning `window.onhashchange` are the same storage.
+  for (const tag of ["body", "frameset"]) {
+    const Interface = TAG_CLASSES.get(tag);
+    if (!Interface) continue;
+    for (const type of WINDOW_HANDLER_EVENTS) {
+      Object.defineProperty(Interface.prototype, `on${type}`, {
+        configurable: true,
+        enumerable: true,
+        get() { return globalThis[`on${type}`] ?? null; },
+        set(handler) { globalThis[`on${type}`] = handler; },
+      });
+    }
   }
 
   /// Event-handler *content attributes*: `<body onload="run()">`.
@@ -3857,12 +5383,7 @@
   /// run to tens of thousands of them.
   const HANDLER_ATTRS = [
     ...HANDLER_EVENTS, ...WINDOW_HANDLER_EVENTS,
-    "beforeinput", "select", "reset", "invalid", "toggle", "cancel", "close",
-    "copy", "cut", "paste", "drag", "dragend", "dragenter", "dragleave",
-    "dragover", "dragstart", "drop", "animationstart", "animationiteration",
-    "transitionrun", "transitionstart", "transitioncancel", "pointermove",
-    "pointerover", "pointerout", "pointerenter", "pointerleave", "pointercancel",
-    "mouseenter", "mouseleave", "focusin", "focusout", "readystatechange",
+    "focusin", "focusout", "readystatechange",
   ];
   const HANDLER_ATTR_SET = new Set(HANDLER_ATTRS.map((type) => `on${type}`));
   const HANDLER_ATTR_SELECTOR = HANDLER_ATTRS.map((type) => `[on${type}]`).join(",");
@@ -3951,37 +5472,257 @@
   /// `querySelector("!!!")` throws `SyntaxError` in a browser and returned
   /// `null` here — the same answer as "no such element", so a page with a typo
   /// took its not-found branch and never learned why.
-  /// The selectors this engine cannot parse but which are not the page's fault.
   ///
-  /// `:has()` is the whole list today. Stylo's servo selector parser answers
-  /// `parse_has() -> false` and it is hardcoded, not a preference, so `:has()`
-  /// has never parsed here — in a stylesheet or in `querySelector`. That is a
-  /// missing feature, and the throw below is right either way: an unsupported
-  /// pseudo-class makes a selector invalid, and a browser without `:has()`
-  /// throws too.
+  /// `:has()` never reaches this validator: stylo's servo parser hardcodes
+  /// `parse_has() -> false`, so `withHasMarkers` below evaluates it in this
+  /// file before the engine sees the selector. (A vendored one-bool stylo
+  /// patch once enabled the parser instead; removed by owner decision — an
+  /// in-tree fork of a rendering-engine crate is not something this project
+  /// maintains.)
+  /// The class this engine toggles to make "popover open" a fact CSS and
+  /// selectors can see.
   ///
-  /// What was wrong was the sentence. "`.x:has(.y)` is not a valid selector"
-  /// is false — it is a valid selector, and it is 2026. Someone reading that
-  /// goes looking for a typo they will not find, which is the most expensive
-  /// thing a diagnostic can do. Naming it as unsupported also files it through
-  /// `api.unsupported`, so it appears in the counted gaps beside every other
-  /// feature this engine does not have rather than hiding inside a parse error.
-  const UNSUPPORTED_SELECTOR = /:has\s*\(/i;
+  /// **This is the one place the engine writes into the page's own attribute
+  /// space, and it is owned rather than hidden.** A browser expresses the
+  /// state as the `:popover-open` pseudo-class, which lives outside the DOM;
+  /// this engine's selector matching is Stylo's, Stylo's servo parser does not
+  /// know the pseudo, and the UA rule that hides a closed popover has to have
+  /// *something* to match. A namespaced class is that something: `showPopover`
+  /// adds it, `hidePopover` removes it, and `:popover-open` in a selector is
+  /// rewritten to it below — so the pseudo works in `matches()` and
+  /// `querySelector` even though the parser never sees it. The cost is that
+  /// the class is visible in `className` and in serialisation, which a real
+  /// pseudo-class would not be; the alternative was every closed menu on every
+  /// page sitting in the agent's outline as if it were open.
+  const POPOVER_OPEN_CLASS = "__h5i_popover_open__";
+  /// Same arrangement for `:modal`: `showModal` stamps it, `close` lifts it.
+  const MODAL_OPEN_CLASS = "__h5i_modal_open__";
 
   function checkSelector(selector) {
-    const text = String(selector);
+    const text = String(selector)
+      .replace(/:popover-open\b/g, "." + POPOVER_OPEN_CLASS)
+      .replace(/:modal\b/g, "." + MODAL_OPEN_CLASS);
     if (!api.validSelector(text)) {
-      if (UNSUPPORTED_SELECTOR.test(text)) {
-        api.unsupported("selector :has()");
-        throw new DOMException(
-          `${text} uses :has(), which this engine does not support yet. ` +
-            "It is a valid selector; the engine is the limitation.",
-          "SyntaxError",
-        );
-      }
       throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
     }
     return text;
+  }
+
+  // ── `:has()`, evaluated here rather than parsed there ─────────────────────
+  //
+  // Stylo's servo selector parser hardcodes `parse_has() -> false`, and the
+  // owner's decision stands that this repo will not carry a patched copy of
+  // stylo to change that. So the *query* half of `:has()` is evaluated in
+  // this file instead, with the engine's own matcher doing all the actual
+  // matching: each `:has(ARG)` group is computed into a transient marker
+  // class on the elements that have a relative match, the selector is
+  // rewritten to that class, the ordinary query runs, and the markers are
+  // removed before the call returns — written with the raw attribute ops so
+  // no MutationObserver and no attributeChangedCallback ever sees them.
+  //
+  // What this covers: querySelector/querySelectorAll/matches/closest — every
+  // path that funnels through `checkSelector`. What it does not:
+  // **stylesheet rules** using `:has()`, which go through Stylo's parser
+  // inside Blitz and are silently dropped there; that half stays a named gap
+  // until a Blitz release depends on stylo >= 0.20 (see ROADMAP §B22.1).
+  const HAS_PATTERN = /:has\(/i;
+
+  function rawAddClass(id, cls) {
+    const original = api.getAttr(id, "class");
+    api.setAttr(id, "class", original ? `${original} ${cls}` : cls);
+    return () => {
+      if (original === null) api.removeAttr(id, "class");
+      else api.setAttr(id, "class", original);
+    };
+  }
+
+  function splitTopLevelCommas(text) {
+    const parts = [];
+    let depth = 0;
+    let current = "";
+    for (const ch of text) {
+      if (ch === "(" || ch === "[") depth += 1;
+      else if (ch === ")" || ch === "]") depth -= 1;
+      if (ch === "," && depth === 0) {
+        parts.push(current);
+        current = "";
+      } else current += ch;
+    }
+    parts.push(current);
+    return parts;
+  }
+
+  /// Split one complex selector into `[combinator, compound]` pairs at the
+  /// top level: `"> p b"` becomes `[[">", "p"], [" ", "b"]]`. Brackets and
+  /// parens shield their contents, so `a[title="> x"]` stays one compound.
+  function splitRelativePairs(arg) {
+    const pairs = [];
+    let combinator = " ";
+    let current = "";
+    let depth = 0;
+    const flush = () => {
+      if (current !== "") {
+        pairs.push([combinator, current]);
+        current = "";
+        combinator = " ";
+      }
+    };
+    for (const ch of arg) {
+      if (ch === "(" || ch === "[") depth += 1;
+      else if (ch === ")" || ch === "]") depth -= 1;
+      if (depth === 0 && (ch === ">" || ch === "+" || ch === "~")) {
+        flush();
+        combinator = ch;
+      } else if (depth === 0 && /\s/.test(ch)) {
+        flush();
+      } else {
+        current += ch;
+      }
+    }
+    flush();
+    return pairs;
+  }
+
+  /// Does `el` have a relative match for the pair chain? Evaluated locally —
+  /// children for `>`, the sibling walk for `+`/`~`, a scoped query for the
+  /// descendant hop — so the cost is the neighbourhood actually inspected,
+  /// not a document-wide probe per candidate (which measured 244ms against
+  /// this version's ~1ms on a 2,000-node page).
+  function relativePairsHold(el, pairs, index) {
+    if (index >= pairs.length) return true;
+    const [combinator, compound] = pairs[index];
+    const step = (candidate) =>
+      candidate.matches(compound) && relativePairsHold(candidate, pairs, index + 1);
+    if (combinator === ">") {
+      for (const child of el.children) if (step(child)) return true;
+      return false;
+    }
+    if (combinator === "+") {
+      const next = el.nextElementSibling;
+      return next !== null && step(next);
+    }
+    if (combinator === "~") {
+      for (let n = el.nextElementSibling; n; n = n.nextElementSibling) {
+        if (step(n)) return true;
+      }
+      return false;
+    }
+    for (const found of el.querySelectorAll(compound)) {
+      if (relativePairsHold(found, pairs, index + 1)) return true;
+    }
+    return false;
+  }
+
+  /// Rewrite every `:has(ARG)` in `text` to a marker class, tagging the
+  /// elements that match. Returns the rewritten selector and the cleanup
+  /// that removes every marker.
+  function prepareHasSelector(text) {
+    const cleanups = [];
+    const cleanup = () => {
+      for (const undo of cleanups) undo();
+    };
+    try {
+      let out = "";
+      let i = 0;
+      let group = 0;
+      const lower = text.toLowerCase();
+      while (i < text.length) {
+        const at = lower.indexOf(":has(", i);
+        if (at === -1) {
+          out += text.slice(i);
+          break;
+        }
+        out += text.slice(i, at);
+        let depth = 1;
+        let j = at + 5;
+        while (j < text.length && depth > 0) {
+          if (text[j] === "(") depth += 1;
+          else if (text[j] === ")") depth -= 1;
+          j += 1;
+        }
+        if (depth !== 0) {
+          throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
+        }
+        const argText = text.slice(at + 5, j - 1);
+        if (HAS_PATTERN.test(argText)) {
+          // `:has()` may not nest, per the spec's own grammar.
+          throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
+        }
+        const args = splitTopLevelCommas(argText).map((s) => s.trim()).filter(Boolean);
+        if (args.length === 0) {
+          throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
+        }
+        // Validate each argument once, as the complex selector it is.
+        for (const arg of args) {
+          if (!api.validSelector(arg.replace(/^[>+~]\s*/, ""))) {
+            throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
+          }
+        }
+        const marker = `__h5i_has_${group}__`;
+        group += 1;
+        const tagged = new Set();
+        for (const arg of args) {
+          if (/^[>+~]/.test(arg)) {
+            // A leading combinator is evaluated *from the matches inward*:
+            // one engine query finds every element matching the first
+            // compound, the rest of the chain is verified locally from each,
+            // and the anchor falls out of the combinator — the parent for
+            // `>`, the previous sibling for `+`, every preceding sibling for
+            // `~`. No per-candidate document scan: this is what took the
+            // worst case from 244ms to ~2ms on a 2,000-node page.
+            const pairs = splitRelativePairs(arg);
+            const [combinator, first] = pairs[0];
+            for (const id of api.queryAll(first, 0)) {
+              const m = wrap(id);
+              if (!m || !relativePairsHold(m, pairs, 1)) continue;
+              if (combinator === ">") {
+                const parent = api.parent(id);
+                if (parent !== null && parent !== undefined) tagged.add(parent);
+              } else if (combinator === "+") {
+                const previous = m.previousElementSibling;
+                if (previous) tagged.add(previous._id);
+              } else {
+                for (let n = m.previousElementSibling; n; n = n.previousElementSibling) {
+                  tagged.add(n._id);
+                }
+              }
+            }
+          } else {
+            // The descendant form has a fast path: every strict ancestor of
+            // a match "has" it, because a scoped query only constrains the
+            // subject to the scope's subtree.
+            for (const id of api.queryAll(arg, 0)) {
+              for (let p = api.parent(id); p !== null && p !== undefined; p = api.parent(p)) {
+                tagged.add(p);
+              }
+            }
+          }
+        }
+        for (const id of tagged) {
+          if (api.nodeKind(id) === 1) cleanups.push(rawAddClass(id, marker));
+        }
+        out += `.${marker}`;
+        i = j;
+      }
+      return { rewritten: out, cleanup };
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+  }
+
+  /// The wrapper every selector-taking API goes through: plain selectors go
+  /// straight to `checkSelector`, `:has()` selectors get their markers for
+  /// exactly the duration of `run`.
+  function withHasMarkers(selector, run) {
+    const text = String(selector);
+    if (!HAS_PATTERN.test(text)) return run(checkSelector(text));
+    const { rewritten, cleanup } = prepareHasSelector(text);
+    try {
+      return run(checkSelector(rewritten));
+    } finally {
+      cleanup();
+    }
   }
 
   function camelToDash(name) {
@@ -4064,6 +5805,17 @@
       if (typeof key !== "string" || key in target) return Reflect.get(target, key);
       return target.getPropertyValue(camelToDash(key));
     },
+    // `"color" in el.style` is how pages feature-detect a CSS property, and
+    // WPT cross-checks the answer against `CSS.supports` — so both are
+    // answered by the same authority: Stylo's parser, asked with `inherit`
+    // (valid for every real property). The vendor dance maps `WebkitFoo`
+    // back to `-webkit-foo`, which camel-to-dash alone cannot know.
+    has(target, key) {
+      if (typeof key !== "string" || key in target) return Reflect.has(target, key);
+      const dash = camelToDash(key);
+      if (api.supportsCss(dash, "inherit")) return true;
+      return /^(webkit|moz|ms|o)-/.test(dash) && api.supportsCss(`-${dash}`, "inherit");
+    },
     set(target, key, value) {
       if (typeof key === "string" && !(key in target)) {
         target.setProperty(camelToDash(key), value);
@@ -4095,7 +5847,12 @@
       this.isTrusted = false;
       this._stopped = false;
     }
-    preventDefault() { if (this.cancelable !== false) this.defaultPrevented = true; }
+    preventDefault() {
+      // A passive listener's preventDefault is a no-op by definition — that
+      // is the whole contract of passive.
+      if (this.__h5iInPassive) return;
+      if (this.cancelable !== false) this.defaultPrevented = true;
+    }
     stopPropagation() { this._stopped = true; }
     stopImmediatePropagation() { this._stopped = true; }
     composedPath() { return path(this.target || null); }
@@ -4139,6 +5896,47 @@
       this.data = i.data ?? null; this.inputType = i.inputType || "insertText";
     }
   }
+
+  // `initEvent`, which is how pre-constructor code configures an event —
+  // and what `document.createEvent` hands back is useless without it.
+  Object.assign(Event.prototype, {
+    initEvent(type, bubbles, cancelable) {
+      this.type = String(type);
+      this.bubbles = !!bubbles;
+      this.cancelable = !!cancelable;
+    },
+  });
+  Object.assign(CustomEvent.prototype, {
+    initCustomEvent(type, bubbles, cancelable, detail) {
+      Event.prototype.initEvent.call(this, type, bubbles, cancelable);
+      this.detail = detail ?? null;
+    },
+  });
+  Object.assign(UIEvent.prototype, {
+    initUIEvent(type, bubbles, cancelable, view, detail) {
+      Event.prototype.initEvent.call(this, type, bubbles, cancelable);
+      void view;
+      this.detail = detail || 0;
+    },
+  });
+  Object.assign(MouseEvent.prototype, {
+    initMouseEvent(type, bubbles, cancelable, view, detail, sx, sy, cx, cy,
+      ctrl, alt, shift, meta, button, related) {
+      UIEvent.prototype.initUIEvent.call(this, type, bubbles, cancelable, view, detail);
+      this.screenX = sx || 0; this.screenY = sy || 0;
+      this.clientX = cx || 0; this.clientY = cy || 0;
+      this.ctrlKey = !!ctrl; this.altKey = !!alt;
+      this.shiftKey = !!shift; this.metaKey = !!meta;
+      this.button = button || 0; this.relatedTarget = related ?? null;
+    },
+  });
+  Object.assign(KeyboardEvent.prototype, {
+    initKeyboardEvent(type, bubbles, cancelable, view, key) {
+      Event.prototype.initEvent.call(this, type, bubbles, cancelable);
+      void view;
+      if (key !== undefined) this.key = String(key);
+    },
+  });
 
   // The rest of the event types a page constructs by name.
   //
@@ -4250,6 +6048,17 @@
       this.oldState = i.oldState || ""; this.newState = i.newState || "";
     }
   }
+  // The Invoker Commands half of what ToggleEvent is to popovers: fired at the
+  // element a `<button commandfor command>` points at, carrying which command
+  // and which button, so one listener can serve many invokers.
+  class CommandEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.command = i.command !== undefined ? String(i.command) : "";
+      this.source = i.source ?? null;
+    }
+  }
   class AnimationEvent extends Event {
     constructor(type, init) {
       super(type, init);
@@ -4258,6 +6067,42 @@
       this.pseudoElement = i.pseudoElement || "";
     }
   }
+  // The interfaces that exist mostly *because* `document.createEvent` names
+  // them. Nobody constructs a DeviceMotionEvent by hand in 2026, but the
+  // createEvent alias table is spec text and every row of it is tested.
+  class BeforeUnloadEvent extends Event {
+    constructor(type, init) { super(type, init); this.returnValue = ""; }
+  }
+  class DragEvent extends MouseEvent {
+    constructor(type, init) { super(type, init); this.dataTransfer = (init && init.dataTransfer) ?? null; }
+  }
+  class TextEvent extends UIEvent {
+    constructor(type, init) { super(type, init); this.data = (init && init.data) || ""; }
+    initTextEvent(type, bubbles, cancelable, view, data) {
+      Event.prototype.initEvent.call(this, type, bubbles, cancelable);
+      void view;
+      this.data = data === undefined ? "" : String(data);
+    }
+  }
+  class DeviceMotionEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.acceleration = i.acceleration ?? null;
+      this.accelerationIncludingGravity = i.accelerationIncludingGravity ?? null;
+      this.rotationRate = i.rotationRate ?? null;
+      this.interval = i.interval ?? 0;
+    }
+  }
+  class DeviceOrientationEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.alpha = i.alpha ?? null; this.beta = i.beta ?? null;
+      this.gamma = i.gamma ?? null; this.absolute = !!i.absolute;
+    }
+  }
+
   class TransitionEvent extends Event {
     constructor(type, init) {
       super(type, init);
@@ -4265,6 +6110,54 @@
       this.propertyName = i.propertyName || ""; this.elapsedTime = i.elapsedTime || 0;
       this.pseudoElement = i.pseudoElement || "";
     }
+  }
+
+  // The event classes above initialise their fields as own properties, which
+  // is right for instances and invisible to anyone inspecting the *interface*:
+  // idlharness asks the prototype for each attribute. These accessors are that
+  // declaration — the getter answers the field's default (an instance's own
+  // property shadows it), and the setter exists so the constructors' strict-
+  // mode assignments still land as own data properties instead of throwing at
+  // a getter-only accessor.
+  {
+    const declareEventFields = (Interface, fields) => {
+      for (const [field, fallback] of Object.entries(fields)) {
+        const getter = function () { return fallback; };
+        const setter = function (value) {
+          Object.defineProperty(this, field, {
+            value, writable: true, enumerable: true, configurable: true,
+          });
+        };
+        Object.defineProperty(getter, "name", { value: `get ${field}` });
+        Object.defineProperty(setter, "name", { value: `set ${field}` });
+        Object.defineProperty(Interface.prototype, field, {
+          configurable: true, enumerable: true, get: getter, set: setter,
+        });
+      }
+    };
+    declareEventFields(ToggleEvent, { oldState: "", newState: "", source: null });
+    declareEventFields(CommandEvent, { command: "", source: null });
+    declareEventFields(SubmitEvent, { submitter: null });
+    declareEventFields(FormDataEvent, { formData: null });
+    declareEventFields(PageTransitionEvent, { persisted: false });
+    declareEventFields(ErrorEvent, {
+      message: "", filename: "", lineno: 0, colno: 0, error: undefined,
+    });
+    declareEventFields(MessageEvent, {
+      data: null, origin: "", lastEventId: "", source: null, ports: [],
+    });
+    declareEventFields(StorageEvent, {
+      key: null, oldValue: null, newValue: null, url: "", storageArea: null,
+    });
+    declareEventFields(PopStateEvent, { state: null, hasUAVisualTransition: false });
+    declareEventFields(HashChangeEvent, { oldURL: "", newURL: "" });
+    declareEventFields(PromiseRejectionEvent, { promise: undefined, reason: undefined });
+    declareEventFields(AnimationEvent, {
+      animationName: "", elapsedTime: 0, pseudoElement: "",
+    });
+    declareEventFields(TransitionEvent, {
+      propertyName: "", elapsedTime: 0, pseudoElement: "",
+    });
   }
 
   function path(node) {
@@ -4294,12 +6187,15 @@
           if (at >= 0) listeners.splice(at, 1);
         }
         try {
+          if (l.passive) event.__h5iInPassive = true;
           if (typeof l.handler === "function") l.handler.call(node, event);
           else if (l.handler && typeof l.handler.handleEvent === "function") {
             l.handler.handleEvent(event);
           }
         } catch (error) {
           console.error("listener for " + event.type + " threw: " + withStack(error));
+        } finally {
+          event.__h5iInPassive = false;
         }
       }
     };
@@ -4408,9 +6304,95 @@
     constructor(href, base) {
       const parts = api.parseUrl(String(href), base === undefined ? "" : String(base));
       if (!parts) throw new TypeError(`Invalid URL: ${href}`);
-      Object.assign(this, parts);
+      this._parts = parts;
       this.searchParams = new URLSearchParams(parts.search);
     }
+    /// Every component setter follows the same shape the URL Standard gives
+    /// them: strip tab and newline (the parser eats those anywhere), rebuild
+    /// the serialisation with the one component swapped, and re-parse — a
+    /// candidate the parser refuses leaves the URL exactly as it was, which
+    /// is why `url.protocol = "\0https"` changes nothing instead of storing
+    /// garbage.
+    _serializeWith(overrides) {
+      const p = this._parts;
+      const protocol = overrides.protocol ?? p.protocol;
+      const host = overrides.host ?? p.host;
+      const pathname = overrides.pathname ?? p.pathname;
+      const search = overrides.search ?? p.search;
+      const hash = overrides.hash ?? p.hash;
+      if (!p.host && !p.href.startsWith(`${p.protocol}//`)) {
+        // An opaque path (`data:`, `mailto:`) has no authority to edit.
+        return `${protocol}${pathname}${search}${hash}`;
+      }
+      return `${protocol}//${host}${pathname}${search}${hash}`;
+    }
+    _tryAdopt(candidate) {
+      const p = api.parseUrl(String(candidate), "");
+      if (!p) return;
+      this._parts = p;
+      if (this.searchParams) {
+        this.searchParams._pairs = new URLSearchParams(p.search)._pairs;
+      }
+    }
+    get href() { return this._parts.href; }
+    set href(value) {
+      const p = api.parseUrl(String(value), "");
+      if (!p) throw new TypeError(`Invalid URL: ${value}`);
+      this._parts = p;
+      this.searchParams._pairs = new URLSearchParams(p.search)._pairs;
+    }
+    get protocol() { return this._parts.protocol; }
+    set protocol(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      const m = /^[A-Za-z][A-Za-z0-9+.\-]*/.exec(cleaned);
+      if (!m) return;
+      const rest = this._parts.href.slice(this._parts.protocol.length);
+      this._tryAdopt(`${m[0]}:${rest}`);
+    }
+    get host() { return this._parts.host; }
+    set host(value) {
+      this._tryAdopt(this._serializeWith({ host: String(value).replace(/[\t\n\r]/g, "") }));
+    }
+    get hostname() { return this._parts.hostname; }
+    set hostname(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      const port = this._parts.port;
+      this._tryAdopt(this._serializeWith({ host: port ? `${cleaned}:${port}` : cleaned }));
+    }
+    get port() { return this._parts.port; }
+    set port(value) {
+      const digits = /^\d*/.exec(String(value).replace(/[\t\n\r]/g, ""))[0];
+      const host = digits === ""
+        ? this._parts.hostname
+        : `${this._parts.hostname}:${digits}`;
+      this._tryAdopt(this._serializeWith({ host }));
+    }
+    get pathname() { return this._parts.pathname; }
+    set pathname(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      this._tryAdopt(this._serializeWith({
+        pathname: cleaned.startsWith("/") ? cleaned : `/${cleaned}`,
+      }));
+    }
+    get search() { return this._parts.search; }
+    set search(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      const search = cleaned === "" ? "" : (cleaned.startsWith("?") ? cleaned : `?${cleaned}`);
+      this._tryAdopt(this._serializeWith({ search }));
+    }
+    get hash() { return this._parts.hash; }
+    set hash(value) {
+      const cleaned = String(value).replace(/[\t\n\r]/g, "");
+      const hash = cleaned === "" ? "" : (cleaned.startsWith("#") ? cleaned : `#${cleaned}`);
+      this._tryAdopt(this._serializeWith({ hash }));
+    }
+    get origin() { return this._parts.origin; }
+    // The userinfo half this engine's parser does not surface: read as the
+    // empty string, writes are dropped rather than mangled into the host.
+    get username() { return ""; }
+    set username(value) { void value; }
+    get password() { return ""; }
+    set password(value) { void value; }
     toString() { return this.href; }
     toJSON() { return this.href; }
     /// The two statics, which are the non-throwing way to ask. A page testing
@@ -5626,9 +7608,19 @@
           "NamespaceError",
         );
       }
-      // The local name is what this engine's single element class is built on;
-      // the namespace is validated above and then, honestly, not carried.
-      return wrap(api.createElement(colon === -1 ? name : name.slice(colon + 1)));
+      // The wrapper carries what the tree cannot: this engine's one tree is
+      // an HTML tree, so the namespace, prefix and original-case local name
+      // live on the JS wrapper (wrappers are cached by id, so the expandos
+      // hold for the node's lifetime). That is enough for everything a page
+      // reads back — `namespaceURI`, `prefix`, `localName`, a `tagName` that
+      // is *not* uppercased outside the HTML namespace — while layout keeps
+      // treating the element as the HTML-parsed name it stored.
+      const local = colon === -1 ? name : name.slice(colon + 1);
+      const wrapper = wrap(api.createElement(local));
+      wrapper._nsuri = ns;
+      wrapper._prefix = prefix;
+      wrapper._localName = local;
+      return wrapper;
     },
     // `document.write`, emulated where it can be and refused where it cannot.
     //
@@ -5711,14 +7703,55 @@
     // The pre-constructor way of making an event, still emitted by older
     // libraries and by anything compiled for old targets. The event is inert
     // until `initEvent` names it, which is exactly how the legacy API works.
+    /// `createEvent`, with the table the spec carries rather than a generic
+    /// Event for every name.
+    ///
+    /// Both directions of the table matter. An alias constructs the *mapped*
+    /// interface — `createEvent("MouseEvents")` has MouseEvent.prototype, and
+    /// the test asserts exactly that — and a name **off** the table throws
+    /// NotSupportedError even when the interface exists (`CloseEvent` is
+    /// constructible and still refused here, because createEvent is a legacy
+    /// door the spec deliberately stopped widening). Returning a plain Event
+    /// for everything got both directions wrong at once: 207 subtests in one
+    /// file, all of them table rows.
+    ///
+    /// Matched case-insensitively by ASCII lowercase, which is the spec's rule
+    /// and also why `"U\u0130Event"` must not match "uievent" — Unicode
+    /// case-folding would say it does.
     createEvent(kind) {
-      const event = new Event("", {});
-      event.initEvent = (type, bubbles, cancelable) => {
-        event.type = String(type);
-        event.bubbles = !!bubbles;
-        event.cancelable = !!cancelable;
+      const table = {
+        "beforeunloadevent": BeforeUnloadEvent,
+        "compositionevent": CompositionEvent,
+        "customevent": CustomEvent,
+        "devicemotionevent": DeviceMotionEvent,
+        "deviceorientationevent": DeviceOrientationEvent,
+        "dragevent": DragEvent,
+        "event": Event,
+        "events": Event,
+        "focusevent": FocusEvent,
+        "hashchangeevent": HashChangeEvent,
+        "htmlevents": Event,
+        "keyboardevent": KeyboardEvent,
+        "messageevent": MessageEvent,
+        "mouseevent": MouseEvent,
+        "mouseevents": MouseEvent,
+        "storageevent": StorageEvent,
+        "svgevents": Event,
+        "textevent": TextEvent,
+        "uievent": UIEvent,
+        "uievents": UIEvent,
       };
-      void kind;
+      const key = String(kind).replace(/[A-Z]/g, (c) => c.toLowerCase());
+      const Ctor = table[key];
+      if (!Ctor) {
+        throw new DOMException(
+          `createEvent(${String(kind)}) is not on the legacy table; construct the ` +
+            "event with `new` instead",
+          "NotSupportedError",
+        );
+      }
+      const event = new Ctor("", {});
+      event.type = "";
       return event;
     },
     elementFromPoint(x, y) { return wrap(api.elementFromPoint(Number(x), Number(y))); },
@@ -5732,6 +7765,22 @@
     },
     createTextNode(text) { return wrap(api.createText(String(text))); },
     createDocumentFragment() { return new DocumentFragment(); },
+    /// Validated twice, because the two rules guard different attacks: the
+    /// target must be a Name (`InvalidCharacterError`), and the data must not
+    /// contain `?>` — which would end the instruction early on serialisation
+    /// and turn the rest of the data into markup.
+    createProcessingInstruction(target, data) {
+      const name = String(target);
+      validateQualifiedName(name);
+      const text = String(data);
+      if (text.includes("?>")) {
+        throw new DOMException(
+          "the data of a processing instruction must not contain \"?>\"",
+          "InvalidCharacterError",
+        );
+      }
+      return new ProcessingInstructionNode(name, text);
+    },
     createComment(text) {
       const id = api.createComment(String(text));
       comments.add(id);
@@ -5755,8 +7804,8 @@
     getElementsByName(name) {
       return api.queryAll(`[name="${String(name).replace(/"/g, '\\"')}"]`, 0).map(wrap);
     },
-    querySelector(sel) { return wrap(api.query(checkSelector(sel), 0)); },
-    querySelectorAll(sel) { return collection(api.queryAll(checkSelector(sel), 0).map(wrap)); },
+    querySelector(sel) { return withHasMarkers(sel, (t) => wrap(api.query(t, 0))); },
+    querySelectorAll(sel) { return withHasMarkers(sel, (t) => collection(api.queryAll(t, 0).map(wrap))); },
     getElementById(id) { return wrap(api.query("#" + String(id), 0)); },
     getElementsByTagName(tag) { return collection(api.queryAll(String(tag), 0).map(wrap), "HTMLCollection"); },
     getElementsByClassName(cls) { return collection(api.queryAll("." + String(cls), 0).map(wrap), "HTMLCollection"); },
@@ -5857,6 +7906,13 @@
     get implementation() {
       return observed({
         hasFeature: () => true,
+        /// A doctype is three strings and a nodeType; refusing it was never a
+        /// capability question. Validated like any qualified name — the test
+        /// file is mostly a sweep of names that must be rejected.
+        createDocumentType: (name, publicId, systemId) => {
+          validateQualifiedName(String(name));
+          return new DocumentTypeNode(String(name), String(publicId), String(systemId));
+        },
         // The same shape `DOMParser` produces, which is what this is for: a
         // detached document to build markup in. It shares this engine's one
         // tree, so it is a subtree presented as a document rather than a second
@@ -5893,6 +7949,30 @@
     get hidden() { return false; },
     get visibilityState() { return "visible"; },
   };
+
+  // The legacy colour properties: aliases for attributes *on the body*, kept
+  // because `reflection-sections.html` tests every one on `#document` and old
+  // pages still write them. All five carry [LegacyNullToEmptyString], and all
+  // five read "" with no body rather than throwing on one.
+  for (const [idl, attr] of [
+    ["fgColor", "text"], ["bgColor", "bgcolor"], ["linkColor", "link"],
+    ["alinkColor", "alink"], ["vlinkColor", "vlink"],
+  ]) {
+    Object.defineProperty(documentImpl, idl, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        const body = wrap(api.body());
+        if (!body) return "";
+        return api.getAttr(body._id, attr) ?? "";
+      },
+      set(value) {
+        const body = wrap(api.body());
+        if (!body) return;
+        api.setAttr(body._id, attr, value === null ? "" : String(value));
+      },
+    });
+  }
 
   // Same rule for `document`: a page reading `document.activeElement` or
   // `document.fonts` should produce a named gap, not a silent undefined.
@@ -7264,6 +9344,36 @@
         }
       },
     });
+    // The live document's whole surface, mirrored onto the prototype as
+    // forwarding members. Nothing real inherits from this prototype — the
+    // constructor above returns a parsed document with its own properties —
+    // so the forwarding is only ever reached by code inspecting the
+    // *interface*, which is exactly idlharness asking "does Document.prototype
+    // have `body`". One document per engine makes the forward unambiguous.
+    for (const [key, d] of Object.entries(Object.getOwnPropertyDescriptors(documentImpl))) {
+      if (key.startsWith("_") || key === "constructor") continue;
+      const forwarded = { configurable: true, enumerable: true };
+      if (d.get || d.set) {
+        if (d.get) {
+          forwarded.get = function () { return document[key]; };
+          Object.defineProperty(forwarded.get, "name", { value: `get ${key}` });
+        }
+        if (d.set) {
+          forwarded.set = function (value) { document[key] = value; };
+          Object.defineProperty(forwarded.set, "name", { value: `set ${key}` });
+        }
+      } else if (typeof d.value === "function") {
+        forwarded.writable = true;
+        forwarded.value = function (...args) { return documentImpl[key](...args); };
+        Object.defineProperty(forwarded.value, "name", { value: key });
+      } else {
+        forwarded.get = function () { return document[key]; };
+        forwarded.set = function (value) { document[key] = value; };
+        Object.defineProperty(forwarded.get, "name", { value: `get ${key}` });
+        Object.defineProperty(forwarded.set, "name", { value: `set ${key}` });
+      }
+      Object.defineProperty(ctor.prototype, key, forwarded);
+    }
     return ctor;
   }
 
@@ -7333,8 +9443,11 @@
       typeof v.setItem === "function" && typeof v.key === "function";
 
     return {
-      NodeList: brand("NodeList", isCollection),
-      HTMLCollection: brand("HTMLCollection", (v) => isCollection(v) && typeof v.namedItem === "function"),
+      NodeList: COLLECTION_CLASSES.NodeList,
+      HTMLCollection: COLLECTION_CLASSES.HTMLCollection,
+      HTMLFormControlsCollection: COLLECTION_CLASSES.HTMLFormControlsCollection,
+      HTMLOptionsCollection: COLLECTION_CLASSES.HTMLOptionsCollection,
+      FileList: COLLECTION_CLASSES.FileList,
       NamedNodeMap: brand("NamedNodeMap", isCollection),
       Storage: brand("Storage", isStorage),
       // **Constructible, unlike its neighbours here.** `new Document()` is
@@ -7365,6 +9478,250 @@
       StyleSheet: brand("StyleSheet", (v) => v && "cssRules" in v),
       MediaList: brand("MediaList", (v) => v && typeof v.mediaText === "string"),
     };
+  }
+
+  // ── data-shape interfaces ────────────────────────────────────────────────
+  //
+  // Interfaces that are *shapes over data this engine really has* — a media
+  // error code, an empty plugin list, pixel bytes — as opposed to the
+  // capability interfaces (Worker, Navigation, Sanitizer) that stay absent
+  // deliberately: declaring one of those would send feature detection down a
+  // branch whose machinery does not exist, which is the lie this engine
+  // refuses everywhere. An empty PluginArray is what a plugin-less browser
+  // shows; a Worker that cannot run is not what a worker-less page expects.
+  class MediaError {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get code() {
+      if (!this || this.__h5iCode === undefined) {
+        throw new TypeError("Illegal invocation: code needs a MediaError");
+      }
+      return this.__h5iCode;
+    }
+    get message() { return ""; }
+  }
+  Object.defineProperty(MediaError.prototype, Symbol.toStringTag, {
+    value: "MediaError", configurable: true,
+  });
+  class TimeRanges {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    start() { throw new DOMException("no ranges", "IndexSizeError"); }
+    end() { throw new DOMException("no ranges", "IndexSizeError"); }
+  }
+  class DOMStringList {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    item() { return null; }
+    contains() { return false; }
+  }
+  class ImageData {
+    constructor(dataOrWidth, widthOrHeight, height) {
+      if (dataOrWidth instanceof Uint8ClampedArray) {
+        this.data = dataOrWidth;
+        this.width = widthOrHeight;
+        this.height = height ?? (dataOrWidth.length / 4 / widthOrHeight);
+      } else {
+        this.width = Number(dataOrWidth);
+        this.height = Number(widthOrHeight);
+        if (!(this.width > 0) || !(this.height > 0)) {
+          throw new DOMException("ImageData: zero dimensions", "IndexSizeError");
+        }
+        this.data = new Uint8ClampedArray(this.width * this.height * 4);
+      }
+      this.colorSpace = "srgb";
+    }
+  }
+  class DataTransferItemList {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    add() { return null; }
+    remove() {}
+    clear() {}
+  }
+  class DataTransferItem {
+    constructor() { throw new TypeError("Illegal constructor"); }
+  }
+  class DataTransfer {
+    constructor() {
+      this.dropEffect = "none";
+      this.effectAllowed = "none";
+      this.types = [];
+      this.files = collection([], "FileList");
+      this.items = Object.create(DataTransferItemList.prototype);
+      this.__h5iData = new Map();
+    }
+    setData(format, data) { this.__h5iData.set(String(format), String(data)); }
+    getData(format) { return this.__h5iData.get(String(format)) ?? ""; }
+    clearData(format) {
+      if (format === undefined) this.__h5iData.clear();
+      else this.__h5iData.delete(String(format));
+    }
+    setDragImage() {}
+  }
+  class Plugin { constructor() { throw new TypeError("Illegal constructor"); } }
+  class PluginArray {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    item() { return null; }
+    namedItem() { return null; }
+    refresh() {}
+  }
+  class MimeType { constructor() { throw new TypeError("Illegal constructor"); } }
+  class MimeTypeArray {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get length() { return 0; }
+    item() { return null; }
+    namedItem() { return null; }
+  }
+  class RadioNodeList extends COLLECTION_CLASSES.NodeList {}
+  class HTMLAllCollection {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    item() { return null; }
+    namedItem() { return null; }
+  }
+  class TextMetrics {
+    constructor() { throw new TypeError("Illegal constructor"); }
+  }
+  Object.assign(globalThis, {
+    MediaError, TimeRanges, DOMStringList, ImageData, DataTransfer,
+    DataTransferItem, DataTransferItemList, Plugin, PluginArray, MimeType,
+    MimeTypeArray, RadioNodeList, HTMLAllCollection, TextMetrics,
+  });
+  {
+    const CONSTS = {
+      MEDIA_ERR_ABORTED: 1, MEDIA_ERR_NETWORK: 2,
+      MEDIA_ERR_DECODE: 3, MEDIA_ERR_SRC_NOT_SUPPORTED: 4,
+    };
+    for (const target of [MediaError, MediaError.prototype]) {
+      for (const [name, value] of Object.entries(CONSTS)) {
+        Object.defineProperty(target, name, {
+          value, writable: false, enumerable: true, configurable: false,
+        });
+      }
+    }
+  }
+
+  // Every `<script>` the parser delivered belongs to the Rust runner, which
+  // collected them before any code ran. Marked here so the script-inserted
+  // path above never mistakes one for new — inserting a fragment *near* an
+  // old script must not run that script twice.
+  for (const id of api.queryAll("script", 0)) {
+    const el = wrap(id);
+    if (el) el.__h5iScriptStarted = true;
+  }
+
+  // The one way to arm user activation from outside: the testdriver shim's
+  // click calls this, standing in for the user it simulates. Non-enumerable,
+  // so pages walking `window` never meet it.
+  Object.defineProperty(globalThis, "__h5iNoteUserActivation", {
+    value: () => { userActivation.active = true; userActivation.hasBeen = true; },
+    writable: false, enumerable: false, configurable: false,
+  });
+
+  // ── WebIDL constants ─────────────────────────────────────────────────────
+  //
+  // On the interface object *and* its prototype, as the IDL `const` rules
+  // say — which is why `Node.ELEMENT_NODE` and `node.ELEMENT_NODE` both work.
+  // Real code leans on the first form constantly (`n.nodeType ===
+  // Node.ELEMENT_NODE` is the idiom), and with the constant undefined that
+  // comparison is quietly false for every node, which sent whole test files
+  // walking past their target element into a null.
+  {
+    const defineConstants = (Interface, table) => {
+      for (const target of [Interface, Interface.prototype]) {
+        for (const [name, value] of Object.entries(table)) {
+          Object.defineProperty(target, name, {
+            value, writable: false, enumerable: true, configurable: false,
+          });
+        }
+      }
+    };
+    defineConstants(Node, {
+      ELEMENT_NODE: 1, ATTRIBUTE_NODE: 2, TEXT_NODE: 3, CDATA_SECTION_NODE: 4,
+      ENTITY_REFERENCE_NODE: 5, ENTITY_NODE: 6, PROCESSING_INSTRUCTION_NODE: 7,
+      COMMENT_NODE: 8, DOCUMENT_NODE: 9, DOCUMENT_TYPE_NODE: 10,
+      DOCUMENT_FRAGMENT_NODE: 11, NOTATION_NODE: 12,
+      DOCUMENT_POSITION_DISCONNECTED: 0x01, DOCUMENT_POSITION_PRECEDING: 0x02,
+      DOCUMENT_POSITION_FOLLOWING: 0x04, DOCUMENT_POSITION_CONTAINS: 0x08,
+      DOCUMENT_POSITION_CONTAINED_BY: 0x10,
+      DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 0x20,
+    });
+    defineConstants(Event, {
+      NONE: 0, CAPTURING_PHASE: 1, AT_TARGET: 2, BUBBLING_PHASE: 3,
+    });
+    defineConstants(Range, {
+      START_TO_START: 0, START_TO_END: 1, END_TO_END: 2, END_TO_START: 3,
+    });
+    defineConstants(XMLHttpRequest, {
+      UNSENT: 0, OPENED: 1, HEADERS_RECEIVED: 2, LOADING: 3, DONE: 4,
+    });
+    defineConstants(CSSRule, {
+      STYLE_RULE: 1, CHARSET_RULE: 2, IMPORT_RULE: 3, MEDIA_RULE: 4,
+      FONT_FACE_RULE: 5, PAGE_RULE: 6, MARGIN_RULE: 9, NAMESPACE_RULE: 10,
+      KEYFRAMES_RULE: 7, KEYFRAME_RULE: 8, SUPPORTS_RULE: 12,
+    });
+    // ── WebIDL member polish ─────────────────────────────────────────────
+    //
+    // Three properties of every interface member that idlharness checks and
+    // class syntax gets wrong: members are enumerable, accessor functions are
+    // named `get x`/`set x`, and an accessor reached on the prototype object
+    // itself throws TypeError instead of running against nothing. The
+    // reflection tables already emit all three; this pass brings the members
+    // written as plain class accessors and methods up to the same contract.
+    // Underscore names are internal machinery and stay out of enumeration.
+    const polish = (Interface) => {
+      const proto = Interface && Interface.prototype;
+      if (!proto) return;
+      for (const key of Object.getOwnPropertyNames(proto)) {
+        if (key === "constructor" || key.startsWith("_")) continue;
+        const desc = Object.getOwnPropertyDescriptor(proto, key);
+        if (!desc.configurable) continue;
+        desc.enumerable = true;
+        if (desc.get) {
+          const inner = desc.get;
+          desc.get = function () {
+            // The WebIDL brand check: the prototype itself and any object
+            // that is not an instance of this interface both get the
+            // TypeError — `desc.get.call({})` is idlharness's own probe.
+            if (this === proto || !(this instanceof Interface)) {
+              throw new TypeError(`Illegal invocation: ${key} needs an instance`);
+            }
+            return inner.call(this);
+          };
+          Object.defineProperty(desc.get, "name", { value: `get ${key}` });
+        }
+        if (desc.set) {
+          const inner = desc.set;
+          desc.set = function (value) {
+            if (this === proto || !(this instanceof Interface)) {
+              throw new TypeError(`Illegal invocation: ${key} needs an instance`);
+            }
+            return inner.call(this, value);
+          };
+          Object.defineProperty(desc.set, "name", { value: `set ${key}` });
+        }
+        Object.defineProperty(proto, key, desc);
+      }
+    };
+    for (const Interface of [
+      EventTarget, Node, Element, Text, Comment, CharacterData,
+      DocumentFragment, Range, Event, XMLHttpRequest, CSSRule,
+      ...new Set(TAG_CLASSES.values()),
+    ]) {
+      polish(Interface);
+    }
+
+    defineConstants(DOMException, {
+      INDEX_SIZE_ERR: 1, DOMSTRING_SIZE_ERR: 2, HIERARCHY_REQUEST_ERR: 3,
+      WRONG_DOCUMENT_ERR: 4, INVALID_CHARACTER_ERR: 5, NO_DATA_ALLOWED_ERR: 6,
+      NO_MODIFICATION_ALLOWED_ERR: 7, NOT_FOUND_ERR: 8, NOT_SUPPORTED_ERR: 9,
+      INUSE_ATTRIBUTE_ERR: 10, INVALID_STATE_ERR: 11, SYNTAX_ERR: 12,
+      INVALID_MODIFICATION_ERR: 13, NAMESPACE_ERR: 14, INVALID_ACCESS_ERR: 15,
+      VALIDATION_ERR: 16, TYPE_MISMATCH_ERR: 17, SECURITY_ERR: 18,
+      NETWORK_ERR: 19, ABORT_ERR: 20, URL_MISMATCH_ERR: 21,
+      QUOTA_EXCEEDED_ERR: 22, TIMEOUT_ERR: 23, INVALID_NODE_TYPE_ERR: 24,
+      DATA_CLONE_ERR: 25,
+    });
   }
 
   Object.assign(globalThis, {
@@ -7449,10 +9806,23 @@
       platform: "", language: "en-US", languages: ["en-US"],
       onLine: true, cookieEnabled: false, maxTouchPoints: 0,
       hardwareConcurrency: 1,
+      productSub: "20030107", vendorSub: "", oscpu: "",
+      pdfViewerEnabled: false,
+      // Empty, which is what a plugin-less browser shows — the interfaces
+      // are real, the lists have nothing in them.
+      plugins: Object.create(PluginArray.prototype),
+      mimeTypes: Object.create(MimeTypeArray.prototype),
       // False, and true: this is not a driven browser in the WebDriver sense.
       // A page fingerprinting for automation gets the same answer a person's
       // browser gives, because the answer is not about who is asking.
       webdriver: false,
+      // Live views over the engine's one activation flag (see
+      // `userActivation` at the top): reading through the object always
+      // answers the current state, which is what "transient" means.
+      userActivation: {
+        get isActive() { return userActivation.active; },
+        get hasBeenActive() { return userActivation.hasBeen; },
+      },
       // `userAgentData` and `scheduling` are deliberately *not* declared here.
       // Writing `userAgentData: undefined` would make `'userAgentData' in
       // navigator` answer true, which is the same lie the `missingApi` stubs
@@ -7506,6 +9876,15 @@
     // element" rather than "is this a button" — a coarser answer than a browser
     // gives, and a far better one than `ReferenceError`, which is what these
     // were and which took whole bundles down with them.
+    // **Fallback only.** The reflection table already exported real per-tag
+    // classes for most of these names, and this literal used to overwrite
+    // every one of them with the bare `Element` alias — so
+    // `HTMLOptionElement.prototype` was `Element.prototype`, empty of `label`
+    // and `value`, while the actual option elements used an internal class
+    // idlharness could never see. The clobber cost about 1,500 subtests in
+    // one file and, worse, made `instanceof HTMLOptionElement` true for a
+    // `<div>`. `globalThis[name]` is already the real class here because the
+    // per-tag block assigned first; the alias fills only the names it left.
     ...Object.fromEntries(
       [
         "Anchor", "Area", "Audio", "Base", "Body", "BR", "Button", "Canvas", "Data",
@@ -7516,7 +9895,10 @@
         "Progress", "Quote", "Script", "Select", "Slot", "Source", "Span", "Style",
         "Table", "TableCaption", "TableCell", "TableCol", "TableRow", "TableSection",
         "Template", "TextArea", "Time", "Title", "Track", "UList", "Unknown", "Video",
-      ].map((name) => [`HTML${name}Element`, Element]),
+      ].map((name) => [
+        `HTML${name}Element`,
+        globalThis[`HTML${name}Element`] ?? Element,
+      ]),
     ),
     SVGElement: Element,
     customElements, NodeFilter, NodeIterator, TreeWalker,
@@ -7576,7 +9958,7 @@
     FocusEvent, WheelEvent, PointerEvent, CompositionEvent, ErrorEvent,
     PromiseRejectionEvent, ProgressEvent, MessageEvent, CloseEvent, StorageEvent,
     PopStateEvent, HashChangeEvent, PageTransitionEvent, SubmitEvent,
-    FormDataEvent, ToggleEvent, AnimationEvent, TransitionEvent,
+    FormDataEvent, ToggleEvent, CommandEvent, AnimationEvent, TransitionEvent,
 
     crypto: observed(crypto, "crypto"),
     TextEncoder, TextDecoder, XMLHttpRequest, Blob, File, DOMException,

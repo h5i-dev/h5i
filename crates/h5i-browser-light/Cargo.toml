@@ -125,8 +125,12 @@ base64 = "0.22"
 # the sloppy-mode parser rules including HTML-like comments in scripts. Leaving
 # it off made this engine stricter than any browser — excalidraw's colour parser
 # calls `substr` and died on `not a callable function`.
-boa_engine = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832", default-features = false, features = ["annex-b"] }
-boa_gc = { git = "https://github.com/boa-dev/boa", rev = "334caed3134975054cd490cdacfe7d0400302832" }
+# Plain crates.io, at last: the git pin existed only because published boa's
+# icu requirements clashed with parley's, and `scripts/check_boa_release.sh`
+# failed CI the moment 0.22.0 resolved the clash — which is exactly what it
+# was written to do.
+boa_engine = { version = "0.22.0", default-features = false, features = ["annex-b"] }
+boa_gc = "0.22.0"
 # The public suffix list, compiled in as a static table rather than fetched.
 #
 # This is what makes the `Domain` attribute safe to honour. The rule a browser

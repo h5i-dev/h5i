@@ -295,57 +295,73 @@ fn a_reflected_property_belongs_to_its_interface_and_not_to_every_element() {
 }
 
 #[test]
-fn an_unsupported_selector_is_not_reported_as_an_invalid_one() {
-    // `:has()` does not parse here — stylo's servo selector parser answers
-    // `parse_has() -> false` and it is hardcoded — and throwing is right: an
-    // unsupported pseudo-class makes a selector invalid, and a browser without
-    // `:has()` throws too.
-    //
-    // The sentence was the wrong part. "`.x:has(.y)` is not a valid selector"
-    // is false, and it sends whoever reads it looking for a typo that is not
-    // there. A selector this engine merely lacks says so.
-    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
-    let message = script
-        .eval_value(
-            "(() => { try { document.querySelector('.x:has(.y)'); return 'accepted' } \
-             catch (e) { return e.message } })()",
-        )
-        .unwrap();
-    assert!(
-        message.contains(":has()") && message.contains("does not support"),
-        "names the missing feature: {message}"
+fn has_selectors_match_through_the_prelude_without_a_stylo_fork() {
+    // Stylo's servo parser hardcodes `parse_has() -> false`, and the vendored
+    // one-bool patch that once changed that was removed by owner decision. So
+    // `:has()` on the *query* paths is evaluated in the prelude instead:
+    // each group becomes a transient marker class computed with the engine's
+    // own matcher, and the markers are gone again before the call returns —
+    // which is the second half of what this pins.
+    let (_page, mut script) = page_and_script(
+        "<html><body>\
+           <div id=\"a\"><span class=\"flag\">x</span></div>\
+           <div id=\"b\"><span>y</span></div>\
+           <div id=\"c\"></div>\
+         </body></html>",
     );
-    assert!(
-        !message.contains("is not a valid selector"),
-        "and does not call a valid selector invalid: {message}"
+    assert_eq!(
+        script
+            .eval_value(
+                "[...document.querySelectorAll('div:has(.flag)')].map(e => e.id).join(',')",
+            )
+            .unwrap(),
+        "a",
+        ":has must match the container that has the flag and not the ones that lack it"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('div:has(> .flag)').id")
+            .unwrap(),
+        "a",
+        "the child-combinator relative form must work"
+    );
+    assert_eq!(
+        script
+            .eval_value("document.querySelector('div:has(+ #c)').id")
+            .unwrap(),
+        "b",
+        "the sibling relative form must work"
+    );
+    assert_eq!(
+        script
+            .eval_value("String(document.getElementById('a').matches('div:has(.flag)'))")
+            .unwrap(),
+        "true",
+        "matches() takes the same path"
+    );
+    // No marker may survive the call: the page's own view of `class` is
+    // untouched afterwards.
+    assert_eq!(
+        script
+            .eval_value("JSON.stringify(document.getElementById('a').className)")
+            .unwrap(),
+        "\"\"",
+        "the transient marker classes are cleaned up"
     );
 
-    // Every shape of what precedes `:has`, because the first version of this
-    // guard excluded word characters before the colon — which is exactly what a
-    // tag or class name is. `.row:has(.y)` was told it was malformed.
-    for selector in [".w:has(.y)", "div:has(.y)", ".row:has(.y)", "a:has(img)"] {
+    // A selector that really is malformed still gets the plain answer, and a
+    // nested `:has()` is invalid per the spec's own grammar.
+    for bad in ["!!!", "div:has(:has(.x))"] {
         let asked = format!(
-            "(() => {{ try {{ document.querySelector('{selector}'); return 'accepted' }} \
+            "(() => {{ try {{ document.querySelector('{bad}'); return 'accepted' }} \
              catch (e) {{ return e.message }} }})()"
         );
         let said = script.eval_value(&asked).unwrap();
         assert!(
-            said.contains("does not support"),
-            "{selector} names the missing feature: {said}"
+            said.contains("is not a valid selector"),
+            "{bad} must be refused: {said}"
         );
     }
-
-    // A selector that really is malformed still gets the plain answer.
-    let broken = script
-        .eval_value(
-            "(() => { try { document.querySelector('!!!'); return 'accepted' } \
-             catch (e) { return e.message } })()",
-        )
-        .unwrap();
-    assert!(
-        broken.contains("is not a valid selector"),
-        "a typo is still a typo: {broken}"
-    );
 }
 
 #[test]
@@ -502,14 +518,18 @@ fn reflection_carries_the_type_the_spec_gives_it() {
     assert_eq!(script.eval_value("String(td.colSpan)").unwrap(), "1");
     assert_eq!(script.eval_value("td.getAttribute('colspan')").unwrap(), "1");
 
-    // ARIA is enumerated too, with three states: keyword, invalid, absent.
+    // ARIA is enumerated too, and the states are *per attribute* rather than
+    // one rule: an invalid `aria-checked` answers null (there is no
+    // checkedness to report), and a missing `aria-sort` answers its own
+    // missing-value default, "none". This assertion used to pin the uniform
+    // `invalid -> ""` rule, which was the bug the per-attribute table fixed.
     script.eval("d.setAttribute('aria-checked', 'MIXED')").expect("runs");
     assert_eq!(script.eval_value("d.ariaChecked").unwrap(), "mixed");
     script.eval("d.setAttribute('aria-checked', 'bogus')").expect("runs");
-    assert_eq!(script.eval_value("d.ariaChecked").unwrap(), "");
+    assert_eq!(script.eval_value("String(d.ariaChecked)").unwrap(), "null");
     assert_eq!(
         script.eval_value("String(document.createElement('div').ariaSort)").unwrap(),
-        "null"
+        "none"
     );
 }
 
@@ -2563,6 +2583,138 @@ fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) 
 }
 
 #[test]
+fn create_event_follows_the_legacy_table_in_both_directions() {
+    // Both directions matter: an alias constructs the *mapped* interface, and
+    // a name off the table throws NotSupportedError even when the interface
+    // exists — createEvent is a legacy door the spec stopped widening.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const out = [];
+             const ev = document.createEvent("MouseEvents");
+             out.push(Object.getPrototypeOf(ev) === MouseEvent.prototype);
+             out.push(ev.type === "" && ev.bubbles === false && ev.eventPhase === 0);
+             ev.initEvent("click", true, true);
+             out.push(ev.type + ":" + ev.bubbles);
+             out.push(Object.getPrototypeOf(document.createEvent("htmlevents")) === Event.prototype);
+             for (const bad of ["foo", "CloseEvent", "Eventss"]) {
+               try { document.createEvent(bad); out.push("allowed:" + bad); }
+               catch (e) { out.push(e.name); }
+             }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|true|click:true|true|NotSupportedError|NotSupportedError|NotSupportedError"),
+        "createEvent table is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_doctype_and_a_processing_instruction_can_be_made_and_read() {
+    let (text, console) = scripted_text(
+        r#"<script>
+             const out = [];
+             const dt = document.implementation.createDocumentType("svg", "pub", "sys");
+             out.push(dt.nodeType, dt.name, dt.publicId, dt.systemId, dt instanceof DocumentType);
+             try { document.implementation.createDocumentType("", "", ""); out.push("empty-ok"); }
+             catch (e) { out.push(e.name); }
+             const pi = document.createProcessingInstruction("xml-stylesheet", "href='a.css'");
+             out.push(pi.nodeType, pi.target, pi.data);
+             try { document.createProcessingInstruction("t", "a?>b"); out.push("data-ok"); }
+             catch (e) { out.push(e.name); }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("10|svg|pub|sys|true|InvalidCharacterError|7|xml-stylesheet|href='a.css'|InvalidCharacterError"),
+        "doctype/PI construction is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn the_namespace_trio_answers_what_an_html_document_answers() {
+    let (text, console) = scripted_text(
+        r#"<div id="d">x</div>
+           <script>
+             const d = document.getElementById("d");
+             const XHTML = "http://www.w3.org/1999/xhtml";
+             const out = [];
+             out.push(d.lookupNamespaceURI(null) === XHTML);
+             out.push(d.lookupNamespaceURI("xml") === "http://www.w3.org/XML/1998/namespace");
+             out.push(String(d.lookupNamespaceURI("nope")));
+             out.push(String(d.lookupPrefix(XHTML)));
+             out.push(d.isDefaultNamespace(XHTML), d.isDefaultNamespace(null));
+             const frag = document.createDocumentFragment();
+             out.push(String(frag.lookupNamespaceURI(null)), frag.isDefaultNamespace(null));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|true|null|null|true|false|null|true"),
+        "namespace lookups are wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn create_element_ns_carries_its_namespace_on_the_wrapper() {
+    // The one tree is an HTML tree, so the namespace lives on the JS wrapper —
+    // which is cached by id, so the facts hold for the node's lifetime. An SVG
+    // circle reports lowercase, its namespace, and its prefix, none of which
+    // the HTML-parsed name underneath can say.
+    let (text, console) = scripted_text(
+        r#"<script>
+             const SVG = "http://www.w3.org/2000/svg";
+             const c = document.createElementNS(SVG, "circle");
+             const p = document.createElementNS(SVG, "s:rect");
+             const h = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+             document.getElementById("out").textContent = [
+               c.namespaceURI === SVG, c.tagName, c.localName, String(c.prefix),
+               p.prefix, p.tagName,
+               h.tagName,
+             ].join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|circle|circle|null|s|s:rect|DIV"),
+        "createElementNS drops its namespace:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn aria_enumerated_attributes_follow_the_per_attribute_table() {
+    // The first cut declared all twenty as `{missing: null, invalid: ""}`, and
+    // that uniformity was the bug: the states are per attribute. ariaHidden's
+    // missing value *means* not-hidden ("false"); ariaChecked's means there is
+    // no checkedness to report (null); ariaCurrent preserves any claim of
+    // currency as "true".
+    let (text, console) = scripted_text(
+        r#"<div id="d">x</div>
+           <script>
+             const d = document.getElementById("d");
+             const out = [];
+             out.push(String(d.ariaHidden));                   // missing -> "false"
+             out.push(String(d.ariaChecked));                  // missing -> null
+             d.setAttribute("aria-hidden", "");
+             out.push(d.ariaHidden);                           // "" -> "false"
+             d.setAttribute("aria-checked", "");
+             out.push(String(d.ariaChecked));                  // "" -> null
+             d.setAttribute("aria-current", "bogus");
+             out.push(d.ariaCurrent);                          // invalid -> "true"
+             d.setAttribute("aria-checked", "MIXED");
+             out.push(d.ariaChecked);                          // canonical case
+             d.ariaHidden = null;                              // null removes
+             out.push(d.hasAttribute("aria-hidden"));
+             out.push(String(d.ariaAutoComplete));             // missing -> "none"
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("false|null|false|null|true|mixed|false|none"),
+        "the ARIA enumerated table is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
 fn a_form_owns_by_attribute_and_not_only_by_containment() {
     // `form=""` names no id and therefore has no owner. This read the
     // attribute for truthiness, so an empty one fell through to the ancestor
@@ -2749,8 +2901,11 @@ fn a_text_field_has_a_selection_and_a_number_field_does_not() {
              document.getElementById("out").textContent = out.join("|");
            </script>"#,
     );
+    // A fresh control's selection sits at 0,0 — the caret moves to the end
+    // when *script* assigns `value`, not when the markup seeds it. That is
+    // what browsers do and what WPT's type-change suite asserts.
     assert!(
-        text.contains("11|11|0|5|none|HI world|8|null"),
+        text.contains("0|0|0|5|none|HI world|8|null"),
         "text selection is wrong:\n{text}\nconsole: {console:?}"
     );
 }
@@ -2921,6 +3076,44 @@ fn create_element_ns_refuses_a_name_it_cannot_hold() {
 }
 
 #[test]
+fn a_closed_popover_is_hidden_and_popover_open_matches_the_open_one() {
+    // Blitz's UA sheet hides every popover and hard-codes `:popover-open` to
+    // never match, so "open" was a state no rule could express: `showPopover`
+    // changed all the bookkeeping it liked and the element stayed
+    // `display: none`. The engine's POPOVER_UA_CSS show-rule (keyed on
+    // POPOVER_OPEN_CLASS, the one owned write into the page's attribute
+    // space) is what makes the open half real; the closed half is Blitz's.
+    let (text, console) = scripted_text(
+        r#"<div id="pop" popover>menu content</div>
+           <dialog id="dlg">dialog content</dialog>
+           <script>
+             const pop = document.getElementById("pop");
+             const out = [];
+             out.push("closedMatches:" + pop.matches(":popover-open"));
+             out.push("closedDisplay:" + getComputedStyle(pop).display);
+             pop.showPopover();
+             out.push("openMatches:" + pop.matches(":popover-open"));
+             out.push("query:" + (document.querySelector("[popover]:popover-open") === pop));
+             pop.hidePopover();
+             out.push("afterHide:" + pop.matches(":popover-open"));
+             out.push("dialogDisplay:" + getComputedStyle(document.getElementById("dlg")).display);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains(
+            "closedMatches:false|closedDisplay:none|openMatches:true|query:true|afterHide:false|dialogDisplay:none"
+        ),
+        "popover visibility model is wrong:\n{text}\nconsole: {console:?}"
+    );
+    // And the outline: a closed popover's content is not page content.
+    assert!(
+        !text.contains("menu content") || text.contains("openMatches"),
+        "sanity: the page rendered\n{text}"
+    );
+}
+
+#[test]
 fn a_popover_opens_closes_and_says_why_it_cannot() {
     // The largest self-contained feature that was missing: `popover` reflected
     // and nothing acted on it, so 3,846 subtests failed against 20 passing.
@@ -2943,9 +3136,101 @@ fn a_popover_opens_closes_and_says_why_it_cannot() {
              document.getElementById("out").textContent = out.join("|");
            </script>"#,
     );
+    // The repeated calls are silent no-ops, not errors: WPT's own
+    // `assertIsFunctionalPopover` calls both twice and expects no throw — the
+    // spec's validity check never throws for a visibility mismatch. Only the
+    // missing-attribute case is an exception.
     assert!(
-        text.contains("auto|null|true|InvalidStateError|InvalidStateError|NotSupportedError"),
+        text.contains("auto|null|true|second-show-allowed|second-hide-allowed|NotSupportedError"),
         "popover state machine is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn popover_target_element_reflects_as_an_element_reference() {
+    // Not a string reflection: assigning an element stamps the attribute to
+    // `""` and stores the reference, and the reference only answers while the
+    // target is actually in the document — WPT's invoking-attribute suite
+    // checks every corner of that contract.
+    let (text, console) = scripted_text(
+        r#"<button id="b">go</button><div id="pop" popover>p</div>
+           <script>
+             const b = document.getElementById("b");
+             const pop = document.getElementById("pop");
+             const out = [];
+             const detached = document.createElement("div");
+             detached.popover = "";
+             b.popoverTargetElement = detached;
+             out.push("attr:" + JSON.stringify(b.getAttribute("popovertarget")));
+             out.push("detached:" + String(b.popoverTargetElement));
+             document.body.appendChild(detached);
+             out.push("attached:" + (b.popoverTargetElement === detached));
+             b.popoverTargetElement = null;
+             out.push("cleared:" + JSON.stringify(b.getAttribute("popovertarget")));
+             b.setAttribute("popovertarget", "pop");
+             out.push("byId:" + (b.popoverTargetElement === pop));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains(r#"attr:""|detached:null|attached:true|cleared:null|byId:true"#),
+        "popoverTargetElement reflection is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_command_button_fires_command_and_the_builtin_verbs_act() {
+    // The Invoker Commands API: the `command` event carries which verb and
+    // which button, a `--custom` verb is only the event, and the built-in
+    // verbs open dialogs and toggle popovers unless a listener cancels.
+    let (text, console) = scripted_text(
+        r#"<button id="b" commandfor="dlg" command="show-modal">open</button>
+           <dialog id="dlg">d</dialog>
+           <button id="c" commandfor="pop" command="toggle-popover">t</button>
+           <div id="pop" popover>p</div>
+           <button id="x" commandfor="dlg" command="--my-verb">x</button>
+           <script>
+             const out = [];
+             const dlg = document.getElementById("dlg");
+             dlg.addEventListener("command", (e) => {
+               out.push("cmd:" + e.command + ":" + (e.source ? e.source.id : "-"));
+             });
+             document.getElementById("b").click();
+             out.push("open:" + dlg.open);
+             document.getElementById("x").click();
+             out.push("stillOpen:" + dlg.open);
+             document.getElementById("c").click();
+             out.push("popped:" + document.getElementById("pop").matches(":popover-open"));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("cmd:show-modal:b|open:true|cmd:--my-verb:x|stillOpen:true|popped:true"),
+        "command invoker is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn request_close_asks_cancel_first_and_a_veto_keeps_the_dialog_open() {
+    let (text, console) = scripted_text(
+        r#"<dialog id="d" open>d</dialog>
+           <script>
+             const d = document.getElementById("d");
+             const out = [];
+             let veto = true;
+             d.addEventListener("cancel", (e) => { if (veto) e.preventDefault(); });
+             d.addEventListener("close", () => out.push("closed"));
+             d.requestClose();
+             out.push("vetoed:" + d.open);
+             veto = false;
+             d.requestClose("done");
+             out.push("after:" + d.open + ":" + d.returnValue);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("vetoed:true|closed|after:false:done"),
+        "requestClose is wrong:\n{text}\nconsole: {console:?}"
     );
 }
 

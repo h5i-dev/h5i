@@ -660,6 +660,26 @@ impl Page {
         .into_inner()
     }
 
+    /// The one rule that lets an *open* popover be seen.
+    ///
+    /// Blitz's own UA sheet already carries the standard's hiding rule,
+    /// `[popover]:not(:popover-open):not(dialog[open]) { display: none; }` —
+    /// but Blitz hard-codes the `:popover-open` pseudo-class to never match,
+    /// so that rule applies to every popover *forever*: `showPopover()` could
+    /// change all the state it liked and the element stayed `display: none`.
+    /// The prelude marks the open element with a class instead (the same
+    /// marker its `:popover-open` selector rewrite matches on), and this rule
+    /// turns the marker into visibility.
+    ///
+    /// The stuttered `[popover]` compounds are load-bearing: Blitz's hiding
+    /// rule weighs (0,3,1) — the two `:not()`s count — and a same-origin rule
+    /// only beats it by outweighing it, so this one is stacked to (0,5,0).
+    /// Dialogs need no counterpart: `dialog:not([open])`/`dialog[open]` are
+    /// both in Blitz's sheet and the `open` attribute is real.
+    const POPOVER_UA_CSS: &'static str = "
+        [popover][popover][popover][popover].__h5i_popover_open__ { display: block; }
+    ";
+
     /// Apply this engine's own additions to the user-agent stylesheet.
     ///
     /// One rule today ([`Page::CANVAS_UA_CSS`]). Kept as a step of its own so
@@ -667,6 +687,7 @@ impl Page {
     /// builds a document rather than on whichever one somebody remembered.
     fn apply_ua_stylesheet(doc: &mut BaseDocument) {
         doc.add_user_agent_stylesheet(Self::CANVAS_UA_CSS);
+        doc.add_user_agent_stylesheet(Self::POPOVER_UA_CSS);
     }
 
     pub fn from_html(

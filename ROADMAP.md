@@ -8598,6 +8598,220 @@ moves what an agent can read and drive, which is what the task evidence asked
 for — it does not move what the excluded tests measure.
 
 
+## B22. One bool in a vendored stylo, and the mechanical clusters, 2026-08-28
+
+The 80% campaign's second front, on the branch after #569 merged. Gate:
+288,807 -> 290,137. Two kinds of work, and the first is one line long.
+
+### B22.1 `:has()`: parse was the only gate
+
+§B20's probe found selector invalidation working for descendants, siblings and
+`:not` — and `:has()` never matching. The cause sits in stylo 0.19's Servo
+selector parser: `parse_has()` is **hardcoded to `false`**. Not a preference,
+a constant; nothing outside a patch can turn it on.
+
+So `vendor/stylo` now exists: the crates.io tarball, byte-identical except for
+that one bool, pinned by `[patch.crates-io]` so Blitz's own stylo — the copy
+that parses stylesheets — is the same copy. The pattern is Obscura's
+taffy/cosmic-text one, the crate is 5.6MB, and `vendor/stylo/README-h5i.md`
+carries the exit condition: diff against the tarball on every bump, and drop
+the copy when upstream flips the bet.
+
+The bet was that the matching machinery underneath — the code Gecko ships —
+needed nothing. It held on every axis at once: `querySelector(':has()')`
+matches, the relative form (`:has(> .flag)`) matches, **stylesheet rules
+match, and invalidation works** — a class added by script restyles the
+`:has()` container. The corpus's `selector :has()` entry retires, and the
+refusal branch in `checkSelector` goes with it: a parse failure there is once
+again what it says, a selector no browser would accept.
+
+    css/selectors  2,115 -> 2,620
+
+> **Reversed, 2026-08-28, by owner decision.** The technical bet held; the
+> maintenance bet did not survive review. A 5.6MB in-tree copy of a
+> rendering-engine crate is a fork this project would have to carry across
+> every stylo bump, and the owner's judgment is that no WPT arithmetic pays
+> for that. `vendor/stylo` is deleted and the `[patch.crates-io]` entry with
+> it.
+>
+> **What replaces it:** the *query* half of `:has()` is evaluated in the
+> prelude (`withHasMarkers`), no fork required: each `:has(ARG)` group is
+> computed into a transient marker class — the engine's own matcher does the
+> matching, a leading `>`/`+`/`~` anchors through a scope marker, the
+> descendant form takes an ancestors-of-matches fast path — the selector is
+> rewritten to the marker, the ordinary query runs, and the markers are
+> removed before the call returns, invisible to observers and reactions. So
+> `querySelector`/`querySelectorAll`/`matches`/`closest` keep `:has()`.
+> **Stylesheet rules** using `:has()` are the half that stays lost: they go
+> through Stylo's parser inside Blitz and are dropped there, which takes the
+> `has-in-*` styling/invalidation suites with them (§B22.11's root-restyle
+> hint stays — sibling combinators still need it). The clean exit for that
+> half is the first Blitz release that depends on stylo >= 0.20 (0.20.0 is
+> published; check `parse_has` there when Blitz moves).
+
+### B22.2 The mechanical clusters: tables transcribed, not invented
+
+Everything else in the round is a spec table this engine had approximated:
+
+* **The ARIA enumerated table, per attribute.** The first cut (§B20) declared
+  all twenty as `{missing: null, invalid: ""}`, and the uniformity was the
+  bug: `ariaHidden`'s missing value *means* not-hidden ("false"),
+  `ariaChecked`'s means there is no checkedness to report (null), and
+  `ariaCurrent` preserves any claim of currency as "true". Transcribed from
+  the spec, with `nullable` as its own flag because several attributes remove
+  on null while reading a missing attribute as "false".
+  `html/dom`: 58,079 -> 59,078.
+* **`createEvent`, both directions of the table.** An alias constructs the
+  *mapped* interface — `createEvent("MouseEvents")` has MouseEvent.prototype —
+  and a name off the table throws NotSupportedError even when the interface
+  exists, because createEvent is a legacy door the spec stopped widening.
+  Returning a generic Event for every name got both directions wrong at once.
+  With it came the interfaces the table names (BeforeUnloadEvent, DragEvent,
+  TextEvent, the Device* pair) and the `init*Event` methods.
+* **Doctypes and processing instructions construct.** Three strings and a
+  nodeType each; refusing them was never a capability question. Both validate
+  their names, and a PI's data may not contain `?>` — which would end the
+  instruction early on serialisation and turn the rest into markup.
+* **The namespace trio** (`lookupNamespaceURI`, `lookupPrefix`,
+  `isDefaultNamespace`), with the answers an HTML document gives — the spec's
+  walk collapses to a table over the only tree shape this engine holds, which
+  is not a stub, it is what the full algorithm computes here.
+* **`createElementNS` carries its namespace on the wrapper.** The one tree is
+  an HTML tree, so `namespaceURI`, `prefix` and the original-case local name
+  live on the cached JS wrapper: an SVG `circle` reports `circle` (not
+  `CIRCLE`), its namespace, and its prefix, while layout keeps treating the
+  node as the HTML-parsed name underneath.
+
+    dom  2,672 -> 3,003
+
+### B22.3 The interface objects idlharness could never see
+
+The idlharness deep-dive found one structural cause wearing four failure
+shapes: **the per-tag classes were real and the globals were aliases.** The
+reflection table has minted a genuine `HTMLOptionElement` (prototype carrying
+`label`, `value`, the lot) since §B15's per-tag work — and §B20's
+interface-globals literal then *overwrote* every such name with the bare
+`Element` alias, because `Object.assign` last-write-wins and the literal came
+later. So `window.HTMLOptionElement.prototype` was empty while every actual
+option used an internal class no test could reach, and `instanceof
+HTMLOptionElement` was true for a `<div>`.
+
+The fix is one expression — the alias fills only names the per-tag block left
+— plus the WebIDL plumbing idlharness checks per attribute: **brand guards**
+(reading `HTMLElement.prototype.title` with the prototype as `this` throws
+TypeError instead of dereferencing an `_id` that is not there), **enumerable
+accessors** (WebIDL interface members are enumerable; class syntax defaults
+the other way), and **class strings** (`Object.prototype.toString` on a `<p>`
+says `[object HTMLParagraphElement]`).
+
+And one regression caught by the per-directory measure before it could land:
+deduping by interface *name* — §B20 had added `th`, `colgroup`, `thead`,
+`tfoot`, `del` and `q` as their own table entries, duplicating names the
+`SHARED` map already handled, so the loop minted **two distinct classes with
+one name**: elements constructed with one while the global was the other, and
+`col instanceof HTMLTableColElement` was false for a col whose
+`constructor.name` said otherwise. One class per name now, holding the union.
+
+    idlharness       2,493 -> 2,842 passing
+    html/dom         59,078 -> 59,435
+    html/semantics   5,999 -> 6,383
+    gate             290,137 -> 290,494, no regression
+
+### B22.4 Open popovers, and the two lies visibility told
+
+The popover cluster (~1,700 subtests) came down to two false answers and a
+missing API family, and the diagnosis mattered more than the patch.
+
+**The engine could not show a popover — at all.** Blitz's UA sheet carries the
+standard's hiding rule, `[popover]:not(:popover-open):not(dialog[open])
+{ display: none; }`, and hard-codes the `:popover-open` pseudo-class to never
+match — so the rule applies to every popover forever, at specificity (0,3,1),
+which also outweighs any casual same-origin override. That produced a long
+false trail: marker-class UA rules that "didn't invalidate" were actually
+being outranked (there is no Stylo invalidation bug; author-origin equivalents
+worked because origin, not weight, decided). The fix is one UA rule keyed on
+the prelude's marker class, stacked to (0,5,0) so it outweighs the hider:
+`[popover][popover][popover][popover].__h5i_popover_open__ { display: block; }`.
+
+**`getClientRects()` returned a rect for everything**, including `display:
+none` elements — and `offsetWidth || getClientRects().length` is WPT's (and
+half the web's) visibility idiom, so every hidden element read as visible.
+Empty list now when the element generates no boxes.
+
+With visibility honest, the rest was contract work: repeated
+`showPopover()`/`hidePopover()` are silent no-ops (the spec's validity check
+never throws for a visibility mismatch — the throwing version failed ~1,175
+subtests across two files), `popoverTargetElement` became a real reflected
+element reference (attribute stamped to `""` on assignment, `null` while the
+target is disconnected), input invokers gated to the four button types, and
+the Invoker Commands API landed beside it: `CommandEvent`,
+`command`/`commandForElement` on buttons, the six built-in verbs acting on
+dialogs and popovers, `dialog.requestClose()` with its cancelable `cancel`,
+`form.reset()`, and submit/reset buttons that actually submit and reset their
+form on click. `oncommand`/`ontoggle`/`onbeforetoggle`/`oncancel`/`onclose`
+joined the handler set.
+
+    html/semantics   6,383 -> 8,024  (popovers dir: 1,732 -> ~2,600 of it)
+    dom              2,672 -> 3,003  (the getClientRects half)
+    core tier        69.2% at the start of this entry, recompute pending
+
+### B22.5–B22.13 The grind from 69% to the high seventies
+
+Nine commits, each its own story in the log; what belongs here is the
+pattern. Almost every point of coverage in this stretch came from one of
+three shapes of gap, and knowing the shapes made the next gap cheaper to
+find than the last:
+
+**Contracts the engine had half of.** The popover state machine existed but
+threw where the spec stays silent (§B22.4's follow-through); `<input>` had
+`value` but not the four value modes or a single sanitizer; options had a
+`selected` attribute but no selectedness *state*; scripts ran when the
+parser saw them but never when a page inserted one — the single largest
+real-web gap found in this campaign, since every script-loader works by
+injecting tags. In each case the feature "was there" and pages still broke,
+because the contract is the edges, not the middle.
+
+**Answers coming from the wrong authority.** `getClientRects()` said
+"visible" for hidden elements; `CSS.supports` and `'prop' in el.style`
+disagreed until both asked Stylo's content-gated parser; enumerated
+reflections folded Unicode case when the spec folds ASCII (WPT plants
+U+212A to catch exactly this); `innerText` ignored computed `white-space`
+until the walker read it. The recurring fix: find the one place that
+already knows, and ask it.
+
+**WebIDL shape, mechanically.** Interface constants, accessor names
+(`get title`), enumerability, brand guards (`this instanceof Interface`),
+collections as real classes over real arrays (prototype swapped, so array
+ergonomics survive), event-init fields as prototype accessors, ValidityState
+and ElementInternals as live interfaces. Individually tiny; ~2,000 subtests
+in aggregate, because idlharness checks every member of every interface.
+
+One engine-level find deserves its own line: Blitz hints the element and
+one parent on attribute flips, which is exactly not far enough for `:has()`
+and sibling combinators — a root-subtree re-match hint on every attribute
+mutation (folded into one resolve per settle by `styles_stale`) lit up the
+whole has-invalidation suite. And one crash: `Element.prototype.innerHTML`'s
+setter borrowed onto a doctype wrapper panicked the engine from page script;
+it now throws the TypeError it owed.
+
+    core tier   66.2% at branch start -> 75.7% (88,199 / 116,471, full fresh
+                sweep 2026-08-28) measured with the vendored :has() stylo;
+                ~74.5% after its removal (see the §B22.1 reversal note) —
+                the 80% mark is the next branch's target
+    html/semantics 5,999 -> 9,623 · html/dom 59,435 -> 62,092
+    css/selectors 2,115 -> 3,090, then the :has() share given back
+    css-conditional 881 -> 1,601 · custom-elements 2,217 -> 2,414
+    domparsing 172 -> 384 · dom 2,672 -> 3,278
+
+The pools where the next ~5,000 live, measured and ranked: the idlharness
+file itself (2,628 still failing — the missing-global family is mostly
+capability interfaces this engine deliberately refuses to fake),
+html/semantics' script/img/media/dialog clusters (~6,400), dom's XML-document
+family (`createDocument` and the case rules, ~600), cssom/cssom-view
+serialization and scroll geometry, and the fetch/api JS surface
+(Headers/Request/Response conformance, ~400 reachable without wptserve).
+
+
 ---
 
 # Formal verification: a Lean model beside the Rust

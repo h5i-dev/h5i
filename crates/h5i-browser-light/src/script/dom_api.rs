@@ -701,6 +701,27 @@ fn set_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     Ok(JsValue::undefined())
 }
 
+/// Ask the next restyle to re-match the whole tree, not just the changed
+/// element and its parent.
+///
+/// Blitz's `set_attribute` hints the element and one level up, which is
+/// exactly as far as plain selectors reach — and exactly not far enough for
+/// `:has()` and sibling combinators, which carry a change *upward and
+/// sideways*: `.a:has(.test)` on a grandparent must restyle when the
+/// grandchild's class flips, and Blitz's hint never gets there. The hint here
+/// is the blunt correct answer: root-subtree re-match on the next resolve.
+/// The cost is bounded by the settle loop — however many attributes a script
+/// flips, `styles_stale` folds them into one resolve.
+fn hint_whole_document_restyle(doc: &mut blitz_dom::BaseDocument) {
+    use style::invalidation::element::restyle_hints::RestyleHint;
+    let root_id = doc.root_element().id;
+    if let Some(node) = doc.get_node_mut(root_id)
+        && let Some(mut data) = node.stylo_element_data.get_mut()
+    {
+        data.hint.insert(RestyleHint::restyle_subtree());
+    }
+}
+
 fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let raw = arg_string(args, 1, context)?;
@@ -718,6 +739,8 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         );
         let mut mutator = doc.mutate();
         mutator.set_attribute(id, qual, &value);
+        drop(mutator);
+        hint_whole_document_restyle(&mut doc);
     });
     host.mark_dirty();
     Ok(JsValue::undefined())
@@ -737,6 +760,8 @@ fn remove_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         );
         let mut mutator = doc.mutate();
         mutator.clear_attribute(id, qual);
+        drop(mutator);
+        hint_whole_document_restyle(&mut doc);
     }
     host.mark_dirty();
     Ok(JsValue::undefined())
@@ -746,6 +771,20 @@ fn set_inner_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let id = arg_id(args, 0, context)?;
     let html = arg_string(args, 1, context)?;
     let host = host(context)?;
+    // Refuse non-element targets *here*, because blitz's fragment parser
+    // panics on them. Reachable from a page: borrow the `innerHTML` setter
+    // off `Element.prototype` and `.call` it on a doctype wrapper — or just
+    // `Object.assign` one wrapper onto another now that members are
+    // enumerable — and one line of page script took the whole engine down.
+    {
+        let doc = host.dom.borrow();
+        let is_element = doc.get_node(id).map(|n| n.is_element()).unwrap_or(false);
+        if !is_element {
+            return Err(boa_engine::JsNativeError::typ()
+                .with_message("innerHTML: the target is not an element")
+                .into());
+        }
+    }
     guard_mutation(&host, "setting innerHTML", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
@@ -1807,43 +1846,125 @@ fn computed_style(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 fn inner_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = arg_id(args, 0, context)?;
     let host = host(context)?;
+    // The walk reads computed style — `display` for what is rendered,
+    // `white-space-collapse` for how text folds — so the cascade must be
+    // current: a page that sets `div.style.whiteSpace = "pre"` and reads
+    // `innerText` on the next line means the pre.
+    settle_layout(&host);
     let doc = host.dom.borrow();
-    let mut out = String::new();
-    collect_rendered_text(&doc, id, &mut out);
 
-    // Collapse the runs of breaks nested blocks produce, then trim: a browser
-    // reports no leading or trailing blank line.
-    let mut text = String::with_capacity(out.len());
-    let mut pending_break = false;
-    for ch in out.chars() {
-        if ch == '\n' {
-            pending_break = true;
-            continue;
-        }
-        if pending_break {
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            pending_break = false;
-        }
-        text.push(ch);
+    // An unrendered element falls back to `textContent`, per the spec's first
+    // step — "not being rendered" is decided before any of the text rules run.
+    let rendered = doc
+        .get_node(id)
+        .and_then(|n| n.primary_styles())
+        .map(|s| !s.clone_display().is_none())
+        .unwrap_or(false);
+    if !rendered {
+        let mut out = String::new();
+        collect_text_content(&doc, id, &mut out);
+        return Ok(js_string!(out).into());
     }
-    Ok(js_string!(text.trim()).into())
+
+    let mut segments = Vec::new();
+    collect_rendered_text(&doc, id, &mut segments);
+    Ok(js_string!(assemble_inner_text(segments)).into())
 }
 
-fn collect_rendered_text(doc: &blitz_dom::BaseDocument, id: usize, out: &mut String) {
+fn collect_text_content(doc: &blitz_dom::BaseDocument, id: usize, out: &mut String) {
     let Some(node) = doc.get_node(id) else { return };
     for child in node.children.iter() {
         let Some(kid) = doc.get_node(*child) else { continue };
+        if let blitz_dom::NodeData::Text(text) = &kid.data {
+            out.push_str(&text.content);
+        } else {
+            collect_text_content(doc, *child, out);
+        }
+    }
+}
+
+/// One piece of what `innerText` will report, before the joins are decided.
+enum TextSegment {
+    /// Text with its whitespace already processed per its `white-space`.
+    /// `preserved` protects it from the edge-trimming the joins apply.
+    Text { content: String, preserved: bool },
+    /// A block boundary. Runs of these collapse to one newline.
+    BlockBreak,
+    /// A `<br>`. Every one of these is a newline the author asked for.
+    HardBreak,
+}
+
+fn collect_rendered_text(
+    doc: &blitz_dom::BaseDocument,
+    id: usize,
+    out: &mut Vec<TextSegment>,
+) {
+    use style::properties::longhands::white_space_collapse::computed_value::T as Collapse;
+    let Some(node) = doc.get_node(id) else { return };
+    // The text children take their whitespace rules from *this* element's
+    // computed style, which is what makes `<pre>` and `white-space: pre` on a
+    // div behave identically.
+    let collapse = node
+        .primary_styles()
+        .map(|s| s.get_inherited_text().clone_white_space_collapse())
+        .unwrap_or(Collapse::Collapse);
+    for child in node.children.iter() {
+        let Some(kid) = doc.get_node(*child) else { continue };
         match &kid.data {
-            blitz_dom::NodeData::Text(text) => out.push_str(&text.content),
+            blitz_dom::NodeData::Text(text) => {
+                let raw = text.content.replace("\r\n", "\n").replace('\r', "\n");
+                match collapse {
+                    Collapse::Preserve | Collapse::BreakSpaces => {
+                        out.push(TextSegment::Text { content: raw, preserved: true });
+                    }
+                    Collapse::PreserveBreaks => {
+                        // `pre-line`: spaces collapse, the newlines stay real.
+                        let mut content = String::with_capacity(raw.len());
+                        let mut in_spaces = false;
+                        for ch in raw.chars() {
+                            if ch == ' ' || ch == '\t' {
+                                in_spaces = true;
+                                continue;
+                            }
+                            if in_spaces {
+                                content.push(' ');
+                                in_spaces = false;
+                            }
+                            content.push(ch);
+                        }
+                        if in_spaces {
+                            content.push(' ');
+                        }
+                        out.push(TextSegment::Text { content, preserved: true });
+                    }
+                    Collapse::Collapse => {
+                        let mut content = String::with_capacity(raw.len());
+                        let mut in_spaces = false;
+                        for ch in raw.chars() {
+                            if ch.is_ascii_whitespace() {
+                                in_spaces = true;
+                                continue;
+                            }
+                            if in_spaces {
+                                content.push(' ');
+                                in_spaces = false;
+                            }
+                            content.push(ch);
+                        }
+                        if in_spaces {
+                            content.push(' ');
+                        }
+                        out.push(TextSegment::Text { content, preserved: false });
+                    }
+                }
+            }
             blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
                 let name = el.name.local.as_ref();
                 if matches!(name, "script" | "style" | "template" | "head" | "title") {
                     continue;
                 }
                 if name == "br" {
-                    out.push('\n');
+                    out.push(TextSegment::HardBreak);
                     continue;
                 }
                 // Not rendered, not read. The same rule the snapshot applies,
@@ -1862,16 +1983,81 @@ fn collect_rendered_text(doc: &blitz_dom::BaseDocument, id: usize, out: &mut Str
                 let rendered = display.to_css_string();
                 let inline = rendered.starts_with("inline") || rendered == "contents";
                 if !inline {
-                    out.push('\n');
+                    out.push(TextSegment::BlockBreak);
                 }
                 collect_rendered_text(doc, *child, out);
                 if !inline {
-                    out.push('\n');
+                    out.push(TextSegment::BlockBreak);
                 }
             }
             _ => {}
         }
     }
+}
+
+/// Join the segments: block-break runs become one newline, hard breaks keep
+/// their count, collapsible text sheds the spaces that touch a break or an
+/// edge — and preserved text sheds nothing, which is what `<pre>` means.
+fn assemble_inner_text(segments: Vec<TextSegment>) -> String {
+    // Each entry is a rendered line-ish chunk: (text, preserved-edges flags
+    // folded in already). Build the output by walking segments and tracking
+    // whether a break is pending and how many hard breaks it contains.
+    let mut result = String::new();
+    let mut pending_block = false;
+    let mut pending_hard = 0usize;
+    let mut tail_preserved = false;
+    for segment in segments {
+        match segment {
+            TextSegment::BlockBreak => pending_block = true,
+            TextSegment::HardBreak => pending_hard += 1,
+            TextSegment::Text { content, preserved } => {
+                let mut piece = content;
+                if piece.is_empty() {
+                    continue;
+                }
+                if !preserved && (piece.trim() == "") && (pending_block || pending_hard > 0 || result.is_empty()) {
+                    // Whitespace-only filler beside a break or at the start
+                    // never renders.
+                    continue;
+                }
+                let breaks = if pending_hard > 0 {
+                    pending_hard
+                } else if pending_block && !result.is_empty() {
+                    1
+                } else {
+                    0
+                };
+                if breaks > 0 {
+                    if !preserved {
+                        // A collapsible space never survives against a break.
+                        piece = piece.trim_start_matches(' ').to_string();
+                    }
+                    if !tail_preserved {
+                        while result.ends_with(' ') {
+                            result.pop();
+                        }
+                    }
+                    result.extend(std::iter::repeat_n('\n', breaks));
+                } else if result.is_empty() && !preserved {
+                    piece = piece.trim_start_matches(' ').to_string();
+                }
+                if !piece.is_empty() {
+                    result.push_str(&piece);
+                    tail_preserved = preserved;
+                }
+                pending_block = false;
+                pending_hard = 0;
+            }
+        }
+    }
+    // A trailing collapsible space vanishes; a preserved one — the end of a
+    // `<pre>abc </pre>` — is content and stays.
+    if !tail_preserved {
+        while result.ends_with(' ') {
+            result.pop();
+        }
+    }
+    result
 }
 
 /// The canonical name for an encoding label, or null if it is not one.
@@ -2074,9 +2260,15 @@ fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
         Default::default(),
     );
 
-    let Ok(property_id) = PropertyId::parse(&property, &parser_context) else {
+    // `parse_enabled_for_all_content`, not plain `parse`: the plain form
+    // accepts pref-gated and internal properties (`-moz-*`), and answering
+    // "supported" for a property no page rule could ever use is exactly the
+    // misrouting `CSS.supports` exists to avoid. WPT cross-checks this answer
+    // against the style declaration's own surface, which uses the same gate.
+    let Ok(property_id) = PropertyId::parse_enabled_for_all_content(&property) else {
         return Ok(JsValue::from(false));
     };
+    let _ = &parser_context;
     let mut declaration = SourcePropertyDeclaration::default();
     let mut input = cssparser::ParserInput::new(&value);
     let mut parser = cssparser::Parser::new(&mut input);

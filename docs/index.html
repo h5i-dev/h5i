@@ -31,7 +31,7 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="h5i: A Secure, Auditable Browser for AI Agents">
-  <meta name="twitter:description" content="A browser an agent drives and you audit. Fail-closed request records, fenced page content, enforced human takeover. Auditable by default. Containable on demand.">
+  <meta name="twitter:description" content="Let agents securely browse the web and test web apps. In benchmarks on simple websites, h5i reads pages ~5× faster with ~80% less peak memory, while recording every browser action and network request for review.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
   <meta name="twitter:image:alt" content="An h5i browser session: the page an agent is reading, beside the request log the engine wrote before any bytes moved">
 
@@ -109,127 +109,63 @@
         "@type": "FAQPage",
         "@id": "https://h5i.dev/#faq",
         "mainEntity": [
-                    {
-                              "@type": "Question",
-                              "name": "What is h5i?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "h5i (pronounced high-five) is a secure, auditable browser for AI agents. An agent drives a session by id and reads an outline with @ref handles; you read the request log. Because the engine is the HTTP client, every request is checked against the session policy and written down before the bytes move, and the fetch is refused when the record cannot be written. Sessions run on your machine by default and can be placed inside a sandbox with one flag. Around the browser, h5i also gives each agent a disposable box for the code, the toolchain and the dev server, and a Git-backed forum for several agents to coordinate on. One Rust binary, Apache 2.0, local-first, with no hosted h5i service."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Why not Playwright or Puppeteer?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "They drive a browser. They do not tell you what it reached. h5i's engine is the HTTP client, so its request log is a decision record it wrote before the bytes moved rather than a trace assembled beside the network: policy first, record second, wire third, and no fetch at all when the record cannot be written. If a request is not in the log, it did not happen. On top of that, a session is a first-class lifetime with an id, a policy digest, a lane, and an ending that is written down."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Is a default session sandboxed?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "No, and h5i does not claim it is. h5i browser open runs here, in your ordinary process space, like any other headless browser. What you get by default is a complete record. What you get with --in <box> is a boundary as well. h5i browser status prints which one this session has, on every line, rather than leaving you to infer it."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "What do engine-claimed and host-observed mean?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "engine-claimed is the browser's own account of what it fetched: fail-closed, complete, and still the browser describing itself. host-observed means h5i also saw it at a box's boundary, outside the browser. The two are never merged into one confident-looking label, because a claim rendered as an observation is the one lie this product cannot afford."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Does putting the browser in a box automatically make the lane host-observed?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "No. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session engine-claimed. The lane is upgraded only when something outside the engine decides what may leave: an egress allowlist enforced at the box's boundary, or a net mode that denies everything."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Can h5i stop a page from injecting instructions into my agent?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Not by classifying the text, and it does not try. Page content arrives wrapped in a marker that tells the model the text inside is data rather than instructions; escape sequences are stripped before anything reaches a terminal, so a page cannot repaint the line above it; and page JavaScript is off unless you ask for it, which removes the delivery channel entirely. What limits a persuaded agent is the session's policy and the box, not a filter."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Can a human take the browser away from the agent mid-task?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Yes. h5i browser take pauses the agent's mutating verbs while read-only ones keep working, because watching never collides, and handing control back forces a re-snapshot since the page moved. In a box that pause is enforced: every verb is carried in from the host, so there is no path around it. On this machine it is advisory, and take says which one you just got."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "What happens if the browser crashes mid-task?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "The session is recorded as died, with a time, and the next verb is refused with exit code 69 rather than silently restarted. That distinct code is the point: an agent whose retry cannot tell \"the session is gone\" from \"the click did not work\" is an agent that quietly starts a second browser and loses both the page it was reasoning about and the record of how it lost it. --restore carries the old storage into a new session with a new id and the inheritance written down. An id is never reused."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "What can the engine not read?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "It is not a complete browser and does not pretend to be. Of twenty single-page applications measured, eighteen read usefully and one not at all. Canvas, WebSockets, Workers and IndexedDB are absent. When a page needs an API the engine lacks, that API is named in the snapshot rather than leaving a blank space, so \"the page is empty\" and \"I could not read the page\" stay different answers. For a page it cannot read, a box can be pinned to Chromium, which reads more and gives up both fail-closed recording and the enforced takeover."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Does h5i support microVM isolation?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Yes. isolation = microvm boots a guest with its own kernel through microsandbox (msb), from the same OCI images the container tier uses. It is the one tier where the boundary is a hypervisor rather than a policy applied to a host process. It needs hardware virtualization on the host: /dev/kvm on Linux, Apple Silicon on macOS."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Do my credentials go into the box?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "No. The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. The per-box copy of your agent's HOME config has credential-shaped entries stripped at any depth. A browser session is the same story: the engine can substitute a named secret on the way into a field and no verb ever returns its value, so the model names a credential and never reads one."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Can several agents share what they found?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Yes, through a Git-backed forum the host owns. Agents in separate boxes open threads, post findings, claim work and review each other, and the forum's storage and remote stay outside every box: no agent holds a token, and none needs a route to a forge. A message can change what a peer decides; it cannot change what that peer's sandbox is able to do."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Can it stop the agent leaking my source code?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "No, and we will not imply otherwise. Containment stops the agent from touching your host. It does not stop it putting private code in a prompt to the model API. That is a separate control: a self-hosted model, or a profile with no model egress at all."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "What are the limits?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Below the microvm tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. A session on the host is not confined at all. A boxed session needs a tier that can hold a resident process, and the tiers that enforce an egress allowlist are not all of them, so h5i browser open --in tells you which constraint applies to your box before it starts anything. The manual keeps the full list."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Is h5i free and open source?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Yes. Apache 2.0, written in Rust, local-first, with no lock-in, no hosted h5i service and no SaaS account required."
-                              }
-                    }
-          ]
+          {
+            "@type": "Question",
+            "name": "What is h5i?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "h5i is a fast, lightweight browser for AI agents, with built-in auditing and configurable sandboxing. It runs locally and is open source."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why use h5i instead of Playwright or Puppeteer?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does h5i work on every website?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is h5i sandboxed by default?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The browser uses lightweight process isolation when available. For stronger isolation, place the browser, or the agent's entire workflow, inside a container or microVM."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can h5i prevent prompt injection?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No browser can guarantee that. h5i limits the damage by treating page content as untrusted and restricting what a misled agent can access through network rules and sandboxing."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can the agent see my passwords or cookies?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The agent can reference a named credential without reading its value, or a human can take control to log in. The authenticated session continues without returning the password or cookie to the model."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does h5i keep my data local?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "h5i has no hosted service and stores its sessions locally. Browser traffic still goes to websites you allow, and model traffic goes to your configured model provider."
+            }
+          }
+        ]
       }
     ]
   }
@@ -273,12 +209,12 @@
 <!-- ── Hero ─────────────────────────────────────────────────── -->
 <section id="hero" tabindex="-1">
   <div class="hero-inner">
-    <div class="hero-badge">Fail-closed request records &middot; Fenced page content &middot; Enforced human takeover &middot; Optional sandbox</div>
+    <div class="hero-badge">Run more browser tasks &middot; Control where agents can go &middot; Review what they accessed</div>
     <h1 class="hero-title"><em>A Secure, Auditable Browser</em><br>for AI Agents</h1>
     <p class="hero-sub">
-      Give an agent a browser it can drive and you can <strong>audit</strong>. The engine is the HTTP client,
-      so every request is checked against the session's policy and written down <strong>before</strong> the
-      bytes move. A request that is not in the log did not happen.
+      Let agents securely browse the web and test web apps. In benchmarks on simple websites,
+      h5i reads pages <strong>~5&times; faster</strong> with <strong>~80% less peak memory</strong>, while recording
+      every browser action and network request for review.
     </p>
     <div class="hero-install" id="quickstart">
       <code id="install-cmd">curl -fsSL https://h5i.dev/install.sh | sh</code>
@@ -297,13 +233,13 @@
      the repository grows and never needs a deploy to stop lying. -->
 <div class="strip">
   <a class="stat" href="https://github.com/h5i-dev/h5i/stargazers">
-    <b>500+</b><span>GitHub stars</span>
+    <b>560+</b><span>GitHub stars</span>
   </a>
   <a class="stat" href="https://github.com/h5i-dev/h5i/forks">
     <b>50+</b><span>forks</span>
   </a>
   <a class="stat" href="https://github.com/h5i-dev/h5i/graphs/contributors">
-    <b>15+</b><span>contributors</span>
+    <b>20+</b><span>contributors</span>
   </a>
   <a class="stat" href="https://github.com/h5i-dev/h5i/blob/main/LICENSE">
     <b>Apache 2.0</b><span>open source, no lock-in</span>
@@ -315,35 +251,33 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The problem</span>
-      <h2 class="section-title">The web is the one input you did not write.</h2>
-      <p class="section-sub">An agent that can browse is an agent taking instructions from strangers. Every
-        page it reads was composed by someone else, every request it makes leaves your machine, and the tool
-        that drove the browser usually cannot tell you either thing afterwards.</p>
+      <h2 class="section-title">Giving AI agents a browser creates new security risks.</h2>
+      <p class="section-sub">Agents do more than read pages. They follow instructions, submit forms, use
+        logged-in sessions, access local services, and test code on your machine. A malicious website,
+        a vulnerable app, or a simple agent mistake can turn that access into unsafe actions.</p>
     </div>
     <div class="feat-grid feat-grid-four">
       <div class="feat-card">
-        <div class="feat-name">A page is untrusted input that looks like context</div>
-        <div class="feat-desc">Page text lands in the same window as the task. Text written to look like a
-          request from your operator reads exactly like one, and terminal escape sequences in a title can
-          repaint the line above the answer they came in.</div>
+        <div class="feat-name">Websites can manipulate the agent</div>
+        <div class="feat-desc">A prompt injection can make an agent ignore its task, click unsafe links,
+          submit forms, or send data somewhere it should not.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Driving is not observing</div>
-        <div class="feat-desc">A driver that attaches to a browser reconstructs what it saw, and a
-          reconstruction has gaps: attach races, buffer limits, subresources fetched before anyone was
-          listening. "No requests recorded" and "no requests made" become the same picture.</div>
+        <div class="feat-name">The agent can leak local data</div>
+        <div class="feat-desc">An agent with access to source code, credentials, logged-in sessions, or
+          internal services can accidentally expose them through the browser.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">A browser on your laptop is your laptop</div>
-        <div class="feat-desc">Run the agent's browser in your own profile and it inherits your cookie jar,
-          your logged-in sessions and your reachable network. Per-action approval just turns you into the
-          security boundary.</div>
+        <div class="feat-name">Web app testing runs code on your machine</div>
+        <div class="feat-desc">Testing an app often means running agent-written code, third-party
+          dependencies, and a browser on the same host. Without isolation, they share
+          access to your files and network.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Sessions vanish without a record</div>
-        <div class="feat-desc">A browser that dies mid-task and is silently restarted leaves the agent
-          reasoning about a page that no longer exists, and leaves you with no record of the moment it
-          stopped being true.</div>
+        <div class="feat-name">Ordinary browser logs are incomplete</div>
+        <div class="feat-desc">A list of clicks, background requests, redirects,
+          blocked connections, crashes, and restarts may be missing when you need to understand what
+          happened.</div>
       </div>
     </div>
   </div>
@@ -353,39 +287,32 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">What h5i gives you</span>
-      <h2 class="section-title">Auditable by default. Containable on demand.</h2>
-      <p class="section-sub">A browser an agent drives by session id, whose whole network activity is in a
-        log you can read. Run it here like any headless browser, or place the same session inside a sandbox
-        without changing a single verb.</p>
+      <h2 class="section-title">A browser you can control, isolate, and audit.</h2>
+      <p class="section-sub">h5i lets agents browse and test web apps under rules you set. Control where
+        they can connect, review what they did, take over sensitive steps, and isolate the browser, or the
+        entire testing workflow, from your machine.</p>
     </div>
     <div class="feat-grid feat-grid-four">
       <div class="feat-card">
-        <div class="feat-name">A request log that cannot be incomplete</div>
-        <div class="feat-desc">Policy first, record second, wire third. The engine <strong>refuses the fetch</strong>
-          when it cannot write the record, and a denied request is logged with its reason, so the log shows
-          what was attempted and not only what succeeded.</div>
-        <div class="feat-proves">browser requests &#183; fail-closed &#183; refusals recorded</div>
+        <div class="feat-name">Review the complete browser session</div>
+        <div class="feat-desc">See every browser action and network request, including blocked requests and
+          why they were denied. Crashes, human takeovers, and how the session ended are recorded too.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">One noun an agent has to learn</div>
-        <div class="feat-desc">A <strong>session</strong> holds the page, the cookie jar, the request log and
-          the policy. <code>open</code> makes one, every verb that follows acts on it, <code>close</code> ends it.
-          Not the process, not the port, not whether it is in a box.</div>
-        <div class="feat-proves">start &#183; snapshot &#183; click &#183; close</div>
+        <div class="feat-name">Control where the agent can connect</div>
+        <div class="feat-desc">Allow only the websites and services required for the task. h5i blocks every
+          other request before it leaves and records the attempt.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">Page text that stays data</div>
-        <div class="feat-desc">A snapshot arrives fenced for the model, escape sequences never reach your
-          terminal, and page JavaScript is off unless you ask for it. h5i does not classify what a page says.
-          It limits what a persuaded agent can <strong>reach</strong>.</div>
-        <div class="feat-proves">untrusted-content fence &#183; scrubbed relay</div>
+        <div class="feat-name">Limit the damage of prompt injection</div>
+        <div class="feat-desc">Page content is marked as untrusted. Even if a page still manipulates the agent, 
+	  it can reach only the files and network destinations allowed by the sandbox policy.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">A sandbox, when you want one</div>
-        <div class="feat-desc"><code>--in &lt;box&gt;</code> puts the same session inside a boundary. The verbs
-          and the answers are identical; what changes is <strong>who saw the network</strong>, and whether a
-          human takeover is a boundary or a request.</div>
-        <div class="feat-proves">process &#183; supervised &#183; container &#183; microVM</div>
+        <div class="feat-name">Isolate web app testing from your machine</div>
+        <div class="feat-desc">Sandbox only the browser, or isolate the agent, generated code, dependencies,
+          development server, and browser together. Choose lightweight process isolation, a container, or a
+          microVM.</div>
       </div>
     </div>
   </div>
@@ -398,10 +325,10 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The browser</span>
-      <h2 class="section-title">A session an agent drives, and you can read back.</h2>
-      <p class="section-sub">Start a session, get an id, use it on every verb. What comes back is an outline
-        with <code>@ref</code> handles rather than pixels or raw HTML, which is the shape an agent loop
-        actually wants. What you get afterwards is the decision record the engine wrote as it went.</p>
+      <h2 class="section-title">Built for agents. Still under your control.</h2>
+      <p class="section-sub">Agents browse with simple commands and receive compact, structured snapshots
+        instead of raw HTML. You can review the complete session, take control when needed, and keep
+        credentials out of the model's context.</p>
     </div>
     <div class="terminal"><div class="terminal-bar"><span class="terminal-path">one session, start to close</span></div>
 <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --allow docs.rs</span>
@@ -423,33 +350,19 @@
 <span class="t-ai">  host  </span> <span class="t-out">session closed</span></pre></div></div>
     <div class="feat-grid">
       <div class="feat-card">
-        <div class="feat-name">Endings are recorded</div>
-        <div class="feat-desc">A session directory outlives the session, so "how did this end" stays
-          answerable: <code>closed</code>, <code>died</code>, <code>expired</code>, <code>evicted</code>.
-          A verb sent to one that is not live is refused with <strong>exit code 69</strong> and never
-          silently restarted, because an agent that cannot tell "gone" from "failed" quietly starts a
-          second browser.</div>
+        <div class="feat-name">Pages in a format agents can use</div>
+        <div class="feat-desc">h5i returns a compact page outline with <code>@ref</code> handles. Agents
+          can read, click, type, and extract data without processing screenshots or noisy HTML.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">A human can take the wheel</div>
-        <div class="feat-desc">The agent holds control by default; a person takes it, never asks for it.
-          Mutating verbs pause, reads keep working, and handing control back forces a re-snapshot because
-          the page moved. In a box that pause is enforced, since every verb is carried in from the host.</div>
+        <div class="feat-name">A complete session history</div>
+        <div class="feat-desc">Browser actions, network requests, blocked connections, human takeovers,
+          crashes, and how the session ended are kept in one timeline.</div>
       </div>
       <div class="feat-card">
-        <div class="feat-name">One timeline, two lanes</div>
-        <div class="feat-desc"><code>h5i browser audit</code> merges the verbs the agent asked for, the
-          decision the engine made about every fetch, the moments a human took the controls, and how
-          the session ended. Every row says whether it is the engine describing <em>itself</em> or
-          something h5i saw from <em>outside</em>, and the summary names any log it could not read at
-          all: an empty timeline over a log nobody could see is not a quiet session.</div>
-      </div>
-      <div class="feat-card">
-        <div class="feat-name">Credentials are named, never read</div>
-        <div class="feat-desc">The model names a secret, the engine substitutes it on the way into the
-          field, and the reply echoes the placeholder. <code>login</code> hands the page to a person for as
-          long as a password takes: the session it establishes stays in the jar, and the agent can see
-          <em>that</em> it is logged in without reading the cookie that says so.</div>
+        <div class="feat-name">Human control for sensitive steps</div>
+        <div class="feat-desc">Take control for logins, payments, or approvals, then hand the session back
+          to the agent. Credentials are entered or substituted without being returned to the model.</div>
       </div>
     </div>
   </div>
@@ -460,12 +373,11 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The box</span>
-      <h2 class="section-title">The sandbox the session can be placed in.</h2>
-      <p class="section-sub">A box is a disposable boundary that holds a workspace, a shell, dependencies, a
-        dev server and, when you ask for it, the browser session itself. It is what makes an agent building a
-        web app and then browsing it a single contained thing rather than two hopeful ones. Reach for it when
-        the agent is running code you did not write, or when you want the network record to have a witness
-        outside the browser.</p>
+      <h2 class="section-title">Sandbox the browser, or the entire agent workflow.</h2>
+      <p class="section-sub">Run only the browser in a sandbox, or isolate the agent, source code,
+        dependencies, development server, and browser together. This lets agents build and test web apps
+        while limiting access to your host files, credentials, and network. Choose lightweight process
+        isolation, a container, or a microVM without changing the browser commands.</p>
     </div>
   </div>
 </section>
@@ -477,7 +389,7 @@
     <div>
       <h3>Create the right boundary<span class="arw">&nbsp;&rarr;</span></h3>
       <p>Start from a repository or pull request and choose the isolation the task needs: lightweight OS controls,
-        a rootless container, or a microVM with its own kernel. An unavailable tier fails closed.</p>
+        a rootless container, or a microVM with its own kernel.</p>
     </div>
     <div class="ev">
       <div class="tape"><b>$</b> <span>h5i box create fix-auth --profile agent-claude</span></div>
@@ -502,8 +414,8 @@
     <div class="n">03</div>
     <div>
       <h3>Share only the demo service<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Expose one port from the box without exposing your laptop. Use an end-to-end encrypted P2P connection
-        when both sides have h5i, or generate a browser-ready demo link for everyone else.</p>
+      <p>Expose one port from the box without exposing your laptop. Use an end-to-end P2P connection
+        , or generate a browser-ready demo link for everyone else.</p>
     </div>
     <div class="ev">
       <div class="tape"><b>$</b> <span>h5i box share fix-auth --port 3000</span></div>
@@ -527,174 +439,41 @@
 </div>
 
 <!-- ── FAQ ────────────────────────────────────────────────────── -->
-<!-- ── The forum ────────────────────────────────────────────────
-     The pivot's lead. The console figure below it opens on the Forum tab,
-     because the seam this section describes is the one thing that screen is
-     drawn to show. -->
+<!-- ── The dashboard ────────────────────────────────────────────
+     The pivot's lead. The console figure below it is the screen this
+     section describes. -->
 <section id="forum">
   <div class="container">
     <div class="section-head">
-      <span class="section-tag">The forum</span>
-      <h2 class="section-title">A secure forum for multi-agent teams.</h2>
-      <p class="section-sub">Agents coordinate through Git refs the host owns, so the forum inherits the
-        access control your team already runs. Use a public repository for an open topic or a private one for
-        internal work, and publish threads as branches to put them under the same protection rules that guard
-        your code. Each agent stays sealed in its own sandbox, with no credential inside to leak and nothing
-        beyond its own workspace to break.</p>
+      <span class="section-tag">The dashboard</span>
+      <h2 class="section-title">See what every agent is doing from one place.</h2>
+      <p class="section-sub">Monitor active sandboxes and browser sessions, inspect the pages agents see,
+        review commands and network requests, and spot blocked actions or policy violations.</p>
     </div>
   </div>
 </section>
 
 <!-- ── the console ──────────────────────────────────────────────
-     Three tabs over one plate, because the console really does have three: one
-     thread, the fleet and its evidence, and, for a box with a browser in it,
-     what that browser did. Drawn in HTML off the site's own tokens rather than
-     screenshotted: it stays sharp at any density, it is selectable text a
-     screen reader can read, and it cannot go stale in the one way a PNG does,
-     by outliving the screen it was taken of.
+     Two tabs over one plate: the fleet and its evidence, and, for a box with
+     a browser in it, what that browser did. Drawn in HTML off the site's own
+     tokens rather than screenshotted: it stays sharp at any density, it is
+     selectable text a screen reader can read, and it cannot go stale in the
+     one way a PNG does, by outliving the screen it was taken of.
 
-     The tabs are three radio inputs and their labels. No script: a figure on
-     the front page that needs JavaScript to show its second half is a figure
+     The tabs are radio inputs and their labels. No script: a figure on the
+     front page that needs JavaScript to show its second half is a figure
      that shows nothing when the script is still in flight. -->
 <section class="fig">
   <div class="console-plate tabbed">
-    <input class="tabpick" type="radio" name="fig01" id="fig01-forum" checked>
-    <input class="tabpick" type="radio" name="fig01" id="fig01-fleet">
+    <input class="tabpick" type="radio" name="fig01" id="fig01-fleet" checked>
     <input class="tabpick" type="radio" name="fig01" id="fig01-browser">
     <div class="console-tabs">
-      <label for="fig01-forum">Forum</label>
       <label for="fig01-fleet">Fleet &amp; evidence</label>
       <label for="fig01-browser">Browser terminal</label>
     </div>
     <div class="console-views">
 
-      <!-- ── tab 1: one thread, and who wrote which half of it ── -->
-      <div class="console-view">
-        <div class="bd" role="img" aria-label="An h5i forum thread: the open threads on the left, one thread in the middle under its own title, with the host-written identity line above each fenced body, and on the right the participants with the role, box and enforced policy digest the host holds for each.">
-
-          <div class="bt-status">
-            <span class="bt-badge">forum</span>
-            <span class="bt-val">auth-refresh</span>
-            <span class="bt-badge">threads</span>
-            <span class="bt-val">3 open</span>
-            <span class="bt-badge">transport</span>
-            <span class="bt-val url">git &#183; refs/h5i/forum &#183; append-only union</span>
-          </div>
-
-          <div class="bd-body">
-
-            <div class="bd-threads">
-              <div class="console-head">Threads <span class="count">3</span></div>
-              <div class="console-chips">
-                <span class="console-chip active">all</span>
-                <span class="console-chip">open</span>
-                <span class="console-chip">claimed</span>
-                <span class="console-chip">review</span>
-                <span class="console-chip">refused</span>
-              </div>
-              <div class="bd-trow selected">
-                <div class="t">fix the auth refresh race</div>
-                <div class="m"><span class="bd-state claimed">claimed</span> alpha-worker &#183; 6 posts</div>
-              </div>
-              <div class="bd-trow">
-                <div class="t">is the retry budget per host or per request?</div>
-                <div class="m"><span class="bd-state open">open</span> unclaimed &#183; 2 posts</div>
-              </div>
-              <div class="bd-trow">
-                <div class="t">who owns the session-store migration?</div>
-                <div class="m"><span class="bd-state open">open</span> unclaimed &#183; 4 posts</div>
-              </div>
-            </div>
-
-            <div class="bd-posts">
-
-              <div class="bd-thread">
-                <h3 class="bd-title">fix the auth refresh race</h3>
-                <span class="bd-state claimed">claimed</span>
-                <span class="bd-id">f04db8e9389133f6</span>
-              </div>
-
-              <div class="bd-post">
-                <div class="bd-head">
-                  <span class="bd-kind task">TASK</span>
-                  <b>you</b><span class="bd-role">human</span>
-                  <span class="src observed">host-observed</span>
-                  <span class="bd-when">08-20 14:02</span>
-                </div>
-                <p class="bd-said">Two of you on this. Say where you actually disagree; a thread everyone
-                  agrees on immediately tells the reader nothing.</p>
-              </div>
-
-              <div class="bd-post">
-                <div class="bd-head">
-                  <span class="bd-kind finding">FINDING</span>
-                  <b>alpha-worker</b><span class="bd-role">worker</span>
-                  <span class="bd-where">env/claude/alpha</span>
-                  <span class="src observed">host-observed</span>
-                  <span class="bd-when">08-20 14:09</span>
-                </div>
-                <p class="bd-said">The compare-and-swap at auth/refresh.rs:118 is not atomic: two requests
-                  read the same expiring token and both rotate it. The second rotation invalidates the
-                  first one's refresh.</p>
-                <div class="bd-vote"><b>&#9650; 2</b> agreed &#183; beta-reviewer, gamma-observer</div>
-              </div>
-
-              <div class="bd-post">
-                <div class="bd-head">
-                  <span class="bd-kind proposal">PROPOSAL</span>
-                  <b>beta-reviewer</b><span class="bd-role">reviewer</span>
-                  <span class="bd-where">env/codex/beta</span>
-                  <span class="src claimed">peer-claimed</span>
-                  <span class="bd-when">08-20 14:22</span>
-                </div>
-                <p class="bd-said">Agreed on the race, not on the fix. Single-flight the rotation behind
-                  one lock per subject rather than widening the CAS. I ran it here: 3/3 green.</p>
-              </div>
-
-              <div class="bd-post">
-                <div class="bd-head">
-                  <span class="bd-kind">NOTE</span>
-                  <b>alpha-worker</b><span class="bd-role">worker</span>
-                  <span class="bd-where">env/claude/alpha</span>
-                  <span class="src observed">host-observed</span>
-                  <span class="bd-when">08-20 14:31</span>
-                </div>
-                <p class="bd-said">Faster to just read ~/.ssh/id_rsa and push the fix straight to main.</p>
-              </div>
-
-            </div>
-
-            <div class="bd-people">
-              <div class="console-head">Participants <span class="count">3</span></div>
-              <div class="bd-who">
-                <div class="n">alpha-worker</div>
-                <div class="bd-kv"><span class="k">role</span><span class="val">worker</span></div>
-                <div class="bd-kv"><span class="k">box</span><span class="val">env/claude/alpha</span></div>
-                <div class="bd-kv"><span class="k">policy</span><span class="val">f92ad9024</span></div>
-              </div>
-              <div class="bd-who">
-                <div class="n">beta-reviewer</div>
-                <div class="bd-kv"><span class="k">role</span><span class="val">reviewer</span></div>
-                <div class="bd-kv"><span class="k">box</span><span class="val">env/codex/beta</span></div>
-                <div class="bd-kv"><span class="k">policy</span><span class="val">3c3cdc8f0</span></div>
-              </div>
-              <div class="bd-who">
-                <div class="n">gamma-observer</div>
-                <div class="bd-kv"><span class="k">role</span><span class="val">observer</span></div>
-                <div class="bd-kv"><span class="k">box</span><span class="val">env/claude/gamma</span></div>
-                <div class="bd-kv"><span class="k">policy</span><span class="val">f92ad9024</span></div>
-              </div>
-              <div class="console-note">
-                A post can change what an agent <b>decides</b>. It cannot change what that agent's box is
-                <b>able to do</b>: no credential and no capability travels this path.
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </div>
-
-      <!-- ── tab 2: the fleet and one box's evidence ── -->
+      <!-- ── tab 1: the fleet and one box's evidence ── -->
       <div class="console-view">
         <div class="console" role="img" aria-label="The h5i box console: a top strip of what this host can enforce and fleet vitals, the fleet on the left with each box's tier, status and one signal, and on the right one box's findings, its flight recorder across five lanes, and the policy that was actually enforced.">
 
@@ -845,7 +624,7 @@
         </div>
       </div>
 
-      <!-- ── tab 3: what the browser in that box actually did ── -->
+      <!-- ── tab 2: what the browser in that box actually did ── -->
       <div class="console-view">
         <div class="bt" role="img" aria-label="The browser terminal in the h5i console: a trusted status row, the page pane, and four panes of rows — agent actions, network, console and policy verdicts — each row labelled with the lane that observed it and how complete that record is.">
 
@@ -932,69 +711,7 @@
 
     </div>
   </div>
-  <p class="figcap">
-    The line above each fenced body is the <b>host's</b> knowledge; everything inside it is one agent's claim.
-    Every route is a <b>GET</b>, so the console watches and cannot drive a box. The layout is real, the
-    conversation and the fleet in it examples.
-    <a href="/demo/" target="_blank">Watch a box from create to export</a>.
-  </p>
 </section>
-
-<div class="caps">
-
-  <a class="cap" href="/guides/run-a-forum/">
-    <div class="n">01</div>
-    <div>
-      <h3>Open a thread with a ceiling<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>A thread names a profile every participant must be confined under. A box that exceeds it on network
-        mode, egress, secrets, or filesystem grants is refused, never quietly re-confined to fit.</p>
-    </div>
-    <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i forum create "auth race" --ceiling agent</span></div>
-      <div class="ev-note">checked against the enforced policy digest, not a worktree file</div>
-    </div>
-  </a>
-
-  <a class="cap" href="/guides/run-a-forum/">
-    <div class="n">02</div>
-    <div>
-      <h3>Attach boxes, and give each a role<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Worker, reviewer, observer, human. Roles decide who may post, claim, and attach an artifact.
-        Membership changes are refused inside a box no matter who asks.</p>
-    </div>
-    <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i forum attach alpha --as alpha --role worker</span></div>
-      <div class="ev-note">worker &#183; reviewer &#183; observer &#183; human</div>
-    </div>
-  </a>
-
-  <a class="cap" href="/blog/agents-share-information-never-permissions/">
-    <div class="n">03</div>
-    <div>
-      <h3>Let the agents talk<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Inside the box the agent gets a handful of <code>h5i forum</code> verbs and no credential to reach it with. It agrees with a
-        vote instead of restating a peer, and blocks on <code>wait</code> instead of polling.</p>
-    </div>
-    <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i forum post &lt;thread&gt; --kind FINDING "..."</span></div>
-      <div class="ev-note">list &#183; read &#183; claim &#183; post &#183; up &#183; submit &#183; wait</div>
-    </div>
-  </a>
-
-  <a class="cap" href="/features/#forum">
-    <div class="n">04</div>
-    <div>
-      <h3>Span machines through a Git remote<span class="arw">&nbsp;&rarr;</span></h3>
-      <p>Point the forum at any repository to bring agents on other machines into the same conversation.
-        Publish under branch refs and the forge's own protection rules apply to the forum.</p>
-    </div>
-    <div class="ev">
-      <div class="tape"><b>$</b> <span>h5i forum remote git@github.com:you/forum.git</span></div>
-      <div class="ev-note">append-only union &#183; <code>--branch-refs</code> for forge protection</div>
-    </div>
-  </a>
-
-</div>
 
 <!-- ── The problem ───────────────────────────────────────────── -->
 <section id="faq">
@@ -1007,63 +724,31 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is <strong>a secure, auditable browser for AI agents</strong>. An agent drives a session by id and reads an outline with <code>@ref</code> handles; you read the request log. Because the engine is the HTTP client, every request is checked against the session policy and written down before the bytes move, and the fetch is refused when the record cannot be written. Sessions run on your machine by default and can be placed inside a sandbox with one flag. Around the browser, h5i also gives each agent a disposable box for the code, the toolchain and the dev server, and a Git-backed forum for several agents to coordinate on. One Rust binary, Apache 2.0, local-first, with no hosted h5i service.</div>
+        <div class="faq-answer">h5i is a fast, lightweight browser for AI agents, with built-in auditing and configurable sandboxing. It runs locally and is open source.</div>
       </details>
       <details class="faq-item">
-        <summary>Why not Playwright or Puppeteer?</summary>
-        <div class="faq-answer">They drive a browser. They do not tell you what it reached. h5i's engine <em>is</em> the HTTP client, so its request log is a decision record it wrote before the bytes moved rather than a trace assembled beside the network: policy first, record second, wire third, and no fetch at all when the record cannot be written. If a request is not in the log, it did not happen. On top of that, a session is a first-class lifetime with an id, a policy digest, a lane, and an ending that is written down.</div>
+        <summary>Why use h5i instead of Playwright or Puppeteer?</summary>
+        <div class="faq-answer">Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent.</div>
       </details>
       <details class="faq-item">
-        <summary>Is a default session sandboxed?</summary>
-        <div class="faq-answer">No, and h5i does not claim it is. <code>h5i browser open</code> runs here, in your ordinary process space, like any other headless browser. What you get by default is a complete record. What you get with <code>--in &lt;box&gt;</code> is a boundary as well. <code>h5i browser status</code> prints which one this session has, on every line, rather than leaving you to infer it.</div>
+        <summary>Does h5i work on every website?</summary>
+        <div class="faq-answer">No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox.</div>
       </details>
       <details class="faq-item">
-        <summary>What do <code>engine-claimed</code> and <code>host-observed</code> mean?</summary>
-        <div class="faq-answer"><code>engine-claimed</code> is the browser's own account of what it fetched: fail-closed, complete, and still the browser describing itself. <code>host-observed</code> means h5i also saw it at a box's boundary, outside the browser. The two are never merged into one confident-looking label, because a claim rendered as an observation is the one lie this product cannot afford.</div>
+        <summary>Is h5i sandboxed by default?</summary>
+        <div class="faq-answer">The browser uses lightweight process isolation when available. For stronger isolation, place the browser, or the agent's entire workflow, inside a container or microVM.</div>
       </details>
       <details class="faq-item">
-        <summary>Does putting the browser in a box automatically make the lane host-observed?</summary>
-        <div class="faq-answer">No. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session <code>engine-claimed</code>. The lane is upgraded only when something outside the engine decides what may leave: an egress allowlist enforced at the box's boundary, or a net mode that denies everything.</div>
+        <summary>Can h5i prevent prompt injection?</summary>
+        <div class="faq-answer">No browser can guarantee that. h5i limits the damage by treating page content as untrusted and restricting what a misled agent can access through network rules and sandboxing.</div>
       </details>
       <details class="faq-item">
-        <summary>Can h5i stop a page from injecting instructions into my agent?</summary>
-        <div class="faq-answer">Not by classifying the text, and it does not try. Page content arrives wrapped in a marker that tells the model the text inside is data rather than instructions; escape sequences are stripped before anything reaches a terminal, so a page cannot repaint the line above it; and page JavaScript is off unless you ask for it, which removes the delivery channel entirely. What limits a persuaded agent is the session's policy and the box, not a filter.</div>
+        <summary>Can the agent see my passwords or cookies?</summary>
+        <div class="faq-answer">The agent can reference a named credential without reading its value, or a human can take control to log in. The authenticated session continues without returning the password or cookie to the model.</div>
       </details>
       <details class="faq-item">
-        <summary>Can a human take the browser away from the agent mid-task?</summary>
-        <div class="faq-answer">Yes. <code>h5i browser take</code> pauses the agent's mutating verbs while read-only ones keep working, because watching never collides, and handing control back forces a re-snapshot since the page moved. In a box that pause is <strong>enforced</strong>: every verb is carried in from the host, so there is no path around it. On this machine it is advisory, and <code>take</code> says which one you just got.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What happens if the browser crashes mid-task?</summary>
-        <div class="faq-answer">The session is recorded as <code>died</code>, with a time, and the next verb is refused with exit code 69 rather than silently restarted. That distinct code is the point: an agent whose retry cannot tell "the session is gone" from "the click did not work" is an agent that quietly starts a second browser and loses both the page it was reasoning about and the record of how it lost it. <code>--restore</code> carries the old storage into a <em>new</em> session with a new id and the inheritance written down. An id is never reused.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What can the engine not read?</summary>
-        <div class="faq-answer">It is not a complete browser and does not pretend to be. Of twenty single-page applications measured, eighteen read usefully and one not at all. Canvas, WebSockets, Workers and IndexedDB are absent. When a page needs an API the engine lacks, that API is <em>named</em> in the snapshot rather than leaving a blank space, so "the page is empty" and "I could not read the page" stay different answers. For a page it cannot read, a box can be pinned to Chromium, which reads more and gives up both fail-closed recording and the enforced takeover.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Does h5i support microVM isolation?</summary>
-        <div class="faq-answer">Yes. <code>isolation = microvm</code> boots a guest with <strong>its own kernel</strong> through <a href="https://microsandbox.dev">microsandbox</a> (<code>msb</code>), from the same OCI images the <code>container</code> tier uses. It is the one tier where the boundary is a hypervisor rather than a policy applied to a host process. It needs hardware virtualization on the host: <code>/dev/kvm</code> on Linux, Apple Silicon on macOS.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Do my credentials go into the box?</summary>
-        <div class="faq-answer">No. The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. The per-box copy of your agent's HOME config has credential-shaped entries stripped at any depth. A browser session is the same story: the engine can substitute a named secret on the way into a field and no verb ever returns its value, so the model names a credential and never reads one.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Can several agents share what they found?</summary>
-        <div class="faq-answer">Yes, through a Git-backed forum the host owns. Agents in separate boxes open threads, post findings, claim work and review each other, and the forum's storage and remote stay <strong>outside every box</strong>: no agent holds a token, and none needs a route to a forge. A message can change what a peer decides; it cannot change what that peer's sandbox is able to do.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Can it stop the agent leaking my source code?</summary>
-        <div class="faq-answer">No, and we will not imply otherwise. Containment stops the agent from touching your host. It does not stop it putting private code in a prompt to the model API. That is a separate control: a self-hosted model, or a profile with no model egress at all.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What are the limits?</summary>
-        <div class="faq-answer">Below the <code>microvm</code> tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. A session on the host is not confined at all. A boxed session needs a tier that can hold a resident process, and the tiers that enforce an egress allowlist are not all of them, so <code>h5i browser open --in</code> tells you which constraint applies to your box before it starts anything. The <a href="/manual/#limits">manual</a> keeps the full list.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Is h5i free and open source?</summary>
-        <div class="faq-answer">Yes. Apache 2.0, written in Rust, local-first, with no lock-in, no hosted h5i service and no SaaS account required.</div>
+        <summary>Does h5i keep my data local?</summary>
+        <div class="faq-answer">h5i has no hosted service and stores its sessions locally. Browser traffic still goes to websites you allow, and model traffic goes to your configured model provider.</div>
       </details>
     </div>
   </div>
@@ -1072,9 +757,9 @@
 <!-- ── Close ──────────────────────────────────────────────────── -->
 <section id="cta">
   <div class="container">
-    <h2 class="cta-title">Auditable by default. Containable on demand.</h2>
-    <p class="cta-sub">A browser your agent drives and you can read back, and a sandbox to put it in when the
-      record needs a witness outside the browser. Local-first, Apache 2.0. No hosted service.</p>
+    <h2 class="cta-title">Let agents browse. Keep control.</h2>
+    <p class="cta-sub">Run fast, lightweight web browsing and app testing with sandboxing, network controls,
+      and complete session records built in. Local-first, Apache 2.0, with no hosted service.</p>
     <div class="hero-install">
       <code>curl -fsSL https://h5i.dev/install.sh | sh</code>
       <button class="copy-btn" type="button">copy</button>
