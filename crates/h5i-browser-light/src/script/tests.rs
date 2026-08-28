@@ -2863,8 +2863,11 @@ fn a_text_field_has_a_selection_and_a_number_field_does_not() {
              document.getElementById("out").textContent = out.join("|");
            </script>"#,
     );
+    // A fresh control's selection sits at 0,0 — the caret moves to the end
+    // when *script* assigns `value`, not when the markup seeds it. That is
+    // what browsers do and what WPT's type-change suite asserts.
     assert!(
-        text.contains("11|11|0|5|none|HI world|8|null"),
+        text.contains("0|0|0|5|none|HI world|8|null"),
         "text selection is wrong:\n{text}\nconsole: {console:?}"
     );
 }

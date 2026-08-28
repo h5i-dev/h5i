@@ -20,6 +20,14 @@
   /// a `const` still in its temporal dead zone.
   const TAG_CLASSES = new Map();
 
+  /// Transient user activation, the spec's gate on gesture-guarded APIs.
+  ///
+  /// No real user drives this engine, so the flag is armed by the paths that
+  /// stand in for one — the testdriver shim's click, `h5i browser click` —
+  /// and consumed by the APIs that spend it (`showPicker`). `hasBeen` never
+  /// goes back down, which is exactly `navigator.userActivation`'s pair.
+  const userActivation = { active: false, hasBeen: false };
+
   /// Which node has focus, or null for none.
   ///
   /// Held here rather than on the tree because focus is a property of the
@@ -899,6 +907,11 @@
         // markup default, which is not what the user had typed into it.
         if (this._value !== undefined) copy._value = this._value;
         if (this._checked !== undefined) copy._checked = this._checked;
+        // `indeterminate` and `dirty checkedness` ride along too — WPT's
+        // cloning-steps file checks each piece of control state by name.
+        if (this.__h5iIndeterminate !== undefined) {
+          copy.__h5iIndeterminate = this.__h5iIndeterminate;
+        }
         if (deep) copy.innerHTML = this.innerHTML;
       }
       return copy;
@@ -2983,65 +2996,70 @@
           const explicit = api.getAttr(this._id, "value");
           return explicit === null ? this.textContent : explicit;
         }
-        // `<input type=color>` has a *value sanitisation algorithm*, and it is
-        // the strictest one in HTML: the value is always a valid lowercase
-        // simple colour, and anything else — including the empty string a page
-        // just assigned — becomes `#000000`. A page reading it expects seven
-        // characters starting with `#`, always.
-        if (tag === "INPUT"
-          && (api.getAttr(this._id, "type") || "").toLowerCase() === "color") {
-          const raw = this._value ?? api.getAttr(this._id, "value") ?? "";
-          return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toLowerCase() : "#000000";
-        }
-        const kind = (api.getAttr(this._id, "type") || "").toLowerCase();
-        if (kind === "checkbox" || kind === "radio") {
-          const v = api.getAttr(this._id, "value");
-          return v === null ? "on" : v;
-        }
-        // The editor is the truth when there is one and it holds something:
-        // typing updates it and leaves the `value` attribute at whatever the
-        // HTML said.
-        const edited = api.getValue(this._id);
-        if (edited && edited.trim()) return edited;
-
-        // A blank editor on a `<textarea>` is the case worth handling. A
-        // textarea's default value is its text content, and blitz lays one out
-        // with an editor holding a single space rather than that content — so a
-        // page whose comment box arrives filled in read back as blank, which is
-        // a filled form reported as empty. Whitespace-only counts as unseeded
-        // for that reason: the space is blitz's, not the page's.
-        //
-        // The limitation this leaves is small and stated: a textarea a user
-        // has explicitly *cleared* also has an empty editor, and reports its
-        // original text rather than "". Wrong in that one case, right in the
-        // far commoner one, and it fails toward showing content that exists
-        // rather than hiding it.
-        if (tag === "TEXTAREA" && this._value === undefined) {
-          const written = this.textContent;
-          if (written) return written;
-        }
-        // **A whitespace-only editor on an unedited control is empty.** This
-        // is the same rule the `<textarea>` branch above states, and it was
-        // being applied to textareas only — so a laid-out `<input>` that
-        // nobody had typed into reported `" "`, because that is what blitz
-        // seeds its editor with.
-        //
-        // It is not a validation detail. `if (!input.value)` was *false* for
-        // an empty field, so every page and every agent that tests a form for
-        // emptiness got the wrong answer, and `required` could never fire.
-        if (edited !== null && edited !== undefined) {
-          if (this._value === undefined && !edited.trim()) {
-            return api.getAttr(this._id, "value") ?? "";
+        // For `<input>` the *value mode* routes the read before any editor is
+        // consulted: attribute-backed modes never see the dirty value, a file
+        // input never has one, and every value-mode read passes through the
+        // type's own sanitizer — which is why a `color` always answers seven
+        // lowercase characters and a `number` never answers garbage.
+        if (tag === "INPUT") {
+          const kind = inputType(this);
+          const mode = inputValueMode(kind);
+          if (mode === "filename") return "";
+          if (mode === "default") return api.getAttr(this._id, "value") ?? "";
+          if (mode === "default/on") {
+            const v = api.getAttr(this._id, "value");
+            return v === null ? "on" : v;
           }
-          return edited;
         }
-        // There is no editor — a detached control, or a `<textarea>`, which
-        // blitz lays out as text rather than as an input. Falling back to the
-        // markup is what a browser reports, and answering "" instead made a
-        // filled-in comment box look empty to the agent reading it.
-        if (this._value !== undefined) return this._value;
-        if (tag === "TEXTAREA") return this.textContent;
-        return api.getAttr(this._id, "value") ?? "";
+        const raw = (() => {
+          // The editor is the truth when there is one and it holds something:
+          // typing updates it and leaves the `value` attribute at whatever the
+          // HTML said.
+          const edited = api.getValue(this._id);
+          if (edited && edited.trim()) return edited;
+
+          // A blank editor on a `<textarea>` is the case worth handling. A
+          // textarea's default value is its text content, and blitz lays one
+          // out with an editor holding a single space rather than that content
+          // — so a page whose comment box arrives filled in read back as
+          // blank, which is a filled form reported as empty. Whitespace-only
+          // counts as unseeded for that reason: the space is blitz's, not the
+          // page's.
+          //
+          // The limitation this leaves is small and stated: a textarea a user
+          // has explicitly *cleared* also has an empty editor, and reports its
+          // original text rather than "". Wrong in that one case, right in the
+          // far commoner one, and it fails toward showing content that exists
+          // rather than hiding it.
+          if (tag === "TEXTAREA" && this._value === undefined) {
+            const written = this.textContent;
+            if (written) return written;
+          }
+          // **A whitespace-only editor on an unedited control is empty.** This
+          // is the same rule the `<textarea>` branch above states, and it was
+          // being applied to textareas only — so a laid-out `<input>` that
+          // nobody had typed into reported `" "`, because that is what blitz
+          // seeds its editor with.
+          //
+          // It is not a validation detail. `if (!input.value)` was *false* for
+          // an empty field, so every page and every agent that tests a form
+          // for emptiness got the wrong answer, and `required` could never
+          // fire.
+          if (edited !== null && edited !== undefined) {
+            if (this._value === undefined && !edited.trim()) {
+              return api.getAttr(this._id, "value") ?? "";
+            }
+            return edited;
+          }
+          // There is no editor — a detached control, or a `<textarea>`, which
+          // blitz lays out as text rather than as an input. Falling back to
+          // the markup is what a browser reports, and answering "" instead
+          // made a filled-in comment box look empty to the agent reading it.
+          if (this._value !== undefined) return this._value;
+          if (tag === "TEXTAREA") return this.textContent;
+          return api.getAttr(this._id, "value") ?? "";
+        })();
+        return tag === "INPUT" ? sanitizeInputValue(inputType(this), raw) : raw;
       },
       set(v) {
         const text = String(v);
@@ -3056,18 +3074,53 @@
           this.setAttribute("value", text);
           return;
         }
+        // The value modes again, on the write side: attribute-backed modes
+        // write the attribute, a file input refuses anything but "", and a
+        // value-mode write is sanitized on the way in with the caret moved to
+        // the end — assigning `value` is the one write that parks the cursor
+        // after the text.
+        let stored = text;
+        if (this.tagName === "INPUT") {
+          const kind = inputType(this);
+          const mode = inputValueMode(kind);
+          if (mode === "filename") {
+            if (text !== "") {
+              throw new DOMException(
+                "value: a file input's value can only be cleared",
+                "InvalidStateError",
+              );
+            }
+            delete this._value;
+            return;
+          }
+          if (mode === "default" || mode === "default/on") {
+            this.setAttribute("value", text);
+            return;
+          }
+          stored = sanitizeInputValue(kind, text);
+          if (["text", "search", "url", "tel", "password"].includes(kind)) {
+            this.__h5iSelection =
+              { start: stored.length, end: stored.length, direction: "none" };
+          }
+        } else if (this.tagName === "TEXTAREA") {
+          this.__h5iSelection =
+            { start: text.length, end: text.length, direction: "none" };
+        }
         // Remembered on this side when the write had nowhere to land, so a
         // page that builds a control and fills it in can read back what it
         // wrote. A page that sets `.value` from script does not get
         // input/change: the spec fires those for *user* edits, and a framework
         // that re-rendered on its own write would loop. `Page::type_into` is
         // the user path.
-        const landed = api.setValue(this._id, text);
+        const landed = api.setValue(this._id, stored);
         if (!landed) {
-          this._value = text;
-          if (this.tagName === "TEXTAREA") this.textContent = text;
+          this._value = stored;
+          if (this.tagName === "TEXTAREA") this.textContent = stored;
         } else {
-          delete this._value;
+          // The dirty flag must survive even when the editor took the write:
+          // a later type change asks "was this control's value ever set by
+          // script or typing", and the editor cannot answer that.
+          this._value = stored;
         }
       },
     });
@@ -3371,6 +3424,33 @@
       },
     });
 
+    // `showPicker` opens nothing here — there is no picker to draw — but the
+    // *guards* are the API's contract and are what WPT exercises: disabled
+    // and readonly controls refuse with InvalidStateError, and without a user
+    // gesture nothing opens anywhere, which is NotAllowedError. A permitted
+    // call spends the activation, exactly as a real picker would.
+    on(["input", "select"], "showPicker", {
+      value() {
+        if (this.disabled) {
+          throw new DOMException("showPicker: the control is disabled", "InvalidStateError");
+        }
+        if (this.tagName === "INPUT") {
+          const kind = inputType(this);
+          const readonlyApplies = ![
+            "button", "checkbox", "color", "file", "hidden", "image", "radio",
+            "range", "reset", "submit",
+          ].includes(kind);
+          if (readonlyApplies && api.getAttr(this._id, "readonly") !== null) {
+            throw new DOMException("showPicker: the control is readonly", "InvalidStateError");
+          }
+        }
+        if (!userActivation.active) {
+          throw new DOMException("showPicker: needs a user gesture", "NotAllowedError");
+        }
+        userActivation.active = false;
+      },
+    });
+
     // `indeterminate` is pure state — never reflected, cleared by a user
     // click, drawn as the dash a page uses for "some but not all selected".
     on(["input"], "indeterminate", {
@@ -3423,9 +3503,104 @@
     // `<input>` is the one element whose missing `type` is not the empty
     // string: an input with no type attribute is a text input, and code reads
     // `input.type` to decide how to treat it.
+    const KNOWN_INPUT_TYPES = new Set([
+      "hidden", "text", "search", "tel", "url", "email", "password", "date",
+      "month", "week", "time", "datetime-local", "number", "range", "color",
+      "checkbox", "radio", "file", "submit", "image", "reset", "button",
+    ]);
+    function inputType(el) {
+      const raw = (api.getAttr(el._id, "type") || "").toLowerCase();
+      return KNOWN_INPUT_TYPES.has(raw) ? raw : "text";
+    }
+    // Which of the spec's four *value modes* a type is in — the axis that
+    // decides where `value` lives: the dirty value, the attribute, "on", or a
+    // filename this engine will never have.
+    function inputValueMode(type) {
+      if (type === "file") return "filename";
+      if (type === "checkbox" || type === "radio") return "default/on";
+      if (["hidden", "submit", "image", "reset", "button"].includes(type)) {
+        return "default";
+      }
+      return "value";
+    }
+    // The per-type *value sanitization algorithm*. Every value-mode-value type
+    // has one, and the tests change type mid-flight precisely to watch the
+    // new type's rules bite the old type's value.
+    function sanitizeInputValue(type, raw) {
+      const value = String(raw);
+      const isFiniteNumber = (s) => s !== "" && /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s);
+      const validDate = (s) => {
+        const m = /^(\d{4,})-(\d{2})-(\d{2})$/.exec(s);
+        if (!m) return false;
+        const [, y, mo, d] = m.map(Number);
+        if (y < 1 || mo < 1 || mo > 12) return false;
+        const days = new Date(y, mo, 0).getDate();
+        return d >= 1 && d <= days;
+      };
+      const validTime = (s) => /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?$/.test(s);
+      switch (type) {
+        case "text": case "search": case "tel": case "password":
+          return value.replace(/[\r\n]/g, "");
+        case "url": case "email":
+          return value.replace(/[\r\n]/g, "").trim();
+        case "number":
+          return isFiniteNumber(value) ? value : "";
+        case "range": {
+          if (isFiniteNumber(value)) return value;
+          // The default of a range is the middle of its track.
+          return "50";
+        }
+        case "color":
+          return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : "#000000";
+        case "date":
+          return validDate(value) ? value : "";
+        case "time":
+          return validTime(value) ? value : "";
+        case "month":
+          return /^(\d{4,})-(0[1-9]|1[0-2])$/.test(value) ? value : "";
+        case "week":
+          return /^(\d{4,})-W(0[1-9]|[1-4]\d|5[0-3])$/.test(value) ? value : "";
+        case "datetime-local": {
+          const parts = value.split("T");
+          return parts.length === 2 && validDate(parts[0]) && validTime(parts[1])
+            ? value : "";
+        }
+        default:
+          return value;
+      }
+    }
     on(["input"], "type", {
-      get() { return (api.getAttr(this._id, "type") || "text").toLowerCase(); },
-      set(v) { this.setAttribute("type", v); },
+      get() { return inputType(this); },
+      set(v) {
+        // A type change is a *state* change, and the spec walks the value
+        // between modes: a dirty value entering an attribute-backed mode is
+        // written into the attribute, a value entering filename mode is gone,
+        // and whatever arrives in a value-mode type meets that type's
+        // sanitizer. Selection resets to the start when the control becomes
+        // selectable.
+        const oldType = inputType(this);
+        const wasSelectable =
+          this.tagName === "INPUT" && ["text", "search", "url", "tel", "password"].includes(oldType);
+        const oldMode = inputValueMode(oldType);
+        const dirty = this._value !== undefined;
+        const oldDirty = dirty ? this._value : null;
+        this.setAttribute("type", v);
+        const newType = inputType(this);
+        const newMode = inputValueMode(newType);
+        if (oldMode === "value" && dirty
+          && (newMode === "default" || newMode === "default/on")) {
+          api.setAttr(this._id, "value", oldDirty);
+          delete this._value;
+        } else if (newMode === "filename") {
+          delete this._value;
+        } else if (newMode === "value" && dirty) {
+          this._value = sanitizeInputValue(newType, oldDirty);
+        }
+        const nowSelectable = ["text", "search", "url", "tel", "password"].includes(newType);
+        if (!wasSelectable && nowSelectable) {
+          this.__h5iSelection = { start: 0, end: 0, direction: "none" };
+        }
+      },
     });
     reflectOn(["a", "link", "script", "style", "embed", "object", "source",
                "param", "ol", "ul", "li", "button"], "type", "type");
@@ -3700,9 +3875,8 @@
     };
     const DATE_VALUED = new Set(["date", "month", "week", "time"]);
 
-    function inputType(el) {
-      return (api.getAttr(el._id, "type") || "text").toLowerCase();
-    }
+    // (`inputType` — the known-types-or-text read — is declared once, beside
+    // the value-mode table above.)
 
     /// `value` as a number, or NaN.
     ///
@@ -3906,8 +4080,9 @@
 
     function selectionOf(el) {
       if (!el.__h5iSelection) {
-        const end = String(el.value ?? "").length;
-        el.__h5iSelection = { start: end, end, direction: "none" };
+        // 0,0 — the caret moves to the end when script assigns `value`, not
+        // because the markup seeded one.
+        el.__h5iSelection = { start: 0, end: 0, direction: "none" };
       }
       return el.__h5iSelection;
     }
@@ -8412,6 +8587,14 @@
     };
   }
 
+  // The one way to arm user activation from outside: the testdriver shim's
+  // click calls this, standing in for the user it simulates. Non-enumerable,
+  // so pages walking `window` never meet it.
+  Object.defineProperty(globalThis, "__h5iNoteUserActivation", {
+    value: () => { userActivation.active = true; userActivation.hasBeen = true; },
+    writable: false, enumerable: false, configurable: false,
+  });
+
   // ── WebIDL constants ─────────────────────────────────────────────────────
   //
   // On the interface object *and* its prototype, as the IDL `const` rules
@@ -8601,6 +8784,13 @@
       // A page fingerprinting for automation gets the same answer a person's
       // browser gives, because the answer is not about who is asking.
       webdriver: false,
+      // Live views over the engine's one activation flag (see
+      // `userActivation` at the top): reading through the object always
+      // answers the current state, which is what "transient" means.
+      userActivation: {
+        get isActive() { return userActivation.active; },
+        get hasBeenActive() { return userActivation.hasBeen; },
+      },
       // `userAgentData` and `scheduling` are deliberately *not* declared here.
       // Writing `userAgentData: undefined` would make `'userAgentData' in
       // navigator` answer true, which is the same lie the `missingApi` stubs
