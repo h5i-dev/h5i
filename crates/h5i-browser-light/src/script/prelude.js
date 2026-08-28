@@ -823,7 +823,9 @@
         for (const node of nodes) parent.insertBefore(node, this);
         this.remove();
       } else {
-        this.textContent = "";
+        // Not `textContent = ""`, which parks an empty text node where the
+        // content was — WPT counts the children afterwards.
+        while (this.firstChild) this.removeChild(this.firstChild);
         for (const node of nodes) this.appendChild(node);
       }
     }
@@ -2115,6 +2117,12 @@
   const FORM_METHOD = {
     keywords: ["get", "post", "dialog"], missing: "", invalid: "get",
   };
+  // Shared by every element that carries `referrerpolicy`: same keywords, and
+  // garbage reads as the empty string (the default policy), not as itself.
+  const REFERRER_POLICY = { keywords: [
+    "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
+    "origin", "strict-origin", "origin-when-cross-origin",
+    "strict-origin-when-cross-origin", "unsafe-url"] };
 
   /// `action` and `formAction` answer with the *document's* address when the
   /// attribute is missing or empty, rather than with "". A form whose action
@@ -2190,11 +2198,25 @@
       bool() { return api.getAttr(this._id, content) !== null; },
       long() {
         const value = parseInteger(api.getAttr(this._id, content));
-        return value === null ? (options.default ?? 0) : value;
+        if (value === null) return options.default ?? 0;
+        // "Limited to only non-negative numbers": a negative in the markup is
+        // not a value, it is the default — `maxlength="-36"` reads -1.
+        if (options.nonNegative && value < 0) return options.default ?? 0;
+        return value;
       },
       ulong() {
         const value = parseInteger(api.getAttr(this._id, content));
         if (value === null || value < 0) return options.default ?? 0;
+        // "Limited to only positive numbers": zero is out of range, so
+        // `size="0"` falls back rather than reporting an impossible size.
+        if (options.positive && value === 0) return options.default ?? 0;
+        // "Clamped to the range": `colgroup.span` reads 0 as 1 and the
+        // 32-bit maximum as 1000 — clamping, unlike the rules above, keeps
+        // the out-of-range value's *direction*.
+        if (options.clamp) {
+          const [lo, hi] = options.clamp;
+          return Math.min(Math.max(value, lo), hi);
+        }
         return value;
       },
       // A reflected `double`, for `<meter>` and `<progress>`. Not an integer
@@ -2214,7 +2236,11 @@
         // — `crossOrigin` reports null for an absent attribute — and `??` would
         // quietly turn that into "".
         if (raw === null) return "missing" in options ? options.missing : "";
-        const lower = String(raw).toLowerCase();
+        // ASCII lowercase, not `toLowerCase()`: keyword matching is defined
+        // over ASCII, and Unicode lowering is *wider* — it folds U+212A
+        // (kelvin) to "k" and U+017F (long s) to "s", making garbage match.
+        // WPT plants exactly those characters to catch it.
+        const lower = String(raw).replace(/[A-Z]/g, (c) => c.toLowerCase());
         // Aliases first: a keyword can have more than one spelling that maps to
         // the same state, and the empty string is the one that matters —
         // `<div contenteditable>` is the "true" state, so an implementation
@@ -2560,10 +2586,7 @@
         "report", "script", "serviceworker", "sharedworker", "style", "track",
         "video", "webidentity", "worker", "xslt"] }],
       CROSS_ORIGIN,
-      ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
-        "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
-        "origin", "strict-origin", "origin-when-cross-origin",
-        "strict-origin-when-cross-origin", "unsafe-url"] }],
+      ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     meta: ["HTMLMetaElement", [
       ["httpEquiv", "http-equiv"], ["media", "media"], ["scheme", "scheme"],
@@ -2581,15 +2604,12 @@
       ["target", "target"], ["download", "download"], ["ping", "ping"],
       ["rel", "rel"], ["hreflang", "hreflang"], ["charset", "charset"],
       ["rev", "rev"], ["shape", "shape"], ["coords", "coords"],
-      ["referrerPolicy", "referrerpolicy", "enumerated", { keywords: [
-        "", "no-referrer", "no-referrer-when-downgrade", "same-origin",
-        "origin", "strict-origin", "origin-when-cross-origin",
-        "strict-origin-when-cross-origin", "unsafe-url"] }],
+      ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     area: ["HTMLAreaElement", [
       ["coords", "coords"], ["download", "download"], ["ping", "ping"],
       ["rel", "rel"], ["shape", "shape"], ["target", "target"],
-      ["noHref", "nohref", "bool"], ["referrerPolicy", "referrerpolicy"],
+      ["noHref", "nohref", "bool"], ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     img: ["HTMLImageElement", [
       ["srcset", "srcset"], ["sizes", "sizes"], ["useMap", "usemap"],
@@ -2597,8 +2617,11 @@
       ["lowsrc", "lowsrc", "url"], ["longDesc", "longdesc", "url"],
       ["width", "width", "ulong"], ["height", "height", "ulong"],
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
-      ["decoding", "decoding"], ["loading", "loading"],
-      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy"],
+      ["decoding", "decoding", "enumerated",
+        { keywords: ["sync", "async", "auto"], missing: "auto", invalid: "auto" }],
+      ["loading", "loading", "enumerated",
+        { keywords: ["lazy", "eager"], missing: "eager", invalid: "eager" }],
+      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     embed: ["HTMLEmbedElement", [
       ["width", "width"], ["height", "height"], ["align", "align"],
@@ -2658,9 +2681,9 @@
       ["align", "align"], ["defaultValue", "value"],
       ["multiple", "multiple", "bool"], ["required", "required", "bool"],
       ["readOnly", "readonly", "bool"],
-      ["maxLength", "maxlength", "long", { default: -1 }],
-      ["minLength", "minlength", "long", { default: -1 }],
-      ["size", "size", "ulong", { default: 20 }],
+      ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
+      ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
+      ["size", "size", "ulong", { default: 20, positive: true }],
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     button: ["HTMLButtonElement", [
@@ -2682,8 +2705,8 @@
       ["autocomplete", "autocomplete"], ["dirName", "dirname"],
       ["placeholder", "placeholder"], ["wrap", "wrap"],
       ["required", "required", "bool"], ["readOnly", "readonly", "bool"],
-      ["maxLength", "maxlength", "long", { default: -1 }],
-      ["minLength", "minlength", "long", { default: -1 }],
+      ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
+      ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
       ["cols", "cols", "ulong", { default: 20 }],
       ["rows", "rows", "ulong", { default: 2 }],
     ]],
@@ -2699,7 +2722,7 @@
     ]],
     caption: ["HTMLTableCaptionElement", [["align", "align"]]],
     col: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1 }], ["align", "align"],
+      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], ["align", "align"],
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
       ["width", "width"],
     ]],
@@ -2708,8 +2731,8 @@
       ["vAlign", "valign"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     td: ["HTMLTableCellElement", [
-      ["colSpan", "colspan", "ulong", { default: 1 }],
-      ["rowSpan", "rowspan", "ulong", { default: 1 }],
+      ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
+      ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
       ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
       ["align", "align"], ["axis", "axis"], ["height", "height"],
       ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
@@ -2729,7 +2752,7 @@
       ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
       ["defer", "defer", "bool"], ["integrity", "integrity"],
       ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
-      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy"],
+      CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     marquee: ["HTMLMarqueeElement", [
       ["behavior", "behavior"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
@@ -2795,12 +2818,15 @@
       ["frameBorder", "frameborder"], ["longDesc", "longdesc", "url"],
       ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
       ["allowFullscreen", "allowfullscreen", "bool"],
+      ["loading", "loading", "enumerated",
+        { keywords: ["lazy", "eager"], missing: "eager", invalid: "eager" }],
+      ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     del: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
     q: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
     th: ["HTMLTableCellElement", [
-      ["colSpan", "colspan", "ulong", { default: 1 }],
-      ["rowSpan", "rowspan", "ulong", { default: 1 }],
+      ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
+      ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
       ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
       ["align", "align"], ["axis", "axis"], ["height", "height"],
       ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
@@ -2816,7 +2842,7 @@
       ["vAlign", "valign"],
     ]],
     colgroup: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1 }], ["align", "align"],
+      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], ["align", "align"],
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
       ["width", "width"],
     ]],
