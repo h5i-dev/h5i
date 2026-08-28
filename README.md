@@ -234,139 +234,64 @@ receives a private, one-time copy of approved HOME state.
 ## 5. FAQ
 
 <details>
-<summary>Why not Playwright or Puppeteer?</summary>
+<summary>What is h5i?</summary>
 
-They drive a browser. They do not tell you what it reached. h5i's engine is the
-HTTP client, so the request log is a decision record it wrote before the bytes
-moved, not a trace assembled beside the network. If a request is not in the log,
-it did not happen.
+h5i is a fast, lightweight browser for AI agents, with built-in auditing and
+optional sandboxing. It runs locally and is open source.
 
 </details>
 
 <details>
-<summary>Why do I not have to pass a session id?</summary>
+<summary>Why use h5i instead of Playwright or Puppeteer?</summary>
 
-Because you share a filesystem with the browser. An opaque id on every verb is
-the shape of a remote-browser HTTP API, where the id exists because the client
-and the browser have nothing else in common. Here `open` makes a session and
-points the default at it, and the verbs that follow land there. The id still
-exists in `--json` and in the receipts, where a durable reference belongs. Use
-`--session <name>` when you want several at once.
+Use Playwright or Puppeteer when maximum website compatibility is your
+priority. Use h5i when you need lower resource use, network controls, a
+complete session record, or a sandbox for both the browser and agent.
 
 </details>
 
 <details>
-<summary>Is a default session sandboxed?</summary>
+<summary>Does h5i work on every website?</summary>
 
-Yes. `h5i browser open` runs the engine in a process-tier sandbox: Landlock
-filesystem scoping, a seccomp filter and rlimits, with no box and no repository
-involved. It contains what a compromised engine could *do* — its files, its
-environment, its allocations.
-
-It does not contain the network, because a browser needs one, and it does not
-upgrade the request lane: a process-tier sandbox corroborates no part of the
-log. `--in <box>` is the rung that does both. `--no-sandbox` turns it off, and
-a host that cannot confine runs the session unconfined and says so.
-`h5i browser status` prints which you have.
+No. h5i works best for content-heavy websites and common browser interactions,
+but some browser APIs are not yet supported. For incompatible websites, you can
+run Chromium inside an h5i sandbox.
 
 </details>
 
 <details>
-<summary>Why does one session show up as two processes?</summary>
+<summary>Is h5i sandboxed by default?</summary>
 
-Because the half that parses a stranger's bytes should not be the half that
-holds the decisions. The process h5i starts is the broker: the allowlist, the
-HTTP client, the receipt sink, the cookie jar and the credentials. It starts the
-renderer, which parses the HTML, runs the cascade and the script and draws the
-frame. The renderer holds none of those. Its environment has no `H5I_SECRET_*`
-in it, and its only route to the network is to ask the broker, which records
-first.
-
-Neither half is a command. `h5i browser open` is unchanged, and
-`H5I_BROWSER_NO_SPLIT=1` runs the old single process if you want to compare.
-
-It does not yet make the log evidence against a compromised renderer: the
-renderer is still in the broker's network namespace, so it could open a socket
-of its own. That closes when the renderer's own profile denies the network.
+The browser uses lightweight process isolation when available. For stronger
+isolation, place the browser, or the agent's entire workflow, inside a
+container or microVM.
 
 </details>
 
 <details>
-<summary>What do `engine-claimed` and `host-observed` mean?</summary>
+<summary>Can h5i prevent prompt injection?</summary>
 
-`engine-claimed` is the browser's own account of what it fetched: fail-closed,
-complete, and still the browser describing itself. `host-observed` means h5i
-also saw it at a box's boundary, outside the browser. h5i never merges the two.
-
-</details>
-
-<details>
-<summary>Does a box automatically make the lane host-observed?</summary>
-
-No. A box whose policy lets the browser reach the whole network corroborates
-nothing. The lane is upgraded only when something outside the engine decides
-what may leave: an egress allowlist, or a net mode that denies everything.
+No browser can guarantee that. h5i limits the damage by treating page content
+as untrusted and restricting what a misled agent can access through network
+rules and sandboxing.
 
 </details>
 
 <details>
-<summary>Can h5i stop a page from injecting instructions into my agent?</summary>
+<summary>Can the agent see my passwords or cookies?</summary>
 
-Not by classifying the text, and it does not try. Page content arrives fenced as
-data, escape sequences are stripped, and script is off unless you ask for it,
-which removes the delivery channel entirely. What limits a persuaded agent is
-the session's policy and the box, not a filter.
-
-</details>
-
-<details>
-<summary>Can a human take the browser away from the agent mid-task?</summary>
-
-Yes. `h5i browser take` pauses the agent's mutating verbs while read-only ones
-keep working, and handing control back forces a re-snapshot because the page
-moved. In a box that pause is enforced, because every verb is carried in from
-the host. On this machine it is advisory, and `take` says so.
+The agent can reference a named credential without reading its value, or a
+human can take control to log in. The authenticated session continues without
+returning the password or cookie to the model.
 
 </details>
 
 <details>
-<summary>What happens if the browser crashes mid-task?</summary>
+<summary>Does h5i keep my data local?</summary>
 
-The session is recorded as `died`, with a time, and the next verb is refused
-with exit code 69. Nothing restarts automatically. `--restore` carries the old
-session's storage into a **new** session with a new id and the inheritance
-written down; an id is never reused.
-
-</details>
-
-<details>
-<summary>Can a box forge its identity on the forum?</summary>
-
-Not on a confined tier. Forum storage stays outside the sandbox's grants, and
-the host, not the payload, supplies the sender, role, box ID, and policy digest.
-
-</details>
-
-<details>
-<summary>Does h5i guarantee that posts contain no secrets?</summary>
-
-No. h5i scrubs supported patterns before writing Git objects, but this is
-defense in depth, not a guarantee.
-
-</details>
-
-<details>
-<summary>Which isolation tiers provide a security boundary?</summary>
-
-`workspace` has no confinement and is refused unless explicitly allowed. Other
-tiers enforce a boundary; only `microvm` has its own kernel.
-
-</details>
-
-<details>
-<summary>Can h5i stop an agent from sending code to its model provider?</summary>
-
-No. Model egress is a separate policy decision.
+h5i has no hosted service and stores its sessions locally. Browser traffic
+still goes to websites you allow, and model traffic goes to your configured
+model provider.
 
 </details>
 

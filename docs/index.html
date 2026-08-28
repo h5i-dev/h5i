@@ -109,127 +109,63 @@
         "@type": "FAQPage",
         "@id": "https://h5i.dev/#faq",
         "mainEntity": [
-                    {
-                              "@type": "Question",
-                              "name": "What is h5i?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "h5i (pronounced high-five) is a secure, auditable browser for AI agents. An agent drives a session by id and reads an outline with @ref handles; you read the request log. Because the engine is the HTTP client, every request is checked against the session policy and written down before the bytes move, and the fetch is refused when the record cannot be written. Sessions run on your machine by default and can be placed inside a sandbox with one flag. Around the browser, h5i also gives each agent a disposable box for the code, the toolchain and the dev server, and a Git-backed forum for several agents to coordinate on. One Rust binary, Apache 2.0, local-first, with no hosted h5i service."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Why not Playwright or Puppeteer?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "They drive a browser. They do not tell you what it reached. h5i's engine is the HTTP client, so its request log is a decision record it wrote before the bytes moved rather than a trace assembled beside the network: policy first, record second, wire third, and no fetch at all when the record cannot be written. If a request is not in the log, it did not happen. On top of that, a session is a first-class lifetime with an id, a policy digest, a lane, and an ending that is written down."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Is a default session sandboxed?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "No, and h5i does not claim it is. h5i browser open runs here, in your ordinary process space, like any other headless browser. What you get by default is a complete record. What you get with --in <box> is a boundary as well. h5i browser status prints which one this session has, on every line, rather than leaving you to infer it."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "What do engine-claimed and host-observed mean?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "engine-claimed is the browser's own account of what it fetched: fail-closed, complete, and still the browser describing itself. host-observed means h5i also saw it at a box's boundary, outside the browser. The two are never merged into one confident-looking label, because a claim rendered as an observation is the one lie this product cannot afford."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Does putting the browser in a box automatically make the lane host-observed?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "No. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session engine-claimed. The lane is upgraded only when something outside the engine decides what may leave: an egress allowlist enforced at the box's boundary, or a net mode that denies everything."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Can h5i stop a page from injecting instructions into my agent?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Not by classifying the text, and it does not try. Page content arrives wrapped in a marker that tells the model the text inside is data rather than instructions; escape sequences are stripped before anything reaches a terminal, so a page cannot repaint the line above it; and page JavaScript is off unless you ask for it, which removes the delivery channel entirely. What limits a persuaded agent is the session's policy and the box, not a filter."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Can a human take the browser away from the agent mid-task?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Yes. h5i browser take pauses the agent's mutating verbs while read-only ones keep working, because watching never collides, and handing control back forces a re-snapshot since the page moved. In a box that pause is enforced: every verb is carried in from the host, so there is no path around it. On this machine it is advisory, and take says which one you just got."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "What happens if the browser crashes mid-task?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "The session is recorded as died, with a time, and the next verb is refused with exit code 69 rather than silently restarted. That distinct code is the point: an agent whose retry cannot tell \"the session is gone\" from \"the click did not work\" is an agent that quietly starts a second browser and loses both the page it was reasoning about and the record of how it lost it. --restore carries the old storage into a new session with a new id and the inheritance written down. An id is never reused."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "What can the engine not read?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "It is not a complete browser and does not pretend to be. Of twenty single-page applications measured, eighteen read usefully and one not at all. Canvas, WebSockets, Workers and IndexedDB are absent. When a page needs an API the engine lacks, that API is named in the snapshot rather than leaving a blank space, so \"the page is empty\" and \"I could not read the page\" stay different answers. For a page it cannot read, a box can be pinned to Chromium, which reads more and gives up both fail-closed recording and the enforced takeover."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Does h5i support microVM isolation?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Yes. isolation = microvm boots a guest with its own kernel through microsandbox (msb), from the same OCI images the container tier uses. It is the one tier where the boundary is a hypervisor rather than a policy applied to a host process. It needs hardware virtualization on the host: /dev/kvm on Linux, Apple Silicon on macOS."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Do my credentials go into the box?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "No. The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. The per-box copy of your agent's HOME config has credential-shaped entries stripped at any depth. A browser session is the same story: the engine can substitute a named secret on the way into a field and no verb ever returns its value, so the model names a credential and never reads one."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Can several agents share what they found?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Yes, through a Git-backed forum the host owns. Agents in separate boxes open threads, post findings, claim work and review each other, and the forum's storage and remote stay outside every box: no agent holds a token, and none needs a route to a forge. A message can change what a peer decides; it cannot change what that peer's sandbox is able to do."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Can it stop the agent leaking my source code?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "No, and we will not imply otherwise. Containment stops the agent from touching your host. It does not stop it putting private code in a prompt to the model API. That is a separate control: a self-hosted model, or a profile with no model egress at all."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "What are the limits?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Below the microvm tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. A session on the host is not confined at all. A boxed session needs a tier that can hold a resident process, and the tiers that enforce an egress allowlist are not all of them, so h5i browser open --in tells you which constraint applies to your box before it starts anything. The manual keeps the full list."
-                              }
-                    },
-                    {
-                              "@type": "Question",
-                              "name": "Is h5i free and open source?",
-                              "acceptedAnswer": {
-                                        "@type": "Answer",
-                                        "text": "Yes. Apache 2.0, written in Rust, local-first, with no lock-in, no hosted h5i service and no SaaS account required."
-                              }
-                    }
-          ]
+          {
+            "@type": "Question",
+            "name": "What is h5i?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "h5i is a fast, lightweight browser for AI agents, with built-in auditing and optional sandboxing. It runs locally and is open source."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why use h5i instead of Playwright or Puppeteer?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does h5i work on every website?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is h5i sandboxed by default?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The browser uses lightweight process isolation when available. For stronger isolation, place the browser, or the agent's entire workflow, inside a container or microVM."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can h5i prevent prompt injection?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No browser can guarantee that. h5i limits the damage by treating page content as untrusted and restricting what a misled agent can access through network rules and sandboxing."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can the agent see my passwords or cookies?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The agent can reference a named credential without reading its value, or a human can take control to log in. The authenticated session continues without returning the password or cookie to the model."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does h5i keep my data local?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "h5i has no hosted service and stores its sessions locally. Browser traffic still goes to websites you allow, and model traffic goes to your configured model provider."
+            }
+          }
+        ]
       }
     ]
   }
@@ -788,63 +724,31 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is <strong>a secure, auditable browser for AI agents</strong>. An agent drives a session by id and reads an outline with <code>@ref</code> handles; you read the request log. Because the engine is the HTTP client, every request is checked against the session policy and written down before the bytes move, and the fetch is refused when the record cannot be written. Sessions run on your machine by default and can be placed inside a sandbox with one flag. Around the browser, h5i also gives each agent a disposable box for the code, the toolchain and the dev server, and a Git-backed forum for several agents to coordinate on. One Rust binary, Apache 2.0, local-first, with no hosted h5i service.</div>
+        <div class="faq-answer">h5i is a fast, lightweight browser for AI agents, with built-in auditing and optional sandboxing. It runs locally and is open source.</div>
       </details>
       <details class="faq-item">
-        <summary>Why not Playwright or Puppeteer?</summary>
-        <div class="faq-answer">They drive a browser. They do not tell you what it reached. h5i's engine <em>is</em> the HTTP client, so its request log is a decision record it wrote before the bytes moved rather than a trace assembled beside the network: policy first, record second, wire third, and no fetch at all when the record cannot be written. If a request is not in the log, it did not happen. On top of that, a session is a first-class lifetime with an id, a policy digest, a lane, and an ending that is written down.</div>
+        <summary>Why use h5i instead of Playwright or Puppeteer?</summary>
+        <div class="faq-answer">Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent.</div>
       </details>
       <details class="faq-item">
-        <summary>Is a default session sandboxed?</summary>
-        <div class="faq-answer">No, and h5i does not claim it is. <code>h5i browser open</code> runs here, in your ordinary process space, like any other headless browser. What you get by default is a complete record. What you get with <code>--in &lt;box&gt;</code> is a boundary as well. <code>h5i browser status</code> prints which one this session has, on every line, rather than leaving you to infer it.</div>
+        <summary>Does h5i work on every website?</summary>
+        <div class="faq-answer">No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox.</div>
       </details>
       <details class="faq-item">
-        <summary>What do <code>engine-claimed</code> and <code>host-observed</code> mean?</summary>
-        <div class="faq-answer"><code>engine-claimed</code> is the browser's own account of what it fetched: fail-closed, complete, and still the browser describing itself. <code>host-observed</code> means h5i also saw it at a box's boundary, outside the browser. The two are never merged into one confident-looking label, because a claim rendered as an observation is the one lie this product cannot afford.</div>
+        <summary>Is h5i sandboxed by default?</summary>
+        <div class="faq-answer">The browser uses lightweight process isolation when available. For stronger isolation, place the browser, or the agent's entire workflow, inside a container or microVM.</div>
       </details>
       <details class="faq-item">
-        <summary>Does putting the browser in a box automatically make the lane host-observed?</summary>
-        <div class="faq-answer">No. A box whose policy lets the browser reach the whole network corroborates nothing, and h5i keeps calling that session <code>engine-claimed</code>. The lane is upgraded only when something outside the engine decides what may leave: an egress allowlist enforced at the box's boundary, or a net mode that denies everything.</div>
+        <summary>Can h5i prevent prompt injection?</summary>
+        <div class="faq-answer">No browser can guarantee that. h5i limits the damage by treating page content as untrusted and restricting what a misled agent can access through network rules and sandboxing.</div>
       </details>
       <details class="faq-item">
-        <summary>Can h5i stop a page from injecting instructions into my agent?</summary>
-        <div class="faq-answer">Not by classifying the text, and it does not try. Page content arrives wrapped in a marker that tells the model the text inside is data rather than instructions; escape sequences are stripped before anything reaches a terminal, so a page cannot repaint the line above it; and page JavaScript is off unless you ask for it, which removes the delivery channel entirely. What limits a persuaded agent is the session's policy and the box, not a filter.</div>
+        <summary>Can the agent see my passwords or cookies?</summary>
+        <div class="faq-answer">The agent can reference a named credential without reading its value, or a human can take control to log in. The authenticated session continues without returning the password or cookie to the model.</div>
       </details>
       <details class="faq-item">
-        <summary>Can a human take the browser away from the agent mid-task?</summary>
-        <div class="faq-answer">Yes. <code>h5i browser take</code> pauses the agent's mutating verbs while read-only ones keep working, because watching never collides, and handing control back forces a re-snapshot since the page moved. In a box that pause is <strong>enforced</strong>: every verb is carried in from the host, so there is no path around it. On this machine it is advisory, and <code>take</code> says which one you just got.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What happens if the browser crashes mid-task?</summary>
-        <div class="faq-answer">The session is recorded as <code>died</code>, with a time, and the next verb is refused with exit code 69 rather than silently restarted. That distinct code is the point: an agent whose retry cannot tell "the session is gone" from "the click did not work" is an agent that quietly starts a second browser and loses both the page it was reasoning about and the record of how it lost it. <code>--restore</code> carries the old storage into a <em>new</em> session with a new id and the inheritance written down. An id is never reused.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What can the engine not read?</summary>
-        <div class="faq-answer">It is not a complete browser and does not pretend to be. Of twenty single-page applications measured, eighteen read usefully and one not at all. Canvas, WebSockets, Workers and IndexedDB are absent. When a page needs an API the engine lacks, that API is <em>named</em> in the snapshot rather than leaving a blank space, so "the page is empty" and "I could not read the page" stay different answers. For a page it cannot read, a box can be pinned to Chromium, which reads more and gives up both fail-closed recording and the enforced takeover.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Does h5i support microVM isolation?</summary>
-        <div class="faq-answer">Yes. <code>isolation = microvm</code> boots a guest with <strong>its own kernel</strong> through <a href="https://microsandbox.dev">microsandbox</a> (<code>msb</code>), from the same OCI images the <code>container</code> tier uses. It is the one tier where the boundary is a hypervisor rather than a policy applied to a host process. It needs hardware virtualization on the host: <code>/dev/kvm</code> on Linux, Apple Silicon on macOS.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Do my credentials go into the box?</summary>
-        <div class="faq-answer">No. The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach an OpenAI credential. The per-box copy of your agent's HOME config has credential-shaped entries stripped at any depth. A browser session is the same story: the engine can substitute a named secret on the way into a field and no verb ever returns its value, so the model names a credential and never reads one.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Can several agents share what they found?</summary>
-        <div class="faq-answer">Yes, through a Git-backed forum the host owns. Agents in separate boxes open threads, post findings, claim work and review each other, and the forum's storage and remote stay <strong>outside every box</strong>: no agent holds a token, and none needs a route to a forge. A message can change what a peer decides; it cannot change what that peer's sandbox is able to do.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Can it stop the agent leaking my source code?</summary>
-        <div class="faq-answer">No, and we will not imply otherwise. Containment stops the agent from touching your host. It does not stop it putting private code in a prompt to the model API. That is a separate control: a self-hosted model, or a profile with no model egress at all.</div>
-      </details>
-      <details class="faq-item">
-        <summary>What are the limits?</summary>
-        <div class="faq-answer">Below the <code>microvm</code> tier the kernel is shared, so this is good against a runaway agent and careless dependency code, and is not a claim against a targeted kernel exploit. A session on the host is not confined at all. A boxed session needs a tier that can hold a resident process, and the tiers that enforce an egress allowlist are not all of them, so <code>h5i browser open --in</code> tells you which constraint applies to your box before it starts anything. The <a href="/manual/#limits">manual</a> keeps the full list.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Is h5i free and open source?</summary>
-        <div class="faq-answer">Yes. Apache 2.0, written in Rust, local-first, with no lock-in, no hosted h5i service and no SaaS account required.</div>
+        <summary>Does h5i keep my data local?</summary>
+        <div class="faq-answer">h5i has no hosted service and stores its sessions locally. Browser traffic still goes to websites you allow, and model traffic goes to your configured model provider.</div>
       </details>
     </div>
   </div>
