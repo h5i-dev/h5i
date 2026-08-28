@@ -795,7 +795,38 @@
     /// page against `textContent`'s 6ms, because every level built an array of
     /// wrapped nodes and every read paid a proxy trap.
     get innerText() { return api.innerText(this._id); }
-    set innerText(value) { this.textContent = String(value); }
+    // The setter is not `textContent`: each line break in the string becomes
+    // a real `<br>`, because innerText round-trips through the *rendered*
+    // form — write "a\nb", read "a\nb" — and only a break element renders as
+    // a break.
+    set innerText(value) { this._replaceWithRenderedText(value, false); }
+    get outerText() { return api.innerText(this._id); }
+    set outerText(value) { this._replaceWithRenderedText(value, true); }
+    _replaceWithRenderedText(value, replaceSelf) {
+      const parts = String(value).split(/\r\n|\r|\n/);
+      const nodes = [];
+      parts.forEach((part, i) => {
+        if (i > 0) nodes.push(document.createElement("br"));
+        if (part !== "") nodes.push(document.createTextNode(part));
+      });
+      if (replaceSelf) {
+        const parent = this.parentNode;
+        if (!parent) {
+          throw new DOMException(
+            "outerText: the element has no parent",
+            "NoModificationAllowedError",
+          );
+        }
+        // An empty string still leaves a text node behind — the spec keeps a
+        // merge point where the element was.
+        if (nodes.length === 0) nodes.push(document.createTextNode(""));
+        for (const node of nodes) parent.insertBefore(node, this);
+        this.remove();
+      } else {
+        this.textContent = "";
+        for (const node of nodes) this.appendChild(node);
+      }
+    }
 
     appendChild(child) {
       // Inserting a fragment inserts its children and leaves the fragment
@@ -2064,6 +2095,26 @@
   /// attributes carry: `body.bgColor = null` writes "" rather than "null".
   /// Named once so the flag reads as the IDL annotation it is.
   const NULL_IS_EMPTY = { nullAsEmpty: true };
+  // The form-submission enumerations. `enctype` on the form falls back to
+  // urlencoded whether missing or garbage; the per-button `form*` overrides
+  // report "" when absent — absent means "defer to the form" — but garbage
+  // still snaps to the invalid-value default.
+  const ENCTYPE_KEYWORDS = [
+    "application/x-www-form-urlencoded", "multipart/form-data", "text/plain",
+  ];
+  const ENCTYPE = {
+    keywords: ENCTYPE_KEYWORDS,
+    missing: "application/x-www-form-urlencoded",
+    invalid: "application/x-www-form-urlencoded",
+  };
+  const FORM_ENCTYPE = {
+    keywords: ENCTYPE_KEYWORDS,
+    missing: "",
+    invalid: "application/x-www-form-urlencoded",
+  };
+  const FORM_METHOD = {
+    keywords: ["get", "post", "dialog"], missing: "", invalid: "get",
+  };
 
   /// `action` and `formAction` answer with the *document's* address when the
   /// attribute is missing or empty, rather than with "". A form whose action
@@ -2203,11 +2254,19 @@
         ? function (value) {
           const number = Number(value);
           let written = Number.isFinite(number) ? Math.trunc(number) : 0;
-          // An unsigned reflection cannot hold a negative, and writing one
-          // anyway left `td.colSpan = -3` reading back as 1 while
-          // `getAttribute("colspan")` said "-3" — the property and the
-          // attribute disagreeing about the same element.
-          if (type === "ulong" && written < 0) written = options.default ?? 0;
+          // WebIDL conversion happens *before* the reflection rules see the
+          // value: a long wraps modulo 2^32 into signed range (`|0`), an
+          // unsigned long wraps into unsigned range (`>>>0`) and anything the
+          // attribute still cannot hold — above 2147483647, which includes
+          // every negative after wrapping — becomes the default. Without the
+          // wrap, `img.width = 2147483648` wrote "2147483648" into markup
+          // where a browser writes "0".
+          if (type === "long") {
+            written |= 0;
+          } else {
+            written >>>= 0;
+            if (written > 2147483647) written = options.default ?? 0;
+          }
           this.setAttribute(content, String(written));
         }
         : type === "double"
@@ -2250,6 +2309,10 @@
       }
       return set.call(this, value);
     };
+    // WebIDL names accessor functions `get title`/`set title` — the same
+    // spelling class syntax produces — and idlharness reads the name back.
+    Object.defineProperty(guardedGet, "name", { value: `get ${idl}` });
+    Object.defineProperty(guardedSet, "name", { value: `set ${idl}` });
     Object.defineProperty(proto, idl, {
       configurable: true,
       // WebIDL interface members are enumerable, which idlharness also
@@ -2265,6 +2328,56 @@
   // at the engine.
   reflect(Element.prototype, "hidden", "hidden", "bool");
   reflect(Element.prototype, "autofocus", "autofocus", "bool");
+  reflect(Element.prototype, "inert", "inert", "bool");
+  // Three booleans whose attribute form is a keyword pair rather than
+  // presence: `translate` speaks yes/no, `autocorrect` on/off, `draggable`
+  // true/false — and each has its own reading of "absent".
+  Object.defineProperty(Element.prototype, "translate", {
+    configurable: true, enumerable: true,
+    get: Object.defineProperty(function () {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      return (api.getAttr(this._id, "translate") || "").toLowerCase() !== "no";
+    }, "name", { value: "get translate" }),
+    set: Object.defineProperty(function (value) {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      this.setAttribute("translate", value ? "yes" : "no");
+    }, "name", { value: "set translate" }),
+  });
+  Object.defineProperty(Element.prototype, "autocorrect", {
+    configurable: true, enumerable: true,
+    get: Object.defineProperty(function () {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      return (api.getAttr(this._id, "autocorrect") || "").toLowerCase() !== "off";
+    }, "name", { value: "get autocorrect" }),
+    set: Object.defineProperty(function (value) {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      this.setAttribute("autocorrect", value ? "on" : "off");
+    }, "name", { value: "set autocorrect" }),
+  });
+  Object.defineProperty(Element.prototype, "draggable", {
+    configurable: true, enumerable: true,
+    get: Object.defineProperty(function () {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      const raw = (api.getAttr(this._id, "draggable") || "").toLowerCase();
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      // The absent default is per element: images and links drag, text does not.
+      return this.tagName === "IMG"
+        || (this.tagName === "A" && api.getAttr(this._id, "href") !== null);
+    }, "name", { value: "get draggable" }),
+    set: Object.defineProperty(function (value) {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      this.setAttribute("draggable", value ? "true" : "false");
+    }, "name", { value: "set draggable" }),
+  });
+  Object.defineProperty(Element.prototype, "accessKeyLabel", {
+    configurable: true, enumerable: true,
+    get: Object.defineProperty(function () {
+      if (!this || this._id === undefined) throw new TypeError("Illegal invocation");
+      // No keyboard here, so no label — the honest constant.
+      return "";
+    }, "name", { value: "get accessKeyLabel" }),
+  });
   // `tabIndex` has no single default: an element the user can reach with the
   // keyboard reports 0, everything else -1. Answering -1 for a link or a button
   // tells a page nothing is focusable, which is the opposite of true.
@@ -2526,8 +2639,9 @@
     form: ["HTMLFormElement", [
       ["acceptCharset", "accept-charset"],
       ["action", "action", "url", DOCUMENT_URL_WHEN_EMPTY],
-      ["autocomplete", "autocomplete"], ["enctype", "enctype"],
-      ["encoding", "enctype"], ["method", "method"],
+      ["autocomplete", "autocomplete"],
+      ["enctype", "enctype", "enumerated", ENCTYPE],
+      ["encoding", "enctype", "enumerated", ENCTYPE],
       ["noValidate", "novalidate", "bool"], ["target", "target"], ["rel", "rel"],
     ]],
     label: ["HTMLLabelElement", [["htmlFor", "for"]]],
@@ -2535,8 +2649,9 @@
       ["accept", "accept"], ["autocomplete", "autocomplete"],
       ["defaultChecked", "checked", "bool"], ["dirName", "dirname"],
       ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
-      ["formEnctype", "formenctype"],
-      ["formMethod", "formmethod"], ["formTarget", "formtarget"],
+      ["formEnctype", "formenctype", "enumerated", FORM_ENCTYPE],
+      ["formMethod", "formmethod", "enumerated", FORM_METHOD],
+      ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
       ["max", "max"], ["min", "min"], ["pattern", "pattern"],
       ["placeholder", "placeholder"], ["step", "step"], ["useMap", "usemap"],
@@ -2550,8 +2665,9 @@
     ]],
     button: ["HTMLButtonElement", [
       ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
-      ["formEnctype", "formenctype"],
-      ["formMethod", "formmethod"], ["formTarget", "formtarget"],
+      ["formEnctype", "formenctype", "enumerated", FORM_ENCTYPE],
+      ["formMethod", "formmethod", "enumerated", FORM_METHOD],
+      ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
     ]],
     select: ["HTMLSelectElement", [
@@ -2577,8 +2693,9 @@
     table: ["HTMLTableElement", [
       ["align", "align"], ["border", "border"], ["frame", "frame"],
       ["rules", "rules"], ["summary", "summary"], ["width", "width"],
-      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY], ["cellPadding", "cellpadding"],
-      ["cellSpacing", "cellspacing"],
+      ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
+      ["cellPadding", "cellpadding", "string", NULL_IS_EMPTY],
+      ["cellSpacing", "cellspacing", "string", NULL_IS_EMPTY],
     ]],
     caption: ["HTMLTableCaptionElement", [["align", "align"]]],
     col: ["HTMLTableColElement", [
@@ -2783,6 +2900,7 @@
           }
           return descriptor.get.call(this);
         };
+        Object.defineProperty(guarded.get, "name", { value: `get ${name}` });
       }
       if (descriptor.set) {
         guarded.set = function (value) {
@@ -2791,6 +2909,7 @@
           }
           return descriptor.set.call(this, value);
         };
+        Object.defineProperty(guarded.set, "name", { value: `set ${name}` });
       }
       if ("value" in descriptor) {
         guarded.value = descriptor.value;
@@ -3025,6 +3144,132 @@
       set(value) { this.setAttribute("command", String(value)); },
     });
 
+    // ---- media state -------------------------------------------------------
+    //
+    // This engine does not play media, and the surface below says so honestly
+    // rather than pretending: nothing is ever playing (`paused` true, `ended`
+    // false, `currentTime` wherever the page last put it), no data ever
+    // arrives (`readyState` HAVE_NOTHING, empty `buffered`), and `play()`
+    // rejects with the NotSupportedError a browser uses for a source it
+    // cannot decode. A page that branches on these gets the no-media branch,
+    // which is the true one.
+    {
+      const emptyTimeRanges = () => ({
+        length: 0,
+        start() { throw new DOMException("no ranges", "IndexSizeError"); },
+        end() { throw new DOMException("no ranges", "IndexSizeError"); },
+      });
+      const media = ["audio", "video"];
+      on(media, "paused", { get() { return true; } });
+      on(media, "ended", { get() { return false; } });
+      on(media, "seeking", { get() { return false; } });
+      on(media, "duration", { get() { return NaN; } });
+      on(media, "networkState", { get() { return 0; } });
+      on(media, "readyState", { get() { return 0; } });
+      on(media, "error", { get() { return null; } });
+      on(media, "currentSrc", { get() { return this._resolved("src"); } });
+      on(media, "buffered", { get() { return emptyTimeRanges(); } });
+      on(media, "played", { get() { return emptyTimeRanges(); } });
+      on(media, "seekable", { get() { return emptyTimeRanges(); } });
+      on(media, "currentTime", {
+        get() { return this.__h5iMediaTime ?? 0; },
+        set(value) { this.__h5iMediaTime = Number(value) || 0; },
+      });
+      on(media, "playbackRate", {
+        get() { return this.__h5iMediaRate ?? 1; },
+        set(value) { this.__h5iMediaRate = Number(value); },
+      });
+      on(media, "defaultPlaybackRate", {
+        get() { return this.__h5iMediaDefaultRate ?? 1; },
+        set(value) { this.__h5iMediaDefaultRate = Number(value); },
+      });
+      on(media, "volume", {
+        get() { return this.__h5iMediaVolume ?? 1; },
+        set(value) { this.__h5iMediaVolume = Number(value); },
+      });
+      on(media, "muted", {
+        get() { return this.__h5iMediaMuted ?? (api.getAttr(this._id, "muted") !== null); },
+        set(value) { this.__h5iMediaMuted = !!value; },
+      });
+      on(media, "play", {
+        value() {
+          return Promise.reject(
+            new DOMException("play: this engine does not decode media", "NotSupportedError"),
+          );
+        },
+      });
+      on(media, "pause", { value() {} });
+      on(media, "load", { value() {} });
+      on(media, "canPlayType", { value() { return ""; } });
+      on(["video"], "videoWidth", { get() { return 0; } });
+      on(["video"], "videoHeight", { get() { return 0; } });
+    }
+
+    // Small read sides pages and idlharness both reach for.
+    on(["select"], "selectedOptions", {
+      get() {
+        return collection(
+          Array.from(this.querySelectorAll("option")).filter((o) => o.selected),
+          "HTMLCollection",
+        );
+      },
+    });
+    on(["select"], "type", {
+      get() { return api.getAttr(this._id, "multiple") !== null ? "select-multiple" : "select-one"; },
+    });
+    on(["textarea"], "type", { get() { return "textarea"; } });
+    on(["textarea"], "textLength", { get() { return this.value.length; } });
+    on(["output"], "type", { get() { return "output"; } });
+    on(["fieldset"], "type", { get() { return "fieldset"; } });
+    on(["fieldset"], "elements", {
+      get() {
+        return collection(
+          Array.from(this.querySelectorAll("input,button,select,textarea,output,object,fieldset")),
+          "HTMLCollection",
+        );
+      },
+    });
+    // An image that never loaded has no natural size, and `complete` is true
+    // for the no-src case exactly as the spec says.
+    on(["img"], "naturalWidth", { get() { return this.width; } });
+    on(["img"], "naturalHeight", { get() { return this.height; } });
+    // True always: by the time script runs, any load this engine was going to
+    // do has happened — success or failure, both of which are "complete".
+    on(["img"], "complete", { get() { return true; } });
+    on(["a"], "text", {
+      get() { return this.textContent; },
+      set(value) { this.textContent = String(value); },
+    });
+    on(["title"], "text", {
+      get() { return this.textContent; },
+      set(value) { this.textContent = String(value); },
+    });
+    on(["script"], "text", {
+      get() { return this.textContent; },
+      set(value) { this.textContent = String(value); },
+    });
+    on(["map"], "areas", {
+      get() { return collection(Array.from(this.querySelectorAll("area")), "HTMLCollection"); },
+    });
+    on(["label"], "control", {
+      get() {
+        const forId = api.getAttr(this._id, "for");
+        if (forId !== null) {
+          return forId === "" ? null : document.getElementById(forId);
+        }
+        return this.querySelector("input,button,select,textarea,output,meter,progress") ?? null;
+      },
+    });
+    on(["progress"], "position", {
+      get() {
+        const max = Number(api.getAttr(this._id, "max")) || 1;
+        const raw = api.getAttr(this._id, "value");
+        if (raw === null) return -1;
+        const value = Number(raw) || 0;
+        return Math.min(Math.max(value / max, 0), 1);
+      },
+    });
+
     // ---- `<dialog>` --------------------------------------------------------
     //
     // `open` reflected and nothing could change it: `show()`, `showModal()`
@@ -3099,6 +3344,40 @@
         this.close(returnValue);
       },
     });
+
+    // `indeterminate` is pure state — never reflected, cleared by a user
+    // click, drawn as the dash a page uses for "some but not all selected".
+    on(["input"], "indeterminate", {
+      get() { return !!this.__h5iIndeterminate; },
+      set(value) { this.__h5iIndeterminate = !!value; },
+    });
+    // The `<datalist>` the `list` attribute points at — the element, not the
+    // id, and only when it really is a datalist.
+    on(["input"], "list", {
+      get() {
+        const id = api.getAttr(this._id, "list");
+        if (id === null || id === "") return null;
+        const el = document.getElementById(id);
+        return el && el.tagName === "DATALIST" ? el : null;
+      },
+    });
+    // The labels pointing at a control: `<label for>` by id, or the label an
+    // element sits inside. A hidden input answers null — it is not labelable.
+    on(["input", "button", "select", "textarea", "output", "meter", "progress"],
+      "labels", {
+        get() {
+          if (this.tagName === "INPUT" && this.type === "hidden") return null;
+          const id = this.id;
+          const out = [];
+          for (const label of document.querySelectorAll("label")) {
+            const forId = api.getAttr(label._id, "for");
+            if (forId !== null ? (id !== "" && forId === id) : label.contains(this)) {
+              out.push(label);
+            }
+          }
+          return collection(out, "NodeList");
+        },
+      });
 
     on(["input"], "checked", {
       get() {
@@ -3882,14 +4161,41 @@
     on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
       "willValidate", { get() { return !isBarredFromValidation(this); } });
 
+    // A real interface, not a frozen snapshot: `ValidityState` is a global
+    // idlharness checks by name, and its getters are *live* — a page that
+    // holds `input.validity` and types into the field reads the new answer
+    // through the old reference, exactly as in a browser.
+    class ValidityState {
+      constructor() { throw new TypeError("Illegal constructor"); }
+    }
+    for (const flag of [
+      "valueMissing", "typeMismatch", "patternMismatch", "tooLong", "tooShort",
+      "rangeUnderflow", "rangeOverflow", "stepMismatch", "badInput",
+      "customError", "valid",
+    ]) {
+      const getter = function () {
+        const el = this && this.__h5iControl;
+        if (!el) {
+          throw new TypeError(`Illegal invocation: ${flag} needs a ValidityState`);
+        }
+        return computeValidity(el)[flag] ?? false;
+      };
+      Object.defineProperty(getter, "name", { value: `get ${flag}` });
+      Object.defineProperty(ValidityState.prototype, flag, {
+        configurable: true, enumerable: true, get: getter,
+      });
+    }
+    Object.defineProperty(ValidityState.prototype, Symbol.toStringTag, {
+      value: "ValidityState", configurable: true,
+    });
+    globalThis.ValidityState = ValidityState;
+
     on(["input", "select", "textarea", "button", "fieldset", "output", "object"],
       "validity", {
         get() {
-          // Computed fresh each time rather than cached: validity is a
-          // function of the element's current state, and a cached one would
-          // go stale the moment a page typed into the field.
-          const flags = computeValidity(this);
-          return Object.freeze({ ...flags });
+          const state = Object.create(ValidityState.prototype);
+          Object.defineProperty(state, "__h5iControl", { value: this });
+          return state;
         },
       });
 
@@ -4196,6 +4502,24 @@
     // through these four, and `command` is how an invoker button reaches the
     // element it points at.
     "toggle", "beforetoggle", "cancel", "close", "command",
+    // The rest of GlobalEventHandlers. Declaring the property is not claiming
+    // the engine *fires* the event — most of these never fire here — but the
+    // accessor pair is what `el.onpaste = fn` needs to at least register, and
+    // idlharness checks every name on every element interface.
+    "abort", "auxclick", "beforeinput", "beforematch", "canplay",
+    "canplaythrough", "contextlost", "contextrestored", "copy", "cuechange",
+    "cut", "drag", "dragend", "dragenter", "dragleave", "dragover",
+    "dragstart", "drop", "durationchange", "emptied", "ended", "formdata",
+    "invalid", "loadeddata", "loadedmetadata", "loadstart", "mouseenter",
+    "mouseleave", "paste", "pause", "play", "playing", "progress",
+    "ratechange", "reset", "resize", "scrollend", "securitypolicyviolation",
+    "seeked", "seeking", "select", "slotchange", "stalled", "suspend",
+    "timeupdate", "volumechange", "waiting", "pointermove",
+    "pointerover", "pointerout", "pointerenter", "pointerleave",
+    "pointercancel", "gotpointercapture", "lostpointercapture",
+    "animationstart", "animationiteration", "animationcancel",
+    "transitionrun", "transitionstart", "transitioncancel", "selectstart",
+    "selectionchange", "touchmove", "touchcancel",
   ];
   for (const type of HANDLER_EVENTS) {
     const slot = `__on_${type}`;
@@ -4232,6 +4556,9 @@
     const slot = `__on_window_${type}`;
     Object.defineProperty(globalThis, `on${type}`, {
       configurable: true,
+      // Enumerable like every other WebIDL attribute — the window's handler
+      // properties are members of Window, not engine internals.
+      enumerable: true,
       get() { return globalThis[slot] ?? null; },
       set(handler) {
         if (globalThis[slot]) removeEventListener(type, globalThis[slot]);
@@ -4239,6 +4566,34 @@
         if (globalThis[slot]) addEventListener(type, globalThis[slot]);
       },
     });
+  }
+  // `window.name` is a plain settable string here. In a browser it names the
+  // browsing context for `target=`; this engine has one context (§B20.15), so
+  // the value round-trips and nothing else reads it.
+  {
+    let windowName = "";
+    Object.defineProperty(globalThis, "name", {
+      configurable: true,
+      enumerable: true,
+      get() { return windowName; },
+      set(value) { windowName = String(value); },
+    });
+  }
+  // The WindowEventHandlers accessors that `<body>` and `<frameset>` carry on
+  // their *prototypes* but hold on behalf of the window — the IDL-attribute
+  // half of BODY_FORWARDED below: assigning `document.body.onhashchange` and
+  // assigning `window.onhashchange` are the same storage.
+  for (const tag of ["body", "frameset"]) {
+    const Interface = TAG_CLASSES.get(tag);
+    if (!Interface) continue;
+    for (const type of WINDOW_HANDLER_EVENTS) {
+      Object.defineProperty(Interface.prototype, `on${type}`, {
+        configurable: true,
+        enumerable: true,
+        get() { return globalThis[`on${type}`] ?? null; },
+        set(handler) { globalThis[`on${type}`] = handler; },
+      });
+    }
   }
 
   /// Event-handler *content attributes*: `<body onload="run()">`.
@@ -4262,12 +4617,7 @@
   /// run to tens of thousands of them.
   const HANDLER_ATTRS = [
     ...HANDLER_EVENTS, ...WINDOW_HANDLER_EVENTS,
-    "beforeinput", "select", "reset", "invalid",
-    "copy", "cut", "paste", "drag", "dragend", "dragenter", "dragleave",
-    "dragover", "dragstart", "drop", "animationstart", "animationiteration",
-    "transitionrun", "transitionstart", "transitioncancel", "pointermove",
-    "pointerover", "pointerout", "pointerenter", "pointerleave", "pointercancel",
-    "mouseenter", "mouseleave", "focusin", "focusout", "readystatechange",
+    "focusin", "focusout", "readystatechange",
   ];
   const HANDLER_ATTR_SET = new Set(HANDLER_ATTRS.map((type) => `on${type}`));
   const HANDLER_ATTR_SELECTOR = HANDLER_ATTRS.map((type) => `[on${type}]`).join(",");
@@ -4758,6 +5108,54 @@
       this.propertyName = i.propertyName || ""; this.elapsedTime = i.elapsedTime || 0;
       this.pseudoElement = i.pseudoElement || "";
     }
+  }
+
+  // The event classes above initialise their fields as own properties, which
+  // is right for instances and invisible to anyone inspecting the *interface*:
+  // idlharness asks the prototype for each attribute. These accessors are that
+  // declaration — the getter answers the field's default (an instance's own
+  // property shadows it), and the setter exists so the constructors' strict-
+  // mode assignments still land as own data properties instead of throwing at
+  // a getter-only accessor.
+  {
+    const declareEventFields = (Interface, fields) => {
+      for (const [field, fallback] of Object.entries(fields)) {
+        const getter = function () { return fallback; };
+        const setter = function (value) {
+          Object.defineProperty(this, field, {
+            value, writable: true, enumerable: true, configurable: true,
+          });
+        };
+        Object.defineProperty(getter, "name", { value: `get ${field}` });
+        Object.defineProperty(setter, "name", { value: `set ${field}` });
+        Object.defineProperty(Interface.prototype, field, {
+          configurable: true, enumerable: true, get: getter, set: setter,
+        });
+      }
+    };
+    declareEventFields(ToggleEvent, { oldState: "", newState: "", source: null });
+    declareEventFields(CommandEvent, { command: "", source: null });
+    declareEventFields(SubmitEvent, { submitter: null });
+    declareEventFields(FormDataEvent, { formData: null });
+    declareEventFields(PageTransitionEvent, { persisted: false });
+    declareEventFields(ErrorEvent, {
+      message: "", filename: "", lineno: 0, colno: 0, error: undefined,
+    });
+    declareEventFields(MessageEvent, {
+      data: null, origin: "", lastEventId: "", source: null, ports: [],
+    });
+    declareEventFields(StorageEvent, {
+      key: null, oldValue: null, newValue: null, url: "", storageArea: null,
+    });
+    declareEventFields(PopStateEvent, { state: null, hasUAVisualTransition: false });
+    declareEventFields(HashChangeEvent, { oldURL: "", newURL: "" });
+    declareEventFields(PromiseRejectionEvent, { promise: undefined, reason: undefined });
+    declareEventFields(AnimationEvent, {
+      animationName: "", elapsedTime: 0, pseudoElement: "",
+    });
+    declareEventFields(TransitionEvent, {
+      propertyName: "", elapsedTime: 0, pseudoElement: "",
+    });
   }
 
   function path(node) {
@@ -6461,6 +6859,30 @@
     get visibilityState() { return "visible"; },
   };
 
+  // The legacy colour properties: aliases for attributes *on the body*, kept
+  // because `reflection-sections.html` tests every one on `#document` and old
+  // pages still write them. All five carry [LegacyNullToEmptyString], and all
+  // five read "" with no body rather than throwing on one.
+  for (const [idl, attr] of [
+    ["fgColor", "text"], ["bgColor", "bgcolor"], ["linkColor", "link"],
+    ["alinkColor", "alink"], ["vlinkColor", "vlink"],
+  ]) {
+    Object.defineProperty(documentImpl, idl, {
+      configurable: true,
+      enumerable: true,
+      get() {
+        const body = wrap(api.body());
+        if (!body) return "";
+        return api.getAttr(body._id, attr) ?? "";
+      },
+      set(value) {
+        const body = wrap(api.body());
+        if (!body) return;
+        api.setAttr(body._id, attr, value === null ? "" : String(value));
+      },
+    });
+  }
+
   // Same rule for `document`: a page reading `document.activeElement` or
   // `document.fonts` should produce a named gap, not a silent undefined.
   const document = observed(documentImpl, "document");
@@ -7831,6 +8253,36 @@
         }
       },
     });
+    // The live document's whole surface, mirrored onto the prototype as
+    // forwarding members. Nothing real inherits from this prototype — the
+    // constructor above returns a parsed document with its own properties —
+    // so the forwarding is only ever reached by code inspecting the
+    // *interface*, which is exactly idlharness asking "does Document.prototype
+    // have `body`". One document per engine makes the forward unambiguous.
+    for (const [key, d] of Object.entries(Object.getOwnPropertyDescriptors(documentImpl))) {
+      if (key.startsWith("_") || key === "constructor") continue;
+      const forwarded = { configurable: true, enumerable: true };
+      if (d.get || d.set) {
+        if (d.get) {
+          forwarded.get = function () { return document[key]; };
+          Object.defineProperty(forwarded.get, "name", { value: `get ${key}` });
+        }
+        if (d.set) {
+          forwarded.set = function (value) { document[key] = value; };
+          Object.defineProperty(forwarded.set, "name", { value: `set ${key}` });
+        }
+      } else if (typeof d.value === "function") {
+        forwarded.writable = true;
+        forwarded.value = function (...args) { return documentImpl[key](...args); };
+        Object.defineProperty(forwarded.value, "name", { value: key });
+      } else {
+        forwarded.get = function () { return document[key]; };
+        forwarded.set = function (value) { document[key] = value; };
+        Object.defineProperty(forwarded.get, "name", { value: `get ${key}` });
+        Object.defineProperty(forwarded.set, "name", { value: `set ${key}` });
+      }
+      Object.defineProperty(ctor.prototype, key, forwarded);
+    }
     return ctor;
   }
 
@@ -7932,6 +8384,109 @@
       StyleSheet: brand("StyleSheet", (v) => v && "cssRules" in v),
       MediaList: brand("MediaList", (v) => v && typeof v.mediaText === "string"),
     };
+  }
+
+  // ── WebIDL constants ─────────────────────────────────────────────────────
+  //
+  // On the interface object *and* its prototype, as the IDL `const` rules
+  // say — which is why `Node.ELEMENT_NODE` and `node.ELEMENT_NODE` both work.
+  // Real code leans on the first form constantly (`n.nodeType ===
+  // Node.ELEMENT_NODE` is the idiom), and with the constant undefined that
+  // comparison is quietly false for every node, which sent whole test files
+  // walking past their target element into a null.
+  {
+    const defineConstants = (Interface, table) => {
+      for (const target of [Interface, Interface.prototype]) {
+        for (const [name, value] of Object.entries(table)) {
+          Object.defineProperty(target, name, {
+            value, writable: false, enumerable: true, configurable: false,
+          });
+        }
+      }
+    };
+    defineConstants(Node, {
+      ELEMENT_NODE: 1, ATTRIBUTE_NODE: 2, TEXT_NODE: 3, CDATA_SECTION_NODE: 4,
+      ENTITY_REFERENCE_NODE: 5, ENTITY_NODE: 6, PROCESSING_INSTRUCTION_NODE: 7,
+      COMMENT_NODE: 8, DOCUMENT_NODE: 9, DOCUMENT_TYPE_NODE: 10,
+      DOCUMENT_FRAGMENT_NODE: 11, NOTATION_NODE: 12,
+      DOCUMENT_POSITION_DISCONNECTED: 0x01, DOCUMENT_POSITION_PRECEDING: 0x02,
+      DOCUMENT_POSITION_FOLLOWING: 0x04, DOCUMENT_POSITION_CONTAINS: 0x08,
+      DOCUMENT_POSITION_CONTAINED_BY: 0x10,
+      DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 0x20,
+    });
+    defineConstants(Event, {
+      NONE: 0, CAPTURING_PHASE: 1, AT_TARGET: 2, BUBBLING_PHASE: 3,
+    });
+    defineConstants(Range, {
+      START_TO_START: 0, START_TO_END: 1, END_TO_END: 2, END_TO_START: 3,
+    });
+    defineConstants(XMLHttpRequest, {
+      UNSENT: 0, OPENED: 1, HEADERS_RECEIVED: 2, LOADING: 3, DONE: 4,
+    });
+    defineConstants(CSSRule, {
+      STYLE_RULE: 1, CHARSET_RULE: 2, IMPORT_RULE: 3, MEDIA_RULE: 4,
+      FONT_FACE_RULE: 5, PAGE_RULE: 6, MARGIN_RULE: 9, NAMESPACE_RULE: 10,
+      KEYFRAMES_RULE: 7, KEYFRAME_RULE: 8, SUPPORTS_RULE: 12,
+    });
+    // ── WebIDL member polish ─────────────────────────────────────────────
+    //
+    // Three properties of every interface member that idlharness checks and
+    // class syntax gets wrong: members are enumerable, accessor functions are
+    // named `get x`/`set x`, and an accessor reached on the prototype object
+    // itself throws TypeError instead of running against nothing. The
+    // reflection tables already emit all three; this pass brings the members
+    // written as plain class accessors and methods up to the same contract.
+    // Underscore names are internal machinery and stay out of enumeration.
+    const polish = (Interface) => {
+      const proto = Interface && Interface.prototype;
+      if (!proto) return;
+      for (const key of Object.getOwnPropertyNames(proto)) {
+        if (key === "constructor" || key.startsWith("_")) continue;
+        const desc = Object.getOwnPropertyDescriptor(proto, key);
+        if (!desc.configurable) continue;
+        desc.enumerable = true;
+        if (desc.get) {
+          const inner = desc.get;
+          desc.get = function () {
+            if (this === proto) {
+              throw new TypeError(`Illegal invocation: ${key} needs an instance`);
+            }
+            return inner.call(this);
+          };
+          Object.defineProperty(desc.get, "name", { value: `get ${key}` });
+        }
+        if (desc.set) {
+          const inner = desc.set;
+          desc.set = function (value) {
+            if (this === proto) {
+              throw new TypeError(`Illegal invocation: ${key} needs an instance`);
+            }
+            return inner.call(this, value);
+          };
+          Object.defineProperty(desc.set, "name", { value: `set ${key}` });
+        }
+        Object.defineProperty(proto, key, desc);
+      }
+    };
+    for (const Interface of [
+      EventTarget, Node, Element, Text, Comment, CharacterData,
+      DocumentFragment, Range, Event, XMLHttpRequest, CSSRule,
+      ...new Set(TAG_CLASSES.values()),
+    ]) {
+      polish(Interface);
+    }
+
+    defineConstants(DOMException, {
+      INDEX_SIZE_ERR: 1, DOMSTRING_SIZE_ERR: 2, HIERARCHY_REQUEST_ERR: 3,
+      WRONG_DOCUMENT_ERR: 4, INVALID_CHARACTER_ERR: 5, NO_DATA_ALLOWED_ERR: 6,
+      NO_MODIFICATION_ALLOWED_ERR: 7, NOT_FOUND_ERR: 8, NOT_SUPPORTED_ERR: 9,
+      INUSE_ATTRIBUTE_ERR: 10, INVALID_STATE_ERR: 11, SYNTAX_ERR: 12,
+      INVALID_MODIFICATION_ERR: 13, NAMESPACE_ERR: 14, INVALID_ACCESS_ERR: 15,
+      VALIDATION_ERR: 16, TYPE_MISMATCH_ERR: 17, SECURITY_ERR: 18,
+      NETWORK_ERR: 19, ABORT_ERR: 20, URL_MISMATCH_ERR: 21,
+      QUOTA_EXCEEDED_ERR: 22, TIMEOUT_ERR: 23, INVALID_NODE_TYPE_ERR: 24,
+      DATA_CLONE_ERR: 25,
+    });
   }
 
   Object.assign(globalThis, {

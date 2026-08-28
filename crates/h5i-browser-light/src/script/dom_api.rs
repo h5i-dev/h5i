@@ -746,6 +746,20 @@ fn set_inner_html(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let id = arg_id(args, 0, context)?;
     let html = arg_string(args, 1, context)?;
     let host = host(context)?;
+    // Refuse non-element targets *here*, because blitz's fragment parser
+    // panics on them. Reachable from a page: borrow the `innerHTML` setter
+    // off `Element.prototype` and `.call` it on a doctype wrapper — or just
+    // `Object.assign` one wrapper onto another now that members are
+    // enumerable — and one line of page script took the whole engine down.
+    {
+        let doc = host.dom.borrow();
+        let is_element = doc.get_node(id).map(|n| n.is_element()).unwrap_or(false);
+        if !is_element {
+            return Err(boa_engine::JsNativeError::typ()
+                .with_message("innerHTML: the target is not an element")
+                .into());
+        }
+    }
     guard_mutation(&host, "setting innerHTML", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
