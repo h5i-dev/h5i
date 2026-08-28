@@ -8662,6 +8662,39 @@ Everything else in the round is a spec table this engine had approximated:
 
     dom  2,672 -> 3,003
 
+### B22.3 The interface objects idlharness could never see
+
+The idlharness deep-dive found one structural cause wearing four failure
+shapes: **the per-tag classes were real and the globals were aliases.** The
+reflection table has minted a genuine `HTMLOptionElement` (prototype carrying
+`label`, `value`, the lot) since §B15's per-tag work — and §B20's
+interface-globals literal then *overwrote* every such name with the bare
+`Element` alias, because `Object.assign` last-write-wins and the literal came
+later. So `window.HTMLOptionElement.prototype` was empty while every actual
+option used an internal class no test could reach, and `instanceof
+HTMLOptionElement` was true for a `<div>`.
+
+The fix is one expression — the alias fills only names the per-tag block left
+— plus the WebIDL plumbing idlharness checks per attribute: **brand guards**
+(reading `HTMLElement.prototype.title` with the prototype as `this` throws
+TypeError instead of dereferencing an `_id` that is not there), **enumerable
+accessors** (WebIDL interface members are enumerable; class syntax defaults
+the other way), and **class strings** (`Object.prototype.toString` on a `<p>`
+says `[object HTMLParagraphElement]`).
+
+And one regression caught by the per-directory measure before it could land:
+deduping by interface *name* — §B20 had added `th`, `colgroup`, `thead`,
+`tfoot`, `del` and `q` as their own table entries, duplicating names the
+`SHARED` map already handled, so the loop minted **two distinct classes with
+one name**: elements constructed with one while the global was the other, and
+`col instanceof HTMLTableColElement` was false for a col whose
+`constructor.name` said otherwise. One class per name now, holding the union.
+
+    idlharness       2,493 -> 2,842 passing
+    html/dom         59,078 -> 59,435
+    html/semantics   5,999 -> 6,383
+    gate             290,137 -> 290,494, no regression
+
 
 ---
 

@@ -1187,6 +1187,9 @@
   }
 
   class Element extends Node {
+    // The class string for an element whose tag has no interface of its own.
+    // Per-tag prototypes override this with their real name.
+    get [Symbol.toStringTag]() { return "HTMLElement"; }
     get tagName() {
       // Uppercasing is an HTML-namespace privilege: `createElementNS`'s SVG
       // circle reports `circle`, and its prefixed name keeps the prefix.
@@ -2140,7 +2143,30 @@
             else if (value === null && options.nullAsEmpty) this.setAttribute(content, "");
             else this.setAttribute(content, String(value));
           };
-    Object.defineProperty(proto, idl, { configurable: true, get, set });
+    // WebIDL's brand check: reading `HTMLElement.prototype.title` — the
+    // accessor invoked with the prototype itself as `this` — throws TypeError
+    // rather than reaching for an `_id` the prototype does not have.
+    // idlharness probes exactly this on every attribute of every interface.
+    const guardedGet = function () {
+      if (!this || this._id === undefined) {
+        throw new TypeError(`Illegal invocation: ${idl} needs an element`);
+      }
+      return get.call(this);
+    };
+    const guardedSet = function (value) {
+      if (!this || this._id === undefined) {
+        throw new TypeError(`Illegal invocation: ${idl} needs an element`);
+      }
+      return set.call(this, value);
+    };
+    Object.defineProperty(proto, idl, {
+      configurable: true,
+      // WebIDL interface members are enumerable, which idlharness also
+      // checks; class syntax and defineProperty both default the other way.
+      enumerable: true,
+      get: guardedGet,
+      set: guardedSet,
+    });
   }
 
   // The attributes every HTML element carries. `hidden` and `tabIndex` were
@@ -2612,10 +2638,24 @@
   {
     const interfaces = {};
     for (const [tag, [name, attributes]] of Object.entries(REFLECTIONS)) {
-      const Interface = { [name]: class extends Element {} }[name];
+      // One class per interface *name*, however many tags share it. Two
+      // entries both declaring HTMLTableColElement used to mint two distinct
+      // classes — elements constructed with one while the global was the
+      // other, so `col instanceof HTMLTableColElement` was false for a col
+      // whose constructor.name said otherwise. The union of the two entries'
+      // attributes lands on the one prototype, which is also what the spec's
+      // single interface holds.
+      const Interface =
+        interfaces[name] ?? { [name]: class extends Element {} }[name];
       for (const [idl, content, type, options] of attributes) {
         reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
       }
+      // `Object.prototype.toString` on a `<p>` says `[object
+      // HTMLParagraphElement]`, and the class string comes from here.
+      Object.defineProperty(Interface.prototype, Symbol.toStringTag, {
+        configurable: true,
+        get() { return name; },
+      });
       interfaces[name] = Interface;
       TAG_CLASSES.set(tag, Interface);
     }
@@ -2642,12 +2682,33 @@
   // mechanisms.
   {
     const on = (tags, name, descriptor) => {
+      // Same brand rule as `reflect`: an accessor reached on the prototype
+      // itself throws rather than dereferencing an `_id` that is not there.
+      const guarded = { configurable: true, enumerable: true };
+      if (descriptor.get) {
+        guarded.get = function () {
+          if (!this || this._id === undefined) {
+            throw new TypeError(`Illegal invocation: ${name} needs an element`);
+          }
+          return descriptor.get.call(this);
+        };
+      }
+      if (descriptor.set) {
+        guarded.set = function (value) {
+          if (!this || this._id === undefined) {
+            throw new TypeError(`Illegal invocation: ${name} needs an element`);
+          }
+          return descriptor.set.call(this, value);
+        };
+      }
+      if ("value" in descriptor) {
+        guarded.value = descriptor.value;
+        guarded.writable = descriptor.writable ?? true;
+      }
       for (const tag of tags) {
         const Interface = TAG_CLASSES.get(tag);
         if (!Interface) continue;
-        Object.defineProperty(Interface.prototype, name, {
-          configurable: true, ...descriptor,
-        });
+        Object.defineProperty(Interface.prototype, name, guarded);
       }
     };
     const reflectOn = (tags, idl, content, type, options) => {
@@ -7791,6 +7852,15 @@
     // element" rather than "is this a button" — a coarser answer than a browser
     // gives, and a far better one than `ReferenceError`, which is what these
     // were and which took whole bundles down with them.
+    // **Fallback only.** The reflection table already exported real per-tag
+    // classes for most of these names, and this literal used to overwrite
+    // every one of them with the bare `Element` alias — so
+    // `HTMLOptionElement.prototype` was `Element.prototype`, empty of `label`
+    // and `value`, while the actual option elements used an internal class
+    // idlharness could never see. The clobber cost about 1,500 subtests in
+    // one file and, worse, made `instanceof HTMLOptionElement` true for a
+    // `<div>`. `globalThis[name]` is already the real class here because the
+    // per-tag block assigned first; the alias fills only the names it left.
     ...Object.fromEntries(
       [
         "Anchor", "Area", "Audio", "Base", "Body", "BR", "Button", "Canvas", "Data",
@@ -7801,7 +7871,10 @@
         "Progress", "Quote", "Script", "Select", "Slot", "Source", "Span", "Style",
         "Table", "TableCaption", "TableCell", "TableCol", "TableRow", "TableSection",
         "Template", "TextArea", "Time", "Title", "Track", "UList", "Unknown", "Video",
-      ].map((name) => [`HTML${name}Element`, Element]),
+      ].map((name) => [
+        `HTML${name}Element`,
+        globalThis[`HTML${name}Element`] ?? Element,
+      ]),
     ),
     SVGElement: Element,
     customElements, NodeFilter, NodeIterator, TreeWalker,
