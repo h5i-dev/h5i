@@ -1312,6 +1312,101 @@
       }
       return api.innerHtml(this._id);
     }
+    // ---- The popover API -------------------------------------------------
+    //
+    // A self-contained feature and the largest one missing: 3,846 unpassed
+    // subtests in `html/semantics/popovers` against 20 passing, because the
+    // `popover` attribute reflected and nothing acted on it.
+    //
+    // **What is real here and what is not.** The state machine, the
+    // exceptions, the event pair and the invoker wiring are all real: a page
+    // can open a popover, be told why it could not, and observe the same
+    // `beforetoggle`/`toggle` sequence a browser fires. What is missing is the
+    // *top layer* — this engine has no separate paint layer, so an open
+    // popover renders where it sits in the document rather than above
+    // everything else, and light-dismiss-on-outside-click has no hit testing
+    // to hang off. Those are rendering properties; the DOM contract is not,
+    // and it is the half a page scripts against.
+    _popoverState() {
+      const kind = this.popover;
+      return kind === null ? null : kind;
+    }
+    showPopover(options) {
+      const kind = this._popoverState();
+      if (kind === null) {
+        throw new DOMException(
+          "showPopover: this element has no `popover` attribute",
+          "NotSupportedError",
+        );
+      }
+      if (this.__h5iPopoverOpen) {
+        throw new DOMException("showPopover: already showing", "InvalidStateError");
+      }
+      if (!this.isConnected) {
+        throw new DOMException(
+          "showPopover: the element is not connected",
+          "InvalidStateError",
+        );
+      }
+      // `beforetoggle` is cancelable on the way *open* only, which is the
+      // asymmetry that lets a page veto a show and never a hide.
+      const before = new ToggleEvent("beforetoggle", {
+        cancelable: true, oldState: "closed", newState: "open",
+      });
+      this.dispatchEvent(before);
+      if (before.defaultPrevented) return;
+      // Re-checked after the handler: a `beforetoggle` listener may have
+      // removed the element or opened it itself, and acting on the state we
+      // read before running page script is how a double-open gets through.
+      if (this.__h5iPopoverOpen || !this.isConnected) return;
+      this.__h5iPopoverOpen = true;
+      // Auto popovers close their peers. Manual ones do not, which is the
+      // whole difference between the two keywords.
+      if (kind === "auto" || kind === "hint") {
+        for (const other of api.queryAll("[popover]", 0).map(wrap)) {
+          if (other && other !== this && other.__h5iPopoverOpen
+            && other.popover !== "manual") {
+            other.hidePopover();
+          }
+        }
+      }
+      this.dispatchEvent(new ToggleEvent("toggle", {
+        oldState: "closed", newState: "open",
+      }));
+      void options;
+    }
+    hidePopover() {
+      if (this._popoverState() === null) {
+        throw new DOMException(
+          "hidePopover: this element has no `popover` attribute",
+          "NotSupportedError",
+        );
+      }
+      if (!this.__h5iPopoverOpen) {
+        throw new DOMException("hidePopover: not showing", "InvalidStateError");
+      }
+      this.dispatchEvent(new ToggleEvent("beforetoggle", {
+        oldState: "open", newState: "closed",
+      }));
+      if (!this.__h5iPopoverOpen) return;
+      this.__h5iPopoverOpen = false;
+      this.dispatchEvent(new ToggleEvent("toggle", {
+        oldState: "open", newState: "closed",
+      }));
+    }
+    togglePopover(force) {
+      // `force` is a boolean *or* an options object, and both spellings are in
+      // use; the object form is what the current spec takes.
+      const wanted = force && typeof force === "object" ? force.force : force;
+      const open = !!this.__h5iPopoverOpen;
+      if (wanted === true || (wanted === undefined && !open)) {
+        if (!open) this.showPopover();
+      } else if (wanted === false || wanted === undefined) {
+        if (open) this.hidePopover();
+      }
+      return !!this.__h5iPopoverOpen;
+    }
+
     get outerHTML() { return api.outerHtml(this._id); }
     set outerHTML(html) {
       // Replacing an element with its own markup, which is how a component
@@ -1435,8 +1530,41 @@
         dispatch(this, new Event("change", { bubbles: true }));
         return;
       }
-      dispatch(this, new MouseEvent("click", { bubbles: true }));
+      // An invoker acts *after* its click, and only if the click was not
+      // cancelled: `preventDefault()` suppressing the default activation
+      // behaviour is the whole reason this is here rather than inside the
+      // dispatch. The event has to be held to be asked.
+      const activation = new MouseEvent("click", { bubbles: true, cancelable: true });
+      dispatch(this, activation);
+      if (!activation.defaultPrevented) this._runPopoverInvoker();
     }
+
+    /// Activation behaviour for `popovertarget`, which is what makes the
+    /// attribute do anything at all.
+    ///
+    /// Kept off the dispatch path deliberately: it runs after `click` has been
+    /// delivered, so a listener that calls `preventDefault()` suppresses it,
+    /// exactly as a browser's default activation behaviour works.
+    _runPopoverInvoker() {
+      if (this.tagName !== "BUTTON" && this.tagName !== "INPUT") return;
+      const target = this.popoverTargetElement;
+      if (!target || typeof target.togglePopover !== "function") return;
+      if (target.popover === null || target.popover === undefined) return;
+      const action = this.popoverTargetAction;
+      try {
+        if (action === "show") {
+          if (!target.__h5iPopoverOpen) target.showPopover();
+        } else if (action === "hide") {
+          if (target.__h5iPopoverOpen) target.hidePopover();
+        } else {
+          target.togglePopover();
+        }
+      } catch {
+        // An invoker aiming at something that cannot be opened is a no-op in a
+        // browser, not an exception thrown out of a click handler.
+      }
+    }
+
     /// Move focus here, and fire what a browser fires.
     ///
     /// Both were empty, so `document.activeElement` never moved: a page that
@@ -1839,8 +1967,18 @@
   reflect(Element.prototype, "enterKeyHint", "enterkeyhint", "enumerated", {
     keywords: ["enter", "done", "go", "next", "previous", "search", "send"],
   });
+  // Nullable, and three keywords rather than two: an element with no `popover`
+  // attribute reports `null`, which is how a page asks "is this a popover at
+  // all" — reporting "" made every element look like one.
   reflect(Element.prototype, "popover", "popover", "enumerated", {
-    keywords: ["auto", "manual"], invalid: "manual",
+    keywords: ["auto", "manual", "hint"],
+    missing: null,
+    invalid: "manual",
+    // `<div popover>` is the common spelling and its value is the empty
+    // string, which maps to the *auto* state. Without the alias it fell
+    // through to `invalid` and every bare popover reported "manual" — the
+    // one state that does not close its peers, so they all stacked up.
+    aliases: { "": "auto" },
   });
 
   // ARIA, which reflects mechanically: every one of these is `aria-` followed
@@ -2350,6 +2488,95 @@
     // which is why it is reflected separately as `defaultChecked` — writing to
     // it here made `getAttribute("checked")` change under a page that never
     // touched the markup, and made a box the user unticked look ticked still.
+    // The popover invoker pair, on the two elements that can be one.
+    //
+    // `popoverTargetElement` is not a reflection: it is an *element* reference
+    // resolved from the `popovertarget` attribute's id, and it is also
+    // settable directly — a page may hand it an element that has no id at all.
+    // That second half is why it needs its own storage rather than reading the
+    // attribute every time.
+    for (const tag of ["button", "input"]) {
+      on([tag], "popoverTargetElement", {
+        get() {
+          if (this.__h5iPopoverTarget !== undefined) return this.__h5iPopoverTarget;
+          const id = api.getAttr(this._id, "popovertarget");
+          if (id === null) return null;
+          return document.getElementById(id);
+        },
+        set(value) {
+          // Assigning an element detaches this from the attribute, which is
+          // what the spec means by the two being separate: the attribute stays
+          // whatever it was and the property wins.
+          this.__h5iPopoverTarget = value ?? null;
+        },
+      });
+      on([tag], "popoverTargetAction", {
+        get() {
+          const raw = (api.getAttr(this._id, "popovertargetaction") || "").toLowerCase();
+          return raw === "show" || raw === "hide" ? raw : "toggle";
+        },
+        set(value) { this.setAttribute("popovertargetaction", String(value)); },
+      });
+    }
+
+    // ---- `<dialog>` --------------------------------------------------------
+    //
+    // `open` reflected and nothing could change it: `show()`, `showModal()`
+    // and `close()` were all absent, so a dialog could be described and never
+    // opened. As with popovers the state machine and the events are real and
+    // the *modality* is not — there is no top layer and no inert subtree, so a
+    // modal dialog here does not block the page behind it. That difference is
+    // about rendering and focus, and the API contract a page scripts against
+    // is not.
+    on(["dialog"], "returnValue", {
+      get() { return this.__h5iReturnValue ?? ""; },
+      set(value) { this.__h5iReturnValue = String(value); },
+    });
+    for (const [name, modal] of [["show", false], ["showModal", true]]) {
+      Object.defineProperty(Element.prototype, name, {
+        configurable: true,
+        writable: true,
+        value: function () {
+          if (this.tagName !== "DIALOG") {
+            throw new TypeError(`${name} is only defined on <dialog>`);
+          }
+          if (this.hasAttribute("open")) {
+            // Re-showing an already-open dialog is a no-op for `show()` and an
+            // error for `showModal()`, which is the one asymmetry here.
+            if (!modal) return;
+            throw new DOMException(
+              "showModal: the dialog is already open",
+              "InvalidStateError",
+            );
+          }
+          if (modal && !this.isConnected) {
+            throw new DOMException(
+              "showModal: the dialog is not connected",
+              "InvalidStateError",
+            );
+          }
+          this.setAttribute("open", "");
+          this.__h5iModal = modal;
+        },
+      });
+    }
+    Object.defineProperty(Element.prototype, "close", {
+      configurable: true,
+      writable: true,
+      value: function (returnValue) {
+        if (this.tagName !== "DIALOG") {
+          throw new TypeError("close is only defined on <dialog>");
+        }
+        if (!this.hasAttribute("open")) return;
+        if (returnValue !== undefined) this.__h5iReturnValue = String(returnValue);
+        this.removeAttribute("open");
+        this.__h5iModal = false;
+        // `close` does not bubble, which is what a page delegating from an
+        // ancestor has to know and what makes this worth getting right.
+        this.dispatchEvent(new Event("close"));
+      },
+    });
+
     on(["input"], "checked", {
       get() {
         if (this._checked !== undefined) return this._checked;

@@ -2563,6 +2563,123 @@ fn scripted_text(body: &str) -> (String, Vec<crate::script::host::ConsoleLine>) 
 }
 
 #[test]
+fn a_popover_opens_closes_and_says_why_it_cannot() {
+    // The largest self-contained feature that was missing: `popover` reflected
+    // and nothing acted on it, so 3,846 subtests failed against 20 passing.
+    let (text, console) = scripted_text(
+        r#"<div id="pop" popover>hi</div><div id="plain">no</div>
+           <script>
+             const p = document.getElementById("pop");
+             const out = [];
+             out.push(String(p.popover));
+             out.push(String(document.getElementById("plain").popover));
+             p.showPopover();
+             out.push(p.matches("[popover]"));
+             try { p.showPopover(); out.push("second-show-allowed"); }
+             catch (e) { out.push(e.name); }
+             p.hidePopover();
+             try { p.hidePopover(); out.push("second-hide-allowed"); }
+             catch (e) { out.push(e.name); }
+             try { document.getElementById("plain").showPopover(); out.push("no-attr-allowed"); }
+             catch (e) { out.push(e.name); }
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("auto|null|true|InvalidStateError|InvalidStateError|NotSupportedError"),
+        "popover state machine is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_popover_fires_beforetoggle_then_toggle_and_a_veto_stops_it() {
+    // The event pair is the half a page scripts against, and `beforetoggle`
+    // being cancelable *only* on the way open is the asymmetry that lets a page
+    // veto a show and never a hide.
+    let (text, console) = scripted_text(
+        r#"<div id="pop" popover>hi</div>
+           <script>
+             const p = document.getElementById("pop");
+             const seen = [];
+             p.addEventListener("beforetoggle", (e) => seen.push("before:" + e.oldState + ">" + e.newState));
+             p.addEventListener("toggle", (e) => seen.push("toggle:" + e.oldState + ">" + e.newState));
+             p.showPopover();
+             p.hidePopover();
+             p.addEventListener("beforetoggle", (e) => e.preventDefault(), { once: true });
+             p.showPopover();
+             seen.push("openAfterVeto:" + p.matches("[popover]"));
+             document.getElementById("out").textContent = seen.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("before:closed>open|toggle:closed>open|before:open>closed|toggle:open>closed"),
+        "the toggle event sequence is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_popovertarget_button_toggles_its_popover_unless_the_click_is_cancelled() {
+    // The invoker, and why it runs *after* the click rather than inside the
+    // dispatch: a handler calling `preventDefault()` suppresses the default
+    // activation behaviour, exactly as it does in a browser.
+    let (text, console) = scripted_text(
+        r#"<button id="b" popovertarget="pop">open</button>
+           <div id="pop" popover>hi</div>
+           <button id="c" popovertarget="pop">also</button>
+           <script>
+             const b = document.getElementById("b");
+             const pop = document.getElementById("pop");
+             const out = [];
+             out.push(b.popoverTargetElement === pop);
+             out.push(b.popoverTargetAction);
+             let open = 0;
+             pop.addEventListener("toggle", (e) => { if (e.newState === "open") open++; });
+             b.click();
+             out.push("opened:" + open);
+             b.click();
+             out.push("afterSecond:" + open);
+             document.getElementById("c").addEventListener("click", (e) => e.preventDefault());
+             document.getElementById("c").click();
+             out.push("afterCancelled:" + open);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("true|toggle|opened:1|afterSecond:1|afterCancelled:1"),
+        "the invoker did not behave:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_dialog_opens_closes_and_carries_its_return_value() {
+    // `open` reflected and nothing could change it, so a dialog could be
+    // described and never opened.
+    let (text, console) = scripted_text(
+        r#"<dialog id="d">hi</dialog>
+           <script>
+             const d = document.getElementById("d");
+             const out = [];
+             let closed = 0;
+             d.addEventListener("close", () => closed++);
+             out.push(d.open);
+             d.showModal();
+             out.push(d.open);
+             try { d.showModal(); out.push("reopen-allowed"); }
+             catch (e) { out.push(e.name); }
+             d.close("done");
+             out.push(d.open, d.returnValue, "close:" + closed);
+             d.close();
+             out.push("closeAgain:" + closed);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("false|true|InvalidStateError|false|done|close:1|closeAgain:1"),
+        "the dialog state machine is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
 fn an_interface_object_answers_what_a_value_is_rather_than_throwing() {
     // §B8.4 refuses a name that exists and answers wrongly, and that rule is
     // about *feature detection*. This is the other case: a page writing

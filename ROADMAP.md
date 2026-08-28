@@ -8152,7 +8152,92 @@ a different engine and a different corpus, and it will attribute someone else's
 work — in either direction — to yours. Every number in this section is against
 a freshly measured baseline for that reason.
 
-### B20.10 Where core stands, and what is left
+### B20.10 The second pass: types, names, and two features that were declared and never acted on
+
+Four more rounds, each found the same way — read what the failures say, fix the
+cause rather than the file.
+
+**The reflection *type system*, which is per-element and therefore never
+small.** Four bugs, all of them repeating on every element in every
+`reflection-*.html`:
+
+* **`-0`.** `Number("-0")` is negative zero, an IDL long is an integer, and
+  testharness compares with `Object.is` semantics — so `tabindex="-0"` failed
+  `assert_equals(0)` everywhere. `tabIndex` has its own parser and needed the
+  same fix twice.
+* **Out of the 32-bit range is "not a valid integer"**, not a large number.
+* **`[LegacyNullToEmptyString]`** on the legacy colour attributes: `bgColor =
+  null` writes `""`. Marked per attribute, because everywhere else `null`
+  really does stringify.
+* **`action`/`formAction` answer with the document's address** when unset. A
+  form whose action reads `""` submits somewhere different from one that reads
+  the page's URL.
+
+Plus nine element interfaces the table never had — meter, progress, iframe,
+del, q, th, thead, tfoot, colgroup — where `ins` was present and `del` was not,
+`td` was present and `th` was not. A missing entry is not one attribute
+missing; it is every attribute of that element failing at once.
+
+    html/dom  56,241 -> 57,080
+
+**Custom element names, and two wrong turns worth more than the fix.**
+`define` enforced one rule of eight. Implementing the rest took
+`valid-custom-element-names.html` from 222 of 1,975 to **1,975 of 1,975** — but
+only after two mistakes:
+
+1. The first implementation used `PotentialCustomElementNameChar`, which is
+   the **superseded** production. whatwg/html#7991 replaced it with "a valid
+   element local name", which *excludes* rather than includes. So the old rule
+   rejected names that are now legal, and failed the file in the opposite
+   direction from the one it was written to fix. **Implementing from memory of
+   a spec is implementing a spec that may have moved.**
+2. `whenDefined` did not validate. Once `define` threw correctly, the test
+   reached `await promise_rejects_dom(t, 'SyntaxError', whenDefined(bad))` and
+   hung there — taking all 5,900 subtests with it, and turning a +1,753 into a
+   -222 until it was found. **A promise that never settles is the worst of the
+   three answers**: a caller cannot tell it from a component that has not
+   loaded, so it waits out its own timeout instead of handling an error it
+   could have handled at once.
+
+**Popovers and `<dialog>`: declared and never acted on.**
+`html/semantics/popovers` was 3,846 unpassed against 20 passing, and the reason
+was not that the feature is large: the `popover` attribute *reflected*, and
+nothing anywhere did anything with it. `<dialog>` was the same shape — `open`
+reflected, and `show`, `showModal` and `close` were all absent, so a dialog
+could be described and never opened.
+
+Both are now real as far as the DOM goes: the state machine, the exceptions,
+the `beforetoggle`/`toggle` pair with its cancel-on-open-only asymmetry, the
+`popovertarget` invoker, `returnValue`. What is deliberately not real is the
+**top layer** — this engine has no separate paint layer, so an open popover
+renders where it sits and a modal dialog does not block the page behind it.
+That is a rendering property; the API contract a page scripts against is not,
+and the two halves are worth separating rather than refusing the feature whole.
+
+Three things fell out of building it that the tests would not have said
+directly:
+
+* `<div popover>` has the value `""`, which maps to the **auto** state. Without
+  the alias it fell through to `invalid` and every bare popover reported
+  `"manual"` — the one state that does *not* close its peers, so they stacked.
+* `popover` is **nullable**: an element without the attribute reports `null`,
+  which is how a page asks "is this a popover at all". Reporting `""` made
+  every element look like one.
+* An invoker runs **after** the click and only if it was not cancelled, so the
+  click event has to be held and asked. Dispatching and discarding it made
+  `preventDefault()` in a handler do nothing.
+
+**URL and body plumbing.** `new URLSearchParams(otherParams)` walked the
+object's own keys, copied the internal `_pairs` field, and serialised as
+`_pairs=a%2Cb` — a params object emitting its own implementation. It takes any
+iterable of pairs now, plus `sort()`, `size`, proper form-urlencoded output
+(`+` for space and the escapes `encodeURIComponent` leaves alone), the
+`URL.parse`/`canParse` statics, and `formData`/`arrayBuffer`/`blob` on both
+`Request` and `Response`.
+
+    url  68 -> 148 of 499
+
+### B20.11 Where core stands, and what is left
 
 Core moved 49.7% -> roughly 59%, almost all of it §B20.3. The remaining
 distance to 80% is about +25,000 subtests, and the ranked demand list (§B20.4)
