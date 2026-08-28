@@ -1482,24 +1482,28 @@
   // its setter — which is the bug this table was written to end: in a module,
   // which is strict, assigning to a getter-only property *throws*, and a
   // classic-script test cannot see it because sloppy mode swallows it.
+  /// The content attributes every element reflects, because they are global.
+  ///
+  /// It used to hold twelve more, and they were not global: `htmlFor`, `rel`,
+  /// `target`, `charset`, `crossOrigin` and the rest belong to particular
+  /// interfaces, and defining them here put them on *every* element. A page
+  /// asking `"htmlFor" in element` — which is how the platform is feature
+  /// detected, and what WPT's reflection helper gates on — was told yes for
+  /// `<div>`, `<button>`, and everything else.
+  ///
+  /// That is not a cosmetic wrong answer. The helper takes it as licence to
+  /// test a property the element should not have, so one file went from 209
+  /// subtests passing to 330 failing: the engine had claimed a surface it does
+  /// not implement, and was then measured against it.
+  ///
+  /// The interface table below is the right owner for the rest, and already
+  /// declared all but three of them. `dir`, `slot` and `accessKey` stay because
+  /// they really do belong to every element.
   const REFLECTED_ATTRIBUTES = {
     dir: "dir",
-    rel: "rel",
     slot: "slot",
-    crossOrigin: "crossorigin",
-    integrity: "integrity",
-    referrerPolicy: "referrerpolicy",
     accessKey: "accesskey",
-    placeholder: "placeholder",
-    htmlFor: "for",
-    target: "target",
-    media: "media",
-    charset: "charset",
-    loading: "loading",
-    decoding: "decoding",
-    autocomplete: "autocomplete",
-  };
-  for (const [property, attribute] of Object.entries(REFLECTED_ATTRIBUTES)) {
+  };  for (const [property, attribute] of Object.entries(REFLECTED_ATTRIBUTES)) {
     Object.defineProperty(Element.prototype, property, {
       configurable: true,
       get() { return api.getAttr(this._id, attribute) || ""; },
@@ -1761,7 +1765,7 @@
     area: ["HTMLAreaElement", [
       ["coords", "coords"], ["download", "download"], ["ping", "ping"],
       ["rel", "rel"], ["shape", "shape"], ["target", "target"],
-      ["noHref", "nohref", "bool"],
+      ["noHref", "nohref", "bool"], ["referrerPolicy", "referrerpolicy"],
     ]],
     img: ["HTMLImageElement", [
       ["srcset", "srcset"], ["sizes", "sizes"], ["useMap", "usemap"],
@@ -1770,6 +1774,7 @@
       ["width", "width", "ulong"], ["height", "height", "ulong"],
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
       ["decoding", "decoding"], ["loading", "loading"],
+      ["crossOrigin", "crossorigin"], ["referrerPolicy", "referrerpolicy"],
     ]],
     embed: ["HTMLEmbedElement", [
       ["width", "width"], ["height", "height"], ["align", "align"],
@@ -1787,13 +1792,14 @@
       ["poster", "poster", "url"], ["preload", "preload"],
       ["autoplay", "autoplay", "bool"], ["loop", "loop", "bool"],
       ["controls", "controls", "bool"], ["defaultMuted", "muted", "bool"],
+      ["crossOrigin", "crossorigin"],
       ["playsInline", "playsinline", "bool"],
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     audio: ["HTMLAudioElement", [
       ["preload", "preload"], ["autoplay", "autoplay", "bool"],
       ["loop", "loop", "bool"], ["controls", "controls", "bool"],
-      ["defaultMuted", "muted", "bool"],
+      ["defaultMuted", "muted", "bool"], ["crossOrigin", "crossorigin"],
     ]],
     source: ["HTMLSourceElement", [
       ["srcset", "srcset"], ["sizes", "sizes"], ["media", "media"],
@@ -1891,6 +1897,7 @@
       ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
       ["defer", "defer", "bool"], ["integrity", "integrity"],
       ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
+      ["crossOrigin", "crossorigin"], ["referrerPolicy", "referrerpolicy"],
     ]],
     marquee: ["HTMLMarqueeElement", [
       ["behavior", "behavior"], ["bgColor", "bgcolor"],
@@ -2637,9 +2644,34 @@
   /// `querySelector("!!!")` throws `SyntaxError` in a browser and returned
   /// `null` here — the same answer as "no such element", so a page with a typo
   /// took its not-found branch and never learned why.
+  /// The selectors this engine cannot parse but which are not the page's fault.
+  ///
+  /// `:has()` is the whole list today. Stylo's servo selector parser answers
+  /// `parse_has() -> false` and it is hardcoded, not a preference, so `:has()`
+  /// has never parsed here — in a stylesheet or in `querySelector`. That is a
+  /// missing feature, and the throw below is right either way: an unsupported
+  /// pseudo-class makes a selector invalid, and a browser without `:has()`
+  /// throws too.
+  ///
+  /// What was wrong was the sentence. "`.x:has(.y)` is not a valid selector"
+  /// is false — it is a valid selector, and it is 2026. Someone reading that
+  /// goes looking for a typo they will not find, which is the most expensive
+  /// thing a diagnostic can do. Naming it as unsupported also files it through
+  /// `api.unsupported`, so it appears in the counted gaps beside every other
+  /// feature this engine does not have rather than hiding inside a parse error.
+  const UNSUPPORTED_SELECTOR = /(^|[^\\w-])::?has\s*\(/i;
+
   function checkSelector(selector) {
     const text = String(selector);
     if (!api.validSelector(text)) {
+      if (UNSUPPORTED_SELECTOR.test(text)) {
+        api.unsupported("selector :has()");
+        throw new DOMException(
+          `${text} uses :has(), which this engine does not support yet. ` +
+            "It is a valid selector; the engine is the limitation.",
+          "SyntaxError",
+        );
+      }
       throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
     }
     return text;

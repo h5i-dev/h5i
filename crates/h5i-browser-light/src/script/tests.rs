@@ -265,6 +265,75 @@ fn the_document_lifecycle_fires() {
 }
 
 #[test]
+fn a_reflected_property_belongs_to_its_interface_and_not_to_every_element() {
+    // `"htmlFor" in element` is how the platform is feature detected, and it
+    // was answering yes for every element: the reflection table was applied to
+    // `Element.prototype` rather than to the interfaces that own each
+    // attribute. WPT's reflection helper gates on exactly this expression, took
+    // the yes as licence to test a property `<button>` does not have, and one
+    // file went from 209 subtests passing to 330 failing — the engine claimed a
+    // surface it does not implement and was measured against it.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    for (tag, property, expected) in [
+        ("label", "htmlFor", "true"),
+        ("output", "htmlFor", "true"),
+        ("button", "htmlFor", "false"),
+        ("div", "htmlFor", "false"),
+        ("a", "rel", "true"),
+        ("div", "rel", "false"),
+        ("img", "crossOrigin", "true"),
+        ("div", "crossOrigin", "false"),
+        ("div", "dir", "true"),
+    ] {
+        let asked = format!("String('{property}' in document.createElement('{tag}'))");
+        assert_eq!(
+            script.eval_value(&asked).unwrap(),
+            expected,
+            "'{property}' in <{tag}>"
+        );
+    }
+}
+
+#[test]
+fn an_unsupported_selector_is_not_reported_as_an_invalid_one() {
+    // `:has()` does not parse here — stylo's servo selector parser answers
+    // `parse_has() -> false` and it is hardcoded — and throwing is right: an
+    // unsupported pseudo-class makes a selector invalid, and a browser without
+    // `:has()` throws too.
+    //
+    // The sentence was the wrong part. "`.x:has(.y)` is not a valid selector"
+    // is false, and it sends whoever reads it looking for a typo that is not
+    // there. A selector this engine merely lacks says so.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    let message = script
+        .eval_value(
+            "(() => { try { document.querySelector('.x:has(.y)'); return 'accepted' } \
+             catch (e) { return e.message } })()",
+        )
+        .unwrap();
+    assert!(
+        message.contains(":has()") && message.contains("does not support"),
+        "names the missing feature: {message}"
+    );
+    assert!(
+        !message.contains("is not a valid selector"),
+        "and does not call a valid selector invalid: {message}"
+    );
+
+    // A selector that really is malformed still gets the plain answer.
+    let broken = script
+        .eval_value(
+            "(() => { try { document.querySelector('!!!'); return 'accepted' } \
+             catch (e) { return e.message } })()",
+        )
+        .unwrap();
+    assert!(
+        broken.contains("is not a valid selector"),
+        "a typo is still a typo: {broken}"
+    );
+}
+
+#[test]
 fn the_window_runs_the_handler_assigned_to_its_onload_property() {
     // `window.onload = fn` read back as a function and never ran. The `on*`
     // accessors were installed on `Element.prototype`, and the window is not an
