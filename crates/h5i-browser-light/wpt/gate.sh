@@ -17,8 +17,8 @@ JOBS="${JOBS:-4}"
 TIMEOUT="${TIMEOUT:-30}"
 OUT="${OUT:-wpt/gate-results}"
 
-if [ ! -x "../../target/release/h5i-browser-light" ]; then
-  echo "no release binary; cargo build --release -p h5i-browser-light" >&2
+if [ ! -x "../../target/release/h5i" ]; then
+  echo "no release binary; cargo build --release -p h5i" >&2
   exit 1
 fi
 

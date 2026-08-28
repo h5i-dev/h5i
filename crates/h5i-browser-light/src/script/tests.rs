@@ -265,6 +265,200 @@ fn the_document_lifecycle_fires() {
 }
 
 #[test]
+fn a_reflected_property_belongs_to_its_interface_and_not_to_every_element() {
+    // `"htmlFor" in element` is how the platform is feature detected, and it
+    // was answering yes for every element: the reflection table was applied to
+    // `Element.prototype` rather than to the interfaces that own each
+    // attribute. WPT's reflection helper gates on exactly this expression, took
+    // the yes as licence to test a property `<button>` does not have, and one
+    // file went from 209 subtests passing to 330 failing — the engine claimed a
+    // surface it does not implement and was measured against it.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    for (tag, property, expected) in [
+        ("label", "htmlFor", "true"),
+        ("output", "htmlFor", "true"),
+        ("button", "htmlFor", "false"),
+        ("div", "htmlFor", "false"),
+        ("a", "rel", "true"),
+        ("div", "rel", "false"),
+        ("img", "crossOrigin", "true"),
+        ("div", "crossOrigin", "false"),
+        ("div", "dir", "true"),
+    ] {
+        let asked = format!("String('{property}' in document.createElement('{tag}'))");
+        assert_eq!(
+            script.eval_value(&asked).unwrap(),
+            expected,
+            "'{property}' in <{tag}>"
+        );
+    }
+}
+
+#[test]
+fn an_unsupported_selector_is_not_reported_as_an_invalid_one() {
+    // `:has()` does not parse here — stylo's servo selector parser answers
+    // `parse_has() -> false` and it is hardcoded — and throwing is right: an
+    // unsupported pseudo-class makes a selector invalid, and a browser without
+    // `:has()` throws too.
+    //
+    // The sentence was the wrong part. "`.x:has(.y)` is not a valid selector"
+    // is false, and it sends whoever reads it looking for a typo that is not
+    // there. A selector this engine merely lacks says so.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    let message = script
+        .eval_value(
+            "(() => { try { document.querySelector('.x:has(.y)'); return 'accepted' } \
+             catch (e) { return e.message } })()",
+        )
+        .unwrap();
+    assert!(
+        message.contains(":has()") && message.contains("does not support"),
+        "names the missing feature: {message}"
+    );
+    assert!(
+        !message.contains("is not a valid selector"),
+        "and does not call a valid selector invalid: {message}"
+    );
+
+    // Every shape of what precedes `:has`, because the first version of this
+    // guard excluded word characters before the colon — which is exactly what a
+    // tag or class name is. `.row:has(.y)` was told it was malformed.
+    for selector in [".w:has(.y)", "div:has(.y)", ".row:has(.y)", "a:has(img)"] {
+        let asked = format!(
+            "(() => {{ try {{ document.querySelector('{selector}'); return 'accepted' }} \
+             catch (e) {{ return e.message }} }})()"
+        );
+        let said = script.eval_value(&asked).unwrap();
+        assert!(
+            said.contains("does not support"),
+            "{selector} names the missing feature: {said}"
+        );
+    }
+
+    // A selector that really is malformed still gets the plain answer.
+    let broken = script
+        .eval_value(
+            "(() => { try { document.querySelector('!!!'); return 'accepted' } \
+             catch (e) { return e.message } })()",
+        )
+        .unwrap();
+    assert!(
+        broken.contains("is not a valid selector"),
+        "a typo is still a typo: {broken}"
+    );
+}
+
+#[test]
+fn the_window_runs_the_handler_assigned_to_its_onload_property() {
+    // `window.onload = fn` read back as a function and never ran. The `on*`
+    // accessors were installed on `Element.prototype`, and the window is not an
+    // element, so the assignment landed on an ordinary expando — correct on
+    // inspection, inert in practice, which is the reason it survived four
+    // corpora and 7,684 timing-out WPT files.
+    let (page, _broker) = run_page(
+        "<html><body><div id='out'></div><script>\
+         window.onload = () => { document.getElementById('out').textContent = 'window.onload ran' };\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("window.onload ran"),
+        "the property handler fired on load:\n{rendered}"
+    );
+}
+
+#[test]
+fn assigning_the_same_window_handler_twice_leaves_one_handler() {
+    // What separates an `on*` property from `addEventListener`: the second
+    // assignment replaces the first rather than joining it.
+    let (page, _broker) = run_page(
+        "<html><body><div id='out'></div><script>\
+         globalThis.hits = 0;\
+         window.onload = () => { hits++ };\
+         window.onload = () => { hits++; document.getElementById('out').textContent = 'hits=' + hits };\
+         </script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("hits=1"), "one handler, not two:\n{rendered}");
+}
+
+#[test]
+fn body_onload_is_the_windows_load_handler() {
+    // `<body onload>` is forwarded to the window by the spec, and the
+    // difference is not cosmetic: `load` is fired *at* the window, so a handler
+    // left on the body element sits through the one event it exists for.
+    //
+    // This is the shape most of WPT's timeout bucket had — a file whose entire
+    // test is `<body onload="run()">` loaded, registered nothing, and was
+    // scored as an engine that ran it and found nothing to say.
+    let (page, _broker) = run_page(
+        "<html><body onload=\"document.getElementById('out').textContent = 'body onload ran'\">\
+         <div id='out'></div></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("body onload ran"),
+        "the content attribute was compiled and fired:\n{rendered}"
+    );
+}
+
+#[test]
+fn an_inline_handler_attribute_runs_with_the_element_as_this() {
+    // The attribute value is a function *body* taking `event`, not an
+    // expression, and it runs with the element as `this`. Both halves are load
+    // bearing: `this.id` is how half of these handlers find what they act on.
+    let (page, _broker) = run_page(
+        "<html><body><button id='b' onclick=\"this.textContent = 'clicked ' + this.id + ' ' + event.type\">b</button>\
+         <script>addEventListener('load', () => document.getElementById('b').click());</script>\
+         </body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("clicked b click"),
+        "`this` is the element and `event` is in scope:\n{rendered}"
+    );
+}
+
+#[test]
+fn an_inline_handler_arriving_after_load_is_compiled_too() {
+    // The lifecycle sweep has been and gone by the time a page writes markup,
+    // so `innerHTML` and `setAttribute` have to compile what they introduce or
+    // handlers work only when they were in the original document.
+    let (page, _broker) = run_page(
+        "<html><body><div id='host'></div><div id='out'></div><script>\
+         addEventListener('load', () => {\
+           document.getElementById('host').innerHTML =\
+             '<button id=\\'late\\' onclick=\\'document.getElementById(\\\"out\\\").textContent = \\\"late ran\\\"\\'>x</button>';\
+           document.getElementById('late').click();\
+         });</script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("late ran"),
+        "markup written after load carries live handlers:\n{rendered}"
+    );
+}
+
+#[test]
+fn a_handler_attribute_that_does_not_compile_is_reported_not_fatal() {
+    // A syntax error in one handler is the page's bug. A browser reports it and
+    // carries on; taking the document down over it would be this engine
+    // inventing a failure the page does not have.
+    let (page, _broker) = run_page(
+        "<html><body><button id='b' onclick='(((' >b</button>\
+         <div id='out'></div>\
+         <script>addEventListener('load', () => {\
+           document.getElementById('out').textContent = 'document still ran';\
+         });</script></body></html>",
+    );
+    let rendered = page.snapshot().render();
+    assert!(
+        rendered.contains("document still ran"),
+        "the rest of the page is unaffected:\n{rendered}"
+    );
+}
+
+#[test]
 fn an_element_id_becomes_a_global_without_shadowing_one() {
     // "target is not defined" was the single largest cause of files that could
     // report nothing at all: a ReferenceError on line one ends a file before it
