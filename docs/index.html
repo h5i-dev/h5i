@@ -421,14 +421,12 @@
       <div class="feat-card">
         <div class="feat-name">A complete session history</div>
         <div class="feat-desc">Browser actions, network requests, blocked connections, human takeovers,
-          crashes, and how the session ended are kept in one timeline. Failed sessions are never silently
-          restarted.</div>
+          crashes, and how the session ended are kept in one timeline.</div>
       </div>
       <div class="feat-card">
         <div class="feat-name">Human control for sensitive steps</div>
         <div class="feat-desc">Take control for logins, payments, or approvals, then hand the session back
-          to the agent. Credentials are entered or substituted without being returned to the model, and the
-          agent continues with the authenticated session.</div>
+          to the agent. Credentials are entered or substituted without being returned to the model.</div>
       </div>
     </div>
   </div>
@@ -439,12 +437,11 @@
   <div class="container">
     <div class="section-head">
       <span class="section-tag">The box</span>
-      <h2 class="section-title">The sandbox the session can be placed in.</h2>
-      <p class="section-sub">A box is a disposable boundary that holds a workspace, a shell, dependencies, a
-        dev server and, when you ask for it, the browser session itself. It is what makes an agent building a
-        web app and then browsing it a single contained thing rather than two hopeful ones. Reach for it when
-        the agent is running code you did not write, or when you want the network record to have a witness
-        outside the browser.</p>
+      <h2 class="section-title">Sandbox the browser, or the entire agent workflow.</h2>
+      <p class="section-sub">Run only the browser in a sandbox, or isolate the agent, source code,
+        dependencies, development server, and browser together. This lets agents build and test web apps
+        while limiting access to your host files, credentials, and network. Choose lightweight process
+        isolation, a container, or a microVM without changing the browser commands.</p>
     </div>
   </div>
 </section>
