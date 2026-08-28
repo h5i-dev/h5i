@@ -237,7 +237,7 @@ receives a private, one-time copy of approved HOME state.
 <summary>What is h5i?</summary>
 
 h5i is a fast, lightweight browser for AI agents, with built-in auditing and
-optional sandboxing. It runs locally and is open source.
+configurable sandboxing. It runs locally and is open source.
 
 </details>
 
