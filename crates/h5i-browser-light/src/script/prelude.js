@@ -196,6 +196,89 @@
     for (const found of collectCustom(node)) fireConnected(found);
   }
 
+  /// HTML's JavaScript MIME type essence list — the exact sixteen. Note what
+  /// is missing: `javascript1.6` and `1.7` never made the standard, and the
+  /// WPT type/language files assert both directions of that history.
+  const JS_MIME_TYPES = new Set([
+    "application/ecmascript", "application/javascript",
+    "application/x-ecmascript", "application/x-javascript",
+    "text/ecmascript", "text/javascript", "text/javascript1.0",
+    "text/javascript1.1", "text/javascript1.2", "text/javascript1.3",
+    "text/javascript1.4", "text/javascript1.5", "text/jscript",
+    "text/livescript", "text/x-ecmascript", "text/x-javascript",
+  ]);
+
+  /// Prepare-a-script's type decision: "classic", "module", or null for a
+  /// block that is data, not code. The legacy `language` attribute is the
+  /// spec's rule, not a guess: absent-or-empty type with a non-empty language
+  /// means `text/<language>`, which then faces the same sixteen-entry list.
+  function scriptKindOf(el) {
+    const typeAttr = api.getAttr(el._id, "type");
+    const langAttr = api.getAttr(el._id, "language");
+    let type;
+    if (typeAttr !== null && typeAttr.trim() !== "") type = typeAttr.trim();
+    else if (typeAttr === null && langAttr !== null && langAttr !== "") {
+      type = `text/${langAttr}`;
+    } else type = "text/javascript";
+    const lower = type.toLowerCase();
+    if (lower === "module") return "module";
+    return JS_MIME_TYPES.has(lower) ? "classic" : null;
+  }
+
+  /// Script-inserted scripts run — synchronously for inline code, as a fetch
+  /// for external, never for `innerHTML` (which does not come through here,
+  /// exactly as the spec has it). This is the other half of `run_scripts` on
+  /// the Rust side, which executes what the *parser* saw: a `<script>` a page
+  /// builds and appends afterwards was collected by nobody, so a loader that
+  /// works by injecting script tags did nothing at all.
+  function runInsertedScripts(root) {
+    if (!root || root.nodeType !== 1 || !root.isConnected) return;
+    const found = root.tagName === "SCRIPT" ? [root] : [];
+    if (typeof root.querySelectorAll === "function") {
+      found.push(...root.querySelectorAll("script"));
+    }
+    for (const el of found) prepareInsertedScript(el);
+  }
+
+  function prepareInsertedScript(el) {
+    if (el.__h5iScriptStarted || !el.isConnected) return;
+    const kind = scriptKindOf(el);
+    if (kind === null) return;
+    const src = api.getAttr(el._id, "src");
+    if (src !== null) {
+      el.__h5iScriptStarted = true;
+      if (src === "") {
+        // An empty src is an error the element reports, not a fetch.
+        queueMicrotask(() => el.dispatchEvent(new Event("error")));
+        return;
+      }
+      // Fetched and then run in global scope, with the load/error event the
+      // element owes its page. The ordering guarantees of parser-time
+      // scripts (async/defer) do not apply to a script-inserted external
+      // script anyway: it runs when it arrives.
+      fetch(el._resolved("src"))
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.text();
+        })
+        .then((code) => {
+          if (kind === "classic") (0, eval)(code);
+          el.dispatchEvent(new Event("load"));
+        })
+        .catch(() => el.dispatchEvent(new Event("error")));
+      return;
+    }
+    const code = el.textContent;
+    if (!code || !code.trim()) return;
+    if (kind !== "classic") return;
+    el.__h5iScriptStarted = true;
+    try {
+      (0, eval)(code);
+    } catch (error) {
+      console.error(`inserted script threw: ${withStack(error)}`);
+    }
+  }
+
   function fireConnected(node) {
     if (connected.has(node._id)) return;
     connected.add(node._id);
@@ -850,12 +933,14 @@
         if (child._children) child._children.length = 0;
         childListRecord(this, moved, []);
         notifyConnection(this);
+        runInsertedScripts(this);
         return child;
       }
       detachFromParent(child);
       api.append(this._id, child._id);
       childListRecord(this, [child], []);
       notifyConnection(child);
+      runInsertedScripts(child);
       return child;
     }
     insertBefore(child, anchor) {
@@ -874,12 +959,14 @@
         for (const kid of child.childNodes) api.insertBefore(anchor._id, kid._id);
         if (child._children) child._children.length = 0;
         notifyConnection(this);
+        runInsertedScripts(this);
         return child;
       }
       detachFromParent(child);
       api.insertBefore(anchor._id, child._id);
       childListRecord(this, [child], []);
       notifyConnection(child);
+      runInsertedScripts(child);
       return child;
     }
     cloneNode(deep) {
@@ -8717,6 +8804,15 @@
       StyleSheet: brand("StyleSheet", (v) => v && "cssRules" in v),
       MediaList: brand("MediaList", (v) => v && typeof v.mediaText === "string"),
     };
+  }
+
+  // Every `<script>` the parser delivered belongs to the Rust runner, which
+  // collected them before any code ran. Marked here so the script-inserted
+  // path above never mistakes one for new — inserting a fragment *near* an
+  // old script must not run that script twice.
+  for (const id of api.queryAll("script", 0)) {
+    const el = wrap(id);
+    if (el) el.__h5iScriptStarted = true;
   }
 
   // The one way to arm user activation from outside: the testdriver shim's
