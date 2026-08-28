@@ -340,7 +340,7 @@ impl Snapshot {
         };
 
         let root_id = doc.root_element().id;
-        walker.walk(root_id, 0, false);
+        walker.walk(root_id, 0, false, false);
 
         Snapshot {
             url: url.to_string(),
@@ -425,7 +425,7 @@ impl Walker<'_> {
     /// link inside a paragraph and an input inside a label are precisely what
     /// an agent came for, and an outline that drops them is worse than no
     /// outline, because it looks complete.
-    fn walk(&mut self, node_id: usize, depth: usize, in_prose: bool) {
+    fn walk(&mut self, node_id: usize, depth: usize, in_prose: bool, in_frame: bool) {
         if depth > MAX_DEPTH {
             return;
         }
@@ -461,12 +461,15 @@ impl Walker<'_> {
             // Not an element and not text: a comment or the document node.
             // Nothing to say about it, but its children may matter.
             for child in node.children.clone() {
-                self.walk(child, depth, in_prose);
+                self.walk(child, depth, in_prose, in_frame);
             }
             return;
         };
 
         let tag = element.name.local.as_ref().to_string();
+        // Once the walk crosses into a frame it stays "in frame" for the whole
+        // subtree: the styling gap is a property of the subtree, not the node.
+        let in_frame = in_frame || tag == "iframe" || tag == "frame";
 
         // Never in the outline, and never recursed into: their text content is
         // code, not page content, and emitting it is how a snapshot ends up
@@ -501,7 +504,7 @@ impl Walker<'_> {
                     .map(|kid| kid.data.is_element_with_tag_name(&local_name!("summary")))
                     .unwrap_or(false);
                 if is_summary {
-                    self.walk(child, depth, in_prose);
+                    self.walk(child, depth, in_prose, in_frame);
                 }
             }
             return;
@@ -528,14 +531,32 @@ impl Walker<'_> {
         // off-screen accessibility text sometimes takes. Filtering it would
         // risk deleting page content to fix a smaller problem.
         let displayed = match node.primary_styles() {
-            // Blitz resolves no primary styles for a node it will not render.
-            None => false,
+            // Blitz resolves no primary styles for a node it will not render —
+            // **and a grafted frame subtree is exactly that** (§B21): Blitz
+            // treats a frame as a replaced box and never styles its children,
+            // so inside one, "no styles" means "outside the styled tree", not
+            // "hidden by the page". The hiding vectors a page actually
+            // controls in that subtree are the `hidden` attribute and an
+            // inline `display:none`, and both are honoured below — what is
+            // lost is stylesheet-based hiding, whose stylesheet was stripped
+            // at the graft and whose absence the frame note declares.
+            None => in_frame,
             // And a node that has styles can still be `display: none` — which
             // is the common case, since that is what a stylesheet says.
             Some(styles) => !styles.clone_display().is_none(),
         };
         if !displayed {
             return;
+        }
+        if in_frame {
+            if attr_of(node, "hidden").is_some() {
+                return;
+            }
+            if let Some(inline) = attr_of(node, "style")
+                && inline.replace(' ', "").to_ascii_lowercase().contains("display:none")
+            {
+                return;
+            }
         }
 
         // `aria-hidden="true"` hides a subtree from anything reading the page,
@@ -683,7 +704,7 @@ impl Walker<'_> {
                             .map(|kid| kid.is_text_node())
                             .unwrap_or(false);
                         if !is_text {
-                            self.walk(child, child_depth, in_prose);
+                            self.walk(child, child_depth, in_prose, in_frame);
                         }
                     }
                 } else {
@@ -691,7 +712,7 @@ impl Walker<'_> {
                     // subtree continues in prose mode, where only actionable
                     // things speak.
                     for child in node.children.clone() {
-                        self.walk(child, child_depth, in_prose || is_leaf);
+                        self.walk(child, child_depth, in_prose || is_leaf, in_frame);
                     }
                 }
             }
@@ -700,7 +721,7 @@ impl Walker<'_> {
                 // line of its own, and its children keep this depth so the
                 // outline tracks meaning rather than markup nesting.
                 for child in node.children.clone() {
-                    self.walk(child, depth, in_prose);
+                    self.walk(child, depth, in_prose, in_frame);
                 }
             }
         }

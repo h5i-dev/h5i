@@ -8495,6 +8495,109 @@ is what a gamed number looks like too. The difference between those two is
 that the reasons are on the line in `tiers.list`, where moving a line and
 re-running is the audit.
 
+## B21. Reopening two boundaries on task evidence, 2026-08-28
+
+§B20.15's revisit triggers fired the day they were written: task evidence — the
+operator's own agent runs, not WPT — showed real work blocked on frames and on
+fetch's abort behaviour. This section records what was reopened, how far, and
+where the line now is.
+
+### B21.1 Abort, made observable
+
+The claim in §B20.15 that "fetch is synchronous underneath" turned out to be
+half stale: script fetches have run on a thread pool (six slots) since the
+ticket queue landed. What was real is that **abort only took effect when the
+network answered** — the drain checked `signal.aborted` on arrival, so an
+`abort()` against a slow server rejected whenever the server got around to it,
+and against one that never answers, never. 260 of 467 fetch files timed out on
+exactly this shape.
+
+The fix distinguishes the two halves of abort, and implements the one a page
+can observe: **the promise rejects the moment the page says stop**, while the
+wire request runs to completion on its thread and its receipt stands — because
+the request *was* made, and a receipt that vanished when the page changed its
+mind would be a log of intentions rather than of traffic.
+
+Also corrected while there: the rejection reason is now a `DOMException` named
+`AbortError` — every consumer that distinguishes an abort from a failure does
+it by `e.name === "AbortError"`, and rejecting with a plain `Error` sent all of
+them down the failure branch. `AbortSignal.timeout()` (on the virtual clock,
+so a fetch-versus-timeout race settles deterministically here) and
+`AbortSignal.any()` came with it.
+
+**Measured.** `fetch/api/abort` goes from hanging its files to 32 of 96
+scored with three files still timing out — and the remainder is the static
+server's, not the engine's: the mid-download abort tests stream from
+wptserve's `infinite-slow-response.py`, a handler `wpt/serve.py` cannot run
+(§B19.3's wptserve backend is the road to those). Two shape fixes came out of
+reading the failures: every `Request` now mints a `signal` when the caller
+brings none — `request.signal` being null sent every page that wires abort
+through the request object down the wrong branch — and the whole gate moved
++23 alongside.
+
+### B21.2 `window.open`: the named refusal, built
+
+The §B20.15 carve-out, as specified: `window.open` returns `null` — the answer
+every page already handles, because it is what a popup blocker produces — and
+says why on the console and in the unsupported list, naming the recovery: open
+the URL in another session and drive both. Deliberately not a same-realm fake
+window, which would hand the opened page's globals to the opener — the
+two-origins-one-realm hazard wearing a friendlier face.
+
+### B21.3 Frames as content: the narrow reopening
+
+The decision §B20.15 kept — no second browsing context — stands. What task
+evidence forced is narrower and turns out to be buildable without touching the
+boundary: **a frame's document is fetched and its content flattened into the
+page**, exactly as a shadow root is flattened, readable in the snapshot and
+actionable by the verbs. The payment form inside the iframe mints refs like
+any other form.
+
+What crosses, and what does not:
+
+* Every frame fetch goes through the broker under its own initiator —
+  **`frame` in the request log** — so an auditor asking "did this page pull in
+  another document" gets the answer by name. The allowlist applies unchanged;
+  a refused frame is a *note the agent reads*, never an empty box.
+* **Its scripts never run** (stripped after the graft, and `javascript:`
+  frames are refused by name — script by another road). Running a second
+  document's script in this realm is the hazard the boundary exists for.
+* **Its styles do not apply** (also stripped): the host cascade applying a
+  foreign document's rules to the whole page would be a worse lie than
+  unstyled frame content.
+* **`contentDocument` still answers null.** A flattened frame is content, not
+  a browsing context.
+* Bounded at eight frames per page, nested included, and the bound is *said*
+  (§B16.10) — ad cascades nest without limit and every fetch spends the
+  page's own budget.
+
+Three findings from building it, each worth more than the feature:
+
+* **Fragment parsing inside `<iframe>` is raw text.** The first graft set the
+  frame's own innerHTML and produced one text node of escaped markup — the
+  HTML parser's rule, not a bug. The graft goes into a `<div>` container.
+* **Blitz styles nothing it will not render**, so the snapshot's
+  hidden-content defence — "no styles means hidden" — silently dropped every
+  grafted subtree. Inside a frame that inference is wrong: no styles means
+  *outside the styled tree*. The walk now carries an `in_frame` flag, and the
+  hiding vectors a page actually controls there — the `hidden` attribute,
+  inline `display:none`, `aria-hidden` — keep their teeth, verified by test.
+  What is lost is stylesheet-based hiding, whose stylesheet was stripped at
+  the graft and whose absence the frame note declares.
+* **The document-origin loopback rule fired on the first test draft**, refusing
+  a web page's frame from reaching the dev server. §B3.1 doing its job on a
+  road that did not exist when it was written; the test suite now pins it.
+
+### B21.4 What this did not reopen
+
+`tiers.list` is unchanged. `html/browsers/origin` still needs several live
+browsing contexts *scripting each other*; `fetch/metadata` still needs
+`window.open` that opens; the enctype files still observe submission through a
+frame's *load*, which a flattened frame does not perform. Frames-as-content
+moves what an agent can read and drive, which is what the task evidence asked
+for — it does not move what the excluded tests measure.
+
+
 ---
 
 # Formal verification: a Lean model beside the Rust

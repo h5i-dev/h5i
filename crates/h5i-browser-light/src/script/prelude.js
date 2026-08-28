@@ -4462,7 +4462,11 @@
       this.method = (i.method || "GET").toUpperCase();
       this.headers = new Headers(i.headers);
       this.body = i.body ?? null;
-      this.signal = i.signal || null;
+      // Every Request carries a signal, minted here when the caller brought
+      // none — that is the spec's shape, and `request.signal` being null sent
+      // every page that wires its own abort through the request object down
+      // the wrong branch.
+      this.signal = i.signal || (input instanceof Request ? input.signal : null) || new AbortSignal();
       // The two that decide what happens at an origin boundary. Defaults are
       // the spec's — `cors` and `same-origin` — so a page that says nothing
       // gets what a browser gives it: the request may cross, and it does not
@@ -4555,6 +4559,15 @@
   // fires its listeners. It cannot cancel a request in flight, because this
   // engine's fetch is synchronous underneath — that limit is stated rather
   // than papered over with a promise that never settles.
+  /// The default abort reason, which is not `new Error`.
+  ///
+  /// Every consumer that distinguishes an abort from a failure does it by
+  /// `e.name === "AbortError"` — that is the documented idiom, and rejecting
+  /// with a plain Error made every such branch take the failure path.
+  function abortError() {
+    return new DOMException("The operation was aborted.", "AbortError");
+  }
+
   class AbortSignal {
     constructor() { this.aborted = false; this.reason = undefined; this._listeners = []; }
     addEventListener(type, handler) { if (type === "abort") this._listeners.push(handler); }
@@ -4564,26 +4577,56 @@
       if (at >= 0) this._listeners.splice(at, 1);
     }
     throwIfAborted() { if (this.aborted) throw this.reason; }
+    /// Deliver the abort: flip the state, then tell every listener.
+    ///
+    /// On the signal rather than the controller, because three producers need
+    /// it now — the controller, `AbortSignal.timeout`, and `AbortSignal.any` —
+    /// and the delivery has to be identical from all three or a listener's
+    /// behaviour depends on who aborted it.
+    _fire(reason) {
+      if (this.aborted) return;
+      this.aborted = true;
+      this.reason = reason === undefined ? abortError() : reason;
+      const event = new Event("abort", { bubbles: false });
+      for (const handler of this._listeners.slice()) {
+        try { handler.call(this, event); } catch (e) { console.error("abort listener threw: " + e); }
+      }
+      if (typeof this.onabort === "function") this.onabort(event);
+    }
     static abort(reason) {
       const s = new AbortSignal();
       s.aborted = true;
-      s.reason = reason ?? new Error("aborted");
+      s.reason = reason === undefined ? abortError() : reason;
+      return s;
+    }
+    /// A signal that aborts itself after `ms`, with the *timeout* name.
+    ///
+    /// On this engine's virtual clock, which is the interesting part: a page
+    /// racing a fetch against `AbortSignal.timeout(5000)` settles
+    /// deterministically here, where a wall-clock engine gives a different
+    /// answer under load.
+    static timeout(ms) {
+      const s = new AbortSignal();
+      setTimeout(() => s._fire(new DOMException("The operation timed out.", "TimeoutError")), ms);
+      return s;
+    }
+    /// Aborted when any input is. Already-aborted inputs win immediately, and
+    /// the reason is the *first* input's, both per spec.
+    static any(signals) {
+      const s = new AbortSignal();
+      for (const input of signals) {
+        if (input.aborted) { s.aborted = true; s.reason = input.reason; return s; }
+      }
+      for (const input of signals) {
+        input.addEventListener("abort", () => s._fire(input.reason));
+      }
       return s;
     }
   }
 
   class AbortController {
     constructor() { this.signal = new AbortSignal(); }
-    abort(reason) {
-      if (this.signal.aborted) return;
-      this.signal.aborted = true;
-      this.signal.reason = reason ?? new Error("aborted");
-      const event = new Event("abort", { bubbles: false });
-      for (const handler of this.signal._listeners.slice()) {
-        try { handler.call(this.signal, event); } catch (e) { console.error("abort listener threw: " + e); }
-      }
-      if (typeof this.signal.onabort === "function") this.signal.onabort(event);
-    }
+    abort(reason) { this.signal._fire(reason); }
   }
 
   /// Build a form's *entry list*, which is the algorithm submission is made of.
@@ -7344,6 +7387,31 @@
     length: 0,
     frameElement: null,
     opener: null,
+
+    /// `window.open`: a named refusal carrying the recovery, per §B15.6.
+    ///
+    /// A popup is a second page, and h5i's answer to a second page is a second
+    /// *session* — the boundary an agent can see, drive and audit. Returning
+    /// `null` is what a browser does when a popup blocker fires, so every page
+    /// already has a code path for this answer; the difference is that this
+    /// engine also says why on the console and in the unsupported list, where
+    /// the agent reads it and can act: open the URL in another session.
+    ///
+    /// Deliberately not a silent stub and not a same-realm fake window. A fake
+    /// window that shared this realm would hand the opened page's globals to
+    /// the opener, which is the two-origins-one-realm hazard §B20.15 keeps the
+    /// iframe refusal for.
+    open(url, target, features) {
+      void target; void features;
+      const named = url === undefined || url === null || url === "" ? "about:blank" : String(url);
+      api.unsupported(`window.open(${named})`);
+      console.warn(
+        `window.open(${JSON.stringify(named)}) refused: this engine has one page per session. ` +
+        `Open it in another session (h5i browser open ${named} --session <name> --new) ` +
+        `and drive both.`,
+      );
+      return null;
+    },
     document,
     console,
     // Same reporting rule as `document`: a method missing from one of these was
@@ -7586,7 +7654,7 @@
     const request = input instanceof Request ? input : new Request(input, init);
     const signal = (init && init.signal) || request.signal;
     if (signal && signal.aborted) {
-      return Promise.reject(signal.reason ?? new Error("aborted"));
+      return Promise.reject(signal.reason ?? abortError());
     }
 
     let body = request.body ?? "";
@@ -7611,6 +7679,22 @@
     );
     return new Promise((resolve, reject) => {
       pendingFetches.set(id, { resolve, reject, request, signal });
+      // **Abort rejects now, not when the network answers.** The old shape
+      // checked `signal.aborted` only at drain time, so an `abort()` against a
+      // slow server rejected whenever the server got around to it — and
+      // against one that never answers, never. 260 of 467 fetch files timed
+      // out on exactly this. The wire request is not cancelled — the thread
+      // runs to completion and its receipt stands, because the request *was*
+      // made — but the page's promise settles the moment the page said stop,
+      // which is the half of abort a page can observe.
+      if (signal) {
+        signal.addEventListener("abort", () => {
+          const waiting = pendingFetches.get(id);
+          if (!waiting) return;
+          pendingFetches.delete(id);
+          waiting.reject(signal.reason ?? abortError());
+        });
+      }
     });
   }
   globalThis.fetch = fetch;
@@ -7645,7 +7729,7 @@
       if (!waiting) continue;
       pendingFetches.delete(id);
       if (waiting.signal && waiting.signal.aborted) {
-        waiting.reject(waiting.signal.reason ?? new Error("aborted"));
+        waiting.reject(waiting.signal.reason ?? abortError());
       } else if (res.error) {
         waiting.reject(new Error(res.error));
       } else {
