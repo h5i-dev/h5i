@@ -65,12 +65,58 @@
   /// code. An array already answers everything a `NodeList` does except `item`
   /// and `namedItem`, which are right here, so the naming it bought was small
   /// and the price was not.
+  /// The collection interfaces, as real classes over real arrays.
+  ///
+  /// An instance is a genuine Array whose prototype has been re-pointed at
+  /// the interface's — so indexing, `length`, iteration and the array methods
+  /// this file itself leans on all keep working, while `instanceof NodeList`,
+  /// the class string, and `item`/`namedItem` on the *prototype* are what
+  /// idlharness (and pages) can finally observe. `Symbol.species` is Array so
+  /// a `filter` over a collection hands back a plain array instead of asking
+  /// the throwing constructor for a new one.
+  const COLLECTION_CLASSES = {};
+  {
+    const declare = (name, Parent, members) => {
+      const Interface = { [name]: class extends Parent {
+        constructor() {
+          super();
+          throw new TypeError("Illegal constructor");
+        }
+        static get [Symbol.species]() { return Array; }
+      } }[name];
+      Object.defineProperty(Interface.prototype, Symbol.toStringTag, {
+        value: name, configurable: true,
+      });
+      for (const [member, fn] of Object.entries(members ?? {})) {
+        Object.defineProperty(fn, "name", { value: member });
+        Object.defineProperty(Interface.prototype, member, {
+          configurable: true, enumerable: true, writable: true, value: fn,
+        });
+      }
+      COLLECTION_CLASSES[name] = Interface;
+      return Interface;
+    };
+    const item = function (index) {
+      const at = Math.trunc(Number(index)) || 0;
+      return this[at] ?? null;
+    };
+    const namedItem = function (name) {
+      const wanted = String(name);
+      return this.find(
+        (n) => n.id === wanted || n.getAttribute?.("name") === wanted,
+      ) ?? null;
+    };
+    declare("NodeList", Array, { item });
+    const HTMLCollection = declare("HTMLCollection", Array, { item, namedItem });
+    declare("HTMLFormControlsCollection", HTMLCollection, {});
+    declare("HTMLOptionsCollection", HTMLCollection, {});
+    declare("FileList", Array, { item });
+  }
+
   function collection(nodes, label) {
-    void label;
     const list = nodes.slice();
-    list.item = (index) => list[index] ?? null;
-    list.namedItem = (name) =>
-      list.find((n) => n.id === String(name) || n.getAttribute?.("name") === String(name)) ?? null;
+    const Interface = COLLECTION_CLASSES[label] ?? COLLECTION_CLASSES.NodeList;
+    Object.setPrototypeOf(list, Interface.prototype);
     return list;
   }
 
@@ -1129,10 +1175,64 @@
         this.appendChild(item instanceof Node ? item : document.createTextNode(String(item)));
       }
     }
+
+    /// The HTML partial-update family: parse a string, drop what the caller
+    /// asked dropped, and place the nodes with the positional verb the name
+    /// carries. The safe spellings remove `<script>` outright; the unsafe
+    /// ones keep it and run it only when `runScripts` says so — which is why
+    /// each parsed script is pre-marked as started unless it is meant to run,
+    /// keeping the generic insertion hook's hands off it.
+    _insertParsedHTML(position, html, options, safe) {
+      const host = document.createElement("div");
+      host.innerHTML = String(html);
+      const sanitizer = options && options.sanitizer;
+      const removed = new Set(
+        ((sanitizer && sanitizer.removeElements) || []).map((s) => String(s).toLowerCase()),
+      );
+      const banned = (el) =>
+        (safe && el.tagName === "SCRIPT") || removed.has(el.tagName.toLowerCase());
+      const nodes = [];
+      for (const node of Array.from(host.childNodes)) {
+        if (node.nodeType === 1) {
+          if (banned(node)) continue;
+          for (const kid of Array.from(node.querySelectorAll("*"))) {
+            if (banned(kid)) kid.remove();
+          }
+        }
+        nodes.push(node);
+      }
+      const runScripts = !safe && !!(options && options.runScripts);
+      for (const node of nodes) {
+        const scripts = [];
+        if (node.tagName === "SCRIPT") scripts.push(node);
+        if (typeof node.querySelectorAll === "function") {
+          scripts.push(...node.querySelectorAll("script"));
+        }
+        for (const s of scripts) {
+          if (!runScripts) s.__h5iScriptStarted = true;
+        }
+      }
+      if (position === "append") this.append(...nodes);
+      else if (position === "prepend") this.prepend(...nodes);
+      else if (position === "before") this.before(...nodes);
+      else if (position === "after") this.after(...nodes);
+      else if (position === "replaceWith") this.replaceWith(...nodes);
+    }
+
     contains(other) {
       for (let n = other; n; n = n.parentNode) if (n._id === this._id) return true;
       return false;
     }
+    appendHTML(html, options) { this._insertParsedHTML("append", html, options, true); }
+    appendHTMLUnsafe(html, options) { this._insertParsedHTML("append", html, options, false); }
+    prependHTML(html, options) { this._insertParsedHTML("prepend", html, options, true); }
+    prependHTMLUnsafe(html, options) { this._insertParsedHTML("prepend", html, options, false); }
+    beforeHTML(html, options) { this._insertParsedHTML("before", html, options, true); }
+    beforeHTMLUnsafe(html, options) { this._insertParsedHTML("before", html, options, false); }
+    afterHTML(html, options) { this._insertParsedHTML("after", html, options, true); }
+    afterHTMLUnsafe(html, options) { this._insertParsedHTML("after", html, options, false); }
+    replaceWithHTML(html, options) { this._insertParsedHTML("replaceWith", html, options, true); }
+    replaceWithHTMLUnsafe(html, options) { this._insertParsedHTML("replaceWith", html, options, false); }
 
     addEventListener(type, handler, options) {
       if (!handler) return;
@@ -1180,6 +1280,18 @@
         this.appendChild(item instanceof Node ? item : document.createTextNode(String(item)));
       }
     }
+    prepend(...items) {
+      for (const item of items.reverse()) {
+        const node = item instanceof Node ? item : document.createTextNode(String(item));
+        this._children.unshift(node);
+      }
+    }
+    // The partial-update spellings a fragment can honour — a fragment has no
+    // siblings, so the before/after family stays off it, as in the spec.
+    appendHTML(html, options) { Node.prototype._insertParsedHTML.call(this, "append", html, options, true); }
+    appendHTMLUnsafe(html, options) { Node.prototype._insertParsedHTML.call(this, "append", html, options, false); }
+    prependHTML(html, options) { Node.prototype._insertParsedHTML.call(this, "prepend", html, options, true); }
+    prependHTMLUnsafe(html, options) { Node.prototype._insertParsedHTML.call(this, "prepend", html, options, false); }
     removeChild(child) {
       const at = this._children.indexOf(child);
       if (at >= 0) this._children.splice(at, 1);
@@ -8953,8 +9065,11 @@
       typeof v.setItem === "function" && typeof v.key === "function";
 
     return {
-      NodeList: brand("NodeList", isCollection),
-      HTMLCollection: brand("HTMLCollection", (v) => isCollection(v) && typeof v.namedItem === "function"),
+      NodeList: COLLECTION_CLASSES.NodeList,
+      HTMLCollection: COLLECTION_CLASSES.HTMLCollection,
+      HTMLFormControlsCollection: COLLECTION_CLASSES.HTMLFormControlsCollection,
+      HTMLOptionsCollection: COLLECTION_CLASSES.HTMLOptionsCollection,
+      FileList: COLLECTION_CLASSES.FileList,
       NamedNodeMap: brand("NamedNodeMap", isCollection),
       Storage: brand("Storage", isStorage),
       // **Constructible, unlike its neighbours here.** `new Document()` is
