@@ -1568,9 +1568,12 @@
           "NotSupportedError",
         );
       }
-      if (this.__h5iPopoverOpen) {
-        throw new DOMException("showPopover: already showing", "InvalidStateError");
-      }
+      // A visibility mismatch is the one validity failure that stays silent:
+      // showing what is already shown is a no-op, not an error. The order
+      // matters — this returns *before* the connectivity check, because the
+      // spec's "check popover validity" tests visibility second and never
+      // throws for it.
+      if (this.__h5iPopoverOpen) return;
       if (!this.isConnected) {
         throw new DOMException(
           "showPopover: the element is not connected",
@@ -1589,6 +1592,7 @@
       // read before running page script is how a double-open gets through.
       if (this.__h5iPopoverOpen || !this.isConnected) return;
       this.__h5iPopoverOpen = true;
+      this.classList.add(POPOVER_OPEN_CLASS);
       // Auto popovers close their peers. Manual ones do not, which is the
       // whole difference between the two keywords.
       if (kind === "auto" || kind === "hint") {
@@ -1611,14 +1615,16 @@
           "NotSupportedError",
         );
       }
-      if (!this.__h5iPopoverOpen) {
-        throw new DOMException("hidePopover: not showing", "InvalidStateError");
-      }
+      // Hiding what is already hidden is a no-op — and that quietly covers the
+      // disconnected case too, since removal closed it. Same silent-visibility
+      // rule as `showPopover`.
+      if (!this.__h5iPopoverOpen) return;
       this.dispatchEvent(new ToggleEvent("beforetoggle", {
         oldState: "open", newState: "closed",
       }));
       if (!this.__h5iPopoverOpen) return;
       this.__h5iPopoverOpen = false;
+      this.classList.remove(POPOVER_OPEN_CLASS);
       this.dispatchEvent(new ToggleEvent("toggle", {
         oldState: "open", newState: "closed",
       }));
@@ -1770,7 +1776,39 @@
       // dispatch. The event has to be held to be asked.
       const activation = new MouseEvent("click", { bubbles: true, cancelable: true });
       dispatch(this, activation);
-      if (!activation.defaultPrevented) this._runPopoverInvoker();
+      if (!activation.defaultPrevented) {
+        this._runPopoverInvoker();
+        this._runCommandInvoker();
+        this._runFormButton();
+      }
+    }
+
+    /// Activation behaviour for submit and reset buttons: clicking one *does
+    /// something to the form*. Without this a `<button type=submit>` fired its
+    /// click and nothing else — the form sat unsubmitted, which reads as a
+    /// page that ignored the button.
+    _runFormButton() {
+      const tag = this.tagName;
+      if (tag !== "BUTTON" && tag !== "INPUT") return;
+      const form = this.form;
+      if (!form) return;
+      // A button's missing or invalid `type` is `submit`; an input's is `text`.
+      const type = tag === "BUTTON"
+        ? (() => {
+            const raw = (api.getAttr(this._id, "type") || "").toLowerCase();
+            return raw === "reset" || raw === "button" ? raw : "submit";
+          })()
+        : this.type;
+      if (type === "submit" || type === "image") {
+        try {
+          form.requestSubmit(this);
+        } catch {
+          // A submitter the form refuses is a click that did nothing, not an
+          // exception out of the page's own handler.
+        }
+      } else if (type === "reset") {
+        form.reset();
+      }
     }
 
     /// Activation behaviour for `popovertarget`, which is what makes the
@@ -1781,6 +1819,13 @@
     /// exactly as a browser's default activation behaviour works.
     _runPopoverInvoker() {
       if (this.tagName !== "BUTTON" && this.tagName !== "INPUT") return;
+      // Only the button-like input types are invokers. A text field with a
+      // `popovertarget` attribute is inert: clicking into it to type must not
+      // toggle anything.
+      if (this.tagName === "INPUT") {
+        const type = (api.getAttr(this._id, "type") || "").toLowerCase();
+        if (!["button", "reset", "submit", "image"].includes(type)) return;
+      }
       const target = this.popoverTargetElement;
       if (!target || typeof target.togglePopover !== "function") return;
       if (target.popover === null || target.popover === undefined) return;
@@ -1796,6 +1841,42 @@
       } catch {
         // An invoker aiming at something that cannot be opened is a no-op in a
         // browser, not an exception thrown out of a click handler.
+      }
+    }
+
+    /// Activation behaviour for `commandfor`/`command` — the Invoker Commands
+    /// API, which is `popovertarget` generalised: the button names an element
+    /// and a verb, the element hears a `command` event, and the built-in verbs
+    /// act on dialogs and popovers unless a listener cancels.
+    _runCommandInvoker() {
+      if (this.tagName !== "BUTTON") return;
+      const invokee = this.commandForElement;
+      if (!invokee) return;
+      const command = this.command;
+      if (command === "") return;
+      const event = new CommandEvent("command", { cancelable: true, command, source: this });
+      invokee.dispatchEvent(event);
+      // A custom `--command` is *only* the event: its meaning belongs to the
+      // page. The built-in verbs carry defaults, each gated on the kind of
+      // element that understands it.
+      if (event.defaultPrevented || command.startsWith("--")) return;
+      try {
+        if (invokee.tagName === "DIALOG") {
+          if (command === "show-modal") {
+            if (!invokee.hasAttribute("open")) invokee.showModal();
+          } else if (command === "close") {
+            invokee.close();
+          } else if (command === "request-close") {
+            invokee.requestClose();
+          }
+        } else if (invokee.popover !== null) {
+          if (command === "toggle-popover") invokee.togglePopover();
+          else if (command === "show-popover") invokee.showPopover();
+          else if (command === "hide-popover") invokee.hidePopover();
+        }
+      } catch {
+        // Same rule as the popover invoker: a verb aimed at something that
+        // cannot take it is a no-op, not an exception out of a click handler.
       }
     }
 
@@ -1836,7 +1917,17 @@
         toJSON() { return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height }; },
       };
     }
-    getClientRects() { return [this.getBoundingClientRect()]; }
+    // Empty for an element that generates no boxes — that emptiness *is* the
+    // signal: `offsetWidth || getClientRects().length` is the visibility idiom
+    // half the web uses, and a rect handed out for a `display: none` element
+    // makes everything hidden read as visible. The `display` answer already
+    // folds in ancestors (an unstyled node reports "none"), so one read covers
+    // both "this is hidden" and "something above it is".
+    getClientRects() {
+      if (!this.isConnected) return [];
+      if ((api.computedStyle(this._id, "display") || "") === "none") return [];
+      return [this.getBoundingClientRect()];
+    }
     get offsetWidth() { return this.getBoundingClientRect().width; }
     get offsetHeight() { return this.getBoundingClientRect().height; }
     /// Position relative to `offsetParent`, which for this engine is the page.
@@ -2850,16 +2941,34 @@
     for (const tag of ["button", "input"]) {
       on([tag], "popoverTargetElement", {
         get() {
-          if (this.__h5iPopoverTarget !== undefined) return this.__h5iPopoverTarget;
+          // The explicitly-assigned element wins over the attribute, but only
+          // while it is actually in the document: a reference to a detached
+          // element answers null, and comes back when the element is inserted.
+          // That is the spec's "descendant of a shadow-including ancestor"
+          // condition collapsed onto this engine's one flattened tree.
+          const explicit = this.__h5iPopoverTarget;
+          if (explicit !== undefined && explicit !== null) {
+            return explicit.isConnected ? explicit : null;
+          }
           const id = api.getAttr(this._id, "popovertarget");
-          if (id === null) return null;
+          if (id === null || id === "") return null;
           return document.getElementById(id);
         },
         set(value) {
-          // Assigning an element detaches this from the attribute, which is
-          // what the spec means by the two being separate: the attribute stays
-          // whatever it was and the property wins.
-          this.__h5iPopoverTarget = value ?? null;
+          // Assigning null clears both halves; assigning an element stores the
+          // reference and stamps the attribute to "" — the attribute records
+          // *that* a target is set, the reference records *which*, so an id
+          // lookup never shadows the assignment.
+          if (value === null || value === undefined) {
+            this.__h5iPopoverTarget = null;
+            this.removeAttribute("popovertarget");
+            return;
+          }
+          if (value._id === undefined) {
+            throw new TypeError("popoverTargetElement must be an Element or null");
+          }
+          this.__h5iPopoverTarget = value;
+          this.setAttribute("popovertarget", "");
         },
       });
       on([tag], "popoverTargetAction", {
@@ -2870,6 +2979,51 @@
         set(value) { this.setAttribute("popovertargetaction", String(value)); },
       });
     }
+
+    // The Invoker Commands pair, `popovertarget` generalised to any element
+    // and an explicit verb. `commandForElement` follows the same
+    // reflected-element rules as `popoverTargetElement` above — explicit
+    // reference wins while connected, otherwise the attribute's id resolves.
+    on(["button"], "commandForElement", {
+      get() {
+        const explicit = this.__h5iCommandFor;
+        if (explicit !== undefined && explicit !== null) {
+          return explicit.isConnected ? explicit : null;
+        }
+        const id = api.getAttr(this._id, "commandfor");
+        if (id === null || id === "") return null;
+        return document.getElementById(id);
+      },
+      set(value) {
+        if (value === null || value === undefined) {
+          this.__h5iCommandFor = null;
+          this.removeAttribute("commandfor");
+          return;
+        }
+        if (value._id === undefined) {
+          throw new TypeError("commandForElement must be an Element or null");
+        }
+        this.__h5iCommandFor = value;
+        this.setAttribute("commandfor", "");
+      },
+    });
+    // `command` is not a plain reflection: unknown verbs read back as "", and
+    // a page-defined `--verb` reads back exactly as written — that prefix is
+    // the namespace the built-ins can never grow into.
+    const KNOWN_COMMANDS = [
+      "toggle-popover", "show-popover", "hide-popover",
+      "close", "request-close", "show-modal",
+    ];
+    on(["button"], "command", {
+      get() {
+        const raw = api.getAttr(this._id, "command");
+        if (raw === null) return "";
+        if (raw.startsWith("--")) return raw;
+        const low = raw.toLowerCase();
+        return KNOWN_COMMANDS.includes(low) ? low : "";
+      },
+      set(value) { this.setAttribute("command", String(value)); },
+    });
 
     // ---- `<dialog>` --------------------------------------------------------
     //
@@ -2926,6 +3080,23 @@
         // `close` does not bubble, which is what a page delegating from an
         // ancestor has to know and what makes this worth getting right.
         this.dispatchEvent(new Event("close"));
+      },
+    });
+    // The polite `close`: asks first. `cancel` is the asking — a listener that
+    // prevents it keeps the dialog open, which is exactly what pressing
+    // Escape runs through in a browser.
+    Object.defineProperty(Element.prototype, "requestClose", {
+      configurable: true,
+      writable: true,
+      value: function (returnValue) {
+        if (this.tagName !== "DIALOG") {
+          throw new TypeError("requestClose is only defined on <dialog>");
+        }
+        if (!this.hasAttribute("open")) return;
+        const cancel = new Event("cancel", { cancelable: true });
+        this.dispatchEvent(cancel);
+        if (cancel.defaultPrevented) return;
+        this.close(returnValue);
       },
     });
 
@@ -3860,6 +4031,24 @@
       },
     });
 
+    // Reset fires its event first and asks: a `reset` listener that calls
+    // `preventDefault()` keeps every field as it is. The reset itself is
+    // dropping the dirty state — `_value` and `_checked` are the overlays
+    // script and typing put over the attributes, and the attributes *are* the
+    // defaults the spec says to return to.
+    Object.defineProperty(TAG_CLASSES.get("form").prototype, "reset", {
+      configurable: true,
+      writable: true,
+      value() {
+        const ev = new Event("reset", { bubbles: true, cancelable: true });
+        this.dispatchEvent(ev);
+        if (ev.defaultPrevented) return;
+        for (const control of this.elements) {
+          delete control._value;
+          delete control._checked;
+        }
+      },
+    });
     // A form validates by asking each of its controls, and the *statically
     // validate* step is what makes this more than a loop: every control is
     // checked and every invalid one gets its `invalid` event, rather than
@@ -4003,6 +4192,10 @@
     "input", "change", "submit", "focus", "blur", "keydown", "keyup", "keypress",
     "load", "error", "scroll", "wheel", "contextmenu", "pointerdown", "pointerup",
     "touchstart", "touchend", "animationend", "transitionend",
+    // The open/close vocabulary: popovers and dialogs announce themselves
+    // through these four, and `command` is how an invoker button reaches the
+    // element it points at.
+    "toggle", "beforetoggle", "cancel", "close", "command",
   ];
   for (const type of HANDLER_EVENTS) {
     const slot = `__on_${type}`;
@@ -4069,7 +4262,7 @@
   /// run to tens of thousands of them.
   const HANDLER_ATTRS = [
     ...HANDLER_EVENTS, ...WINDOW_HANDLER_EVENTS,
-    "beforeinput", "select", "reset", "invalid", "toggle", "cancel", "close",
+    "beforeinput", "select", "reset", "invalid",
     "copy", "cut", "paste", "drag", "dragend", "dragenter", "dragleave",
     "dragover", "dragstart", "drop", "animationstart", "animationiteration",
     "transitionrun", "transitionstart", "transitioncancel", "pointermove",
@@ -4171,8 +4364,25 @@
   /// matching underneath is the code Gecko ships, and the corpus's
   /// `selector :has()` entry retires with the branch. A parse failure here is
   /// once again what it says: a selector no browser would accept.
+  /// The class this engine toggles to make "popover open" a fact CSS and
+  /// selectors can see.
+  ///
+  /// **This is the one place the engine writes into the page's own attribute
+  /// space, and it is owned rather than hidden.** A browser expresses the
+  /// state as the `:popover-open` pseudo-class, which lives outside the DOM;
+  /// this engine's selector matching is Stylo's, Stylo's servo parser does not
+  /// know the pseudo, and the UA rule that hides a closed popover has to have
+  /// *something* to match. A namespaced class is that something: `showPopover`
+  /// adds it, `hidePopover` removes it, and `:popover-open` in a selector is
+  /// rewritten to it below — so the pseudo works in `matches()` and
+  /// `querySelector` even though the parser never sees it. The cost is that
+  /// the class is visible in `className` and in serialisation, which a real
+  /// pseudo-class would not be; the alternative was every closed menu on every
+  /// page sitting in the agent's outline as if it were open.
+  const POPOVER_OPEN_CLASS = "__h5i_popover_open__";
+
   function checkSelector(selector) {
-    const text = String(selector);
+    const text = String(selector).replace(/:popover-open\b/g, "." + POPOVER_OPEN_CLASS);
     if (!api.validSelector(text)) {
       throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
     }
@@ -4484,6 +4694,17 @@
       super(type, init);
       const i = init || {};
       this.oldState = i.oldState || ""; this.newState = i.newState || "";
+    }
+  }
+  // The Invoker Commands half of what ToggleEvent is to popovers: fired at the
+  // element a `<button commandfor command>` points at, carrying which command
+  // and which button, so one listener can serve many invokers.
+  class CommandEvent extends Event {
+    constructor(type, init) {
+      super(type, init);
+      const i = init || {};
+      this.command = i.command !== undefined ? String(i.command) : "";
+      this.source = i.source ?? null;
     }
   }
   class AnimationEvent extends Event {
@@ -7934,7 +8155,7 @@
     FocusEvent, WheelEvent, PointerEvent, CompositionEvent, ErrorEvent,
     PromiseRejectionEvent, ProgressEvent, MessageEvent, CloseEvent, StorageEvent,
     PopStateEvent, HashChangeEvent, PageTransitionEvent, SubmitEvent,
-    FormDataEvent, ToggleEvent, AnimationEvent, TransitionEvent,
+    FormDataEvent, ToggleEvent, CommandEvent, AnimationEvent, TransitionEvent,
 
     crypto: observed(crypto, "crypto"),
     TextEncoder, TextDecoder, XMLHttpRequest, Blob, File, DOMException,

@@ -8695,6 +8695,44 @@ one name**: elements constructed with one while the global was the other, and
     html/semantics   5,999 -> 6,383
     gate             290,137 -> 290,494, no regression
 
+### B22.4 Open popovers, and the two lies visibility told
+
+The popover cluster (~1,700 subtests) came down to two false answers and a
+missing API family, and the diagnosis mattered more than the patch.
+
+**The engine could not show a popover — at all.** Blitz's UA sheet carries the
+standard's hiding rule, `[popover]:not(:popover-open):not(dialog[open])
+{ display: none; }`, and hard-codes the `:popover-open` pseudo-class to never
+match — so the rule applies to every popover forever, at specificity (0,3,1),
+which also outweighs any casual same-origin override. That produced a long
+false trail: marker-class UA rules that "didn't invalidate" were actually
+being outranked (there is no Stylo invalidation bug; author-origin equivalents
+worked because origin, not weight, decided). The fix is one UA rule keyed on
+the prelude's marker class, stacked to (0,5,0) so it outweighs the hider:
+`[popover][popover][popover][popover].__h5i_popover_open__ { display: block; }`.
+
+**`getClientRects()` returned a rect for everything**, including `display:
+none` elements — and `offsetWidth || getClientRects().length` is WPT's (and
+half the web's) visibility idiom, so every hidden element read as visible.
+Empty list now when the element generates no boxes.
+
+With visibility honest, the rest was contract work: repeated
+`showPopover()`/`hidePopover()` are silent no-ops (the spec's validity check
+never throws for a visibility mismatch — the throwing version failed ~1,175
+subtests across two files), `popoverTargetElement` became a real reflected
+element reference (attribute stamped to `""` on assignment, `null` while the
+target is disconnected), input invokers gated to the four button types, and
+the Invoker Commands API landed beside it: `CommandEvent`,
+`command`/`commandForElement` on buttons, the six built-in verbs acting on
+dialogs and popovers, `dialog.requestClose()` with its cancelable `cancel`,
+`form.reset()`, and submit/reset buttons that actually submit and reset their
+form on click. `oncommand`/`ontoggle`/`onbeforetoggle`/`oncancel`/`onclose`
+joined the handler set.
+
+    html/semantics   6,383 -> 8,024  (popovers dir: 1,732 -> ~2,600 of it)
+    dom              2,672 -> 3,003  (the getClientRects half)
+    core tier        69.2% at the start of this entry, recompute pending
+
 
 ---
 

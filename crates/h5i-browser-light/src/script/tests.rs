@@ -3035,6 +3035,44 @@ fn create_element_ns_refuses_a_name_it_cannot_hold() {
 }
 
 #[test]
+fn a_closed_popover_is_hidden_and_popover_open_matches_the_open_one() {
+    // Blitz's UA sheet hides every popover and hard-codes `:popover-open` to
+    // never match, so "open" was a state no rule could express: `showPopover`
+    // changed all the bookkeeping it liked and the element stayed
+    // `display: none`. The engine's POPOVER_UA_CSS show-rule (keyed on
+    // POPOVER_OPEN_CLASS, the one owned write into the page's attribute
+    // space) is what makes the open half real; the closed half is Blitz's.
+    let (text, console) = scripted_text(
+        r#"<div id="pop" popover>menu content</div>
+           <dialog id="dlg">dialog content</dialog>
+           <script>
+             const pop = document.getElementById("pop");
+             const out = [];
+             out.push("closedMatches:" + pop.matches(":popover-open"));
+             out.push("closedDisplay:" + getComputedStyle(pop).display);
+             pop.showPopover();
+             out.push("openMatches:" + pop.matches(":popover-open"));
+             out.push("query:" + (document.querySelector("[popover]:popover-open") === pop));
+             pop.hidePopover();
+             out.push("afterHide:" + pop.matches(":popover-open"));
+             out.push("dialogDisplay:" + getComputedStyle(document.getElementById("dlg")).display);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains(
+            "closedMatches:false|closedDisplay:none|openMatches:true|query:true|afterHide:false|dialogDisplay:none"
+        ),
+        "popover visibility model is wrong:\n{text}\nconsole: {console:?}"
+    );
+    // And the outline: a closed popover's content is not page content.
+    assert!(
+        !text.contains("menu content") || text.contains("openMatches"),
+        "sanity: the page rendered\n{text}"
+    );
+}
+
+#[test]
 fn a_popover_opens_closes_and_says_why_it_cannot() {
     // The largest self-contained feature that was missing: `popover` reflected
     // and nothing acted on it, so 3,846 subtests failed against 20 passing.
@@ -3057,9 +3095,101 @@ fn a_popover_opens_closes_and_says_why_it_cannot() {
              document.getElementById("out").textContent = out.join("|");
            </script>"#,
     );
+    // The repeated calls are silent no-ops, not errors: WPT's own
+    // `assertIsFunctionalPopover` calls both twice and expects no throw — the
+    // spec's validity check never throws for a visibility mismatch. Only the
+    // missing-attribute case is an exception.
     assert!(
-        text.contains("auto|null|true|InvalidStateError|InvalidStateError|NotSupportedError"),
+        text.contains("auto|null|true|second-show-allowed|second-hide-allowed|NotSupportedError"),
         "popover state machine is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn popover_target_element_reflects_as_an_element_reference() {
+    // Not a string reflection: assigning an element stamps the attribute to
+    // `""` and stores the reference, and the reference only answers while the
+    // target is actually in the document — WPT's invoking-attribute suite
+    // checks every corner of that contract.
+    let (text, console) = scripted_text(
+        r#"<button id="b">go</button><div id="pop" popover>p</div>
+           <script>
+             const b = document.getElementById("b");
+             const pop = document.getElementById("pop");
+             const out = [];
+             const detached = document.createElement("div");
+             detached.popover = "";
+             b.popoverTargetElement = detached;
+             out.push("attr:" + JSON.stringify(b.getAttribute("popovertarget")));
+             out.push("detached:" + String(b.popoverTargetElement));
+             document.body.appendChild(detached);
+             out.push("attached:" + (b.popoverTargetElement === detached));
+             b.popoverTargetElement = null;
+             out.push("cleared:" + JSON.stringify(b.getAttribute("popovertarget")));
+             b.setAttribute("popovertarget", "pop");
+             out.push("byId:" + (b.popoverTargetElement === pop));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains(r#"attr:""|detached:null|attached:true|cleared:null|byId:true"#),
+        "popoverTargetElement reflection is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn a_command_button_fires_command_and_the_builtin_verbs_act() {
+    // The Invoker Commands API: the `command` event carries which verb and
+    // which button, a `--custom` verb is only the event, and the built-in
+    // verbs open dialogs and toggle popovers unless a listener cancels.
+    let (text, console) = scripted_text(
+        r#"<button id="b" commandfor="dlg" command="show-modal">open</button>
+           <dialog id="dlg">d</dialog>
+           <button id="c" commandfor="pop" command="toggle-popover">t</button>
+           <div id="pop" popover>p</div>
+           <button id="x" commandfor="dlg" command="--my-verb">x</button>
+           <script>
+             const out = [];
+             const dlg = document.getElementById("dlg");
+             dlg.addEventListener("command", (e) => {
+               out.push("cmd:" + e.command + ":" + (e.source ? e.source.id : "-"));
+             });
+             document.getElementById("b").click();
+             out.push("open:" + dlg.open);
+             document.getElementById("x").click();
+             out.push("stillOpen:" + dlg.open);
+             document.getElementById("c").click();
+             out.push("popped:" + document.getElementById("pop").matches(":popover-open"));
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("cmd:show-modal:b|open:true|cmd:--my-verb:x|stillOpen:true|popped:true"),
+        "command invoker is wrong:\n{text}\nconsole: {console:?}"
+    );
+}
+
+#[test]
+fn request_close_asks_cancel_first_and_a_veto_keeps_the_dialog_open() {
+    let (text, console) = scripted_text(
+        r#"<dialog id="d" open>d</dialog>
+           <script>
+             const d = document.getElementById("d");
+             const out = [];
+             let veto = true;
+             d.addEventListener("cancel", (e) => { if (veto) e.preventDefault(); });
+             d.addEventListener("close", () => out.push("closed"));
+             d.requestClose();
+             out.push("vetoed:" + d.open);
+             veto = false;
+             d.requestClose("done");
+             out.push("after:" + d.open + ":" + d.returnValue);
+             document.getElementById("out").textContent = out.join("|");
+           </script>"#,
+    );
+    assert!(
+        text.contains("vetoed:true|closed|after:false:done"),
+        "requestClose is wrong:\n{text}\nconsole: {console:?}"
     );
 }
 
