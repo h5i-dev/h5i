@@ -83,7 +83,7 @@ with hardware virtualization (`/dev/kvm` on Linux or Apple Silicon on macOS).
 
 ## 2. Use it
 
-### 2.1. A browser session
+### 2.1. A headless browser
 
 A **session** is the whole agent-facing surface: one page state, one cookie jar,
 one request log, one policy:
