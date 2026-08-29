@@ -1950,6 +1950,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

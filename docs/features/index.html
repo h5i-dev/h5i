@@ -109,8 +109,8 @@
         {
           "@type": "ListItem",
           "position": 2,
-          "name": "Workflows",
-          "item": "https://h5i.dev/workflows/"
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
         },
         {
           "@type": "ListItem",
@@ -126,74 +126,50 @@
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "What is h5i?",
+          "name": "What exactly does the audit record?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "h5i (pronounced high-five) lets agents browse the web, run code and test apps without unrestricted access to your machine. It is three things. A fast, lightweight browser an agent drives from the command line, which returns pages as structured snapshots and records every action and request. A sandbox to place that browser in, along with the agent, the code, the dependencies and the dev server, at whichever of five isolation tiers the task needs. And a read-only dashboard over both. It is one Rust binary: no server, no daemon, no SaaS."
+            "text": "The audit includes browser commands, allowed and denied network requests, human takeovers, and how the session ended. It also tells you whether network activity was reported by the browser itself or independently observed at a sandbox boundary."
           }
         },
         {
           "@type": "Question",
-          "name": "How do agents in separate sandboxes talk to each other?",
+          "name": "What happens if the browser crashes?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "They do not: they talk to the host. Each box has a read-only inbox the host rewrites and one writable spool it already had. An agent stages a record into the spool, the host reads it, stamps the identity, and publishes it as a Git ref that lives outside every grant the box holds. There is no socket, no port and no token on the path, so there is no forum API for a compromised agent to attack."
+            "text": "The session is recorded as died, and later commands are refused instead of silently starting another browser. You can restore its storage into a new session, with the relationship between the two recorded."
           }
         },
         {
           "@type": "Question",
-          "name": "Can an agent forge who it is on the forum?",
+          "name": "What happens if my machine cannot provide the requested isolation?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No, because it never writes that field. The staged record has a thread, a kind, a body and attachments, and no field at all for a sender, a role, a box id or a policy digest. Those are stamped by the host from the environment the record was found in, so a record naming itself \"sender\": \"human\" has nothing read from it."
+            "text": "An explicitly requested isolation tier is never silently downgraded: the sandbox is not created. h5i box probe shows what the current machine can enforce, while auto selects the strongest available tier."
           }
         },
         {
           "@type": "Question",
-          "name": "Can a message escalate what an agent is allowed to do?",
+          "name": "What if h5i cannot render a website correctly?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. A message can change what a peer decides and never what that peer's sandbox is able to do, because nothing on the path carries a capability and there is no code that could mint one. On top of that, a thread names a ceiling profile every attached box is checked against, and a box that exceeds it on network mode, egress, secrets or filesystem grants is refused rather than quietly re-confined."
+            "text": "You can run Chromium inside an h5i sandbox for websites that require unsupported browser APIs. The sandbox still limits filesystem and network access, but h5i's engine-level request record and enforced browser takeover are not available."
           }
         },
         {
           "@type": "Question",
-          "name": "Does h5i work with Claude Code and Codex?",
+          "name": "Can an agent use credentials without reading them?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes, and they can sit on the same forum. agent-claude and agent-codex are built-in profiles that pin the runtime, and the credential broker scopes each one's key so a Claude box cannot reach an OpenAI credential. The agent-facing interface is a skill compiled into the binary, so it cannot document flags the installed binary does not have."
+            "text": "Yes. The agent can name a browser credential without receiving its value, and model or service API keys can remain on the host and be added only to approved requests. A human can also take over the browser to complete a login."
           }
         },
         {
           "@type": "Question",
-          "name": "How strong is the isolation?",
+          "name": "How does work leave the sandbox?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "It depends on the tier, and h5i says which one you got rather than averaging them. process is Landlock, seccomp, namespaces and rlimits. supervised adds a private network namespace with a default-drop nftables allowlist pinned to resolved IPs, DNS pinned by a hosts file, and a seccomp-notify gate on socket(). container is rootless Podman with an L7 proxy allowlist. microvm is the only tier with its own kernel. workspace enforces nothing and forum attach refuses it."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Do my API keys go into the box?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "No. The key stays on the host and a reverse proxy injects it into outbound requests, scoped per runtime. Other services are declared the same way: a host, a host-side credential variable, and the base-URL variable the client reads. The per-box HOME copy strips credential-shaped entries at any depth, including anything ending .pem, .key, _rsa or _ed25519. Publishing the forum to a Git remote is the host's job, so no box holds that key either."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Does h5i stop prompt injection?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "It does not detect it, and no tool reliably can. It bounds what a compromised agent can reach: the filesystem allowlist never granted your home directory, the egress allowlist refuses hosts nobody declared, no credential entered the box, and there is no write path to the host. That bound is exactly why the forum carries no capability, so a persuasive peer message stays only persuasive. Every refused destination is recorded host-side and appears at the top of the exported report. Containment does not stop the agent putting private source into a model prompt, which is a separate control."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Is h5i free and open source?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes. Apache 2.0, written in Rust, local-first, with no lock-in, no hosted h5i service and no SaaS account required."
+            "text": "h5i box export produces a patch, a readable report, and an execution receipt for review. Nothing is applied automatically, and sandboxes created from external URLs or pull requests cannot write directly into your repository."
           }
         }
       ]
@@ -758,47 +734,35 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">FAQ</span>
-      <h2 class="section-title">Questions worth answering directly</h2>
-      <p class="section-sub">The short answers. The <a href="/manual/">manual</a> has the long ones, and the
-        <a href="/blog/">essays</a> have the reasoning.</p>
+      <h2 class="section-title">Boundaries, fallbacks, and failure modes</h2>
+      <p class="section-sub">The details that matter once you start using h5i. See the
+        <a href="/manual/">manual</a> for commands and implementation details.</p>
       <div class="divider"></div>
     </div>
     <div class="faq-list">
       <details class="faq-item" open>
-        <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) lets agents browse the web, run code and test apps without unrestricted access to your machine. It is three things. A <strong>fast, lightweight browser</strong> an agent drives from the command line, which returns pages as structured snapshots and records every action and request. A <strong>sandbox</strong> to place that browser in, along with the agent, the code, the dependencies and the dev server, at whichever of five isolation tiers the task needs. And a <strong>read-only dashboard</strong> over both. Nothing leaves a box except a patch, a report and an execution receipt you exported deliberately. It is one Rust binary: no server, no daemon, no SaaS.</div>
+        <summary>What exactly does the audit record?</summary>
+        <div class="faq-answer">The audit includes browser commands, allowed and denied network requests, human takeovers, and how the session ended. It also tells you whether network activity was reported by the browser itself or independently observed at a sandbox boundary.</div>
       </details>
       <details class="faq-item">
-        <summary>How do agents in separate sandboxes talk to each other?</summary>
-        <div class="faq-answer">They do not: they talk to the <em>host</em>. Each box has a read-only inbox the host rewrites and one writable spool it already had. An agent stages a record into the spool, the host reads it, stamps the identity, and publishes it as a Git ref that lives outside every grant the box holds. There is no socket, no port and no token on the path, so there is no forum API for a compromised agent to attack.</div>
+        <summary>What happens if the browser crashes?</summary>
+        <div class="faq-answer">The session is recorded as <code>died</code>, and later commands are refused instead of silently starting another browser. You can restore its storage into a new session, with the relationship between the two recorded.</div>
       </details>
       <details class="faq-item">
-        <summary>Can an agent forge who it is on the forum?</summary>
-        <div class="faq-answer">No, because it never writes that field. The staged record has a thread, a kind, a body and attachments, and no field at all for a sender, a role, a box id or a policy digest. Those are stamped by the host from the environment the record was found in, so a record naming itself <code>"sender": "human"</code> has nothing read from it.</div>
+        <summary>What happens if my machine cannot provide the requested isolation?</summary>
+        <div class="faq-answer">An explicitly requested isolation tier is never silently downgraded: the sandbox is not created. <code>h5i box probe</code> shows what the current machine can enforce, while <code>auto</code> selects the strongest available tier.</div>
       </details>
       <details class="faq-item">
-        <summary>Can a message escalate what an agent is allowed to do?</summary>
-        <div class="faq-answer">No. A message can change what a peer <em>decides</em> and never what that peer's sandbox is <em>able to do</em>, because nothing on the path carries a capability and there is no code that could mint one. On top of that, a thread names a ceiling profile every attached box is checked against, and a box that exceeds it on network mode, egress, secrets or filesystem grants is refused rather than quietly re-confined.</div>
+        <summary>What if h5i cannot render a website correctly?</summary>
+        <div class="faq-answer">You can run Chromium inside an h5i sandbox for websites that require unsupported browser APIs. The sandbox still limits filesystem and network access, but h5i's engine-level request record and enforced browser takeover are not available.</div>
       </details>
       <details class="faq-item">
-        <summary>Does h5i work with Claude Code and Codex?</summary>
-        <div class="faq-answer">Yes, and they can sit on the same forum. <code>agent-claude</code> and <code>agent-codex</code> are built-in profiles that pin the runtime, and the credential broker scopes each one's key so a Claude box cannot reach an OpenAI credential. The agent-facing interface is a skill compiled into the binary, so it cannot document flags the installed binary does not have.</div>
+        <summary>Can an agent use credentials without reading them?</summary>
+        <div class="faq-answer">Yes. The agent can name a browser credential without receiving its value, and model or service API keys can remain on the host and be added only to approved requests. A human can also take over the browser to complete a login.</div>
       </details>
       <details class="faq-item">
-        <summary>How strong is the isolation?</summary>
-        <div class="faq-answer">It depends on the tier, and h5i says which one you got rather than averaging them. <code>process</code> is Landlock, seccomp, namespaces and rlimits. <code>supervised</code> adds a private network namespace with a default-drop nftables allowlist pinned to resolved IPs, DNS pinned by a hosts file, and a seccomp-notify gate on <code>socket()</code>. <code>container</code> is rootless Podman with an L7 proxy allowlist. <code>microvm</code> is the only tier with its own kernel. <code>workspace</code> enforces nothing and <code>forum attach</code> refuses it.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Do my API keys go into the box?</summary>
-        <div class="faq-answer">No. The key stays on the host and a reverse proxy injects it into outbound requests, scoped per runtime. Other services are declared the same way: a host, a host-side credential variable, and the base-URL variable the client reads. The per-box HOME copy strips credential-shaped entries at any depth, including anything ending <code>.pem</code>, <code>.key</code>, <code>_rsa</code> or <code>_ed25519</code>. Publishing the forum to a Git remote is the host's job, so no box holds that key either.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Does h5i stop prompt injection?</summary>
-        <div class="faq-answer">It does not detect it, and no tool reliably can. It bounds what a compromised agent can reach: the filesystem allowlist never granted your home directory, the egress allowlist refuses hosts nobody declared, no credential entered the box, and there is no write path to the host. That bound is exactly why the forum carries no capability, so a persuasive peer message stays only persuasive. Every refused destination is recorded host-side and appears at the top of the exported report. Containment does not stop the agent putting private source into a model prompt, which is a separate control.</div>
-      </details>
-      <details class="faq-item">
-        <summary>Is h5i free and open source?</summary>
-        <div class="faq-answer">Yes. Apache 2.0, written in Rust, local-first, with no lock-in, no hosted h5i service and no SaaS account required.</div>
+        <summary>How does work leave the sandbox?</summary>
+        <div class="faq-answer"><code>h5i box export</code> produces a patch, a readable report, and an execution receipt for review. Nothing is applied automatically, and sandboxes created from external URLs or pull requests cannot write directly into your repository.</div>
       </details>
     </div>
   </div>
@@ -811,7 +775,7 @@
       <p class="cta-sub">Run fast, lightweight browser tasks and web app testing with sandboxing, network controls and complete session records built in. One binary, local-first, no hosted h5i service. Apache 2.0.</p>
       <div class="hero-actions">
         <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
-        <a href="/workflows/" class="btn btn-ghost">Read the workflow</a>
+        <a href="/blog/the-h5i-loop/" class="btn btn-ghost">Read the whole loop</a>
         <a href="/manual/" class="btn btn-ghost">Read the Manual</a>
       </div>
     </div>

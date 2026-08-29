@@ -146,9 +146,11 @@ fn header(h5i_root: &std::path::Path, m: &h5i_core::env::EnvManifest, deny_only:
         say!(
             "{}",
             style(
-                "         this box has no live browser log: only our own engine writes one, \
-                 and an image-backed tier keeps it out of the host's reach. Rows will appear \
-                 after a run, not during one."
+                "         this box has no live browser log h5i will read. Only our own \
+                 engine writes one; a tier that keeps /tmp inside its image puts it out of \
+                 reach; and where a box shares the host's /tmp, h5i declines to attribute an \
+                 unqualified world-writable file to it. Rows will appear after a run, not \
+                 during one."
             )
             .yellow()
         );
@@ -295,6 +297,26 @@ fn columns(event: &ViewerEvent) -> (&'static str, String, String) {
             holder.clone(),
             note.clone().unwrap_or_default(),
         ),
+
+        // The lane's own row. `name` in the verdict column rather than in the
+        // text, because a reader scanning an audit for "did anything but the
+        // engine touch the network" is scanning that column.
+        EventKind::Helper {
+            name,
+            argv,
+            status,
+            note,
+        } => {
+            let verdict = match status {
+                Some(0) | None => name.clone(),
+                Some(code) => format!("{name} exit {code}"),
+            };
+            let mut text = argv.join(" ");
+            if let Some(note) = note {
+                text.push_str(&format!(" — {note}"));
+            }
+            ("helper", verdict, text)
+        }
 
         EventKind::Lifecycle { state, reason } => (
             "session",

@@ -7,7 +7,7 @@
 - [Features](https://h5i.dev/features/): Product overview: the fast agent browser, five isolation tiers to place it in, the read-only dashboard, and the output gate.
 - [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
 - [First box](https://h5i.dev/guides/first-box/): Install h5i and take one task from box creation to a reviewed patch.
-- [Workflow](https://h5i.dev/workflows/): The complete browse, contain, work, inspect, export, apply loop.
+- [The loop](https://h5i.dev/blog/the-h5i-loop/): The complete browse, contain, work, export, apply loop, and what each step writes down.
 - [Manual](https://h5i.dev/manual/): Authoritative command, policy, receipt, and limitation reference.
 
 ## Guides
@@ -21,6 +21,7 @@
 
 ## Design essays
 
+- [Browse, contain, work, export, apply](https://h5i.dev/blog/the-h5i-loop/): The whole loop, arranged so every step's record is written by something other than the agent.
 - [Agents share information, never permissions](https://h5i.dev/blog/agents-share-information-never-permissions/): A coordination channel is safe to the degree that nothing on it carries a capability.
 - [The environment is the sandbox](https://h5i.dev/blog/the-environment-is-the-sandbox/): The isolation unit is the entire development session, not one command or checkout.
 - [Five tiers, five different promises](https://h5i.dev/blog/choosing-agent-isolation/): Choose process, supervised, container, or microVM isolation by the property required.

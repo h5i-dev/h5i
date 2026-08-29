@@ -517,6 +517,7 @@ one, so a port bound in one is unreachable from the next.
 
 ```bash
 h5i browser structured                          # what the page says about itself
+h5i browser transcript                          # what its media says, from `<track>`
 h5i browser markdown --url https://example.com  # go there and read, in one trip
 h5i browser find  --role button --name 'Sign in'
 h5i browser click --role button --name 'Sign in'
@@ -532,6 +533,134 @@ metadata answers `empty`, which is a fact about the page rather than a failed
 read. Every read verb takes `--url`, which goes there first and then reads: one
 round trip where `navigate` and then the read would be two, and the reply still
 names the URL it ended up on so a redirect is not silent.
+
+`transcript` reads the hole the other verbs leave. A `snapshot` names a
+`<video>` and `markdown` skips it, so a page whose substance is a forty-minute
+talk reads as a title and a play button. Most players ship a `<track>`, and a
+caption file is prose with timestamps: the shape a model reads well, and the one
+audio is not.
+
+```console
+$ h5i browser transcript --url https://example.com/talk
+url: https://example.com/talk
+media: 1 element(s), 1 with timed text, 412 cue(s) read
+--- BEGIN UNTRUSTED PAGE CONTENT ---
+…
+
+## video — Difference engines, briefly
+source: https://example.com/talk.mp4
+
+track: captions [en] "English" (default) — receipt #7
+
+[00:01] Ada: Difference engines, briefly.
+[12:40] And that is the whole of it.
+--- END UNTRUSTED PAGE CONTENT ---
+```
+
+Nothing here decodes audio, and `capabilities.video` stays `false`. The tracks
+are fetched through the same broker as any image: policy-checked, receipted,
+and attributed to the page that declared them, so a `<track>` pointing at
+loopback from a page on the open web is refused exactly as an `<img>` there
+would be. The receipt number beside each track is the row in `h5i browser
+requests` that paid for the text.
+
+Media with **no** track is reported as media with no track, not as silence: that
+is the fact that says the words exist only in the audio, and it is the one a
+caller routes on.
+
+At most two tracks are read per media element: one of the **words**, and the
+**outline** of them. A well-localised player declares thirty languages and they
+are the same words thirty times, so `--lang en` names which one; a `chapters`
+track is different information rather than a translation, so it is read
+alongside. `metadata` tracks are machine payload the page reads with script, and
+`descriptions` is for a screen reader; neither is a transcript.
+
+#### When the captions are not in the markup: `--via yt-dlp`
+
+Some sites do not put their captions in a `<track>` at all. YouTube is the one
+that matters most: its transcript lives behind the player's own JSON API, and
+reaching it takes a program that knows how that API works. `--via yt-dlp` is
+that lane, for about 1,700 sites:
+
+```bash
+h5i browser transcript --via yt-dlp --url https://www.youtube.com/watch?v=…
+```
+
+**It is a different lane, not a better one, and the difference is the point.**
+yt-dlp opens its own sockets from a process the engine never sees. Nothing it
+fetches is in `h5i browser requests`, and nothing can be. The engine did not
+decide about those requests and did not see them, so a log that listed them
+would be an observation dressed as a decision record. The reply says so in an
+`evidence` line, and the run itself lands in `h5i browser audit` as a
+host-observed row carrying the exact argv h5i executed:
+
+```
+  sources  : actions read · requests read · control empty · helpers read
+
+  host    session opened  (…)
+  engine  #0 GET https://www.youtube.com/watch?v=…
+  host    helper yt-dlp --ignore-config --skip-download --no-playlist … -- https://…  412 cue(s) in en
+```
+
+Four things are deliberate:
+
+- **Never implicit, never a fallback.** An engine read that found no captions
+  stays a read that found none. A silent fallback would move a session's traffic
+  outside the engine's log without anyone asking, which is the one thing that
+  log promises cannot happen.
+- **It runs where the session runs.** A boxed session runs yt-dlp *inside its
+  box*, and a boxed session whose box has no yt-dlp is refused rather than
+  served from the host: running it outside would move the session's network to a
+  boundary its caller did not choose. Whether that box has an egress boundary at
+  all is a separate question, and the reply answers it rather than assuming: a
+  tier that confines files and environment and not network is reported as
+  exactly that. Note the standing Linux trade-off here, the same one `open --in`
+  reports: the tiers that enforce egress cannot hold a resident session, so
+  today a boxed session is on a tier with no network boundary unless it is
+  `microvm`.
+- **It gets no credential.** `--secret` grants are resolved by the broker on the
+  way into a page, and this lane has no page and no broker. The child's
+  environment is built from a short allowlist that does not include the
+  `H5I_SECRET_` namespace.
+- **`--ignore-config` is passed**, so a `~/.config/yt-dlp/config` cannot add
+  flags h5i did not choose. The argv in the audit is what actually ran.
+
+One tag, one invocation, and both the author's captions and the machine
+transcript for it — the second because a video whose only transcript is
+machine-generated is exactly what this lane is for. Which languages a video has
+is listed either way, from the metadata, so nothing is downloaded to find that
+out.
+
+`--lang` is an **exact** tag, because yt-dlp matches it with a regex
+`fullmatch` and widening is not free: YouTube answers `en.*` with `en` plus
+`en-de` and `en-en`, the author's captions and two machine translations of them,
+which is three downloads and a rate limit where one download was wanted. The
+value is still a regex, so `--lang 'ja.*'` is how you reach a machine
+translation, which YouTube tags by its pair (`ja-en`) rather than by the
+language alone. A run that matches nothing names the tags the video does have
+and points at that flag.
+
+The exit code follows what arrived, not what yt-dlp returned. It exits non-zero
+if any part of a run failed, so a run that wrote the transcript and then hit a
+rate limit on a second language is a complete answer reported as a failure. h5i
+reports it as an answer, and puts the partial failure in the note beside it,
+because that is what explains a missing title.
+
+A host session's helper is contained by whatever started h5i, and the reply says
+that too rather than implying a boundary that is not there. Automatic captions
+are labelled as automatic, because a machine transcription mishears names and a
+reader about to quote one should know first.
+
+One helper run is given two minutes, after which h5i stops it. The stop is a
+result and not an error: whatever the run had already written is still read and
+returned, with the stop named in the note, because a run killed at the budget
+has usually written some of what it was asked for. `H5I_HELPER_BUDGET_SECS`
+overrides the two minutes, clamped to between one second and thirty minutes, for
+a link slow enough to need it.
+
+The lane is behind the `ytdlp` cargo feature, on by default. Build with
+`--no-default-features` (plus the features you want) for a binary with no code
+path that can exec a helper at all.
 
 A **locator** names an element by what it is called rather than by where it sat.
 `--role button --name 'Sign in'` survives a re-render that moves everything; a

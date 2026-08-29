@@ -33,7 +33,7 @@ path = "src/main.rs"
 # `web` adds the `h5i ui` box console and, through h5i-core, the axum server
 # and the embedded React bundle it serves. On by default; drop it with
 # `--no-default-features` for a build that needs no Node toolchain.
-default = ["web", "share", "runner", "browser"]
+default = ["web", "share", "runner", "browser", "ytdlp"]
 web = ["h5i-core/web"]
 # `browser` links the rendering engine into this binary, which is what
 # `h5i browser` execs itself to become (`h5i __engine`). On by default: without
@@ -45,6 +45,21 @@ web = ["h5i-core/web"]
 # h5i is seconds. Someone working on boxes, the forum or the runner builds
 # `--no-default-features` and never compiles a browser.
 browser = ["dep:h5i-browser-light"]
+# `ytdlp` adds the helper lane: `h5i browser transcript --via yt-dlp`, which
+# runs yt-dlp to reach the transcripts that are not in a page's markup at all —
+# YouTube's above all, whose captions live behind the player's own API.
+#
+# On by default, and gated anyway, because the two switches promise different
+# things. Without the feature the binary has **no code path that execs a
+# helper**, which is a claim a hardened deployment can make about the file it
+# installed rather than about how someone invokes it. With it, the lane still
+# never runs unless `--via` is typed: it is not a fallback from the engine's own
+# read, and it never becomes one, because a fetch that quietly left the engine's
+# request log is the one thing `h5i browser requests` promises cannot happen.
+#
+# Implies `browser`: both lanes answer with one reply shape and parse WebVTT
+# with one parser, which is what stops them disagreeing about a timestamp.
+ytdlp = ["browser", "dep:url"]
 # `bpf` adds the runtime-detection collector: an eBPF probe that watches a run
 # from the kernel and files what it saw as its own evidence lane (ROADMAP.md
 # D1–D14). **Off by default**, for two reasons that both have to be true before
@@ -92,6 +107,11 @@ h5i-browser-light = { path = "crates/h5i-browser-light", optional = true }
 # Optional with the feature that needs it; it is also a dev-dependency below,
 # which is fine — cargo unifies them.
 tempfile = { version = "3.8", optional = true }
+# For one job, in the helper lane: refusing a URL whose scheme is not http(s)
+# before it reaches a program that takes URLs. Already in the tree through
+# h5i-browser-light, so this adds a name to the manifest and no code to the
+# build, and hand-rolling the check would mean hand-rolling a URL parser.
+url = { version = "2.5", optional = true }
 git2 = { workspace = true }
 serde_json = { workspace = true }
 anyhow = "1.0"

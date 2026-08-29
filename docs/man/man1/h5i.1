@@ -1833,6 +1833,46 @@ Go here first, then read. One round trip where `navigate` and then this would be
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH "H5I BROWSER TRANSCRIPT"
+What the page's media **says**: `<track>` captions, fetched and parsed
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS SYNOPSIS
+\fBtranscript\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-url\fR] [\fB\-\-lang\fR] [\fB\-\-max\-bytes\fR] [\fB\-\-via\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SS OPTIONS
+.TP
+\fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
+Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
+.TP
+\fB\-\-lang\fR \fI<LANG>\fR
+Prefer this language, for the words and for the outline alike.
+
+Prefix\-matched against `srclang`, so `en` finds `en\-GB`. Falls back to the track the page marked `default`, then to the first. Every track is listed either way.
+.TP
+\fB\-\-max\-bytes\fR \fI<BYTES>\fR
+The ceiling on caption text carried out of **one** track.
+
+Per track rather than per reply, so a media element with both words and an outline can carry up to twice this.
+.TP
+\fB\-\-via\fR \fI<HELPER>\fR
+Read it with an outside program instead of from the page\*(Aqs markup.
+
+`\-\-via yt\-dlp` reaches the transcripts that are not in the markup at all \(em YouTube\*(Aqs above all, whose captions live behind the player\*(Aqs own API. About 1,700 sites, and the same reply shape.
+
+**It is a different lane, not a better one.** yt\-dlp opens its own sockets from a process the engine never sees, so nothing it fetches is in `h5i browser requests` and nothing can be: the reply says so, and `h5i browser audit` carries the run as a host\-observed row. It runs where the session runs, inside the box for a boxed session, and it is never a fallback: an engine read that found no captions stays a read that found none. The reply says what actually saw its traffic, which for a box depends on whether that box\*(Aqs tier enforces egress at all.
+
+With `\-\-via`, `\-\-url` names the media and the session does not move: there is no page here to render.
+.TP
+\fB\-\-json\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .SH "H5I BROWSER SET-CHECKED"
 Set a checkbox or radio to a state, rather than toggling it
 .ie \n(.g .ds Aq \(aq

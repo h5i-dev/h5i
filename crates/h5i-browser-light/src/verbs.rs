@@ -67,6 +67,8 @@ pub enum Verb {
     Script,
     /// What the page publishes about itself: JSON-LD, OpenGraph, meta.
     Structured,
+    /// What the page's media *says*: `<track>` captions, fetched and parsed.
+    Transcript,
     /// Set a checkbox or radio to a state, rather than toggling it.
     SetChecked,
     /// Choose an option in a `<select>`.
@@ -109,6 +111,7 @@ impl Verb {
         Verb::Env,
         Verb::Script,
         Verb::Structured,
+        Verb::Transcript,
         Verb::SetChecked,
         Verb::Select,
         Verb::Press,
@@ -136,6 +139,7 @@ impl Verb {
             Verb::Env => "env",
             Verb::Script => "script",
             Verb::Structured => "structured",
+            Verb::Transcript => "transcript",
             Verb::SetChecked => "set_checked",
             Verb::Select => "select",
             Verb::Press => "press",
@@ -184,6 +188,10 @@ impl Verb {
             // viewer is doing.
             | Verb::Script
             | Verb::Structured
+            // A read of the page, and one that spends requests doing it. A
+            // human at a login form is not a reason to go fetching the
+            // subresources of whatever page they landed on.
+            | Verb::Transcript
             | Verb::SetChecked
             | Verb::Select
             | Verb::Press
@@ -230,6 +238,7 @@ impl Verb {
             | Verb::Env
             | Verb::Script
             | Verb::Structured
+            | Verb::Transcript
             // It produces handles rather than consuming one.
             | Verb::Find
             | Verb::Screenshot
@@ -264,6 +273,7 @@ impl Verb {
             | Verb::Env
             | Verb::Script
             | Verb::Structured
+            | Verb::Transcript
             | Verb::SetChecked
             | Verb::Select
             | Verb::Press
@@ -303,6 +313,11 @@ impl Verb {
             // needs no realm to report what the session did.
             | Verb::Script
             | Verb::Structured
+            // `<track>` is markup, and the caption file behind it is a URL the
+            // markup names. A player that only mounts its tracks from script
+            // will have none to find here, which is a fact about that page and
+            // is reported as media with no text lane.
+            | Verb::Transcript
             // These act on the DOM, which exists either way. A page with no
             // script simply has nothing listening for the events they fire.
             | Verb::SetChecked
@@ -362,6 +377,7 @@ impl Verb {
             | Verb::Env
             | Verb::Script
             | Verb::Structured
+            | Verb::Transcript
             | Verb::Find
             // Handing the page to a human is the one step a replay must never
             // reproduce: there is nobody there to take it.
@@ -388,6 +404,7 @@ impl Verb {
             | Verb::Markdown
             | Verb::Extract
             | Verb::Structured
+            | Verb::Transcript
             | Verb::Find
             // "Go here and show me" in one round trip, for the same reason
             // `snapshot` has it: the intervening reply is a turn through a
