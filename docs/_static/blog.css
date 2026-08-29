@@ -245,8 +245,8 @@ main > section > .container { padding: 0; max-width: none; margin: 0; }
 .section-title {
   font-family: var(--disp); font-weight: 900;
   font-size: clamp(30px, 3.8vw, 54px);
-  letter-spacing: -0.045em; line-height: 0.95;
-  margin: 20px 0 0; max-width: 20ch; color: var(--ink);
+  letter-spacing: -0.045em; word-spacing: 0.12em; line-height: 0.95;
+  margin: 20px 0 0; max-width: 23ch; color: var(--ink);
 }
 .section-title br { display: none; }
 .section-sub {
@@ -693,7 +693,7 @@ article.post .post-cta h3,
 #cta .cta-title {
   font-family: var(--disp); font-weight: 900;
   font-size: clamp(28px, 3.4vw, 44px);
-  letter-spacing: -0.05em; line-height: 0.95;
+  letter-spacing: -0.05em; word-spacing: 0.12em; line-height: 0.95;
   margin: 0; max-width: 16ch; color: var(--ink);
 }
 article.post .post-cta p,
