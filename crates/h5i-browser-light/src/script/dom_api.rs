@@ -314,15 +314,22 @@ fn get_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 /// stored `viewbox` and rendered nothing. Both are fixed here, in one place,
 /// because `guard_mutation` records what happens when a defect like this is
 /// fixed three times at three call sites instead.
-fn attr_name_for(doc: &blitz_dom::BaseDocument, id: usize, name: &str) -> String {
+/// Borrowed rather than owned: an attribute name arrives lowercase from nearly
+/// every caller, and lowercasing a string that is already lowercase to compare
+/// it against one more was an allocation per attribute read.
+fn attr_name_for<'a>(
+    doc: &blitz_dom::BaseDocument,
+    id: usize,
+    name: &'a str,
+) -> std::borrow::Cow<'a, str> {
     let html_element = doc
         .get_node(id)
         .and_then(|node| node.element_data())
         .is_some_and(|el| el.name.ns == blitz_dom::ns!(html));
-    if html_element {
-        name.to_ascii_lowercase()
+    if html_element && name.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(name.to_ascii_lowercase())
     } else {
-        name.to_string()
+        std::borrow::Cow::Borrowed(name)
     }
 }
 
@@ -332,16 +339,19 @@ fn get_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let host = host(context)?;
     let doc = host.dom.borrow();
     let name = attr_name_for(&doc, id, &name);
+    // Straight to a `JsString` from the borrowed value: the intermediate
+    // `String` this used to build was the third allocation in a read that only
+    // ever needed one.
     let found = doc.get_node(id).and_then(|node| {
         node.attrs().and_then(|attrs| {
             attrs
                 .iter()
-                .find(|a| a.name.local.as_ref() == name)
-                .map(|a| a.value.to_string())
+                .find(|a| a.name.local.as_ref() == name.as_ref())
+                .map(|a| js_string!(a.value.as_str()))
         })
     });
     Ok(match found {
-        Some(value) => js_string!(value).into(),
+        Some(value) => value.into(),
         None => JsValue::null(),
     })
 }
@@ -735,7 +745,7 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         let qual = blitz_dom::QualName::new(
             None,
             blitz_dom::ns!(),
-            blitz_dom::LocalName::from(name.as_str()),
+            blitz_dom::LocalName::from(&*name),
         );
         let mut mutator = doc.mutate();
         mutator.set_attribute(id, qual, &value);
@@ -756,7 +766,7 @@ fn remove_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         let qual = blitz_dom::QualName::new(
             None,
             blitz_dom::ns!(),
-            blitz_dom::LocalName::from(name.as_str()),
+            blitz_dom::LocalName::from(&*name),
         );
         let mut mutator = doc.mutate();
         mutator.clear_attribute(id, qual);

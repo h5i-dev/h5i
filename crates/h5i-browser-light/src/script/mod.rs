@@ -42,6 +42,64 @@ use host::{ConsoleLine, Host, HostHandle};
 /// Boa's own prelude is the language; this is the browser.
 const PRELUDE: &str = include_str!("prelude.js");
 
+/// The pieces of the prelude a page has to *ask* for.
+///
+/// Two of the three costs of the prelude are a straight function of the *code*
+/// handed to Boa: parse and compile are 33 ms and 9 ms of the ~59 ms a realm
+/// takes, and Boa parses eagerly — there is no lazy compilation to hide behind,
+/// so every page pays for every line whether or not it runs one.
+///
+/// Code, not bytes: blanking all 164 KiB of comments in a 448 KiB prelude
+/// changed parse time by nothing measurable, so the documentation is free and
+/// only what the parser tokenises is not. The only way not to pay for a line is
+/// not to hand it over. So a surface most pages never touch lives in its own
+/// file, is never given to the parser, and arrives when something reads the
+/// name it defines — see `lazyGlobals` in the core prelude, which installs the
+/// getter that calls back into [`load_tier`].
+///
+/// The bar for moving something here is that a page which *does* use it pays
+/// slightly more (one extra parse of a small file) and a page which does not
+/// pays nothing. That trade only holds while the tier is genuinely optional:
+/// anything the first paint of an ordinary page touches belongs in the core.
+const TIERS: &[(&str, &str)] = &[
+    ("conformance", include_str!("prelude/conformance.js")),
+    ("sockets", include_str!("prelude/sockets.js")),
+    ("has", include_str!("prelude/has.js")),
+];
+
+/// Evaluate one tier into this realm, by name.
+///
+/// Reached from JavaScript as `__h5iTier("name")`. Evaluating into the same
+/// realm rather than a fresh one is the whole point: a tier finishes building
+/// the object model the core started, so it needs the core's interfaces, and it
+/// reaches them through `__h5iInternals` rather than through a shared closure —
+/// a separately parsed source has no way into the core's scope.
+fn load_tier(
+    _this: &boa_engine::JsValue,
+    args: &[boa_engine::JsValue],
+    context: &mut Context,
+) -> boa_engine::JsResult<boa_engine::JsValue> {
+    use boa_engine::JsArgs;
+    let name = args
+        .get_or_undefined(0)
+        .to_string(context)?
+        .to_std_string_escaped();
+    let Some((_, source)) = TIERS.iter().find(|(known, _)| *known == name) else {
+        return Err(boa_engine::JsError::from_opaque(
+            js_string!(format!("no such prelude tier: {name}")).into(),
+        ));
+    };
+    // Named like the core prelude's own frames, and for the same reason: a
+    // stack frame from here is a bug report against this engine, not against
+    // the page.
+    let path = format!("<h5i browser prelude: {name}>");
+    context.eval(Source::from_reader(
+        source.as_bytes(),
+        Some(std::path::Path::new(&path)),
+    ))?;
+    Ok(boa_engine::JsValue::undefined())
+}
+
 /// What a stack frame inside this engine's own prelude is called.
 ///
 /// The prelude was the one source evaluated without a path, so any frame in it
@@ -337,6 +395,37 @@ impl Settled {
     }
 }
 
+/// What a realm is built with, beyond the document it is bound to.
+///
+/// A struct rather than more parameters on [`Script::new`], because every one
+/// of these is a switch an *instrument* throws and nothing else does, and a
+/// caller that wants none of them should not have to say so.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RealmOptions {
+    /// Install the WebIDL member decoration: enumerable interface members, and
+    /// the brand check that makes an accessor reached on the prototype object
+    /// itself throw rather than run against nothing.
+    ///
+    /// **For instruments.** `idlharness` checks both on every member of every
+    /// interface, and nothing else does: a page reads `el.href`, it does not
+    /// ask whether the descriptor is enumerable. Installing it walks every own
+    /// property of every interface prototype and rebuilds each descriptor with
+    /// two closures, which measured **15 ms of the 83 ms** a realm cost — paid
+    /// by every page, observed by one harness.
+    ///
+    /// Not the `get x`/`set x` accessor naming, which reads as the third thing
+    /// this does and is not: Boa names class accessors correctly on its own and
+    /// the reflection tables name theirs, so that part is already true without
+    /// this. `the_webidl_decoration_arrives_only_when_an_instrument_asks` pins
+    /// all three so the distinction cannot rot.
+    ///
+    /// So it is off unless asked for, `wpt/run.py` asks for it, and the
+    /// conformance number is unchanged. Same shape as `--script-seconds`: an
+    /// instrument says what it is doing, and it changes nothing for anyone who
+    /// does not pass it.
+    pub webidl_conformance: bool,
+}
+
 /// A JavaScript realm bound to one document.
 pub struct Script {
     context: Context,
@@ -369,6 +458,16 @@ impl Script {
         dom: Dom,
         broker: std::sync::Arc<dyn crate::broker::Broker>,
         base: &url::Url,
+    ) -> Result<Self, String> {
+        Self::with_options(dom, broker, base, RealmOptions::default())
+    }
+
+    /// The same, for a caller that has an instrument's switches to throw.
+    pub fn with_options(
+        dom: Dom,
+        broker: std::sync::Arc<dyn crate::broker::Broker>,
+        base: &url::Url,
+        options: RealmOptions,
     ) -> Result<Self, String> {
         let url = base.to_string();
         let host = Rc::new(Host::new(dom, broker, base.clone()));
@@ -415,6 +514,23 @@ impl Script {
                 boa_engine::property::Attribute::empty(),
             )
             .map_err(|e| e.to_string())?;
+        // Built by hand rather than through `register_global_callable` so it
+        // carries the same attributes `__h5iUrl` does: a page walking its own
+        // globals must not find this engine's machinery among them.
+        let tier_loader = boa_engine::object::FunctionObjectBuilder::new(
+            context.realm(),
+            boa_engine::NativeFunction::from_fn_ptr(load_tier),
+        )
+        .name("__h5iTier")
+        .length(1)
+        .build();
+        context
+            .register_global_property(
+                js_string!("__h5iTier"),
+                tier_loader,
+                boa_engine::property::Attribute::empty(),
+            )
+            .map_err(|e| e.to_string())?;
         // Parsed on every realm, and it cannot be otherwise with this Boa.
         //
         // ROADMAP §B11.5.14 wanted this cached: three thousand lines of
@@ -429,6 +545,16 @@ impl Script {
         //
         // The sibling item, reusing the realm itself across navigations, is
         // refused on other grounds — see `Page::run_scripts`.
+        // Read by the core prelude at the one point the decoration has to
+        // happen: after every prototype is populated and before the interfaces
+        // reach the page.
+        context
+            .register_global_property(
+                js_string!("__h5iConformance"),
+                options.webidl_conformance,
+                boa_engine::property::Attribute::empty(),
+            )
+            .map_err(|e| e.to_string())?;
         context
             .eval(Source::from_reader(
                 PRELUDE.as_bytes(),

@@ -169,10 +169,34 @@ fn main() {
                 .expect("realm");
         });
         println!("\nstarting the script realm: {start:.1?} per page");
+        // Code, not bytes. Blanking every comment in the prelude — 164 KiB of
+        // 448, a third of the file — changed parse time by nothing at all, so
+        // the number that predicts this cost is what the parser has to
+        // tokenise, and the documentation is free.
+        let code = |source: &str| -> usize {
+            source
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .map(|line| line.len() + 1)
+                .sum()
+        };
+        let core = include_str!("../src/script/prelude.js");
+        let tiers = [
+            ("conformance", include_str!("../src/script/prelude/conformance.js")),
+            ("sockets", include_str!("../src/script/prelude/sockets.js")),
+            ("has", include_str!("../src/script/prelude/has.js")),
+        ];
         println!(
-            "  prelude is {} lines / {} KiB of JavaScript, parsed and evaluated each time",
-            include_str!("../src/script/prelude.js").lines().count(),
-            include_str!("../src/script/prelude.js").len() / 1024,
+            "  the core prelude is {} KiB of code ({} KiB with its comments), parsed every time",
+            code(core) / 1024,
+            core.len() / 1024
+        );
+        let deferred: usize = tiers.iter().map(|(_, source)| code(source)).sum();
+        println!(
+            "  {} KiB more sits in {} tiers ({}), parsed only when a page asks",
+            deferred / 1024,
+            tiers.len(),
+            tiers.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", ")
         );
     }
 
@@ -214,11 +238,14 @@ fn main() {
             iterate.as_nanos() as f64 / 200.0 / 1000.0);
     }
 
-    // ── the reporting proxy ─────────────────────────────────────────────────
+    // ── where a DOM property read goes ──────────────────────────────────────
     //
-    // Every DOM property read goes through a `get` trap so that an unknown name
-    // can report itself. That is a real cost on the hottest path in the engine,
-    // and it had never been measured.
+    // This section is why the reporting moved. Every DOM property read used to
+    // go through a `get` trap on a proxy in front of every wrapper, so that an
+    // unknown name could report itself — 799 ns of the 882 ns a *known*
+    // property cost, against 82 ns for a plain object. The reporting now sits
+    // at the end of the prototype chain instead, where only a read that missed
+    // arrives, and a known read never meets it.
     println!();
     let url = url::Url::parse("https://bench.example/").unwrap();
     let (scripted, broker) = factory(true);
@@ -250,14 +277,22 @@ fn main() {
         "(() => { let n = 0; const el = document.querySelector('h2'); \
            for (let i = 0; i < 20000; i++) n += el.cloneNode ? 1 : 0; return n })()",
     );
+    // A property that genuinely goes to the tree on every read. It used to be
+    // `tagName`, which stopped being one: a tag cannot change, so the wrapper
+    // remembers it and the second read never leaves JavaScript. That is the
+    // point of the fourth line below, and the reason this one had to move.
     let native = bench(
-        "(() => { let n = 0; const el = document.querySelector('h2'); \
+        "(() => { let n = 0; const el = document.querySelector('section'); \
+           for (let i = 0; i < 20000; i++) n += el.className.length; return n })()",
+    );
+    let remembered = bench(
+        "(() => { let n = 0; const el = document.querySelector('section'); \
            for (let i = 0; i < 20000; i++) n += el.tagName.length; return n })()",
     );
 
     let per = |d: Duration| d.as_nanos() as f64 / reads as f64;
     println!("where a DOM property read goes, over {reads} reads:");
-    println!("  plain object, no proxy        {plain:>10.1?}  ({:.0} ns each)", per(plain));
+    println!("  plain object                  {plain:>10.1?}  ({:.0} ns each)", per(plain));
     println!(
         "  watched node, known property  {trapped:>10.1?}  ({:.0} ns each)",
         per(trapped)
@@ -267,7 +302,11 @@ fn main() {
         per(native)
     );
     println!(
-        "\n  the proxy trap itself         {:>10.1?}  ({:.0} ns each)",
+        "  watched node, remembered      {remembered:>10.1?}  ({:.0} ns each)",
+        per(remembered)
+    );
+    println!(
+        "\n  the object model itself       {:>10.1?}  ({:.0} ns each)",
         trapped.saturating_sub(plain),
         per(trapped.saturating_sub(plain))
     );
@@ -277,13 +316,43 @@ fn main() {
         per(native.saturating_sub(trapped))
     );
 
+    // ── inside one native call ──────────────────────────────────────────────
+    //
+    // "Reaching into the tree" is four things at once, and which of them
+    // dominates decides what is worth fixing: Boa dispatching to a native
+    // function, converting the arguments, finding the host and the node, and
+    // building the answer. Three primitives with the same shape and different
+    // amounts of work at the end separate them.
+    let kind = bench(
+        "(() => { let n = 0; const id = document.querySelector('h2')._id; \
+           for (let i = 0; i < 20000; i++) n += __h5i.nodeKind(id); return n })()",
+    );
+    let tag = bench(
+        "(() => { let n = 0; const id = document.querySelector('h2')._id; \
+           for (let i = 0; i < 20000; i++) n += __h5i.tagName(id).length; return n })()",
+    );
+    let attr = bench(
+        "(() => { let n = 0; const id = document.querySelector('h2')._id; \
+           for (let i = 0; i < 20000; i++) n += String(__h5i.getAttr(id, 'class')).length; \
+           return n })()",
+    );
+    println!("\nwhere a native call goes, over {reads} calls:");
+    println!("  nodeKind: a number back        {kind:>10.1?}  ({:.0} ns each)", per(kind));
+    println!("  tagName: a string back         {tag:>10.1?}  ({:.0} ns each)", per(tag));
+    println!("  getAttr: a string each way     {attr:>10.1?}  ({:.0} ns each)", per(attr));
+
     println!(
-        "\nThe trap is the price of naming what a page asked for and we lack; the tree read is\n\
-         the price of there being one real DOM rather than a JavaScript copy of one. Neither is\n\
-         free, and the second is the larger.\n\n\
-         Measured and rejected: precomputing the set of known property names, so the trap does a\n\
-         hash lookup instead of walking the prototype chain, changed nothing. The cost is Boa\n\
-         dispatching into a JavaScript trap at all, not the test inside it — so the only way to\n\
-         remove it is to stop watching, which would cost the naming that makes a gap reportable."
+        "\nThe object model is the price of a node being an object rather than a number; the tree\n\
+         read is the price of there being one real DOM rather than a JavaScript copy of one. A\n\
+         read the wrapper can answer from what it already knows pays neither, which is what the\n\
+         fourth line is: a tag cannot change, so it is asked for once.\n\n\
+         Measured and rejected, so nobody tries again. **Precomputing the known property names**,\n\
+         so the old proxy trap did a hash lookup instead of walking the prototype chain: no\n\
+         change — the cost was Boa dispatching into a JavaScript trap at all, which is why the\n\
+         fix in the end was to stop being in front of the object. **Interning the uppercased tag\n\
+         names**, and building the attribute answer without its two intermediate `String`s: no\n\
+         change either, and the line above says why — a native call costs ~150 ns before it does\n\
+         anything at all, so shaving the work at the far end of it is shaving the small half.\n\
+         The allocations went anyway; the cache did not, because it was state for nothing."
     );
 }

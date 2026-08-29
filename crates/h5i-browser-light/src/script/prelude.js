@@ -14,6 +14,59 @@
 
   const api = globalThis.__h5i;
 
+  /// What a lazily parsed part of the prelude can reach.
+  ///
+  /// Most of this file is one closure, which is why it is cheap to write and
+  /// impossible to split: every binding is in scope everywhere and nothing
+  /// declares what it needs. A tier (see `TIERS` in `mod.rs`) is a *separate*
+  /// `eval`, so it has no way in, and this record is the door. Sections put
+  /// what a tier needs on it as they build it, and a tier takes only what it
+  /// names — which makes the dependency visible in both files instead of
+  /// implicit in a shared scope.
+  const internals = {};
+  Object.defineProperty(globalThis, "__h5iInternals", {
+    value: internals, writable: false, enumerable: false, configurable: false,
+  });
+
+  /// Names that stand for a source this realm has not parsed yet.
+  ///
+  /// Reading one loads its tier, which defines the name for real and takes this
+  /// accessor's place. The read is the trigger because reading is what a page
+  /// does first with an interface it wants: `new WebSocket(...)`, and
+  /// `typeof WebSocket === "function"` for the feature detection that comes
+  /// before it. Both arrive here, so both bring the file in.
+  ///
+  /// The property it leaves behind is WebIDL's shape for an interface object —
+  /// `{ writable: true, enumerable: false, configurable: true }` — which is
+  /// also what the enumerability pass at the end of this file would have given
+  /// it, and it has to be set here because that pass has long since run by the
+  /// time a tier loads.
+  function lazyGlobals(tier, names) {
+    const install = (name, value) => {
+      Object.defineProperty(globalThis, name, {
+        value, writable: true, enumerable: false, configurable: true,
+      });
+    };
+    for (const name of names) {
+      Object.defineProperty(globalThis, name, {
+        configurable: true,
+        enumerable: false,
+        get() {
+          __h5iTier(tier);
+          const now = Object.getOwnPropertyDescriptor(globalThis, name);
+          // A tier that loaded without defining what it was asked for would
+          // otherwise return this accessor's own undefined, for ever, and look
+          // exactly like an engine that never had the interface.
+          if (!now || now.get) {
+            throw new Error(`the ${tier} tier did not define ${name}`);
+          }
+          return now.value;
+        },
+        set(value) { install(name, value); },
+      });
+    }
+  }
+
   /// Tag name to the interface that tag gets, filled in once the
   /// interfaces below exist. A Map declared here rather than beside them
   /// because `constructElement` is defined above and would otherwise read
@@ -169,7 +222,11 @@
     if (existing) return existing;
     // Re-entrant construction — a custom element's constructor asking the
     // document for itself — gets a plain wrapper rather than recursing forever.
-    if (constructing.has(id)) return observed(new Element(id), "Element");
+    if (constructing.has(id)) {
+      const partial = new Element(id);
+      partial._kind = 1;
+      return partial;
+    }
 
 
     // The tree decides what a node is. A set of ids on this side only knew
@@ -185,10 +242,12 @@
     // Labelled by what the node actually is. Calling a text node "Element"
     // reported `Element.tagName` as missing when what happened was a page
     // reading `tagName` off a text node, where no engine has one.
+    // Read back by the sentinel at the end of every node's prototype chain,
+    // which is where a missing property is named. `label` above is what it
+    // says; this is how it reaches the trap without a wrapper per node.
     raw._kind = kind;
-    const node = observed(raw, label);
-    wrappers.set(id, node);
-    return node;
+    wrappers.set(id, raw);
+    return raw;
   }
 
   // ── custom elements ──────────────────────────────────────────────────────
@@ -561,8 +620,8 @@
     return out;
   }
 
-  // Wrap an object we own so that reading a property it does not have is
-  // *recorded* rather than silently undefined.
+  // Report a read that found nothing, without taxing the reads that find
+  // something.
   //
   // The corpus found the gap this closes. `missingApi` names globals, so
   // `WebSocket` reports itself — but a page reading `el.scrollIntoView` or
@@ -571,46 +630,68 @@
   // anywhere named the property. The measurement could not see what was left,
   // which is a different thing from nothing being left.
   //
-  // Only genuinely unknown names are recorded. Anything on the prototype chain
-  // is a property we implement, and anything the page itself assigned is an
-  // expando it expects to read back — both take the plain path, so a working
-  // page records nothing at all.
-  function observed(target, label) {
-    return new Proxy(target, {
+  // **This used to be a `Proxy` around every wrapper**, and the reporting was
+  // right while the price was not: a `get` trap in front of an object fires for
+  // every read, including the overwhelming majority that find exactly what they
+  // asked for. Measured at **799 ns of the 882 ns** a known property read cost
+  // against 82 ns for a plain object — a 10x tax on the hottest path in the
+  // engine, to name the reads that miss.
+  //
+  // A missing read already walks the whole prototype chain; a found one stops
+  // where it is found. So the reporting goes at the *end* of the chain instead
+  // of the front of the object, and the two cases separate themselves: a
+  // property we implement is found on a prototype and never reaches here, and
+  // only a genuine miss pays for a trap. Nothing about *what* is reported
+  // changes.
+  //
+  // It also removes a compromise the proxy form had to make. That trap passed
+  // the raw target as the receiver, so a getter the *page* defined on its own
+  // class ran with the proxy stripped and its own missing reads went
+  // unrecorded. A sentinel has no receiver to substitute: `receiver` is the
+  // object the page actually read from, always.
+
+  /// The labels `wrap` gives the three kinds of node it hands out.
+  const KIND_LABELS = { 1: "Element", 3: "Text", 8: "Comment" };
+
+  /// One stand-in per label, because building a fresh proxy per object was the
+  /// other half of the old cost: `el.classList` minted one on every read.
+  const sentinels = new Map();
+
+  /// Objects that *are* sentinels, so a second `observed` on the same target
+  /// stacks nothing.
+  const isSentinel = new Set();
+
+  function gapTrap(naming) {
+    return {
       get(object, property, receiver) {
+        // Found after all: the sentinel stands in for the tail of a real
+        // prototype chain, and `Object.prototype`'s members are still there.
         if (typeof property === "symbol" || property in object) {
-          // The raw target as receiver, not the proxy. A getter invoked with
-          // the proxy as `this` pays another trap for every `this._id` it
-          // reads, so each of our own accessors cost two — `nodeType` was
-          // 2.15 µs for what is a field lookup. Passing the target takes the
-          // hot properties to 0.85 µs.
-          //
-          // What it narrows: a getter *defined by the page* on its own class
-          // runs with the target as `this`, so an unknown property read inside
-          // one is not reported. Methods are unaffected — `el.method()` still
-          // calls with the proxy as `this` — and the reporting that has found
-          // real bugs has always been about properties the page reads *off* a
-          // node, which is unchanged.
-          return Reflect.get(object, property, object);
+          return Reflect.get(object, property, receiver);
         }
         // `then` is probed by the promise machinery on anything it is handed;
         // recording it would report a missing API every time a node passed
         // through an await.
         if (property === "then") return undefined;
 
-        // A gap is only a gap if a real browser would have answered. Reading
-        // `tagName` off a text node gets undefined in every engine there is —
-        // reporting it would send us building something that does not exist,
-        // and the corpus did exactly that until this rule was written.
-        if (label !== "Element" && property in Element.prototype) return undefined;
-
         // Nor is a page's own bookkeeping. No web platform property begins with
         // an underscore or a dollar; frameworks' private fields routinely do.
         // Solid reads `document._$DX_DELEGATE` before it sets it, and the list
         // an agent reads carried that as something this engine was missing.
+        //
+        // First, and not only for tidiness: `naming` below reads `_kind` off
+        // the receiver, and a receiver without one would come back here for
+        // that read. This rule is what makes that terminate.
         const name = String(property);
         const first = name.charCodeAt(0);
-        if (first === 95 || first === 36) return undefined;
+        if (first === 95 || first === 36) {
+          // Ours, and therefore a cost rather than a gap: see
+          // `declareInternals`. Counted only when a test asks, because the
+          // answer to "did one of our own reads walk the whole chain" is
+          // otherwise invisible — it is undefined either way.
+          if (globalThis.__h5iReportInternalMisses) api.unsupported(`internal miss: ${name}`);
+          return undefined;
+        }
 
         // Nor is a generated key. jQuery and Sizzle stamp elements with names
         // like `jQuery360062973586668224961` and `sizzle1786301869537`, read
@@ -620,10 +701,83 @@
         // that long, because it would have to be typed by a person.
         if (/\d{6}/.test(name)) return undefined;
 
-        api.unsupported(`${label}.${String(property)}`);
+        // Something we never handed out. A page's own `class Store extends
+        // EventTarget` reaches no sentinel, but a bare `new Element(id)` this
+        // file made for its own use does, and that is not an object the page
+        // asked us for.
+        const label = naming(receiver);
+        if (label === null || label === undefined) return undefined;
+
+        // A gap is only a gap if a real browser would have answered. Reading
+        // `tagName` off a text node gets undefined in every engine there is —
+        // reporting it would send us building something that does not exist,
+        // and the corpus did exactly that until this rule was written.
+        if (label !== "Element" && property in Element.prototype) return undefined;
+
+        api.unsupported(`${label}.${name}`);
         return undefined;
       },
-    });
+    };
+  }
+
+  /// The stand-in that goes where `proto` was.
+  ///
+  /// Its target is an empty object *over* `proto` rather than `proto` itself,
+  /// which is what keeps `instanceof` honest: a proxy reports its target's
+  /// prototype, so the real chain continues through it instead of ending at it.
+  function gapSentinel(proto, label) {
+    const naming = typeof label === "function" ? label : () => label;
+    const found = sentinels.get(label);
+    if (found !== undefined && Object.getPrototypeOf(found) === proto) return found;
+    const sentinel = new Proxy(Object.create(proto), gapTrap(naming));
+    isSentinel.add(sentinel);
+    if (found === undefined) sentinels.set(label, sentinel);
+    return sentinel;
+  }
+
+  /// Watch one object: for the singletons this file builds as literals, where
+  /// every property it really has is an own property and the sentinel is
+  /// reached only by a read that missed.
+  function observed(target, label) {
+    const proto = Object.getPrototypeOf(target);
+    if (isSentinel.has(proto)) return target;
+    Object.setPrototypeOf(target, gapSentinel(proto, label));
+    return target;
+  }
+
+  /// Declare the fields this file sets only sometimes.
+  ///
+  /// `get tagName()` reads `this._nsuri` to find out whether the element came
+  /// from `createElementNS`, and for everything the parser made it never did.
+  /// That read found nothing on the instance, nothing on any prototype, and
+  /// arrived at the sentinel — so **the engine was paying a trap to ask itself
+  /// a question about its own bookkeeping**, on the hottest accessor there is.
+  /// It measured 1415 ns against the 196 ns the underlying native call costs.
+  ///
+  /// A value of `undefined` on the prototype answers the same question at the
+  /// first hop. Writable, because an instance that *does* have a namespace
+  /// assigns over it, and a non-writable prototype property would make that
+  /// assignment fail. Non-enumerable, because these are machinery and nothing
+  /// that walks an interface should see them.
+  ///
+  /// `an_internal_read_never_reaches_the_sentinel` is the guard: add a field
+  /// like this and forget to declare it, and that test says so.
+  function declareInternals(proto, names) {
+    for (const name of names) {
+      Object.defineProperty(proto, name, {
+        value: undefined, writable: true, enumerable: false, configurable: true,
+      });
+    }
+  }
+
+  /// Watch every instance of a class, once, by putting the sentinel at the end
+  /// of the class's own chain. The per-instance form would sit *above* the
+  /// instance and below the prototype holding its methods, which puts a trap
+  /// back in front of every method call — the cost this rewrite removes.
+  function observedClass(Interface, label) {
+    const proto = Object.getPrototypeOf(Interface.prototype);
+    if (isSentinel.has(proto)) return;
+    Object.setPrototypeOf(Interface.prototype, gapSentinel(proto, label));
   }
 
   // `class` is the famous one, but `rel` is a token list too, and so are
@@ -1482,7 +1636,17 @@
       if (this._nsuri !== undefined && this._nsuri !== "http://www.w3.org/1999/xhtml") {
         return this._prefix ? `${this._prefix}:${this._localName}` : this._localName;
       }
-      return api.tagName(this._id);
+      // Remembered on the wrapper, because a native call costs ~150 ns of
+      // dispatch however little it does at the end of it — and this is the
+      // most-read property in the engine. The prelude alone branches on it a
+      // dozen times (`=== "SCRIPT"`, `=== "TEMPLATE"`, `=== "TEXTAREA"`), each
+      // of those a round trip into Rust for an answer that cannot change: an
+      // element's tag is fixed when the element is made.
+      //
+      // The same bet `_kind` already makes, and it stands or falls with it: a
+      // wrapper is keyed by node id and kept, so both are wrong together if a
+      // freed id is ever handed to a new node.
+      return this._tag ?? (this._tag = api.tagName(this._id));
     }
     get nodeName() { return this.tagName; }
     get children() { return collection(this.childNodes.filter((n) => n.nodeType === 1), "HTMLCollection"); }
@@ -1544,7 +1708,7 @@
       // [SameObject]: the identical list every read — pages compare them.
       if (!this.__h5iClassList) {
         this.__h5iClassList =
-          observed(DOMTokenList._indexed(new DOMTokenList(this, "class")), "DOMTokenList");
+          DOMTokenList._indexed(new DOMTokenList(this, "class"));
       }
       return this.__h5iClassList;
     }
@@ -1552,7 +1716,7 @@
     get relList() {
       if (!this.__h5iRelList) {
         this.__h5iRelList =
-          observed(DOMTokenList._indexed(new DOMTokenList(this, "rel")), "DOMTokenList");
+          DOMTokenList._indexed(new DOMTokenList(this, "rel"));
       }
       return this.__h5iRelList;
     }
@@ -5527,189 +5691,12 @@
   // until a Blitz release depends on stylo >= 0.20 (see ROADMAP §B22.1).
   const HAS_PATTERN = /:has\(/i;
 
-  function rawAddClass(id, cls) {
-    const original = api.getAttr(id, "class");
-    api.setAttr(id, "class", original ? `${original} ${cls}` : cls);
-    return () => {
-      if (original === null) api.removeAttr(id, "class");
-      else api.setAttr(id, "class", original);
-    };
-  }
-
-  function splitTopLevelCommas(text) {
-    const parts = [];
-    let depth = 0;
-    let current = "";
-    for (const ch of text) {
-      if (ch === "(" || ch === "[") depth += 1;
-      else if (ch === ")" || ch === "]") depth -= 1;
-      if (ch === "," && depth === 0) {
-        parts.push(current);
-        current = "";
-      } else current += ch;
-    }
-    parts.push(current);
-    return parts;
-  }
-
-  /// Split one complex selector into `[combinator, compound]` pairs at the
-  /// top level: `"> p b"` becomes `[[">", "p"], [" ", "b"]]`. Brackets and
-  /// parens shield their contents, so `a[title="> x"]` stays one compound.
-  function splitRelativePairs(arg) {
-    const pairs = [];
-    let combinator = " ";
-    let current = "";
-    let depth = 0;
-    const flush = () => {
-      if (current !== "") {
-        pairs.push([combinator, current]);
-        current = "";
-        combinator = " ";
-      }
-    };
-    for (const ch of arg) {
-      if (ch === "(" || ch === "[") depth += 1;
-      else if (ch === ")" || ch === "]") depth -= 1;
-      if (depth === 0 && (ch === ">" || ch === "+" || ch === "~")) {
-        flush();
-        combinator = ch;
-      } else if (depth === 0 && /\s/.test(ch)) {
-        flush();
-      } else {
-        current += ch;
-      }
-    }
-    flush();
-    return pairs;
-  }
-
-  /// Does `el` have a relative match for the pair chain? Evaluated locally —
-  /// children for `>`, the sibling walk for `+`/`~`, a scoped query for the
-  /// descendant hop — so the cost is the neighbourhood actually inspected,
-  /// not a document-wide probe per candidate (which measured 244ms against
-  /// this version's ~1ms on a 2,000-node page).
-  function relativePairsHold(el, pairs, index) {
-    if (index >= pairs.length) return true;
-    const [combinator, compound] = pairs[index];
-    const step = (candidate) =>
-      candidate.matches(compound) && relativePairsHold(candidate, pairs, index + 1);
-    if (combinator === ">") {
-      for (const child of el.children) if (step(child)) return true;
-      return false;
-    }
-    if (combinator === "+") {
-      const next = el.nextElementSibling;
-      return next !== null && step(next);
-    }
-    if (combinator === "~") {
-      for (let n = el.nextElementSibling; n; n = n.nextElementSibling) {
-        if (step(n)) return true;
-      }
-      return false;
-    }
-    for (const found of el.querySelectorAll(compound)) {
-      if (relativePairsHold(found, pairs, index + 1)) return true;
-    }
-    return false;
-  }
-
-  /// Rewrite every `:has(ARG)` in `text` to a marker class, tagging the
-  /// elements that match. Returns the rewritten selector and the cleanup
-  /// that removes every marker.
-  function prepareHasSelector(text) {
-    const cleanups = [];
-    const cleanup = () => {
-      for (const undo of cleanups) undo();
-    };
-    try {
-      let out = "";
-      let i = 0;
-      let group = 0;
-      const lower = text.toLowerCase();
-      while (i < text.length) {
-        const at = lower.indexOf(":has(", i);
-        if (at === -1) {
-          out += text.slice(i);
-          break;
-        }
-        out += text.slice(i, at);
-        let depth = 1;
-        let j = at + 5;
-        while (j < text.length && depth > 0) {
-          if (text[j] === "(") depth += 1;
-          else if (text[j] === ")") depth -= 1;
-          j += 1;
-        }
-        if (depth !== 0) {
-          throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
-        }
-        const argText = text.slice(at + 5, j - 1);
-        if (HAS_PATTERN.test(argText)) {
-          // `:has()` may not nest, per the spec's own grammar.
-          throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
-        }
-        const args = splitTopLevelCommas(argText).map((s) => s.trim()).filter(Boolean);
-        if (args.length === 0) {
-          throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
-        }
-        // Validate each argument once, as the complex selector it is.
-        for (const arg of args) {
-          if (!api.validSelector(arg.replace(/^[>+~]\s*/, ""))) {
-            throw new DOMException(`${text} is not a valid selector`, "SyntaxError");
-          }
-        }
-        const marker = `__h5i_has_${group}__`;
-        group += 1;
-        const tagged = new Set();
-        for (const arg of args) {
-          if (/^[>+~]/.test(arg)) {
-            // A leading combinator is evaluated *from the matches inward*:
-            // one engine query finds every element matching the first
-            // compound, the rest of the chain is verified locally from each,
-            // and the anchor falls out of the combinator — the parent for
-            // `>`, the previous sibling for `+`, every preceding sibling for
-            // `~`. No per-candidate document scan: this is what took the
-            // worst case from 244ms to ~2ms on a 2,000-node page.
-            const pairs = splitRelativePairs(arg);
-            const [combinator, first] = pairs[0];
-            for (const id of api.queryAll(first, 0)) {
-              const m = wrap(id);
-              if (!m || !relativePairsHold(m, pairs, 1)) continue;
-              if (combinator === ">") {
-                const parent = api.parent(id);
-                if (parent !== null && parent !== undefined) tagged.add(parent);
-              } else if (combinator === "+") {
-                const previous = m.previousElementSibling;
-                if (previous) tagged.add(previous._id);
-              } else {
-                for (let n = m.previousElementSibling; n; n = n.previousElementSibling) {
-                  tagged.add(n._id);
-                }
-              }
-            }
-          } else {
-            // The descendant form has a fast path: every strict ancestor of
-            // a match "has" it, because a scoped query only constrains the
-            // subject to the scope's subtree.
-            for (const id of api.queryAll(arg, 0)) {
-              for (let p = api.parent(id); p !== null && p !== undefined; p = api.parent(p)) {
-                tagged.add(p);
-              }
-            }
-          }
-        }
-        for (const id of tagged) {
-          if (api.nodeKind(id) === 1) cleanups.push(rawAddClass(id, marker));
-        }
-        out += `.${marker}`;
-        i = j;
-      }
-      return { rewritten: out, cleanup };
-    } catch (error) {
-      cleanup();
-      throw error;
-    }
-  }
+  // The evaluator itself is in `prelude/has.js`, parsed the first time a
+  // selector actually contains `:has(`. Every selector-taking API already asked
+  // that question to decide whether it needed any of this; now the same
+  // question decides whether the file exists yet.
+  internals.wrap = wrap;
+  internals.HAS_PATTERN = HAS_PATTERN;
 
   /// The wrapper every selector-taking API goes through: plain selectors go
   /// straight to `checkSelector`, `:has()` selectors get their markers for
@@ -5717,7 +5704,8 @@
   function withHasMarkers(selector, run) {
     const text = String(selector);
     if (!HAS_PATTERN.test(text)) return run(checkSelector(text));
-    const { rewritten, cleanup } = prepareHasSelector(text);
+    if (!internals.prepareHasSelector) __h5iTier("has");
+    const { rewritten, cleanup } = internals.prepareHasSelector(text);
     try {
       return run(checkSelector(rewritten));
     } finally {
@@ -7408,8 +7396,38 @@
     toString() { return this._range ? this._range.toString() : ""; }
   }
 
+  // ── what this file hands out is watched, once ────────────────────────────
+  //
+  // Four classes rather than four objects per read. The sentinel goes at the
+  // end of each class's own prototype chain, so a method or accessor the class
+  // really has is found before anything is trapped, and only a read that missed
+  // arrives at the report. See `observedClass`.
+  //
+  // `Node` covers every node, because `Element`, `Text` and `Comment` all
+  // descend from it — and its label comes from the receiver, since one chain
+  // ends three kinds of node and "reading `tagName` off a text node" has to
+  // stay distinguishable from reading it off an element.
+  internals.withStack = withStack;
+  observedClass(Node, (receiver) => KIND_LABELS[receiver._kind] ?? null);
+  declareInternals(Node.prototype, ["_kind"]);
+  declareInternals(Element.prototype, [
+    // Set by `createElementNS`, and by nothing the parser does.
+    "_nsuri", "_prefix", "_localName",
+    // The tag, remembered on first read: see `get tagName`.
+    "_tag",
+    // The token list a `classList` read memoises on its element.
+    "__h5iClassList",
+    // A form control's dirty overlay: present only once something set it.
+    "_checked", "_value", "_selected",
+    // The shadow root an element may have been given, and usually was not.
+    "_shadow",
+  ]);
+  observedClass(DOMTokenList, "DOMTokenList");
+  observedClass(Range, "Range");
+  observedClass(Selection, "Selection");
+
   const selection = new Selection();
-  function getSelection() { return observed(selection, "Selection"); }
+  function getSelection() { return selection; }
 
   /// `document.execCommand`, for the commands this engine can actually carry out.
   ///
@@ -7660,7 +7678,7 @@
     open() { return document; },
     close() {},
 
-    createRange() { return observed(new Range(), "Range"); },
+    createRange() { return new Range(); },
     getSelection() { return getSelection(); },
 
     /// The commands this engine carries out, and no others.
@@ -7977,6 +7995,11 @@
   // Same rule for `document`: a page reading `document.activeElement` or
   // `document.fonts` should produce a named gap, not a silent undefined.
   const document = observed(documentImpl, "document");
+  // The document is passed wherever a node is, and every one of those paths
+  // reads `._id` off it. It does not have one — there is no id that means "the
+  // document" to the primitives — so each of those reads walked its whole chain
+  // into the sentinel. 105 of them in one ordinary page's worth of work.
+  declareInternals(documentImpl, ["_id"]);
 
   const console = {
     log: (...a) => api.log("log", a.map(render).join(" ")),
@@ -8177,216 +8200,22 @@
   // true for a stub cost three sites their entire bundle. This is a working
   // object over a real connection, or the identifier is not defined at all.
   //
+  // **In its own source**, because a page that opens no socket should not parse
+  // it: `prelude/sockets.js`, reached by reading either name. `typeof
+  // WebSocket === "function"` still answers true — reading the name is what
+  // brings the file in — so the rule above is unchanged by the move.
+  //
   // Delivery is at settle-round boundaries rather than the instant a frame
   // lands, because the session has no pump at rest. See `socket_drain` in
   // dom_api.rs.
-  const openSockets = new Map(); // id -> WebSocket
+  lazyGlobals("sockets", ["WebSocket", "EventSource"]);
 
-  class WebSocket extends EventTarget {
-    constructor(url, protocols) {
-      super();
-      if (arguments.length === 0) {
-        throw new TypeError("WebSocket requires a url");
-      }
-      this._url = String(url);
-      this._protocols = protocols;
-      this.readyState = WebSocket.CONNECTING;
-      this.bufferedAmount = 0;
-      this.extensions = "";
-      this.protocol = "";
-      this.binaryType = "blob";
-      this.onopen = null;
-      this.onmessage = null;
-      this.onclose = null;
-      this.onerror = null;
-      // Throws if the policy refused it, which is what a page sees for any
-      // other refused request too.
-      this._id = api.socketOpen(this._url);
-      openSockets.set(this._id, this);
-    }
-
-    get url() {
-      return this._url;
-    }
-
-    send(data) {
-      if (this.readyState === WebSocket.CONNECTING) {
-        throw new DOMException_("still connecting", "InvalidStateError");
-      }
-      if (this.readyState !== WebSocket.OPEN) return;
-      api.socketSend(this._id, typeof data === "string" ? data : String(data));
-    }
-
-    close(code, reason) {
-      if (this.readyState === WebSocket.CLOSED) return;
-      this.readyState = WebSocket.CLOSING;
-      api.socketClose(this._id);
-      openSockets.delete(this._id);
-      this.readyState = WebSocket.CLOSED;
-      const event = new Event("close");
-      event.code = code === undefined ? 1000 : code;
-      event.reason = reason === undefined ? "" : String(reason);
-      event.wasClean = true;
-      this._fire("close", event);
-    }
-
-    _fire(kind, event) {
-      const handler = this["on" + kind];
-      if (typeof handler === "function") {
-        try {
-          handler.call(this, event);
-        } catch (error) {
-          console.error("websocket " + kind + " handler threw: " + withStack(error));
-        }
-      }
-      this.dispatchEvent(event);
-    }
-  }
-  WebSocket.CONNECTING = 0;
-  WebSocket.OPEN = 1;
-  WebSocket.CLOSING = 2;
-  WebSocket.CLOSED = 3;
-
-  // A minimal DOMException stand-in, only where the spec names one.
-  function DOMException_(message, name) {
-    const error = new Error(message);
-    error.name = name;
-    return error;
-  }
-
-  // Collect what arrived and turn it into events. Returns how many were
-  // delivered, so the settle loop knows whether the round did any work: a
-  // socket that is merely *open* must not hold the page busy forever, and one
-  // that delivered a message should get another round.
-  // `EventSource`, over the same delivery mechanism. Real, or absent — the
-  // rule above applies here too.
-  const openStreams = new Map(); // id -> EventSource
-
-  class EventSource extends EventTarget {
-    constructor(url, init) {
-      super();
-      if (arguments.length === 0) {
-        throw new TypeError("EventSource requires a url");
-      }
-      this._url = String(url);
-      this.withCredentials = !!(init && init.withCredentials);
-      this.readyState = EventSource.CONNECTING;
-      this.onopen = null;
-      this.onmessage = null;
-      this.onerror = null;
-      this._id = api.sseOpen(this._url);
-      openStreams.set(this._id, this);
-    }
-
-    get url() {
-      return this._url;
-    }
-
-    close() {
-      if (this.readyState === EventSource.CLOSED) return;
-      api.sseClose(this._id);
-      openStreams.delete(this._id);
-      this.readyState = EventSource.CLOSED;
-    }
-
-    _fire(kind, event) {
-      const handler = this["on" + kind];
-      if (typeof handler === "function") {
-        try {
-          handler.call(this, event);
-        } catch (error) {
-          console.error("eventsource " + kind + " handler threw: " + withStack(error));
-        }
-      }
-      this.dispatchEvent(event);
-    }
-  }
-  EventSource.CONNECTING = 0;
-  EventSource.OPEN = 1;
-  EventSource.CLOSED = 2;
-
-  globalThis.WebSocket = WebSocket;
-  globalThis.EventSource = EventSource;
-
-  globalThis.__h5iDrainSockets = function () {
-    let delivered = 0;
-    for (const socket of Array.from(openSockets.values())) {
-      const events = api.socketDrain(socket._id);
-      for (const entry of events) {
-        const kind = entry[0];
-        const payload = entry[1];
-        delivered++;
-        if (kind === "open") {
-          socket.readyState = WebSocket.OPEN;
-          socket._fire("open", new Event("open"));
-        } else if (kind === "message") {
-          const event = new Event("message");
-          event.data = payload;
-          event.origin = socket._url;
-          socket._fire("message", event);
-        } else if (kind === "close") {
-          socket.readyState = WebSocket.CLOSED;
-          // Tell the engine too, not just this map. Dropping it only here left
-          // the Rust side holding the connection for the life of the page: the
-          // snapshot reported a phantom open socket forever, and every later
-          // `wait_for` polled in real time for the whole network budget
-          // because the engine still believed something might arrive.
-          api.socketClose(socket._id);
-          openSockets.delete(socket._id);
-          const event = new Event("close");
-          event.code = 1006;
-          event.reason = payload;
-          event.wasClean = false;
-          socket._fire("close", event);
-        } else if (kind === "error") {
-          const event = new Event("error");
-          event.message = payload;
-          socket._fire("error", event);
-        }
-      }
-    }
-
-    for (const stream of Array.from(openStreams.values())) {
-      const events = api.sseDrain(stream._id);
-      for (const entry of events) {
-        const kind = entry[0];
-        const payload = entry[1];
-        delivered++;
-        if (kind === "open") {
-          stream.readyState = EventSource.OPEN;
-          stream._fire("open", new Event("open"));
-        } else if (kind === "message") {
-          // The name arrives as its own field. Reading it out of the payload
-          // meant guessing, and a plain `data: one\ndata: two` was read as an
-          // event named `one` carrying `two`, so `onmessage` never fired.
-          const name = entry[2] || "message";
-          const event = new Event(name);
-          event.data = payload;
-          event.origin = stream._url;
-          stream._fire(name === "message" ? "message" : name, event);
-        } else if (kind === "close") {
-          stream.readyState = EventSource.CLOSED;
-          api.sseClose(stream._id);
-          openStreams.delete(stream._id);
-          const event = new Event("error");
-          event.message = payload;
-          stream._fire("error", event);
-        } else if (kind === "error") {
-          const event = new Event("error");
-          event.message = payload;
-          stream._fire("error", event);
-        }
-      }
-    }
-
-    return delivered;
-  };
-
-  /// How many long-lived connections this page has open, for the engine's own
-  /// reporting.
-  globalThis.__h5iOpenSockets = function () {
-    return openSockets.size + openStreams.size;
-  };
+  /// What the settle loop asks every round. A page that never opened a socket
+  /// has no sockets to drain, and answering that without loading the tier is
+  /// the whole point: `prelude/sockets.js` replaces both of these when it
+  /// arrives.
+  globalThis.__h5iDrainSockets = function () { return 0; };
+  globalThis.__h5iOpenSockets = function () { return 0; };
 
   globalThis.__h5iPendingTimers = function () {
     let pending = 0;
@@ -9660,56 +9489,19 @@
       FONT_FACE_RULE: 5, PAGE_RULE: 6, MARGIN_RULE: 9, NAMESPACE_RULE: 10,
       KEYFRAMES_RULE: 7, KEYFRAME_RULE: 8, SUPPORTS_RULE: 12,
     });
-    // ── WebIDL member polish ─────────────────────────────────────────────
+    // ── WebIDL member decoration ──────────────────────────────────────────
     //
-    // Three properties of every interface member that idlharness checks and
-    // class syntax gets wrong: members are enumerable, accessor functions are
-    // named `get x`/`set x`, and an accessor reached on the prototype object
-    // itself throws TypeError instead of running against nothing. The
-    // reflection tables already emit all three; this pass brings the members
-    // written as plain class accessors and methods up to the same contract.
-    // Underscore names are internal machinery and stay out of enumeration.
-    const polish = (Interface) => {
-      const proto = Interface && Interface.prototype;
-      if (!proto) return;
-      for (const key of Object.getOwnPropertyNames(proto)) {
-        if (key === "constructor" || key.startsWith("_")) continue;
-        const desc = Object.getOwnPropertyDescriptor(proto, key);
-        if (!desc.configurable) continue;
-        desc.enumerable = true;
-        if (desc.get) {
-          const inner = desc.get;
-          desc.get = function () {
-            // The WebIDL brand check: the prototype itself and any object
-            // that is not an instance of this interface both get the
-            // TypeError — `desc.get.call({})` is idlharness's own probe.
-            if (this === proto || !(this instanceof Interface)) {
-              throw new TypeError(`Illegal invocation: ${key} needs an instance`);
-            }
-            return inner.call(this);
-          };
-          Object.defineProperty(desc.get, "name", { value: `get ${key}` });
-        }
-        if (desc.set) {
-          const inner = desc.set;
-          desc.set = function (value) {
-            if (this === proto || !(this instanceof Interface)) {
-              throw new TypeError(`Illegal invocation: ${key} needs an instance`);
-            }
-            return inner.call(this, value);
-          };
-          Object.defineProperty(desc.set, "name", { value: `set ${key}` });
-        }
-        Object.defineProperty(proto, key, desc);
-      }
-    };
-    for (const Interface of [
+    // Its own source, parsed only when an instrument asks: see
+    // `prelude/conformance.js`. Called from *here* rather than after the
+    // prelude finishes because the decoration has to see the prototypes in the
+    // state the rest of this file leaves them in, and the interfaces it needs
+    // are closure bindings that a separately parsed source cannot reach.
+    internals.polishTargets = [
       EventTarget, Node, Element, Text, Comment, CharacterData,
       DocumentFragment, Range, Event, XMLHttpRequest, CSSRule,
-      ...new Set(TAG_CLASSES.values()),
-    ]) {
-      polish(Interface);
-    }
+    ];
+    internals.TAG_CLASSES = TAG_CLASSES;
+    if (globalThis.__h5iConformance) __h5iTier("conformance");
 
     defineConstants(DOMException, {
       INDEX_SIZE_ERR: 1, DOMSTRING_SIZE_ERR: 2, HIERARCHY_REQUEST_ERR: 3,

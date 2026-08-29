@@ -72,6 +72,13 @@ pub struct PageOptions {
     /// doing, and it changes nothing for anyone who does not pass it. The
     /// navigation deadline still bounds the whole load either way.
     pub script_budget: Option<std::time::Duration>,
+
+    /// Install the WebIDL member decoration in the script realm.
+    ///
+    /// **For instruments**, and off by default: see
+    /// [`crate::script::RealmOptions::webidl_conformance`] for what it costs
+    /// and who observes it.
+    pub webidl_conformance: bool,
 }
 
 impl Default for PageOptions {
@@ -83,6 +90,7 @@ impl Default for PageOptions {
             max_snapshot_lines: 500,
             script: false,
             script_budget: None,
+            webidl_conformance: false,
             // Above what a slow real page takes and far below what a stuck one
             // would, which is the shape every ceiling in this engine has.
             navigation_budget: std::time::Duration::from_secs(45),
@@ -956,8 +964,15 @@ impl Page {
             return Ok(());
         }
 
-        let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
-            .map_err(H5iError::Metadata)?;
+        let mut script = crate::script::Script::with_options(
+            self.dom(),
+            broker.clone(),
+            &self.url,
+            crate::script::RealmOptions {
+                webidl_conformance: self.options.webidl_conformance,
+            },
+        )
+        .map_err(H5iError::Metadata)?;
         script.set_encoding(self.encoding);
 
         // The map, before anything can import. First one wins and the rest are
