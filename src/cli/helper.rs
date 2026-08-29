@@ -189,10 +189,17 @@ pub fn transcript(
     };
 
     let argv = build_argv(&url, &langs, &work.in_helper, !all);
-    let (status, stderr) = run(session, &argv, &work)?;
+    let (status, said) = run(session, &argv, &work)?;
 
     let read = collect(&work.host, Some(want), max_bytes);
-    let note = describe(&read, want, status, &stderr);
+    let mut note = describe(&read, want, status, &said);
+    // The box's own receipt for this invocation, when there is one. It is the
+    // strongest evidence this lane produces — a row h5i wrote from outside the
+    // helper, naming the policy the run was subject to — so the audit row
+    // points at it rather than leaving the two records to be matched by time.
+    if let Some(receipt) = box_receipt(&work) {
+        note.push_str(&format!(" Box receipt {receipt}."));
+    }
 
     // Written whatever happened, including a failure: "h5i ran yt-dlp and it
     // exited 1" is the row an auditor needs most, and a log that only recorded
@@ -447,18 +454,67 @@ fn run(
         }
     };
 
-    let mut stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
+    let mut said = complaint(&session.placement, work);
     if timed_out {
-        stderr.push_str(&format!(
+        said.push_str(&format!(
             "\nh5i stopped `{NAME}` after {}s, its whole budget for one transcript.",
             BUDGET.as_secs()
         ));
     }
     // `None` for a kill *and* for a signal death, which is why the timeout is
-    // reported through stderr rather than by an out-of-band status: what the
+    // reported through the text rather than by an out-of-band status: what the
     // caller has to be able to tell apart is "nothing arrived" from "something
     // did", and the directory answers that.
-    Ok((if timed_out { Some(-1) } else { status }, stderr))
+    Ok((if timed_out { Some(-1) } else { status }, said))
+}
+
+/// The banner `h5i box run` puts between a child's two streams.
+///
+/// It merges them: the child's stderr arrives on `box run`'s **stdout**, after
+/// this line, and `box run`'s own stderr carries only its receipt.
+const BOX_RUN_STDERR_BANNER: &str = "----- stderr -----";
+
+/// What the helper itself said when it went wrong, and nothing h5i said.
+///
+/// Two different files depending on where it ran, and getting this wrong is not
+/// cosmetic. On the host the child's stderr is the child's stderr. Inside a box
+/// it is not: `h5i box run` folds it into its own stdout under
+/// [`BOX_RUN_STDERR_BANNER`] and keeps stderr for its receipt line, so reading
+/// stderr there yields `◈ receipt … · exit 1 · wall 3ms` — h5i's own
+/// bookkeeping, handed to a caller as the reason yt-dlp failed. It says nothing
+/// about the failure and it reads as though h5i were the thing that broke.
+fn complaint(placement: &bs::Placement, work: &Workspace) -> String {
+    let read = |name: &str| std::fs::read_to_string(work.host.join(name)).unwrap_or_default();
+    match placement {
+        bs::Placement::Host => read("stderr.log"),
+        bs::Placement::Box { .. } => {
+            let merged = read("stdout.log");
+            match merged.split_once(BOX_RUN_STDERR_BANNER) {
+                Some((_, complaint)) => complaint.to_string(),
+                // No banner means the child wrote nothing to stderr, which is
+                // the whole of what this function is for. An empty answer is
+                // right: `describe` falls back to saying it said nothing,
+                // rather than reporting the child's *stdout* as a complaint.
+                None => String::new(),
+            }
+        }
+    }
+}
+
+/// The box receipt `h5i box run` wrote for this invocation.
+///
+/// Worth keeping, because it is the strongest evidence this lane produces: a
+/// row in the box's own receipt log, written by h5i from outside the helper,
+/// naming the policy the run was subject to. The audit row carries it so the
+/// two records can be put beside each other.
+fn box_receipt(work: &Workspace) -> Option<String> {
+    let text = std::fs::read_to_string(work.host.join("stderr.log")).ok()?;
+    let at = text.find("receipt ")? + "receipt ".len();
+    let id: String = text[at..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .collect();
+    (id.len() >= 8).then_some(id)
 }
 
 /// `yt-dlp`, from `PATH` or from the two places an install lands.
@@ -1149,6 +1205,73 @@ mod tests {
         assert!(matches!(session.placement, bs::Placement::Box { .. }));
         let argv = build_argv("https://x.test/v", "en", "/tmp/helper/%(id)s", true);
         assert!(argv.last().is_some_and(|a| a == "https://x.test/v"));
+    }
+
+    fn workspace_at(dir: &Path) -> Workspace {
+        Workspace {
+            in_helper: dir.join("%(id)s").display().to_string(),
+            host: dir.to_path_buf(),
+        }
+    }
+
+    /// `h5i box run` merges the child's stderr into its own stdout and keeps
+    /// stderr for its receipt line. Reading stderr on the boxed path therefore
+    /// yields h5i's own bookkeeping, which `describe` would hand a caller as
+    /// the reason yt-dlp failed: it says nothing about the failure, and it
+    /// reads as though h5i were the thing that broke.
+    #[test]
+    fn a_boxed_helpers_complaint_is_its_own_and_not_h5is_receipt_line() {
+        let dir = std::env::temp_dir().join(format!("h5i-box-io-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Exactly the shape observed from `h5i box run`.
+        std::fs::write(
+            dir.join("stdout.log"),
+            "[youtube] Extracting URL\n\n----- stderr -----\nERROR: Video unavailable\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("stderr.log"),
+            "\u{25c8}  receipt f31bdc823671183e (box env/human/probe1, policy 47084e)              \u{b7} exit 1 \u{b7} wall 3ms\n",
+        )
+        .unwrap();
+        let work = workspace_at(&dir);
+
+        let boxed = complaint(&bs::Placement::Box { name: "probe1".into() }, &work);
+        assert!(boxed.contains("Video unavailable"), "{boxed}");
+        assert!(!boxed.contains("receipt"), "h5i's own row is not the helper's: {boxed}");
+
+        // The reason a caller actually sees.
+        let note = describe(&Read::default(), "en", Some(1), &boxed);
+        assert!(note.contains("Video unavailable"), "{note}");
+        assert!(!note.contains("wall 3ms"), "{note}");
+
+        // On the host the child's stderr really is the child's stderr.
+        let on_host = complaint(&bs::Placement::Host, &work);
+        assert!(on_host.contains("receipt"), "the host path reads stderr: {on_host}");
+
+        // And the receipt is not thrown away: it is the box's own record of
+        // the run, and the audit row names it.
+        assert_eq!(box_receipt(&work).as_deref(), Some("f31bdc823671183e"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A child that wrote nothing to stderr gets no banner, and its *stdout*
+    /// must not be promoted into a complaint.
+    #[test]
+    fn a_quiet_boxed_child_has_no_complaint_rather_than_a_borrowed_one() {
+        let dir = std::env::temp_dir().join(format!("h5i-box-quiet-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("stdout.log"), "[info] Downloading subtitles: en\n").unwrap();
+        let work = workspace_at(&dir);
+
+        let boxed = complaint(&bs::Placement::Box { name: "probe1".into() }, &work);
+        assert!(boxed.is_empty(), "{boxed}");
+        assert!(box_receipt(&work).is_none(), "no receipt file, no receipt");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
