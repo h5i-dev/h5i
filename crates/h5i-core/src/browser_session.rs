@@ -91,6 +91,17 @@ pub const RECEIPTS_FILE: &str = "requests.jsonl";
 /// The verbs an agent asked for, as the session recorded them.
 pub const ACTIONS_FILE: &str = "actions.jsonl";
 
+/// Outside programs h5i ran on this session's behalf, one JSON object per line.
+///
+/// **Written by h5i, not by the engine**, and that is the whole reason it is a
+/// separate file rather than a row in the action log. A helper is a second
+/// program with its own network, so the engine's log cannot account for it and
+/// must not appear to: mixing the two would turn "a request that is not in
+/// `requests` did not happen" from a claim the engine can keep into one it
+/// cannot. Host-observed, so an auditor gets the stronger evidence grade on the
+/// one lane the engine cannot see.
+pub const HELPERS_FILE: &str = "helpers.jsonl";
+
 /// The session's cookie jar, mirrored by the engine and read by `--restore`.
 ///
 /// The one file in a session directory that is **credential material**, and the
@@ -1085,6 +1096,9 @@ pub struct Sources {
     pub actions: Availability,
     pub requests: Availability,
     pub control: Availability,
+    /// The helper log, which exists only for sessions that ran one.
+    #[serde(default)]
+    pub helpers: Availability,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1158,6 +1172,10 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     };
     let actions = read(&session.logs.actions);
     let requests = read(&session.logs.requests);
+    // Straight off the session directory rather than out of `session.logs`: the
+    // helper log is h5i's own, written beside the session by whoever ran the
+    // helper, and it exists for sessions opened before this file did.
+    let helpers = fs::read_to_string(dir.join(HELPERS_FILE)).ok();
     let handovers = control_journal(&dir);
     let read_at = now();
 
@@ -1188,6 +1206,27 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     if let Some(text) = &requests {
         for draft in ev::ingest_request_log_with(text, &caused) {
             rows.push(Row::engine(&session.started_at, &read_at, draft));
+        }
+    }
+
+    // Host rows, like the handovers and the lifecycle: h5i ran the program and
+    // wrote this down from outside it. That is a stronger grade than anything
+    // in the engine's two logs, and it is the grade the one lane the engine
+    // cannot see deserves.
+    if let Some(text) = &helpers {
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let Ok(row) = serde_json::from_str::<HelperRow>(line) else {
+                continue;
+            };
+            rows.push(Row::host(
+                &row.at,
+                ev::Draft::host(ev::EventKind::Helper {
+                    name: row.name,
+                    argv: row.argv,
+                    status: row.status,
+                    note: row.note,
+                }),
+            ));
         }
     }
 
@@ -1230,10 +1269,66 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
             } else {
                 Availability::Read
             },
+            helpers: Availability::of(&helpers),
         },
         events: log.since(0).into_iter().cloned().collect(),
         dropped: log.dropped(),
     }
+}
+
+/// One line of [`HELPERS_FILE`], as h5i wrote it.
+///
+/// Its own type rather than the event enum: the file is h5i's record of what it
+/// ran, and the audit's event shape is a rendering concern that should be free
+/// to change without rewriting a log already on disk.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HelperRow {
+    /// RFC3339, from h5i's clock. Unlike the engine's stamps, this one is the
+    /// clock the reader is on, and [`record_helper`] sets it — what a caller
+    /// puts here is ignored.
+    pub at: String,
+    /// The program, as h5i names the lane: `yt-dlp`.
+    pub name: String,
+    /// What was actually executed. h5i built it, so it is a fact and not a
+    /// claim — and it carries no credential, because this lane is not given
+    /// one.
+    pub argv: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Append one row to a session's helper log.
+///
+/// Best effort by design, and the *caller* decides what a failure means. It is
+/// deliberately not fail-closed the way the engine's receipts are: those gate
+/// bytes reaching a page, and this records that a program ran, after it has
+/// already run. Refusing to report a result h5i already has because a log line
+/// would not write would lose the result and the record both.
+pub fn record_helper(root: &Path, id: &str, row: &HelperRow) -> Result<(), H5iError> {
+    use std::io::Write;
+    // Stamped here rather than by the caller. The audit interleaves these with
+    // the engine's rows on time alone, so a second clock reading taken in
+    // another module is a second clock the timeline can be wrong about — and
+    // this is the one lane whose whole value is being h5i's own observation.
+    let row = HelperRow {
+        at: now(),
+        ..row.clone()
+    };
+    let row = &row;
+    let dir = dir(root, id);
+    fs::create_dir_all(&dir)
+        .map_err(|e| H5iError::Metadata(format!("could not open the session directory: {e}")))?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(HELPERS_FILE))
+        .map_err(|e| H5iError::Metadata(format!("could not open the helper log: {e}")))?;
+    let line = serde_json::to_string(row)
+        .map_err(|e| H5iError::Metadata(format!("could not write the helper row: {e}")))?;
+    writeln!(file, "{line}")
+        .map_err(|e| H5iError::Metadata(format!("could not append to the helper log: {e}")))
 }
 
 /// One audit row, with the instant it sorts on.

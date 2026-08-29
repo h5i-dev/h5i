@@ -2104,6 +2104,93 @@ fn control_verb_inner(
             (reply, false)
         }
 
+        // What the page's media *says*, when the page has written it down.
+        //
+        // The one hole every other read leaves. A snapshot names a `<video>`,
+        // the markdown skips it, and the screenshot paints a box — so a page
+        // whose substance is a forty-minute talk reads as a title and a play
+        // button, and an agent summarising it is summarising the chrome.
+        //
+        // Not a decoder. The tracks are fetched through the broker like any
+        // other subresource, with the page as the origin they are attributed
+        // to, so a caption fetch is policy-checked and receipted exactly as an
+        // image is — and `<track src="http://127.0.0.1:3000/…">` on a page from
+        // the open web is refused for the same reason an `<img>` there is.
+        Verb::Transcript => {
+            let selection = crate::transcript::Selection {
+                language: request
+                    .get("lang")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                all: request.get("all").and_then(Value::as_bool).unwrap_or(false),
+                max_bytes: request
+                    .get("max_bytes")
+                    .and_then(Value::as_u64)
+                    .map(|n| n as usize)
+                    .unwrap_or(crate::transcript::DEFAULT_MAX_BYTES),
+            };
+
+            // Discovery first, and the DOM borrow released before any fetch:
+            // the broker call can re-enter the document on this thread, and a
+            // borrow held across it is a panic rather than a deadlock.
+            let mut found = {
+                let dom = session.page.dom();
+                let doc = dom.borrow();
+                crate::transcript::discover(&doc, session.page.url())
+            };
+            crate::transcript::read(
+                &mut found,
+                session.factory.broker().as_ref(),
+                Some(session.page.url()),
+                &selection,
+            );
+
+            // Both of these are *results* rather than failures, and both are
+            // said as one: "there is nothing here to transcribe" and "the read
+            // went wrong" are different facts, and reporting the first as the
+            // second is what starts a self-correction loop instead of ending
+            // one.
+            let note = if found.is_empty() {
+                Some(
+                    "this page has no `<video>` or `<audio>` element. Use `markdown` or \
+                     `snapshot` to read what it does contain."
+                        .to_string(),
+                )
+            } else if found.cue_count() == 0 {
+                // The answer that routes a caller somewhere else, and worth
+                // saying plainly rather than leaving to be inferred from an
+                // empty list.
+                Some(
+                    "this page carries media and no readable timed text. Its words exist only \
+                     in the audio, which this engine does not decode — `video` is false in \
+                     `capabilities` and stays false."
+                        .to_string(),
+                )
+            } else {
+                None
+            };
+            // Into the reading as well as beside it. `text` is what a human
+            // sees, and a note that lived only in the JSON would be missing
+            // from the one view most callers read.
+            if let Some(note) = &note {
+                found.notes.push(note.clone());
+            }
+
+            let url = session.page.url().to_string();
+            let mut reply = json!({
+                "ok": true,
+                "url": url,
+                "empty": found.is_empty(),
+                "media": found.media,
+                "cues": found.cue_count(),
+                "text": found.render(&url),
+            });
+            if let Some(note) = note {
+                reply["note"] = json!(note);
+            }
+            (reply, false)
+        }
+
         Verb::Env => {
             let names = session.factory.broker().secret_names();
             (
@@ -2591,6 +2678,173 @@ mod tests {
         port
     }
 
+    /// Serves a fixed set of paths, so a page and the subresource it names can
+    /// both come from one origin.
+    ///
+    /// `one_page_server` answers every request with the same body, which is
+    /// fine for a navigation and useless for a `<track>`: the caption fetch
+    /// would come back as the HTML document.
+    fn path_server(routes: Vec<(&'static str, &'static str, &'static str)>, hits: usize) -> u16 {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..hits {
+                let Ok((stream, _)) = listener.accept() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                let _ = reader.read_line(&mut request_line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                }
+                let path = request_line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let mut stream = stream;
+                match routes.iter().find(|(route, _, _)| *route == path) {
+                    Some((_, content_type, body)) => {
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\n\
+                             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                    }
+                    None => {
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\
+                             Connection: close\r\n\r\n"
+                        );
+                    }
+                }
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// The whole of Lane A, end to end: the page declares a caption track, the
+    /// engine fetches it through the broker, and the words come back with the
+    /// clock attached.
+    #[test]
+    fn a_captioned_video_reads_as_timed_text() {
+        let port = path_server(
+            vec![
+                (
+                    "/talk",
+                    "text/html",
+                    r#"<html><body><h1>The talk</h1>
+                       <video src="/talk.mp4" title="The talk">
+                         <track kind="captions" srclang="en" label="English" default
+                                src="/cc/en.vtt">
+                       </video></body></html>"#,
+                ),
+                (
+                    "/cc/en.vtt",
+                    "text/vtt",
+                    "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n\
+                     <v Ada>Difference engines, briefly.\n\n\
+                     00:12:40.000 --> 00:12:43.000\nAnd that is the whole of it.\n",
+                ),
+            ],
+            2,
+        );
+        let mut session = session_with("<html><body><p>before</p></body></html>");
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "transcript", "url": format!("http://127.0.0.1:{port}/talk")}),
+        );
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["empty"], false, "{reply:?}");
+        assert_eq!(reply["cues"], 2, "{reply:?}");
+
+        let text = reply["text"].as_str().unwrap_or_default();
+        assert!(text.contains("[00:01] Ada: Difference engines, briefly."), "{text}");
+        assert!(text.contains("[12:40] And that is the whole of it."), "{text}");
+        // Page-derived text, fenced like every other reading of a stranger's
+        // bytes. A caption file is no more trusted than a heading is.
+        assert!(text.contains(crate::snapshot::CONTENT_BEGIN), "{text}");
+        assert!(text.contains(crate::snapshot::CONTENT_END), "{text}");
+
+        // The receipt is the point. A transcript with no row in the request log
+        // to point at is exactly the shape this engine exists to refuse.
+        let track = &reply["media"][0]["tracks"][0];
+        assert_eq!(track["fetched"], true, "{reply:?}");
+        assert!(track["seq"].is_number(), "the track names its receipt: {reply:?}");
+        let fetched = session.factory.broker().records();
+        assert!(
+            fetched.iter().any(|r| r.url.ends_with("/cc/en.vtt")),
+            "the caption fetch is in the log, or it did not happen: {fetched:?}"
+        );
+    }
+
+    /// The answer that routes a caller somewhere else, and it is an answer
+    /// rather than a failure. Silence here would read as "no media", which is a
+    /// different and wrong fact.
+    #[test]
+    fn media_with_no_captions_says_so_rather_than_reading_as_an_empty_page() {
+        let mut session =
+            session_with(r#"<html><body><audio src="/ep12.mp3"></audio></body></html>"#);
+
+        let (reply, moved) = control_verb(&mut session, &json!({"verb": "transcript"}));
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["empty"], false, "there is media; it has no captions");
+        assert_eq!(reply["cues"], 0, "{reply:?}");
+        assert!(
+            reply["note"].as_str().unwrap_or_default().contains("in the audio"),
+            "{reply:?}"
+        );
+        assert!(!moved, "reading a page does not move it");
+    }
+
+    #[test]
+    fn a_page_with_no_media_is_a_result_and_not_an_error() {
+        let mut session = session_with("<html><body><p>just words</p></body></html>");
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "transcript"}));
+
+        assert_eq!(reply["ok"], true, "{reply:?}");
+        assert_eq!(reply["empty"], true, "{reply:?}");
+        assert!(reply["note"].as_str().unwrap_or_default().contains("no `<video>`"), "{reply:?}");
+    }
+
+    /// The hole a new fetch path is most likely to reopen. A caption fetch is a
+    /// subresource of the page that declared it, so it is attributed to that
+    /// page's origin — without which `check_from` reads it as the agent naming
+    /// a URL, and a page from the open web reaches the box's dev server.
+    #[test]
+    fn a_caption_track_pointing_at_loopback_is_refused_like_any_other_subresource() {
+        let port = path_server(vec![("/cc/en.vtt", "text/vtt", "WEBVTT\n")], 1);
+        // The document's own origin is `https://example.com/`, which is what
+        // `session_with` builds the page against.
+        let mut session = session_with(&format!(
+            r#"<html><body><video src="/t.mp4">
+                 <track kind="captions" src="http://127.0.0.1:{port}/cc/en.vtt">
+               </video></body></html>"#
+        ));
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "transcript"}));
+
+        assert_eq!(reply["ok"], true, "the verb succeeded; the fetch did not");
+        assert_eq!(reply["cues"], 0, "{reply:?}");
+        let track = &reply["media"][0]["tracks"][0];
+        assert_eq!(track["fetched"], true, "it was attempted: {reply:?}");
+        assert!(
+            track["error"].as_str().unwrap_or_default().contains("denied by policy"),
+            "a page from the open web must not reach loopback through a caption: {reply:?}"
+        );
+        // And the refusal is written down, like every other one.
+        let records = session.factory.broker().records();
+        assert!(
+            records.iter().any(|r| r.url.contains("/cc/en.vtt") && !r.allowed),
+            "{records:?}"
+        );
+    }
+
     /// A read verb given a `url` goes there first. The turn this saves is the
     /// whole point: `navigate` then `markdown` is two passes through a model to
     /// answer one question.
@@ -2792,6 +3046,7 @@ mod tests {
                     | Verb::Markdown
                     | Verb::Extract
                     | Verb::Structured
+                    | Verb::Transcript
                     | Verb::Find
                     | Verb::Screenshot
             );

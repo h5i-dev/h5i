@@ -190,6 +190,29 @@ pub enum EventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
+    /// An outside program h5i ran on this session's behalf, and what came of it.
+    ///
+    /// **Host-observed, and it is the row that keeps the request log honest.**
+    /// A helper makes its own network connections, from a process the engine
+    /// never sees — so its fetches are not in `h5i browser requests`, and the
+    /// invariant that log carries ("a request that is not here did not happen")
+    /// would quietly become false if a helper's traffic went unrecorded
+    /// anywhere. It does not become false, because the helper is not the
+    /// engine: this row says a second program ran, names it, and names what it
+    /// was told to do, so a reader can see the boundary rather than having to
+    /// know about it.
+    ///
+    /// `argv` is what was actually executed, credentials excluded — h5i builds
+    /// it, so this is a fact rather than the helper's account of itself.
+    Helper {
+        name: String,
+        argv: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<i32>,
+        /// Where it ran, and what it produced or why it did not.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
     /// The session began, or ended, and how.
     ///
     /// Host-observed for the same reason: the ending is written by whoever

@@ -641,6 +641,37 @@ enum SessionVerb {
         at: SessionArgs,
     },
 
+    /// What the page's media says: `<track>` captions, fetched and parsed.
+    ///
+    /// The hole every other read leaves. A snapshot names a `<video>` and the
+    /// markdown skips it, so a page whose substance is a talk reads as a title
+    /// and a play button. Most players ship captions, and a caption file is
+    /// prose with timestamps.
+    ///
+    /// Nothing here decodes audio. Media with no `<track>` is reported as
+    /// exactly that, which is the fact that routes a caller elsewhere.
+    Transcript {
+        /// Go here first, then read.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        /// Prefer this language. Prefix-matched against `srclang`, so `en`
+        /// finds `en-GB`.
+        #[arg(long, value_name = "LANG")]
+        lang: Option<String>,
+        /// Fetch every text track rather than one per media element.
+        ///
+        /// One per element is the default because a well-localised player
+        /// declares thirty languages, and fetching all of them spends thirty
+        /// requests of the page's budget to answer a question about one.
+        #[arg(long)]
+        all: bool,
+        /// The ceiling on caption text carried out of one track.
+        #[arg(long, value_name = "BYTES")]
+        max_bytes: Option<usize>,
+        #[command(flatten)]
+        at: SessionArgs,
+    },
+
     /// Which credentials this session can use, by name.
     ///
     /// Names only. No verb in this engine returns a credential's value: the
@@ -1580,6 +1611,22 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
             at,
             serde_json::json!({"verb": Verb::Structured.name(), "url": url}),
         ),
+        SessionVerb::Transcript {
+            url,
+            lang,
+            all,
+            max_bytes,
+            at,
+        } => (
+            at,
+            serde_json::json!({
+                "verb": Verb::Transcript.name(),
+                "url": url,
+                "lang": lang,
+                "all": all,
+                "max_bytes": max_bytes,
+            }),
+        ),
         SessionVerb::Script { save: _, at } => {
             (at, serde_json::json!({"verb": Verb::Script.name()}))
         }
@@ -2459,6 +2506,8 @@ mod tests {
             vec!["h5i-browser-light", "session", "submit", "--selector", "#go"],
             vec!["h5i-browser-light", "session", "click", "--selector", "a.next"],
             vec!["h5i-browser-light", "session", "structured"],
+            vec!["h5i-browser-light", "session", "transcript"],
+            vec!["h5i-browser-light", "session", "transcript", "--lang", "en", "--all"],
             vec!["h5i-browser-light", "session", "markdown", "--url", "https://x.test/"],
             vec!["h5i-browser-light", "session", "script", "--save", "/tmp/s.json"],
             vec!["h5i-browser-light", "replay", "/tmp/s.json"],

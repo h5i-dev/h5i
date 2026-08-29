@@ -59,6 +59,7 @@ pub mod snapshot;
 pub mod sse;
 pub mod structured;
 pub mod stream;
+pub mod transcript;
 pub mod verbs;
 pub mod ws;
 pub mod wsclient;
@@ -92,6 +93,19 @@ pub struct Capabilities {
     pub live_view: bool,
     /// Deliberately absent, and owned by the Chromium path instead.
     pub video: bool,
+    /// Timed text off a page's media: `<track>` fetched and parsed, not decoded.
+    ///
+    /// Beside `video` rather than inside it, because they are different claims
+    /// and a caller routing on one must not read the other. `video: false` says
+    /// nothing here plays. This says the words are still reachable when the
+    /// page wrote them down, which is what an agent summarising a talk actually
+    /// needs — and it is a text fetch over a URL the document named, so it costs
+    /// no decoder, no script and no new grant.
+    ///
+    /// It does not promise a transcript exists. A page whose captions live
+    /// behind a player's own API rather than in a `<track>` reads as media with
+    /// no text lane, and is reported as exactly that.
+    pub captions: bool,
     pub webgl: bool,
     pub downloads: bool,
     /// Canvas 2D that actually rasterises, and composites into the page.
@@ -127,6 +141,7 @@ impl Capabilities {
             snapshot: true,
             live_view: true,
             video: false,
+            captions: true,
             webgl: false,
             downloads: false,
             canvas_2d: javascript,
@@ -150,6 +165,12 @@ mod tests {
         assert!(!caps.webgl);
         assert!(caps.screenshot);
         assert!(caps.fail_closed_receipts);
+
+        // Timed text is not video, and the two are separate claims on purpose:
+        // this engine can read what a talk *says* while still not playing it,
+        // and a caller routing on `video` must not be told otherwise.
+        assert!(caps.captions);
+        assert!(!caps.video);
 
         // Canvas and sockets need a realm to be reachable at all, so with
         // script off they are absent — promising them here would route a

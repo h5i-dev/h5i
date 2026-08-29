@@ -498,6 +498,64 @@ pub enum BrowserCommands {
         json: bool,
     },
 
+    /// What the page's media **says**: `<track>` captions, fetched and parsed.
+    ///
+    /// The hole every other read leaves. A `snapshot` names a `<video>` and
+    /// `markdown` skips it, so a page whose substance is a forty-minute talk
+    /// reads as a title and a play button. Most players ship a caption track,
+    /// and a caption file is prose with timestamps — which is what a model
+    /// reads well and what audio is not.
+    ///
+    /// Nothing here decodes audio: the tracks are fetched through the same
+    /// broker as any image, policy-checked and receipted, and media with no
+    /// `<track>` is reported as exactly that rather than as silence.
+    Transcript {
+        /// Which session, when more than one is open. A name from
+        /// `--session` at open time, or an opaque id. Defaults to
+        /// $H5I_BROWSER_SESSION, then to the session `open` last made.
+        #[arg(long, short = 's', value_name = "NAME")]
+        session: Option<String>,
+        /// Go here first, then read. One round trip where `navigate` and then
+        /// this would be two, and the reply still names the URL it ended up on
+        /// so a redirect is not silent.
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+        /// Prefer this language. Prefix-matched against `srclang`, so `en`
+        /// finds `en-GB`. Every track is listed either way.
+        #[arg(long, value_name = "LANG")]
+        lang: Option<String>,
+        /// Read every text track rather than one per media element.
+        ///
+        /// One per element is the default: a well-localised player declares
+        /// thirty languages, and reading all of them spends thirty of the
+        /// page's requests to answer a question about one.
+        #[arg(long)]
+        all: bool,
+        /// The ceiling on caption text carried out of one track.
+        #[arg(long, value_name = "BYTES")]
+        max_bytes: Option<usize>,
+        /// Read it with an outside program instead of from the page's markup.
+        ///
+        /// `--via yt-dlp` reaches the transcripts that are not in the markup at
+        /// all — YouTube's above all, whose captions live behind the player's
+        /// own API. About 1,700 sites, and the same reply shape.
+        ///
+        /// **It is a different lane, not a better one.** yt-dlp opens its own
+        /// sockets from a process the engine never sees, so nothing it fetches
+        /// is in `h5i browser requests` and nothing can be: the reply says so,
+        /// and `h5i browser audit` carries the run as a host-observed row. It
+        /// runs where the session runs — inside the box for a boxed session, so
+        /// the box's egress boundary sees it — and it is never a fallback: an
+        /// engine read that found no captions stays a read that found none.
+        ///
+        /// With `--via`, `--url` names the media and the session does not move:
+        /// there is no page here to render.
+        #[arg(long, value_name = "HELPER")]
+        via: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Set a checkbox or radio to a state, rather than toggling it.
     ///
     /// Prefer this to clicking one. A click *toggles*, so where it lands
@@ -866,6 +924,43 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
         } => {
             let mut argv = vec!["structured".to_string()];
             argv.extend(url_arg(url));
+            let moves_the_page = argv.iter().any(|a| a == "--url");
+            verb(&root, session.as_deref(), argv, moves_the_page, json)
+        }
+        BrowserCommands::Transcript {
+            session,
+            url,
+            lang,
+            all,
+            max_bytes,
+            via,
+            json,
+        } => {
+            if let Some(helper) = via {
+                return via_helper(
+                    &root,
+                    session.as_deref(),
+                    &helper,
+                    url,
+                    lang,
+                    all,
+                    max_bytes,
+                    json,
+                );
+            }
+            let mut argv = vec!["transcript".to_string()];
+            argv.extend(url_arg(url));
+            if let Some(lang) = lang {
+                argv.push("--lang".into());
+                argv.push(lang);
+            }
+            if all {
+                argv.push("--all".into());
+            }
+            if let Some(max) = max_bytes {
+                argv.push("--max-bytes".into());
+                argv.push(max.to_string());
+            }
             let moves_the_page = argv.iter().any(|a| a == "--url");
             verb(&root, session.as_deref(), argv, moves_the_page, json)
         }
@@ -2151,6 +2246,127 @@ fn verb(
     Ok(())
 }
 
+/// `transcript --via <helper>`: the lane that is not the engine.
+///
+/// Kept apart from [`verb`] on purpose. `verb` carries a request to the engine
+/// and everything it does — the control lock, the stale-ref clearing, the
+/// refusal-is-still-an-answer exit code — is about that conversation. This
+/// talks to a different program entirely, and folding it into the same function
+/// would be the first step toward the two being hard to tell apart, which is
+/// the one property this lane must never lose.
+#[cfg(feature = "ytdlp")]
+#[allow(clippy::too_many_arguments)]
+fn via_helper(
+    root: &Path,
+    selector: Option<&str>,
+    helper: &str,
+    url: Option<String>,
+    lang: Option<String>,
+    all: bool,
+    max_bytes: Option<usize>,
+    json: bool,
+) -> anyhow::Result<()> {
+    use crate::cli::helper;
+
+    // Named rather than matched loosely: `--via ytdlp` and `--via youtube-dl`
+    // are both somebody expecting a lane that is not there, and running the one
+    // that is would be answering a question nobody asked.
+    if helper != helper::NAME {
+        anyhow::bail!(
+            "`--via {helper}` names no helper this build has. The only one is `--via {}`.",
+            helper::NAME
+        );
+    }
+
+    let session = match bs::resolve(root, selector) {
+        Ok(session) => session,
+        Err(gone) => {
+            eprintln!("{gone}");
+            std::process::exit(bs::EXIT_SESSION_GONE);
+        }
+    };
+    let dir = bs::dir(root, &session.id);
+
+    // Not a mutation: nothing here touches the page. The lock is still asked,
+    // because a human at the controls of a session is a human whose box should
+    // not have a second program started against it behind their back.
+    if let Some(explanation) = h5i_core::control::check(&dir, false).explain() {
+        anyhow::bail!("{explanation}");
+    }
+
+    // The page the session is actually on, when the caller did not name a URL.
+    // Asked rather than read off the record: `session.url` is what `open` was
+    // *told*, and a redirect or a click has moved it since.
+    let target = match url {
+        Some(named) => named,
+        None => {
+            let status = deliver(&session, &dir, vec!["status".to_string()])?;
+            status
+                .get("url")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "this session did not say what page it is on, so there is no URL to                          hand the helper. Name one with `--url`."
+                    )
+                })?
+        }
+    };
+
+    let outcome = helper::transcript(
+        root,
+        &session,
+        &target,
+        lang.as_deref(),
+        all,
+        max_bytes.unwrap_or(h5i_browser_light::transcript::DEFAULT_MAX_BYTES),
+    )?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&outcome.reply)?);
+    } else {
+        print_answer(&outcome.reply);
+    }
+
+    // Judged by what arrived, not by the helper's exit code. yt-dlp exits
+    // non-zero if any part of a run failed, and the first live run of this lane
+    // wrote the transcript, then hit a 429 fetching a second language, and
+    // exited 1 — a complete answer reported as a failure, which is exactly the
+    // shape that sends a caller retrying work it already has.
+    //
+    // A clean run that found no captions is *also* not a failure: the question
+    // was answered, and the answer is that this URL has none. What is a failure
+    // is a run that produced nothing and said why, because a caller scripting
+    // this has to tell "no captions" from "yt-dlp is broken" without reading
+    // prose.
+    if !outcome.answered && outcome.status.is_some_and(|code| code != 0) {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// The same entry point in a build with no helper lane compiled in.
+///
+/// An error rather than a missing flag, because the flag is in the help text
+/// either way and a caller who typed it deserves to be told which of the two
+/// things is missing — the build, or the program.
+#[cfg(not(feature = "ytdlp"))]
+#[allow(clippy::too_many_arguments)]
+fn via_helper(
+    _root: &Path,
+    _selector: Option<&str>,
+    helper: &str,
+    _url: Option<String>,
+    _lang: Option<String>,
+    _all: bool,
+    _max_bytes: Option<usize>,
+    _json: bool,
+) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "this build has no helper lane, so `--via {helper}` cannot run: it was compiled          without the `ytdlp` feature, and it has no path to exec a helper at all. Drop          `--via` to read the captions the page itself declares."
+    )
+}
+
 /// What a session said when it refused, or a stand-in when it said nothing.
 fn refusal(answer: &Value) -> String {
     answer
@@ -2674,8 +2890,16 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
     // What could and could not be read, before the rows. A reader has to know
     // whether an empty timeline means a quiet session or a log h5i cannot see.
     let src = &audit.sources;
+    // The helper lane is named only when there is one. A source line that
+    // listed it as `empty` on every session would read as a lane that exists
+    // and did nothing, where the truth is that nothing outside the engine
+    // touched this session at all.
+    let helpers = match src.helpers {
+        bs::Availability::Empty => String::new(),
+        other => format!(" · helpers {}", availability(other)),
+    };
     println!(
-        "  sources  : actions {} · requests {} · control {}",
+        "  sources  : actions {} · requests {} · control {}{helpers}",
         availability(src.actions),
         availability(src.requests),
         availability(src.control)
@@ -2779,6 +3003,29 @@ fn render_event(kind: &h5i_core::browser_events::EventKind) -> String {
         K::Console { level, text } => format!("console {} {text}", level.as_str()),
         K::PolicyVerdict { subject, reason } => format!("refused {subject}  ({reason})"),
         K::SessionReset { source } => format!("source restarted: {source}"),
+        // The lane's boundary, drawn where a reader will see it. `helper` is
+        // its own word rather than `verb` because the fetches it made are not
+        // in the rows above or below it — and an auditor who reads this row as
+        // one more engine action has been misled about the one thing this
+        // timeline is for.
+        K::Helper {
+            name,
+            argv,
+            status,
+            note,
+        } => {
+            let outcome = match status {
+                Some(0) | None => String::new(),
+                Some(code) => format!("  (exit {code})"),
+            };
+            format!(
+                "helper {name} {}{outcome}{}",
+                argv.join(" "),
+                note.as_deref()
+                    .map(|n| format!("  {n}"))
+                    .unwrap_or_default()
+            )
+        }
     }
 }
 

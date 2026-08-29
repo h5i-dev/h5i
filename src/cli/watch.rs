@@ -296,6 +296,26 @@ fn columns(event: &ViewerEvent) -> (&'static str, String, String) {
             note.clone().unwrap_or_default(),
         ),
 
+        // The lane's own row. `name` in the verdict column rather than in the
+        // text, because a reader scanning an audit for "did anything but the
+        // engine touch the network" is scanning that column.
+        EventKind::Helper {
+            name,
+            argv,
+            status,
+            note,
+        } => {
+            let verdict = match status {
+                Some(0) | None => name.clone(),
+                Some(code) => format!("{name} exit {code}"),
+            };
+            let mut text = argv.join(" ");
+            if let Some(note) = note {
+                text.push_str(&format!(" — {note}"));
+            }
+            ("helper", verdict, text)
+        }
+
         EventKind::Lifecycle { state, reason } => (
             "session",
             state.clone(),
