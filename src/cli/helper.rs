@@ -225,7 +225,7 @@ pub fn transcript(
     // selection fell through to whatever sorted first, and `-` sorts before `.`
     // so `en-de` won. The translation-of-a-translation bug, handed to a caller
     // who followed this tool's own advice.
-    let mut read = collect(&work.host, Some(literal_prefix(want)), max_bytes);
+    let mut read = collect(&work.host, Some(literal_prefix(want)), max_bytes, all);
     record(root, session, &work, &argv, status, &describe(&read, want, status, &said));
 
     // The second pass, and only for `--all` on a video that turns out to have
@@ -250,7 +250,9 @@ pub fn transcript(
         let (second_status, second_said) = run(session, &argv, &work)?;
         status = second_status;
         said = second_said;
-        read = collect(&work.host, Some(literal_prefix(&tag)), max_bytes);
+        // The fallback fetched exactly one track, so there is nothing extra to
+        // carry even though `--all` is what got us here.
+        read = collect(&work.host, Some(literal_prefix(&tag)), max_bytes, false);
         record(
             root,
             session,
@@ -806,7 +808,12 @@ struct Read {
 /// (`en.*`), so more than one file can legitimately arrive — `en` and `en-orig`
 /// both match — and picking the alphabetically first would hand back the
 /// machine transcription when the author's own captions are sitting beside it.
-fn collect(dir: &Path, want: Option<&str>, max_bytes: usize) -> Read {
+///
+/// `keep_extra` carries the tracks beyond the chosen one, and follows `--all`
+/// rather than "did more than one file arrive": a `--lang` pattern also brings
+/// back several, and the caller who wrote one asked for a language, not for
+/// every rendering of it.
+fn collect(dir: &Path, want: Option<&str>, max_bytes: usize, keep_extra: bool) -> Read {
     let mut read = Read::default();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return read;
@@ -887,9 +894,16 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize) -> Read {
             read.truncated = truncated;
         }
 
-        // Everything else that arrived. Only `--all` downloads more than one
-        // file, so this is empty on every other path and costs nothing there.
-        for path in subtitles.iter().filter(|p| *p != first) {
+        // Everything else that arrived, and only when every track was asked
+        // for.
+        //
+        // `--all` is not the only thing that downloads more than one file: a
+        // `--lang` **pattern** does too, and `en.*` against YouTube brings back
+        // `en` and `en-en`, the author's captions and a machine translation of
+        // English into English. Rendering both there is noise on top of the one
+        // transcript the caller asked for. `--all` is the flag that says "every
+        // text track", so it is the flag this follows.
+        for path in subtitles.iter().filter(|p| *p != first).filter(|_| keep_extra) {
             let Ok(text) = std::fs::read_to_string(path) else {
                 continue;
             };
@@ -1267,7 +1281,7 @@ mod tests {
         std::fs::write(dir.join("abc.en-orig.vtt"), format!("{vtt}automatic\n")).unwrap();
         std::fs::write(dir.join("abc.en.vtt"), format!("{vtt}authored\n")).unwrap();
 
-        let read = collect(&dir, Some("en"), 4096);
+        let read = collect(&dir, Some("en"), 4096, false);
         assert_eq!(read.language.as_deref(), Some("en"));
         assert_eq!(read.cues[0].text, "authored");
         assert!(!read.automatic);
@@ -1278,7 +1292,7 @@ mod tests {
         assert_eq!(read.cues[0].text, "authored");
 
         // Asked for the automatic one by name, it is what comes back.
-        let read = collect(&dir, Some("en-orig"), 4096);
+        let read = collect(&dir, Some("en-orig"), 4096, false);
         assert_eq!(read.cues[0].text, "automatic");
         assert!(read.automatic, "and it is labelled as machine-transcribed");
 
@@ -1299,7 +1313,7 @@ mod tests {
             std::fs::write(dir.join(format!("v.{tag}.vtt")), format!("{vtt}{tag}\n")).unwrap();
         }
 
-        let read = collect(&dir, Some("en"), 4096);
+        let read = collect(&dir, Some("en"), 4096, false);
         assert_eq!(read.language.as_deref(), Some("en"));
         assert_eq!(read.cues[0].text, "en", "an exact tag match wins over a prefix one");
         assert_eq!(read.language.as_deref(), Some("en"));
@@ -1675,9 +1689,12 @@ mod tests {
         std::fs::write(dir.join("v.en.vtt"), format!("{vtt}authored\n")).unwrap();
         std::fs::write(dir.join("v.en-de.vtt"), format!("{vtt}translated\n")).unwrap();
 
-        let read = collect(&dir, Some(literal_prefix("en.*")), 4096);
+        let read = collect(&dir, Some(literal_prefix("en.*")), 4096, false);
         assert_eq!(read.language.as_deref(), Some("en"));
         assert_eq!(read.cues[0].text, "authored");
+        // A pattern brings back several files and the caller asked for one
+        // language, so the translation beside it is not rendered too.
+        assert!(read.extra.is_empty(), "a --lang pattern is not --all");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1701,7 +1718,7 @@ mod tests {
         )
         .unwrap();
 
-        let read = collect(&dir, Some("en"), 4096);
+        let read = collect(&dir, Some("en"), 4096, false);
         assert!(read.automatic, "the tag is only in automatic_captions");
         assert!(describe(&read, "en", Some(0), "").contains("automatic captions"));
 
@@ -1712,7 +1729,7 @@ mod tests {
             r#"{"subtitles":{"en":[]},"automatic_captions":{"en":[]}}"#,
         )
         .unwrap();
-        let read = collect(&dir, Some("en"), 4096);
+        let read = collect(&dir, Some("en"), 4096, false);
         assert!(!read.automatic, "yt-dlp prefers the authored track and so do we");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1732,7 +1749,10 @@ mod tests {
                 .unwrap();
         }
 
-        let read = collect(&dir, Some("en"), 4096);
+        // Without `--all` the caller asked for one language and gets one.
+        assert!(collect(&dir, Some("en"), 4096, false).extra.is_empty());
+
+        let read = collect(&dir, Some("en"), 4096, true);
         assert_eq!(read.language.as_deref(), Some("en"));
         assert_eq!(read.cues[0].text, "said in en");
         let extra: Vec<&str> = read
@@ -1746,7 +1766,7 @@ mod tests {
         // One file is the ordinary path and has no extras to carry.
         let _ = std::fs::remove_file(dir.join("v.de.vtt"));
         let _ = std::fs::remove_file(dir.join("v.fr.vtt"));
-        assert!(collect(&dir, Some("en"), 4096).extra.is_empty());
+        assert!(collect(&dir, Some("en"), 4096, true).extra.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
