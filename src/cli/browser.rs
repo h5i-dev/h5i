@@ -106,16 +106,16 @@ pub enum BrowserCommands {
 
         /// Run the session inside this box instead of on this machine.
         ///
-        /// The box must already exist (`h5i box`). Whether its egress
-        /// allowlist is *enforced* depends on the tier: `supervised`,
-        /// `container` and `microvm` apply it at the box's boundary, and only
-        /// then does the session's request lane become host-observed. On
-        /// `workspace` and `process` the network scope is deny-or-host, so
-        /// nothing outside the engine polices which hosts it reaches and the
-        /// lane stays engine-claimed. `h5i browser status` prints which of the
-        /// two this session got; read it rather than assuming, and note the
-        /// standing Linux trade-off: the tiers that enforce egress cannot hold
-        /// a resident session yet.
+        /// The box must already exist (`h5i box`). A box that declares an
+        /// egress allowlist has a tier that enforces it, because creation is
+        /// fail-closed on that combination, so the session's request lane
+        /// becomes host-observed: what it reached was also seen outside the
+        /// engine. A box that declares none corroborates nothing, and the lane
+        /// stays engine-claimed. `h5i browser status` prints which of the two
+        /// this session got; read it rather than assuming the box earned the
+        /// stronger one. Note the standing Linux trade-off: the tiers that
+        /// enforce egress cannot hold a resident session yet, so today that
+        /// combination is `microvm`, or a one-shot `h5i browser read --in`.
         #[arg(long = "in", value_name = "BOX")]
         in_box: Option<String>,
 

@@ -26,12 +26,12 @@ verb table and cannot go stale.
 either: a session on this machine is not sandboxed, and a box that lets the
 browser reach the whole network does not upgrade the lane.
 
-A box's `net.egress` bounds what the session can reach only on a tier that
-enforces egress (`supervised`, `container`, `microvm`). On `workspace` and
-`process` the network scope is deny or host, so that list reaches the engine as
-a default for its allowlist rather than as a ceiling: `--allow` adds to it, and
-so does the start URL. Nothing outside the engine polices it there, which is
-what `engine-claimed` is saying.
+`--allow` cannot get around a box's `net.egress`. A profile that declares one
+cannot be created at a tier that cannot enforce it (creation is fail-closed), so
+a box with a list has a boundary underneath it: the flag widens what the engine
+will *ask* for, and what leaves the box is still decided outside it. A box that
+declares no list has nothing to widen, its net mode being host or deny, and a
+session there stays `engine-claimed`.
 
 `--in` needs a box on a tier that can hold a resident process. If yours cannot,
 `start` says so before it starts anything, and names the fix.

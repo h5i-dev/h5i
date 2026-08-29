@@ -1930,23 +1930,21 @@ fn build_policy(net: &NetArgs) -> Policy {
     // Flags first, then whatever h5i granted the box, and the two are a
     // **union**.
     //
-    // This used to say that an agent therefore cannot widen the box's policy,
-    // "because the sandbox's own egress enforcement is still the boundary
-    // underneath". That is true only where such a boundary exists: supervised,
-    // container and microvm. On `workspace` and `process` the tier's network
-    // scope is deny-or-host, so nothing polices which hosts are reached and the
-    // union *is* the whole policy — `--allow` widens it, and so does naming a
-    // start URL. On those tiers the box's `net.egress` reaches this engine as a
-    // default rather than as a ceiling, and the engine's allowlist is a
-    // cooperating process's own account of what it will fetch, which is why the
-    // lane it earns stays `engine-claimed`
-    // ([`h5i_core::browser_session::Session::lane_for`]) and why nothing here
-    // calls it containment.
+    // A union that still cannot widen a box's *enforced* policy, and the reason
+    // is at creation rather than here: a profile that declares `net.egress`
+    // cannot be created at a tier that cannot enforce one. `h5i box create
+    // --isolation process --profile <one with egress>` is refused, fail-closed
+    // ("process-v1 supports net.mode deny|host only"), so a box whose list
+    // reaches this engine is a box with a boundary underneath it. `--allow`
+    // adds an origin to what this process will *ask* for; what actually leaves
+    // the box is still decided outside it, which is what a `read --in` against
+    // an un-listed origin demonstrates — the engine grants the target it was
+    // handed and the box's pinned DNS refuses to resolve it.
     //
-    // Left as a union deliberately: an intersection would *read* as enforcement
-    // while being bypassable by the agent that owns the environment this
-    // variable arrives in, which is the same generous-direction claim in a new
-    // costume.
+    // A box that declares no list is a box with nothing to widen: its net mode
+    // is host or deny, nothing outside the engine is deciding about hosts at
+    // all, and the lane such a session earns stays `engine-claimed` for exactly
+    // that reason (`h5i_core::browser_session::Session::lane_for`).
     let from_env: Vec<String> = std::env::var(ALLOW_VAR)
         .unwrap_or_default()
         .split(',')

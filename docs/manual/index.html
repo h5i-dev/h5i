@@ -661,18 +661,29 @@ upgraded:</p>
 lets the engine reach the whole host network corroborates nothing, and such a
 session stays <code>engine-claimed</code>. What earns <code>host-observed</code> is an egress
 allowlist or a <code>deny</code> net mode — enforcement outside the engine.</p>
-<p><strong>What <code>net.egress</code> means on a tier that does not enforce it.</strong> h5i hands the
-box's list to the engine either way, so a session there starts with those
-origins granted. On <code>supervised</code>, <code>container</code> and <code>microvm</code> the same list is
-applied at the boundary, and it bounds what anything in the box can reach. On
-<code>workspace</code> and <code>process</code> the network scope is deny or host and nothing applies
-it per host: the list arrives as a <strong>default</strong> for the engine's own allowlist,
-not as a ceiling, so <code>--allow</code> adds to it and so does naming a start URL. An
-agent inside such a box reaches past the list exactly as <code>curl</code> in that box
-does. That is not the browser getting around something. It is what a tier with
-no network boundary means, and it is why a session there keeps saying
-<code>engine-claimed</code> and why <code>h5i browser status</code> is the line to read rather than
-the tier's name.</p>
+<p><strong>Can <code>--allow</code> get around the box's <code>net.egress</code>?</strong> No, and the reason is at
+creation rather than in the browser. A profile that declares an egress
+allowlist cannot be created at a tier that cannot enforce one:</p>
+<pre><code>$ h5i box create webtest --profile browser --isolation process
+Error: profile 'browser' sets a net.egress domain allowlist, but isolation
+'process' cannot enforce it (process-v1 supports net.mode deny|host only) —
+use a supervisor/container backend or drop net.egress (fail-closed)
+</code></pre>
+<p>So a box whose list reaches the engine is a box with a boundary underneath it.
+h5i does hand that list to the engine, and <code>--allow</code> and the start URL add to
+it, but what they add is what the engine will <em>ask</em> for. What leaves the box is
+still decided outside it:</p>
+<pre><code>$ h5i browser read https://example.com --in webbox   # webbox allows en.wikipedia.org
+  confined : box webbox, policy 2bb35dc2fa6c...
+https://example.com: could not open https://example.com/: denied by policy:
+`example.com` could not be resolved: Temporary failure in name resolution
+</code></pre>
+<p>The engine granted the target it was handed, exactly as <code>read</code> always does, and
+the box's pinned DNS refused it anyway.</p>
+<p>A box that declares no egress list has nothing to widen: its net mode is host
+or deny, nothing outside the engine is deciding about hosts, and a session
+there keeps saying <code>engine-claimed</code>. That line, not the tier's name, is what
+says whether anything corroborated the request log.</p>
 <p>Two mechanics are worth knowing, because they explain the shape of the feature:</p>
 <ul>
 <li><strong>The engine runs as a service, not as a run.</strong> <code>h5i box run</code> holds the box's
