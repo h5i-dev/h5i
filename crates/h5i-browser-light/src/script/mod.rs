@@ -988,20 +988,41 @@ impl Script {
     /// off rather than left to look merely thin.
     fn with_job_deadline<T>(&mut self, budget: Duration, body: impl FnOnce(&mut Self) -> T) -> (T, bool) {
         let cancel = self.cancel.clone();
-        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let watching = finished.clone();
+        // A condition variable rather than a polled flag, because this thread is
+        // *joined*: whatever it is still doing when the body finishes, the page
+        // waits for.
+        //
+        // It used to sleep 20 ms between checks, so a page that settled in 50 µs
+        // — which is most pages, most of the time — then sat in `join` until the
+        // watchdog next woke up. **A 20 ms tax on every settle**, and on every
+        // agent `wait` besides, spent asleep. It read as script time in the
+        // profile and was not: the settle loop ran one round costing 50 µs
+        // inside a phase that measured 20.4 ms. It was intermittent, too, which
+        // is the worst way for a cost to present — a plain race between the body
+        // and the watchdog's first check, so half the runs looked fine.
+        let done = std::sync::Arc::new((
+            std::sync::Mutex::new(false),
+            std::sync::Condvar::new(),
+        ));
+        let watching = done.clone();
         let deadline = std::time::Instant::now() + budget;
 
         let watchdog = std::thread::Builder::new()
             .name("h5i-script-deadline".to_string())
             .spawn(move || {
-                while std::time::Instant::now() < deadline {
-                    if watching.load(std::sync::atomic::Ordering::Relaxed) {
-                        return false;
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
+                let (lock, wake) = &*watching;
+                let mut finished = lock.lock().unwrap_or_else(|e| e.into_inner());
+                while !*finished {
+                    let Some(left) = deadline.checked_duration_since(std::time::Instant::now())
+                    else {
+                        break;
+                    };
+                    let (guard, _) = wake
+                        .wait_timeout(finished, left)
+                        .unwrap_or_else(|e| e.into_inner());
+                    finished = guard;
                 }
-                if watching.load(std::sync::atomic::Ordering::Relaxed) {
+                if *finished {
                     return false;
                 }
                 cancel.store(true, portable_atomic::Ordering::Relaxed);
@@ -1010,7 +1031,14 @@ impl Script {
             .ok();
 
         let out = body(self);
-        finished.store(true, std::sync::atomic::Ordering::Relaxed);
+        {
+            let (lock, wake) = &*done;
+            *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            // Under the lock's release, not before it: a watchdog notified while
+            // the flag was still false would go back to waiting out the budget,
+            // and the join below would wait with it.
+            wake.notify_all();
+        }
         let fired = watchdog.and_then(|w| w.join().ok()).unwrap_or(false);
 
         // Boa clears the flag itself when it acts on it, but a deadline that

@@ -205,6 +205,29 @@ fn main() {
         );
     }
 
+    // ── what a scripted page costs before it has any content ────────────────
+    //
+    // One section, so the number is almost entirely fixed cost: build the realm,
+    // run one trivial script, fire the load lifecycle, settle. It is the floor
+    // under every scripted page, and the place a fixed cost that is nobody's
+    // feature shows up as itself.
+    //
+    // It found one. The deadline watchdog polled a flag every 20 ms and was
+    // *joined*, so a settle that finished in 50 us then waited for a sleeping
+    // thread to notice — up to 20 ms on every settle, and on every agent `wait`
+    // besides. It read as script time in a phase profile, and it was
+    // intermittent, because whether the watchdog had reached its first sleep was
+    // a race with the body finishing.
+    {
+        let url = url::Url::parse("https://bench.example/").unwrap();
+        let (scripted, _) = factory(true);
+        let minimal = document_with_script(1);
+        let floor = time(9, || {
+            let _ = scripted.from_html(&minimal, &url);
+        });
+        println!("\nthe floor under a scripted page (1 section): {floor:.1?}");
+    }
+
     // ── queries and collections ─────────────────────────────────────────────
     {
         let url = url::Url::parse("https://bench.example/").unwrap();
