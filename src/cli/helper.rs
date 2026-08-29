@@ -37,11 +37,18 @@
 //! # What contains it
 //!
 //! The session's placement, and nothing else here. A boxed session runs the
-//! helper **inside its box**, so the box's egress enforcement — h5i's own
-//! boundary, host-side and outside the engine — sees its traffic exactly as it
-//! sees the engine's. A host session runs it on the host, where it is contained
-//! by whatever the shell that started h5i is contained by, which is to say by
-//! nothing this module can name.
+//! helper **inside its box**; a host session runs it on the host, where it is
+//! contained by whatever the shell that started h5i is contained by, which is
+//! to say by nothing this module can name.
+//!
+//! Whether being in a box buys a *network* boundary is a second question, and
+//! [`evidence`] answers it from the session's lane rather than assuming. A box
+//! confines files and environment at every tier and egress at only some, and on
+//! Linux today the tiers that enforce egress cannot hold a resident browser
+//! session at all — so a boxed session is on `workspace` or `process`, neither
+//! of which polices what leaves it. Reporting that as containment would be the
+//! generous-direction error [`h5i_core::browser_session::Session::lane_for`]
+//! exists to prevent.
 //!
 //! **There is no fallback between the two.** A boxed session whose box has no
 //! yt-dlp is refused rather than served from the host: running it outside would
@@ -161,6 +168,17 @@ pub fn transcript(
     // `--lang 'en.*'` is the escape hatch, and a run that matched nothing names
     // it along with the tags the video actually has.
     let want = lang.unwrap_or("en");
+    // `--all` means the same thing on both lanes: every track the media
+    // actually carries. On the `<track>` lane that is what the markup declares,
+    // one to a few dozen. Here it has to be said with two flags rather than
+    // one, because yt-dlp folds machine translations into `all` the moment
+    // `--write-auto-subs` is on — three hundred languages on an ordinary
+    // YouTube video, and nine hundred on a popular one.
+    //
+    // So `--all` drops the automatic flag and asks only for the tracks somebody
+    // wrote. A single language still asks for both, because a video whose only
+    // transcript is machine-generated is exactly the case this lane exists to
+    // reach.
     let langs = if all {
         // `live_chat` is a chat transcript rather than a subtitle track, and on
         // a long stream it is enormous. Excluded by name, the way yt-dlp's own
@@ -170,7 +188,7 @@ pub fn transcript(
         want.to_string()
     };
 
-    let argv = build_argv(&url, &langs, &work.in_helper);
+    let argv = build_argv(&url, &langs, &work.in_helper, !all);
     let (status, stderr) = run(session, &argv, &work)?;
 
     let read = collect(&work.host, Some(want), max_bytes);
@@ -288,8 +306,18 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
 }
 
 /// The command line, built here and recorded exactly as built.
-fn build_argv(url: &str, langs: &str, out: &str) -> Vec<String> {
-    [
+///
+/// `automatic` decides whether machine transcriptions are in scope, and it is
+/// what makes `all` mean the same thing here as it does on the `<track>` lane.
+/// yt-dlp resolves `--sub-langs all` against the languages it is *willing to
+/// write*, and `--write-auto-subs` is what puts several hundred machine
+/// translations into that set (`YoutubeDL.py`, `available_subs`). Asking for
+/// every language with automatic captions on is therefore not "every track this
+/// video has", it is 314 requests on the first video this lane was pointed at
+/// and 940 on the second: a rate limit within seconds, and nothing anybody
+/// wanted.
+fn build_argv(url: &str, langs: &str, out: &str, automatic: bool) -> Vec<String> {
+    let mut argv: Vec<&str> = vec![
         // Nothing from a config file. A `~/.config/yt-dlp/config` could
         // otherwise add flags h5i did not choose — a proxy, a cookie file, a
         // post-processor — which would make the argv this module records an
@@ -309,7 +337,11 @@ fn build_argv(url: &str, langs: &str, out: &str) -> Vec<String> {
         // machine's transcription are different evidence, and `describe` says
         // which arrived.
         "--write-subs",
-        "--write-auto-subs",
+    ];
+    if automatic {
+        argv.push("--write-auto-subs");
+    }
+    argv.extend([
         "--sub-langs",
         langs,
         // WebVTT first because it is what the `<track>` lane parses, so both
@@ -328,10 +360,8 @@ fn build_argv(url: &str, langs: &str, out: &str) -> Vec<String> {
         // is read as a flag, which is the oldest argv bug there is.
         "--",
         url,
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
+    ]);
+    argv.iter().map(|s| s.to_string()).collect()
 }
 
 /// Run it where the session runs, and nowhere else.
@@ -387,24 +417,38 @@ fn run(
         anyhow::anyhow!("could not start `{NAME}`: {e}")
     })?;
     let deadline = Instant::now() + BUDGET;
+    let mut timed_out = false;
     let status = loop {
         match child.try_wait()? {
             Some(status) => break status.code(),
             None if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                anyhow::bail!(
-                    "`{NAME}` was still running after {}s and was stopped. Its output is at {}.",
-                    BUDGET.as_secs(),
-                    err_path.display()
-                );
+                // Stopped, not failed. A run killed at the budget has usually
+                // written some of what it was asked for, and this used to
+                // return an error and throw all of it away — the same mistake
+                // as reading yt-dlp's exit code instead of reading the
+                // directory, and made in the one place where the caller has
+                // already waited two minutes for the answer.
+                timed_out = true;
+                break None;
             }
             None => std::thread::sleep(Duration::from_millis(50)),
         }
     };
 
-    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
-    Ok((status, stderr))
+    let mut stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
+    if timed_out {
+        stderr.push_str(&format!(
+            "\nh5i stopped `{NAME}` after {}s, its whole budget for one transcript.",
+            BUDGET.as_secs()
+        ));
+    }
+    // `None` for a kill *and* for a signal death, which is why the timeout is
+    // reported through stderr rather than by an out-of-band status: what the
+    // caller has to be able to tell apart is "nothing arrived" from "something
+    // did", and the directory answers that.
+    Ok((if timed_out { Some(-1) } else { status }, stderr))
 }
 
 /// `yt-dlp`, from `PATH` or from the two places an install lands.
@@ -679,18 +723,41 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
     })
 }
 
+/// What saw this lane's traffic, said without rounding up.
+///
+/// **Branching on the session's lane, not on its placement**, and that
+/// distinction is the whole of this function. Being in a box is not the same as
+/// being behind a boundary: [`bs::Session::lane_for`] awards `HostObserved`
+/// only for enforcement outside the engine, an egress allowlist the box applies
+/// or a net mode that lets nothing out, and a boxed session on a tier that
+/// confines files and environment but not network is `EngineClaimed`.
+///
+/// The first version of this claimed the boundary for every boxed session. On
+/// this host that claim was already false the moment it was written: the tiers
+/// that enforce egress cannot hold a resident browser session on Linux today,
+/// so a boxed session is on `workspace` or `process`, and neither has a network
+/// boundary at all. `lane_for`'s own comment names this as the one error the
+/// product cannot afford, in the direction it cannot afford it in.
 fn evidence(session: &bs::Session) -> String {
-    match &session.placement {
-        bs::Placement::Box { name } => format!(
-            "helper-observed. `{NAME}` ran inside box `{name}`, so its traffic crossed that \
-             box's egress boundary — but it is not the engine, so none of its fetches are in \
-             `h5i browser requests`. The run itself is in `h5i browser audit`."
+    let common = "It is not the engine, so none of its fetches are in `h5i browser requests`. \
+                  The run itself is in `h5i browser audit`.";
+    match (&session.placement, session.lane) {
+        (bs::Placement::Box { name }, bs::Lane::HostObserved) => format!(
+            "helper-observed. `{NAME}` ran inside box `{name}`, whose boundary enforces egress, \
+             so its traffic crossed the same enforcement the engine's did. {common}"
         ),
-        bs::Placement::Host => format!(
+        // In a box, and the box does not police what leaves it. Said plainly:
+        // the containment that *is* there is real and is not a network one, and
+        // reporting it as one would be worth less than reporting nothing.
+        (bs::Placement::Box { name }, bs::Lane::EngineClaimed) => format!(
+            "helper-observed. `{NAME}` ran inside box `{name}`, which confines its files and \
+             its environment and **not** its network — that box's tier enforces no egress \
+             boundary, so nothing outside `{NAME}` itself saw these fetches. {common}"
+        ),
+        (bs::Placement::Host, _) => format!(
             "helper-observed. `{NAME}` ran on this machine, outside the engine and outside any \
-             boundary h5i enforces: its fetches are not in `h5i browser requests` and nothing \
-             here checked them against this session's policy. The run itself is in \
-             `h5i browser audit`."
+             boundary h5i enforces: nothing here checked its fetches against this session's \
+             policy. {common}"
         ),
     }
 }
@@ -809,7 +876,7 @@ mod tests {
     /// media may be fetched by it.
     #[test]
     fn the_recorded_argv_cannot_be_added_to_by_a_config_file() {
-        let argv = build_argv("https://site.example/v", "en.*", "/tmp/x/%(id)s");
+        let argv = build_argv("https://site.example/v", "en.*", "/tmp/x/%(id)s", true);
         assert!(argv.contains(&"--ignore-config".to_string()), "{argv:?}");
         assert!(argv.contains(&"--skip-download".to_string()), "{argv:?}");
         assert!(argv.contains(&"--no-playlist".to_string()), "{argv:?}");
@@ -915,9 +982,82 @@ mod tests {
     /// the third is what got rate-limited on the first live run.
     #[test]
     fn the_default_language_is_an_exact_tag_and_not_a_prefix() {
-        let argv = build_argv("https://x.test/v", "en", "/tmp/x/%(id)s");
+        let argv = build_argv("https://x.test/v", "en", "/tmp/x/%(id)s", true);
         let at = argv.iter().position(|a| a == "--sub-langs").expect("flag");
         assert_eq!(argv[at + 1], "en", "not `en.*`: {argv:?}");
+    }
+
+    /// The one that would have hurt somebody else. yt-dlp resolves
+    /// `--sub-langs all` against the languages it is willing to *write*, and
+    /// `--write-auto-subs` puts every machine translation into that set: 314 on
+    /// the first video this lane was pointed at, 940 on the second. Asking for
+    /// all of them is several hundred requests to a third party from one flag,
+    /// a rate limit within seconds, and nothing anybody wanted.
+    ///
+    /// So `--all` asks only for the tracks somebody wrote, which is what `--all`
+    /// means on the `<track>` lane too.
+    #[test]
+    fn all_asks_for_authored_tracks_and_not_every_machine_translation() {
+        let every = build_argv("https://x.test/v", "all,-live_chat", "/tmp/x/%(id)s", false);
+        assert!(every.contains(&"--write-subs".to_string()), "{every:?}");
+        assert!(
+            !every.contains(&"--write-auto-subs".to_string()),
+            "with automatic captions on, `all` is every language YouTube can translate \
+             into: {every:?}"
+        );
+
+        // A single language still asks for both: a video whose only transcript
+        // is machine-generated is exactly what this lane exists to reach, and
+        // it is one file either way.
+        let one = build_argv("https://x.test/v", "en", "/tmp/x/%(id)s", true);
+        assert!(one.contains(&"--write-auto-subs".to_string()), "{one:?}");
+    }
+
+    fn session_at(placement: bs::Placement, lane: bs::Lane) -> bs::Session {
+        let mut session: bs::Session = serde_json::from_value(serde_json::json!({
+            "id": "br_test", "engine": "h5i-light",
+            "placement": placement, "lane": lane,
+            "url": "https://site.example/", "started_at": "2026-01-01T00:00:00Z",
+            "expires_at": null, "storage": "ephemeral", "policy_digest": "sha256:0",
+            "restored_from": null, "state": "live", "ended_at": null, "end_reason": null,
+            "control": {"channel": "socket", "file": null, "witness": null, "pid": null},
+        }))
+        .expect("a session record");
+        session.lane = lane;
+        session
+    }
+
+    /// Being in a box is not the same as being behind a boundary. On Linux
+    /// today the tiers that enforce egress cannot hold a resident browser
+    /// session at all, so every boxed session is on a tier that confines files
+    /// and environment and not network — and the first version of this claimed
+    /// the boundary for all of them.
+    #[test]
+    fn a_box_without_an_egress_boundary_is_not_reported_as_having_one() {
+        let unenforced = evidence(&session_at(
+            bs::Placement::Box { name: "capbox".into() },
+            bs::Lane::EngineClaimed,
+        ));
+        assert!(unenforced.contains("not** its network"), "{unenforced}");
+        assert!(
+            !unenforced.contains("crossed the same enforcement"),
+            "a process-tier box polices files, not egress: {unenforced}"
+        );
+
+        let enforced = evidence(&session_at(
+            bs::Placement::Box { name: "capbox".into() },
+            bs::Lane::HostObserved,
+        ));
+        assert!(enforced.contains("enforces egress"), "{enforced}");
+
+        // And neither of them ever claims the request log saw it.
+        for text in [unenforced, enforced, evidence(&session_at(bs::Placement::Host, bs::Lane::EngineClaimed))] {
+            assert!(text.contains("not the engine"), "{text}");
+            assert!(
+                text.contains("none of its fetches are in `h5i browser requests`"),
+                "{text}"
+            );
+        }
     }
 
     #[test]

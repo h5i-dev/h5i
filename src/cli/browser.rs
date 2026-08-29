@@ -544,9 +544,11 @@ pub enum BrowserCommands {
         /// sockets from a process the engine never sees, so nothing it fetches
         /// is in `h5i browser requests` and nothing can be: the reply says so,
         /// and `h5i browser audit` carries the run as a host-observed row. It
-        /// runs where the session runs — inside the box for a boxed session, so
-        /// the box's egress boundary sees it — and it is never a fallback: an
-        /// engine read that found no captions stays a read that found none.
+        /// runs where the session runs, inside the box for a boxed session, and
+        /// it is never a fallback: an engine read that found no captions stays
+        /// a read that found none. The reply says what actually saw its
+        /// traffic, which for a box depends on whether that box's tier enforces
+        /// egress at all.
         ///
         /// With `--via`, `--url` names the media and the session does not move:
         /// there is no page here to render.

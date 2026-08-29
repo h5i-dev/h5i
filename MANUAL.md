@@ -605,10 +605,15 @@ Four things are deliberate:
   outside the engine's log without anyone asking, which is the one thing that
   log promises cannot happen.
 - **It runs where the session runs.** A boxed session runs yt-dlp *inside its
-  box*, so the box's egress boundary sees its traffic exactly as it sees the
-  engine's. A boxed session whose box has no yt-dlp is refused rather than
+  box*, and a boxed session whose box has no yt-dlp is refused rather than
   served from the host: running it outside would move the session's network to a
-  boundary its caller did not choose.
+  boundary its caller did not choose. Whether that box has an egress boundary at
+  all is a separate question, and the reply answers it rather than assuming: a
+  tier that confines files and environment and not network is reported as
+  exactly that. Note the standing Linux trade-off here, the same one `open --in`
+  reports: the tiers that enforce egress cannot hold a resident session, so
+  today a boxed session is on a tier with no network boundary unless it is
+  `microvm`.
 - **It gets no credential.** `--secret` grants are resolved by the broker on the
   way into a page, and this lane has no page and no broker. The child's
   environment is built from a short allowlist that does not include the
