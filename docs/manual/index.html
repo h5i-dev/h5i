@@ -786,6 +786,16 @@ host-observed row carrying the exact argv h5i executed:</p>
 <li><strong><code>--ignore-config</code> is passed</strong>, so a <code>~/.config/yt-dlp/config</code> cannot add
   flags h5i did not choose. The argv in the audit is what actually ran.</li>
 </ul>
+<p><code>--all</code> means the same thing on both lanes: every track the media actually
+carries. Here that takes two flags rather than one, because yt-dlp folds
+YouTube's machine translations into <code>all</code> the moment automatic captions are
+requested, which is several hundred downloads for a question about one video. So
+<code>--all</code> asks only for the tracks somebody wrote. When a video turns out to have
+none, it runs a second time for one automatic track and says so in the note: a
+flag that asks for more must never hand back less, and without that second pass
+<code>--all</code> returned nothing on a video whose only transcript is machine-generated
+while passing no flag at all returned it. Both invocations appear in the audit,
+with their own argv, because that is what actually ran.</p>
 <p><code>--lang</code> is an <strong>exact</strong> tag, because yt-dlp matches it with a regex
 <code>fullmatch</code> and widening is not free: YouTube answers <code>en.*</code> with <code>en</code> plus
 <code>en-de</code> and <code>en-en</code>, the author's captions and two machine translations of them,

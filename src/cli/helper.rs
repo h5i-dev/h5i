@@ -204,7 +204,10 @@ pub fn transcript(
     // So `--all` drops the automatic flag and asks only for the tracks somebody
     // wrote. A single language still asks for both, because a video whose only
     // transcript is machine-generated is exactly the case this lane exists to
-    // reach.
+    // reach — and that asymmetry is why `--all` needs the second pass below:
+    // without it, `--all` on such a video returns nothing while passing no flag
+    // at all returns the transcript, and a flag that asks for more must never
+    // hand back less.
     let langs = if all {
         // `live_chat` is a chat transcript rather than a subtitle track, and on
         // a long stream it is enormous. Excluded by name, the way yt-dlp's own
@@ -214,22 +217,92 @@ pub fn transcript(
         want.to_string()
     };
 
-    let argv = build_argv(&url, &langs, &work.in_helper, !all);
-    let (status, said) = run(session, &argv, &work)?;
+    let mut argv = build_argv(&url, &langs, &work.in_helper, !all);
+    let (mut status, mut said) = run(session, &argv, &work)?;
+    let mut read = collect(&work.host, Some(want), max_bytes);
+    record(root, session, &work, &argv, status, &describe(&read, want, status, &said));
 
-    let read = collect(&work.host, Some(want), max_bytes);
+    // The second pass, and only for `--all` on a video that turns out to have
+    // no authored captions at all.
+    //
+    // The info file the first pass wrote is what makes this decidable without
+    // guessing: asked for subtitles it could not supply, yt-dlp still writes it
+    // and still lists what the video has, in both kinds.
+    //
+    // How long that automatic list is varies by video — some report only their
+    // source tracks, others the whole translated set — and it deliberately does
+    // not matter here, because `fallback_tag` takes exactly one tag out of it.
+    // The bound is on what gets *asked for*, not on what gets listed, which is
+    // the same bound `--all` dropping the automatic flag was buying.
+    let mut fell_back = None;
+    if all
+        && read.cues.is_empty()
+        && read.authored.is_empty()
+        && let Some(tag) = fallback_tag(&read.automatic_tags, want)
+    {
+        argv = build_argv(&url, &tag, &work.in_helper, true);
+        let (second_status, second_said) = run(session, &argv, &work)?;
+        status = second_status;
+        said = second_said;
+        read = collect(&work.host, Some(&tag), max_bytes);
+        record(
+            root,
+            session,
+            &work,
+            &argv,
+            status,
+            &describe(&read, &tag, status, &said),
+        );
+        fell_back = Some(tag);
+    }
+
     let mut note = describe(&read, want, status, &said);
+    if let Some(tag) = &fell_back {
+        note.push_str(&format!(
+            ". No authored captions on this video, so `--all` fell back to its automatic \
+             transcript in `{tag}`."
+        ));
+    }
     // The box's own receipt for this invocation, when there is one. It is the
     // strongest evidence this lane produces — a row h5i wrote from outside the
-    // helper, naming the policy the run was subject to — so the audit row
-    // points at it rather than leaving the two records to be matched by time.
+    // helper, naming the policy the run was subject to — so the reply points at
+    // it rather than leaving the two records to be matched by time.
     if let Some(receipt) = box_receipt(&work) {
         note.push_str(&format!(" Box receipt {receipt}."));
     }
 
-    // Written whatever happened, including a failure: "h5i ran yt-dlp and it
-    // exited 1" is the row an auditor needs most, and a log that only recorded
-    // successes would report a quiet session where a program ran and failed.
+    Ok(Outcome {
+        reply: render(&url, session, &read, &note),
+        // The last argv that ran. Each invocation has its own row in the helper
+        // log, which is where the whole sequence is: a `--all` that fell back
+        // ran twice, and a record showing one of them would be a record of a
+        // command that is not the one that produced the answer.
+        argv,
+        status,
+        answered: !read.cues.is_empty(),
+        note,
+    })
+}
+
+/// Append one row per invocation.
+///
+/// Per invocation rather than per verb, because the argv is the thing this row
+/// exists to state and a `--all` that falls back runs two different ones.
+/// Written whatever happened, including a failure: "h5i ran yt-dlp and it
+/// exited 1" is the row an auditor needs most, and a log that only recorded
+/// successes would report a quiet session where a program ran and failed.
+fn record(
+    root: &Path,
+    session: &bs::Session,
+    work: &Workspace,
+    argv: &[String],
+    status: Option<i32>,
+    note: &str,
+) {
+    let mut note = note.to_string();
+    if let Some(receipt) = box_receipt(work) {
+        note.push_str(&format!(" Box receipt {receipt}."));
+    }
     let _ = bs::record_helper(
         root,
         &session.id,
@@ -237,19 +310,33 @@ pub fn transcript(
             // Stamped by `record_helper`, from the clock the audit sorts on.
             at: String::new(),
             name: NAME.to_string(),
-            argv: argv.clone(),
+            argv: argv.to_vec(),
             status,
-            note: Some(note.clone()),
+            note: Some(note),
         },
     );
+}
 
-    Ok(Outcome {
-        reply: render(&url, session, &read, &note),
-        argv,
-        status,
-        answered: !read.cues.is_empty(),
-        note,
-    })
+/// Which automatic track to fall back to, out of the ones the video has.
+///
+/// Bounded to exactly one, because the whole point of `--all` dropping the
+/// automatic flag is not to ask for hundreds. The order is what a caller would
+/// expect: the language they named, then anything beginning with it, then a
+/// bare language code — a tag with no `-` is a source transcript rather than a
+/// translation of one, which is what `de-en` means — then whatever is first.
+fn fallback_tag(automatic: &[String], want: &str) -> Option<String> {
+    let want = want.to_ascii_lowercase();
+    automatic
+        .iter()
+        .find(|tag| tag.eq_ignore_ascii_case(&want))
+        .or_else(|| {
+            automatic
+                .iter()
+                .find(|tag| tag.to_ascii_lowercase().starts_with(&want))
+        })
+        .or_else(|| automatic.iter().find(|tag| !tag.contains('-')))
+        .or_else(|| automatic.first())
+        .cloned()
 }
 
 /// Refuse a URL this lane should not be handed.
@@ -760,7 +847,7 @@ fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> Strin
     }
     if !read.automatic_tags.is_empty() {
         have.push(format!(
-            "{} machine translations",
+            "{} automatic caption tag(s)",
             read.automatic_tags.len()
         ));
     }
@@ -892,8 +979,12 @@ fn text(url: &str, session: &bs::Session, read: &Read, note: &str) -> String {
         ));
     }
     if !read.automatic_tags.is_empty() {
+        // "automatic captions", not "machine translations": the list holds both
+        // a video's own machine transcript and YouTube's translations of it,
+        // and naming it after the second kind mislabels the first — which is
+        // the one a caller actually wants when there are no authored captions.
         out.push_str(&format!(
-            "machine translations available: {}\n",
+            "automatic captions available: {} tag(s)\n",
             read.automatic_tags.len()
         ));
     }
@@ -1066,7 +1157,7 @@ mod tests {
         let note = describe(&read, "en", Some(0), "");
         assert!(note.contains("no subtitles tagged `en`"), "{note}");
         assert!(note.contains("captions in de, fr"), "{note}");
-        assert!(note.contains("1 machine translations"), "{note}");
+        assert!(note.contains("1 automatic caption tag"), "{note}");
         assert!(note.contains("--lang 'en.*'"), "the escape hatch is named: {note}");
     }
 
@@ -1343,6 +1434,30 @@ mod tests {
         // And with nothing to show for it, the same stop *is* a failure.
         let empty = describe(&Read::default(), "en", Some(-1), stopped);
         assert!(empty.starts_with("failed:"), "{empty}");
+    }
+
+    /// A flag that asks for more must never hand back less. `--all` drops the
+    /// automatic flag so it does not ask YouTube for three hundred languages,
+    /// and on a video whose only transcript is machine-generated that made
+    /// `--all` return nothing where passing no flag returned the transcript.
+    /// The fallback picks exactly one automatic track.
+    #[test]
+    fn the_all_fallback_picks_one_track_in_the_order_a_caller_expects() {
+        // The language they named wins.
+        assert_eq!(fallback_tag(&["de".into(), "en".into()], "en").as_deref(), Some("en"));
+        // Then anything beginning with it.
+        assert_eq!(fallback_tag(&["en-GB".into(), "de".into()], "en").as_deref(), Some("en-GB"));
+        // Then a source transcript over a translation of one: `de-en` is
+        // German rendered from English, `de` is what was actually said.
+        assert_eq!(
+            fallback_tag(&["fr-en".into(), "de".into()], "en").as_deref(),
+            Some("de"),
+            "a bare tag is a source track"
+        );
+        // Then whatever there is.
+        assert_eq!(fallback_tag(&["fr-en".into()], "en").as_deref(), Some("fr-en"));
+        // And nothing to fall back to is not a fallback.
+        assert_eq!(fallback_tag(&[], "en"), None);
     }
 
     #[test]

@@ -621,6 +621,17 @@ Four things are deliberate:
 - **`--ignore-config` is passed**, so a `~/.config/yt-dlp/config` cannot add
   flags h5i did not choose. The argv in the audit is what actually ran.
 
+`--all` means the same thing on both lanes: every track the media actually
+carries. Here that takes two flags rather than one, because yt-dlp folds
+YouTube's machine translations into `all` the moment automatic captions are
+requested, which is several hundred downloads for a question about one video. So
+`--all` asks only for the tracks somebody wrote. When a video turns out to have
+none, it runs a second time for one automatic track and says so in the note: a
+flag that asks for more must never hand back less, and without that second pass
+`--all` returned nothing on a video whose only transcript is machine-generated
+while passing no flag at all returned it. Both invocations appear in the audit,
+with their own argv, because that is what actually ran.
+
 `--lang` is an **exact** tag, because yt-dlp matches it with a regex
 `fullmatch` and widening is not free: YouTube answers `en.*` with `en` plus
 `en-de` and `en-en`, the author's captions and two machine translations of them,
