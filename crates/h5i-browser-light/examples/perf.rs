@@ -160,10 +160,51 @@ fn main() {
         drop(pages);
     }
 
+    // ── the realm, by phase ─────────────────────────────────────────────────
+    //
+    // The prelude is compiled once per thread and run once per realm, so the
+    // first realm on a thread is the only one that pays for the compile. That
+    // makes these two columns a before-and-after of the change, measured in one
+    // run rather than argued across two builds.
+    //
+    // On a thread of its own because the template is per-thread, and a realm
+    // built anywhere above would already have paid the compile.
+    {
+        let phases = std::thread::spawn(|| {
+            let url = url::Url::parse("https://bench.example/").unwrap();
+            let (factory, broker) = factory(true);
+            let page = factory.from_html(&document(10), &url);
+            let first = h5i_browser_light::script::Script::new(page.dom(), broker.clone(), &url)
+                .expect("realm")
+                .cost();
+            let later = h5i_browser_light::script::Script::new(page.dom(), broker.clone(), &url)
+                .expect("realm")
+                .cost();
+            (first, later)
+        })
+        .join()
+        .expect("realm phases");
+
+        println!("\nstarting the script realm, by phase");
+        println!("                       first realm   later realms");
+        let row = |name: &str, first: Duration, later: Duration| {
+            println!("  {name:<19} {first:>10.1?}   {later:>10.1?}");
+        };
+        row("context", phases.0.context, phases.1.context);
+        row("primitives", phases.0.primitives, phases.1.primitives);
+        row(
+            "prelude compile",
+            phases.0.prelude_compile,
+            phases.1.prelude_compile,
+        );
+        row("prelude run", phases.0.prelude_run, phases.1.prelude_run);
+        row("total", phases.0.total(), phases.1.total());
+    }
+
     // ── starting the realm ──────────────────────────────────────────────────
     //
     // A fixed cost paid once per page, which dominates a small one: the prelude
-    // is parsed and evaluated from scratch every time.
+    // is run from scratch for every realm, even though it is compiled only once.
     {
         let url = url::Url::parse("https://bench.example/").unwrap();
         let (factory, broker) = factory(true);
@@ -192,7 +233,8 @@ fn main() {
             ("has", include_str!("../src/script/prelude/has.js")),
         ];
         println!(
-            "  the core prelude is {} KiB of code ({} KiB with its comments), parsed every time",
+            "  the core prelude is {} KiB of code ({} KiB with its comments), compiled once \
+             per thread and run per realm",
             code(core) / 1024,
             core.len() / 1024
         );

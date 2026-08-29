@@ -44,22 +44,28 @@ const PRELUDE: &str = include_str!("prelude.js");
 
 /// The pieces of the prelude a page has to *ask* for.
 ///
-/// Two of the three costs of the prelude are a straight function of the *code*
-/// handed to Boa: parse and compile are 33 ms and 9 ms of the ~59 ms a realm
-/// takes, and Boa parses eagerly — there is no lazy compilation to hide behind,
-/// so every page pays for every line whether or not it runs one.
+/// **What this is worth changed, and it is worth less than it was.** Parse and
+/// compile were 67 ms of the 83 a realm cost and were paid by every page; they
+/// are now paid once per thread (see [`compiled_prelude`]) and a later realm
+/// spends under a microsecond there. What a tier still saves per page is the
+/// *running* of its code — building its classes and prototypes — which is
+/// 12.4 ms for the whole 273 KiB core, so roughly 45 µs per KiB rather than the
+/// ~150 µs per KiB it was when the parse was in the number too.
 ///
-/// Code, not bytes: blanking all 164 KiB of comments in a 448 KiB prelude
+/// It still saves the compile for the first page a renderer serves, and that is
+/// the page a person is waiting on.
+///
+/// Code, not bytes: blanking all 164 KiB of comments in a 443 KiB prelude
 /// changed parse time by nothing measurable, so the documentation is free and
-/// only what the parser tokenises is not. The only way not to pay for a line is
-/// not to hand it over. So a surface most pages never touch lives in its own
-/// file, is never given to the parser, and arrives when something reads the
-/// name it defines — see `lazyGlobals` in the core prelude, which installs the
-/// getter that calls back into [`load_tier`].
+/// only what the parser tokenises is not. So a surface most pages never touch
+/// lives in its own file, is not given to the parser with the core, and arrives
+/// when something reads the name it defines — see `lazyGlobals` in the core
+/// prelude, which installs the getter that calls back into [`load_tier`].
 ///
 /// The bar for moving something here is that a page which *does* use it pays
-/// slightly more (one extra parse of a small file) and a page which does not
-/// pays nothing. That trade only holds while the tier is genuinely optional:
+/// slightly more (one extra parse of a small file, on every realm that asks —
+/// tiers are not shared the way the core is) and a page which does not pays
+/// nothing. That trade only holds while the tier is genuinely optional:
 /// anything the first paint of an ordinary page touches belongs in the core.
 const TIERS: &[(&str, &str)] = &[
     ("conformance", include_str!("prelude/conformance.js")),
@@ -98,6 +104,89 @@ fn load_tier(
         Some(std::path::Path::new(&path)),
     ))?;
     Ok(boa_engine::JsValue::undefined())
+}
+
+thread_local! {
+    /// The prelude, parsed and compiled once for this thread.
+    ///
+    /// A renderer serves every navigation of a session on one thread, so this
+    /// is once per process in the product and once per test in the suite.
+    ///
+    /// The context it was compiled against is kept with it, and is deliberately
+    /// a plain one: no host, no document, no broker. It exists to own the realm
+    /// the compiler resolved names against and nothing else, so holding it for
+    /// the life of the thread cannot pin a page's DOM — which storing the
+    /// *first page's* context here would have done.
+    static PRELUDE_TEMPLATE: std::cell::RefCell<Option<PreludeTemplate>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The compiled prelude and the realm it was compiled against.
+struct PreludeTemplate {
+    /// Held only to keep the compilation realm alive; never run.
+    _context: Context,
+    script: boa_engine::Script,
+}
+
+/// The compiled prelude for this thread, compiling it if this is the first ask.
+///
+/// The returned handle shares the code block rather than copying it: what comes
+/// back is cheap, and what it costs to *make* is paid once.
+fn compiled_prelude() -> Result<boa_engine::Script, String> {
+    PRELUDE_TEMPLATE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            let mut context = Context::default();
+            let script = boa_engine::Script::parse(
+                Source::from_reader(PRELUDE.as_bytes(), Some(std::path::Path::new(PRELUDE_PATH))),
+                None,
+                &mut context,
+            )
+            .map_err(|e| format!("the browser prelude did not parse: {e}"))?;
+            // Compiled here rather than left to the first `bind_to_realm`, so
+            // the cost lands on this function and the phase it is measured in.
+            script
+                .codeblock(&mut context)
+                .map_err(|e| format!("the browser prelude did not compile: {e}"))?;
+            *slot = Some(PreludeTemplate {
+                _context: context,
+                script,
+            });
+        }
+        Ok(slot
+            .as_ref()
+            .expect("the template was just built")
+            .script
+            .clone())
+    })
+}
+
+/// What building one realm cost, by phase.
+///
+/// Kept because the realm is most of what a small page costs (§B8.9) and the
+/// phases move independently: the prelude's *compile* is now paid once per
+/// thread while its *run* is paid per page, and a total alone could not tell
+/// those apart or show the sharing still working.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RealmCost {
+    /// Building the Boa context: the language's own globals and intrinsics.
+    pub context: Duration,
+    /// Installing this engine's native primitives, and the globals the prelude
+    /// reads on its way up.
+    pub primitives: Duration,
+    /// Parsing and compiling the prelude. Near zero after the first realm on a
+    /// thread; that it is near zero is the whole point.
+    pub prelude_compile: Duration,
+    /// Running the prelude: building the object model this realm hands the page.
+    pub prelude_run: Duration,
+}
+
+impl RealmCost {
+    /// What the realm cost in total.
+    #[must_use]
+    pub fn total(&self) -> Duration {
+        self.context + self.primitives + self.prelude_compile + self.prelude_run
+    }
 }
 
 /// What a stack frame inside this engine's own prelude is called.
@@ -450,6 +539,9 @@ pub struct Script {
     /// How long the job queue may run. Overridable so a test can prove the
     /// deadline fires without waiting the real budget out.
     job_budget: Duration,
+
+    /// What building this realm cost, by phase. See [`RealmCost`].
+    cost: RealmCost,
 }
 
 impl Script {
@@ -469,6 +561,8 @@ impl Script {
         base: &url::Url,
         options: RealmOptions,
     ) -> Result<Self, String> {
+        let mut cost = RealmCost::default();
+        let at = std::time::Instant::now();
         let url = base.to_string();
         let host = Rc::new(Host::new(dom, broker, base.clone()));
         // The loader is built before the context because the context owns it,
@@ -504,6 +598,9 @@ impl Script {
             .runtime_limits_mut()
             .set_loop_iteration_limit(LOOP_ITERATION_LIMIT);
 
+        cost.context = at.elapsed();
+
+        let at = std::time::Instant::now();
         context.insert_data(HostHandle(host.clone()));
 
         dom_api::install(&mut context).map_err(|e| e.to_string())?;
@@ -531,20 +628,6 @@ impl Script {
                 boa_engine::property::Attribute::empty(),
             )
             .map_err(|e| e.to_string())?;
-        // Parsed on every realm, and it cannot be otherwise with this Boa.
-        //
-        // ROADMAP §B11.5.14 wanted this cached: three thousand lines of
-        // JavaScript re-parsed per page is a real cost, and §B8.9 measured the
-        // realm at ~20ms. It is not buildable here, for a checkable reason
-        // rather than a hard one. `boa_engine::Script::parse` interns its
-        // identifiers into *this context's* interner (`context.interner_mut()`)
-        // and binds the result to this context's realm, and every page builds a
-        // fresh `Context`. A parsed script is therefore not a portable
-        // artifact; there is nothing to cache across pages. Revisit if Boa
-        // grows a shared interner or a serialisable code block.
-        //
-        // The sibling item, reusing the realm itself across navigations, is
-        // refused on other grounds — see `Page::run_scripts`.
         // Read by the core prelude at the one point the decoration has to
         // happen: after every prototype is populated and before the interfaces
         // reach the page.
@@ -555,20 +638,48 @@ impl Script {
                 boa_engine::property::Attribute::empty(),
             )
             .map_err(|e| e.to_string())?;
-        context
-            .eval(Source::from_reader(
-                PRELUDE.as_bytes(),
-                Some(std::path::Path::new(PRELUDE_PATH)),
-            ))
+        cost.primitives = at.elapsed();
+
+        // Compiled once for this thread, run once per realm.
+        //
+        // Parse and compile were 67 ms of the 83 a realm cost (§B8.9), paid
+        // again by every page for a source that never changes. They are now
+        // paid by the first page a renderer serves and by no other, taking a
+        // later realm to ~15 ms — the largest saving this engine has taken.
+        //
+        // The sibling item, reusing the *realm* across navigations, stays
+        // refused — see `Page::run_scripts`. This is not that. Only the
+        // instructions are shared; every page still gets its own realm, its own
+        // globals and its own prototypes, and nothing a page did is reachable
+        // from the next one. See `bind_to_realm` in our Boa fork for what makes
+        // the sharing safe, and §B15.12a for the reasoning it replaces.
+        let at = std::time::Instant::now();
+        let template = compiled_prelude()?;
+        cost.prelude_compile = at.elapsed();
+
+        let at = std::time::Instant::now();
+        let realm = context.realm().clone();
+        template
+            .bind_to_realm(realm)
+            .map_err(|e| format!("the browser prelude could not be bound to this realm: {e}"))?
+            .evaluate(&mut context)
             .map_err(|e| format!("the browser prelude failed to load: {e}"))?;
+        cost.prelude_run = at.elapsed();
 
         Ok(Self {
             context,
             cancel,
             job_budget: JOB_QUEUE_BUDGET,
+            cost,
             host,
             pending_modules: Vec::new(),
         })
+    }
+
+    /// What building this realm cost, by phase.
+    #[must_use]
+    pub fn cost(&self) -> RealmCost {
+        self.cost
     }
 
     /// Run one script from the page. An error is returned, not swallowed: a

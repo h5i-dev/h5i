@@ -824,6 +824,15 @@ impl Page {
     /// Obscura, a much larger engine in the same space, drops and recreates its
     /// whole JS runtime on every navigation for exactly this reason. The cost
     /// is real and it is the right one to pay.
+    ///
+    /// **Sharing the prelude's compiled code is a different thing and is
+    /// built.** The distinction is the whole safety argument, so it is worth
+    /// being exact: what is shared between realms is instructions, and what is
+    /// never shared is state. A second realm gets its own global object, its own
+    /// prototypes, its own module map and cleared inline caches — nothing a page
+    /// wrote is reachable from the next one, which is what the paragraph above
+    /// protects. It saved 67 ms of the 83 a realm cost; see §B15.12a, and
+    /// `a_realm_shares_the_preludes_code_and_none_of_its_state` for the guard.
     pub fn run_scripts(&mut self, broker: Arc<dyn Broker>) -> Result<(), H5iError> {
         // In document order, inline and external together, because execution
         // order is semantics: a bundle that defines a global in one script and
@@ -939,9 +948,10 @@ impl Page {
         };
 
         // Nothing to run means nothing to build. Starting the realm costs about
-        // 15ms — the prelude is 113 KiB of JavaScript, parsed and evaluated from
-        // scratch — and a page with no script elements was paying all of it for
-        // a realm that would never be asked a question.
+        // 15 ms — 273 KiB of JavaScript evaluated from scratch, the prelude's
+        // compile no longer being part of it (§B8.9) — and a page with no
+        // script elements was paying all of it for a realm that would never be
+        // asked a question.
         // A page whose only `<script>` is an import map has no code to run: the
         // map is a declaration for imports that never happen. Filtered here
         // rather than in the walk, so the walk stays one pass and this stays
