@@ -110,11 +110,16 @@ fn main() {
             let _ = page.snapshot();
         });
 
-        let (scripted, broker) = factory(true);
+        let (scripted, _) = factory(true);
         let scripted_html = document_with_script(rows);
+        // No `run_scripts` here: a script-enabled factory has already run them
+        // inside `from_html`, through `finish_page`. Calling it again does not
+        // no-op — it builds a *second* realm and runs the page's scripts again
+        // — so this column counted the realm twice for as long as it has
+        // existed. At 15.9 ms a realm that was a third of the number; at 58 ms
+        // it was most of it, which is how it was finally noticed.
         let with_script = time(5, || {
             let mut page = scripted.from_html(&scripted_html, &url);
-            page.run_scripts(broker.clone()).expect("realm");
             page.refresh();
             let _ = page.snapshot();
         });
@@ -204,8 +209,9 @@ fn main() {
     {
         let url = url::Url::parse("https://bench.example/").unwrap();
         let (factory, broker) = factory(true);
-        let mut page = factory.from_html(&document(200), &url);
-        page.run_scripts(broker.clone()).expect("realm");
+        // Same as below: this document carries no script, so the only realm is
+        // the one built here, which is the one the queries run in.
+        let page = factory.from_html(&document(200), &url);
         let mut script =
             h5i_browser_light::script::Script::new(page.dom(), broker, &url).expect("realm");
 
@@ -249,13 +255,11 @@ fn main() {
     println!();
     let url = url::Url::parse("https://bench.example/").unwrap();
     let (scripted, broker) = factory(true);
-    let mut page = scripted.from_html(&document(20), &url);
-    page.run_scripts(broker).expect("realm");
-    let mut script =
-        h5i_browser_light::script::Script::new(page.dom(), {
-            let (_, broker) = factory(true);
-            broker
-        }, &url)
+    // The document has no script of its own, so `from_html` builds no realm for
+    // it (§B8.9: a page with nothing to run stopped paying for a realm). The
+    // one below is the only one, and it is the one being measured through.
+    let page = scripted.from_html(&document(20), &url);
+    let mut script = h5i_browser_light::script::Script::new(page.dom(), broker, &url)
         .expect("realm");
 
     let reads = 20_000;
