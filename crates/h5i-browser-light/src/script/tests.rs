@@ -3579,6 +3579,82 @@ fn the_prelude_is_compiled_once_for_a_thread_and_run_for_every_realm() {
     );
 }
 
+/// A thread that warmed before it had a realm must be able to end.
+///
+/// This is a regression test for a crash, not for a wrong answer, and it has an
+/// unusual shape because of it: everything the thread does succeeds, and the
+/// process then aborts as the thread exits, with
+/// `tcache_thread_shutdown(): unaligned tcache chunk detected`. So the failure
+/// is the test binary dying rather than an assertion, and the thread has to be
+/// spawned and joined for the teardown to happen at all.
+///
+/// The order is the entire content of the test. Building a realm first touches
+/// Boa's garbage-collected heap before it touches [`PRELUDE_TEMPLATE`], and the
+/// thread-local destructors then run in an order that happens to be safe.
+/// Warming first inverts it, and the template drops `Gc` handles into a heap
+/// that has already been torn down. Warming before a realm exists is precisely
+/// what the overlap does, so this is the shape the product runs in.
+///
+/// See [`PreludeTemplate`] for why the fix is that the template is never
+/// dropped at all.
+#[test]
+fn the_compile_survives_a_thread_that_warmed_before_it_had_a_realm() {
+    std::thread::spawn(|| {
+        warm_prelude();
+        let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+        // Something after the warm that actually uses the realm, so this cannot
+        // pass by never getting there.
+        assert_eq!(
+            script.eval_value("document.querySelector('p').textContent").unwrap(),
+            "x"
+        );
+    })
+    .join()
+    .expect("the thread that warmed before building its realm");
+}
+
+/// Warming leaves the realm with no compiling left to do.
+///
+/// The link between "the compile happens during the fetch" and "the page is
+/// faster", asserted where a stopwatch cannot argue with it. `ipc.rs` proves the
+/// work runs while the request is in flight and `engine.rs` proves it is only
+/// attempted where there is a wait to hide it in; this is the third side, that
+/// the work is the thing the realm would otherwise have had to do.
+///
+/// Two threads, because the template is per-thread: one realm pays the compile
+/// the way an unwarmed page does, and the other must find it already paid.
+#[test]
+fn warming_takes_the_compile_out_of_the_realm_build() {
+    let cold = std::thread::spawn(|| {
+        let (_page, script) = page_and_script("<html><body></body></html>");
+        script.cost()
+    })
+    .join()
+    .expect("cold realm");
+
+    let warmed = std::thread::spawn(|| {
+        warm_prelude();
+        let (_page, script) = page_and_script("<html><body></body></html>");
+        script.cost()
+    })
+    .join()
+    .expect("warmed realm");
+
+    assert!(
+        cold.prelude_compile > Duration::from_millis(5),
+        "an unwarmed realm compiled the prelude in {:?}, so this test is no \
+         longer measuring the cost it exists to move",
+        cold.prelude_compile
+    );
+    assert!(
+        warmed.prelude_compile * 50 < cold.prelude_compile,
+        "a warmed realm still spent {:?} compiling against an unwarmed realm's \
+         {:?}; the warm did not take",
+        warmed.prelude_compile,
+        cold.prelude_compile
+    );
+}
+
 #[test]
 fn a_tier_is_not_parsed_until_the_page_asks_for_it() {
     // The deferral has to be observable, or it is a claim rather than a fact:

@@ -6224,9 +6224,71 @@ per *thread*, and a renderer serves a session's navigations on one. So a session
 pays the compile on its first page and never again, and every number above is
 that second-page-onward case. A one-shot `h5i browser read <url>` builds one
 realm in a fresh process and is not helped at all — it pays exactly what it paid
-before. Making the first page cheaper is a different problem: the compile would
-have to overlap the navigation's network fetch, which is nearly always longer
-than 67 ms and is where this should go next.
+before. Making the first page cheaper is a different problem, and it is the one
+below.
+
+### B15.12b The compile moved into the navigation's own wait, 2026-08-29
+
+The first realm on a thread still paid the whole 67 ms, and a one-shot
+`h5i browser open` never has a second. That compile is now paid while the
+navigation's own request is in flight: `Broker::send_while` hands the renderer's
+idle window to a caller with something to do, and `BrokerClient` writes the
+request, runs the work, then blocks on the answer. The broker is a separate
+process, so that window is real. It is a reordering rather than parallelism —
+Boa's heap is thread-local and `Gc` is not `Send`, so the compile can never go
+to a worker thread.
+
+**It is speculative, which is the whole difficulty.** The decision comes before
+the document exists, so it cannot ask whether the page has script, and a page
+with none builds no realm and would have paid nothing. `worth_warming` asks the
+two things it can know: scripting must be on, and there must be a wait to hide
+the compile in.
+
+**Measured before building.** Over the corpus, 64 pages: 92% run script, and the
+scriptless ones fetch *slower* than the scripted ones — 117 ms at the fastest
+against a ~67 ms compile. Not one page lost, and the compile would have to
+nearly double before one did. Six pages were dropped as bot-challenge responses,
+which are not the page, arrive fast, and carry their own script, so they land as
+false wins in exactly the region that decides this. Every page measured was
+remote, so loopback and the non-network schemes are excluded in code rather than
+assumed to behave like the rest.
+
+**Measured after, and the first answer was wrong.** An end-to-end A/B of two
+binaries said 171 ms saved. That is more than the compile being hidden, so it
+could not be the change, and it was not: `before` and `after` ran back to back on
+the same URL, handing the second warm DNS, a resumable TLS session and a warm
+CDN. With the order alternating, the eight-page median fell to **−6 ms** — the
+effect is 67 ms against pages that take 0.9 to 39 seconds and swing by hundreds
+of milliseconds, so it simply is not resolvable there.
+
+It is resolvable on pages fast enough to show it. Three pages under 1.5 s, 20
+repetitions, order alternating, **59 paired runs**:
+
+    after faster in 44/59            sign test p = 0.0001
+    median delta                     +106 ms
+    95% bootstrap CI                 [+53, +139] ms
+    predicted (the compile hidden)   +63 to +82 ms
+
+The interval excludes zero and contains the prediction. The point estimate sits
+above the ceiling, which is what a wide interval on a noisy box looks like
+rather than a saving larger than the thing being saved.
+
+**The bug this shipped with, because it is the more useful half.** Warming
+before a realm exists inverted the order in which two thread-locals are first
+touched — the template's and Boa's GC heap — and the template then dropped `Gc`
+handles into a heap already torn down. The symptom is not a wrong answer:
+everything succeeds, and the process aborts as the thread ends with
+`tcache_thread_shutdown(): unaligned tcache chunk detected`. Every test passed
+on the commit before, because building a realm touches Boa's heap first and the
+order happened to be safe. The fix is `ManuallyDrop`, so the thread-local has no
+destructor and the order cannot matter.
+
+Three things about it are worth keeping. Rust does not specify thread-local
+destructor order, so anything holding a `Gc` in one **must not be dropped** —
+this is a rule, not an incident. A latent crash can hide behind a green suite
+when the failure is in teardown rather than in the work. And it was found only
+because a test was written for the *link* the wall clock could not measure;
+the measurement that could not see the win did not see the crash either.
 
 **And the one that looked free was measured and was not there.** The settle loop
 made *five* separate `context.eval` calls per round, three of them on the hot

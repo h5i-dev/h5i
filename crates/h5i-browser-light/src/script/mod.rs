@@ -117,11 +117,41 @@ thread_local! {
     /// the compiler resolved names against and nothing else, so holding it for
     /// the life of the thread cannot pin a page's DOM — which storing the
     /// *first page's* context here would have done.
-    static PRELUDE_TEMPLATE: std::cell::RefCell<Option<PreludeTemplate>> =
+    /// **Deliberately holds nothing that will be dropped.** See
+    /// [`PreludeTemplate`].
+    static PRELUDE_TEMPLATE:
+        std::cell::RefCell<Option<std::mem::ManuallyDrop<PreludeTemplate>>> =
         const { std::cell::RefCell::new(None) };
 }
 
 /// The compiled prelude and the realm it was compiled against.
+///
+/// # Why this is never dropped
+///
+/// It holds `Gc` handles, and freeing those needs Boa's garbage-collected heap
+/// — which lives in a thread-local of its own (`BOA_GC`). Rust does not specify
+/// the order thread-local destructors run in, so a thread ending could destroy
+/// that heap first and leave this dropping handles into freed memory. It does
+/// exactly that, reproducibly, and the symptom is not a panic but
+/// `tcache_thread_shutdown(): unaligned tcache chunk detected` and `SIGABRT` as
+/// the thread exits, with the work already finished and correct.
+///
+/// It depended on the order the two thread-locals were *first touched*, which is
+/// why it appeared only once the compile moved into the navigation. Building a
+/// realm touches Boa's heap before it touches this, so its destructor was
+/// registered first and ran last, and everything was fine. Warming touches this
+/// one first, inverting the order — and warming before a realm exists is the
+/// whole point of the overlap (§B15.12a).
+///
+/// Wrapping it in `ManuallyDrop` means this thread-local has no drop glue at
+/// all, so no destructor is registered for it and the order cannot matter. What
+/// is left behind is the `Context` and `Script` structs; the GC heap they point
+/// into is freed by `BOA_GC`'s own teardown, so this leaks a bounded amount per
+/// thread that compiled a prelude rather than a growing one.
+///
+/// `the_compile_survives_a_thread_that_warmed_before_it_had_a_realm` is the
+/// guard, and it fails as an abort rather than an assertion, so it has to run
+/// in a thread that then exits.
 struct PreludeTemplate {
     /// Held only to keep the compilation realm alive; never run.
     _context: Context,
@@ -148,10 +178,10 @@ fn compiled_prelude() -> Result<boa_engine::Script, String> {
             script
                 .codeblock(&mut context)
                 .map_err(|e| format!("the browser prelude did not compile: {e}"))?;
-            *slot = Some(PreludeTemplate {
+            *slot = Some(std::mem::ManuallyDrop::new(PreludeTemplate {
                 _context: context,
                 script,
-            });
+            }));
         }
         Ok(slot
             .as_ref()
