@@ -295,7 +295,7 @@
       <div class="feat-card flagship reveal">
         <span class="feat-cmd">h5i browser open</span>
         <div class="feat-name">Run more browser tasks</div>
-        <div class="feat-desc">In benchmarks on simple websites, h5i reads pages <strong>~5&times; faster</strong> with <strong>~80% less peak memory</strong>. Sessions start quickly and can run in parallel without the overhead of a conventional browser.</div>
+        <div class="feat-desc">In our benchmarks, h5i reads pages <strong>~5&times; faster</strong> with <strong>~80% less peak memory</strong>. Sessions start quickly and can run in parallel without the overhead of a conventional browser.</div>
         <div class="feat-proves">the cost of reading a page decides how many pages an agent can afford to read.</div>
       </div>
       <div class="feat-card reveal">
@@ -307,25 +307,25 @@
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i browser audit &#183; requests</span>
         <div class="feat-name">Review the complete session</div>
-        <div class="feat-desc">Browser actions, network requests, blocked connections, human takeovers, crashes and how the session ended are kept in one timeline. <strong>A request is never sent unless its decision has been recorded first</strong>, so a fetch that cannot be written down is refused rather than made quietly.</div>
+        <div class="feat-desc">Browser actions, network requests, blocked connections, human takeovers, crashes and how the session ended are kept in one timeline.</div>
         <div class="feat-proves">a request that is not in the log did not happen.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">net.egress = [ &hellip; ]</span>
         <div class="feat-name">Control where the browser can connect</div>
-        <div class="feat-desc">Allow only the websites and services the task requires. Other requests, including redirects to unapproved destinations, are blocked before they leave and recorded with the reason. A redirect out of the allowlist is refused at the hop rather than followed and explained afterwards.</div>
+        <div class="feat-desc">Allow only the websites and services the task requires. Other requests, including redirects to unapproved destinations, are blocked before they leave and recorded.</div>
         <div class="feat-proves">denials are findings, not silence.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">UNTRUSTED PAGE CONTENT</span>
         <div class="feat-name">Limit the damage of prompt injection</div>
-        <div class="feat-desc">Page content is marked as untrusted, and you can run both the agent and the browser inside a sandbox. If a page still manipulates the agent, it can reach only the files and network destinations the sandbox policy allows.</div>
+        <div class="feat-desc">Page content is marked as untrusted. If a page still manipulates the agent, it can reach only the files and network destinations the sandbox policy allows.</div>
         <div class="feat-proves">h5i does not detect injection; it bounds what a persuaded agent can reach.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i browser take &#183; release &#183; login &#183; --secret</span>
         <div class="feat-name">Take over sensitive steps</div>
-        <div class="feat-desc">Take control for logins, payments or approvals, then hand the session back to the agent. Credentials can be typed by you or substituted from the host by name, so the value is used in the request without being returned to the model.</div>
+        <div class="feat-desc">Take control for logins, payments or approvals, then hand the session back to the agent. Credentials can be typed by you or substituted from the host by name.</div>
         <div class="feat-proves">handing control back invalidates the agent&#39;s page refs, so it re-reads before it acts.</div>
       </div>
 
@@ -334,19 +334,19 @@
       <div class="feat-card flagship reveal">
         <span class="feat-cmd">isolation = workspace | process | supervised | container | microvm</span>
         <div class="feat-name">Start with the right level of isolation</div>
-        <div class="feat-desc">Browser sessions use lightweight process isolation by default. Choose stronger network isolation, a rootless container or a microVM when the task requires a tighter boundary. h5i reports the isolation actually in use and <strong>never silently downgrades an explicit choice</strong>: an unsatisfiable tier fails closed instead. <code>h5i box probe</code> tells you what this machine can enforce before you rely on it.</div>
+        <div class="feat-desc">Browser sessions use lightweight process isolation by default. Choose stronger network isolation, a rootless container or a microVM</div>
         <div class="feat-proves">the tier you asked for is the tier you got, or creation refused.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i box . &#183; --pr 1234 &#183; &lt;url&gt; &#183; --new</span>
         <div class="feat-name">Keep the entire testing workflow inside</div>
-        <div class="feat-desc">Place the agent, the source, the dependencies, the development server and the browser inside one disposable environment. Work from your repository, an external URL or a pull request without running unfamiliar code directly on your machine. Code that came from outside arrives <strong>detached</strong>, so it can never land back on your branch by momentum.</div>
+        <div class="feat-desc">Place the agent, the source, the dependencies, the development server and the browser inside one disposable environment.</div>
         <div class="feat-proves">install scripts from a stranger&#39;s branch run in there, not in your shell.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">[[profile.X.auth]] &#183; h5i box secrets</span>
-        <div class="feat-name">Keep credentials and network access under control</div>
-        <div class="feat-desc">Grant only the files, services and network destinations the task requires. Model and service credentials stay on the host and are inserted into approved requests without becoming readable files inside the sandbox, and the per-box <code>HOME</code> copy strips credential-shaped entries at any depth.</div>
+        <div class="feat-name">Keep credentials access under control</div>
+        <div class="feat-desc">Model and service credentials stay on the host and are inserted into approved requests without becoming readable files inside the sandbox.</div>
         <div class="feat-proves">a prompt-injected agent has no reusable token to read or exfiltrate.</div>
       </div>
 
@@ -355,19 +355,19 @@
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i ui</span>
         <div class="feat-name">Monitor the whole workflow</div>
-        <div class="feat-desc">See which sandboxes are running, what isolation they use, which pages agents are viewing, what commands ran and which network requests were blocked. Every route is a <code>GET</code> on loopback, so the screen can watch a box and never drive one.</div>
+        <div class="feat-desc">See which sandboxes are running, what isolation they use, which pages agents are viewing, what commands ran and which network requests were blocked.</div>
         <div class="feat-proves">nothing on the console is a score, and the console cannot act.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">source: host-observed | box-claimed</span>
         <div class="feat-name">Review records the agent cannot rewrite</div>
-        <div class="feat-desc">Execution results, resource usage and denied connections are stored outside the sandbox, where the box has no write path. Every entry identifies whether it was <strong>observed by h5i</strong> or <strong>reported by the agent</strong>, and the two are never folded into one number.</div>
+        <div class="feat-desc">Execution results, resource usage and denied connections are stored outside the sandbox, where the box has no write path.</div>
         <div class="feat-proves">you can tell testimony from observation without trusting either.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i box export &lt;name&gt; --out ./review</span>
         <div class="feat-name">Bring work out deliberately</div>
-        <div class="feat-desc">Export a proposed patch, a readable report and the associated execution record. The patch is path-validated against symlink escapes and agent-introduced gitlinks, and the report puts denied egress first and the agent&#39;s own proposal last. Nothing is applied to your repository until you review and accept it.</div>
+        <div class="feat-desc">Export a proposed patch, a readable report and the associated execution record. Nothing is applied to your repository until you review and accept it.</div>
         <div class="feat-proves">getting work out is a step you take, not something the box can do.</div>
       </div>
 
@@ -376,19 +376,19 @@
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i skill install &#183; show &#183; path</span>
         <div class="feat-name">Works with the agents you already use</div>
-        <div class="feat-desc">Any agent that can run command-line tools can use h5i. The binary includes its own agent skill, compiled in at build time, so the instructions always match the installed version rather than documenting flags it does not have.</div>
+        <div class="feat-desc">Any agent that can run command-line tools can use h5i.</div>
         <div class="feat-proves">an agent acts on stale documentation without hesitating, then reports your tool as broken.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i box cache refresh &#183; ls &#183; mounts</span>
         <div class="feat-name">Reuse dependencies safely</div>
-        <div class="feat-desc">Read-only caches avoid downloading and rebuilding the same dependencies for every sandbox. Caches are keyed by the project&#39;s lockfile digest, mounted read-only, and written only by a box with no agent inside it, so they are <strong>never shared as writable state between agents</strong>.</div>
+        <div class="feat-desc">Read-only caches avoid downloading and rebuilding the same dependencies for every sandbox. Caches are keyed by the project&#39;s lockfile digest and mounted read-only.</div>
         <div class="feat-proves">cold install is the difference between a twenty-second box and a four-minute one.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i box share &#183; h5i join</span>
         <div class="feat-name">Share the app, not the sandbox</div>
-        <div class="feat-desc">Expose only the development server an agent built, without exposing your machine or the rest of the sandbox. Share it over an encrypted peer-to-peer connection, or with <code>--tunnel</code> for a temporary link any browser can open. Tickets expire, can be revoked, and every visit lands in the receipt.</div>
+        <div class="feat-desc">Expose only the development server an agent built, without exposing your machine or the rest of the sandbox. Share it over an encrypted peer-to-peer connection.</div>
         <div class="feat-proves">this is the one path that lets something in, and it is scoped to one port.</div>
       </div>
     </div>
