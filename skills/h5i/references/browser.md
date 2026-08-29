@@ -4,7 +4,7 @@ A **session** is the unit. It holds one page state, one cookie jar, one request
 log and one policy, and it is addressed by an id:
 
 ```bash
-h5i browser open https://example.com --allow example.com   # -> br_7k2xqa
+h5i browser open https://example.com   # -> br_7k2xqa; the page grants itself
 h5i browser <verb> br_7k2xqa ...
 h5i browser close
 ```
@@ -26,8 +26,23 @@ verb table and cannot go stale.
 either: a session on this machine is not sandboxed, and a box that lets the
 browser reach the whole network does not upgrade the lane.
 
+A box's `net.egress` bounds what the session can reach only on a tier that
+enforces egress (`supervised`, `container`, `microvm`). On `workspace` and
+`process` the network scope is deny or host, so that list reaches the engine as
+a default for its allowlist rather than as a ceiling: `--allow` adds to it, and
+so does the start URL. Nothing outside the engine polices it there, which is
+what `engine-claimed` is saying.
+
 `--in` needs a box on a tier that can hold a resident process. If yours cannot,
 `start` says so before it starts anything, and names the fix.
+
+## What a session may reach
+
+The page it was opened on, loopback, and whatever `--allow` names. Nothing
+else: an off-origin subresource is refused and says so in `h5i browser
+requests`, which is the log's whole point. The grant is fixed when the engine
+starts, so `--allow` on a second `open` is refused rather than ignored, and
+`--no-loopback` takes back the dev-server exemption.
 
 ## Which engine
 
@@ -110,6 +125,23 @@ read.
 Every read verb takes `--url`, which goes there first and then reads. Prefer it:
 one round trip where `navigate` and then the read would be two, and the reply
 still names the URL it ended up on, so a redirect is not silent.
+
+## What the page's media says
+
+```bash
+h5i browser transcript                                    # the page's `<track>` captions
+h5i browser transcript --via yt-dlp --url <video url>     # captions no markup carries
+```
+
+`--via yt-dlp` is a different lane, not a better one: yt-dlp opens its own
+sockets, so nothing it fetches is in `h5i browser requests` and nothing can be.
+The reply says so, and the run lands in `h5i browser audit` as a host-observed
+row. It is never a fallback. An engine read that found no captions stays a read
+that found none.
+
+It runs where the session runs, inside the box for a boxed session. With `--url`
+and no session open it runs on this machine, contained by nothing h5i enforces,
+and is recorded in `h5i browser audit --no-session`.
 
 ## Naming an element without a `@ref`
 

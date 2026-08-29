@@ -657,6 +657,215 @@ fn a_read_leaves_no_session() {
     assert!(listed.is_empty(), "a read left a session behind: {listed:?}");
 }
 
+/// `open` grants the page it was told to open, and only that page.
+///
+/// The engine is fail-closed and a navigation is policy-checked like any other
+/// request, so without this grant a session denied the very URL it was started
+/// on: `h5i browser open https://example.com` came back "origin
+/// `https://example.com` is not in the allowlist" while `--allow`'s own help
+/// promised that a URL's own origin needs no grant. Loopback is exempt by
+/// default, which is why every test here — and every dev server — sailed past
+/// it, and why the first remote URL anyone typed hit it.
+///
+/// `--no-loopback` is what makes this test able to see it at all: it removes
+/// the exemption, so the only thing that can load a page on 127.0.0.1 is the
+/// grant `open` makes for the URL it was given.
+#[test]
+fn an_open_grants_the_page_it_was_opened_on() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let url = format!("{}/third-party", fx.site.base);
+    // No `--allow`: naming the URL is what grants it, exactly as it is for
+    // `read`.
+    let out = fx.run(&["browser", "open", &url, "--no-loopback", "--json"]);
+    assert!(
+        out.status.success(),
+        "a session was denied the page it was opened on: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let snapshot = fx.run(&["browser", "snapshot"]);
+    assert!(
+        String::from_utf8_lossy(&snapshot.stdout).contains("third party"),
+        "the page did not load: {}",
+        String::from_utf8_lossy(&snapshot.stdout)
+    );
+
+    // And the grant is the page, not "and whatever this page pulls in": the
+    // off-origin image is still refused, and still says so in the log.
+    let out = fx.run(&["browser", "requests", "--json"]);
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let requests = answer["requests"].as_array().expect("a request log");
+    assert!(
+        requests.iter().any(|r| r["allowed"] == false),
+        "an off-origin subresource was not refused: {answer}"
+    );
+    let _ = fx.run(&["browser", "close"]);
+}
+
+/// Two sessions allowed different things must not digest the same.
+///
+/// The policy digest is the only durable claim about what a host session could
+/// reach, and the page a session was opened on is part of its allowlist now. A
+/// digest taken over the flags alone would have called two sessions with
+/// different reach identical, which is the one direction this field must not be
+/// wrong in.
+#[test]
+fn the_policy_digest_follows_the_page_the_session_was_opened_on() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let one = fx.run(&["browser", "open", &fx.site.base, "--json"]);
+    let one: serde_json::Value = serde_json::from_slice(&one.stdout).unwrap();
+    let again = fx.run(&["browser", "open", &fx.site.base, "--new", "--json"]);
+    let again: serde_json::Value = serde_json::from_slice(&again.stdout).unwrap();
+    // The same start, so the same grants, so the same digest. Two sessions
+    // allowed the same things is exactly what an equal digest claims.
+    assert_eq!(one["policy_digest"], again["policy_digest"], "{one} {again}");
+
+    // Somewhere else entirely. It cannot serve a page, but the record a failed
+    // start leaves behind still carries the policy it was started with, which
+    // is the part under test.
+    let elsewhere = fx.run(&["browser", "open", "http://127.0.0.2:9/", "--new", "--json"]);
+    let listed = fx.run(&["browser", "list", "--all", "--json"]);
+    let listed: Vec<serde_json::Value> = serde_json::from_slice(&listed.stdout).unwrap();
+    let other = listed
+        .iter()
+        .find(|s| s["url"].as_str() == Some("http://127.0.0.2:9/"))
+        .unwrap_or_else(|| panic!("the failed start left no record: {:?}", elsewhere.status));
+    assert_ne!(
+        other["policy_digest"], one["policy_digest"],
+        "two sessions granted different origins digested the same"
+    );
+    let _ = fx.run(&["browser", "close", "--all"]);
+}
+
+/// The helper lane runs with no session, when `--url` names the media.
+///
+/// This is the shape an agent actually types for a video — `h5i browser
+/// transcript --via yt-dlp --url <url>` — and it used to answer with the
+/// closing note of whatever session had last been open, because the lane
+/// resolved a session before it did anything else. There is no page here to
+/// render and nothing for a session to contribute but a placement, so a run
+/// with none happens on this machine, says exactly that, and is still written
+/// down.
+///
+/// yt-dlp is stood in for. The lane's contract is that h5i builds the argv,
+/// runs the program where the session is, and records what it ran; none of
+/// that needs the real program, and a test that needed the network to pass
+/// would not be run.
+#[cfg(unix)]
+#[test]
+fn a_helper_run_needs_no_session_when_a_url_names_the_media() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let bin = fx.home.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = bin.join("yt-dlp");
+    // It expands `%(id)s` the way yt-dlp does and writes the two files h5i
+    // reads back: the captions and the metadata beside them.
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out="$2"; fi
+  shift
+done
+out=$(printf '%s' "$out" | sed 's/%(id)s/vid/')
+printf 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhello from the helper\n' > "$out.en.vtt"
+printf '{"title":"A talk","subtitles":{"en":[]}}' > "$out.info.json"
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let out = fx.run_with(
+        &[
+            "browser",
+            "transcript",
+            "--via",
+            "yt-dlp",
+            "--url",
+            "https://video.example/watch?v=1",
+        ],
+        &[("PATH", path.as_str())],
+    );
+    assert!(
+        out.status.success(),
+        "a helper run with no session failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("hello from the helper"), "{text}");
+    // And it says what held it, which was nothing.
+    assert!(text.contains("no browser session open"), "{text}");
+
+    // It invents no session on the way past.
+    let listed = fx.run(&["browser", "list", "--all", "--json"]);
+    let listed: Vec<serde_json::Value> = serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(listed.is_empty(), "the helper lane left a session behind: {listed:?}");
+
+    // The run is recorded, and it is findable: a lane whose whole value is
+    // being written down cannot have a case that quietly is not.
+    let audit = fx.run(&["browser", "audit", "--no-session", "--json"]);
+    assert!(audit.status.success(), "{}", String::from_utf8_lossy(&audit.stderr));
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&audit.stdout).unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["name"], "yt-dlp");
+    let argv: Vec<&str> = rows[0]["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert!(
+        argv.contains(&"https://video.example/watch?v=1"),
+        "the row does not name what ran: {argv:?}"
+    );
+    // What h5i built, not what the helper says it did: the flags that keep the
+    // recorded argv a complete account travel with it.
+    assert!(argv.contains(&"--ignore-config"), "{argv:?}");
+}
+
+/// A `--session` that names something gone is still an error, even with a URL.
+///
+/// The rule the sessionless case must not erode: running somewhere else would
+/// move the lane to a boundary the caller did not choose, which is the same
+/// reason a boxed run is never served from the host.
+#[cfg(unix)]
+#[test]
+fn a_named_session_that_has_ended_is_refused_rather_than_run_here() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let id = fx.open(&[]);
+    assert!(fx.run(&["browser", "close"]).status.success());
+
+    let out = fx.run(&[
+        "browser",
+        "transcript",
+        "--via",
+        "yt-dlp",
+        "--session",
+        &id,
+        "--url",
+        "https://video.example/watch?v=1",
+    ]);
+    assert_eq!(out.status.code(), Some(EXIT_SESSION_GONE));
+    let why = String::from_utf8_lossy(&out.stderr);
+    assert!(why.contains(&id), "{why}");
+}
+
 /// A read grants the targets it was given, and only those.
 ///
 /// The first half is why there is no `--allow`: a URL the caller typed is a URL

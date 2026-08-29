@@ -85,6 +85,13 @@ pub const NAME: &str = "yt-dlp";
 /// something else entirely.
 const FALLBACKS: &[&str] = &["/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp"];
 
+/// Where a run with no session writes, under the browser state directory.
+///
+/// One directory per run, named for the run, because [`scrub`] reads back
+/// whatever it finds in there and reports it as the transcript: two runs
+/// sharing a directory is two runs able to answer with each other's captions.
+const SESSIONLESS_WORK: &str = "helpers";
+
 /// How long the helper may run before it is killed.
 ///
 /// A transcript is a metadata fetch and a subtitle file. Two minutes is
@@ -164,15 +171,69 @@ pub struct Outcome {
 /// reads the page it is on, and the helper reads a URL directly, so moving the
 /// session to a page nobody is going to read would be a page load spent on
 /// nothing.
+/// Where a run is placed, and what it is recorded against.
+///
+/// The three facts this lane takes from a session and no others: an id to name
+/// the workspace and the log, a placement to run in, and a lane to report
+/// honestly. Naming them makes the second case expressible — a `--via` run with
+/// a `--url` needs no page, so it needs no session, and demanding one was a
+/// requirement of the code rather than of the design.
+pub enum Site<'a> {
+    /// A session: the helper runs where that session runs, inside its box for a
+    /// boxed one, and its row lands in that session's helper log.
+    Session(&'a bs::Session),
+    /// No session at all. `--url` named the media, so nothing was left for a
+    /// session to contribute but a placement, and the placement is this
+    /// machine, contained by whatever the shell that started h5i is contained
+    /// by. Recorded in [`bs::SESSIONLESS_HELPERS_FILE`], because a run nobody
+    /// wrote down is the one thing this lane may not produce.
+    Sessionless { id: String },
+}
+
+impl Site<'_> {
+    /// A fresh home for a run with no session.
+    ///
+    /// The id carries the clock and the process, which is enough to be unique
+    /// among the runs one machine can start: [`scrub`] refuses a directory it
+    /// did not just create, so a collision is a refusal rather than one run
+    /// reading another's output.
+    pub fn sessionless() -> Site<'static> {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_micros())
+            .unwrap_or_default();
+        Site::Sessionless {
+            id: format!("{}-{at}", std::process::id()),
+        }
+    }
+
+    fn id(&self) -> &str {
+        match self {
+            Site::Session(session) => &session.id,
+            Site::Sessionless { id } => id,
+        }
+    }
+
+    /// Where the helper runs. A run with no session runs here: there is no
+    /// session whose boundary it could have been placed inside.
+    fn placement(&self) -> &bs::Placement {
+        const HERE: bs::Placement = bs::Placement::Host;
+        match self {
+            Site::Session(session) => &session.placement,
+            Site::Sessionless { .. } => &HERE,
+        }
+    }
+}
+
 pub fn transcript(
     root: &Path,
-    session: &bs::Session,
+    site: &Site,
     url: &str,
     lang: Option<&str>,
     max_bytes: usize,
 ) -> anyhow::Result<Outcome> {
     let url = check_url(url)?;
-    let work = workspace(root, session)?;
+    let work = workspace(root, site)?;
     scrub(&work)?;
 
     // The default is written down once, here, and used for **both** the pattern
@@ -204,7 +265,7 @@ pub fn transcript(
     // serve a flag whose only honest meaning here was "the same words in forty
     // languages". It is gone, and so is the machinery.
     let argv = build_argv(&url, want, &work.in_helper);
-    let (status, said) = run(session, &argv, &work)?;
+    let (status, said) = run(site, &argv, &work)?;
     let read = collect(&work.host, Some(literal_prefix(want)), max_bytes);
 
     let mut note = describe(&read, want, status, &said);
@@ -219,14 +280,13 @@ pub fn transcript(
     // whole value is that its claims are exact. Two places that decorate one
     // string is a bug waiting for an edit; one place cannot double it, and the
     // row and the reply now say the same sentence for the same reason.
-    if let Some(receipt) = box_receipt(session, &work) {
+    if let Some(receipt) = box_receipt(site, &work) {
         note.push_str(&format!(" Box receipt {receipt}."));
     }
-    record(root, session, &work, &argv, status, &note);
-
+    record(root, site, &work, &argv, status, &note);
 
     Ok(Outcome {
-        reply: render(&url, session, &read, &note),
+        reply: render(&url, site, &read, &note),
         argv,
         status,
         answered: !read.cues.is_empty(),
@@ -241,7 +301,7 @@ pub fn transcript(
 /// successes would report a quiet session where a program ran and failed.
 fn record(
     root: &Path,
-    session: &bs::Session,
+    site: &Site,
     _work: &Workspace,
     argv: &[String],
     status: Option<i32>,
@@ -249,18 +309,21 @@ fn record(
 ) {
     // Written verbatim. Decorating here as well as at the call site is what
     // doubled the receipt claim once already.
-    let _ = bs::record_helper(
-        root,
-        &session.id,
-        &bs::HelperRow {
-            // Stamped by `record_helper`, from the clock the audit sorts on.
-            at: String::new(),
-            name: NAME.to_string(),
-            argv: argv.to_vec(),
-            status,
-            note: Some(note.to_string()),
-        },
-    );
+    let row = bs::HelperRow {
+        // Stamped when it is appended, from the clock the audit sorts on.
+        at: String::new(),
+        name: NAME.to_string(),
+        argv: argv.to_vec(),
+        status,
+        note: Some(note.to_string()),
+    };
+    // A run with no session has no session log to land in, and dropping the row
+    // rather than writing it elsewhere would make "every run is recorded" true
+    // only of the runs that had a session open.
+    let _ = match site {
+        Site::Session(session) => bs::record_helper(root, &session.id, &row),
+        Site::Sessionless { .. } => bs::record_sessionless_helper(root, &row),
+    };
 }
 
 /// The literal head of a `--sub-langs` value.
@@ -388,11 +451,22 @@ struct Workspace {
 ///
 /// The id rather than the name: a name can be reused once the session it named
 /// has ended, which is what makes it comfortable to type and useless here.
-fn leaf(session: &bs::Session) -> String {
-    format!("helper-{}", session.id)
+fn leaf(site: &Site) -> String {
+    format!("helper-{}", site.id())
 }
 
-fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
+fn workspace(root: &Path, site: &Site) -> anyhow::Result<Workspace> {
+    // No session, and so no session directory. Beside `sessions/` rather than
+    // in it: the browser state directory is h5i's own, which is the one
+    // property this needs, and a run that is not a session must not leave
+    // something session-shaped behind for `h5i browser list` to explain.
+    let Site::Session(session) = site else {
+        let dir = root.join(SESSIONLESS_WORK).join(leaf(site));
+        return Ok(Workspace {
+            in_helper: dir.join("%(id)s").display().to_string(),
+            host: dir,
+        });
+    };
     match &session.placement {
         bs::Placement::Host => {
             // Already per-session here, since the parent is the session's own
@@ -400,7 +474,7 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
             // helper writes is one rule to check, and a reader comparing the
             // two arms should not have to work out whether the difference
             // matters.
-            let dir = bs::dir(root, &session.id).join(leaf(session));
+            let dir = bs::dir(root, &session.id).join(leaf(site));
             Ok(Workspace {
                 in_helper: dir.join("%(id)s").display().to_string(),
                 host: dir,
@@ -415,7 +489,7 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
                 .ok_or_else(|| {
                     anyhow::anyhow!("this session's record does not name the box's own /tmp")
                 })?
-                .join(leaf(session));
+                .join(leaf(site));
             // `None` means this machine cannot see the box's `/tmp` at all: an
             // image-backed tier is the designed reason, and a session that died
             // before its record was complete is the accidental one. Either way
@@ -441,7 +515,7 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
                          or read this URL with `--via` unset."
                     )
                 })?
-                .join(leaf(session));
+                .join(leaf(site));
             Ok(Workspace {
                 in_helper: in_box.join("%(id)s").display().to_string(),
                 host: on_host,
@@ -505,11 +579,11 @@ fn build_argv(url: &str, langs: &str, out: &str) -> Vec<String> {
 
 /// Run it where the session runs, and nowhere else.
 fn run(
-    session: &bs::Session,
+    site: &Site,
     argv: &[String],
     work: &Workspace,
 ) -> anyhow::Result<(Option<i32>, String)> {
-    let mut command = match &session.placement {
+    let mut command = match site.placement() {
         bs::Placement::Host => {
             let binary = locate().ok_or_else(|| {
                 anyhow::anyhow!(
@@ -577,7 +651,7 @@ fn run(
         }
     };
 
-    let mut said = complaint(&session.placement, work);
+    let mut said = complaint(site.placement(), work);
     if timed_out {
         said.push_str(&format!(
             "\nh5i stopped `{NAME}` after {}s, its whole budget for one transcript.",
@@ -630,12 +704,12 @@ fn complaint(placement: &bs::Placement, work: &Workspace) -> String {
 /// row in the box's own receipt log, written by h5i from outside the helper,
 /// naming the policy the run was subject to. The audit row carries it so the
 /// two records can be put beside each other.
-fn box_receipt(session: &bs::Session, work: &Workspace) -> Option<String> {
+fn box_receipt(site: &Site, work: &Workspace) -> Option<String> {
     // Only where there *is* a box. On the host, `stderr.log` is yt-dlp's own
     // stderr, and any line of it carrying `receipt ` and eight hex digits would
     // have this claim a box receipt for a run that never entered one — a false
     // evidence claim, in the one lane whose entire value is evidence honesty.
-    if !matches!(session.placement, bs::Placement::Box { .. }) {
+    if !matches!(site.placement(), bs::Placement::Box { .. }) {
         return None;
     }
     let text = std::fs::read_to_string(work.host.join("stderr.log")).ok()?;
@@ -908,7 +982,7 @@ fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> Strin
 /// transcript should not have to learn a second reading for the same question
 /// asked a different way — what differs is `source` and `evidence`, which is
 /// exactly the part that *should* differ and the part it must not miss.
-fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
+fn render(url: &str, site: &Site, read: &Read, note: &str) -> Value {
     let track = json!({
         "kind": "captions",
         "language": read.language,
@@ -939,10 +1013,10 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
         // The sentence that keeps the request log's claim true. Said in the
         // reply and not only in the audit, because the reply is what a model
         // reads and the audit is what a person reads afterwards.
-        "evidence": evidence(session),
+        "evidence": evidence(site),
         "media": [media],
         "note": note,
-        "text": text(url, session, read, note),
+        "text": text(url, site, read, note),
     })
 }
 
@@ -961,9 +1035,21 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
 /// so a boxed session is on `workspace` or `process`, and neither has a network
 /// boundary at all. `lane_for`'s own comment names this as the one error the
 /// product cannot afford, in the direction it cannot afford it in.
-fn evidence(session: &bs::Session) -> String {
+fn evidence(site: &Site) -> String {
     let common = "It is not the engine, so none of its fetches are in `h5i browser requests`. \
                   The run itself is in `h5i browser audit`.";
+    let Site::Session(session) = site else {
+        // No session, so no placement anyone chose and no session policy to
+        // have been checked against. Said as plainly as the host arm below,
+        // and pointing at the log this run actually landed in rather than at a
+        // session audit that does not contain it.
+        return format!(
+            "helper-observed. `{NAME}` ran on this machine with no browser session open, \
+             outside the engine and outside any boundary h5i enforces. It is not the engine, \
+             so none of its fetches are in `h5i browser requests`. The run itself is in \
+             `h5i browser audit --no-session`."
+        );
+    };
     match (&session.placement, session.lane) {
         (bs::Placement::Box { name }, bs::Lane::HostObserved) => format!(
             "helper-observed. `{NAME}` ran inside box `{name}`, whose boundary enforces egress, \
@@ -990,10 +1076,10 @@ fn evidence(session: &bs::Session) -> String {
 /// A transcript fetched by a helper is a stranger's words exactly as one parsed
 /// out of a `<track>` is, and it reaches the same reader making the same
 /// decision. The fence is not about which program did the fetching.
-fn text(url: &str, session: &bs::Session, read: &Read, note: &str) -> String {
+fn text(url: &str, site: &Site, read: &Read, note: &str) -> String {
     use h5i_browser_light::snapshot::{CONTENT_BEGIN, CONTENT_END};
 
-    let mut out = format!("url: {url}\nsource: {NAME}\nevidence: {}\n", evidence(session));
+    let mut out = format!("url: {url}\nsource: {NAME}\nevidence: {}\n", evidence(site));
     if let Some(title) = &read.title {
         out.push_str(&format!("title: {}\n", collapse(title)));
     }
@@ -1220,6 +1306,13 @@ mod tests {
         assert_eq!(argv[at + 1], "en", "not `en.*`: {argv:?}");
     }
 
+    /// A session, as the thing that gives a run its home. The tests below are
+    /// about what a *placement* produces, so the wrapping is noise in every one
+    /// of them.
+    fn placed(session: &bs::Session) -> Site<'_> {
+        Site::Session(session)
+    }
+
     fn session_at(placement: bs::Placement, lane: bs::Lane) -> bs::Session {
         session_with_control(placement, lane, None, None)
     }
@@ -1243,6 +1336,103 @@ mod tests {
         session
     }
 
+    /// A run with no session is a run this lane can do, and it says so.
+    ///
+    /// `--url` names the media and this lane renders no page, so a session was
+    /// never contributing anything here but a placement — and requiring one
+    /// meant `h5i browser transcript --via yt-dlp --url <a video>` answered
+    /// with the closing note of whatever session had last been open, which had
+    /// nothing to do with the question asked.
+    #[test]
+    fn a_run_with_no_session_is_placed_here_and_says_so() {
+        let site = Site::sessionless();
+        let said = evidence(&site);
+        assert!(said.contains("no browser session open"), "{said}");
+        // The same two claims every other arm makes: not the engine, and not
+        // in the engine's request log.
+        assert!(said.contains("not the engine"), "{said}");
+        assert!(
+            said.contains("none of its fetches are in `h5i browser requests`"),
+            "{said}"
+        );
+        // And it points at the log this run actually lands in, rather than at
+        // a session audit that does not contain it.
+        assert!(said.contains("audit --no-session"), "{said}");
+        // Nothing outside the engine held it, and it must not read as though
+        // something had.
+        assert!(!said.contains("enforces egress"), "{said}");
+    }
+
+    /// It writes beside the sessions rather than inside one: a run that is not
+    /// a session must leave nothing session-shaped behind for
+    /// `h5i browser list` to have to explain.
+    #[test]
+    fn a_run_with_no_session_writes_beside_the_sessions() {
+        let site = Site::sessionless();
+        let work = workspace(Path::new("/state"), &site).expect("a workspace");
+        assert!(
+            work.host.starts_with("/state/helpers/"),
+            "{:?}",
+            work.host
+        );
+        assert!(
+            !work.host.to_string_lossy().contains("/sessions/"),
+            "a run with no session claimed a session directory: {:?}",
+            work.host
+        );
+        assert_eq!(
+            work.in_helper,
+            work.host.join("%(id)s").display().to_string(),
+            "here the two views are one directory"
+        );
+
+        // One directory per run: `scrub` reports whatever it finds in there as
+        // the transcript, so two runs sharing one is two runs able to answer
+        // with each other's captions.
+        let second = workspace(Path::new("/state"), &Site::sessionless()).unwrap();
+        assert_ne!(work.host, second.host);
+    }
+
+    /// Every run is recorded, including the ones with no session to record it
+    /// in. A lane whose whole value is that it is written down cannot have a
+    /// case that quietly is not.
+    #[test]
+    fn a_run_with_no_session_is_still_written_down() {
+        let root = std::env::temp_dir().join(format!("h5i-loose-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let work_dir = root.join("work");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        record(
+            &root,
+            &Site::sessionless(),
+            &workspace_at(&work_dir),
+            &["yt-dlp".to_string(), "--skip-download".to_string()],
+            Some(0),
+            "1 cue(s) in en.",
+        );
+
+        let rows = bs::sessionless_helpers(&root).expect("the log h5i just wrote");
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].name, NAME);
+        assert!(rows[0].argv.contains(&"--skip-download".to_string()));
+        // Stamped when it was appended, from the clock an audit sorts on.
+        assert!(!rows[0].at.is_empty(), "{rows:?}");
+        // And it is not in any session's log, because it was not part of one.
+        assert!(!root.join("sessions").exists(), "it invented a session");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An empty answer and an unreadable log are opposite facts, and the
+    /// ordinary case is that no run of this kind has ever happened.
+    #[test]
+    fn a_helper_log_that_is_not_there_is_no_runs_rather_than_an_error() {
+        let root = std::env::temp_dir().join(format!("h5i-loose-none-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(bs::sessionless_helpers(&root).unwrap().is_empty());
+    }
+
     /// Being in a box is not the same as being behind a boundary. On Linux
     /// today the tiers that enforce egress cannot hold a resident browser
     /// session at all, so every boxed session is on a tier that confines files
@@ -1250,24 +1440,28 @@ mod tests {
     /// the boundary for all of them.
     #[test]
     fn a_box_without_an_egress_boundary_is_not_reported_as_having_one() {
-        let unenforced = evidence(&session_at(
+        let unenforced = evidence(&placed(&session_at(
             bs::Placement::Box { name: "capbox".into() },
             bs::Lane::EngineClaimed,
-        ));
+        )));
         assert!(unenforced.contains("not** its network"), "{unenforced}");
         assert!(
             !unenforced.contains("crossed the same enforcement"),
             "a process-tier box polices files, not egress: {unenforced}"
         );
 
-        let enforced = evidence(&session_at(
+        let enforced = evidence(&placed(&session_at(
             bs::Placement::Box { name: "capbox".into() },
             bs::Lane::HostObserved,
-        ));
+        )));
         assert!(enforced.contains("enforces egress"), "{enforced}");
 
         // And neither of them ever claims the request log saw it.
-        for text in [unenforced, enforced, evidence(&session_at(bs::Placement::Host, bs::Lane::EngineClaimed))] {
+        for text in [
+            unenforced,
+            enforced,
+            evidence(&placed(&session_at(bs::Placement::Host, bs::Lane::EngineClaimed))),
+        ] {
             assert!(text.contains("not the engine"), "{text}");
             assert!(
                 text.contains("none of its fetches are in `h5i browser requests`"),
@@ -1288,7 +1482,7 @@ mod tests {
             Some("/tmp/h5i-browser.sock"),
             Some("/home/u/.h5i/env/wsbox/tmp/h5i-browser.sock"),
         );
-        let work = workspace(Path::new("/state"), &session).expect("both views");
+        let work = workspace(Path::new("/state"), &placed(&session)).expect("both views");
         assert_eq!(work.in_helper, "/tmp/helper-br_test/%(id)s", "the box's own path");
         assert_eq!(
             work.host,
@@ -1308,7 +1502,7 @@ mod tests {
             Some("/tmp/h5i-browser.sock"),
             None,
         );
-        let err = workspace(Path::new("/state"), &session)
+        let err = workspace(Path::new("/state"), &placed(&session))
             .expect_err("no host view, no run")
             .to_string();
         assert!(err.contains("cannot see box `imagebox`'s /tmp"), "{err}");
@@ -1320,7 +1514,7 @@ mod tests {
     #[test]
     fn a_host_run_writes_beside_the_session() {
         let session = session_at(bs::Placement::Host, bs::Lane::EngineClaimed);
-        let work = workspace(Path::new("/state"), &session).expect("a host workspace");
+        let work = workspace(Path::new("/state"), &placed(&session)).expect("a host workspace");
         assert!(work.host.ends_with("helper-br_test"), "{:?}", work.host);
         assert!(
             work.in_helper.ends_with("helper-br_test/%(id)s"),
@@ -1402,7 +1596,7 @@ mod tests {
             bs::Lane::EngineClaimed,
         );
         assert_eq!(
-            box_receipt(&boxed_session, &work).as_deref(),
+            box_receipt(&placed(&boxed_session), &work).as_deref(),
             Some("f31bdc823671183e")
         );
         // And never for a run that had no box: on the host that same file is
@@ -1410,7 +1604,7 @@ mod tests {
         // false evidence claim in the reply.
         let host_session = session_at(bs::Placement::Host, bs::Lane::EngineClaimed);
         assert!(
-            box_receipt(&host_session, &work).is_none(),
+            box_receipt(&placed(&host_session), &work).is_none(),
             "a host run has no box receipt to claim"
         );
 
@@ -1444,7 +1638,7 @@ mod tests {
 
         record(
             &root,
-            &session,
+            &placed(&session),
             &work,
             &["yt-dlp".to_string()],
             Some(0),
@@ -1481,7 +1675,7 @@ mod tests {
             bs::Lane::EngineClaimed,
         );
         assert!(
-            box_receipt(&boxed_session, &work).is_none(),
+            box_receipt(&placed(&boxed_session), &work).is_none(),
             "no receipt file, no receipt"
         );
 
@@ -1507,8 +1701,8 @@ mod tests {
         let mut b = a.clone();
         b.id = "br_other".into();
 
-        let wa = workspace(Path::new("/state"), &a).unwrap();
-        let wb = workspace(Path::new("/state"), &b).unwrap();
+        let wa = workspace(Path::new("/state"), &placed(&a)).unwrap();
+        let wb = workspace(Path::new("/state"), &placed(&b)).unwrap();
         assert_ne!(wa.host, wb.host, "two sessions, two directories");
         assert_ne!(wa.in_helper, wb.in_helper);
         assert!(wa.host.to_string_lossy().contains("br_test"), "{:?}", wa.host);

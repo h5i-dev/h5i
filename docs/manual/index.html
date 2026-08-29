@@ -314,7 +314,7 @@ agent and the human can operate on.</p>
 <hr />
 <h2 id="the-loop">The loop</h2>
 <p>Reading and acting on a page, which needs nothing else:</p>
-<pre><code class="language-bash">h5i browser open https://example.com --allow example.com
+<pre><code class="language-bash">h5i browser open https://example.com       # the page grants itself; `--allow` adds more
 h5i browser snapshot                       # the outline, with @ref handles
 h5i browser click @e3
 h5i browser requests                       # what it reached, and what was refused
@@ -466,6 +466,16 @@ whether or not there is a box.</p>
 status line:</p>
 <pre><code>requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 </code></pre>
+<h4 id="the-page-grants-itself">The page grants itself</h4>
+<p>A session reaches the URL it was opened on, and nothing else remote. Naming a
+URL and then naming its origin again is ceremony that teaches nothing, so
+<code>open</code> grants the page it was given exactly as <code>read</code> grants its targets.
+<code>--allow</code> is for the origins beyond it: an API the page calls, a CDN it pulls
+from. Loopback is reachable by default because it is the dev server, and
+<code>--no-loopback</code> takes that back.</p>
+<p>The grant is the page and not "and whatever this page pulls in". An off-origin
+subresource is still refused, and still says so in the request log, which is
+the part a wider default would have given away.</p>
 <h3 id="read-one-page-no-session"><code>read</code>: one page, no session</h3>
 <pre><code class="language-bash">h5i browser read https://example.com
 h5i browser read url1 url2 url3 --json
@@ -641,15 +651,28 @@ problem. A spawn that fails falls back to one process on its own, and says so.</
 h5i browser open https://example.com --in web
 h5i browser snapshot  # identical verb, identical answer
 </code></pre>
-<p><code>--in</code> changes nothing you type. It changes <strong>who saw the network</strong>. The box
-enforces its egress allowlist at its own boundary, which is outside the thing
-being described, so the session's lane is upgraded:</p>
+<p><code>--in</code> changes nothing you type. It changes <strong>who saw the network</strong>, when the
+box's tier is one that applies its egress allowlist at its own boundary. That
+boundary is outside the thing being described, so the session's lane is
+upgraded:</p>
 <pre><code>requests : host-observed (also seen at the box's boundary, outside the engine)
 </code></pre>
 <p>Being in a box is not by itself enough to earn that line. A box whose policy
 lets the engine reach the whole host network corroborates nothing, and such a
 session stays <code>engine-claimed</code>. What earns <code>host-observed</code> is an egress
 allowlist or a <code>deny</code> net mode — enforcement outside the engine.</p>
+<p><strong>What <code>net.egress</code> means on a tier that does not enforce it.</strong> h5i hands the
+box's list to the engine either way, so a session there starts with those
+origins granted. On <code>supervised</code>, <code>container</code> and <code>microvm</code> the same list is
+applied at the boundary, and it bounds what anything in the box can reach. On
+<code>workspace</code> and <code>process</code> the network scope is deny or host and nothing applies
+it per host: the list arrives as a <strong>default</strong> for the engine's own allowlist,
+not as a ceiling, so <code>--allow</code> adds to it and so does naming a start URL. An
+agent inside such a box reaches past the list exactly as <code>curl</code> in that box
+does. That is not the browser getting around something. It is what a tier with
+no network boundary means, and it is why a session there keeps saying
+<code>engine-claimed</code> and why <code>h5i browser status</code> is the line to read rather than
+the tier's name.</p>
 <p>Two mechanics are worth knowing, because they explain the shape of the feature:</p>
 <ul>
 <li><strong>The engine runs as a service, not as a run.</strong> <code>h5i box run</code> holds the box's
@@ -772,7 +795,8 @@ host-observed row carrying the exact argv h5i executed:</p>
   stays a read that found none. A silent fallback would move a session's traffic
   outside the engine's log without anyone asking, which is the one thing that
   log promises cannot happen.</li>
-<li><strong>It runs where the session runs.</strong> A boxed session runs yt-dlp <em>inside its
+<li><strong>It runs where the session runs, and with no session it runs here.</strong> A
+  boxed session runs yt-dlp <em>inside its
   box</em>, and a boxed session whose box has no yt-dlp is refused rather than
   served from the host: running it outside would move the session's network to a
   boundary its caller did not choose. Whether that box has an egress boundary at
@@ -807,6 +831,16 @@ if any part of a run failed, so a run that wrote the transcript and then hit a
 rate limit on a second language is a complete answer reported as a failure. h5i
 reports it as an answer, and puts the partial failure in the note beside it,
 because that is what explains a missing title.</p>
+<p><strong>No session is needed when <code>--url</code> names the media.</strong> There is no page here to
+render, so the only thing a session was ever contributing to this lane is a
+placement, and a run with none happens on this machine. It says exactly that in
+its <code>evidence</code> line, it opens no session and leaves none behind, and it is
+still written down: <code>h5i browser audit --no-session</code> lists the runs that belong
+to no session, with the same argv and the same host-observed lane as a row
+inside a session's timeline. They are kept out of that timeline on purpose,
+because a run that was not part of a session must not appear inside one. To put
+the run behind a boundary, open a session with <code>--in &lt;box&gt;</code> and it runs in
+there.</p>
 <p>A host session's helper is contained by whatever started h5i, and the reply says
 that too rather than implying a boundary that is not there. Automatic captions
 are labelled as automatic, because a machine transcription mishears names and a

@@ -76,7 +76,7 @@ agent and the human can operate on.
 Reading and acting on a page, which needs nothing else:
 
 ```bash
-h5i browser open https://example.com --allow example.com
+h5i browser open https://example.com       # the page grants itself; `--allow` adds more
 h5i browser snapshot                       # the outline, with @ref handles
 h5i browser click @e3
 h5i browser requests                       # what it reached, and what was refused
@@ -232,6 +232,19 @@ status line:
 ```
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 ```
+
+#### The page grants itself
+
+A session reaches the URL it was opened on, and nothing else remote. Naming a
+URL and then naming its origin again is ceremony that teaches nothing, so
+`open` grants the page it was given exactly as `read` grants its targets.
+`--allow` is for the origins beyond it: an API the page calls, a CDN it pulls
+from. Loopback is reachable by default because it is the dev server, and
+`--no-loopback` takes that back.
+
+The grant is the page and not "and whatever this page pulls in". An off-origin
+subresource is still refused, and still says so in the request log, which is
+the part a wider default would have given away.
 
 ### `read`: one page, no session
 
@@ -447,9 +460,10 @@ h5i browser open https://example.com --in web
 h5i browser snapshot  # identical verb, identical answer
 ```
 
-`--in` changes nothing you type. It changes **who saw the network**. The box
-enforces its egress allowlist at its own boundary, which is outside the thing
-being described, so the session's lane is upgraded:
+`--in` changes nothing you type. It changes **who saw the network**, when the
+box's tier is one that applies its egress allowlist at its own boundary. That
+boundary is outside the thing being described, so the session's lane is
+upgraded:
 
 ```
 requests : host-observed (also seen at the box's boundary, outside the engine)
@@ -459,6 +473,19 @@ Being in a box is not by itself enough to earn that line. A box whose policy
 lets the engine reach the whole host network corroborates nothing, and such a
 session stays `engine-claimed`. What earns `host-observed` is an egress
 allowlist or a `deny` net mode — enforcement outside the engine.
+
+**What `net.egress` means on a tier that does not enforce it.** h5i hands the
+box's list to the engine either way, so a session there starts with those
+origins granted. On `supervised`, `container` and `microvm` the same list is
+applied at the boundary, and it bounds what anything in the box can reach. On
+`workspace` and `process` the network scope is deny or host and nothing applies
+it per host: the list arrives as a **default** for the engine's own allowlist,
+not as a ceiling, so `--allow` adds to it and so does naming a start URL. An
+agent inside such a box reaches past the list exactly as `curl` in that box
+does. That is not the browser getting around something. It is what a tier with
+no network boundary means, and it is why a session there keeps saying
+`engine-claimed` and why `h5i browser status` is the line to read rather than
+the tier's name.
 
 Two mechanics are worth knowing, because they explain the shape of the feature:
 
@@ -608,7 +635,8 @@ Four things are deliberate:
   stays a read that found none. A silent fallback would move a session's traffic
   outside the engine's log without anyone asking, which is the one thing that
   log promises cannot happen.
-- **It runs where the session runs.** A boxed session runs yt-dlp *inside its
+- **It runs where the session runs, and with no session it runs here.** A
+  boxed session runs yt-dlp *inside its
   box*, and a boxed session whose box has no yt-dlp is refused rather than
   served from the host: running it outside would move the session's network to a
   boundary its caller did not choose. Whether that box has an egress boundary at
@@ -645,6 +673,17 @@ if any part of a run failed, so a run that wrote the transcript and then hit a
 rate limit on a second language is a complete answer reported as a failure. h5i
 reports it as an answer, and puts the partial failure in the note beside it,
 because that is what explains a missing title.
+
+**No session is needed when `--url` names the media.** There is no page here to
+render, so the only thing a session was ever contributing to this lane is a
+placement, and a run with none happens on this machine. It says exactly that in
+its `evidence` line, it opens no session and leaves none behind, and it is
+still written down: `h5i browser audit --no-session` lists the runs that belong
+to no session, with the same argv and the same host-observed lane as a row
+inside a session's timeline. They are kept out of that timeline on purpose,
+because a run that was not part of a session must not appear inside one. To put
+the run behind a boundary, open a session with `--in <box>` and it runs in
+there.
 
 A host session's helper is contained by whatever started h5i, and the reply says
 that too rather than implying a boundary that is not there. Automatic captions

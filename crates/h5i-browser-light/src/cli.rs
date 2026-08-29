@@ -1927,9 +1927,26 @@ fn control_file_beside(stream_file: &Path) -> PathBuf {
 }
 
 fn build_policy(net: &NetArgs) -> Policy {
-    // Flags first, then whatever h5i granted the box. Both are additive: an
-    // agent cannot widen the box's policy by passing `--allow`, because the
-    // sandbox's own egress enforcement is still the boundary underneath.
+    // Flags first, then whatever h5i granted the box, and the two are a
+    // **union**.
+    //
+    // This used to say that an agent therefore cannot widen the box's policy,
+    // "because the sandbox's own egress enforcement is still the boundary
+    // underneath". That is true only where such a boundary exists: supervised,
+    // container and microvm. On `workspace` and `process` the tier's network
+    // scope is deny-or-host, so nothing polices which hosts are reached and the
+    // union *is* the whole policy — `--allow` widens it, and so does naming a
+    // start URL. On those tiers the box's `net.egress` reaches this engine as a
+    // default rather than as a ceiling, and the engine's allowlist is a
+    // cooperating process's own account of what it will fetch, which is why the
+    // lane it earns stays `engine-claimed`
+    // ([`h5i_core::browser_session::Session::lane_for`]) and why nothing here
+    // calls it containment.
+    //
+    // Left as a union deliberately: an intersection would *read* as enforcement
+    // while being bypassable by the agent that owns the environment this
+    // variable arrives in, which is the same generous-direction claim in a new
+    // costume.
     let from_env: Vec<String> = std::env::var(ALLOW_VAR)
         .unwrap_or_default()
         .split(',')

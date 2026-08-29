@@ -106,9 +106,16 @@ pub enum BrowserCommands {
 
         /// Run the session inside this box instead of on this machine.
         ///
-        /// The box must already exist (`h5i box`). Its egress allowlist is
-        /// enforced at the box's boundary, so the session's request lane
-        /// becomes host-observed.
+        /// The box must already exist (`h5i box`). Whether its egress
+        /// allowlist is *enforced* depends on the tier: `supervised`,
+        /// `container` and `microvm` apply it at the box's boundary, and only
+        /// then does the session's request lane become host-observed. On
+        /// `workspace` and `process` the network scope is deny-or-host, so
+        /// nothing outside the engine polices which hosts it reaches and the
+        /// lane stays engine-claimed. `h5i browser status` prints which of the
+        /// two this session got; read it rather than assuming, and note the
+        /// standing Linux trade-off: the tiers that enforce egress cannot hold
+        /// a resident session yet.
         #[arg(long = "in", value_name = "BOX")]
         in_box: Option<String>,
 
@@ -472,6 +479,14 @@ pub enum BrowserCommands {
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
+        /// The helper runs that belong to no session.
+        ///
+        /// `h5i browser transcript --via yt-dlp --url <URL>` needs no page and
+        /// so opens no session; the run is still recorded, and this is where.
+        /// Kept out of a session's own timeline on purpose: a run that was not
+        /// part of a session must not appear inside it.
+        #[arg(long = "no-session", conflicts_with = "session")]
+        no_session: bool,
         #[arg(long)]
         json: bool,
     },
@@ -556,7 +571,12 @@ pub enum BrowserCommands {
         /// egress at all.
         ///
         /// With `--via`, `--url` names the media and the session does not move:
-        /// there is no page here to render.
+        /// there is no page here to render. With **no session open at all**,
+        /// `--url` is the whole of what this lane needs: the run happens on
+        /// this machine, contained by nothing h5i enforces, says so in its
+        /// `evidence` line, and is recorded in
+        /// `h5i browser audit --no-session`. To place it behind a boundary,
+        /// open a session with `--in <box>` and it runs in there.
         #[arg(long, value_name = "HELPER")]
         via: Option<String>,
         #[arg(long)]
@@ -1051,7 +1071,17 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             verb(&root, session.as_deref(), argv, false, json)
         }
-        BrowserCommands::Audit { session, json } => audit(&root, session.as_deref(), json),
+        BrowserCommands::Audit {
+            session,
+            no_session,
+            json,
+        } => {
+            if no_session {
+                sessionless_audit(&root, json)
+            } else {
+                audit(&root, session.as_deref(), json)
+            }
+        }
         BrowserCommands::Env { session, json } => {
             verb(&root, session.as_deref(), vec!["env".into()], false, json)
         }
@@ -1983,14 +2013,53 @@ fn locator(
 
 fn net_args(opts: &StartOptions) -> Vec<String> {
     let mut argv = Vec::new();
-    for origin in &opts.allow {
+    for origin in granted_origins(opts) {
         argv.push("--allow".to_string());
-        argv.push(origin.clone());
+        argv.push(origin);
     }
     if opts.no_loopback {
         argv.push("--no-loopback".into());
     }
     argv
+}
+
+/// What this session is allowed to reach: the origins the caller named, and the
+/// page it asked to open.
+///
+/// The second half is not a convenience, it is the difference between `open`
+/// working and not. The engine is fail-closed and a navigation is policy-checked
+/// like any other request, so a session started with an empty allowlist denied
+/// the very page it was told to open — `h5i browser open https://example.com`
+/// came back "origin `https://example.com` is not in the allowlist", while
+/// `--allow`'s own help promised that a URL's own origin is reachable without
+/// it. Loopback is exempt by default, which is why every test and every dev
+/// server missed this and why the first remote URL anyone typed hit it.
+///
+/// `read` has granted its targets this way since it was written
+/// ([`origins_of`]), and this is the same rule for the session lane: the page
+/// and nothing else. An off-origin subresource is still refused and still says
+/// so in the request log, and widening the grant to "and whatever this page
+/// pulls in" is the thing neither lane does.
+///
+/// Handed to the engine verbatim, because its `--allow` normalizes with the
+/// same code that later checks a request — a second notion of "origin" here is
+/// a second one to drift. Only a `http`/`https` target grants anything: a page
+/// opened from a file needs no grant, and a bare path normalizes to a host that
+/// was never asked for.
+fn granted_origins(opts: &StartOptions) -> Vec<String> {
+    let mut origins = opts.allow.clone();
+    if is_web_url(&opts.url) && !origins.contains(&opts.url) {
+        origins.push(opts.url.clone());
+    }
+    origins
+}
+
+/// Whether a target is fetched over the network, judged by its scheme alone.
+fn is_web_url(target: &str) -> bool {
+    let target = target.trim_start();
+    ["http://", "https://"]
+        .iter()
+        .any(|scheme| target.len() > scheme.len() && target[..scheme.len()].eq_ignore_ascii_case(scheme))
 }
 
 /// The digest of what a host session was allowed to do.
@@ -1999,9 +2068,18 @@ fn net_args(opts: &StartOptions) -> Vec<String> {
 /// allowlist and the two switches it was started with. Digesting them means
 /// two sessions with the same digest were allowed the same things, which is the
 /// only promise the field makes anywhere.
+///
+/// The *effective* allowlist, [`granted_origins`], and not the flags alone: the
+/// page a session was opened on is in its policy, so two sessions opened
+/// somewhere else entirely were allowed different things and must not digest
+/// the same. It is the start URL as typed rather than the origin derived from
+/// it, so two sessions opened on two pages of one site digest differently
+/// though their grants match — the promise is that an equal digest means equal
+/// grants, and this keeps that direction true without a second notion of
+/// "origin" here to drift from the engine's.
 fn host_policy_digest(opts: &StartOptions) -> String {
     use sha2::{Digest, Sha256};
-    let mut allow = opts.allow.clone();
+    let mut allow = granted_origins(opts);
     allow.sort();
     let material = format!(
         "host\nallow={}\nloopback={}\nscript={}\n",
@@ -2285,29 +2363,51 @@ fn via_helper(
         );
     }
 
+    // A session when there is one, and none when there is not.
+    //
+    // **Only when the caller named neither a session nor a URL is a missing
+    // session an error.** `--url` names the media and this lane renders no
+    // page, so a session would contribute nothing here but a placement; asking
+    // for one anyway is what made `h5i browser transcript --via yt-dlp --url …`
+    // answer with the closing note of a session that had nothing to do with the
+    // question. A `--session` that names something gone is still an error,
+    // because running somewhere else would move the lane to a boundary the
+    // caller did not choose — the same rule that keeps a boxed run out of the
+    // host.
     let session = match bs::resolve(root, selector) {
-        Ok(session) => session,
-        Err(gone) => {
+        Ok(session) => Some(session),
+        Err(gone) if selector.is_some() || url.is_none() => {
             eprintln!("{gone}");
             std::process::exit(bs::EXIT_SESSION_GONE);
         }
+        Err(_) => None,
     };
-    let dir = bs::dir(root, &session.id);
 
     // Not a mutation: nothing here touches the page. The lock is still asked,
     // because a human at the controls of a session is a human whose box should
-    // not have a second program started against it behind their back.
-    if let Some(explanation) = h5i_core::control::check(&dir, false).explain() {
+    // not have a second program started against it behind their back. A run
+    // with no session steers nothing and asks nobody.
+    if let Some(session) = &session
+        && let Some(explanation) =
+            h5i_core::control::check(&bs::dir(root, &session.id), false).explain()
+    {
         anyhow::bail!("{explanation}");
     }
 
     // The page the session is actually on, when the caller did not name a URL.
     // Asked rather than read off the record: `session.url` is what `open` was
     // *told*, and a redirect or a click has moved it since.
-    let target = match url {
-        Some(named) => named,
-        None => {
-            let status = deliver(&session, &dir, vec!["status".to_string()])?;
+    let target = match (&url, &session) {
+        (Some(named), _) => named.clone(),
+        // Unreachable by the arms above: a caller with no URL and no session
+        // has already been sent away with the session's own explanation.
+        (None, None) => anyhow::bail!(
+            "there is no session to read a URL from and none was named. \
+             Name one with `--url`."
+        ),
+        (None, Some(session)) => {
+            let dir = bs::dir(root, &session.id);
+            let status = deliver(session, &dir, vec!["status".to_string()])?;
             status
                 .get("url")
                 .and_then(Value::as_str)
@@ -2321,9 +2421,14 @@ fn via_helper(
         }
     };
 
+    let site = match &session {
+        Some(session) => helper::Site::Session(session),
+        None => helper::Site::sessionless(),
+    };
+
     let outcome = helper::transcript(
         root,
-        &session,
+        &site,
         &target,
         lang.as_deref(),
         max_bytes.unwrap_or(h5i_browser_light::transcript::DEFAULT_MAX_BYTES),
@@ -2949,6 +3054,58 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
     }
     if audit.events.is_empty() {
         println!("  nothing recorded for this session yet.");
+    }
+    Ok(())
+}
+
+/// The helper runs that belong to no session.
+///
+/// A separate command rather than a section of the timeline above, because
+/// these runs were not part of any session and putting them in one session's
+/// audit would be a claim about that session that is not true. They are the
+/// same rows in the same shape, read from
+/// [`bs::SESSIONLESS_HELPERS_FILE`](h5i_core::browser_session::SESSIONLESS_HELPERS_FILE),
+/// and every one of them is host-observed: h5i built the argv and ran the
+/// program, so the row is an observation rather than the helper's account of
+/// itself.
+fn sessionless_audit(root: &Path, json: bool) -> anyhow::Result<()> {
+    let rows = bs::sessionless_helpers(root)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
+    if rows.is_empty() {
+        println!("  no helper has run outside a session on this machine.");
+        return Ok(());
+    }
+
+    println!("  runs     : {} with no session", rows.len());
+    println!(
+        "  {}     h5i ran these itself, so every row is an observation.",
+        style("note").dim()
+    );
+    println!(
+        "           None of their fetches are in `h5i browser requests`: \
+         they were not the engine's."
+    );
+    println!();
+    for row in &rows {
+        let outcome = match row.status {
+            Some(0) | None => String::new(),
+            Some(code) => format!("  (exit {code})"),
+        };
+        println!(
+            "  {}  {}  helper {} {}{outcome}",
+            style("host  ").green(),
+            row.at,
+            row.name,
+            row.argv.join(" ")
+        );
+        if let Some(note) = &row.note {
+            println!("          {}", style(bs::scrub_text(note)).dim());
+        }
     }
     Ok(())
 }
