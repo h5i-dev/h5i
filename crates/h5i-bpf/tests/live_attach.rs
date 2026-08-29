@@ -3,8 +3,7 @@
 //! Loading a BPF program and attaching it to a tracepoint requires `CAP_BPF`
 //! and `CAP_PERFMON`, which no CI runner grants and which an ordinary
 //! development machine does not give a `cargo test`. So this suite **skips
-//! loudly** rather than failing, and prints exactly why — the same discipline
-//! the Lean DRT harness uses, and for the same reason: a test that silently
+//! loudly** rather than failing, and prints exactly why: a test that silently
 //! passes on a host that could not run it is worse than one that is not there.
 //!
 //! To run it for real:

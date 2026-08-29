@@ -116,8 +116,6 @@ tokio = { version = "1.0", features = ["rt-multi-thread"], optional = true }
 libc = "0.2.186"
 tempfile = "3.8"
 serde_json = { workspace = true }
-# Seeded generator for the interferes DRT harness (tests/interferes_drt.rs).
-fastrand = "2.3.0"
 
 [profile.dev]
 debug = false

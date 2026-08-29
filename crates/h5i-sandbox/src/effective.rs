@@ -1,5 +1,5 @@
 //! The effective configuration — what the kernel tiers actually apply
-//! (ROADMAP.md §V2).
+//! (ROADMAP.md §P1).
 //!
 //! `policy.resolved.toml` is the digested *intent*. `ResolvedPolicy` also
 //! carries runtime-only, never-serialized fields (the bind lists, readonly
@@ -17,12 +17,12 @@
 //! these strings would then miss the grant or fail the bind — both the
 //! fail-closed direction.
 //!
-//! Linux kernel tiers (`process`, `supervised`) only, per §V2's v1 scope. The
+//! Linux kernel tiers (`process`, `supervised`) only, per §P1's v1 scope. The
 //! Seatbelt, container and microvm backends enforce through mechanisms this
 //! schema does not describe; they are excluded rather than half-described.
 //!
 //! Every runtime-only (`serde(skip)`) field of [`ResolvedPolicy`] is either in
-//! this dump or excluded here by name, with the reason (§V2's exit criterion):
+//! this dump or excluded here by name, with the reason (§P1's exit criterion):
 //!
 //! - `private_binds`, `home_binds`, `ro_binds`, `cache_write`,
 //!   `work_readonly`, `user_egress_allow`, `loopback_ports`: **in the dump**
@@ -167,7 +167,7 @@ pub struct RlimitsEffective {
 /// Resolution metadata: facts about the *policy*, not kernel rules. `fs_deny`
 /// lives here and nowhere else — Landlock is allowlist-only, and `fs_deny` is
 /// a preflight refusal condition on resolution, so a theorem about it can only
-/// ever be "resolution refuses", never "the kernel denies" (§V2).
+/// ever be "resolution refuses", never "the kernel denies" (§P1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolutionMeta {
     pub profile: String,
@@ -371,7 +371,7 @@ pub fn compute_effective(
 /// [`compute_effective`] does, **minus the exists-filter** (which only removes).
 /// The validator checks the effective grants are a subset of these — so a
 /// legitimate box always passes, and only a divergence between the resolver's
-/// output and the declared intent (a bug) is caught. ROADMAP §VF.4.
+/// output and the declared intent (a bug) is caught. ROADMAP §P2.
 pub fn declared_grants(policy: &ResolvedPolicy, work: &Path) -> (Vec<String>, Vec<String>) {
     let p = &policy.profile;
     let ro_work = policy.work_readonly;
@@ -389,12 +389,11 @@ pub fn declared_grants(policy: &ResolvedPolicy, work: &Path) -> (Vec<String>, Ve
     (ro, rw)
 }
 
-/// Validate a shipped effective config against the declared policy (§VF.4):
+/// Validate a shipped effective config against the declared policy (§P2):
 /// the effective grants are a subset of the declared intent, every write grant
 /// was declared writable, and no read-only overlay bind is writable. On Unix it
 /// also measures the host for symlink escapes of a grant beneath the worktree
-/// (§VF.5). This is the per-run translation validator on real output — the
-/// path-level companion to the proved object-level `H5iFs.validate`.
+/// (§P3). This is the per-run translation validator on real output.
 pub fn validate_effective(
     policy: &ResolvedPolicy,
     work: &Path,
@@ -420,7 +419,7 @@ pub fn validate_effective(
         // Check the landlock grants AND every bind's source and target. A grant
         // is the user's own declaration, but a bind whose mountpoint or source
         // lies beneath the worktree and resolves out through a planted symlink
-        // is the runc-class escape (§VF.5) — the config-lock and private binds
+        // is the runc-class escape (§P3) — the config-lock and private binds
         // sit under $WORK, so their paths are exactly where a previous run's
         // agent could redirect. `symlink_escapes` ignores paths outside the
         // worktree, so h5i's managed dirs (cache, home-state) are not
@@ -437,8 +436,8 @@ pub fn validate_effective(
     verdict
 }
 
-/// Component view of an absolute path, mirroring the Lean model's
-/// `parsePath`: split on `/`, empty components dropped.
+/// Component view of an absolute path: split on `/`, empty components
+/// dropped.
 fn components(s: &str) -> Vec<&str> {
     s.split('/').filter(|c| !c.is_empty()).collect()
 }
@@ -448,24 +447,19 @@ fn is_component_prefix(a: &[&str], b: &[&str]) -> bool {
 }
 
 /// Do two path-beneath scopes overlap (share any path)? Two prefix scopes
-/// overlap iff one is a component-prefix of the other — the Lean
-/// `scopesOverlap`, whose role in the noninterference argument is proved
-/// there (`isPrefixOf_comparable`).
+/// overlap iff one is a component-prefix of the other.
 fn scopes_overlap(a: &str, b: &str) -> bool {
     let (ca, cb) = (components(a), components(b));
     is_component_prefix(&ca, &cb) || is_component_prefix(&cb, &ca)
 }
 
-/// One direction of the machine-checked interference condition
-/// (`lean/H5iSpec/Noninterference.lean`): a path `writer` may write and
-/// `reader` may read. Returns the first witnessing (write grant, read
-/// grant) pair, or `None` — and `None` is the strong answer: by
-/// `interferesCheck_sound`, a clean check in BOTH directions means neither
-/// box can write a path the other reads through their Landlock-granted
-/// filesystems. The claim's scope is exactly the grant lists: binds, the
-/// network, and anything outside the dumps are not covered. Kept
-/// semantically identical to the Lean `interferesCheck`;
-/// `tests/interferes_drt.rs` diffs the two on random pairs.
+/// One direction of the cross-box interference condition: a path `writer`
+/// may write and `reader` may read. Returns the first witnessing (write
+/// grant, read grant) pair, or `None` — and `None` is the strong answer: a
+/// clean check in BOTH directions means neither box can write a path the
+/// other reads through their Landlock-granted filesystems. The claim's scope
+/// is exactly the grant lists: binds, the network, and anything outside the
+/// dumps are not covered (ROADMAP.md §P2).
 pub fn interferes(
     writer: &EffectiveConfig,
     reader: &EffectiveConfig,
@@ -569,7 +563,7 @@ mod tests {
         assert_eq!(cfg, back);
     }
 
-    /// Drift guard (§VF.4, review #2): `compute_effective`'s output must satisfy
+    /// Drift guard (§P2, review #2): `compute_effective`'s output must satisfy
     /// `validate_effective`, so `declared_grants` and `compute_effective` stay
     /// in sync — if one grows a grant source the other forgets, this fails.
     /// Exercises the production validator entry point in CI, where the opt-in

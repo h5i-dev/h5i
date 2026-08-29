@@ -113,8 +113,8 @@ not get a name in the CLI, and a thing that stands beside a session does.
 
 Status: superseded 2026-08-27 by the section above, and retained because every
 section below still describes machinery that exists and is tested. Read it as
-the reference for the box, the forum, the runner, the detection lane and the
-Lean work, not as the product's framing.
+the reference for the box, the forum, the runner and the detection lane, not
+as the product's framing.
 
 This document has five parts:
 
@@ -126,9 +126,10 @@ This document has five parts:
   carry a `B` prefix so the two numbering schemes never collide. Section 12
   stays the authority on the engine's *scope and why*; the B sections are the
   authority on *order*.
-- **Formal verification**, sections V1 to V6. A Lean 4 model of the policy
-  layer beside the Rust, connected by differential testing, Cedar-style. M16
-  is its milestone stub; the V sections are the authority on design and order.
+- **Policy resolution and the authority validator**, sections P1 to P4. The
+  effective-config dump, the per-run translation validator over it, and the
+  mount realization audit. What remains of a formal-verification effort whose
+  Lean model was removed on 2026-08-28.
 - **The remote runner**, sections R1 to R13. Placing a box on a second Linux
   machine over SSH while the control plane, the repo, and the credentials stay
   local. M17 is its milestone stub; the R sections are the authority on design
@@ -3018,224 +3019,6 @@ property is verified, but its remaining unknown is the in-guest forwarder — no
 slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
 small static binary staged into a mounted directory is the first thing that
 work has to decide.
-
-### M16. The Lean model beside the Rust: steps 1 to 5 built 2026-08-15
-
-> **Superseded in part, 2026-08-16.** M16 as recorded below shipped V1–V6.
-> Building it showed `compile_sound` was near-trivial and the whole-config
-> twin cost more than it caught, so the effort pivoted to an attack-driven
-> filesystem authority machine (§VF). `Model`/`Input`/`Theorems`/`Phase`/
-> `Refinement.lean` and `effective_drt` were retired; `Landlock`,
-> `interferesCheck`, `Predict`, `Seatbelt`, and the probes were kept. The
-> record below stands as what M16 built; §VF is the live direction.
-
-**Steps 4 and 5 built, 2026-08-15.** Step 4 (`lean/H5iSpec/Refinement.lean`)
-is L2: `compileLandlock` mirrors what `build_confined_command` builds from
-the dump's grant lists, and the two directions are separate theorems —
-`compile_sound` (the compiled ruleset never admits an access the resolved
-policy denies, for every input and every world) and
-`compile_complete_of_world_full` (it admits everything the policy grants,
-exactly when no grant path was missing from the host; when one was, the run
-is narrower on purpose and `skipped_missing` already says so). Step 5
-(`lean/H5iSpec/Noninterference.lean`) is L3: a two-box shared-filesystem
-semantics, the `noninterference` unwinding theorem (a box's writes are
-invisible to a box it shares no writable-readable path with, over all trace
-pairs), and the side condition made decidable — `interferesCheck` scans rule
-pairs for overlapping scopes (prefix comparability), `interferesCheck_sound`
-ties a clean check to the theorem, and the instances are concrete: two
-agent-profile boxes fail the check through host-shared `/tmp` and really do
-interfere; two workspace-only boxes pass it and provably cannot. The probes
-close the loop model-to-kernel: `h5i-spec --predict` derives from a real
-box's `policy.effective.json` what the kernel must allow and deny, and
-`tests/effective_probes.rs` runs those accesses in a real process-tier box —
-seven of seven agree on this host. The probe harness's own first failure was
-educational and is now a comment: a test repo under `/tmp` vanishes behind
-the box's private-tmp bind, which was exactly the bind-semantics gap the
-prediction layer named — until the follow-ons below closed it.
-
-**The four follow-ons, built 2026-08-15.**
-
-- *The profile-corpus sweep.* `builtin_and_repo_profiles_agree` runs the
-  builtin profile family plus this repo's own `.h5i/env.toml` profiles —
-  five profiles, the agent and browser ones carrying dozens of tilde-laden
-  real-host grants — through the same Rust-versus-Lean diff, with the world
-  taken from read-only stats of the real host.
-- *The HOME-controlled lane.* `interactive_and_tilde_cases_agree`
-  re-executes itself as a child whose `$HOME` is a disposable directory, so
-  it can generate what the other lanes must not touch: `interactive` shapes
-  (config-lock binds, whose `$HOME` config files it materializes per case)
-  and `~` grants. 200 cases; a deliberate mutation of the model's
-  config-lock file order produced 48 mismatches before being reverted, so
-  the lane has teeth.
-- *Bind semantics in the prediction layer.* `H5iSpec/Predict.lean`:
-  accesses beneath a bind target are judged on the path rebased into the
-  bind's source subtree, a read-only remount denies writes before Landlock
-  is consulted (`ro_bind_denies_write` — the theorem behind the config-lock
-  pin), and away from every bind the prediction is exactly the compiled
-  ruleset, so `compile_sound` bounds it. The probes now predict against the
-  *run-shape* dump (binds are runtime state; a warmup run writes them) and
-  probe the private-`/tmp` redirect itself. Extended the same day with
-  **nesting and existence**: resolution recurses through the bind stack
-  (later shallower binds shadow earlier deeper ones, chained
-  source-under-target paths resolve through both — the four `nested_*`
-  facts pin it), and each verdict is `{allow, real, check}` — the
-  mechanisms' permission, the resolved host object, and what must exist
-  there — with the harness supplying the existence facts by stat'ing
-  `real`. That split let the probes cover what permission alone cannot: a
-  host `/tmp` file predicted invisible behind the private-tmp bind (the
-  confusion that broke the harness's first version, now a passing
-  prediction), and a same-run scratch round-trip. Eleven probes, eleven
-  agreements — after the suite caught one more true fact the honest way:
-  the private-tmp scratch is wiped per run (`prepare_private_tmp`), env
-  lifecycle above the mount layer, so existence facts are valid only
-  within the invocation that measured them. Named as an exclusion in the
-  layer's docs.
-- *The `fs_overlap` receipt.* `effective::interferes` in Rust mirrors the
-  Lean `interferesCheck` (differentially tested against it,
-  `rust_and_lean_interferes_agree`), and every kernel-tier run and shell
-  record now carries `fs_overlap`: the other materialized boxes whose
-  effective grants overlap this box's, each with the shared path. Empty is
-  the strong answer — by `interferesCheck_sound` plus `noninterference`,
-  such boxes cannot influence each other through their granted filesystems
-  — and the field's docs state the claim's exact scope (grants only; binds
-  and the network are not covered). Honesty note the integration test pins:
-  two boxes on one repo DO overlap, through the shared git plumbing
-  `grant_box_git` writes into both, and the receipt says so rather than
-  smoothing it.
-
-**The second round, built 2026-08-15**: the three items the first round left
-named.
-
-- *The Seatbelt refinement.* `lean/H5iSpec/Seatbelt.lean` models the
-  file-rule fragment `seatbelt::build_profile` emits, in its exact order,
-  under SBPL's real semantics — `(deny default)`, last match wins. That is
-  the opposite regime from Landlock (denies exist here), and the theorem
-  says so: `fs_deny_wins` proves the generator's deny tail beats every
-  grant, i.e. `fs.deny` is genuinely enforced on Seatbelt where on Linux it
-  is a resolution lint. The generator is pure and compiles on Linux, so
-  `tests/seatbelt_drt.rs` runs it here, parses the file rules out of the
-  generated SBPL, and diffs them structurally against the model — 100
-  policies green, and a mutation (dropping one path from the mirrored
-  system-read list) fails all 100. Named gaps: the network/mach/sysctl
-  sections, and `macos_developer_reads` is host-measured (empty on Linux;
-  an on-mac sweep would exercise it).
-- *Symlinks and procfs in the prediction layer.* Symlinks are chased
-  fuel-bounded (`MAXSYMLINKS`), each hop re-entering in-box resolution
-  through the binds, with the verdict taken at the resolved object — which
-  is Landlock's actual behaviour and why `symlink_no_smuggle` holds: a link
-  planted in the granted worktree confers nothing on its ungranted target.
-  Under a pidns, `/proc` is the fresh private procfs with its read-only
-  Landlock re-grant, so reads pass and writes fail whatever the grant lists
-  say about the host's `/proc`, and existence is namespace-local
-  (`box-local` checks carry the harness's a-priori knowledge). Probes now
-  cover both: sixteen probes, sixteen agreements — among them the
-  host-pid-invisible probe, which turns the tier's PID-view design claim
-  into a measured fact.
-- *Console rendering of `fs_overlap`.* `Signals` carries the newest
-  run/shell receipt's overlap list — latest-record semantics, so a departed
-  box's overlap clears rather than lingers, and a box-claimed lane can
-  never update it — and the box pane renders it as a standing-property note
-  beside `weak_isolation`, never folded into the verdict: overlap is
-  policy, not enforcement firing. The export bundle's report gains the same
-  line, so a reviewer applying a patch knows the box did not run alone.
-
-**Adversarial self-review of the whole chapter, 2026-08-15.** The question
-asked of every change: did it widen the sandbox, add an exploitable path, or
-prove something vacuous. Findings, each verified in code rather than argued:
-
-- **No widening found in the enforcement refactor.** `build_confined_command`
-  still runs the re-probe and `resolve` gate; seccomp, rlimits, uid maps,
-  no-new-privs, pidns and the child's mount sequence are untouched; the
-  grant-set computation is list-for-list equivalent (order, `$WORK`
-  stripping, exists-filter, readonly flip), evidenced by the unit suites,
-  the kernel probes, and the DRT mutations.
-- **Fixed: silent non-UTF-8 mangling.** The dump layer serializes paths as
-  UTF-8; the refactor made enforcement consume those strings, so a
-  non-UTF-8 workspace or bind path would round-trip mangled. Every failure
-  mode was verified fail-closed — `path_beneath_rules` silently *skips* an
-  unopenable path (checked in the crate's source), so a mangled worktree
-  grant meant a box confined without its worktree, and a mangled bind meant
-  a refused mount — but silent-and-confusing is not a boundary story.
-  `build_confined_command` now refuses non-UTF-8 work and bind paths
-  explicitly, before anything is computed.
-- **Fixed: one more duplicated formula.** `want_netns` was still computed
-  beside the dump's `namespaces.net` — the exact drift the apply-seam rule
-  forbids. Enforcement now consumes the effective config's answer.
-- **Fixed: two honesty overclaims.** `fs_overlap` said "on this host" while
-  the scan is per-repository (`env::list` walks this repo's `.h5i/env`) —
-  a box of a different repo on the same host is outside it; the docs now
-  say so, along with the shape-staleness bound (a neighbor's dump reflects
-  its latest invocation, so a readonly-shell dump under-reports until the
-  next run). And `pidns_proc_read_allowed` reads as "any /proc read
-  succeeds"; its docstring now states the layer-wide rule that `allow`
-  means the sandbox mechanisms permit — DAC and procfs's own checks apply
-  on top.
-- **Checked and sound, for the record:** `effective_out` is serde-skipped,
-  so a tampered `policy.resolved.toml` cannot redirect the dump write; the
-  dump path's parent is not box-writable on any tier, so no symlink can be
-  planted under the host-side write; box-claimed lanes can never set
-  `fs_overlap` (unit-tested); receipt identity (`run_id`) is unchanged by
-  the new fields; overlap detection covers bind backings because h5i pushes
-  them onto `fs_write`; the console renders overlap strings through React's
-  escaping; and no Lean code is linked into or executed by the product.
-
-A Lean 4 model of the policy layer, developed beside the Rust and never linked
-into it, connected by differential testing over a machine-readable dump of the
-effective configuration. The design, the theorems, and the order live in
-sections V1 to V6. M16 does not depend on M15 or on any browser work; its only
-touch on the existing code is the dump (V2).
-
-**Step 1 (the dump) is built and driven, 2026-08-15.** `compute_effective`
-(`crates/h5i-sandbox/src/effective.rs`) is the single computation
-`build_confined_command` now consumes for its Landlock path sets and bind
-lists, so the dump and the enforcement cannot drift; every serde-skipped
-`ResolvedPolicy` field is in the dump or excluded by name with a reason in the
-module docs. `env create` writes the baseline and pins its digest in the env
-manifest; each kernel-tier run and shell rewrites the file at the apply seam
-and pins that run's digest in its capture record. Driven end to end on the
-process tier by `effective_config_written_at_create_and_pinned_per_run`
-(tests/env_integration.rs), on a host where the tier actually enforces.
-
-Exit criteria for the first cut:
-
-- `policy.effective.json` is written at box creation from the same values the
-  mechanism appliers receive, and its digest is recorded in the capture
-  manifest (V2). **Done, as above.**
-- A `lean/` package builds in CI and its executable model agrees with the Rust
-  resolver on the `examples/` corpus plus 10k generated profiles, with every
-  mismatch either fixed or checked in as a named regression (V4). **Step 2
-  built, 2026-08-15**: `lean/` (Lean core only, no mathlib; toolchain pinned
-  v4.29.1) holds the schema mirror, the executable model, and five theorems
-  checked on every `lake build` — among them `readonly_work_not_rw`, which
-  came out *conditional*: `work_readonly` alone does not keep `$WORK` out of
-  the rw grants when an `fs_write` entry spells the workspace path; the
-  caller obligation `env::shell` discharges in prose is now a stated
-  hypothesis. The DRT harness (`tests/effective_drt.rs`) generates policies
-  with their filesystem world materialized in a tempdir, runs both sides,
-  and diffs null-stripped JSON; green at 2000 cases locally, and a mutation
-  test (the `/tmp` bind-order rule removed from the model) was caught within
-  the first handful of cases before being restored. CI:
-  `.github/workflows/lean-drt.yml`, a separate non-gating lane at 5000
-  cases; the harness skips loudly for contributors without a Lean toolchain.
-  The generator gaps this text originally named — `interactive` shapes, `~`
-  grants, the profile-corpus sweep — closed the same day; see the follow-ons
-  paragraph below.
-- The Landlock fragment of the mechanism semantics is mechanized, and the
-  conditional phase-transition theorem is machine-checked, including the
-  counterexample the agent profile's shared `/tmp` provides (V3). **Step 3
-  built, 2026-08-15**: `lean/H5iSpec/Landlock.lean` is L0 — rulesets as
-  allowlists over path-beneath scopes, domains as intersecting stacks,
-  `restrict_narrows` and `deny_persists`. `lean/H5iSpec/Phase.lean` is the
-  machine: fds as capabilities with rights fixed at open, `restrict_self`
-  as the phase transition, and the conditional theorem in both directions —
-  `phase_confidentiality` proves install-phase denial confines through
-  every later phase (invariant induction over reachability), and
-  `run_deny_insufficient` exhibits the fd-smuggle trace: a reachable state
-  whose domain denies the secret and which reads it anyway. The shared
-  `/tmp` footgun is `shared_tmp_survives`, a `decide`-closed fact: a grant
-  present in every layer survives the intersection, so narrowing bounds the
-  boundary from above and never promises it moved. All checked on every
-  `lake build`, so the Lean CI lane carries them.
 
 ### M17. The remote runner: R13.1 built, 2026-08-16
 
@@ -8911,108 +8694,37 @@ serialization and scroll geometry, and the fetch/api JS surface
 
 ---
 
-# Formal verification: a Lean model beside the Rust
+# Policy resolution and the authority validator
 
-Status: proposed, 2026-08-15. Milestone stub: M16. Mode: the model is a
-sibling of the implementation, never a dependency of it. No Lean code is
-linked into the `h5i` binary, no Lean runs inside a box, and nothing on any
-runtime path changes. Enforcement stays where it is today: in the kernel,
-installed once at box setup. Verification touches only policy resolution,
-which runs once per `env create`.
+Status: shipped, sections P1 to P4. This part was once the tail of a formal
+verification effort — a Lean 4 model of the policy layer developed beside the
+Rust and connected to it by differential testing. That model, its `lake`
+package, its CI lane and the DRT harnesses that drove it were removed on
+2026-08-28: the model cost more to keep in step with the Rust than it caught,
+and nothing on any runtime path ever depended on it. What follows is the
+machinery that outlived it, all of it Rust, all of it exercised by the normal
+test suite. The claims below are what the code checks, not what a prover
+proved, and they are written that way.
 
-> **Pivot, 2026-08-16.** M16 shipped V1–V6 as written below, and building it
-> taught us where the effort was misspent. The refinement theorem
-> (`compile_sound`) turned out near-trivial: the resolver's output and the
-> Landlock rule list are almost the same shape, so the proof was
-> list-membership bookkeeping. Meanwhile the bugs that actually escape a
-> sandbox of this kind — surveyed in §VF — are not policy-compilation errors
-> at all; they are symlink and mount races on an adversarially-prepared
-> filesystem (runc's 2025 breakout CVEs, the virtiofsd family) and
-> configuration injection. The whole-config differential twin
-> (`Model.lean` + `effective_drt`) also cost more to maintain than it caught:
-> it mirrored a host-dependent pipeline field-for-field.
->
-> So the effort turns from *modeling the resolver* to *an attack-driven
-> filesystem authority machine* (§VF, "H5iFs"), whose theorems hold only
-> after a defense is added and which doubles as the semantics of a per-run
-> **translation validator** on the actual `policy.effective.json`. V1–V6
-> stand below as the record of what M16 built; §VF supersedes their
-> forward-looking parts. What was kept, retired, and why is in §VF.0 and in
-> `lean/README.md`. **The phase machinery (V3 L3, `Phase.lean`) is retired,
-> not merely paused: h5i has no in-process phase transition and the
-> cache-refresh/run split is phase *separation* across two boxes, not the
-> fd-carrying transition `Phase.lean` modeled — the V1/V3 text calling it an
-> in-repo phase instance was wrong.**
-
-## V1. What is being claimed, and why an interactive prover
-
-The precedent is Cedar, AWS's authorization language: a production Rust
-implementation, an executable formal model of the same semantics in Lean 4,
-metatheorems proved against the model, and millions of differential tests
-checking that the two agree ("verification-guided development", Amazon
-Verified Permissions ships on it). Cedar is h5i minus the operating system:
-its policies denote over an abstract request, and the story ends there. Ours
-bottoms out in Landlock rule sets, seccomp filters, and mount tables, and that
-is where the open ground is:
-
-- seccomp has been formalized once, at the JIT level, in Coq (Jitk, OSDI
-  2014). iptables has Isabelle semantics (Diekmann). seL4 proved intransitive
-  noninterference for a whole kernel. **Landlock has no mechanized semantics
-  at all, and neither does the composition of Landlock with seccomp and mount
-  namespaces.** That composition is exactly what `build_confined_command`
-  emits.
-- No published system treats **phase-aware** sandbox policy: a policy that is
-  deliberately different during dependency installation than during the run,
-  with a transition between them. *(Retired 2026-08-16: h5i's cache-refresh/
-  run split is phase **separation** across two boxes, not the in-process,
-  fd-carrying transition this motivated. `Phase.lean` modeled a feature h5i
-  does not have; see the chapter banner and §VF.0. The remaining V-text below
-  is the M16 record.)*
-
-Why an interactive prover rather than a solver: every property worth claiming
-here is quantified over all policies, all reachable states, or pairs of
-traces. Refinement ("the compiled mechanisms admit no trace the policy
-forbids") and noninterference ("box A's secrets never influence box B's
-observations") are not per-instance queries. And once the semantics is in
-Lean, the per-instance facts a solver would have provided fall out for free:
-a concrete policy against a decidable semantics is discharged by `decide`.
-One toolchain, no gap between the checker and the theorems.
-
-What a green result means, stated exactly, because the pieces compose and
-none substitutes for another:
-
-1. The DRT harness green (V4) means: the Rust resolver and the Lean model
-   compute the same effective configuration on every input tried.
-2. The refinement theorem (V3, L2) means: the model's compilation of any
-   policy is sound against the model's mechanism semantics.
-3. The conformance probes (V4) mean: on the hosts we run them, the mechanism
-   semantics predicts what the kernel actually does, for the behaviours
-   probed.
-
-Together they say the deployed configuration enforces the written policy, up
-to the trusted base in V5. Separately each is much less, and this chapter
-will not blur them.
-
-## V2. The one Rust change: dump the effective configuration at the apply seam
+## P1. The effective configuration, dumped at the apply seam
 
 `policy.resolved.toml` is the digested *intent*. The *enforced* state is
 larger: `ResolvedPolicy` carries runtime-only, serde-skipped fields that never
 enter the digest and are still applied as mounts and grants, deliberately
-(`crates/h5i-sandbox/src/sandbox_policy.rs:1899`): `ro_binds`, `home_binds`,
+(`crates/h5i-sandbox/src/sandbox_policy.rs`): `ro_binds`, `home_binds`,
 `private_binds`, `cache_write`, `work_readonly`, `user_egress_allow`, the
-loopback port list, `box_git`. A model that reads only the toml verifies less
+loopback port list, `box_git`. Anything that reads only the toml sees less
 than what a box gets.
 
-So the single change to the existing code is a second serialization,
-`policy.effective.json`, written at box creation, with one rule that is the
-whole point:
+So there is a second serialization, `policy.effective.json`, written at box
+creation, with one rule that is the whole point:
 
 **The dump serializes the exact values handed to the mechanism appliers in
-`build_confined_command`, not a parallel pretty-printer.** If the dump is
-computed by separate code that re-derives "what we probably applied", the
-model verifies a brochure. The serializer takes the same structs, at the seam
-where Landlock rules, mount calls, and the seccomp filter are constructed,
-after `$WORK` expansion and after `prepare_private_paths` and
+`build_confined_command`, not a parallel pretty-printer.** If the dump were
+computed by separate code that re-derived "what we probably applied", every
+check over it would be checking a brochure. The serializer takes the same
+structs, at the seam where Landlock rules, mount calls, and the seccomp filter
+are constructed, after `$WORK` expansion and after `prepare_private_paths` and
 `prepare_home_state` have run.
 
 Contents, version 1 of a versioned schema, canonically ordered so the digest
@@ -9026,540 +8738,82 @@ is stable:
 - net mode, egress allowlist including host-side extras, the loopback port
   list, and the AF_UNIX flag;
 - the seccomp template identifier and its parameters (the filter itself is a
-  fixed artifact per template; the model treats templates as named
-  semantics, V3);
+  fixed artifact per template, so templates are named semantics here);
 - rlimits, `env_pass`, the tools allowlist.
 
 `fs_deny` appears in the dump under resolution metadata, not under
 enforcement, because it is not a kernel rule: Landlock is allowlist-only and
-`fs_deny` is a preflight refusal condition on the *policy*. The model gives
-it exactly that semantics, so what gets proved about it is "resolution
-refuses", never "the kernel denies". Writing that distinction into the schema
-keeps the model honest by construction.
+`fs_deny` is a preflight refusal condition on the *policy*. What can be said
+about it is "resolution refuses", never "the kernel denies". Writing that
+distinction into the schema keeps the artifact honest by construction.
 
 The dump's digest is recorded in the capture manifest beside the policy
-digest. That makes the verified artifact tamper-evident the same way the
-policy already is, and it costs one hash.
-
-## V3. The Lean development, layer by layer
-
-A `lean/` package (lake project, built in CI, pinned toolchain). Four layers,
-each meaningful without the ones above it.
-
-**L0, mechanism semantics.** Small-step operational semantics of the
-contracts h5i composes, at the level of their documented behaviour, not
-kernel C:
-
-- *Landlock*: a rule set is an allowlist of access rights over path
-  prefixes; domains nest and **a nested domain can only intersect, never
-  widen**; and the rights of a file descriptor are fixed at `open` and
-  travel with the fd afterwards, through `fork`, `exec`, and `SCM_RIGHTS`.
-  Paths are component lists; symlinks are out of scope in v1 and listed in
-  V5, not silently ignored.
-- *Mounts*: per-namespace tables, bind then read-only remount, private
-  propagation. The interesting lemma is that a bind can re-expose a path a
-  Landlock grant did not name, which is why the two are modeled together or
-  not usefully at all.
-- *seccomp*: a stack of pure functions over syscall number and arguments,
-  most-restrictive result wins. h5i ships fixed filter templates, so the
-  model gives each template a name and a denotation rather than modeling
-  BPF.
-- *Process state*: processes with fd tables and domain stacks; spawn
-  inherits both.
-
-The fd-as-capability rule is the scientific core. It is why phase
-transitions are dangerous, it has never been mechanized, and every theorem
-in L3 leans on it.
-
-**L1, policy denotation.** The v1 `Profile` subset (fs grants, deny
-preconditions, net mode, the unix flag, tools) denotes a predicate over
-abstract actions: read p, write p, connect h, spawn t. Phases are policy
-transformers with an explicit transition action. senv's install/run is the
-motivating client; h5i's cache-refresh/run split is the in-repo instance,
-so the phase machinery is exercised without waiting on senv.
-
-**L2, compilation and refinement.** A pure `compile : Profile → MechConfig`
-mirroring the decisions `build_confined_command` takes, and per backend the
-theorem: every trace the L0 semantics admits under `compile p` maps to
-actions `p` allows. Trace inclusion, proved as a simulation. Kernel tier
-first. Container, microvm, and Seatbelt each get their own refinement later
-or stay DRT-only, and the claim is **sound under-approximation per backend,
-never cross-backend equivalence**: the tiers genuinely differ (private
-`/tmp` on container, loopback semantics on macOS) and a theorem that denied
-that would be false.
-
-**L3, hyperproperties.** Three, in order of what they teach:
-
-- *Monotone narrowing.* A phase transition never widens effective
-  permissions. Under Landlock's intersection rule this is nearly free at
-  the mechanism level; the content is that mounts and inherited fds do not
-  break it.
-- *The conditional fd theorem.* "Run phase forbids credentials" is **not**
-  implied by the run-phase policy: an fd opened during install keeps its
-  rights across the transition. The theorem comes out conditional: run-phase
-  confidentiality holds if and only if the install phase could not open the
-  resource, or the transition is an exec boundary that closes the fds. That
-  conditional is a design output, not a caveat: it says senv must deny
-  credentials in install too, or the transition must be an exec with
-  close-on-exec discipline the dump can attest.
-- *Box-to-box noninterference.* Two boxes whose writable grant sets are
-  disjoint cannot influence each other, seL4-style, by unwinding
-  conditions. Also conditional, and **the side condition is false today for
-  two agent-profile boxes**, which share host `/tmp` by design. The theorem
-  does not condemn that choice; it turns it into a checkable disjointness
-  obligation per host, and the console can count it like any other receipt.
-
-Nothing in v1 proves anything about the browser, the share tunnel, or the
-viewer. The policy layer is the subject.
-
-## V4. The differential harness, and the probes that check the model itself
-
-Two loops, in the two directions a model can be wrong.
-
-**Model versus Rust (drift).** A generator (proptest on the Rust side)
-produces profiles, including the adversarial shapes that found real bugs in
-this repo's history: grants overlapping a deny parent, `$WORK`-relative
-escapes, an egress list on the process tier (must fail closed), home-state
-redirects colliding with explicit grants. The Lean model compiles to a native
-executable that reads a profile as JSON and emits its resolution and its
-`MechConfig`; the harness diffs both against the Rust resolver's output and
-the `policy.effective.json` dump. Corpus: everything under `examples/`, plus
-generated cases, plus every past mismatch checked in as a named regression.
-Cedar's experience, which we adopt as a working assumption, is that this loop
-finds bugs in both directions. The CI job is separate and non-gating until it
-has been quiet for a while; then it gates.
-
-**Model versus kernel (fidelity).** The semantics is executable, so `#eval`
-on an action trace predicts allow or deny. The harness emits those
-predictions as small probe programs and runs them inside real boxes,
-comparing outcome to prediction. This is `sandbox::verify_exec` generalized:
-that function exists because mechanism-present is not mechanism-works, and
-the same discipline applies to a model. Linux first; Seatbelt probes read
-their denials from `log show`, which is the only place Seatbelt puts them.
-
-## V5. What is not modeled, stated up front
-
-The trusted base, in the same spirit as section 9:
-
-- **The kernel.** Landlock, seccomp, and namespaces are assumed to implement
-  their documented contracts. The probes sample this assumption; they do not
-  discharge it. Kernel bugs and side channels are out of scope.
-- **Symlinks**, in v1. Landlock resolves them at access time and the model
-  does not, yet. Until it does, the refinement theorem is stated over
-  symlink-free traces and says so in its hypotheses.
-- **/proc and ptrace**, beyond what the seccomp templates already block.
-- **Container and microvm tiers.** Their enforcement runs through an OCI
-  runtime and a guest kernel the model does not describe. They stay in the
-  DRT loop (the resolver is shared) but carry no refinement claim until
-  someone writes their L0.
-- **The Lean toolchain and its extraction**, as with any mechanized proof.
-- **Model drift.** The model is hand-written against the Rust; the DRT loop
-  is the control, and a quiet DRT job is evidence, not proof. The upgrade
-  path that removes this line is translating the resolver itself
-  (Aeneas-style, Rust to Lean); it is deliberately not in scope for M16,
-  because it requires carving the resolution logic into a pure core and
-  nothing above requires that to start.
-
-## V6. The order
-
-1. **The dump.** `policy.effective.json` at the apply seam, schema v1,
-   digest into the capture manifest. Small, pure Rust, useful on its own for
-   debugging. Exit: every serde-skipped field of `ResolvedPolicy` is either
-   in the dump or named in the schema as excluded, with a reason. **Built and
-   driven, 2026-08-15 — see M16 for what shipped and where.**
-2. **The model, executable.** `lean/` package, L1 for the fs and net
-   subset, the JSON interface, DRT over `examples/` plus 10k generated
-   profiles. Exit: the M16 criterion, zero unexplained diffs. **Built and
-   driven, 2026-08-15 — see M16; the profile-corpus sweep and the
-   interactive/tilde lanes landed with the follow-ons the same day.**
-3. **The Landlock fragment.** L0 domains, intersection, fd rights, and the
-   two phase theorems, including the shared-`/tmp` counterexample as a Lean
-   example, not prose. Exit: theorems check in CI. **Built, 2026-08-15 —
-   see M16.**
-4. **Refinement.** L2 for the kernel tier over the v1 action alphabet.
-   **Built, 2026-08-15 — see M16**: soundness unconditional, completeness
-   conditional on a full world, both machine-checked.
-5. **Noninterference and probes.** L3 with unwinding conditions; probe
-   generation running against real boxes on Linux in CI. **Built,
-   2026-08-15 — see M16**: the unwinding theorem, the decidable
-   `interferesCheck` with soundness, the agent-`/tmp` and disjoint-box
-   instances, and `--predict`-driven probes green on a real process-tier
-   box. The probes run in the Lean CI lane and skip loudly on runners that
-   cannot host the tier.
-
-Steps 1 and 2 are weeks, not months, and step 3 is the first thing worth
-writing up. Everything after that earns its own status line here when it
-exists, in this document's usual voice: built when driven, proposed until
-then.
-
-# VF. Verified workspace authority: the H5iFs machine
-
-Status: proposed, 2026-08-16. This chapter is the post-pivot direction (see
-the banner at the top of the verification chapter). It replaces "model the
-resolver, differential-test the twin" with "model the thing that actually
-mediates host filesystem authority, prove it confines an adversary, and make
-that model the semantics a per-run validator checks the real output against."
-The title says *authority*, not *filesystem*: until the optional backend of
-VF.6 exists, what is verified is an authority model and a validator, not a
-filesystem implementation.
-
-The claim it builds toward, stated at the strength the design actually
-supports — no stronger:
-
-> For every Linux **process/supervised-tier** run the validator covers, a
-> checked validator confirms that the filesystem authority the box's
-> **effective plan** would grant — under an adversary who prepared the
-> worktree and drives the box — is no greater than the declared source
-> policy, and that a mount-realization audit found the **observed** mount
-> state consistent with that plan before exec.
-
-Three levels are kept distinct throughout, because collapsing them is the
-overstatement the pivot exists to avoid:
-
-- **SourcePolicy** — what the user declared.
-- **EffectivePlan / MountPlan** — what h5i intends to hand the backend
-  (`policy.effective.json` plus the ordered mount manifest). The validator
-  (VF.4) reasons about *this*.
-- **ObservedMountState** — what the kernel actually realized, read back
-  before exec. The auditor (VF.5) checks *this* against the plan.
-
-The validator proves a property of the plan; it does not by itself prove the
-kernel granted exactly the plan. That gap is what VF.5 narrows and VF.8
-states. Seatbelt, container, and microVM tiers are **not** covered at this
-strength — they are named where they touch this and otherwise out of scope.
-
-## VF.0. What was kept, retired, and why
-
-Retired to git history (the pivot banner explains the reasoning):
-
-- `H5iSpec/Model.lean`, `Input.lean`, `Theorems.lean` — the hand-ported twin
-  of `compute_effective` and its over-all-inputs theorems. Verified a
-  re-implementation, not the shipped output.
-- `H5iSpec/Refinement.lean` — `compile_sound` /
-  `compile_complete_of_world_full`. Near-trivial because spec and output
-  share a shape; `parsePath`/`compileLandlock` (the useful parts) moved into
-  `Landlock.lean`.
-- `H5iSpec/Phase.lean` — the fd-smuggling phase machine. Modeled an
-  in-process install→run transition h5i does not have. Its two lessons are
-  preserved as prose in §VF.3 (fds carry rights past a restriction; shared
-  `/tmp` breaks box separation) and can return if a same-process phase
-  feature is ever built.
-- `tests/effective_drt.rs` — the whole-config differential harness. The one
-  lane worth keeping (the interference checker) was extracted to
-  `tests/interferes_drt.rs`.
-
-Kept, because each is either the base layer the new machine extends or a spec
-the *product* runs against today:
-
-- `H5iSpec/Landlock.lean` — L0 rulesets, intersecting domains,
-  `restrict_narrows`, `deny_persists`, and now `parsePath`/`compileLandlock`.
-  The H5iFs machine is built on top of this, not beside it.
-- `H5iSpec/Noninterference.lean`, trimmed to `interferesCheck` +
-  `interferesCheck_sound` + the agent-`/tmp` and disjoint-box instances. This
-  is the specification of the product-live `effective::interferes`
-  (`env.rs`), differential-tested by `interferes_drt`.
-- `H5iSpec/Predict.lean` — the bind/symlink/procfs prediction layer that
-  `effective_probes.rs` holds a real box to. Its semantics is the seed for
-  H5iFs's resolver (§VF.2); it is absorbed, then retired, not rewritten.
-- `H5iSpec/Seatbelt.lean` + `seatbelt_drt.rs` — `fs_deny_wins`, a live
-  property of the macOS backend.
-
-Known cost, stated precisely. The retired `effective_drt` diffed the whole
-`compute_effective` output against the twin; deleting the twin ends that
-differential check. Note two things so the gap is neither hidden nor
-overstated:
-
-- **What still covers `compute_effective`.** Its filesystem-relevant output
-  is still held to the *kernel* by `effective_probes` (via `Predict`), and
-  `effective::interferes` over its output is still diffed against Lean by
-  `interferes_drt`. The fs surface is not uncovered.
-- **What lost coverage.** The non-fs fields — net mode, seccomp template,
-  rlimits, `env_pass`, tools — no longer have a differential check against
-  any spec. These were exactly the DRT-only, no-refinement-theorem fields.
-
-Un-deleting `effective_drt` is not the fix: the harness diffs against
-`Model.lean`, so keeping it means keeping the twin — reverting the pivot.
-The fix is VF.4, whose validator restores a spec check on the *shipped*
-plan, fields included. Until then this gap is deliberate and named here.
-
-## VF.1. Why a filesystem, and why "authority", not "storage"
-
-The survey (§VF.9) points at where verified-filesystem effort has gone.
-Among the systems surveyed here — FSCQ, DFSCQ, Yggdrasil, Perennial,
-DaisyNFS — the target is *functional correctness and crash safety* for a
-filesystem whose caller is a **benign** POSIX client; the adversary is power
-loss and concurrency. One of them (SFSCQ/DiskSec) proves a security property,
-confidentiality, and among those surveyed none formulates **authority
-confinement against a hostile caller** (not a claim about the whole
-literature — VF.9 flags the systematic review owed before any external
-claim). h5i's problem is the dual of the classic one:
-
-- storage semantics can be *simple* — the box is disposable, so crash
-  consistency is out of scope entirely (if the daemon dies, throw the box
-  away). This is the single assumption that moves the effort from
-  person-years to something a small team can hold; it is a scope decision
-  backed by the field's own effort numbers (BilbyFs: 13k proof lines for 1k
-  of code, almost all of it crash/refinement).
-- the **caller is the adversary**. The agent in run N writes the worktree
-  freely; the privileged setup for run N+1 (canonicalize → make mountpoints →
-  bind → `restrict_self`) then traverses that worktree. Planting
-  `evil → ~/.ssh` or a procfs symlink is the textbook runc attack, reproduced
-  in h5i's own threat model.
-
-So the object to verify is not a general filesystem. It is the **authority
-machine**: the layer that decides, for each filesystem operation, which host
-object it reaches and whether policy permits it — over symlinks, hardlinks,
-ordered mounts, and inherited fds. "ext4 replacement" is a non-goal forever.
-
-## VF.2. The model: `lean/H5iFs/`
-
-A small filesystem modeled as an object graph, not a byte store. File
-*contents* are opaque values (`Nat`); the machinery is names, identity,
-resolution, and rights. The design rule that keeps it from being `decide`-dead
-and keeps it executable (both required — the model must run as the validator's
-semantics and probe oracle): **finite maps (association lists with a sortedness
-invariant), no function-typed state fields, and the house no-mathlib rule.**
-
-Core state, sketched (final shapes land with the code):
-
-```
-abbrev NodeId := Nat            -- opaque model-internal identity, NOT an inode
-inductive NodeKind | file | dir | symlink (target : Path)
-structure Meta where            -- integrity is more than content (VF.3)
-  mode, uid, gid : Nat
-  suid, sgid, exec : Bool
-  nlink : Nat
-  xattrs : List (String × Nat)
-structure FsState where
-  nodes   : List (NodeId × NodeKind)          -- finite, sorted; NOT NodeId → _
-  entries : List ((NodeId × String) × NodeId) -- dir/name ↦ child; hardlink = two entries, one child
-  content : List (NodeId × Nat)
-  meta    : List (NodeId × Meta)
-```
-
-`NodeId` is a model-internal identity, **not** a Linux inode number: inode
-numbers are unique only within a device and are reused, so when the model
-touches the host it does so through an `ObjectKey := MountId × DeviceId ×
-Inode × Generation?`, and equality of host objects is equality of keys, never
-of inode alone. The base snapshot is a `BaseProjection` — the nodes,
-directory entries, **and** metadata that must be invariant — not a bare
-`List NodeId`: an immutable base whose *contents* are pinned is still broken
-if a `base` directory entry can be renamed or unlinked.
-
-Five amplifiers it must model, each because an attack needs it:
-
-1. **Symlinks**, with every case that has bitten a real system spelled out,
-   not "symlinks": relative vs absolute targets, a symlinked *ancestor* (not
-   just final component), `.`/`..`, loops (fuel-bounded), the `/proc/self/fd`
-   magic-link family, and target resolution that crosses a mount. A naive
-   string-prefix check passes `/work/evil → /home/user/.ssh`; resolution
-   lands outside the grant. Both are machine-checked.
-2. **Hardlinks and rename.** Several entries name one `NodeId`, so
-   `/work/allowed` and `/secret/alias` are one object. Rights are reasoned
-   about on **object identity**, not path — the single most important
-   structural break from every kept file, which is path-based.
-3. **Ordered mounts and shadowing.** `/work` rw, then `/work/.claude/…` ro:
-   reverse the mount order and the ro overlay becomes writable again. Not
-   hypothetical — `home_binds_in_mount_order` in `sandbox.rs` sorts binds by
-   hand to avoid exactly this, and the config-lock is a real ro-over-rw
-   overmount. The verdict is `effectivePermission mounts path`, over the mount
-   *order*, and the theorem is `protected → effectivePermission ≤ ReadOnly`.
-4. **File descriptors as capabilities.** Open `~/.ssh/id_rsa`, then
-   `restrict_self`, then read from the saved fd. Landlock fixes rights at
-   `open`; the restriction does not revisit them. The model carries an fd
-   table with rights; the invariant is `NoForbiddenFd` on the **ready** state
-   (after setup closes fds), not on the initial one — a forbidden fd in the
-   *initial* state is fine if setup closes it, and only `FD_CLOEXEC` fds close
-   at exec on their own, so setup must either close explicitly or carry a
-   CLOEXEC invariant. Naming this as an initial-state condition would be
-   wrong.
-
-The **operation alphabet is fixed up front**, so nothing security-relevant
-hides in an unmodeled op: `lookup/open/read/write/truncate`,
-`create/mkdir/unlink/rmdir`, `rename/link/symlink`, `execute`,
-`chmod/chown/setxattr`, `dup` and fd-relative operations (`ftruncate`,
-`*at`), and `mmap` only if the daemon of VF.6 needs it. And Landlock is
-modeled with its **real** right set — `execute`, `read-file`/`read-dir`,
-`remove-file`/`remove-dir`, `make-*`, `refer`, `truncate`, ioctl-dev — not a
-two-symbol read/write, and the rights bound to an fd at open are distinguished
-from the rights checked per path.
-
-**The adversary acts during setup, not only before it.** The threat is TOCTOU:
-a symlink swapped between the check and the mount. So the model is not a fixed
-`initial` state plus attacker ops afterward, but an interleaved schedule —
-
-```
-inductive SetupEvent
-  | h5i      (op : SetupOp)          -- mount, close-fd, no_new_privs, restrict, …
-  | attacker (op : AllowedMutation)  -- what a worktree writer can do, between h5i's steps
-```
-
-— and the theorems quantify over an arbitrary well-formed adversarial
-`initial` **and** an arbitrary attacker interleaving. A model that only
-quantified over the starting state cannot even express the check-vs-mount race
-that is the entire runc-CVE class; this is the half of the threat model the
-classic verified filesystems omit, and it is what makes the setup steps
-(symlinked-ancestor refusal, fd closing, race-free mount construction — VF.5b)
-do real work instead of unfolding to `True`.
-
-The **setup state machine models the real order and names what it abstracts.**
-The actual `build_confined_command` path also sets up namespaces, an egress
-helper, a PID-namespace supervisor, private procfs, rlimits, and a
-notification listener, and `close_inherited_fds()` runs on a specific
-supervisor path. The v1 machine covers `mount → close inherited fds →
-no_new_privs → Landlock → seccomp → exec` and lists the steps it omits, rather
-than implying the abstraction is the whole pipeline.
-
-## VF.3. The theorems, integrity before confidentiality
-
-Integrity before confidentiality, because integrity needs no observation
-model. But the central theorem is **not** final-state equality — that misses
-the write-then-restore attack, where a forbidden object is changed and put
-back. It is **trace-level authority safety**: every effect a trace produces is
-one the policy permits.
-
-```
-theorem every_effect_authorized
-    (hadv   : Adversarial initial)                 -- any hostile worktree
-    (hsetup : setup config initial sched = .ready ready)  -- setup accepted
-    (hrun   : Runs ready attackerTrace final) :
-    ∀ e ∈ effectsOf attackerTrace, PolicyAllows policy e
-```
-
-`ProtectedProjection` equality — that no object outside the writable grants
-changes — is then a **corollary**, and it must project more than content:
-integrity is broken content-unchanged by a `rename`, an `unlink`, a `chmod`,
-or an xattr edit. The projection pins content **and** directory entries,
-ownership/mode/executable bit, link count, symlink target, and the relevant
-xattrs.
-
-Two framings that keep the theorem from being vacuous:
-
-- **Setup is executable and total: reject-or-confine.** Not a `ValidSetup`
-  hypothesis (which lets the theorem hold whenever setup is impossible), but a
-  function that returns `.rejected` or a `.ready` state, with
-  `setup_rejects_or_confines : setup config initial sched = .ready r →
-  ReadyStateSafe policy r`. An adversary that can force setup to a state the
-  theorem does not cover forces a *rejection*, not a silent pass.
-- **The fd condition is on `ready`/`ExecState`, never `initial`** (VF.2).
-
-**The attack menu is the specification.** Each item is entered first as a
-counterexample against a deliberately-weak setup, then defeated by adding the
-defense; the theorem is the *reward* for the defense, never a consequence of
-unfolding definitions:
-
-| # | Attack | Defense the theorem forces |
-|---|--------|----------------------------|
-| 1 | string-prefix path escape | resolve, then judge the resolved object |
-| 2 | symlink / symlinked-ancestor escape | resolution follows links, verdict at the target |
-| 3 | pre-opened fd past a restriction | `NoForbiddenFd` on `ready`, explicit close or CLOEXEC |
-| 4 | parent-allow / child-deny | per-object rights in the ideal model; validator **rejects as unrepresentable** on a backend that can't express it (below) |
-| 5 | rw mount shadows a ro overlay | `effectivePermission` over mount order |
-| 6 | rename/hardlink authority amplification | rights on `ObjectKey`, not path |
-| 7 | check-vs-mount TOCTOU during setup | race-free mount construction (VF.5b), interleaving-quantified |
-
-**Ideal semantics and backend expressiveness are separate layers.** Attack #4
-is where this bites: per-object rights in the H5iFs *ideal* model do not make
-a "parent readable, one child denied" policy *implementable* on the Landlock
-backend, which grants over path-beneath scopes and has no deny rule. So the
-validator carries a representability check: a source policy the selected
-backend cannot express is **rejected as unrepresentable**, never compiled to
-something weaker and reported as enforced. This is the filesystem instance of
-the project-wide rule that nothing unenforceable is rendered as enforced.
-
-**Confidentiality is later, and stated as noninterference, not object
-inclusion.** "The trace only touched readable objects" is too weak: what
-leaks is not the object set but the *observations* — read results, error
-codes (ENOENT vs EACCES distinguishes existence), and metadata. The honest
-form is two-run: `LowEquivalent policy init₁ init₂ → observations trace₁ =
-observations trace₂`, over an observation function that includes responses,
-content, errors, and metadata. DiskSec's sealed-content factoring is a
-**candidate** technique to keep this tractable, not a given — H5iFs has path,
-error, and metadata channels DiskSec's block model did not, so its
-applicability is something VF's confidentiality step must establish, not
-assume.
-
-## VF.4. The payoff: a per-run translation validator
-
-The H5iFs model is not a separate toy; it is the **semantics of a validator on
-the real plan.** The existing `policy.effective.json` (V2) plus a *mount
-manifest* (the ordered mounts + classes the backend was handed) feed a
-decidable checker. Its effects are **filesystem** effects only — `Read p`,
-`Write p`, `Execute p`, `Remove p`, `Create p` — so `≤ ReadOnly`,
-deny-not-circumvented, and writable-set-limited are expressible;
-`Connect`/`ReceiveSecret` are **out of scope here** and belong to a future
-`AuthorityEffect` layer that composes an fs checker with network/secret
-checkers. And its world input is not the whole host filesystem (unenumerable)
-but a finite `WorldEvidence`:
-
-```
-structure WorldEvidence where            -- what the harness measured, not the whole FS
-  paths     : List (Path × ObjectKey)    -- relevant paths and their measured identity
-  symlinks  : List (Path × Path)         -- link → target facts
-  mounts    : List MountFact
-  complete  : CompletenessWitness        -- the closure condition making the finite set sufficient
-
-def validate (policy : SourcePolicy) (plan : EffectivePlan)
-             (ev : WorldEvidence) : ValidateResult    -- .ok | .rejected reason
-
-theorem validate_sound :
-  validate policy plan ev = .ok →
-  ∀ e, PlanAdmits plan ev e → PolicyAllows policy e
-```
-
-Deployment (settled points from the design discussion, carried here so they
-are not relitigated):
-
-- **Execution shape, stated without contradiction.** What runs *per run* is
-  the **unproven Rust port** of the checker; it writes its verdict to the
-  receipt. The proof lives in CI: the **real Lean checker** runs over every
-  generated case, and a **checker-level DRT** (`interferes_drt` is the
-  template — small surface, strong sampling) holds the port to it. So the
-  honest phrasing is "the shipped plan conforms, per run, to a Lean-proved
-  specification, checked by a Rust port that CI differential-tests against the
-  proof" — **not** "a machine-checked proof runs on every run." The residual
-  trust is the port; the DRT is its control, not its proof. (The stronger
-  option — compile the Lean checker and run *it* pre-exec — stays open in
-  VF.7 if the port's residual trust proves unacceptable.)
-- **Fail-closed by type.** The plan is a `ValidatedPlan` typestate: `spawn`
-  accepts only a validated plan, so "the run went through the validator" is a
-  Rust type obligation, and `validate_sound` is what the type is worth. This
-  is the cheap half of mediation; that the kernel *realized* the plan is VF.5.
-- **Parse the real output.** The checker reads the *emitted* argv/rule text
-  where it can (the msb/Seatbelt argument strings), not just the in-memory
-  struct, so a serializer bug can't slip past — the Kata `source=/` injection
-  is the cautionary case.
-- **Receipt.** `validated=ok`, the policy and plan digests, the checker
-  version, the backend, and the per-claim booleans (`fs_subset`,
-  `writes_confined`, `cache_readonly`), rendered in `box status` the way the
-  console already counts receipts.
-- **`no_shared_writable` is not a single-run property.** Whether a box shares
-  a writable-readable path with *another* live box can only be decided against
-  all live boxes, under a global lock or an atomic registry snapshot at box
-  create/exit — otherwise two boxes race into a shared `/tmp` between their
-  checks. It is a cross-box obligation on the registry, reported separately,
-  not a field the per-run validator can set alone.
-- **Backend representability, honestly.** The check is not "egress subset" but
-  "can this backend *represent* this constraint at all." Enforcement points
-  differ per tier (kernel: nft + egress proxy; microvm: msb's coarser on/off;
-  macOS: SBPL carries no network proof), so an unrepresentable constraint is
-  rejected or marked unenforced — never rendered as enforced. No silent tier
-  downgrade.
-
-## VF.5. Mount realization audit: plan-check plus a read-back
-
-`validate_sound` says "the plan is safe"; it does not say "the kernel realized
-the plan." For mechanisms whose output is a syscall stream (mounts, Landlock
-rulesets) there is no argv to re-parse, so the plan-checker leaves a gap — the
-serializer-bug class, one layer down. Narrow it with a **mount realization
-audit**: after setup, before `exec`, the supervisor reads back the child's
-realized state and diffs it against the `ValidatedPlan`; a mismatch aborts the
-launch and lands in the receipt.
-
-Two honest bounds on what this buys, because "complete mediation" would
-overstate it:
-
-- **It is a mount-topology/identity audit, not a full mediation.**
+digest. That makes it tamper-evident the same way the policy already is, and
+it costs one hash.
+
+Linux kernel tiers (`process`, `supervised`) only, matching the mechanisms it
+describes. `crates/h5i-sandbox/src/effective.rs` is the implementation.
+
+## P2. The per-run translation validator
+
+The dump is the input to a check on the resolver itself: re-derive the subset
+claims from the *shipped* effective config and the declared policy,
+independently of the `compute_effective` code that produced them. This is
+translation validation — the same shape as checking a compiler's output for
+one program rather than proving the compiler — and it catches the class of bug
+where resolution silently widens a grant.
+
+`fs_authority::validate_grants` computes one boolean per claim, recorded in
+the box manifest as an `AuthorityVerdict` and rendered by `box status`:
+
+- `fs_subset` — every effective grant is one the declared policy authorized.
+- `writes_confined` — every read-write grant was declared writable (`$WORK`
+  or `fs_write`).
+- `cache_readonly` — no read-only overlay was left writable: the config-lock
+  pin and the warm cache stay read-only. Private, home-state, and the one
+  cache-rw refresh bind are writable by design and not constrained here.
+- `symlink_clean` — no effective grant, and no bind source or mountpoint
+  beneath the worktree, resolves out through a planted symlink on the host
+  (`fs_authority::symlink_escapes`). `None` when the host was not measured.
+  This one is evidence, reported separately, not part of the gate.
+
+`AuthorityVerdict::confined()` is the gating verdict: the three
+statically-decidable claims. A false there is a real config or logic bug and
+is safe to fail a launch on.
+
+**Fully opt-in.** With `H5I_FS_AUTHORITY_ENFORCE` unset the validator never
+executes — no computation, no host measurement, no manifest field, no gate —
+so default behavior is exactly as it was before the validator existed. Set
+`H5I_FS_AUTHORITY_ENFORCE=1` to compute the verdict at box create and run,
+record it, and fail closed on a violation. Earning trust before gating by
+default is the discipline; flipping the default is a decision with a receipt
+trail behind it, not a default to drift into.
+
+Two bounds worth stating. `no_shared_writable` — whether a box shares a
+writable-readable path with *another* live box — is not a single-run property:
+it can only be decided against all live boxes under a lock or an atomic
+registry snapshot, or two boxes race into a shared `/tmp` between their
+checks. It is a cross-box obligation on the registry
+(`effective::interferes`), reported separately. And backend representability
+is not a subset question but "can this backend represent this constraint at
+all": enforcement points differ per tier (kernel: nft plus the egress proxy;
+microvm: msb's coarser on/off; macOS: SBPL carries no network proof), so an
+unrepresentable constraint is marked unenforced, never rendered as enforced,
+and never silently downgraded.
+
+## P3. Mount realization audit: plan-check plus a read-back
+
+A check on the plan says the plan is safe; it does not say the kernel realized
+the plan. For mechanisms whose output is a syscall stream (mounts, Landlock
+rulesets) there is no argv to re-parse, so the plan-level check leaves a gap —
+the serializer-bug class, one layer down. `crates/h5i-sandbox/src/mount_audit.rs`
+narrows it: after setup, before `exec`, the supervisor reads back the child's
+realized state and diffs it against the plan; a mismatch aborts the launch and
+lands in the receipt.
+
+Two honest bounds, because "complete mediation" would overstate it:
+
+- **It is a mount-topology and identity audit, not a full mediation.**
   `/proc/<pid>/mountinfo` exposes mount ID, parent, major/minor, mount root,
   mount point, and ro/nosuid/nodev/noexec/propagation flags — it does **not**
   expose the installed Landlock ruleset or seccomp filter. So the audit
@@ -9567,33 +8821,32 @@ overstate it:
   read back the fs-grant enforcement itself.
 - **It detects a large slice of the TOCTOU class, not all of it.** It turns
   mount-swap and masked-path realizations (the shape of runc's 2025 CVEs)
-  from "prevent perfectly" into "detect and fail closed," but a symlink race
+  from "prevent perfectly" into "detect and fail closed", but a symlink race
   that leaves mount topology unchanged, or a shared source mutated after the
-  read-back, is not caught here — those are prevented by construction in
-  VF.5b, and the audit is the net under that discipline, not a substitute.
+  read-back, is not caught here — those are prevented by construction in P4,
+  and the audit is the net under that discipline, not a substitute.
 
-To make it worth its name the audit reads more than `mountinfo`: mount ID and
+To be worth its name the audit reads more than `mountinfo`: mount ID and
 parent, major/minor, mount root, ro/rw and nosuid/nodev/noexec, propagation
 flags, per-target object identity via `statx`/`fdinfo`, the inherited-fd
-inventory, `NoNewPrivs`, and the seccomp mode. It shares the H5iFs semantics
-with the validator — one checks the plan, the other checks what was realized.
+inventory, `NoNewPrivs`, and the seccomp mode.
 
-**The audit needs an explicit exec barrier.** Today `Command::pre_exec` runs
-setup and then execs in the same breath, with no point for a second party to
-look. So the design adds a handshake: the child completes setup and **stops**
-(a `SIGSTOP` or a blocking wait on a pipe), the supervisor performs the audit,
-and only on success sends *go*; on mismatch it kills the child. Without this
+**The audit needs an explicit exec barrier.** `Command::pre_exec` runs setup
+and then execs in the same breath, with no point for a second party to look.
+So the design adds a handshake: the child completes setup and **stops** (a
+`SIGSTOP` or a blocking wait on a pipe), the supervisor performs the audit,
+and only on success sends *go*; on mismatch it kills the child. Without that
 barrier "audit before exec" has nowhere to stand.
 
-## VF.5b. Race-free mount construction
+## P4. Race-free mount construction
 
 The audit is a net; prevention is the floor under it, and it belongs in the
-setup code, not in a theorem. Two disciplines:
+setup code. Two disciplines:
 
 - **Resolution.** Every path the privileged setup opens on the adversarial
   worktree goes through `openat2` with `RESOLVE_NO_SYMLINKS` and
   `RESOLVE_BENEATH`, then fd-relative operations only — no second lookup of a
-  path already checked. This is what closes the check-vs-mount window at the
+  path already checked. That is what closes the check-vs-mount window at the
   resolution layer.
 - **Mount by handle.** `openat2` alone does not remove races in path-based
   `mount(2)`, whose source and destination are re-resolved by string. Where
@@ -9602,278 +8855,9 @@ setup code, not in a theorem. Two disciplines:
   mounted is the object checked, by descriptor identity, not by re-walked
   path.
 
-The setup state machine (VF.2) treats these as obligations on its mount steps;
-VF.5's interleaving quantifier is what turns "we call `openat2`" into a
-property that survives an attacker acting between the steps.
-
-## VF.6. Optional product: `verified-cow` workspace backend
-
-If the model matures, it becomes a real backend, not a permanent toy — but the
-target is a **workspace filesystem for `/work`, not a general FS.** A
-copy-on-write view over an immutable base snapshot plus a writable delta,
-exported as a git patch:
-
-```
-[workspace]
-backend = "host"          # today: live host sharing, the default
-# backend = "verified-cow" # isolated overlay with a verified core
-```
-
-Constrained from the start, which is what makes it tractable: base read-only,
-writes only to the delta, nothing outside `/work` representable, no device
-nodes, no setuid/setgid, no dangerous xattrs, symlinks confined to the
-workspace, host paths never re-resolved per request, output is a git patch.
-
-Crash safety, stated precisely, because "no crash safety, ever" is too broad:
-the disposable **delta** carries no durability or recovery guarantee (a
-crashed daemon means a discarded box), but "a daemon crash cannot corrupt the
-immutable base or touch the host" is a **safety requirement that holds across
-crashes**, not something disposability waives.
-
-**Concurrency is not merely deferred — it is designed out of v1.** A FUSE
-backend cannot ship as "sequential model, concurrency out of scope": the
-daemon serves concurrent requests. The v1 daemon serializes every request
-through a single queue and makes that serialization point the model boundary
-(the DaisyNFS move — concentrate concurrency in one place), and the FUSE
-cache, writeback, and mmap paths are disabled or restricted so there is no
-second, unmodeled ordering.
-
-The executable core is `handle : FsState → Request → Except Err (FsState ×
-Response × List StorageEffect)`, with `handle_preserves_wellformed`,
-`effects_are_authorized`, and `immutable_base_unchanged` (over the
-`BaseProjection`, not content alone). The honest label is **"Lean-verified
-filesystem authorization and state-transition core,"** not "fully verified
-filesystem", and not "verified backend" at all until it is settled *how* the
-core executes — Lean-generated core, Rust port under DRT, or Verus (VF.7) —
-each of which licenses a different claim. The unverified Rust adapter that
-translates FUSE requests to `Request`s must hold no ambient authority beyond
-the base/delta fds and whatever pre-opened control fds it needs (`Landlock`ed
-to exactly those, no path-opening API), and is fuzzed at the protocol layer.
-
-**Patch export is its own security boundary.** The output is a git patch
-applied on the host, and `git apply` has traversed outside the working tree
-via a patch that creates a symlink then writes through it (CVE-2023-23946). So
-export is not an afterthought: a safe exporter/validator, with
-`exported_effects_confined` — every effect an applied patch produces stays
-within `/work` and follows no symlink out of it — before any host apply.
-
-**This backend does not change the current UX or default.** Live host sharing
-of the disposable worktree stays the default; `verified-cow` is the
-patch-only, feature-restricted tier for hostile packages or strong
-prompt-injection exposure. Host-side viewing is `box diff` / `box export`, not
-a live editor mount, at least at first.
-
-## VF.7. Two decision points, named not resolved
-
-The order below defers these on purpose; they are called out so the choice is
-deliberate when it arrives.
-
-- **Verification boundary (DaisyNFS's lesson).** DaisyNFS chose the NFS
-  protocol as its boundary, not the VFS/FUSE hooks, precisely to get
-  coarse-grained operations and dodge the kernel-callback swamp. If H5iFs
-  grows a daemon, its boundary is chosen for *provability* — a FUSE-lowlevel
-  subset with the cache off, or a 9p-style protocol — not for feature
-  completeness. The unverified adapter stays thin by construction.
-- **Lean vs Verus for the daemon.** The semantics and validator layers are
-  Lean, continuous with the kept `H5iSpec`. But a *daemon implementation*
-  wants either Coq/Lean-style extraction (a gap) or Verus, which verifies the
-  shipping Rust directly (two OSDI'24 best papers, industrial use). The
-  read today: Lean for semantics/validator; revisit Verus at the daemon stage
-  so the executable core has no extraction gap. Not decided now.
-
-Also settled, so it is not reopened: **no delta crash-recovery** (disposable
-boxes; base+host confinement still holds across crashes — VF.6); **no
-in-process phase system** (Landlock only narrows, the wanted direction is
-widening, which belongs to a broker or a second box; an exec boundary closes
-only `FD_CLOEXEC` fds, so the transition still needs an explicit close
-discipline — VF.2); **no verified microVM/VMM** (SeKVM/VeriSMo scale for the
-wrong surface — the microVM/container escape vulnerabilities *relevant here*
-are filesystem-sharing and configuration bugs, virtiofsd and `source=/`
-injection among them, which the validator's mount-manifest check addresses;
-this is not a claim that VMM-side vulnerabilities do not exist).
-
-## VF.8. What is not modeled, stated up front
-
-The trusted base, same spirit as V5 and section 9:
-
-- **The kernel.** Landlock, namespaces, and `openat2` resolution flags are
-  assumed to honor their contracts. The conformance probes (kept from V4)
-  sample this; they do not discharge it. This is *more* important post-pivot,
-  because the validator's soundness is conditional on the H5iFs semantics
-  matching the kernel — a validator that is provably sound against a wrong
-  semantics is wrong soundly.
-- **The FUSE protocol adapter** (if VF.6 is built): unverified, kept thin and
-  authority-starved, fuzzed, not proved.
-- **Concurrency.** The v1 model is sequential. A daemon serving concurrent
-  requests needs the DaisyNFS move (concentrate concurrency in one verified
-  layer) before any concurrent theorem means anything.
-- **Timing, cache, and metadata side channels; the network egress path;
-  the seccomp filter semantics.** As in V5.
-- **The Lean toolchain and the Rust port of the checker.** The checker-level
-  DRT is the control on the port, not a proof of it.
-
-## VF.9. Related work this rests on
-
-The survey that reset the direction (2026-08-16). Each entry states what the
-work *proves* and how H5iFs differs, so it is not read as "we do what they do,
-harder":
-
-- **FSCQ (SOSP'15), DFSCQ (SOSP'17), Yggdrasil (OSDI'16).** Prove functional
-  correctness and crash consistency of a real FS against a benign caller.
-  H5iFs proves neither — it drops crash safety entirely and targets authority
-  under a hostile caller. Their cost is the point: BilbyFs's 13:1
-  proof-to-code ratio, almost all crash/refinement, is what dropping it buys.
-- **Perennial/GoJournal, DaisyNFS (OSDI'22).** Prove a concurrent, crash-safe
-  FS by confining concurrency and crash to one verified transaction layer and
-  reasoning sequentially above it. H5iFs borrows the *technique* (serialize at
-  one boundary, VF.6) and the boundary-choice lesson (VF.7), not the crash or
-  concurrency proofs.
-- **SFSCQ/DiskSec (OSDI'18).** Proves confidentiality (data noninterference)
-  for a FS via sealed blocks. Closest in spirit; differs in caller model
-  (benign) and in channels (block contents, where H5iFs also has path, error,
-  and metadata channels — VF.3). Its factoring is a *candidate*, not imported.
-- **SibylFS (SOSP'15), Metis/RefFS (FAST'24).** Executable reference model
-  differential-tested against real filesystems (no theorem about a caller).
-  H5iFs being executable ⇒ it is the oracle for the attack suite against live
-  backends before any daemon exists — the same use, an adversarial corpus.
-- **Verus (SOSP'24; two OSDI'24 best papers; Atmosphere SOSP'25).** Verifies
-  shipping Rust directly, closing the extraction gap. The VF.7 decision point
-  for the daemon; not adopted for the semantics/validator layers.
-- **WaVe (S&P'23).** Verifies a sandbox runtime's syscall boundary
-  (memory/fs/network isolation) with an explicit OS spec, but no
-  filesystem-*state* semantics. H5iFs is the missing fs-state model under a
-  claim like WaVe's.
-- **The threat, real and recent.** runc 2025 breakouts
-  (CVE-2025-31133/52565/52881, masked-path and mount races), CVE-2021-30465
-  (symlink-exchange mount swap), virtiofsd (CVE-2020-35517 device nodes,
-  CVE-2022-0358 SGID, Kata CVE-2026-44210 `source=/` injection), git
-  CVE-2023-23946 (`git apply` symlink traversal — the export boundary, VF.6).
-  None is a policy-compilation bug; all live in the filesystem-authority
-  surface H5iFs models.
-
-The positioning, stated as a search result rather than a proof of absence:
-**we have not found prior work combining authority confinement for a
-disposable workspace filesystem under an adversarial caller with a model that
-doubles as a per-run validator on shipped output.** A systematic literature
-review is owed before that is claimed externally; VF.1's "among systems
-surveyed here" hedge stands until it is done.
-
-## VF.10. The order
-
-1. **`lean/H5iFs/` semantics.** Object graph, symlink/hardlink/rename, ordered
-   mounts, fd table, setup state machine — built as the validator's semantics
-   module from line one, not a standalone toy. Absorb `Predict.lean`'s
-   resolver. Exit: the 7 attacks (VF.3) are each expressible as a
-   counterexample against a weak setup, and `every_effect_authorized` holds
-   over an adversarial initial state and attacker interleaving once the
-   defenses are in. Theorems check in CI.
-   **Built, 2026-08-16** (26 theorems, no `sorry`/`admit`, checked by
-   `lake build` — H5iFs is a default target). `Core` (object graph +
-   symlink-aware, fuel-bounded resolution + well-formedness), `Mount` (ordered
-   mounts, `effectivePermission`, top-mount lemma), `Fd` (descriptors as
-   capabilities, `closeForbidden` invariant, two proved lemmas). `Attacks`
-   machine-checks six amplifiers by `decide`: #1 prevented by the component-
-   path representation, #2 symlink escape, #3 fd smuggling, #5 mount-order
-   shadowing, #6 hardlink amplification, #7 setup TOCTOU. `Setup` models the
-   interleaved `SetupEvent` schedule and proves `runFrozen_sound` — the
-   `setup_rejects_or_confines` result — over *any* attacker interleaving, with
-   the check-then-use counterexample beside it. `Theorems` proves the central
-   trace-level `every_effect_authorized` and the `integrity_outside_writable`
-   corollary (the content half of the `ProtectedProjection`). Still deferred,
-   and correctly so: #4 (parent-allow/child-deny) is a validator
-   representability check (step 2), and the full `ProtectedProjection` beyond
-   content lands with the validator's metadata handling.
-2. **The mount manifest + validator.** Extend `EffectiveConfig` with ordered
-   mounts and classes; write `validate` + `validate_sound`; run the real Lean
-   checker over CI cases; the first two claims (`writes_confined`,
-   `cache_readonly`) into the receipt. Exit: validator green on the corpus and
-   on this repo's own profiles, `ValidatedPlan` typestate in place so `spawn`
-   cannot bypass it.
-   **Lean spec built, 2026-08-16** (`H5iFs/Validate.lean`): `EffectivePlan`
-   (ro/rw grant paths + ordered mounts), `EffectivePlan.authority` (resolve
-   each grant through the measured world into the induced object authority),
-   `validate` (that authority is a policy subset), and `validate_sound`
-   straight from `every_effect_authorized`. The `cache_readonly` core is two
-   lemmas — `writable_only_from_rw` and `write_effect_needs_rw` (no write under
-   a non-rw mount). Accept/reject are `decide`-checked on the `Attacks` world:
-   a benign `/work` plan is accepted; a plan whose grant resolves through the
-   planted symlink or hard link to the secret is rejected. **Remaining:** the
-   Rust half — extend `EffectiveConfig`/mount manifest, `WorldEvidence` with
-   its completeness witness, the `--validate` mode + Rust port, checker-level
-   DRT, `ValidatedPlan` typestate, and the receipt fields (step 3).
-3. **The Rust port + checker-level DRT.** Port `validate` to Rust behind the
-   receipt; differential-test it against the Lean checker (`interferes_drt`
-   pattern). Exit: zero mismatches over the sweep; receipt renders in
-   `box status`.
-   **Port + DRT built, 2026-08-16.** `h5i-spec --validate` exposes the Lean
-   checker (JSON: `{policy, world, plan}` → verdict array).
-   `h5i_sandbox::fs_authority` is the Rust port — `FsState`, symlink-aware
-   fuel-bounded `resolve`, and `validate`, mirroring `Core`/`Validate` line for
-   line — with unit tests for the accept/reject/loop cases.
-   `tests/validate_drt.rs` diffs the port against the Lean checker over 200
-   generated worlds (symlinks, aliases, loops) per run, green across seeds and
-   wired into the Lean CI lane.
-   **Production wire built, 2026-08-16.** The manifest already existed
-   (`EffectiveConfig.binds` carry `BindKind` classes and order; `landlock.ro`/
-   `rw`). `effective::validate_effective` re-checks the shipped config against
-   the declared policy: `fs_subset`/`writes_confined` (the effective grants are
-   the declared grants minus the exists-filter — a translation-validation that
-   catches a `compute_effective` divergence), `cache_readonly` (the config-lock
-   and cache-ro *overlays* stay read-only; private/home-state/cache-rw are
-   writable by design), and `symlink_clean` (host measurement: no landlock
-   grant and no bind source or mountpoint beneath the worktree canonicalizes
-   out through a planted symlink — §VF.5; the bind mountpoints, where the
-   config-lock and private binds sit, are the runc-class surface). A drift
-   guard (`compute_effective_output_passes_the_validator`) runs
-   `validate_effective` over `compute_effective`'s output in CI, so
-   `declared_grants` cannot silently diverge. The
-   verdict is recorded in the `EnvManifest` (`fs_authority`), rendered in
-   `box status` (the `authorit:` line) and the console badge
-   (`authority_unconfined` colors the verdict). The gate lives at the single
-   spawn chokepoint (`build_confined_command`, after `compute_effective`) and,
-   when active, **fails closed** on `!confined()` — an invariant a legit config
-   always passes, verified by the real `home_bind_shadows` confined-run test —
-   so a run cannot bypass validation. **Fully opt-in for now** (`enforce_enabled`,
-   env `H5I_FS_AUTHORITY_ENFORCE=1`): with it unset — the default — the
-   validator never runs (no host measurement, no manifest field, no gate, zero
-   overhead), so default behavior is byte-for-byte as before this work. This is
-   the §V4 gating discipline made explicit: the new gate earns trust opt-in
-   before it ever becomes the default.
-   **Honest gap:** the production check resolves via OS `canonicalize`, not the
-   proved `FsState.resolve`; feeding a measured `FsState` through the proved
-   `validate` (fully closing model↔production, and the finite-evidence
-   completeness witness) remains future work, sampled meanwhile by the
-   conformance probes (§VF.8).
-4. **The mount realization audit + exec barrier.** Read-back diff against the
-   `ValidatedPlan` before exec (VF.5), behind the stop/audit/go handshake,
-   sharing the H5iFs semantics; abort-and-record on mismatch. Exit: a planted
-   mount mismatch is detected and fails the launch on a real process-tier box
-   (the probe harness, generalized).
-   **Audit core built, 2026-08-16** (`mount_audit`): the pure parse +
-   diff — `audit_mounts(expected, mountinfo)` returns `Missing` and
-   `WritableButExpectedRo` mismatches, last-mount-wins per target (the §VF.2
-   rule), with `expected_mounts(cfg)` deriving the plan from the bind manifest
-   and `audit_pid(pid, ...)` reading a stopped child's `/proc/<pid>/mountinfo`.
-   Five unit tests over synthetic `mountinfo` (consistent, ro-realized-rw,
-   missing, stacked-topmost, narrower-ro-ok). **Remaining, and flagged as
-   risky:** the stop/audit/go handshake in the live `pre_exec` path (`SIGSTOP`
-   the child after setup, audit, send *go* or kill) — delicate exec-path
-   surgery that needs a real process-tier box to validate, not landed here.
-5. **`verified-cow` spike (optional), two stages.**
-   *Stage 1:* read-only FUSE prototype over base+delta, executable core
-   reusing `handle`; the agent can build and test but not write. Exit: source
-   reads and a build run through the overlay.
-   *Stage 2:* writable copy-on-write, single-queue serialized; agent edits
-   land in the delta and surface in `box diff`; patch export behind
-   `exported_effects_confined`. Exit: `box diff`/`box export` round-trips a
-   real edit safely, and a hold/go decision on the Lean-vs-Verus boundary
-   (VF.7) with the daemon's real shape in hand. No commitment past this
-   without it.
-
-Step 1 is the first thing worth writing up on its own, and the first that is
-honest about being attack-driven rather than definition-driven. Everything
-after earns its status line here when it is driven, in this document's usual
-voice.
+These are obligations on the setup's mount steps: an attacker acting *between*
+two steps is the case they exist for, and the P3 read-back is what catches the
+residue.
 
 ---
 
@@ -10710,7 +9694,7 @@ demonstration, not a diff.
   scans (a planted nested-git and a private-path write are both filtered and
   named), and applies through the unchanged gates.
 
-Decision points, named not resolved, in the VF.7 discipline:
+Decision points, named not resolved:
 
 1. **The lane name.** `runner-observed` as a third lane string, against
    overloading `Grade` to express transport trust. The third string is
@@ -10898,8 +9882,8 @@ The build script is honest about the toolchain rather than demanding it. No
 `clang` that can target BPF means the object is not built, the crate still
 compiles, and the loader reports `unavailable` with the reason "built without
 the eBPF object". `H5I_BPF_REQUIRE=1` turns that into a build failure, which is
-what this lane's CI job sets, in the shape `H5I_DRT_REQUIRE` already
-established for the Lean lane.
+what this lane's CI job sets, so a lane that exists to prove the probe loads
+never passes by silently skipping it.
 
 The released binaries do **not** carry the probe, and that is stated rather
 than left to be discovered. The release matrix cross-builds musl targets inside

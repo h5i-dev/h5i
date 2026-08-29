@@ -66,15 +66,13 @@ pub use h5i_sandbox::{
 // on macOS/other targets in the cross-check job.
 #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub use h5i_sandbox::seccomp_notify;
-/// The kernel tiers' effective-config dump (ROADMAP.md §V2) — Linux only.
+/// The kernel tiers' effective-config dump (ROADMAP.md §P1) — Linux only.
 #[cfg(target_os = "linux")]
 pub use h5i_sandbox::effective;
-/// The filesystem-authority validator (ROADMAP.md §VF.4) — the Rust port of
-/// the Lean `H5iFs.validate`.
+/// The filesystem-authority validator (ROADMAP.md §P2).
 pub use h5i_sandbox::fs_authority;
 /// The macOS Seatbelt backend — compiled on every Unix target so its pure
-/// SBPL generator is testable (and differentially tested, ROADMAP §V3)
-/// from the Linux job.
+/// SBPL generator is testable from the Linux job.
 #[cfg(unix)]
 pub use h5i_sandbox::seatbelt;
 /// The runtime-detection lane (ROADMAP.md D1–D14). Re-exported unconditionally

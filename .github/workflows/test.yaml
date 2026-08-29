@@ -127,7 +127,7 @@ jobs:
     timeout-minutes: 25
     env:
       # Fail the build rather than ship a binary whose detector is permanently
-      # `unavailable`. The same shape as H5I_DRT_REQUIRE in the Lean lane.
+      # `unavailable`.
       H5I_BPF_REQUIRE: "1"
       # This job is about the Rust and the C, not the console bundle.
       H5I_SKIP_WEB_BUILD: "1"

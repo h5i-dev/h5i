@@ -628,7 +628,7 @@ fn create_pins_an_explicit_base_revision() {
     assert!(!r.work("old-base").join("later.txt").exists());
 }
 
-/// ROADMAP §V2 (M16 step 1): a kernel-tier create writes
+/// ROADMAP §P1: a kernel-tier create writes
 /// `policy.effective.json` from the same computation the sandbox applies and
 /// pins its digest in the manifest; a run rewrites it at the apply seam and
 /// pins the digest of what it enforced in the capture record. A workspace-tier

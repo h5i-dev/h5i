@@ -385,7 +385,7 @@ pub struct Signals {
     pub weak_isolation: bool,
     /// Runs exist and none of them was host-observed.
     pub box_claimed_only: bool,
-    /// The create-time filesystem-authority validator (§VF.4) found the
+    /// The create-time filesystem-authority validator (§P2) found the
     /// effective config not confined to the declared policy — a grant outside
     /// the declared subset, a write not declared writable, a read-only overlay
     /// left writable, or a grant escaping the worktree by symlink. A boundary

@@ -2136,7 +2136,7 @@ pub struct ResolvedPolicy {
     pub egress_proxy_port: Option<u16>,
     /// Runtime-only: where the kernel tiers write `policy.effective.json` —
     /// the enforced state, serialized at the apply seam inside
-    /// `build_confined_command` (ROADMAP.md §V2). Set by the host's `env` run
+    /// `build_confined_command` (ROADMAP.md §P1). Set by the host's `env` run
     /// paths; never serialized. Its digest is recorded per run in the capture
     /// record, not here.
     #[serde(skip)]
