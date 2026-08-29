@@ -955,6 +955,22 @@
       // element's constructor runs as `super()` with no arguments — the class
       // never sees the node it is being attached to — so the id arrives out of
       // band, exactly as the construction stack works in a real engine.
+      //
+      // Anything else with no id is a page calling `new Element()`, which DOM
+      // §4.4 and §4.9 say is not a thing: `Node`, `Element` and `CharacterData`
+      // are not constructible, and every engine throws here. Ours did not, and
+      // the result was the same defect `new Text("x")` had — `_id` became
+      // `null`, the primitives read that as node 0, and node 0 is the document.
+      // `new Element().textContent = "x"` wrote through to the document and
+      // took the process down with it.
+      //
+      // `Text` and `Comment` *are* constructible, and reach this with a real id
+      // because their own constructors make a node first.
+      if (typeof id !== "number" && upgrading === null) {
+        throw new TypeError(
+          "Illegal constructor: this interface is not constructible",
+        );
+      }
       this._id = id === undefined ? upgrading : id;
     }
 

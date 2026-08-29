@@ -4093,6 +4093,41 @@ fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
         script.eval_value("String(new Text().data) + '|' + new Text().nodeType").unwrap(),
         "|3"
     );
+
+    // And the interfaces that are *not* constructible say so, which is the same
+    // defect wearing the other hat: `new Element()` left `_id` as `null`, the
+    // primitives read that as node 0, and node 0 is the document — so
+    // `new Element().textContent = "x"` wrote through to the document and took
+    // the process down with it. DOM §4.4 and §4.9: these throw in every engine.
+    for name in ["Element", "Node", "CharacterData"] {
+        assert_eq!(
+            script
+                .eval_value(&format!(
+                    "(() => {{ try {{ new {name}(); return 'built' }} \
+                       catch (e) {{ return e.constructor.name }} }})()"
+                ))
+                .unwrap(),
+            "TypeError",
+            "new {name}() did not throw"
+        );
+    }
+
+    // A custom element still upgrades, which is the one path that legitimately
+    // reaches those constructors with no id in hand.
+    let (_page, mut custom) = page_and_script(
+        "<html><body><x-thing id='t'>light</x-thing></body></html>",
+    );
+    assert_eq!(
+        custom
+            .eval_value(
+                "(() => { class Thing extends HTMLElement { \
+                     get probe() { return 'upgraded:' + this.id } } \
+                   customElements.define('x-thing', Thing); \
+                   return document.getElementById('t').probe })()"
+            )
+            .unwrap(),
+        "upgraded:t"
+    );
 }
 
 #[test]
