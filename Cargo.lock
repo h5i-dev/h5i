@@ -1987,6 +1987,7 @@ dependencies = [
  "h5i-error",
  "httpdate",
  "image",
+ "libc",
  "parley",
  "portable-atomic",
  "psl",

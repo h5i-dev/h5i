@@ -4051,6 +4051,102 @@ fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
 }
 
 #[test]
+fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
+    // `new Text("x")` is a page building a node — DOM §4.10 says it may — and
+    // this file's classes take a *node id* as their first argument. Without a
+    // way to tell those apart the page got a wrapper whose id was the string
+    // "x", which the primitives converted to 0, which is the document. So
+    // `new Text("x").nodeType` was **9**, and appending it anywhere put the
+    // document inside one of its own descendants.
+    //
+    // What that cost: `dom/events/Event-dispatch-click.html` does exactly this
+    // (`input.appendChild(new Text("does not matter"))`) and the engine walked
+    // the resulting cycle for ever, at 100% of a core, past every deadline it
+    // has — those guard the script realm, and no script is running while layout
+    // walks. Six of them were found spinning on one machine, the oldest for
+    // seven hours. The file now reports in 0.18 s.
+    let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const t = new Text('hello'); const c = new Comment('note'); \
+                   return [t.nodeType, JSON.stringify(t.data), t.wholeText, \
+                           c.nodeType, JSON.stringify(c.data)].join('|') })()"
+            )
+            .unwrap(),
+        "3|\"hello\"|hello|8|\"note\"",
+        "a constructed Text or Comment is not a real node"
+    );
+    // And it is a node the tree accepts, which is the half that was hanging.
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const d = document.getElementById('d'); \
+                   const t = new Text('hi'); d.appendChild(t); \
+                   return d.textContent + '|' + (t.parentNode === d) })()"
+            )
+            .unwrap(),
+        "hi|true"
+    );
+    // No argument is the empty string, not the document.
+    assert_eq!(
+        script.eval_value("String(new Text().data) + '|' + new Text().nodeType").unwrap(),
+        "|3"
+    );
+}
+
+#[test]
+fn a_node_cannot_be_put_inside_itself() {
+    // The rule that makes the hang above impossible to reach again, from any
+    // direction rather than from the one that was found.
+    //
+    // It is checked twice on purpose. Here, *before* the child is unlinked from
+    // its parent, because that is the only moment the ancestor relationship
+    // still exists — the spec orders it that way for exactly this reason. And
+    // again in `dom_api.rs`, which is the last door before blitz and the only
+    // one a raw primitive call goes through. Neither check can replace the
+    // other: this one cannot see a primitive call, and that one cannot see an
+    // ancestry that the detach has already erased.
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='outer'><div id='inner'></div></div></body></html>",
+    );
+    for attempt in [
+        "document.getElementById('inner').appendChild(document.documentElement)",
+        "document.getElementById('inner').appendChild(document.getElementById('outer'))",
+        "document.getElementById('outer').appendChild(document.getElementById('outer'))",
+        "document.getElementById('inner').insertBefore(document.getElementById('outer'), null)",
+    ] {
+        let refused = script
+            .eval_value(&format!(
+                "(() => {{ try {{ {attempt}; return 'allowed' }} \
+                   catch (e) {{ return e.name }} }})()"
+            ))
+            .unwrap();
+        assert_eq!(refused, "HierarchyRequestError", "{attempt} was not refused");
+    }
+
+    // The primitive underneath refuses it too, which is what stops a cycle that
+    // never passed through the code above.
+    assert!(
+        script
+            .eval_value(
+                "(() => { try { __h5i.append(document.getElementById('inner')._id, \
+                   document.documentElement._id); return 'allowed' } \
+                   catch (e) { return String(e) } })()"
+            )
+            .unwrap()
+            .contains("HierarchyRequestError"),
+        "the primitive allowed a cycle"
+    );
+
+    // Still a working document afterwards, rather than a half-moved tree.
+    assert_eq!(
+        script.eval_value("document.getElementById('inner').parentNode.id").unwrap(),
+        "outer"
+    );
+}
+
+#[test]
 fn a_gap_is_named_by_the_object_it_was_read_from() {
     // The reporting contract, pinned where it now lives: at the *end* of a
     // node's prototype chain rather than in a proxy in front of every wrapper.

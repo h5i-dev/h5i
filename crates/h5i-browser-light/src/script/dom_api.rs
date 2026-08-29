@@ -587,10 +587,50 @@ fn set_scroll_top(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     Ok(JsValue::undefined())
 }
 
+/// Would putting `child` inside `parent` make the tree cyclic?
+///
+/// DOM §4.2.3 forbids it — a node cannot contain itself or its own ancestor —
+/// and the prelude checks it for the nodes it can see. This is the same check
+/// where nothing can get past it, because the consequence is not a wrong answer
+/// but a **hang**: blitz walks the tree for layout, and a cycle means it walks
+/// for ever, at 100% of a core, past every deadline this engine has. Those
+/// deadlines guard the script realm; there is no script running while layout
+/// walks, so none of them fire.
+///
+/// Reachable from ordinary page code, which is what makes it this file's
+/// problem rather than the prelude's: `new Text("x")` used to hand back a
+/// wrapper whose id was the string `"x"`, and the conversion below turns
+/// anything non-numeric into 0 — the document itself. Appending *that* to a
+/// div spliced the whole document under one of its own descendants. One line in
+/// a WPT file left six engines spinning on this machine for seven hours.
+fn would_cycle(doc: &blitz_dom::BaseDocument, parent: usize, child: usize) -> bool {
+    let mut at = Some(parent);
+    while let Some(id) = at {
+        if id == child {
+            return true;
+        }
+        at = doc.get_node(id).and_then(|node| node.parent);
+    }
+    false
+}
+
+/// The error a refused insertion reports, in the spec's own terms.
+fn hierarchy_request(what: &str) -> JsError {
+    JsError::from_opaque(
+        js_string!(format!(
+            "HierarchyRequestError: {what} would make a node contain itself"
+        ))
+        .into(),
+    )
+}
+
 fn append(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let parent_id = arg_id(args, 0, context)?;
     let child_id = arg_id(args, 1, context)?;
     let host = host(context)?;
+    if would_cycle(&host.dom.borrow(), parent_id, child_id) {
+        return Err(hierarchy_request("appending a node"));
+    }
     guard_mutation(&host, "appending a node", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
@@ -613,6 +653,13 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         // only in the prelude because a panic is not a DOM error: it takes the
         // page, the snapshot and the receipts with it, and WPT reaches this
         // path on purpose (`ChildNode-after`, `-before`, `-replaceWith`).
+        // The same cycle rule `append` carries, at the other door into the tree:
+        // the new node must not already contain the anchor it is going before.
+        if let Some(parent) = doc.get_node(anchor).and_then(|node| node.parent)
+            && would_cycle(&doc, parent, new_id)
+        {
+            return Err(hierarchy_request("inserting a node"));
+        }
         if doc.get_node(anchor).map(|node| node.parent.is_none()).unwrap_or(true) {
             return Err(boa_engine::JsNativeError::error()
                 .with_message(

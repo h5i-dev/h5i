@@ -216,6 +216,18 @@
     return knownDocumentNode;
   }
 
+  /// Tells "wrap the node that already has this id" apart from "a page called
+  /// `new Text('hello')`".
+  ///
+  /// `Text` and `Comment` are constructible interfaces — DOM §4.10 and §4.11
+  /// say a page may build one — and this file's own classes take a *node id* as
+  /// their first argument. Without a way to tell the two apart, `new Text("x")`
+  /// built a wrapper whose id was the string `"x"`, which the primitives
+  /// converted to 0, which is the document. The page got the document back
+  /// dressed as a text node, and appending it anywhere put the document inside
+  /// itself. See `would_cycle` in `dom_api.rs` for what that cost.
+  const FROM_ID = Symbol("h5i node id");
+
   function wrap(id) {
     if (id === null || id === undefined) return null;
     let existing = wrappers.get(id);
@@ -235,9 +247,9 @@
     let raw;
     let label;
     const kind = api.nodeKind(id);
-    if (kind === 8) { raw = new Comment(id); label = "Comment"; }
+    if (kind === 8) { raw = new Comment(id, FROM_ID); label = "Comment"; }
     else if (kind === 1) { raw = constructElement(id); label = "Element"; }
-    else { raw = new Text(id); label = "Text"; }
+    else { raw = new Text(id, FROM_ID); label = "Text"; }
 
     // Labelled by what the node actually is. Calling a text node "Element"
     // reported `Element.tagName` as missing when what happened was a page
@@ -1149,7 +1161,28 @@
       }
     }
 
+    /// DOM §4.2.3's first pre-insertion step: a node may not be put inside
+    /// itself or inside anything it already contains.
+    ///
+    /// **Before the detach, which is the whole point.** `dom_api.rs` refuses the
+    /// same thing, but by the time it is asked the node has been unlinked from
+    /// its parent and the ancestor relationship it would have seen is gone — so
+    /// the refusal there catches a raw primitive call and cannot catch this. The
+    /// two are not redundant; they cover different halves of the same rule.
+    _refuseIfAncestor(child) {
+      if (!child || child.nodeType === 11) return;
+      for (let at = this; at; at = at.parentNode) {
+        if (at === child || at._id === child._id) {
+          throw new DOMException(
+            "the new child contains the parent it was being put inside",
+            "HierarchyRequestError",
+          );
+        }
+      }
+    }
+
     appendChild(child) {
+      this._refuseIfAncestor(child);
       // Inserting a fragment inserts its children and leaves the fragment
       // behind, which is the whole reason a fragment exists.
       if (child && child.nodeType === 11) {
@@ -1170,6 +1203,7 @@
     }
     insertBefore(child, anchor) {
       if (!anchor) return this.appendChild(child);
+      this._refuseIfAncestor(child);
       // The spec's pre-insert step, and not a formality: without it the anchor
       // reaches blitz, which inserts relative to the anchor's parent and
       // unwraps it. A caller that passes a node from somewhere else is asking
@@ -1594,6 +1628,13 @@
   }
 
   class Text extends CharacterData {
+    /// `new Text(data)`, which is a page building a node, unless `FROM_ID` says
+    /// this is the file wrapping one it already has.
+    constructor(data, token) {
+      super(token === FROM_ID
+        ? data
+        : api.createText(data === undefined ? "" : String(data)));
+    }
     get wholeText() {
       // Adjacent text nodes read as one run, which is what the property means.
       let text = "";
@@ -1622,6 +1663,12 @@
   // A real comment node, not a text node wearing a hat: a marker that showed up
   // in `textContent` would appear in the outline an agent reads.
   class Comment extends CharacterData {
+    /// Same rule as `Text`: `new Comment(data)` is a page building a node.
+    constructor(data, token) {
+      super(token === FROM_ID
+        ? data
+        : api.createComment(data === undefined ? "" : String(data)));
+    }
     get nodeType() { return 8; }
     get nodeValue() { return api.getText(this._id); }
   }
