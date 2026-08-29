@@ -801,41 +801,41 @@
 <div class="slide active" style="gap:28px;">
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:1000px;">
-    <div class="hero-badge">Fail-closed request records · fenced page content · enforced human takeover · an optional sandbox</div>
+    <div class="hero-badge">Run more browser tasks · Control where agents can go · Review what they accessed</div>
     <h1 style="font-size:clamp(2.6rem,5.4vw,4.4rem);">A Secure, Auditable Browser<br><span class="shine-text">for AI Agents</span></h1>
-    <ul class="lede" style="list-style:none;max-width:1040px;margin:28px 0 0;padding:0;font-size:clamp(2rem,3.8vw,3rem);line-height:1.4;display:flex;flex-direction:column;gap:20px;">
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span>Agents browse now. h5i gives them a browser you can <span class="cyan">read back</span>.</li>
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span>The engine <span class="cyan">is</span> the HTTP client, so a request that is not in the log <span class="cyan">did not happen</span>.</li>
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Auditable by default. Containable on demand.</span></li>
+    <ul class="lede" style="list-style:none;max-width:1040px;margin:28px 0 0;padding:0;font-size:clamp(1.35rem,2.5vw,1.95rem);line-height:1.4;display:flex;flex-direction:column;gap:18px;">
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Run more browser tasks in parallel.</span> ~5&times; faster reads with ~80% less peak memory.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Start sandboxed by default.</span> Isolate the browser or the agent&#39;s entire workflow inside a container or microVM.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Review exactly what happened.</span> Every browser action and network request is recorded.</li>
     </ul>
-    <p class="mono" style="margin-top:30px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">&#9733; <span style="color:var(--ink);">500+ GitHub stars</span> &#183; Apache 2.0 &#183; <span class="cyan">local-first, no hosted service</span></p>
+    <p class="mono" style="margin-top:30px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">&#9733; <span style="color:var(--ink);">580+ GitHub stars</span> &#183; Apache 2.0 &#183; <span class="cyan">local-first, no hosted service</span></p>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 2 — Why now (agents got a browser before anyone got a record)
+     SLIDE 2 — Why now (browsing for agents is too heavy and too risky)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:980px;">
     <div class="section-tag">Why now</div>
-    <h2>Agents got a browser<br>before anyone got <span class="red">a record</span>.</h2>
+    <h2>Web browsing for agents is<br><span class="red">too heavy</span> and <span class="red">too risky</span>.</h2>
     <div class="g2" style="margin-top:36px;align-items:stretch;gap:24px;">
       <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
         <span class="pill red">today</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Driving is not observing</h3>
-        <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>A driver reconstructs what a browser reached, with gaps</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Every page is untrusted input wearing the shape of context</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>The agent&#39;s browser is usually just your browser</li>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Browsers built for people</h3>
+        <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.05rem,1.8vw,1.3rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Browsers designed for people are too complex, slow, and memory-intensive</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Malicious pages can manipulate agents into harmful actions, such as leaking credentials</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Existing browser tools do not provide a clear, complete audit trail of what the agent did</li>
         </ul>
       </div>
       <div class="card" style="border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
         <span class="pill green">with h5i</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">A decision record, not a trace</h3>
-        <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Policy, then record, then the wire. Never out of order</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Page text arrives fenced as data, with no escape sequences</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>One flag puts the same session inside a sandbox</li>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">A browser built for agents</h3>
+        <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.05rem,1.8vw,1.3rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>~5&times; faster reads with ~80% less peak memory on simple websites</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Sandboxing and network rules limit what a manipulated agent can access</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Every browser action and network request is recorded in one reviewable timeline</li>
         </ul>
       </div>
     </div>
