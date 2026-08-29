@@ -354,9 +354,13 @@ pub fn grants_for(names: &[String]) -> Vec<SecretGrant> {
 /// rather than like the sandbox denied one file. A default sandbox that turns
 /// every public URL into a DNS error is a default nobody would keep.
 ///
-/// Only the browser's profile, not [`sandbox::Profile::builtin`]'s defaults: a
-/// policy's digest is taken over its serialization, so widening the defaults
-/// would change the digest of every box already pinned on disk.
+/// The box profiles now carry the well-known locations themselves, as a static
+/// list (`sandbox_policy`'s `RESOLVER_PATHS`), because a box's policy is
+/// serialized and digested and a runtime-resolved grant would give one profile
+/// a different digest on every host. This is the other half: a browser session
+/// on *this machine* builds its sandbox at runtime and pins no such digest, so
+/// it can follow the link wherever it actually goes and cover the hosts that
+/// list does not name.
 fn resolver_grants() -> Vec<PathBuf> {
     let conf = Path::new("/etc/resolv.conf");
     match conf.canonicalize() {

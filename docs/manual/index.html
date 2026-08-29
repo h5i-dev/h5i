@@ -48,7 +48,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
-  <link rel="stylesheet" href="/_static/blog.css?v=98424fdf62">
+  <link rel="stylesheet" href="/_static/blog.css?v=ccfaa76598">
   <style>
     /* The manual is the site's article layout with a two-level index: the
        measure sits beside a sticky section list, both hung off the sheet's
@@ -314,7 +314,7 @@ agent and the human can operate on.</p>
 <hr />
 <h2 id="the-loop">The loop</h2>
 <p>Reading and acting on a page, which needs nothing else:</p>
-<pre><code class="language-bash">h5i browser open https://example.com --allow example.com
+<pre><code class="language-bash">h5i browser open https://example.com       # the page grants itself; `--allow` adds more
 h5i browser snapshot                       # the outline, with @ref handles
 h5i browser click @e3
 h5i browser requests                       # what it reached, and what was refused
@@ -466,6 +466,16 @@ whether or not there is a box.</p>
 status line:</p>
 <pre><code>requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 </code></pre>
+<h4 id="the-page-grants-itself">The page grants itself</h4>
+<p>A session reaches the URL it was opened on, and nothing else remote. Naming a
+URL and then naming its origin again is ceremony that teaches nothing, so
+<code>open</code> grants the page it was given exactly as <code>read</code> grants its targets.
+<code>--allow</code> is for the origins beyond it: an API the page calls, a CDN it pulls
+from. Loopback is reachable by default because it is the dev server, and
+<code>--no-loopback</code> takes that back.</p>
+<p>The grant is the page and not "and whatever this page pulls in". An off-origin
+subresource is still refused, and still says so in the request log, which is
+the part a wider default would have given away.</p>
 <h3 id="read-one-page-no-session"><code>read</code>: one page, no session</h3>
 <pre><code class="language-bash">h5i browser read https://example.com
 h5i browser read url1 url2 url3 --json
@@ -641,15 +651,39 @@ problem. A spawn that fails falls back to one process on its own, and says so.</
 h5i browser open https://example.com --in web
 h5i browser snapshot  # identical verb, identical answer
 </code></pre>
-<p><code>--in</code> changes nothing you type. It changes <strong>who saw the network</strong>. The box
-enforces its egress allowlist at its own boundary, which is outside the thing
-being described, so the session's lane is upgraded:</p>
+<p><code>--in</code> changes nothing you type. It changes <strong>who saw the network</strong>, when the
+box's tier is one that applies its egress allowlist at its own boundary. That
+boundary is outside the thing being described, so the session's lane is
+upgraded:</p>
 <pre><code>requests : host-observed (also seen at the box's boundary, outside the engine)
 </code></pre>
 <p>Being in a box is not by itself enough to earn that line. A box whose policy
 lets the engine reach the whole host network corroborates nothing, and such a
 session stays <code>engine-claimed</code>. What earns <code>host-observed</code> is an egress
 allowlist or a <code>deny</code> net mode — enforcement outside the engine.</p>
+<p><strong>Can <code>--allow</code> get around the box's <code>net.egress</code>?</strong> No, and the reason is at
+creation rather than in the browser. A profile that declares an egress
+allowlist cannot be created at a tier that cannot enforce one:</p>
+<pre><code>$ h5i box create webtest --profile browser --isolation process
+Error: profile 'browser' sets a net.egress domain allowlist, but isolation
+'process' cannot enforce it (process-v1 supports net.mode deny|host only) —
+use a supervisor/container backend or drop net.egress (fail-closed)
+</code></pre>
+<p>So a box whose list reaches the engine is a box with a boundary underneath it.
+h5i does hand that list to the engine, and <code>--allow</code> and the start URL add to
+it, but what they add is what the engine will <em>ask</em> for. What leaves the box is
+still decided outside it:</p>
+<pre><code>$ h5i browser read https://example.com --in webbox   # webbox allows en.wikipedia.org
+  confined : box webbox, policy 2bb35dc2fa6c...
+https://example.com: could not open https://example.com/: denied by policy:
+`example.com` could not be resolved: Temporary failure in name resolution
+</code></pre>
+<p>The engine granted the target it was handed, exactly as <code>read</code> always does, and
+the box's pinned DNS refused it anyway.</p>
+<p>A box that declares no egress list has nothing to widen: its net mode is host
+or deny, nothing outside the engine is deciding about hosts, and a session
+there keeps saying <code>engine-claimed</code>. That line, not the tier's name, is what
+says whether anything corroborated the request log.</p>
 <p>Two mechanics are worth knowing, because they explain the shape of the feature:</p>
 <ul>
 <li><strong>The engine runs as a service, not as a run.</strong> <code>h5i box run</code> holds the box's
@@ -772,7 +806,8 @@ host-observed row carrying the exact argv h5i executed:</p>
   stays a read that found none. A silent fallback would move a session's traffic
   outside the engine's log without anyone asking, which is the one thing that
   log promises cannot happen.</li>
-<li><strong>It runs where the session runs.</strong> A boxed session runs yt-dlp <em>inside its
+<li><strong>It runs where the session runs, and with no session it runs here.</strong> A
+  boxed session runs yt-dlp <em>inside its
   box</em>, and a boxed session whose box has no yt-dlp is refused rather than
   served from the host: running it outside would move the session's network to a
   boundary its caller did not choose. Whether that box has an egress boundary at
@@ -807,6 +842,16 @@ if any part of a run failed, so a run that wrote the transcript and then hit a
 rate limit on a second language is a complete answer reported as a failure. h5i
 reports it as an answer, and puts the partial failure in the note beside it,
 because that is what explains a missing title.</p>
+<p><strong>No session is needed when <code>--url</code> names the media.</strong> There is no page here to
+render, so the only thing a session was ever contributing to this lane is a
+placement, and a run with none happens on this machine. It says exactly that in
+its <code>evidence</code> line, it opens no session and leaves none behind, and it is
+still written down: <code>h5i browser audit --no-session</code> lists the runs that belong
+to no session, with the same argv and the same host-observed lane as a row
+inside a session's timeline. They are kept out of that timeline on purpose,
+because a run that was not part of a session must not appear inside one. To put
+the run behind a boundary, open a session with <code>--in &lt;box&gt;</code> and it runs in
+there.</p>
 <p>A host session's helper is contained by whatever started h5i, and the reply says
 that too rather than implying a boundary that is not there. Automatic captions
 are labelled as automatic, because a machine transcription mishears names and a
@@ -2587,6 +2632,18 @@ so "what was enforced" is never a matter of trust.</p>
 <p>Runtime scoping is not cosmetic: a Claude box must not get Codex's credentials
 or egress to OpenAI, because a prompt-injected agent could otherwise read the
 <em>other</em> runtime's token and use it against an allowlisted host.</p>
+<p>A note on the one grant nobody would think to write. The built-in read set
+carries the handful of paths <code>/etc/resolv.conf</code> is a symlink <em>to</em>
+(<code>/mnt/wsl/resolv.conf</code> on WSL, the systemd-resolved and resolvconf locations
+under <code>/run</code>), one file each. <code>/etc</code> alone is not enough, because Landlock
+follows the link to a path the box was never granted, and what that costs does
+not look like a denied file: <code>getaddrinfo</code> answers "Temporary failure in name
+resolution" and a <code>net.mode = "host"</code> box reads as a machine with no network.
+The entries are the same on every host whether the files exist or not, because
+a grant resolved from the local <code>/etc</code> would give one profile a different
+policy digest on every machine. <strong>A custom profile that sets <code>fs.read</code>
+replaces that list</strong>, so a box of your own with <code>mode = "host"</code> needs the line
+for your host, which <code>readlink -f /etc/resolv.conf</code> names.</p>
 <p>Custom profiles live in <code>.h5i/env.toml</code>:</p>
 <pre><code class="language-toml">[profile.review]
 isolation = &quot;supervised&quot;

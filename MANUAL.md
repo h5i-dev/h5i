@@ -76,7 +76,7 @@ agent and the human can operate on.
 Reading and acting on a page, which needs nothing else:
 
 ```bash
-h5i browser open https://example.com --allow example.com
+h5i browser open https://example.com       # the page grants itself; `--allow` adds more
 h5i browser snapshot                       # the outline, with @ref handles
 h5i browser click @e3
 h5i browser requests                       # what it reached, and what was refused
@@ -232,6 +232,19 @@ status line:
 ```
 requests : engine-claimed (fail-closed, and the engine's own account of what it fetched)
 ```
+
+#### The page grants itself
+
+A session reaches the URL it was opened on, and nothing else remote. Naming a
+URL and then naming its origin again is ceremony that teaches nothing, so
+`open` grants the page it was given exactly as `read` grants its targets.
+`--allow` is for the origins beyond it: an API the page calls, a CDN it pulls
+from. Loopback is reachable by default because it is the dev server, and
+`--no-loopback` takes that back.
+
+The grant is the page and not "and whatever this page pulls in". An off-origin
+subresource is still refused, and still says so in the request log, which is
+the part a wider default would have given away.
 
 ### `read`: one page, no session
 
@@ -447,9 +460,10 @@ h5i browser open https://example.com --in web
 h5i browser snapshot  # identical verb, identical answer
 ```
 
-`--in` changes nothing you type. It changes **who saw the network**. The box
-enforces its egress allowlist at its own boundary, which is outside the thing
-being described, so the session's lane is upgraded:
+`--in` changes nothing you type. It changes **who saw the network**, when the
+box's tier is one that applies its egress allowlist at its own boundary. That
+boundary is outside the thing being described, so the session's lane is
+upgraded:
 
 ```
 requests : host-observed (also seen at the box's boundary, outside the engine)
@@ -459,6 +473,37 @@ Being in a box is not by itself enough to earn that line. A box whose policy
 lets the engine reach the whole host network corroborates nothing, and such a
 session stays `engine-claimed`. What earns `host-observed` is an egress
 allowlist or a `deny` net mode — enforcement outside the engine.
+
+**Can `--allow` get around the box's `net.egress`?** No, and the reason is at
+creation rather than in the browser. A profile that declares an egress
+allowlist cannot be created at a tier that cannot enforce one:
+
+```
+$ h5i box create webtest --profile browser --isolation process
+Error: profile 'browser' sets a net.egress domain allowlist, but isolation
+'process' cannot enforce it (process-v1 supports net.mode deny|host only) —
+use a supervisor/container backend or drop net.egress (fail-closed)
+```
+
+So a box whose list reaches the engine is a box with a boundary underneath it.
+h5i does hand that list to the engine, and `--allow` and the start URL add to
+it, but what they add is what the engine will *ask* for. What leaves the box is
+still decided outside it:
+
+```
+$ h5i browser read https://example.com --in webbox   # webbox allows en.wikipedia.org
+  confined : box webbox, policy 2bb35dc2fa6c...
+https://example.com: could not open https://example.com/: denied by policy:
+`example.com` could not be resolved: Temporary failure in name resolution
+```
+
+The engine granted the target it was handed, exactly as `read` always does, and
+the box's pinned DNS refused it anyway.
+
+A box that declares no egress list has nothing to widen: its net mode is host
+or deny, nothing outside the engine is deciding about hosts, and a session
+there keeps saying `engine-claimed`. That line, not the tier's name, is what
+says whether anything corroborated the request log.
 
 Two mechanics are worth knowing, because they explain the shape of the feature:
 
@@ -608,7 +653,8 @@ Four things are deliberate:
   stays a read that found none. A silent fallback would move a session's traffic
   outside the engine's log without anyone asking, which is the one thing that
   log promises cannot happen.
-- **It runs where the session runs.** A boxed session runs yt-dlp *inside its
+- **It runs where the session runs, and with no session it runs here.** A
+  boxed session runs yt-dlp *inside its
   box*, and a boxed session whose box has no yt-dlp is refused rather than
   served from the host: running it outside would move the session's network to a
   boundary its caller did not choose. Whether that box has an egress boundary at
@@ -645,6 +691,17 @@ if any part of a run failed, so a run that wrote the transcript and then hit a
 rate limit on a second language is a complete answer reported as a failure. h5i
 reports it as an answer, and puts the partial failure in the note beside it,
 because that is what explains a missing title.
+
+**No session is needed when `--url` names the media.** There is no page here to
+render, so the only thing a session was ever contributing to this lane is a
+placement, and a run with none happens on this machine. It says exactly that in
+its `evidence` line, it opens no session and leaves none behind, and it is
+still written down: `h5i browser audit --no-session` lists the runs that belong
+to no session, with the same argv and the same host-observed lane as a row
+inside a session's timeline. They are kept out of that timeline on purpose,
+because a run that was not part of a session must not appear inside one. To put
+the run behind a boundary, open a session with `--in <box>` and it runs in
+there.
 
 A host session's helper is contained by whatever started h5i, and the reply says
 that too rather than implying a boundary that is not there. Automatic captions
@@ -2604,6 +2661,19 @@ Built-ins need no file:
 Runtime scoping is not cosmetic: a Claude box must not get Codex's credentials
 or egress to OpenAI, because a prompt-injected agent could otherwise read the
 *other* runtime's token and use it against an allowlisted host.
+
+A note on the one grant nobody would think to write. The built-in read set
+carries the handful of paths `/etc/resolv.conf` is a symlink *to*
+(`/mnt/wsl/resolv.conf` on WSL, the systemd-resolved and resolvconf locations
+under `/run`), one file each. `/etc` alone is not enough, because Landlock
+follows the link to a path the box was never granted, and what that costs does
+not look like a denied file: `getaddrinfo` answers "Temporary failure in name
+resolution" and a `net.mode = "host"` box reads as a machine with no network.
+The entries are the same on every host whether the files exist or not, because
+a grant resolved from the local `/etc` would give one profile a different
+policy digest on every machine. **A custom profile that sets `fs.read`
+replaces that list**, so a box of your own with `mode = "host"` needs the line
+for your host, which `readlink -f /etc/resolv.conf` names.
 
 Custom profiles live in `.h5i/env.toml`:
 

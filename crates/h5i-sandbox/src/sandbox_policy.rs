@@ -876,9 +876,46 @@ impl BrowserEngine {
 
 /// Read-only system paths granted by default at the `process` tier — enough to
 /// exec interpreters and link against system libraries, nothing under `$HOME`.
+/// Where `/etc/resolv.conf` actually lives, on the hosts where it is a symlink.
+///
+/// `/etc` is granted, so on a host whose resolver config is a real file inside
+/// it there is nothing to do. It is a symlink on more machines than one would
+/// like — WSL points it at `/mnt/wsl/resolv.conf`, systemd-resolved and
+/// resolvconf at somewhere under `/run` — and a Landlock grant follows the link
+/// to a path the domain never granted. What that costs is worth spelling out,
+/// because it does not read as a sandbox denial: `getaddrinfo` answers
+/// "Temporary failure in name resolution", every fetch fails before the wire,
+/// and a `net.mode = "host"` box looks like a host with no network. It took a
+/// boxed browser session and twenty minutes to find, on the box that has been
+/// this project's own development machine since the beginning.
+///
+/// **A static list rather than `canonicalize()`**, and that is the whole
+/// design. Resolving the link at runtime would grant the right path on every
+/// host and give the *same profile a different digest on each of them* — the
+/// one promise a policy digest makes is that two boxes with the same digest
+/// were allowed the same things, and a digest that varies with `/etc` cannot
+/// make it. These entries are the same everywhere, present or not: a grant for
+/// a path that does not exist is skipped by the Landlock builder, so a host
+/// with none of them enforces exactly what it enforced before.
+///
+/// Read-only, one file each, and none of them is a way out of anything: a
+/// `deny` box has no network to resolve for, and a `host` box already reaches
+/// everything. `/run` itself stays ungranted.
+const RESOLVER_PATHS: &[&str] = &[
+    // WSL2.
+    "/mnt/wsl/resolv.conf",
+    // systemd-resolved, stub and non-stub.
+    "/run/systemd/resolve/stub-resolv.conf",
+    "/run/systemd/resolve/resolv.conf",
+    // Debian's resolvconf, and NetworkManager writing its own.
+    "/run/resolvconf/resolv.conf",
+    "/run/NetworkManager/resolv.conf",
+];
+
 fn default_fs_read() -> Vec<String> {
     ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/nix", "/opt", "/tmp", "/dev/null", "/dev/zero", "/dev/urandom", "/proc"]
         .iter()
+        .chain(RESOLVER_PATHS.iter())
         .map(|s| s.to_string())
         .collect()
 }

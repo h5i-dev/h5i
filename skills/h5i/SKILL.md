@@ -26,7 +26,7 @@ Reach for it before guessing at a flag.
 ## 1. Browsing
 
 ```bash
-h5i browser open https://example.com --allow example.com
+h5i browser open https://example.com   # the page grants itself; `--allow` adds origins
 h5i browser snapshot             # the outline, with @ref handles — read this, not HTML
 h5i browser click @e3
 h5i browser type @e5 "test@example.com"

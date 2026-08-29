@@ -106,9 +106,16 @@ pub enum BrowserCommands {
 
         /// Run the session inside this box instead of on this machine.
         ///
-        /// The box must already exist (`h5i box`). Its egress allowlist is
-        /// enforced at the box's boundary, so the session's request lane
-        /// becomes host-observed.
+        /// The box must already exist (`h5i box`). A box that declares an
+        /// egress allowlist has a tier that enforces it, because creation is
+        /// fail-closed on that combination, so the session's request lane
+        /// becomes host-observed: what it reached was also seen outside the
+        /// engine. A box that declares none corroborates nothing, and the lane
+        /// stays engine-claimed. `h5i browser status` prints which of the two
+        /// this session got; read it rather than assuming the box earned the
+        /// stronger one. Note the standing Linux trade-off: the tiers that
+        /// enforce egress cannot hold a resident session yet, so today that
+        /// combination is `microvm`, or a one-shot `h5i browser read --in`.
         #[arg(long = "in", value_name = "BOX")]
         in_box: Option<String>,
 
@@ -315,11 +322,14 @@ pub enum BrowserCommands {
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
-        /// Where to write it. Defaults to a host-named file in the session's
-        /// own artifacts directory.
+        /// Where to write it, on **this** machine. Defaults to a host-named
+        /// file in the session's own artifacts directory.
         ///
-        /// For a session in a box this path is resolved **inside the box**,
-        /// because that is the filesystem the engine has.
+        /// The engine paints into a directory it is allowed to write and h5i
+        /// moves the file here afterwards, so this is any path you can write,
+        /// not a path the confined engine can. For a session in a box that
+        /// means the file is carried out of the box — which needs a tier whose
+        /// `/tmp` this machine shares, and says so when it does not.
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
         /// Go here first, then paint.
@@ -472,6 +482,14 @@ pub enum BrowserCommands {
         /// $H5I_BROWSER_SESSION, then to the session `open` last made.
         #[arg(long, short = 's', value_name = "NAME")]
         session: Option<String>,
+        /// The helper runs that belong to no session.
+        ///
+        /// `h5i browser transcript --via yt-dlp --url <URL>` needs no page and
+        /// so opens no session; the run is still recorded, and this is where.
+        /// Kept out of a session's own timeline on purpose: a run that was not
+        /// part of a session must not appear inside it.
+        #[arg(long = "no-session", conflicts_with = "session")]
+        no_session: bool,
         #[arg(long)]
         json: bool,
     },
@@ -556,7 +574,12 @@ pub enum BrowserCommands {
         /// egress at all.
         ///
         /// With `--via`, `--url` names the media and the session does not move:
-        /// there is no page here to render.
+        /// there is no page here to render. With **no session open at all**,
+        /// `--url` is the whole of what this lane needs: the run happens on
+        /// this machine, contained by nothing h5i enforces, says so in its
+        /// `evidence` line, and is recorded in
+        /// `h5i browser audit --no-session`. To place it behind a boundary,
+        /// open a session with `--in <box>` and it runs in there.
         #[arg(long, value_name = "HELPER")]
         via: Option<String>,
         #[arg(long)]
@@ -659,7 +682,8 @@ pub enum BrowserCommands {
         /// `button`, `link`, `textbox`, `checkbox`, …
         #[arg(long, value_name = "ROLE")]
         role: String,
-        /// The accessible name.
+        /// The accessible name, matched whole: case is ignored and whitespace
+        /// collapsed, but half a name finds nothing.
         #[arg(long, value_name = "TEXT")]
         name: Option<String>,
         /// Go here first, then read. One round trip where `navigate` and then
@@ -1051,7 +1075,17 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             }
             verb(&root, session.as_deref(), argv, false, json)
         }
-        BrowserCommands::Audit { session, json } => audit(&root, session.as_deref(), json),
+        BrowserCommands::Audit {
+            session,
+            no_session,
+            json,
+        } => {
+            if no_session {
+                sessionless_audit(&root, json)
+            } else {
+                audit(&root, session.as_deref(), json)
+            }
+        }
         BrowserCommands::Env { session, json } => {
             verb(&root, session.as_deref(), vec!["env".into()], false, json)
         }
@@ -1652,15 +1686,19 @@ fn preflight_box(
         );
     }
 
-    // 2. The box's h5i has to be one that carries an engine.
+    // 2. The box's h5i has to be one it can run, and one that carries an
+    //    engine. **Two failures, and they are told apart by the shell's own
+    //    exit codes** rather than by guessing.
     //
-    //    A weaker check than the one this replaced, and a more useful one. The
-    //    old check asked whether a *second binary* could be executed at all,
-    //    because Landlock makes `~/.cargo/bin` readable and not executable and
-    //    `command -v` could not tell. That cannot happen now. What can is a box
-    //    running an older or `--no-default-features` h5i, which has no
-    //    `__engine` — and the failure looks identical from outside either way:
-    //    the session never advertises.
+    //    An earlier version of this comment said the first could not happen any
+    //    more. It happens on the machine this was written on: a `cargo install`
+    //    h5i lives in `~/.cargo/bin`, which every profile grants **read** and
+    //    none grants **exec**, so `command -v h5i` inside the box finds it and
+    //    running it dies with `Permission denied`. Reporting that as "no
+    //    browser engine in it" sends whoever reads it to rebuild a binary that
+    //    was fine. `sh` answers 126 for "found it, could not execute it" and
+    //    127 for "no such command", which is exactly the distinction, and it
+    //    survives the redirection that keeps the probe quiet.
     let probe = Command::new(std::env::current_exe()?)
         .arg("box")
         .arg("run")
@@ -1673,18 +1711,33 @@ fn preflight_box(
             h5i_in_box()
         ))
         .output()?;
-    if !probe.status.success() {
-        anyhow::bail!(
-            "the `{}` inside box `{name}` has no browser engine in it.\n\n  \
+    let binary = h5i_in_box();
+    match probe.status.code() {
+        Some(0) => Ok(()),
+        // Found and not executable. Almost always the h5i on `PATH` being a
+        // `cargo install` one, so the fix is named rather than described.
+        Some(126) => anyhow::bail!(
+            "box `{name}` cannot execute `{binary}`.\n\n  \
+             A box grants `~/.cargo/bin` and `~/.local/bin` **read** and not **exec**, so an \
+             h5i installed there is visible inside the box and cannot be run. Install one \
+             where the box may execute it:\n    \
+             sudo install -m755 $(command -v h5i) /usr/local/bin/h5i\n\n  \
+             Or set $H5I_IN_BOX to a path inside the box that is executable there."
+        ),
+        Some(127) => anyhow::bail!(
+            "there is no `{binary}` in box `{name}`.\n\n  \
+             `--in` carries every verb into the box by running h5i there, so the box needs \
+             one on its `PATH`. Install it at a system path, or set $H5I_IN_BOX to where it \
+             actually is inside the box."
+        ),
+        _ => anyhow::bail!(
+            "the `{binary}` inside box `{name}` has no browser engine in it.\n\n  \
              The engine is part of the h5i binary, so the box needs an h5i new enough to \
              carry one, built with the `browser` feature. Check what it has:\n    \
-             h5i box run {name} -- {} --version\n\n  \
-             Set $H5I_IN_BOX to point at a different one inside the box.",
-            h5i_in_box(),
-            h5i_in_box()
-        );
+             h5i box run {name} -- {binary} --version\n\n  \
+             Set $H5I_IN_BOX to point at a different one inside the box."
+        ),
     }
-    Ok(())
 }
 
 fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<Spawned> {
@@ -1983,14 +2036,53 @@ fn locator(
 
 fn net_args(opts: &StartOptions) -> Vec<String> {
     let mut argv = Vec::new();
-    for origin in &opts.allow {
+    for origin in granted_origins(opts) {
         argv.push("--allow".to_string());
-        argv.push(origin.clone());
+        argv.push(origin);
     }
     if opts.no_loopback {
         argv.push("--no-loopback".into());
     }
     argv
+}
+
+/// What this session is allowed to reach: the origins the caller named, and the
+/// page it asked to open.
+///
+/// The second half is not a convenience, it is the difference between `open`
+/// working and not. The engine is fail-closed and a navigation is policy-checked
+/// like any other request, so a session started with an empty allowlist denied
+/// the very page it was told to open — `h5i browser open https://example.com`
+/// came back "origin `https://example.com` is not in the allowlist", while
+/// `--allow`'s own help promised that a URL's own origin is reachable without
+/// it. Loopback is exempt by default, which is why every test and every dev
+/// server missed this and why the first remote URL anyone typed hit it.
+///
+/// `read` has granted its targets this way since it was written
+/// ([`origins_of`]), and this is the same rule for the session lane: the page
+/// and nothing else. An off-origin subresource is still refused and still says
+/// so in the request log, and widening the grant to "and whatever this page
+/// pulls in" is the thing neither lane does.
+///
+/// Handed to the engine verbatim, because its `--allow` normalizes with the
+/// same code that later checks a request — a second notion of "origin" here is
+/// a second one to drift. Only a `http`/`https` target grants anything: a page
+/// opened from a file needs no grant, and a bare path normalizes to a host that
+/// was never asked for.
+fn granted_origins(opts: &StartOptions) -> Vec<String> {
+    let mut origins = opts.allow.clone();
+    if is_web_url(&opts.url) && !origins.contains(&opts.url) {
+        origins.push(opts.url.clone());
+    }
+    origins
+}
+
+/// Whether a target is fetched over the network, judged by its scheme alone.
+fn is_web_url(target: &str) -> bool {
+    let target = target.trim_start();
+    ["http://", "https://"]
+        .iter()
+        .any(|scheme| target.len() > scheme.len() && target[..scheme.len()].eq_ignore_ascii_case(scheme))
 }
 
 /// The digest of what a host session was allowed to do.
@@ -1999,9 +2091,18 @@ fn net_args(opts: &StartOptions) -> Vec<String> {
 /// allowlist and the two switches it was started with. Digesting them means
 /// two sessions with the same digest were allowed the same things, which is the
 /// only promise the field makes anywhere.
+///
+/// The *effective* allowlist, [`granted_origins`], and not the flags alone: the
+/// page a session was opened on is in its policy, so two sessions opened
+/// somewhere else entirely were allowed different things and must not digest
+/// the same. It is the start URL as typed rather than the origin derived from
+/// it, so two sessions opened on two pages of one site digest differently
+/// though their grants match — the promise is that an equal digest means equal
+/// grants, and this keeps that direction true without a second notion of
+/// "origin" here to drift from the engine's.
 fn host_policy_digest(opts: &StartOptions) -> String {
     use sha2::{Digest, Sha256};
-    let mut allow = opts.allow.clone();
+    let mut allow = granted_origins(opts);
     allow.sort();
     let material = format!(
         "host\nallow={}\nloopback={}\nscript={}\n",
@@ -2121,8 +2222,11 @@ fn seed_storage(root: &Path, from: &str, into: &Path) -> anyhow::Result<()> {
 ///   writable there — and the reply says it is inside the box rather than
 ///   printing a host path that does not exist.
 ///
-/// An explicit `--out` is taken as given in both cases, because a caller who
-/// named a path named it for a reason.
+/// `--out` is a **host** path in both cases, and h5i is what puts the file
+/// there. The engine paints where it is allowed to and never where the caller
+/// pointed: it is confined, h5i is not, and a path the caller named is h5i's to
+/// write. Handing it through was what made `--out ~/shot.png` fail with a bare
+/// `Permission denied` from a sandbox the caller never asked about.
 fn screenshot(
     root: &Path,
     selector: Option<&str>,
@@ -2138,57 +2242,138 @@ fn screenshot(
         }
     };
 
-    let path = match out {
-        Some(path) => path,
-        None => {
-            // Milliseconds, so two shots in one second are two files. A
-            // screenshot that silently replaced the previous one would lose the
-            // before-and-after that is most of why an agent takes two.
-            let stamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
-            let name = format!("screenshot-{stamp}.png");
-            match &session.placement {
-                bs::Placement::Host => {
-                    let path = bs::artifact_path(root, &session.id, &name);
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    path
-                }
-                bs::Placement::Box { name: box_name } => {
-                    // The box's own /tmp, via the socket the record already
-                    // holds. Nothing here can create the directory: it is on
-                    // the far side of the boundary, and it exists because the
-                    // socket is bound in it.
-                    let control = session.control.file.clone().ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "this session in `{box_name}` names no control socket, so there is \
-                             no path inside the box to default to. Pass `--out <path>` naming \
-                             a file the box can write."
-                        )
-                    })?;
-                    let dir = control
-                        .parent()
-                        .map(Path::to_path_buf)
-                        .unwrap_or_else(|| PathBuf::from("/tmp"));
-                    dir.join(bs::safe_name(&name))
-                }
+    // Milliseconds, so two shots in one second are two files. A screenshot that
+    // silently replaced the previous one would lose the before-and-after that is
+    // most of why an agent takes two.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let name = format!("screenshot-{stamp}.png");
+
+    // **The engine always paints into a directory it may write**, and h5i moves
+    // the file afterwards. Handing `--out` straight to the engine is what this
+    // used to do, and a confined session may write only its own directory, so
+    // `--out ~/shot.png` came back as a bare `Permission denied` — h5i asking a
+    // sandboxed process to write somewhere h5i itself could have written, and
+    // then reporting the sandbox's refusal as though the path were at fault.
+    // Which process holds the authority for a path the *caller* named is not a
+    // question the engine should be asked: it is the same rule the cookie jar
+    // already follows, h5i chooses the path and the engine only chooses the
+    // bytes.
+    let (painted, host_view) = match &session.placement {
+        bs::Placement::Host => {
+            let path = bs::artifact_path(root, &session.id, &name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
             }
+            (path.clone(), Some(path))
+        }
+        bs::Placement::Box { name: box_name } => {
+            // The box's own /tmp, via the socket the record already holds.
+            // Nothing here can create the directory: it is on the far side of
+            // the boundary, and it exists because the socket is bound in it.
+            let control = session.control.file.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this session in `{box_name}` names no control socket, so there is no \
+                     path inside the box to paint into. Reopen the session, or take the \
+                     screenshot from a session on this machine."
+                )
+            })?;
+            let in_box = control
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .join(bs::safe_name(&name));
+            // Where this machine sees that same file, when it can see it at
+            // all. An image-backed tier keeps its `/tmp` inside the image, and
+            // then the file exists and is unreachable from here — which is a
+            // fact to report rather than to paper over.
+            let on_host = session
+                .control
+                .witness
+                .as_ref()
+                .and_then(|p| p.parent())
+                .map(|dir| dir.join(bs::safe_name(&name)));
+            (in_box, on_host)
         }
     };
 
     let mut argv = vec![
         "screenshot".to_string(),
         "--path".to_string(),
-        path.display().to_string(),
+        painted.display().to_string(),
     ];
     argv.extend(url_arg(url));
     // Painting does not move the page. Going somewhere first does, and the
     // control lock exists so a human at the wheel is not steered from under.
     let moves_the_page = argv.iter().any(|a| a == "--url");
-    verb(root, selector, argv, moves_the_page, json)
+
+    verb_then(root, selector, argv, moves_the_page, json, |answer| {
+        let Some(out) = out else {
+            return Ok(());
+        };
+        deliver_file(&painted, host_view.as_deref(), &out, &session)?;
+        // The reply names where the file *is*. An answer still pointing into
+        // the session's artifacts would send a caller to the copy h5i just
+        // moved away.
+        answer["path"] = Value::String(out.display().to_string());
+        Ok(())
+    })
+}
+
+/// Move the file the engine painted to where the caller asked for it.
+///
+/// The bytes are never lost. A copy that fails leaves the shot where the engine
+/// put it and says both paths, because "the screenshot could not be written" is
+/// false when it was written and only the second step failed.
+fn deliver_file(
+    painted: &Path,
+    host_view: Option<&Path>,
+    out: &Path,
+    session: &bs::Session,
+) -> anyhow::Result<()> {
+    let Some(source) = host_view else {
+        anyhow::bail!(
+            "the screenshot was painted inside the box, at {}, and this machine cannot see \
+             that filesystem — the box keeps its /tmp inside its image — so h5i cannot \
+             bring it out to {}.\n\n  \
+             Take it without `--out` and read it from inside the box, or place the session \
+             on a tier whose /tmp this machine shares.",
+            painted.display(),
+            out.display()
+        );
+    };
+    if source == out {
+        return Ok(());
+    }
+    if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            anyhow::anyhow!(
+                "the screenshot is at {}, and {} could not be created for it: {e}",
+                source.display(),
+                parent.display()
+            )
+        })?;
+    }
+    // Copy then remove, rather than `rename`: the two paths are routinely on
+    // different filesystems (a box's /tmp, a scratch mount), and a `rename`
+    // across one fails with `EXDEV` for a reason that has nothing to do with
+    // what the caller asked.
+    std::fs::copy(source, out).map_err(|e| {
+        anyhow::anyhow!(
+            "the screenshot was taken and is at {}, but it could not be copied to {}: {e}",
+            source.display(),
+            out.display()
+        )
+    })?;
+    // Best effort: the file is where it was asked for, and a leftover in the
+    // session's own directory is not worth failing a screenshot over. Kept for
+    // a boxed session, where the file is the box's and h5i took a copy.
+    if matches!(session.placement, bs::Placement::Host) {
+        let _ = std::fs::remove_file(source);
+    }
+    Ok(())
 }
 
 /// Send one verb to a session and print what came back.
@@ -2208,6 +2393,23 @@ fn verb(
     argv: Vec<String>,
     mutating: bool,
     json: bool,
+) -> anyhow::Result<()> {
+    verb_then(root, selector, argv, mutating, json, |_| Ok(()))
+}
+
+/// The same, with something to do to the answer before it is printed.
+///
+/// One caller: `screenshot --out`, which has to move a file the confined engine
+/// wrote and then say where it ended up. It runs only on an answer that was not
+/// a refusal, and it runs *before* the printing, because an answer naming a
+/// path the file is no longer at would be worse than no answer.
+fn verb_then(
+    root: &Path,
+    selector: Option<&str>,
+    argv: Vec<String>,
+    mutating: bool,
+    json: bool,
+    after: impl FnOnce(&mut Value) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let session = match bs::resolve(root, selector) {
         Ok(session) => session,
@@ -2240,6 +2442,9 @@ fn verb(
     // script that checks the status code would read "denied by policy" as
     // success, which is the failure this whole design is arranged against.
     let refused = answer.get("ok").and_then(Value::as_bool) == Some(false);
+    if !refused {
+        after(&mut answer)?;
+    }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&answer)?);
@@ -2285,29 +2490,51 @@ fn via_helper(
         );
     }
 
+    // A session when there is one, and none when there is not.
+    //
+    // **Only when the caller named neither a session nor a URL is a missing
+    // session an error.** `--url` names the media and this lane renders no
+    // page, so a session would contribute nothing here but a placement; asking
+    // for one anyway is what made `h5i browser transcript --via yt-dlp --url …`
+    // answer with the closing note of a session that had nothing to do with the
+    // question. A `--session` that names something gone is still an error,
+    // because running somewhere else would move the lane to a boundary the
+    // caller did not choose — the same rule that keeps a boxed run out of the
+    // host.
     let session = match bs::resolve(root, selector) {
-        Ok(session) => session,
-        Err(gone) => {
+        Ok(session) => Some(session),
+        Err(gone) if selector.is_some() || url.is_none() => {
             eprintln!("{gone}");
             std::process::exit(bs::EXIT_SESSION_GONE);
         }
+        Err(_) => None,
     };
-    let dir = bs::dir(root, &session.id);
 
     // Not a mutation: nothing here touches the page. The lock is still asked,
     // because a human at the controls of a session is a human whose box should
-    // not have a second program started against it behind their back.
-    if let Some(explanation) = h5i_core::control::check(&dir, false).explain() {
+    // not have a second program started against it behind their back. A run
+    // with no session steers nothing and asks nobody.
+    if let Some(session) = &session
+        && let Some(explanation) =
+            h5i_core::control::check(&bs::dir(root, &session.id), false).explain()
+    {
         anyhow::bail!("{explanation}");
     }
 
     // The page the session is actually on, when the caller did not name a URL.
     // Asked rather than read off the record: `session.url` is what `open` was
     // *told*, and a redirect or a click has moved it since.
-    let target = match url {
-        Some(named) => named,
-        None => {
-            let status = deliver(&session, &dir, vec!["status".to_string()])?;
+    let target = match (&url, &session) {
+        (Some(named), _) => named.clone(),
+        // Unreachable by the arms above: a caller with no URL and no session
+        // has already been sent away with the session's own explanation.
+        (None, None) => anyhow::bail!(
+            "there is no session to read a URL from and none was named. \
+             Name one with `--url`."
+        ),
+        (None, Some(session)) => {
+            let dir = bs::dir(root, &session.id);
+            let status = deliver(session, &dir, vec!["status".to_string()])?;
             status
                 .get("url")
                 .and_then(Value::as_str)
@@ -2321,9 +2548,14 @@ fn via_helper(
         }
     };
 
+    let site = match &session {
+        Some(session) => helper::Site::Session(session),
+        None => helper::Site::sessionless(),
+    };
+
     let outcome = helper::transcript(
         root,
-        &session,
+        &site,
         &target,
         lang.as_deref(),
         max_bytes.unwrap_or(h5i_browser_light::transcript::DEFAULT_MAX_BYTES),
@@ -2949,6 +3181,58 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
     }
     if audit.events.is_empty() {
         println!("  nothing recorded for this session yet.");
+    }
+    Ok(())
+}
+
+/// The helper runs that belong to no session.
+///
+/// A separate command rather than a section of the timeline above, because
+/// these runs were not part of any session and putting them in one session's
+/// audit would be a claim about that session that is not true. They are the
+/// same rows in the same shape, read from
+/// [`bs::SESSIONLESS_HELPERS_FILE`](h5i_core::browser_session::SESSIONLESS_HELPERS_FILE),
+/// and every one of them is host-observed: h5i built the argv and ran the
+/// program, so the row is an observation rather than the helper's account of
+/// itself.
+fn sessionless_audit(root: &Path, json: bool) -> anyhow::Result<()> {
+    let rows = bs::sessionless_helpers(root)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
+    if rows.is_empty() {
+        println!("  no helper has run outside a session on this machine.");
+        return Ok(());
+    }
+
+    println!("  runs     : {} with no session", rows.len());
+    println!(
+        "  {}     h5i ran these itself, so every row is an observation.",
+        style("note").dim()
+    );
+    println!(
+        "           None of their fetches are in `h5i browser requests`: \
+         they were not the engine's."
+    );
+    println!();
+    for row in &rows {
+        let outcome = match row.status {
+            Some(0) | None => String::new(),
+            Some(code) => format!("  (exit {code})"),
+        };
+        println!(
+            "  {}  {}  helper {} {}{outcome}",
+            style("host  ").green(),
+            row.at,
+            row.name,
+            row.argv.join(" ")
+        );
+        if let Some(note) = &row.note {
+            println!("          {}", style(bs::scrub_text(note)).dim());
+        }
     }
     Ok(())
 }

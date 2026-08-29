@@ -1385,7 +1385,7 @@ Without this, `open` navigates the session it finds, because that is what openin
 \fB\-\-in\fR \fI<BOX>\fR
 Run the session inside this box instead of on this machine.
 
-The box must already exist (`h5i box`). Its egress allowlist is enforced at the box\*(Aqs boundary, so the session\*(Aqs request lane becomes host\-observed.
+The box must already exist (`h5i box`). A box that declares an egress allowlist has a tier that enforces it, because creation is fail\-closed on that combination, so the session\*(Aqs request lane becomes host\-observed: what it reached was also seen outside the engine. A box that declares none corroborates nothing, and the lane stays engine\-claimed. `h5i browser status` prints which of the two this session got; read it rather than assuming the box earned the stronger one. Note the standing Linux trade\-off: the tiers that enforce egress cannot hold a resident session yet, so today that combination is `microvm`, or a one\-shot `h5i browser read \-\-in`.
 .TP
 \fB\-\-allow\fR \fI<ORIGIN>\fR
 Grant an origin. Repeatable. Without any, nothing remote is reachable except the URL\*(Aqs own origin
@@ -1584,9 +1584,9 @@ Write a PNG of the page this session is on
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
 \fB\-\-out\fR \fI<PATH>\fR
-Where to write it. Defaults to a host\-named file in the session\*(Aqs own artifacts directory.
+Where to write it, on **this** machine. Defaults to a host\-named file in the session\*(Aqs own artifacts directory.
 
-For a session in a box this path is resolved **inside the box**, because that is the filesystem the engine has.
+The engine paints into a directory it is allowed to write and h5i moves the file here afterwards, so this is any path you can write, not a path the confined engine can. For a session in a box that means the file is carried out of the box \(em which needs a tier whose `/tmp` this machine shares, and says so when it does not.
 .TP
 \fB\-\-url\fR \fI<URL>\fR
 Go here first, then paint
@@ -1799,13 +1799,18 @@ Everything recorded about this session, in one ordered timeline
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBaudit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBaudit\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-no\-session\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
 .TP
 \fB\-s\fR, \fB\-\-session\fR \fI<NAME>\fR
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
+.TP
+\fB\-\-no\-session\fR
+The helper runs that belong to no session.
+
+`h5i browser transcript \-\-via yt\-dlp \-\-url <URL>` needs no page and so opens no session; the run is still recorded, and this is where. Kept out of a session\*(Aqs own timeline on purpose: a run that was not part of a session must not appear inside it.
 .TP
 \fB\-\-json\fR
 
@@ -1866,7 +1871,7 @@ Read it with an outside program instead of from the page\*(Aqs markup.
 
 **It is a different lane, not a better one.** yt\-dlp opens its own sockets from a process the engine never sees, so nothing it fetches is in `h5i browser requests` and nothing can be: the reply says so, and `h5i browser audit` carries the run as a host\-observed row. It runs where the session runs, inside the box for a boxed session, and it is never a fallback: an engine read that found no captions stays a read that found none. The reply says what actually saw its traffic, which for a box depends on whether that box\*(Aqs tier enforces egress at all.
 
-With `\-\-via`, `\-\-url` names the media and the session does not move: there is no page here to render.
+With `\-\-via`, `\-\-url` names the media and the session does not move: there is no page here to render. With **no session open at all**, `\-\-url` is the whole of what this lane needs: the run happens on this machine, contained by nothing h5i enforces, says so in its `evidence` line, and is recorded in `h5i browser audit \-\-no\-session`. To place it behind a boundary, open a session with `\-\-in <box>` and it runs in there.
 .TP
 \fB\-\-json\fR
 
@@ -1989,7 +1994,7 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 `button`, `link`, `textbox`, `checkbox`, ...
 .TP
 \fB\-\-name\fR \fI<TEXT>\fR
-The accessible name
+The accessible name, matched whole: case is ignored and whitespace collapsed, but half a name finds nothing
 .TP
 \fB\-\-url\fR \fI<URL>\fR
 Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent

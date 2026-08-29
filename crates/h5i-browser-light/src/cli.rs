@@ -1927,9 +1927,24 @@ fn control_file_beside(stream_file: &Path) -> PathBuf {
 }
 
 fn build_policy(net: &NetArgs) -> Policy {
-    // Flags first, then whatever h5i granted the box. Both are additive: an
-    // agent cannot widen the box's policy by passing `--allow`, because the
-    // sandbox's own egress enforcement is still the boundary underneath.
+    // Flags first, then whatever h5i granted the box, and the two are a
+    // **union**.
+    //
+    // A union that still cannot widen a box's *enforced* policy, and the reason
+    // is at creation rather than here: a profile that declares `net.egress`
+    // cannot be created at a tier that cannot enforce one. `h5i box create
+    // --isolation process --profile <one with egress>` is refused, fail-closed
+    // ("process-v1 supports net.mode deny|host only"), so a box whose list
+    // reaches this engine is a box with a boundary underneath it. `--allow`
+    // adds an origin to what this process will *ask* for; what actually leaves
+    // the box is still decided outside it, which is what a `read --in` against
+    // an un-listed origin demonstrates — the engine grants the target it was
+    // handed and the box's pinned DNS refuses to resolve it.
+    //
+    // A box that declares no list is a box with nothing to widen: its net mode
+    // is host or deny, nothing outside the engine is deciding about hosts at
+    // all, and the lane such a session earns stays `engine-claimed` for exactly
+    // that reason (`h5i_core::browser_session::Session::lane_for`).
     let from_env: Vec<String> = std::env::var(ALLOW_VAR)
         .unwrap_or_default()
         .split(',')

@@ -1333,25 +1333,81 @@ pub struct HelperRow {
 /// already run. Refusing to report a result h5i already has because a log line
 /// would not write would lose the result and the record both.
 pub fn record_helper(root: &Path, id: &str, row: &HelperRow) -> Result<(), H5iError> {
+    let dir = dir(root, id);
+    fs::create_dir_all(&dir)
+        .map_err(|e| H5iError::Metadata(format!("could not open the session directory: {e}")))?;
+    append_helper(&dir.join(HELPERS_FILE), row)
+}
+
+/// The helper log for the runs that belong to no session.
+///
+/// `h5i browser transcript --via yt-dlp --url …` names its own media and
+/// renders no page, so it needs no session — and a run with no session has no
+/// session directory to be recorded in. Without somewhere else to write, this
+/// lane's promise that *every* run is recorded would hold only for the runs
+/// that happened to have a session open, which is the kind of gap that is
+/// discovered by someone auditing a run that is not there.
+///
+/// At the root of the browser state directory, beside `sessions/`, because that
+/// is the scope of what it records. [`crate::browser_session::audit`] never
+/// reads it: a session's timeline must not carry runs that were not part of
+/// that session. `h5i browser audit --no-session` is what renders it.
+pub const SESSIONLESS_HELPERS_FILE: &str = "helpers.jsonl";
+
+/// Append one row for a run that had no session. See
+/// [`SESSIONLESS_HELPERS_FILE`]; best effort in the same way [`record_helper`]
+/// is, and for the same reason.
+pub fn record_sessionless_helper(root: &Path, row: &HelperRow) -> Result<(), H5iError> {
+    fs::create_dir_all(root).map_err(|e| {
+        H5iError::Metadata(format!("could not open the browser state directory: {e}"))
+    })?;
+    append_helper(&root.join(SESSIONLESS_HELPERS_FILE), row)
+}
+
+/// Read back the rows written by [`record_sessionless_helper`], oldest first.
+///
+/// A log that is not there is an empty one: no run of this kind has happened,
+/// which is the ordinary case. A log that is there and cannot be read is an
+/// error rather than an empty answer, because the two mean opposite things to
+/// whoever is asking.
+pub fn sessionless_helpers(root: &Path) -> Result<Vec<HelperRow>, H5iError> {
+    let text = match fs::read_to_string(root.join(SESSIONLESS_HELPERS_FILE)) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(H5iError::Metadata(format!(
+                "could not read the helper log at {}: {e}",
+                root.join(SESSIONLESS_HELPERS_FILE).display()
+            )));
+        }
+    };
+    // A line that will not parse is skipped rather than failing the read: this
+    // file is appended to by concurrent runs, and one torn line must not hide
+    // every row written before it.
+    Ok(text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<HelperRow>(line).ok())
+        .collect())
+}
+
+/// Stamp a row and append it, whichever log it belongs in.
+///
+/// Stamped here rather than by the caller. The audit interleaves these with the
+/// engine's rows on time alone, so a second clock reading taken in another
+/// module is a second clock the timeline can be wrong about — and this is the
+/// one lane whose whole value is being h5i's own observation.
+fn append_helper(path: &Path, row: &HelperRow) -> Result<(), H5iError> {
     use std::io::Write;
-    // Stamped here rather than by the caller. The audit interleaves these with
-    // the engine's rows on time alone, so a second clock reading taken in
-    // another module is a second clock the timeline can be wrong about — and
-    // this is the one lane whose whole value is being h5i's own observation.
     let row = HelperRow {
         at: now(),
         ..row.clone()
     };
-    let row = &row;
-    let dir = dir(root, id);
-    fs::create_dir_all(&dir)
-        .map_err(|e| H5iError::Metadata(format!("could not open the session directory: {e}")))?;
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join(HELPERS_FILE))
+        .open(path)
         .map_err(|e| H5iError::Metadata(format!("could not open the helper log: {e}")))?;
-    let line = serde_json::to_string(row)
+    let line = serde_json::to_string(&row)
         .map_err(|e| H5iError::Metadata(format!("could not write the helper row: {e}")))?;
     writeln!(file, "{line}")
         .map_err(|e| H5iError::Metadata(format!("could not append to the helper log: {e}")))
