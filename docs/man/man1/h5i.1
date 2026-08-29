@@ -1584,9 +1584,9 @@ Write a PNG of the page this session is on
 Which session, when more than one is open. A name from `\-\-session` at open time, or an opaque id. Defaults to $H5I_BROWSER_SESSION, then to the session `open` last made
 .TP
 \fB\-\-out\fR \fI<PATH>\fR
-Where to write it. Defaults to a host\-named file in the session\*(Aqs own artifacts directory.
+Where to write it, on **this** machine. Defaults to a host\-named file in the session\*(Aqs own artifacts directory.
 
-For a session in a box this path is resolved **inside the box**, because that is the filesystem the engine has.
+The engine paints into a directory it is allowed to write and h5i moves the file here afterwards, so this is any path you can write, not a path the confined engine can. For a session in a box that means the file is carried out of the box \(em which needs a tier whose `/tmp` this machine shares, and says so when it does not.
 .TP
 \fB\-\-url\fR \fI<URL>\fR
 Go here first, then paint
@@ -1994,7 +1994,7 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 `button`, `link`, `textbox`, `checkbox`, ...
 .TP
 \fB\-\-name\fR \fI<TEXT>\fR
-The accessible name
+The accessible name, matched whole: case is ignored and whitespace collapsed, but half a name finds nothing
 .TP
 \fB\-\-url\fR \fI<URL>\fR
 Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent

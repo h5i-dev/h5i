@@ -2053,8 +2053,10 @@ fn control_verb_inner(
                 // called Sign in" is an answer, and reporting it as an error
                 // would send an agent correcting a request that was fine.
                 reply["note"] = json!(format!(
-                    "nothing on this page is a `{role}`{}. Try `find` with just the role to \
-                     see what there is, or take a `snapshot`.",
+                    "nothing on this page is a `{role}`{}. The name is matched whole, \
+                     ignoring case and collapsing whitespace, so a partial one finds \
+                     nothing. Try `find` with just the role to see what there is, or take \
+                     a `snapshot`.",
                     name.map(|n| format!(" named \"{n}\"")).unwrap_or_default()
                 ));
             } else if found.len() > MAX_FIND_MATCHES {
@@ -2326,8 +2328,14 @@ fn find_by_role(
             if !found_role.eq_ignore_ascii_case(role) {
                 return None;
             }
+            // Case-insensitively, like the role above it. An accessible name
+            // is what a control is *called*, and a caller reading "Memory
+            // safety" in prose and typing it back got nothing from a page whose
+            // link says "memory safety" — while `--role LINK` had always
+            // matched `link`. The asymmetry was the bug: one half of a locator
+            // ignored case and the other half did not.
             if let Some(wanted) = &wanted_name
-                && &found_name != wanted
+                && !same_name(&found_name, wanted)
             {
                 return None;
             }
@@ -2346,6 +2354,16 @@ fn find_by_role(
                 })
         })
         .collect()
+}
+
+/// Whether two accessible names are the same name.
+///
+/// Whitespace is already collapsed on both sides by the caller. What is left is
+/// case, and `to_lowercase` rather than `eq_ignore_ascii_case` because a page
+/// that names its controls in Greek, Cyrillic or accented Latin is a page whose
+/// caller deserves the same treatment as an English one.
+fn same_name(found: &str, wanted: &str) -> bool {
+    found == wanted || found.to_lowercase() == wanted.to_lowercase()
 }
 
 /// Read whichever handle the caller used.
@@ -3619,6 +3637,51 @@ mod tests {
         );
         assert_eq!(reply["count"], 1, "{reply:?}");
         assert_eq!(reply["matches"][0]["name"], "Save");
+    }
+
+    /// A name is what a thing is *called*, and case is not part of that.
+    ///
+    /// The locator's two halves disagreed: `--role LINK` had always matched
+    /// `link`, and `--name "Memory safety"` did not match a link that spells it
+    /// `memory safety`. A caller reading a name out of prose and typing it back
+    /// got `count: 0` and a note telling them the page has no such link, which
+    /// is a fact about the page and was not true.
+    #[test]
+    fn a_name_matches_however_the_page_capitalised_it() {
+        let mut session = session_with(
+            "<html><body>\
+               <a href=\"/a\">memory safety</a>\
+               <a href=\"/b\">Ünïcode Name</a>\
+             </body></html>",
+        );
+
+        for asked in ["memory safety", "Memory Safety", "MEMORY SAFETY"] {
+            let (found, _) = control_verb(
+                &mut session,
+                &json!({"verb": "find", "role": "link", "name": asked}),
+            );
+            assert_eq!(found["count"], 1, "asked for {asked:?}: {found:?}");
+        }
+
+        // Not only ASCII: a page that names its controls in accented Latin,
+        // Greek or Cyrillic gets the same treatment as an English one.
+        let (found, _) = control_verb(
+            &mut session,
+            &json!({"verb": "find", "role": "link", "name": "ünïcode name"}),
+        );
+        assert_eq!(found["count"], 1, "{found:?}");
+
+        // Still the whole name. Half of one matching would make a locator that
+        // silently acts on the wrong control.
+        let (found, _) = control_verb(
+            &mut session,
+            &json!({"verb": "find", "role": "link", "name": "memory"}),
+        );
+        assert_eq!(found["count"], 0, "{found:?}");
+        assert!(
+            found["note"].as_str().unwrap().contains("matched whole"),
+            "the note must say why a partial name found nothing: {found:?}"
+        );
     }
 
     /// Nothing matching is an answer about the page, not a failed request.

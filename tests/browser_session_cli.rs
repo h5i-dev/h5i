@@ -866,6 +866,48 @@ fn a_named_session_that_has_ended_is_refused_rather_than_run_here() {
     assert!(why.contains(&id), "{why}");
 }
 
+/// `--out` is a path on **this** machine, and h5i is what writes it.
+///
+/// The engine is confined to its own directory, so handing it the caller's path
+/// made `--out ~/shot.png` fail with a bare `Permission denied` from a sandbox
+/// the caller never asked about. It paints where it may write and h5i moves the
+/// file, which is the rule the cookie jar already follows: h5i chooses the
+/// path, the engine only chooses the bytes.
+#[test]
+fn a_screenshot_goes_where_the_caller_asked_and_not_where_the_engine_may_write() {
+    let Some(fx) = Fixture::new() else {
+        return skip("no h5i binary to drive");
+    };
+    let id = fx.open(&[]);
+
+    // Deliberately outside everything the session's sandbox can write: a
+    // directory made after the engine started, which no grant can name.
+    let elsewhere = tempfile::tempdir().expect("a directory of our own");
+    let out = elsewhere.path().join("deeper").join("shot.png");
+
+    let taken = fx.run(&["browser", "screenshot", "--out", out.to_str().unwrap(), "--json"]);
+    assert!(
+        taken.status.success(),
+        "screenshot failed: {}",
+        String::from_utf8_lossy(&taken.stderr)
+    );
+    let answer: serde_json::Value = serde_json::from_slice(&taken.stdout).unwrap();
+    // The reply names where the file is, not where it was painted.
+    assert_eq!(answer["path"].as_str(), out.to_str(), "{answer}");
+    let written = std::fs::metadata(&out).expect("the file the reply named");
+    assert!(written.len() > 0, "an empty screenshot");
+    assert_eq!(answer["bytes"].as_u64(), Some(written.len()), "{answer}");
+
+    // And nothing was left behind in the session's own artifacts: the file
+    // moved, it was not copied twice.
+    let leftovers: Vec<_> = std::fs::read_dir(fx.dir(&id).join("artifacts"))
+        .map(|d| d.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "the shot was left in the session too: {leftovers:?}");
+
+    let _ = fx.run(&["browser", "close"]);
+}
+
 /// A read grants the targets it was given, and only those.
 ///
 /// The first half is why there is no `--allow`: a URL the caller typed is a URL

@@ -600,6 +600,25 @@ fn run(
         // Never on the host as a fallback: that would move the session's
         // network to a boundary its caller did not choose.
         bs::Placement::Box { name } => {
+            // Asked before the run, the way [`locate`] asks on the host, and
+            // for the same reason: a box with no yt-dlp in it otherwise
+            // produced `failed: it said nothing`. `h5i box run` fails to exec
+            // the program and says so on **its** stderr, which [`complaint`]
+            // deliberately does not read — it holds h5i's receipt line, not the
+            // helper's words — so the one fact the caller needed was the one
+            // thing discarded. `sh` answers 127 for a command it cannot find.
+            if !present_in_box(name)? {
+                anyhow::bail!(
+                    "`{NAME}` is not in box `{name}`, and this session runs there.\n\n  \
+                     A box sees the system paths and not your `$HOME`, so an install under \
+                     `~/.local/bin` or in a virtualenv is invisible in there. Put it where \
+                     the box can reach it:\n    \
+                     sudo install -m755 $(command -v {NAME}) /usr/local/bin/{NAME}\n\n  \
+                     Or read this URL with `--via` unset. h5i does not fall back to the \
+                     host: running it out there would move this session's network to a \
+                     boundary its caller did not choose."
+                );
+            }
             let mut command = Command::new(std::env::current_exe()?);
             command
                 .arg("box")
@@ -719,6 +738,25 @@ fn box_receipt(site: &Site, work: &Workspace) -> Option<String> {
         .take_while(|c| c.is_ascii_hexdigit())
         .collect();
     (id.len() >= 8).then_some(id)
+}
+
+/// Is the helper in that box at all?
+///
+/// Through `sh` rather than by execing the program directly, because the answer
+/// wanted here is the shell's: 127 is "no such command", and `h5i box run`
+/// asked to exec a program that is not there reports its own error with its own
+/// exit code instead.
+fn present_in_box(name: &str) -> anyhow::Result<bool> {
+    let probe = Command::new(std::env::current_exe()?)
+        .arg("box")
+        .arg("run")
+        .arg(name)
+        .arg("--")
+        .arg("sh")
+        .arg("-c")
+        .arg(format!("command -v {NAME} >/dev/null 2>&1"))
+        .output()?;
+    Ok(probe.status.success())
 }
 
 /// `yt-dlp`, from `PATH` or from the two places an install lands.
