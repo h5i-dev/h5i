@@ -4683,13 +4683,28 @@ pub fn browser_request_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> 
     if policy.claim.image_backed() {
         return None;
     }
-    // The bare name, matching `browser_light_env`, which injects this path into
-    // the box as `H5I_BROWSER_RECEIPTS` built from `box_tmp_root` and this
-    // literal. Qualifying only this side would put the reader at a path the
-    // writer never uses — the same mismatch `box_tmp_on_host` exists to fix.
-    // The leaf can only be qualified here by qualifying the injection with it,
-    // and the two would have to move together.
-    let backing = box_tmp_on_host(h5i_root, m, &policy);
+    // `None` where the box's `/tmp` is the host's.
+    //
+    // The leaf name is fixed by `browser_light_env`, which injects this path
+    // into the box as `H5I_BROWSER_RECEIPTS` built from `box_tmp_root` and this
+    // literal — so it cannot be qualified here without moving the injection
+    // with it. Unqualified in a shared `/tmp` it is a world-writable path at a
+    // well-known name: a second box, or any local user, can create it first and
+    // have their rows rendered as this box's receipts, in a lane whose whole
+    // claim is that its rows are evidence.
+    //
+    // An earlier comment here said the case was unreachable because these are
+    // gated on the `browser` profile, which is supervised. That was wrong. The
+    // gate above is on the *engine*, and `--engine h5i --isolation workspace`
+    // sets one without the other.
+    //
+    // So it is refused, which an audit already renders honestly as a log this
+    // machine cannot read. Qualifying both sides is the better answer and is a
+    // change to the injection, not to this.
+    let backing = box_tmp_on_host(h5i_root, m, &policy)?;
+    if !tmp_is_redirected(&policy) {
+        return None;
+    }
     Some(backing.join("browser-requests.jsonl"))
 }
 
@@ -4714,9 +4729,13 @@ pub fn browser_action_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> {
     if policy.claim.image_backed() {
         return None;
     }
-    // Bare, for the reason `browser_request_log` gives: the writer's path is
-    // injected as `H5I_BROWSER_ACTIONS` from the same literal.
-    let backing = box_tmp_on_host(h5i_root, m, &policy);
+    // Refused in a shared `/tmp`, for the reason `browser_request_log` gives:
+    // the writer's path is injected as `H5I_BROWSER_ACTIONS` from the same
+    // literal, so it cannot be qualified from this side alone.
+    let backing = box_tmp_on_host(h5i_root, m, &policy)?;
+    if !tmp_is_redirected(&policy) {
+        return None;
+    }
     Some(backing.join("browser-actions.jsonl"))
 }
 
@@ -4746,7 +4765,7 @@ pub fn box_tmp_file(
     // host's own `/tmp`, shared with every other box on the machine.
     let leaf = box_tmp_leaf(m, name, tmp_is_redirected(&policy));
     let in_box = PathBuf::from(box_tmp_root(&policy)).join(&leaf);
-    let on_host = box_tmp_on_host(h5i_root, m, &policy).join(&leaf);
+    let on_host = box_tmp_on_host(h5i_root, m, &policy)?.join(&leaf);
     Some((in_box, on_host))
 }
 
@@ -4773,9 +4792,13 @@ pub fn browser_control_file(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf>
     if policy.claim.image_backed() {
         return None;
     }
-    // Bare, for the reason `browser_request_log` gives: the daemon derives this
-    // directory from `H5I_BROWSER_STREAM_FILE`, injected from the same literal.
-    let backing = box_tmp_on_host(h5i_root, m, &policy);
+    // Refused in a shared `/tmp`, for the reason `browser_request_log` gives:
+    // the daemon derives this directory from `H5I_BROWSER_STREAM_FILE`, which
+    // is injected from the same literal.
+    let backing = box_tmp_on_host(h5i_root, m, &policy)?;
+    if !tmp_is_redirected(&policy) {
+        return None;
+    }
     Some(backing.join("agent-browser").join("h5i-light.control"))
 }
 
@@ -4799,13 +4822,20 @@ pub fn browser_control_file(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf>
 /// has one. Here the policy comes straight from [`load_policy`], the grants are
 /// as the profile wrote them, and the predicate is the same one the preparer
 /// will apply.
-fn box_tmp_on_host(h5i_root: &Path, m: &EnvManifest, policy: &ResolvedPolicy) -> PathBuf {
-    let redirected = tmp_is_redirected(policy);
-    if redirected {
-        private_tmp_backing(&m.dir(h5i_root).join("tmp"))
-    } else {
-        // No redirect: what the box calls `/tmp` is what this machine calls it.
-        PathBuf::from(box_tmp_root(policy))
+fn box_tmp_on_host(h5i_root: &Path, m: &EnvManifest, policy: &ResolvedPolicy) -> Option<PathBuf> {
+    if tmp_is_redirected(policy) {
+        return Some(private_tmp_backing(&m.dir(h5i_root).join("tmp")));
+    }
+    // No redirect, and the answer then depends on which tier it is rather than
+    // on "not a container". At the workspace tier the box shares this machine's
+    // namespaces, so what it calls `/tmp` is what this machine calls it. At a
+    // hardened container it does not: that tier is not `image_backed()`, so it
+    // reaches here, and handing back the host's literal `/tmp` would name a
+    // directory with no relationship to the box's — worse than the nonexistent
+    // path this used to return, because that one merely read as empty.
+    match policy.claim {
+        IsolationClaim::Workspace => Some(PathBuf::from(box_tmp_root(policy))),
+        _ => None,
     }
 }
 
@@ -4825,9 +4855,8 @@ fn box_tmp_on_host(h5i_root: &Path, m: &EnvManifest, policy: &ResolvedPolicy) ->
 /// three `browser_*` readers above are not like that: their writer's path is
 /// injected into the box as an environment variable built from a hardcoded
 /// literal, so qualifying the reader alone would put it at a path nothing
-/// writes — the mismatch this module already had once. Those stay bare, and
-/// the collision they can have at the workspace tier is not reachable today
-/// because they are gated on the `browser` profile, which is supervised.
+/// writes — the mismatch this module already had once. Those refuse to answer
+/// in a shared `/tmp` instead.
 ///
 /// The env id rather than the box's name, because the id is what does not move.
 fn box_tmp_leaf(m: &EnvManifest, name: &str, redirected: bool) -> String {

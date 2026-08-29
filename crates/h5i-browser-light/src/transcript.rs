@@ -261,7 +261,14 @@ impl Transcript {
                 media
                     .tracks
                     .iter()
-                    .filter(|track| track.fetched && track.error.is_some())
+                    // `error.is_some()` alone. A track whose `src` will not
+                    // parse as a URL gets an error and never reaches
+                    // `fetched = true`, so requiring both let exactly that case
+                    // fall through to "its words exist only in the audio" —
+                    // the misreport this method was added to prevent. A track
+                    // that was listed and not asked for has no error, so it is
+                    // still not a failure.
+                    .filter(|track| track.error.is_some())
                     .map(move |track| (media, track))
             })
             .collect()
@@ -766,25 +773,22 @@ fn strip_markup(text: &str) -> String {
     while let Some(ch) = chars.next() {
         match ch {
             '<' => {
-                // Bounded. Cue tags are short — `v Speaker`, `i`, `c.name`, a
-                // timestamp — so a `<` with no `>` within a tag's worth of
-                // characters is a literal `<` in out-of-spec text, which is
-                // routine in scraped caption files. Scanning to end of input
-                // there silently discarded the rest of the cue.
-                const LONGEST_TAG: usize = 128;
-                let mut tag = String::new();
-                let mut closed = false;
-                for inner in chars.by_ref().take(LONGEST_TAG) {
-                    if inner == '>' {
-                        closed = true;
-                        break;
-                    }
-                    tag.push(inner);
-                }
-                if !closed {
+                // A `<` with no `>` after it at all is a literal `<` in
+                // out-of-spec text, which is routine in scraped caption files;
+                // consuming to end of input there discarded the rest of the
+                // cue. The test is whether a `>` exists, not how far away it
+                // is: bounding the scan instead made a legitimately long closed
+                // tag — `<c.a-generated-class-name…>` past the bound — come out
+                // verbatim in the transcript, which is the same class of
+                // mistake pointing the other way.
+                let rest: String = chars.clone().collect();
+                let Some(end) = rest.find('>') else {
                     out.push('<');
-                    out.push_str(&tag);
                     continue;
+                };
+                let tag: String = rest[..end].to_string();
+                for _ in 0..tag.chars().count() + 1 {
+                    chars.next();
                 }
                 // `<v Roger Bannister>` names the speaker of everything after
                 // it. Rendered as a prefix rather than dropped: a two-person
@@ -847,11 +851,21 @@ fn is_css_ident(id: &str) -> bool {
     let Some(first) = chars.next() else {
         return false;
     };
+    // A leading digit ends the identifier, and so does a leading `-` followed
+    // by one: `#-1a` does not parse. A bare `-` is not an identifier either.
     if first.is_ascii_digit() {
         return false;
     }
-    id.chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii())
+    if first == '-' && !chars.clone().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
+        return false;
+    }
+    // An allowed set rather than `!c.is_ascii()`, which admitted every
+    // non-ASCII character including the invisible ones. `collapse` drops
+    // whitespace, and U+200B is not whitespace — so a zero-width space rode
+    // through into a selector that names nothing.
+    id.chars().all(|c| {
+        c.is_alphanumeric() && !c.is_whitespace() && !c.is_control() || c == '-' || c == '_'
+    })
 }
 
 fn attr(node: &Node, name: &str) -> Option<String> {
@@ -993,10 +1007,66 @@ mod tests {
         assert!(is_css_ident("player"));
         assert!(is_css_ident("main-video_2"));
         assert!(is_css_ident("café"));
+        assert!(is_css_ident("-leading-dash-then-letter"));
         assert!(!is_css_ident("video.main"), "a class follows the id");
         assert!(!is_css_ident("two words"), "a descendant combinator");
         assert!(!is_css_ident("2fast"), "an identifier cannot start with a digit");
+        assert!(!is_css_ident("-1a"), "nor a dash and then one");
+        assert!(!is_css_ident("-"), "a bare dash is not an identifier");
+        assert!(!is_css_ident("--"), "nor two");
+        // `collapse` drops whitespace and U+200B is not whitespace, so a
+        // zero-width space rode through into a selector that names nothing.
+        assert!(!is_css_ident("play\u{200b}er"), "a zero-width space");
+        assert!(!is_css_ident("play\u{00a0}er"), "a no-break space");
         assert!(!is_css_ident(""));
+    }
+
+    /// The bound treated a legitimately long *closed* tag as unterminated and
+    /// put the markup verbatim into the transcript — the same mistake as
+    /// eating the cue, pointing the other way.
+    #[test]
+    fn a_long_but_closed_tag_is_still_stripped() {
+        let long_class = "a-generated-class-name".repeat(12);
+        let (cues, _) = parse(
+            &format!(
+                "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<c.{long_class}>the words</c>\n"
+            ),
+            DEFAULT_MAX_BYTES,
+        );
+        assert_eq!(cues[0].text, "the words", "{}", cues[0].text);
+    }
+
+    /// A track whose `src` will not parse gets an error before it is ever
+    /// marked fetched, and requiring both let it fall through to "its words
+    /// exist only in the audio".
+    #[test]
+    fn a_track_that_never_reached_the_wire_is_still_a_read_failure() {
+        let mut transcript = Transcript {
+            media: vec![Media {
+                kind: "video".into(),
+                selector: None,
+                src: None,
+                label: None,
+                tracks: vec![Track {
+                    kind: "captions".into(),
+                    language: None,
+                    label: None,
+                    default: true,
+                    src: "not a url".into(),
+                    fetched: false,
+                    seq: None,
+                    error: Some("unreadable track URL: relative URL".into()),
+                    cues: Vec::new(),
+                    truncated: None,
+                }],
+            }],
+            notes: Vec::new(),
+        };
+        assert_eq!(transcript.read_failures().len(), 1);
+
+        // A track that was listed and never asked for is not a failure.
+        transcript.media[0].tracks[0].error = None;
+        assert!(transcript.read_failures().is_empty());
     }
 
     /// An unterminated `<` is a literal in out-of-spec text, and routine in

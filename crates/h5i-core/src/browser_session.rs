@@ -1175,7 +1175,15 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     // Straight off the session directory rather than out of `session.logs`: the
     // helper log is h5i's own, written beside the session by whoever ran the
     // helper, and it exists for sessions opened before this file did.
-    let helpers = fs::read_to_string(dir.join(HELPERS_FILE)).ok();
+    // Not-found and unreadable are different facts and `Availability::of`
+    // collapses them, because `read_to_string(...).ok()` gives `None` for both.
+    // A session that never ran a helper must read as `Empty` — nothing of this
+    // kind happened — and a log this machine could not open must read as
+    // `Unavailable`, which is the one an auditor has to see. The path is the
+    // only thing that tells them apart.
+    let helpers_path = dir.join(HELPERS_FILE);
+    let helpers_exists = helpers_path.exists();
+    let helpers = fs::read_to_string(&helpers_path).ok();
     let handovers = control_journal(&dir);
     let read_at = now();
 
@@ -1269,7 +1277,15 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
             } else {
                 Availability::Read
             },
-            helpers: Availability::of(&helpers),
+            helpers: match (&helpers, helpers_exists) {
+                (Some(text), _) if text.trim().is_empty() => Availability::Empty,
+                (Some(_), _) => Availability::Read,
+                // There, and h5i could not read it. Nothing can be concluded
+                // from its silence, which is exactly what `Unavailable` says.
+                (None, true) => Availability::Unavailable,
+                // Not there: no helper ever ran for this session.
+                (None, false) => Availability::Empty,
+            },
         },
         events: log.since(0).into_iter().cloned().collect(),
         dropped: log.dropped(),

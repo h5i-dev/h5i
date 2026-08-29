@@ -265,7 +265,11 @@ pub fn transcript(
     }
 
     let mut note = describe(&read, want, status, &said);
-    if let Some(tag) = &fell_back {
+    // Only when the second pass actually produced something. Appended
+    // unconditionally it followed `failed: HTTP Error 429` with "fell back to
+    // its automatic transcript in `en`" — a claim that a transcript arrived, in
+    // the same sentence as the reason none did.
+    if let Some(tag) = fell_back.as_ref().filter(|_| !read.cues.is_empty()) {
         note.push_str(&format!(
             ". No authored captions on this video, so `--all` fell back to its automatic \
              transcript in `{tag}`."
@@ -287,7 +291,7 @@ pub fn transcript(
         // command that is not the one that produced the answer.
         argv,
         status,
-        answered: !read.cues.is_empty(),
+        answered: read.cue_total() > 0,
         note,
     })
 }
@@ -875,19 +879,10 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize, keep_extra: bool) -
         // therefore said `automatic: false` exactly where the warning matters
         // most, and dropped "machine-transcribed, names are frequently wrong"
         // from the one transcript that needed it.
-        read.automatic = read.language.as_deref().is_some_and(|tag| {
-            let authored = read.authored.iter().any(|t| t.eq_ignore_ascii_case(tag));
-            let automatic = read
-                .automatic_tags
-                .iter()
-                .any(|t| t.eq_ignore_ascii_case(tag));
-            // A tag in both lists is the author's own captions; yt-dlp prefers
-            // those and so does this. Only a tag that is *only* automatic, or
-            // one whose name says so, is reported as machine-transcribed.
-            (automatic && !authored)
-                || tag.contains("-orig")
-                || tag.starts_with("a.")
-        });
+        read.automatic = read
+            .language
+            .clone()
+            .is_some_and(|tag| is_automatic(&read, &tag));
         if let Ok(text) = std::fs::read_to_string(first) {
             let (cues, truncated) = h5i_browser_light::transcript::parse(&text, max_bytes);
             read.cues = cues;
@@ -903,14 +898,30 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize, keep_extra: bool) -
         // English into English. Rendering both there is noise on top of the one
         // transcript the caller asked for. `--all` is the flag that says "every
         // text track", so it is the flag this follows.
+        // **One budget across the whole reply**, not one per file. `max_bytes`
+        // bounds a track, and once `--all` carries every track the reply grew
+        // with the number of languages a video has: forty authored tracks meant
+        // forty times the ceiling in a single answer to an agent.
+        let mut left =
+            max_bytes.saturating_sub(read.cues.iter().map(|c| c.text.len()).sum::<usize>());
         for path in subtitles.iter().filter(|p| *p != first).filter(|_| keep_extra) {
+            if left == 0 {
+                read.truncated.get_or_insert_with(|| {
+                    format!(
+                        "the other tracks passed the {max_bytes} byte ceiling for this reply \
+                         and are not carried. Ask for one with `--lang`."
+                    )
+                });
+                break;
+            }
             let Ok(text) = std::fs::read_to_string(path) else {
                 continue;
             };
-            let (cues, truncated) = h5i_browser_light::transcript::parse(&text, max_bytes);
+            let (cues, truncated) = h5i_browser_light::transcript::parse(&text, left);
             if cues.is_empty() {
                 continue;
             }
+            left = left.saturating_sub(cues.iter().map(|c| c.text.len()).sum::<usize>());
             read.extra.push(Extra {
                 tag: tag_of(path),
                 cues,
@@ -919,6 +930,19 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize, keep_extra: bool) -
         }
     }
     read
+}
+
+impl Read {
+    /// Cues across every track this reply carries.
+    ///
+    /// `read.cues` is the *chosen* track, and once `--all` carries the others
+    /// the two diverge: a chosen track that parsed to nothing while `de` and
+    /// `fr` parsed fine reported `empty: true, cues: 0` beside a fenced
+    /// transcript of hundreds of lines, so a caller keying on either discarded
+    /// a transcript it had been handed.
+    fn cue_total(&self) -> usize {
+        self.cues.len() + self.extra.iter().map(|e| e.cues.len()).sum::<usize>()
+    }
 }
 
 /// One track beyond the chosen one.
@@ -940,6 +964,23 @@ fn tags(value: &Value) -> Vec<String> {
     let mut out: Vec<String> = map.keys().map(|k| collapse(k)).filter(|k| !k.is_empty()).collect();
     out.sort();
     out
+}
+
+/// Whether a tag names a machine transcript rather than an author's captions.
+///
+/// From the info file's two lists, not from the filename. The marker in a
+/// filename only appears on a *translated* automatic track (`en-orig`, `a.en`);
+/// the case this lane exists to serve — a video with automatic captions and no
+/// authored ones — is written as plain `<id>.en.vtt`, identical to an authored
+/// track. A tag in both lists is the author's own, because that is the one
+/// yt-dlp writes when both exist.
+fn is_automatic(read: &Read, tag: &str) -> bool {
+    let authored = read.authored.iter().any(|t| t.eq_ignore_ascii_case(tag));
+    let automatic = read
+        .automatic_tags
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case(tag));
+    (automatic && !authored) || tag.contains("-orig") || tag.starts_with("a.")
 }
 
 /// The language tag out of `<id>.<lang>.vtt`.
@@ -1053,7 +1094,11 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
             "default": false,
             "src": url,
             "fetched": true,
-            "automatic": false,
+            // Computed, not assumed. Extras only arrive under `--all`, which
+            // asks for authored tracks alone, so `false` is right today — and
+            // right by accident, which is how the chosen track's label came to
+            // be wrong for the one case that mattered. Ask the info file.
+            "automatic": extra.tag.as_deref().is_some_and(|tag| is_automatic(read, tag)),
             "cues": extra.cues,
             "truncated": extra.truncated,
         }));
@@ -1072,8 +1117,8 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
     json!({
         "ok": true,
         "url": url,
-        "empty": read.cues.is_empty(),
-        "cues": read.cues.len(),
+        "empty": read.cue_total() == 0,
+        "cues": read.cue_total(),
         "source": NAME,
         // The sentence that keeps the request log's claim true. Said in the
         // reply and not only in the audit, because the reply is what a model
@@ -1768,6 +1813,64 @@ mod tests {
         let _ = std::fs::remove_file(dir.join("v.fr.vtt"));
         assert!(collect(&dir, Some("en"), 4096, true).extra.is_empty());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One budget across the whole reply. `max_bytes` bounds a track, and once
+    /// `--all` carries every track the reply grew with the number of languages
+    /// a video has.
+    #[test]
+    fn every_track_together_stays_inside_one_ceiling() {
+        let dir = std::env::temp_dir().join(format!("h5i-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut vtt = String::from("WEBVTT\n\n");
+        for i in 0..40 {
+            vtt.push_str(&format!(
+                "00:00:{:02}.000 --> 00:00:{:02}.000\n{}\n\n",
+                i % 60,
+                (i + 1) % 60,
+                "word ".repeat(10)
+            ));
+        }
+        for tag in ["en", "de", "fr", "it"] {
+            std::fs::write(dir.join(format!("v.{tag}.vtt")), &vtt).unwrap();
+        }
+
+        let read = collect(&dir, Some("en"), 600, true);
+        let carried: usize = read.cues.iter().map(|c| c.text.len()).sum::<usize>()
+            + read
+                .extra
+                .iter()
+                .flat_map(|e| e.cues.iter())
+                .map(|c| c.text.len())
+                .sum::<usize>();
+        assert!(
+            carried <= 600 + 64,
+            "four tracks came back at {carried} bytes against a 600 byte ceiling"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `empty` and `cues` describe the whole reply, not the chosen track. A
+    /// chosen track that parses to nothing beside extras that parse fine said
+    /// `empty: true` over a transcript of hundreds of lines.
+    #[test]
+    fn the_counts_describe_what_the_reply_carries() {
+        let dir = std::env::temp_dir().join(format!("h5i-counts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // `en` is present and parses to nothing; `de` is real.
+        std::fs::write(dir.join("v.en.vtt"), "WEBVTT\n").unwrap();
+        std::fs::write(
+            dir.join("v.de.vtt"),
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nGesagt.\n",
+        )
+        .unwrap();
+
+        let read = collect(&dir, Some("en"), 4096, true);
+        assert!(read.cues.is_empty(), "the chosen track parsed to nothing");
+        assert_eq!(read.cue_total(), 1, "and the reply still carries one cue");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

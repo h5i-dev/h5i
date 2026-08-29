@@ -2905,9 +2905,13 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
     // the colour reserved for "nothing can be concluded from the silence of a
     // log h5i could not read". So the arm was inverted: it hid the one state
     // worth showing and shouted the one that means nothing happened.
+    // Hidden only when the log is absent, which `audit` now reports as `Empty`
+    // rather than folding it in with a log it could not open. Suppressing
+    // `Unavailable` too would have dropped the one state the red is for: a
+    // helper log that exists and cannot be read.
     let helpers = match src.helpers {
-        bs::Availability::Read => format!(" · helpers {}", availability(src.helpers)),
-        bs::Availability::Empty | bs::Availability::Unavailable => String::new(),
+        bs::Availability::Empty => String::new(),
+        other => format!(" · helpers {}", availability(other)),
     };
     println!(
         "  sources  : actions {} · requests {} · control {}{helpers}",
