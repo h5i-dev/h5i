@@ -247,6 +247,26 @@ impl Transcript {
         self.media.iter().filter(|m| m.is_silent()).collect()
     }
 
+    /// Tracks that were fetched and did not yield cues, with the reason.
+    ///
+    /// The difference between "this page has no text lane" and "this page has
+    /// one and it did not load" — a policy refusal, a 5xx, a body that is not
+    /// WebVTT. Both end with no cues, and reporting the second as the first
+    /// tells an agent to route away from a page whose captions are right there
+    /// and were simply not delivered.
+    pub fn read_failures(&self) -> Vec<(&Media, &Track)> {
+        self.media
+            .iter()
+            .flat_map(|media| {
+                media
+                    .tracks
+                    .iter()
+                    .filter(|track| track.fetched && track.error.is_some())
+                    .map(move |track| (media, track))
+            })
+            .collect()
+    }
+
     /// How many cues were actually read, across everything.
     pub fn cue_count(&self) -> usize {
         self.media
@@ -358,6 +378,11 @@ impl Transcript {
 pub fn discover(doc: &BaseDocument, base: &url::Url) -> Transcript {
     let mut out = Transcript::default();
     let mut truncated_tracks = false;
+    // The raw `id` of each media element, in the same order, resolved into
+    // selectors after the walk. It cannot be decided during the walk: whether
+    // `#player` names *this* element depends on whether anything later on the
+    // page carries the same id.
+    let mut ids: Vec<Option<String>> = Vec::new();
 
     for (_node_id, node) in doc.tree().iter() {
         let Some(element) = node.element_data() else {
@@ -376,10 +401,9 @@ pub fn discover(doc: &BaseDocument, base: &url::Url) -> Transcript {
 
         let mut media = Media {
             kind: tag.to_string(),
-            selector: attr(node, "id")
-                .map(|id| collapse(&id))
-                .filter(|id| !id.is_empty())
-                .map(|id| format!("#{id}")),
+            // Filled in after the walk: whether `#player` names *this* element
+            // depends on what the rest of the page carries.
+            selector: None,
             src: attr(node, "src").and_then(|raw| resolve(base, &raw)),
             label: attr(node, "title")
                 .or_else(|| attr(node, "aria-label"))
@@ -449,7 +473,31 @@ pub fn discover(doc: &BaseDocument, base: &url::Url) -> Transcript {
             });
         }
 
+        ids.push(attr(node, "id").map(|id| collapse(&id)).filter(|id| !id.is_empty()));
         out.media.push(media);
+    }
+
+    // Ids, resolved against the whole document rather than per element.
+    //
+    // `#dup` names the *first* element with that id, and duplicate ids are
+    // legal in the wild — two copies of an embed snippet is the ordinary way it
+    // happens. Handing the second `<video id="player">` back as `#player` gives
+    // a caller a handle that acts on the first, and this field's own doc says a
+    // handle that resolves to the wrong thing is worse than none. An id that is
+    // not a legal CSS identifier (`video.main`) is dropped for the same reason:
+    // `#video.main` parses as an id plus a class and matches something else.
+    // `crate::selector` guards its ids both ways already.
+    let mut seen: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for (_, node) in doc.tree().iter() {
+        if let Some(id) = attr(node, "id").map(|id| collapse(&id)).filter(|id| !id.is_empty()) {
+            *seen.entry(id).or_default() += 1;
+        }
+    }
+    for (media, id) in out.media.iter_mut().zip(ids) {
+        media.selector = id
+            .filter(|id| is_css_ident(id))
+            .filter(|id| seen.get(id).copied() == Some(1))
+            .map(|id| format!("#{id}"));
     }
 
     if truncated_tracks {
@@ -718,12 +766,25 @@ fn strip_markup(text: &str) -> String {
     while let Some(ch) = chars.next() {
         match ch {
             '<' => {
+                // Bounded. Cue tags are short — `v Speaker`, `i`, `c.name`, a
+                // timestamp — so a `<` with no `>` within a tag's worth of
+                // characters is a literal `<` in out-of-spec text, which is
+                // routine in scraped caption files. Scanning to end of input
+                // there silently discarded the rest of the cue.
+                const LONGEST_TAG: usize = 128;
                 let mut tag = String::new();
-                for inner in chars.by_ref() {
+                let mut closed = false;
+                for inner in chars.by_ref().take(LONGEST_TAG) {
                     if inner == '>' {
+                        closed = true;
                         break;
                     }
                     tag.push(inner);
+                }
+                if !closed {
+                    out.push('<');
+                    out.push_str(&tag);
+                    continue;
                 }
                 // `<v Roger Bannister>` names the speaker of everything after
                 // it. Rendered as a prefix rather than dropped: a two-person
@@ -772,6 +833,25 @@ fn strip_markup(text: &str) -> String {
         }
     }
     out
+}
+
+/// Whether a bare `#name` selector would mean this id.
+///
+/// The CSS grammar for an identifier, in the subset that matters: no leading
+/// digit, and nothing that would end the identifier and start something else.
+/// A `.` makes `#a.b` an id *and* a class, a space makes it a descendant
+/// combinator, and either way the selector matches an element that is not the
+/// one it was minted for.
+fn is_css_ident(id: &str) -> bool {
+    let mut chars = id.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if first.is_ascii_digit() {
+        return false;
+    }
+    id.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii())
 }
 
 fn attr(node: &Node, name: &str) -> Option<String> {
@@ -883,6 +963,52 @@ mod tests {
         assert_eq!(found.media.len(), 2);
         assert_eq!(found.media[0].selector.as_deref(), Some("#player"));
         assert_eq!(found.media[1].selector, None);
+    }
+
+    /// `#dup` names the first element with that id, and duplicate ids are
+    /// legal. Handing the second one back as `#player` gives a caller a handle
+    /// that acts on the first.
+    #[test]
+    fn a_duplicated_or_unusable_id_is_not_offered_as_a_handle() {
+        let found = discovered(
+            r#"<html><body>
+                 <video id="player" src="/a.mp4"><track src="/a.vtt"></video>
+                 <video id="player" src="/b.mp4"><track src="/b.vtt"></video>
+                 <video id="video.main" src="/c.mp4"><track src="/c.vtt"></video>
+                 <video id="ok" src="/d.mp4"><track src="/d.vtt"></video>
+               </body></html>"#,
+        );
+        assert_eq!(found.media.len(), 4);
+        assert_eq!(found.media[0].selector, None, "duplicated id");
+        assert_eq!(found.media[1].selector, None, "duplicated id");
+        assert_eq!(
+            found.media[2].selector, None,
+            "`#video.main` is an id plus a class, and matches something else"
+        );
+        assert_eq!(found.media[3].selector.as_deref(), Some("#ok"));
+    }
+
+    #[test]
+    fn is_css_ident_refuses_what_would_end_the_identifier() {
+        assert!(is_css_ident("player"));
+        assert!(is_css_ident("main-video_2"));
+        assert!(is_css_ident("café"));
+        assert!(!is_css_ident("video.main"), "a class follows the id");
+        assert!(!is_css_ident("two words"), "a descendant combinator");
+        assert!(!is_css_ident("2fast"), "an identifier cannot start with a digit");
+        assert!(!is_css_ident(""));
+    }
+
+    /// An unterminated `<` is a literal in out-of-spec text, and routine in
+    /// scraped caption files. Scanning to end of input discarded the cue.
+    #[test]
+    fn an_unterminated_tag_does_not_eat_the_rest_of_the_cue() {
+        let (cues, _) = parse(
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n5 < 6 and that is the whole of it\n",
+            DEFAULT_MAX_BYTES,
+        );
+        assert_eq!(cues.len(), 1);
+        assert!(cues[0].text.contains("whole of it"), "{}", cues[0].text);
     }
 
     #[test]

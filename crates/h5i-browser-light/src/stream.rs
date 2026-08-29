@@ -2156,6 +2156,25 @@ fn control_verb_inner(
                      `snapshot` to read what it does contain."
                         .to_string(),
                 )
+            } else if found.cue_count() == 0 && !found.read_failures().is_empty() {
+                // A *failed read*, and the one case this branch used to get
+                // wrong. A denied fetch, a 5xx or a body that is not WebVTT all
+                // end with no cues, and calling that "no timed text" tells an
+                // agent to route away from a page whose captions are right
+                // there and were simply not delivered. The reasons come from
+                // the tracks, so the note names what went wrong rather than
+                // describing the page.
+                let why: Vec<String> = found
+                    .read_failures()
+                    .iter()
+                    .filter_map(|(_, track)| track.error.clone())
+                    .collect();
+                Some(format!(
+                    "this page declares timed text and none of it could be read: {}. That is a \
+                     failed read, not a page without captions — the tracks are listed in \
+                     `media` with their URLs.",
+                    why.join("; ")
+                ))
             } else if found.cue_count() == 0 {
                 // The answer that routes a caller somewhere else, and worth
                 // saying plainly rather than leaving to be inferred from an
@@ -2837,6 +2856,14 @@ mod tests {
             track["error"].as_str().unwrap_or_default().contains("denied by policy"),
             "a page from the open web must not reach loopback through a caption: {reply:?}"
         );
+        // And it is reported as a failed read rather than as a page with no
+        // captions. This exact state used to produce "its words exist only in
+        // the audio", which routes an agent away from a page whose captions are
+        // there and were refused.
+        let note = reply["note"].as_str().unwrap_or_default();
+        assert!(note.contains("failed read"), "{note}");
+        assert!(note.contains("denied by policy"), "{note}");
+        assert!(!note.contains("exist only"), "{note}");
         // And the refusal is written down, like every other one.
         let records = session.factory.broker().records();
         assert!(

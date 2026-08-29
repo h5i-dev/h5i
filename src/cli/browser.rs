@@ -2309,7 +2309,8 @@ fn via_helper(
                 .map(str::to_string)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "this session did not say what page it is on, so there is no URL to                          hand the helper. Name one with `--url`."
+                        "this session did not say what page it is on, so there is no URL to hand \
+                         the helper. Name one with `--url`."
                     )
                 })?
         }
@@ -2365,7 +2366,9 @@ fn via_helper(
     _json: bool,
 ) -> anyhow::Result<()> {
     anyhow::bail!(
-        "this build has no helper lane, so `--via {helper}` cannot run: it was compiled          without the `ytdlp` feature, and it has no path to exec a helper at all. Drop          `--via` to read the captions the page itself declares."
+        "this build has no helper lane, so `--via {helper}` cannot run: it was compiled \
+         without the `ytdlp` feature, and it has no path to exec a helper at all. Drop \
+         `--via` to read the captions the page itself declares."
     )
 }
 
@@ -2896,9 +2899,15 @@ fn audit(root: &Path, selector: Option<&str>, json: bool) -> anyhow::Result<()> 
     // listed it as `empty` on every session would read as a lane that exists
     // and did nothing, where the truth is that nothing outside the engine
     // touched this session at all.
+    // Named only when there *is* a helper log. `Availability::of` answers
+    // `Unavailable` for a file that is not there, which is the ordinary case —
+    // almost no session runs a helper — and `availability()` paints that red,
+    // the colour reserved for "nothing can be concluded from the silence of a
+    // log h5i could not read". So the arm was inverted: it hid the one state
+    // worth showing and shouted the one that means nothing happened.
     let helpers = match src.helpers {
-        bs::Availability::Empty => String::new(),
-        other => format!(" · helpers {}", availability(other)),
+        bs::Availability::Read => format!(" · helpers {}", availability(src.helpers)),
+        bs::Availability::Empty | bs::Availability::Unavailable => String::new(),
     };
     println!(
         "  sources  : actions {} · requests {} · control {}{helpers}",

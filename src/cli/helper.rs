@@ -218,7 +218,14 @@ pub fn transcript(
 
     let mut argv = build_argv(&url, &langs, &work.in_helper, !all);
     let (mut status, mut said) = run(session, &argv, &work)?;
-    let mut read = collect(&work.host, Some(want), max_bytes);
+    // `want` goes to yt-dlp as a **regex** and to `collect` as a literal, so
+    // the chooser gets the literal head of it. Without this the escape hatch
+    // this lane recommends by name — `--lang 'en.*'`, printed by `describe` —
+    // matched nothing in the chooser: no tag equals or starts with `en.*`, so
+    // selection fell through to whatever sorted first, and `-` sorts before `.`
+    // so `en-de` won. The translation-of-a-translation bug, handed to a caller
+    // who followed this tool's own advice.
+    let mut read = collect(&work.host, Some(literal_prefix(want)), max_bytes);
     record(root, session, &work, &argv, status, &describe(&read, want, status, &said));
 
     // The second pass, and only for `--all` on a video that turns out to have
@@ -243,7 +250,7 @@ pub fn transcript(
         let (second_status, second_said) = run(session, &argv, &work)?;
         status = second_status;
         said = second_said;
-        read = collect(&work.host, Some(&tag), max_bytes);
+        read = collect(&work.host, Some(literal_prefix(&tag)), max_bytes);
         record(
             root,
             session,
@@ -266,7 +273,7 @@ pub fn transcript(
     // strongest evidence this lane produces — a row h5i wrote from outside the
     // helper, naming the policy the run was subject to — so the reply points at
     // it rather than leaving the two records to be matched by time.
-    if let Some(receipt) = box_receipt(&work) {
+    if let Some(receipt) = box_receipt(session, &work) {
         note.push_str(&format!(" Box receipt {receipt}."));
     }
 
@@ -299,7 +306,7 @@ fn record(
     note: &str,
 ) {
     let mut note = note.to_string();
-    if let Some(receipt) = box_receipt(work) {
+    if let Some(receipt) = box_receipt(session, work) {
         note.push_str(&format!(" Box receipt {receipt}."));
     }
     let _ = bs::record_helper(
@@ -314,6 +321,27 @@ fn record(
             note: Some(note),
         },
     );
+}
+
+/// The literal head of a `--sub-langs` value.
+///
+/// yt-dlp matches that value as a regex and this module matches tags as text,
+/// so a caller who writes `en.*` means "any tag starting with en" to one and a
+/// tag literally named `en.*` to the other. Everything up to the first
+/// metacharacter is the part both agree on.
+fn literal_prefix(pattern: &str) -> &str {
+    const META: &[char] = &[
+        '.', '*', '+', '?', '[', ']', '(', ')', '{', '}', '|', '^', '$', '\\',
+    ];
+    match pattern.find(META) {
+        // A pattern that is all metacharacter has no literal head, and a bare
+        // `""` would prefix-match everything. Handing back the whole thing
+        // matches nothing instead, which is the safe direction: the caller is
+        // told what the video has rather than given an arbitrary track.
+        Some(0) => pattern,
+        Some(at) => &pattern[..at],
+        None => pattern,
+    }
 }
 
 /// Which automatic track to fall back to, out of the ones the video has.
@@ -419,6 +447,18 @@ struct Workspace {
 /// re-computing the box's tmp mapping is the same rule the rest of this file
 /// follows: two places that must agree about a path are two places that can
 /// stop agreeing.
+/// Pick a directory both h5i and the helper can name.
+///
+/// For a host session that is the session directory, which h5i already owns.
+/// For a boxed one it is beside the control socket in the box's `/tmp`, whose
+/// two views the session record already carries — `control.file` is the box's
+/// and `control.witness` is this machine's. Deriving them here rather than
+/// re-computing the box's tmp mapping is the same rule the rest of this file
+/// follows: two places that must agree about a path are two places that can
+/// stop agreeing.
+///
+/// (Doc kept with [`workspace`] below; [`leaf`] names the directory.)
+///
 /// The workspace directory's name, which has to carry the session id.
 ///
 /// A bare `helper` is unique per session on the host, where the parent is the
@@ -678,7 +718,14 @@ fn complaint(placement: &bs::Placement, work: &Workspace) -> String {
 /// row in the box's own receipt log, written by h5i from outside the helper,
 /// naming the policy the run was subject to. The audit row carries it so the
 /// two records can be put beside each other.
-fn box_receipt(work: &Workspace) -> Option<String> {
+fn box_receipt(session: &bs::Session, work: &Workspace) -> Option<String> {
+    // Only where there *is* a box. On the host, `stderr.log` is yt-dlp's own
+    // stderr, and any line of it carrying `receipt ` and eight hex digits would
+    // have this claim a box receipt for a run that never entered one — a false
+    // evidence claim, in the one lane whose entire value is evidence honesty.
+    if !matches!(session.placement, bs::Placement::Box { .. }) {
+        return None;
+    }
     let text = std::fs::read_to_string(work.host.join("stderr.log")).ok()?;
     let at = text.find("receipt ")? + "receipt ".len();
     let id: String = text[at..]
@@ -730,6 +777,14 @@ struct Read {
     automatic: bool,
     cues: Vec<h5i_browser_light::transcript::Cue>,
     truncated: Option<String>,
+    /// The other tracks that arrived, parsed, in tag order.
+    ///
+    /// `--all` downloads every authored track, and reporting one of them made
+    /// those requests pay for nothing: the tag list in the reply comes from the
+    /// info file whether they were downloaded or not, so a caller learned
+    /// nothing from the downloads that it did not already know. The CLI help
+    /// says "read every text track", and this is that.
+    extra: Vec<Extra>,
     /// The language tags this video *has*, from the info file rather than from
     /// what happened to be downloaded.
     ///
@@ -804,17 +859,60 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize) -> Read {
         // writes for one carries the `-orig` or `a.` marker, and the info file
         // lists it under `automatic_captions`. The filename is the reliable
         // half across versions.
-        read.automatic = read
-            .language
-            .as_deref()
-            .is_some_and(|tag| tag.contains("-orig") || tag.starts_with("a."));
+        // From the info file's two lists, not from the filename.
+        //
+        // The marker in a filename only appears on a *translated* automatic
+        // track (`en-orig`, `a.en`). The case this lane exists to serve — a
+        // video with automatic captions and no authored ones — gets written as
+        // plain `<id>.en.vtt`, identical to an authored track. Reading the name
+        // therefore said `automatic: false` exactly where the warning matters
+        // most, and dropped "machine-transcribed, names are frequently wrong"
+        // from the one transcript that needed it.
+        read.automatic = read.language.as_deref().is_some_and(|tag| {
+            let authored = read.authored.iter().any(|t| t.eq_ignore_ascii_case(tag));
+            let automatic = read
+                .automatic_tags
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(tag));
+            // A tag in both lists is the author's own captions; yt-dlp prefers
+            // those and so does this. Only a tag that is *only* automatic, or
+            // one whose name says so, is reported as machine-transcribed.
+            (automatic && !authored)
+                || tag.contains("-orig")
+                || tag.starts_with("a.")
+        });
         if let Ok(text) = std::fs::read_to_string(first) {
             let (cues, truncated) = h5i_browser_light::transcript::parse(&text, max_bytes);
             read.cues = cues;
             read.truncated = truncated;
         }
+
+        // Everything else that arrived. Only `--all` downloads more than one
+        // file, so this is empty on every other path and costs nothing there.
+        for path in subtitles.iter().filter(|p| *p != first) {
+            let Ok(text) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            let (cues, truncated) = h5i_browser_light::transcript::parse(&text, max_bytes);
+            if cues.is_empty() {
+                continue;
+            }
+            read.extra.push(Extra {
+                tag: tag_of(path),
+                cues,
+                truncated,
+            });
+        }
     }
     read
+}
+
+/// One track beyond the chosen one.
+#[derive(Default)]
+struct Extra {
+    tag: Option<String>,
+    cues: Vec<h5i_browser_light::transcript::Cue>,
+    truncated: Option<String>,
 }
 
 /// The language tags out of an info file's `subtitles` / `automatic_captions`.
@@ -933,6 +1031,19 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
         "cues": read.cues,
         "truncated": read.truncated,
     });
+    let mut tracks = vec![track];
+    for extra in &read.extra {
+        tracks.push(json!({
+            "kind": "captions",
+            "language": extra.tag,
+            "default": false,
+            "src": url,
+            "fetched": true,
+            "automatic": false,
+            "cues": extra.cues,
+            "truncated": extra.truncated,
+        }));
+    }
     let media = json!({
         "kind": "video",
         "src": url,
@@ -941,7 +1052,7 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
         "uploader": read.uploader,
         "captions": read.authored,
         "automatic_captions": read.automatic_tags,
-        "tracks": [track],
+        "tracks": tracks,
     });
 
     json!({
@@ -1049,21 +1160,38 @@ fn text(url: &str, session: &bs::Session, read: &Read, note: &str) -> String {
         out.push_str(&format!("note: {truncated}\n"));
     }
 
-    let body = read
-        .cues
-        .iter()
-        .map(|cue| {
-            format!(
-                "[{}] {}",
-                h5i_browser_light::transcript::stamp(cue.start),
-                cue.text
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let render_cues = |cues: &[h5i_browser_light::transcript::Cue]| {
+        cues.iter()
+            .map(|cue| {
+                format!(
+                    "[{}] {}",
+                    h5i_browser_light::transcript::stamp(cue.start),
+                    cue.text
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut body = render_cues(&read.cues);
+    for extra in &read.extra {
+        body.push_str(&format!(
+            "\n\n## track {}\n",
+            extra.tag.as_deref().unwrap_or("(unnamed)")
+        ));
+        if let Some(truncated) = &extra.truncated {
+            body.push_str(&format!("note: {truncated}\n"));
+        }
+        body.push_str(&render_cues(&extra.cues));
+    }
 
     out.push_str(CONTENT_BEGIN);
     out.push('\n');
+    // The same sentence the engine's own readings carry. A caption file fetched
+    // by a helper is a stranger's words exactly as one parsed out of a
+    // `<track>` is, and it reaches the same reader making the same decision;
+    // fencing it with a weaker framing than the other lane would say otherwise.
+    out.push_str(h5i_browser_light::snapshot::UNTRUSTED_NOTE);
+    out.push_str("\n\n");
     out.push_str(&body.replace(CONTENT_BEGIN, "[fence marker removed]")
         .replace(CONTENT_END, "[fence marker removed]"));
     out.push('\n');
@@ -1431,7 +1559,22 @@ mod tests {
 
         // And the receipt is not thrown away: it is the box's own record of
         // the run, and the audit row names it.
-        assert_eq!(box_receipt(&work).as_deref(), Some("f31bdc823671183e"));
+        let boxed_session = session_at(
+            bs::Placement::Box { name: "probe1".into() },
+            bs::Lane::EngineClaimed,
+        );
+        assert_eq!(
+            box_receipt(&boxed_session, &work).as_deref(),
+            Some("f31bdc823671183e")
+        );
+        // And never for a run that had no box: on the host that same file is
+        // yt-dlp's own stderr, so a line of it mentioning a receipt would put a
+        // false evidence claim in the reply.
+        let host_session = session_at(bs::Placement::Host, bs::Lane::EngineClaimed);
+        assert!(
+            box_receipt(&host_session, &work).is_none(),
+            "a host run has no box receipt to claim"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1448,7 +1591,14 @@ mod tests {
 
         let boxed = complaint(&bs::Placement::Box { name: "probe1".into() }, &work);
         assert!(boxed.is_empty(), "{boxed}");
-        assert!(box_receipt(&work).is_none(), "no receipt file, no receipt");
+        let boxed_session = session_at(
+            bs::Placement::Box { name: "probe1".into() },
+            bs::Lane::EngineClaimed,
+        );
+        assert!(
+            box_receipt(&boxed_session, &work).is_none(),
+            "no receipt file, no receipt"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1501,6 +1651,102 @@ mod tests {
             std::fs::read_dir(&work.host).unwrap().next().is_none(),
             "the planted file survived into a run that would have read it"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `--lang` is a regex to yt-dlp and a literal here, and the escape hatch
+    /// this lane prints by name is `--lang 'en.*'`. Without the literal head,
+    /// no tag equals or starts with `en.*`, selection falls through to whatever
+    /// sorted first, and `-` sorts before `.` — so following the tool's own
+    /// advice returned `en-de`, a translation of a translation.
+    #[test]
+    fn a_regex_language_still_chooses_the_right_file() {
+        assert_eq!(literal_prefix("en"), "en");
+        assert_eq!(literal_prefix("en.*"), "en");
+        assert_eq!(literal_prefix("ja.*"), "ja");
+        assert_eq!(literal_prefix("(en|de)"), "(en|de)", "no literal head to use");
+        assert_eq!(literal_prefix(""), "");
+
+        let dir = std::env::temp_dir().join(format!("h5i-regex-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n";
+        std::fs::write(dir.join("v.en.vtt"), format!("{vtt}authored\n")).unwrap();
+        std::fs::write(dir.join("v.en-de.vtt"), format!("{vtt}translated\n")).unwrap();
+
+        let read = collect(&dir, Some(literal_prefix("en.*")), 4096);
+        assert_eq!(read.language.as_deref(), Some("en"));
+        assert_eq!(read.cues[0].text, "authored");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A video with automatic captions and no authored ones gets them written
+    /// as plain `<id>.en.vtt`, which the filename cannot distinguish from an
+    /// author's track — so the "machine-transcribed" warning went missing on
+    /// exactly the transcript that needed it.
+    #[test]
+    fn an_automatic_only_track_is_labelled_from_the_info_file() {
+        let dir = std::env::temp_dir().join(format!("h5i-autolabel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("v.en.vtt"),
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nMachine heard this.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("v.info.json"),
+            r#"{"subtitles":{},"automatic_captions":{"en":[]}}"#,
+        )
+        .unwrap();
+
+        let read = collect(&dir, Some("en"), 4096);
+        assert!(read.automatic, "the tag is only in automatic_captions");
+        assert!(describe(&read, "en", Some(0), "").contains("automatic captions"));
+
+        // The same filename, where the video *does* have authored captions in
+        // that language, is the author's track and is not labelled.
+        std::fs::write(
+            dir.join("v.info.json"),
+            r#"{"subtitles":{"en":[]},"automatic_captions":{"en":[]}}"#,
+        )
+        .unwrap();
+        let read = collect(&dir, Some("en"), 4096);
+        assert!(!read.automatic, "yt-dlp prefers the authored track and so do we");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `--all` downloads every authored track and used to report one, so the
+    /// extra requests bought nothing a caller could not already read off the
+    /// tag list. The CLI help says "read every text track".
+    #[test]
+    fn every_downloaded_track_is_reported_and_not_just_the_chosen_one() {
+        let dir = std::env::temp_dir().join(format!("h5i-allrep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n";
+        for tag in ["en", "de", "fr"] {
+            std::fs::write(dir.join(format!("v.{tag}.vtt")), format!("{vtt}said in {tag}\n"))
+                .unwrap();
+        }
+
+        let read = collect(&dir, Some("en"), 4096);
+        assert_eq!(read.language.as_deref(), Some("en"));
+        assert_eq!(read.cues[0].text, "said in en");
+        let extra: Vec<&str> = read
+            .extra
+            .iter()
+            .filter_map(|e| e.tag.as_deref())
+            .collect();
+        assert_eq!(extra, vec!["de", "fr"], "the other two are carried too");
+        assert_eq!(read.extra[0].cues[0].text, "said in de");
+
+        // One file is the ordinary path and has no extras to carry.
+        let _ = std::fs::remove_file(dir.join("v.de.vtt"));
+        let _ = std::fs::remove_file(dir.join("v.fr.vtt"));
+        assert!(collect(&dir, Some("en"), 4096).extra.is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
