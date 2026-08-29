@@ -199,11 +199,6 @@ h5i ui # watch the whole fleet in a browser
 `h5i box probe` reports the tiers your host can run. h5i never silently
 downgrades: an unsatisfiable request fails closed.
 
-A browser session uses `process` by default, without a box. The rows below it
-are what `--in <box>` reaches for, and the difference that matters to a session
-is the one thing `process` cannot do: enforce which addresses may be reached, at
-a boundary outside the engine.
-
 | Tier | What enforces it |
 | --- | --- |
 | `workspace` | a separate git worktree, no confinement |
