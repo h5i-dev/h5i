@@ -217,16 +217,24 @@ Update documentation in the same change when behavior changes.
 - `SECURITY.md`: security model, reporting, and sensitive areas.
 - `CONTRIBUTING.md`: this file.
 
-**The manuals are generated and CI diffs them.** `man/man1/h5i.1` comes from the
-clap tree and `docs/manual/index.html` comes from `MANUAL.md`. A CLI flag change
-or a `MANUAL.md` edit that lands without regenerating both fails the `docs` job.
+**The manuals are generated and CI diffs them.** `docs/man/man1/h5i.1` comes
+from the clap tree, rendered by `examples/gen_man.rs`, and
+`docs/manual/index.html` comes from `MANUAL.md`. A CLI flag change or a
+`MANUAL.md` edit that lands without regenerating both fails the `docs` job.
 Regenerate on Linux with the pinned generator and commit the result:
 
 ```bash
 ./scripts/gen_man.sh
 python3 -m pip install -r scripts/requirements.txt && python3 scripts/gen_manual.py
-git add man/man1/h5i.1 docs/manual/index.html
+git add docs/man/man1/h5i.1 docs/manual/index.html
 ```
+
+The man page lives under `docs/` and nowhere else, because `docs/` is published
+verbatim: the site serves that exact file at `https://h5i.dev/man/man1/h5i.1`,
+which is how a reader installs it now that there is no `h5i man` subcommand.
+Read it locally with `MANPATH=$PWD/docs/man man h5i`. (`install.sh` is the one
+file that does keep two copies, and only because it has to answer at exactly
+`/install.sh`.)
 
 Do not include real tokens, private logs, private prompts, or private
 repository names in docs, screenshots, fixtures, or examples.

@@ -23,7 +23,6 @@ pub mod completion;
 // feature that provides the collector would hide that answer from exactly the
 // builds that need it.
 pub mod detect;
-pub mod man;
 // `h5i box share` / `h5i join`. Gated with `share-tunnel`, the narrower of
 // the two switches, because the tunnel transport is what this module always
 // has: a build with `share-tunnel` and no `share` gets `box share --tunnel`

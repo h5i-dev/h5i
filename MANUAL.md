@@ -139,7 +139,7 @@ npx skills add h5i-dev/h5i  # same bytes, if you do not have the binary yet
 | [`h5i runner`](#h5i-runner) | Pair a second Linux machine and run boxes there over SSH. |
 | [`h5i skill`](#h5i-skill) | Write or print the agent skill this binary carries. |
 | [`h5i join`](#h5i-box-share) | Open a box someone else is sharing, from their ticket. |
-| `h5i completion` / `h5i man` | Shell completions and the man page. |
+| `h5i completion` | Shell completions for bash, zsh, fish and friends. |
 
 `h5i dev *` and `h5i env *` both remain as hidden aliases for `h5i box *`
 through one release. The noun the product uses everywhere else is *box*, so the

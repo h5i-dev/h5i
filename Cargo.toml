@@ -21,6 +21,10 @@ version = "0.3.8"
 edition = "2024"
 description = "h5i — disposable, confined development environments for AI coding agents (CLI)."
 
+[lib]
+name = "h5i"
+path = "src/lib.rs"
+
 [[bin]]
 name = "h5i"
 path = "src/main.rs"
@@ -94,7 +98,6 @@ anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5.60", features = ["derive"] }
 clap_complete = "4.5"
-clap_mangen = "0.2"
 console = "0.16.2"
 # The `kill(pid, 0)` liveness check and the `setsid` that detaches a browser
 # session from the terminal that started it (`cli::browser`).
@@ -111,6 +114,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1.0", features = ["rt-multi-thread"], optional = true }
 
 [dev-dependencies]
+# Renders docs/man/man1/h5i.1 in examples/gen_man.rs. A dev-dependency because the
+# page is build output: nothing in the shipped binary prints roff.
+clap_mangen = "0.2"
 # `kill(pid, SIGKILL)` in tests/browser_session_cli.rs: proving that an engine
 # that dies is recorded as having died needs a way to make one die.
 libc = "0.2.186"
