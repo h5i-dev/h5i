@@ -92,6 +92,32 @@ const FALLBACKS: &[&str] = &["/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp"];
 /// media download this lane never asks for.
 const BUDGET: Duration = Duration::from_secs(120);
 
+/// Override for [`BUDGET`], in whole seconds.
+///
+/// Two readers. A slow or rate-limited link where two minutes is genuinely not
+/// enough, and a test that needs the stop path to happen this second rather
+/// than in two minutes — which is the only way to exercise it at all, and it
+/// went untested until it was.
+///
+/// Clamped rather than trusted: zero would stop every run before it began, and
+/// a very large value would turn the budget into no budget, which is the thing
+/// it exists not to be.
+const BUDGET_ENV: &str = "H5I_HELPER_BUDGET_SECS";
+
+fn budget() -> Duration {
+    budget_from(std::env::var(BUDGET_ENV).ok().as_deref())
+}
+
+/// Split from [`budget`] so the clamping is testable without an environment.
+/// A test that sets a process-wide variable is a test that races every other
+/// test in the binary.
+fn budget_from(raw: Option<&str>) -> Duration {
+    match raw.and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(secs) => Duration::from_secs(secs.clamp(1, 1800)),
+        None => BUDGET,
+    }
+}
+
 /// The environment the child gets, and the whole of it.
 ///
 /// An allowlist rather than a filter: a filter has to know every variable worth
@@ -433,7 +459,8 @@ fn run(
     let mut child = command.spawn().map_err(|e| {
         anyhow::anyhow!("could not start `{NAME}`: {e}")
     })?;
-    let deadline = Instant::now() + BUDGET;
+    let budget = budget();
+    let deadline = Instant::now() + budget;
     let mut timed_out = false;
     let status = loop {
         match child.try_wait()? {
@@ -458,7 +485,7 @@ fn run(
     if timed_out {
         said.push_str(&format!(
             "\nh5i stopped `{NAME}` after {}s, its whole budget for one transcript.",
-            BUDGET.as_secs()
+            budget.as_secs()
         ));
     }
     // `None` for a kill *and* for a signal death, which is why the timeout is
@@ -1272,6 +1299,50 @@ mod tests {
         assert!(box_receipt(&work).is_none(), "no receipt file, no receipt");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Clamped rather than trusted. Zero would stop every run before it began,
+    /// and a very large value would turn the budget into no budget, which is
+    /// the thing it exists not to be. Nonsense falls back to the default rather
+    /// than to either edge.
+    #[test]
+    fn the_budget_override_is_clamped_and_nonsense_keeps_the_default() {
+        assert_eq!(budget_from(None), BUDGET);
+        assert_eq!(budget_from(Some("not a number")), BUDGET);
+        assert_eq!(budget_from(Some("")), BUDGET);
+        assert_eq!(budget_from(Some(" 30 ")), Duration::from_secs(30));
+        assert_eq!(budget_from(Some("0")), Duration::from_secs(1), "never zero");
+        assert_eq!(
+            budget_from(Some("999999")),
+            Duration::from_secs(1800),
+            "a budget that never expires is not a budget"
+        );
+    }
+
+    /// The stop is a *result*, not an error. A run killed at the budget has
+    /// usually written some of what it was asked for, and this used to return
+    /// an error and throw all of it away.
+    #[test]
+    fn a_run_stopped_at_the_budget_keeps_what_it_had() {
+        let read = Read {
+            language: Some("en".into()),
+            cues: vec![h5i_browser_light::transcript::Cue {
+                start: 1.0,
+                end: 4.0,
+                text: "The first ten minutes.".into(),
+            }],
+            ..Read::default()
+        };
+        let stopped = "still working\nh5i stopped `yt-dlp` after 3s, its whole budget for one \
+                       transcript.";
+        let note = describe(&read, "en", Some(-1), stopped);
+        assert!(note.starts_with("1 cue(s) in en"), "{note}");
+        assert!(note.contains("stopped"), "the stop is named, not hidden: {note}");
+        assert!(!note.starts_with("failed"), "{note}");
+
+        // And with nothing to show for it, the same stop *is* a failure.
+        let empty = describe(&Read::default(), "en", Some(-1), stopped);
+        assert!(empty.starts_with("failed:"), "{empty}");
     }
 
     #[test]

@@ -641,6 +641,13 @@ that too rather than implying a boundary that is not there. Automatic captions
 are labelled as automatic, because a machine transcription mishears names and a
 reader about to quote one should know first.
 
+One helper run is given two minutes, after which h5i stops it. The stop is a
+result and not an error: whatever the run had already written is still read and
+returned, with the stop named in the note, because a run killed at the budget
+has usually written some of what it was asked for. `H5I_HELPER_BUDGET_SECS`
+overrides the two minutes, clamped to between one second and thirty minutes, for
+a link slow enough to need it.
+
 The lane is behind the `ytdlp` cargo feature, on by default. Build with
 `--no-default-features` (plus the features you want) for a binary with no code
 path that can exec a helper at all.
