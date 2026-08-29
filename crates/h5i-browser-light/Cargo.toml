@@ -186,3 +186,10 @@ brotli = { version = "8.0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3.8"
+
+# `_exit`, for one call: the renderer's "my broker is gone" stop. See
+# `BrokerClient::over` in `ipc.rs` for why `std::process::exit` is not enough
+# there. Unix only, because the renderer is only ever spawned over a socket
+# pair, which is a unix path already.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"

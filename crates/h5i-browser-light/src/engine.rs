@@ -72,6 +72,13 @@ pub struct PageOptions {
     /// doing, and it changes nothing for anyone who does not pass it. The
     /// navigation deadline still bounds the whole load either way.
     pub script_budget: Option<std::time::Duration>,
+
+    /// Install the WebIDL member decoration in the script realm.
+    ///
+    /// **For instruments**, and off by default: see
+    /// [`crate::script::RealmOptions::webidl_conformance`] for what it costs
+    /// and who observes it.
+    pub webidl_conformance: bool,
 }
 
 impl Default for PageOptions {
@@ -83,6 +90,7 @@ impl Default for PageOptions {
             max_snapshot_lines: 500,
             script: false,
             script_budget: None,
+            webidl_conformance: false,
             // Above what a slow real page takes and far below what a stuck one
             // would, which is the shape every ceiling in this engine has.
             navigation_budget: std::time::Duration::from_secs(45),
@@ -956,8 +964,15 @@ impl Page {
             return Ok(());
         }
 
-        let mut script = crate::script::Script::new(self.dom(), broker.clone(), &self.url)
-            .map_err(H5iError::Metadata)?;
+        let mut script = crate::script::Script::with_options(
+            self.dom(),
+            broker.clone(),
+            &self.url,
+            crate::script::RealmOptions {
+                webidl_conformance: self.options.webidl_conformance,
+            },
+        )
+        .map_err(H5iError::Metadata)?;
         script.set_encoding(self.encoding);
 
         // The map, before anything can import. First one wins and the rest are
@@ -2080,7 +2095,7 @@ impl PageFactory {
     /// Load whatever a form asked for, through the same broker as everything
     /// else. A refused submission is an error the agent reads, not a blank page.
     pub fn open_submission(&self, submission: &Submission) -> Result<Page, H5iError> {
-        self.begin_navigation();
+        let _navigating = self.begin_navigation();
         let outcome = self.broker.send_from(
             &submission.url,
             Initiator::Navigation,
@@ -2190,12 +2205,16 @@ impl PageFactory {
     /// Before the navigation's own request, deliberately: resetting afterwards
     /// would give the page that just spent its allowance a clean slate for the
     /// subresources it is about to ask for.
-    fn begin_navigation(&self) {
+    fn begin_navigation(&self) -> crate::budget::HardStop {
         self.broker.reset_budget();
+        // Held by the caller until the page is built, which is the span every
+        // deadline in this engine is supposed to cover and the one where none of
+        // them reach layout. See `HardStop`.
+        crate::budget::HardStop::arm(self.options.navigation_budget)
     }
 
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
-        self.begin_navigation();
+        let _navigating = self.begin_navigation();
         // Leaving an origin drops its cookies — in `finish`, against the origin
         // actually loaded rather than the one asked for. See
         // `cookies::Jar::retain_origin` for why that bound exists and what it
@@ -2213,7 +2232,7 @@ impl PageFactory {
     /// The same as [`PageFactory::from_html`], but from bytes whose encoding is
     /// not yet known — so the document gets to say what it is written in.
     pub fn from_bytes(&self, bytes: &[u8], content_type: Option<&str>, base_url: &Url) -> Page {
-        self.begin_navigation();
+        let _navigating = self.begin_navigation();
         self.finish_reporting(Page::from_bytes(
             bytes,
             content_type,
@@ -2225,7 +2244,7 @@ impl PageFactory {
     }
 
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
-        self.begin_navigation();
+        let _navigating = self.begin_navigation();
         self.finish_reporting(Page::from_html(
             html,
             base_url,

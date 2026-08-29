@@ -275,6 +275,30 @@ pub struct BrokerClient {
     has_secrets: std::sync::OnceLock<bool>,
 }
 
+/// End this process, from a thread that cannot assume the rest of it is well.
+///
+/// `std::process::exit` is the wrong tool here and the difference is not
+/// theoretical. It runs the atexit handlers and flushes stdio on its way out,
+/// and both take locks — so a thread calling it while *another* thread is deep
+/// in allocation gets to wait for that thread, which is precisely the thread we
+/// have given up on. Measured: with the renderer's main thread spinning inside
+/// layout, this path printed "so it is stopping" and then did not stop. Six of
+/// them accumulated on one machine, the oldest running for seven hours, each
+/// holding a core.
+///
+/// `_exit` skips all of it and returns the descriptor to the kernel. Nothing is
+/// lost: there is no result to flush on this path — the broker that would have
+/// received one is gone — and the line above went to stderr, which Rust does
+/// not buffer.
+pub(crate) fn stop_now(code: i32) -> ! {
+    #[cfg(unix)]
+    unsafe {
+        libc::_exit(code)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(code)
+}
+
 impl BrokerClient {
     /// The renderer's broker, on the descriptor it was handed.
     ///
@@ -324,7 +348,7 @@ impl BrokerClient {
                         "h5i-browser-light: the broker process ended; this renderer cannot fetch \
                          or receipt without it, so it is stopping."
                     );
-                    std::process::exit(70);
+                    stop_now(70);
                 }
             });
 

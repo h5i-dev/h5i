@@ -35,8 +35,65 @@ fn arg_string(args: &[JsValue], index: usize, context: &mut Context) -> JsResult
         .to_std_string_escaped())
 }
 
-fn arg_id(args: &[JsValue], index: usize, context: &mut Context) -> JsResult<usize> {
-    Ok(args.get_or_undefined(index).to_number(context)? as usize)
+/// The node the prelude has no id for.
+///
+/// `document` is an object literal on the JavaScript side, not a wrapper, and it
+/// deliberately carries no `_id`: every reflected accessor uses
+/// `this._id === undefined` as its WebIDL brand check, so giving the document
+/// one would make it pass for an element. Every path that hands `document._id`
+/// to a primitive therefore hands over `undefined`, and every one of them means
+/// this node.
+const DOCUMENT_NODE_ID: usize = 0;
+
+/// A node id argument, or an error naming what turned up instead.
+///
+/// This used to be `to_number(...)? as usize`, and that cast is why a text node
+/// could be the document. Rust's float-to-integer cast saturates: `NaN as usize`
+/// is **0**, and so is every negative number — and node 0 is the document. So
+/// any argument that was not a number at all became a valid id for the most
+/// consequential node in the tree, silently.
+///
+/// `new Text("x")` produced exactly that (see the prelude's `FROM_ID`), and
+/// appending the result made the document its own descendant, which hung layout
+/// for as long as anyone let it. That particular door is shut on both sides now;
+/// this is the rule underneath it, so the next bad id is an error rather than a
+/// different node.
+///
+/// The one non-numeric argument that is *not* a mistake is `undefined`, which is
+/// what `document._id` reads as. It means the document, it has always meant the
+/// document, and it says so here rather than arriving through a NaN.
+/// What a primitive says when it is handed something that is not an id.
+///
+/// Named as ours rather than as the page's: nothing a page writes reaches here
+/// directly, so an id that is not a number is this engine having lost track of
+/// one of its own nodes.
+fn bad_node_id(saw: &str) -> JsError {
+    JsError::from_opaque(
+        js_string!(format!(
+            "a node id has to be a whole number, and this one is `{saw}`. That is \
+             a bug in this engine, not in the page."
+        ))
+        .into(),
+    )
+}
+
+fn arg_id(args: &[JsValue], index: usize, _context: &mut Context) -> JsResult<usize> {
+    let value = args.get_or_undefined(index);
+    if value.is_undefined() || value.is_null() {
+        return Ok(DOCUMENT_NODE_ID);
+    }
+    // A *number*, not something a number can be made of. JavaScript's coercion
+    // is happy to turn `[]` and `""` into 0, and 0 is the document — so a rule
+    // written in terms of `to_number` would leave the same hole in a narrower
+    // shape. Every id this side ever sees came from `this._id`, which is a
+    // number or it is nothing.
+    let Some(number) = value.as_number() else {
+        return Err(bad_node_id(value.type_of()));
+    };
+    if !number.is_finite() || number.is_sign_negative() || number.fract() != 0.0 {
+        return Err(bad_node_id(&number.to_string()));
+    }
+    Ok(number as usize)
 }
 
 /// Read a JS array of `[name, value]` pairs.
@@ -314,15 +371,22 @@ fn get_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 /// stored `viewbox` and rendered nothing. Both are fixed here, in one place,
 /// because `guard_mutation` records what happens when a defect like this is
 /// fixed three times at three call sites instead.
-fn attr_name_for(doc: &blitz_dom::BaseDocument, id: usize, name: &str) -> String {
+/// Borrowed rather than owned: an attribute name arrives lowercase from nearly
+/// every caller, and lowercasing a string that is already lowercase to compare
+/// it against one more was an allocation per attribute read.
+fn attr_name_for<'a>(
+    doc: &blitz_dom::BaseDocument,
+    id: usize,
+    name: &'a str,
+) -> std::borrow::Cow<'a, str> {
     let html_element = doc
         .get_node(id)
         .and_then(|node| node.element_data())
         .is_some_and(|el| el.name.ns == blitz_dom::ns!(html));
-    if html_element {
-        name.to_ascii_lowercase()
+    if html_element && name.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(name.to_ascii_lowercase())
     } else {
-        name.to_string()
+        std::borrow::Cow::Borrowed(name)
     }
 }
 
@@ -332,16 +396,19 @@ fn get_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let host = host(context)?;
     let doc = host.dom.borrow();
     let name = attr_name_for(&doc, id, &name);
+    // Straight to a `JsString` from the borrowed value: the intermediate
+    // `String` this used to build was the third allocation in a read that only
+    // ever needed one.
     let found = doc.get_node(id).and_then(|node| {
         node.attrs().and_then(|attrs| {
             attrs
                 .iter()
-                .find(|a| a.name.local.as_ref() == name)
-                .map(|a| a.value.to_string())
+                .find(|a| a.name.local.as_ref() == name.as_ref())
+                .map(|a| js_string!(a.value.as_str()))
         })
     });
     Ok(match found {
-        Some(value) => js_string!(value).into(),
+        Some(value) => value.into(),
         None => JsValue::null(),
     })
 }
@@ -577,10 +644,50 @@ fn set_scroll_top(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     Ok(JsValue::undefined())
 }
 
+/// Would putting `child` inside `parent` make the tree cyclic?
+///
+/// DOM §4.2.3 forbids it — a node cannot contain itself or its own ancestor —
+/// and the prelude checks it for the nodes it can see. This is the same check
+/// where nothing can get past it, because the consequence is not a wrong answer
+/// but a **hang**: blitz walks the tree for layout, and a cycle means it walks
+/// for ever, at 100% of a core, past every deadline this engine has. Those
+/// deadlines guard the script realm; there is no script running while layout
+/// walks, so none of them fire.
+///
+/// Reachable from ordinary page code, which is what makes it this file's
+/// problem rather than the prelude's: `new Text("x")` used to hand back a
+/// wrapper whose id was the string `"x"`, and the conversion below turns
+/// anything non-numeric into 0 — the document itself. Appending *that* to a
+/// div spliced the whole document under one of its own descendants. One line in
+/// a WPT file left six engines spinning on this machine for seven hours.
+fn would_cycle(doc: &blitz_dom::BaseDocument, parent: usize, child: usize) -> bool {
+    let mut at = Some(parent);
+    while let Some(id) = at {
+        if id == child {
+            return true;
+        }
+        at = doc.get_node(id).and_then(|node| node.parent);
+    }
+    false
+}
+
+/// The error a refused insertion reports, in the spec's own terms.
+fn hierarchy_request(what: &str) -> JsError {
+    JsError::from_opaque(
+        js_string!(format!(
+            "HierarchyRequestError: {what} would make a node contain itself"
+        ))
+        .into(),
+    )
+}
+
 fn append(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let parent_id = arg_id(args, 0, context)?;
     let child_id = arg_id(args, 1, context)?;
     let host = host(context)?;
+    if would_cycle(&host.dom.borrow(), parent_id, child_id) {
+        return Err(hierarchy_request("appending a node"));
+    }
     guard_mutation(&host, "appending a node", || {
         let mut doc = host.dom.borrow_mut();
         let mut mutator = doc.mutate();
@@ -603,6 +710,13 @@ fn insert_before(_this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         // only in the prelude because a panic is not a DOM error: it takes the
         // page, the snapshot and the receipts with it, and WPT reaches this
         // path on purpose (`ChildNode-after`, `-before`, `-replaceWith`).
+        // The same cycle rule `append` carries, at the other door into the tree:
+        // the new node must not already contain the anchor it is going before.
+        if let Some(parent) = doc.get_node(anchor).and_then(|node| node.parent)
+            && would_cycle(&doc, parent, new_id)
+        {
+            return Err(hierarchy_request("inserting a node"));
+        }
         if doc.get_node(anchor).map(|node| node.parent.is_none()).unwrap_or(true) {
             return Err(boa_engine::JsNativeError::error()
                 .with_message(
@@ -735,7 +849,7 @@ fn set_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         let qual = blitz_dom::QualName::new(
             None,
             blitz_dom::ns!(),
-            blitz_dom::LocalName::from(name.as_str()),
+            blitz_dom::LocalName::from(&*name),
         );
         let mut mutator = doc.mutate();
         mutator.set_attribute(id, qual, &value);
@@ -756,7 +870,7 @@ fn remove_attr(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         let qual = blitz_dom::QualName::new(
             None,
             blitz_dom::ns!(),
-            blitz_dom::LocalName::from(name.as_str()),
+            blitz_dom::LocalName::from(&*name),
         );
         let mut mutator = doc.mutate();
         mutator.clear_attribute(id, qual);

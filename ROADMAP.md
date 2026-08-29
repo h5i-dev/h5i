@@ -4548,8 +4548,123 @@ Not bindings, and the reason four pages read as empty:
 
 ### B8.9 What it costs, measured
 
-`cargo run --release --example perf`. Two rounds, and the second is mostly the
-Boa upgrade paying for itself:
+`cargo run --release --example perf`. Numbers from one WSL2 laptop, and it
+drifts by 10% between runs, so read the ratios rather than the digits.
+
+**First, a correction to what this section used to say.** Its `script` column
+counted the realm twice. A script-enabled factory runs the page's scripts inside
+`from_html`, through `finish_page`, and the benchmark then called `run_scripts`
+again — which does not no-op, it builds a second realm and runs every script a
+second time. At 15.9 ms a realm the error looked like noise; at 58 ms it was
+most of the number, which is how it was finally caught. Only the benchmark was
+affected: `finish_page` is the sole caller in the product.
+
+```
+reading a page                no script     script     outline
+10 sections  (~90 nodes)          2.0ms      72ms       60 lines
+100 sections (~900 nodes)        13.0ms      86ms      500 lines
+500 sections (~4500 nodes)       66.0ms     185ms      500 lines
+
+starting the script realm          63ms per page
+the floor under a scripted page    66ms      (one section: almost all fixed cost)
+
+a DOM property read
+  plain object                      68 ns
+  watched node, known property     198 ns
+  watched node, read from tree     740 ns
+  watched node, remembered         300 ns    (a tag cannot change; it is asked once)
+
+one native call
+  a number back (nodeKind)         136 ns
+  a string back (tagName)          190 ns
+  a string each way (getAttr)      270 ns
+
+queries, 200 calls each
+  document.querySelectorAll        405 µs
+  section.querySelectorAll          20 µs
+  iterating a 400-node result      213 µs
+```
+
+**The realm is still most of a small page**, at 93% of the ten-section row when
+this pass began and about 87% now. Inside it, parse and compile are two thirds:
+33 ms and 9 ms of the 63, against 272 KiB of *code*. Boa parses eagerly, so
+every page pays for every line whether or not it runs one.
+
+Code, not bytes: blanking all 164 KiB of comments in a 448 KiB prelude changed
+parse time by **nothing measurable**. The documentation is free; only what the
+parser tokenises is not. `the_eagerly_parsed_prelude_stays_within_its_budget`
+holds the line at 275 KiB, because the file grew 4,692 lines in two commits
+during a coverage push and took the realm from 15.9 ms to 82.8 ms with nothing
+saying so — every test passed, since a slower engine is not a wrong one.
+
+#### What came out, and what each was worth
+
+1. **The WebIDL member decoration is a tier.** `idlharness` checks that every
+   interface member is enumerable and that an accessor reached on a prototype
+   throws; no page asks either. Rebuilding every descriptor of every interface
+   prototype cost **15 ms of 83**, on every page, and it now lives in a source
+   Boa is handed only under `--webidl-conformance`, which `wpt/run.py` passes.
+2. **The gap reporting moved to the end of the prototype chain.** It was a
+   `Proxy` in front of every wrapper, so it fired on reads that found what they
+   asked for: **799 ns of the 882 ns** a known property cost, against 82 ns for
+   a plain object. A read that misses already walks the whole chain, so the
+   sentinel sits where only a miss arrives. Known reads went to ~200 ns, and a
+   compromise went with it — the proxy passed the raw target as receiver to
+   avoid double-trapping, which made a miss inside a page's own getter
+   invisible.
+3. **The engine stopped paying a trap to ask itself a question.** `get tagName()`
+   reads `this._nsuri` to learn whether the element came from `createElementNS`,
+   and for everything the parser made it never did — so the most-read accessor
+   in the engine walked its whole prototype chain into a proxy, 1415 ns against
+   the 196 ns its native call costs. `declareInternals` answers at the first
+   hop, and `an_internal_read_never_reaches_the_sentinel` is the guard for the
+   next such field.
+4. **Every settle stopped waiting on a sleeping thread.** The deadline watchdog
+   polled a flag every 20 ms and was *joined*, so a settle that finished in
+   50 µs sat in `join` until the thread woke. A 20 ms tax on every settle and
+   every agent `wait`, spent asleep, and intermittent — a race between the body
+   finishing and the watchdog reaching its first sleep, so half the runs looked
+   fine. A condition variable, and the deadline is unchanged.
+
+Three tiers exist so far (`conformance`, `sockets`, `has`, 12 KiB together) and
+the mechanism is cheap to extend, but its ceiling is low: 272 of the 284 KiB of
+code is DOM core that every page uses. The one tier still worth building is the
+form-control extras, ~48 KiB and ~7 ms, which needs the free-variable analysis
+that splitting a shared closure demands.
+
+#### Measured and rejected, so nobody tries again
+
+* **Precomputing the known property names**, so the old proxy trap did a hash
+  lookup instead of walking the prototype chain: no change. The cost was Boa
+  dispatching into a JavaScript trap at all, which is why the answer in the end
+  was to stop standing in front of the object.
+* **Raising the loop bound from 5 to 50 million**: turned a site that returned
+  in three minutes into one that had not returned in four.
+* **Interning the uppercased tag names**, and building the attribute answer
+  without its two intermediate `String`s: no change either. A native call costs
+  ~136 ns of dispatch before it does anything at all, so shaving the work at the
+  far end of it is shaving the small half. The allocations went anyway; the
+  cache did not, because it was state for nothing. What worked was not making
+  the call: `tagName` is remembered on the wrapper, 740 ns to 300 ns.
+* **Stripping comments before handing the source to Boa**: no change, per the
+  measurement above. Worth recording because the idea is obvious and the file is
+  a third comments by volume.
+* **Reusing the compiled prelude across pages**, which would remove the 42 ms of
+  parse and compile and is the only 3x-class win left. A `CodeBlock` owns its
+  `InlineCache` entries, and those hold live shape-to-slot mappings, so reusing
+  one carries the last page's object shapes into the next page's lookups. That
+  is a sharper reason than the interner one this section used to give, and it
+  names the upstream change that would unblock it: reset the caches on reuse, or
+  hang them off the realm rather than the code block.
+
+Reusing the *realm* across navigations is refused on other grounds and still is:
+a page could leave state for whatever loads next, which is the same reason the
+cookie jar is cleared across origins.
+
+#### The history this replaces
+
+The Boa revision bump, measured before and after, and still the strongest
+argument for pinning a revision over a five-month-old release:
 
 ```
 a DOM property read              on 0.19      on main
@@ -4558,51 +4673,19 @@ a DOM property read              on 0.19      on main
   watched node, read from tree     6173 ns     1534 ns
 ```
 
-Four times faster for nothing but a dependency bump, which is the single
-strongest argument for pinning a revision over a five-month-old release.
+Three earlier changes, each of which still holds:
 
-Three things then changed on our side, each measured before and after:
-
-1. **A page with no script no longer builds a realm.** That costs ~15 ms, 114
-   KiB of prelude parsed and evaluated, and a page with nothing to run was
-   paying all of it for a realm never asked a question. It is also reported
-   correctly now: "had none to run" is a different fact from "script is off",
-   and a page with no script is *settled* rather than unknown.
+1. **A page with no script no longer builds a realm.** A page with nothing to
+   run was paying the whole fixed cost for a realm never asked a question. It is
+   also reported correctly: "had none to run" is a different fact from "script
+   is off", and a page with no script is *settled* rather than unknown.
 2. **Collections are no longer watched.** Wrapping a query result in the
-   reporting proxy cost **3.9x on iteration**, 674 µs against 174 µs for a
-   400-node result, because every index read goes through a trap and
-   `for (const el of query)` is the hottest line in DOM code. An array already
-   answers everything a `NodeList` does except `item` and `namedItem`, which are
-   implemented, so the naming it bought was small and the price was not.
-3. **`matches()` is a direct predicate.** It had been asking the *parent* for
-   all matching descendants and checking membership, which made `closest()`
-   walk a subtree per ancestor: quadratic on any page whose framework calls it
-   in a render loop, and worth minutes on a real site.
-
-```
-reading a page                no script     script     outline
-10 sections  (~90 nodes)          1.5ms     37.4ms      60 lines
-100 sections (~900 nodes)        12.7ms     54.1ms     500 lines
-500 sections (~4500 nodes)       69.8ms    166.2ms     500 lines
-
-starting the script realm        15.9ms per page
-queries, 200 calls each
-  document.querySelectorAll        361 µs
-  section.querySelectorAll           6 µs
-  iterating a 400-node result      169 µs
-```
-
-The remaining fixed cost is the realm: 114 KiB of JavaScript parsed per page.
-Reusing one across navigations would remove it, and is *not* safe: a page could
-leave state for whatever loads next, which is the same reason the cookie jar is
-cleared across origins.
-
-**Measured and rejected**, twice, and both are recorded so nobody tries again:
-precomputing the set of known property names so the reporting trap does a hash
-lookup instead of walking the prototype chain changed nothing (the cost is Boa
-dispatching into a JavaScript trap at all); and raising the loop bound from 5 to
-50 million turned a site that returned in three minutes into one that had not
-returned in four.
+   reporting proxy cost **3.9x on iteration**, because every index read went
+   through a trap and `for (const el of query)` is the hottest line in DOM code.
+3. **`matches()` is a direct predicate.** It had been asking the *parent* for all
+   matching descendants and checking membership, which made `closest()` walk a
+   subtree per ancestor: quadratic on any page whose framework calls it in a
+   render loop.
 
 ### B8.10 Source positions, and what they found
 
@@ -6250,10 +6333,14 @@ say so.
 ### B15.12a The performance items, measured: all three answers are no
 
 §B11.5.13 and §B11.5.14 list two performance items — reuse the realm across
-navigations (~20ms a page, §B8.9), and cache the prelude's bytecode (three
-thousand lines of JavaScript parsed per realm). Both were attempted. Neither
+navigations, and cache the prelude's bytecode. Both were attempted. Neither
 should be built, and a third optimisation that looked obvious was measured and
 reverted. Recorded together because the pattern is the point.
+
+The prices have moved since this was written and the answers have not. The realm
+was ~20 ms a page then and is ~63 ms now; the prelude was three thousand lines
+and is ten thousand. §B8.9 carries the current numbers, and a better reason for
+the second refusal than the one below.
 
 **Realm reuse: refused, on grounds §B11.5 did not weigh.** A realm carries
 everything the previous document's script put in it — globals, patched
@@ -6270,6 +6357,16 @@ reason rather than a hard one. `boa_engine::Script::parse` interns identifiers
 into *the context's own* interner (`context.interner_mut()`) and binds the
 result to that context's realm; every page builds a fresh `Context`. A parsed
 script is not a portable artifact, so there is nothing to cache across pages.
+
+Re-examined on Boa 0.22, where the decisive reason turns out to be a different
+and sharper one: a `CodeBlock` owns its `InlineCache` entries, and those hold
+live shape-to-slot mappings filled in as the code runs. Reusing one across
+realms would carry the last page's object shapes into the next page's property
+lookups, which is the same cross-page contamination the realm refusal above
+exists to prevent, arriving through the cache instead of through the globals.
+The upstream change that would unblock it is small and namable: reset the caches
+on reuse, or hang them off the realm rather than the code block. Worth 42 ms of
+the 63, and worth an upstream issue rather than a fork.
 Revisit if Boa grows a shared interner or a serialisable code block. The note
 lives at the prelude's eval site.
 

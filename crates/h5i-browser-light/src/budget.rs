@@ -271,9 +271,105 @@ impl Deadline {
     }
 }
 
+/// The stop of last resort, for the half of this engine no deadline reaches.
+///
+/// Every other ceiling here guards the **script realm**: `--script-seconds`
+/// bounds the script phase, the loop-iteration limit bounds one `for`, the job
+/// deadline bounds the queue. All three work by asking Boa to stop between
+/// pieces of work it is doing. None of them can do anything about a *layout*
+/// that never returns, because no script is running while layout walks the tree
+/// — and layout is native code with no interruption point in it at all.
+///
+/// That gap was not theoretical. A cyclic tree — reachable, at the time, from
+/// `document.body.appendChild(new Text("x"))` — sent blitz walking for ever at
+/// 100% of a core, straight through a 45-second navigation budget and a
+/// 60-second script budget, for **seven hours**. The tree cannot go cyclic any
+/// more, but "no ceiling at all covers half the engine" is the condition that
+/// turned one bug into seven hours, and it is worth closing on its own.
+///
+/// A separate thread, because the wedged thread cannot help; `_exit`, because
+/// `std::process::exit` waits on the atexit handlers and stdio locks that the
+/// wedged thread may be holding (see `stop_now`). Armed for a *navigation*
+/// rather than for the process, so a long-lived `serve` session is bounded per
+/// page rather than in total.
+///
+/// The margin is wide on purpose. This is not a tighter version of the
+/// navigation budget — that one reports a page as unfinished and hands back
+/// what rendered, which is a useful answer. Reaching *this* one ends the
+/// process, so it must be somewhere no page that is merely slow can arrive.
+pub struct HardStop {
+    done: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+
+/// How far past its budget a navigation may go before the process stops.
+const HARD_STOP_MARGIN: Duration = Duration::from_secs(60);
+
+impl HardStop {
+    pub fn arm(budget: Duration) -> Self {
+        let done = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let watching = done.clone();
+        let ceiling = budget + HARD_STOP_MARGIN;
+        let _ = std::thread::Builder::new()
+            .name("h5i-navigation-stop".to_string())
+            .spawn(move || {
+                let (lock, wake) = &*watching;
+                let mut finished = lock.lock().unwrap_or_else(|e| e.into_inner());
+                let deadline = Instant::now() + ceiling;
+                while !*finished {
+                    let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                        break;
+                    };
+                    let (guard, _) = wake
+                        .wait_timeout(finished, left)
+                        .unwrap_or_else(|e| e.into_inner());
+                    finished = guard;
+                }
+                if *finished {
+                    return;
+                }
+                eprintln!(
+                    "h5i-browser-light: this page has been loading for {ceiling:?} without \
+                     finishing, which is past anything a slow page does. The engine is stopping \
+                     rather than holding a core indefinitely. This is a bug in the engine: a \
+                     page that takes too long is supposed to be reported as unfinished, not to \
+                     become one that never returns."
+                );
+                crate::ipc::stop_now(71);
+            });
+        Self { done }
+    }
+}
+
+impl Drop for HardStop {
+    /// The navigation finished, however it finished.
+    fn drop(&mut self) {
+        let (lock, wake) = &*self.done;
+        *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        wake.notify_all();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_navigation_that_finishes_disarms_its_hard_stop() {
+        // The half of `HardStop` that can be tested in process. The other half
+        // ends the process, so it is verified by running one: a navigation held
+        // open past its ceiling exits 71 and says why.
+        //
+        // What this pins is the part that would be catastrophic to get wrong in
+        // the opposite direction — a guard that fired on a page which had
+        // already finished would take down a working engine, and it would do it
+        // rarely enough to be blamed on anything else.
+        for _ in 0..64 {
+            drop(HardStop::arm(Duration::from_millis(1)));
+        }
+        // The margin is what makes the above safe: an armed stop that outlived
+        // its navigation by 1 ms would have fired sixty-four times by now.
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     fn tight() -> Budget {
         Budget::new(Limits {

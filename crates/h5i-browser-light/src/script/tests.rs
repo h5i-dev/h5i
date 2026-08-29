@@ -3371,6 +3371,185 @@ console: {console:?}"
     );
 }
 
+/// A realm with an instrument's switches thrown, which the default is not.
+fn conformance_script(html: &str) -> (crate::engine::Page, Script) {
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).expect("broker");
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
+    let base = url::Url::parse("https://app.example/").unwrap();
+    let page = factory.from_html(html, &base);
+    let script = Script::with_options(
+        page.dom(),
+        factory.broker().clone(),
+        &base,
+        RealmOptions { webidl_conformance: true },
+    )
+    .expect("realm");
+    (page, script)
+}
+
+#[test]
+fn the_webidl_decoration_arrives_only_when_an_instrument_asks() {
+    // The decoration is a whole source that is not parsed by default, so this
+    // checks the tier seam as much as the decoration: a realm built the
+    // ordinary way must not have it, and one built with the flag must — from a
+    // file the first realm never handed to Boa.
+    //
+    // What the pass actually adds, probed on both a plain class accessor and a
+    // reflected one: the member becomes enumerable, and the accessor refuses a
+    // receiver that is not an instance. The `get x` naming is *not* part of it
+    // — Boa names class accessors correctly on its own, and the reflection
+    // tables name theirs — which is worth pinning down, because it is the one
+    // of the three a reader would assume the pass was carrying.
+    let probe = r#"(() => {
+        const out = [];
+        for (const [Iface, key] of [[Node, "textContent"], [Element, "id"]]) {
+          const d = Object.getOwnPropertyDescriptor(Iface.prototype, key);
+          let refused = false;
+          try { d.get.call({}); } catch (e) { refused = String(e).includes("Illegal invocation"); }
+          out.push(d.enumerable + "," + d.get.name + "," + refused);
+        }
+        return out.join("|");
+    })()"#;
+
+    let (_page, mut plain) = page_and_script("<html><body><p id='x'>hi</p></body></html>");
+    assert_eq!(
+        plain.eval_value(probe).unwrap(),
+        "false,get textContent,false|false,get id,false",
+        "an ordinary page paid for the conformance decoration"
+    );
+
+    let (_page, mut decorated) = conformance_script("<html><body><p id='x'>hi</p></body></html>");
+    assert_eq!(
+        decorated.eval_value(probe).unwrap(),
+        "true,get textContent,true|true,get id,true",
+        "the conformance tier did not install"
+    );
+
+    // And the decoration does not cost the page its own reads.
+    assert_eq!(
+        decorated.eval_value("document.querySelector('p').id").unwrap(),
+        "x"
+    );
+}
+
+/// What the parser is handed, which is not the same as how big the file is.
+///
+/// Comments are free: blanking all 164 KiB of them in a 448 KiB prelude changed
+/// parse time by *nothing measurable*, so a budget counted in raw bytes would
+/// tax the documentation this engine is largely made of, and would not predict
+/// the cost. Everything else is a token the parser builds.
+///
+/// The rule is line-based, which is exact here because the prelude has no block
+/// comments and no template literal spans a line — both checked below.
+fn code_bytes(source: &str) -> usize {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .map(|line| line.len() + 1)
+        .sum()
+}
+
+#[test]
+fn the_eagerly_parsed_prelude_stays_within_its_budget() {
+    // **Parse and compile are two thirds of what a script realm costs** — 42 ms
+    // of 59 — and both are a straight function of the code handed to Boa. There
+    // is no lazy compilation to hide behind: every page pays for every line,
+    // whether or not it ever runs one.
+    //
+    // This number is a floor under noticing. The prelude grew by 4,692 lines in
+    // two commits during a coverage push, the realm went from 15.9 ms to 82.8 ms
+    // per page, and nothing said so — the tests all passed, because a slower
+    // engine is not a wrong one. A budget that has to be raised on purpose puts
+    // the price in the diff that pays it.
+    //
+    // Raising it is a normal thing to do, not a failure. The exchange rate is
+    // roughly **150 µs of per-page realm cost per KiB of code**, so a KiB spent
+    // here is a KiB every page pays for whether or not it uses the feature. The
+    // question the number asks is only whether it could be a tier instead: see
+    // `TIERS` in `mod.rs`, and `lazyGlobals` in the prelude.
+    const BUDGET_KIB: usize = 275;
+
+    assert!(
+        !super::PRELUDE.contains("/*"),
+        "the prelude has grown a block comment; `code_bytes` counts by line and \
+         would charge the parser for prose it skips for free"
+    );
+
+    let code = code_bytes(super::PRELUDE) / 1024;
+    assert!(
+        code <= BUDGET_KIB,
+        "the eagerly parsed prelude is {code} KiB of code, over its {BUDGET_KIB} KiB \
+         budget. Every page pays about 150 µs per KiB of this, at realm build, \
+         used or not. Either move the new surface into a tier (`TIERS` in \
+         `mod.rs`) or raise BUDGET_KIB deliberately and say what the page is \
+         getting for it."
+    );
+}
+
+#[test]
+fn a_tier_is_not_parsed_until_the_page_asks_for_it() {
+    // The deferral has to be observable, or it is a claim rather than a fact:
+    // an accessor standing where the interface will be is what "not parsed yet"
+    // looks like from JavaScript, and a data property is what it looks like
+    // afterwards. Both are checked here so that a tier quietly becoming eager
+    // — by something in the core touching the name — shows up as a failure.
+    let (_page, mut script) = page_and_script("<html><body></body></html>");
+    assert_eq!(
+        script
+            .eval_value(
+                "Object.getOwnPropertyDescriptor(globalThis, 'WebSocket').get ? 'deferred' : 'eager'"
+            )
+            .unwrap(),
+        "deferred"
+    );
+    // Reading the name is the trigger, and `typeof` is a read: it is how a page
+    // asks whether the interface exists at all, and it must not answer
+    // "undefined" for something this engine has.
+    assert_eq!(script.eval_value("typeof WebSocket").unwrap(), "function");
+    assert_eq!(
+        script
+            .eval_value(
+                "Object.getOwnPropertyDescriptor(globalThis, 'WebSocket').get ? 'deferred' : 'eager'"
+            )
+            .unwrap(),
+        "eager"
+    );
+    // The other shape of trigger. `:has()` is not reached by name — it arrives
+    // inside a selector string — so its tier is loaded by the test the core
+    // already ran to decide whether it needed the evaluator at all. A plain
+    // selector must not bring it in; a `:has()` one must.
+    let (_page, mut selectors) = page_and_script(
+        "<html><body><div id='a'><i class='flag'></i></div><div id='b'></div></body></html>",
+    );
+    let loaded = "__h5iInternals.prepareHasSelector ? 'loaded' : 'deferred'";
+    assert_eq!(selectors.eval_value(loaded).unwrap(), "deferred");
+    assert_eq!(selectors.eval_value("document.querySelectorAll('div').length").unwrap(), "2");
+    assert_eq!(
+        selectors.eval_value(loaded).unwrap(),
+        "deferred",
+        "an ordinary selector parsed the `:has()` evaluator"
+    );
+    assert_eq!(selectors.eval_value("document.querySelector('div:has(.flag)').id").unwrap(), "a");
+    assert_eq!(selectors.eval_value(loaded).unwrap(), "loaded");
+
+    // One file, both names: reading `WebSocket` above brought `EventSource`
+    // with it, because they share a source and splitting them would mean
+    // parsing the same file twice.
+    //
+    // And it arrives shaped as WebIDL says an interface object is — the pass
+    // that fixes that for the core interfaces ran long before this file did.
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const d = Object.getOwnPropertyDescriptor(globalThis, 'EventSource'); \
+                   return [!!d.get, d.enumerable, d.writable, d.configurable].join('|') })()"
+            )
+            .unwrap(),
+        "false|false|true|true"
+    );
+}
+
 #[test]
 fn interface_objects_are_not_enumerable_on_the_global() {
     // WebIDL §3.7: an interface object is `enumerable: false`. Every one of
@@ -3868,6 +4047,298 @@ fn an_api_this_engine_lacks_names_itself_instead_of_throwing_anonymously() {
     assert!(
         reported.iter().any(|n| n == "navigator.clipboard"),
         "a property names its whole path: {reported:?}"
+    );
+}
+
+#[test]
+fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
+    // `new Text("x")` is a page building a node — DOM §4.10 says it may — and
+    // this file's classes take a *node id* as their first argument. Without a
+    // way to tell those apart the page got a wrapper whose id was the string
+    // "x", which the primitives converted to 0, which is the document. So
+    // `new Text("x").nodeType` was **9**, and appending it anywhere put the
+    // document inside one of its own descendants.
+    //
+    // What that cost: `dom/events/Event-dispatch-click.html` does exactly this
+    // (`input.appendChild(new Text("does not matter"))`) and the engine walked
+    // the resulting cycle for ever, at 100% of a core, past every deadline it
+    // has — those guard the script realm, and no script is running while layout
+    // walks. Six of them were found spinning on one machine, the oldest for
+    // seven hours. The file now reports in 0.18 s.
+    let (_page, mut script) = page_and_script("<html><body><div id='d'></div></body></html>");
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const t = new Text('hello'); const c = new Comment('note'); \
+                   return [t.nodeType, JSON.stringify(t.data), t.wholeText, \
+                           c.nodeType, JSON.stringify(c.data)].join('|') })()"
+            )
+            .unwrap(),
+        "3|\"hello\"|hello|8|\"note\"",
+        "a constructed Text or Comment is not a real node"
+    );
+    // And it is a node the tree accepts, which is the half that was hanging.
+    assert_eq!(
+        script
+            .eval_value(
+                "(() => { const d = document.getElementById('d'); \
+                   const t = new Text('hi'); d.appendChild(t); \
+                   return d.textContent + '|' + (t.parentNode === d) })()"
+            )
+            .unwrap(),
+        "hi|true"
+    );
+    // No argument is the empty string, not the document.
+    assert_eq!(
+        script.eval_value("String(new Text().data) + '|' + new Text().nodeType").unwrap(),
+        "|3"
+    );
+
+    // And the interfaces that are *not* constructible say so, which is the same
+    // defect wearing the other hat: `new Element()` left `_id` as `null`, the
+    // primitives read that as node 0, and node 0 is the document — so
+    // `new Element().textContent = "x"` wrote through to the document and took
+    // the process down with it. DOM §4.4 and §4.9: these throw in every engine.
+    for name in ["Element", "Node", "CharacterData"] {
+        assert_eq!(
+            script
+                .eval_value(&format!(
+                    "(() => {{ try {{ new {name}(); return 'built' }} \
+                       catch (e) {{ return e.constructor.name }} }})()"
+                ))
+                .unwrap(),
+            "TypeError",
+            "new {name}() did not throw"
+        );
+    }
+
+    // A custom element still upgrades, which is the one path that legitimately
+    // reaches those constructors with no id in hand.
+    let (_page, mut custom) = page_and_script(
+        "<html><body><x-thing id='t'>light</x-thing></body></html>",
+    );
+    assert_eq!(
+        custom
+            .eval_value(
+                "(() => { class Thing extends HTMLElement { \
+                     get probe() { return 'upgraded:' + this.id } } \
+                   customElements.define('x-thing', Thing); \
+                   return document.getElementById('t').probe })()"
+            )
+            .unwrap(),
+        "upgraded:t"
+    );
+}
+
+#[test]
+fn a_bad_node_id_is_an_error_rather_than_the_document() {
+    // Rust's float-to-integer cast saturates, so `NaN as usize` is 0 — and node
+    // 0 is the document. Every argument that was not a number at all therefore
+    // named the most consequential node in the tree, and named it silently.
+    // That is how `new Text("x")` came back with `nodeType === 9`.
+    //
+    // The prelude cannot produce these any more, so this reaches past it to the
+    // primitives, which is where the rule has to hold: the next bad id will come
+    // from somewhere nobody has thought of yet.
+    let (_page, mut script) = page_and_script("<html><body><p id='p'>hi</p></body></html>");
+    for bad in ["'x'", "NaN", "-1", "1.5", "Infinity", "{}", "[]", "''", "'1'", "true"] {
+        let answer = script
+            .eval_value(&format!(
+                "(() => {{ try {{ return 'got ' + String(__h5i.nodeKind({bad})) }} \
+                   catch (e) {{ return 'refused' }} }})()"
+            ))
+            .unwrap();
+        assert_eq!(answer, "refused", "__h5i.nodeKind({bad}) was accepted");
+    }
+
+    // `undefined` is the exception, and not an accident: `document` carries no
+    // `_id` — every reflected accessor uses `this._id === undefined` as its
+    // WebIDL brand check, so giving the document one would make it pass for an
+    // element — and every path that hands `document._id` to a primitive means
+    // the document. 9 is DOCUMENT_NODE.
+    assert_eq!(script.eval_value("String(__h5i.nodeKind(undefined))").unwrap(), "9");
+    assert_eq!(script.eval_value("String(__h5i.nodeKind(null))").unwrap(), "9");
+
+    // It is a coercion ban, deliberately. `Number([])` and `Number("")` are both
+    // 0, which is the document, so a rule that let JavaScript coerce first would
+    // leave the same hole in a narrower shape. An id is a number or it is an
+    // error; `"1"` is refused along with the rest.
+    // And the document still answers as itself through the paths that rely on
+    // it, rather than through a NaN that happened to land on the right node.
+    assert_eq!(script.eval_value("document.nodeType").unwrap(), "9");
+    assert_eq!(script.eval_value("document.querySelector('#p').textContent").unwrap(), "hi");
+}
+
+#[test]
+fn a_node_cannot_be_put_inside_itself() {
+    // The rule that makes the hang above impossible to reach again, from any
+    // direction rather than from the one that was found.
+    //
+    // It is checked twice on purpose. Here, *before* the child is unlinked from
+    // its parent, because that is the only moment the ancestor relationship
+    // still exists — the spec orders it that way for exactly this reason. And
+    // again in `dom_api.rs`, which is the last door before blitz and the only
+    // one a raw primitive call goes through. Neither check can replace the
+    // other: this one cannot see a primitive call, and that one cannot see an
+    // ancestry that the detach has already erased.
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='outer'><div id='inner'></div></div></body></html>",
+    );
+    for attempt in [
+        "document.getElementById('inner').appendChild(document.documentElement)",
+        "document.getElementById('inner').appendChild(document.getElementById('outer'))",
+        "document.getElementById('outer').appendChild(document.getElementById('outer'))",
+        "document.getElementById('inner').insertBefore(document.getElementById('outer'), null)",
+    ] {
+        let refused = script
+            .eval_value(&format!(
+                "(() => {{ try {{ {attempt}; return 'allowed' }} \
+                   catch (e) {{ return e.name }} }})()"
+            ))
+            .unwrap();
+        assert_eq!(refused, "HierarchyRequestError", "{attempt} was not refused");
+    }
+
+    // The primitive underneath refuses it too, which is what stops a cycle that
+    // never passed through the code above.
+    assert!(
+        script
+            .eval_value(
+                "(() => { try { __h5i.append(document.getElementById('inner')._id, \
+                   document.documentElement._id); return 'allowed' } \
+                   catch (e) { return String(e) } })()"
+            )
+            .unwrap()
+            .contains("HierarchyRequestError"),
+        "the primitive allowed a cycle"
+    );
+
+    // Still a working document afterwards, rather than a half-moved tree.
+    assert_eq!(
+        script.eval_value("document.getElementById('inner').parentNode.id").unwrap(),
+        "outer"
+    );
+}
+
+#[test]
+fn a_gap_is_named_by_the_object_it_was_read_from() {
+    // The reporting contract, pinned where it now lives: at the *end* of a
+    // node's prototype chain rather than in a proxy in front of every wrapper.
+    // Everything below held under the proxy too, except the last assertion,
+    // which the proxy could not make.
+    let (_page, mut script) = page_and_script("<html><body><p id='p'>text</p></body></html>");
+    script
+        .eval(
+            r#"const el = document.getElementById('p');
+               void el.scrollIntoViewIfNeeded;   // a real gap, named
+               void el.firstChild.tagName;       // no engine answers this
+               void el._privateThing;            // a framework's own field
+               void el.$store;
+               void el.jQuery360062973586668224961;
+               el.expando = 1; void el.expando;  // the page's own, read back
+
+               // The chain still ends where it did. A sentinel that reported
+               // its own prototype instead of standing in front of one would
+               // take `instanceof Object` down with it, silently.
+               globalThis.shape = [
+                 el instanceof Object, el instanceof Element, el instanceof Node,
+                 'scrollIntoViewIfNeeded' in el, typeof el.toString,
+               ].join('|');
+
+               // A getter the *page* defines, reading something we lack. The
+               // proxy form passed the raw target as the receiver to avoid
+               // paying a second trap per `this._id`, so a miss inside one of
+               // these was invisible. There is no receiver to substitute now.
+               Object.defineProperty(Element.prototype, 'probe', {
+                 get() { return this.pageDefinedGetterAsked; },
+               });
+               void el.probe;"#,
+        )
+        .expect("runs");
+
+    assert_eq!(
+        script.eval_value("shape").unwrap(),
+        "true|true|true|false|function",
+        "the sentinel changed what a node *is*"
+    );
+
+    let reported: Vec<String> = script.unsupported().into_iter().map(|(n, _)| n).collect();
+    assert!(
+        reported.iter().any(|n| n == "Element.scrollIntoViewIfNeeded"),
+        "a gap names the interface it was read from: {reported:?}"
+    );
+    for quiet in [
+        "tagName",              // reading an element property off a text node
+        "_privateThing",
+        "$store",
+        "jQuery360062973586668224961",
+        "expando",
+    ] {
+        assert!(
+            !reported.iter().any(|n| n.contains(quiet)),
+            "{quiet} is not a gap in this engine: {reported:?}"
+        );
+    }
+    assert!(
+        reported.iter().any(|n| n == "Element.pageDefinedGetterAsked"),
+        "a miss inside a page's own getter is reported now: {reported:?}"
+    );
+}
+
+#[test]
+fn an_internal_read_never_reaches_the_sentinel() {
+    // The sentinel at the end of a node's chain is for names *pages* ask for.
+    // This file's own bookkeeping must not arrive there: a field we set only
+    // sometimes — `_nsuri`, set by `createElementNS` and by nothing the parser
+    // does — is absent on almost every element, so `get tagName()` reading it
+    // walked the whole prototype chain into a proxy trap to learn something
+    // about itself. It cost 1415 ns on an accessor whose native call is 196 ns.
+    //
+    // `declareInternals` puts an `undefined` on the prototype so the read stops
+    // at the first hop. This is the guard for the next such field: a workout
+    // over the surface an ordinary page touches, and nothing of ours may miss.
+    let (_page, mut script) = page_and_script(
+        "<html><body><div id='d' class='a b'><p>one</p><a href='/x'>two</a>\
+         <input type='checkbox'><input type='text' value='v'>\
+         <select><option>o</option></select><ul><li>l</li></ul>\
+         <template><b>t</b></template></div></body></html>",
+    );
+    script
+        .eval(
+            r#"globalThis.__h5iReportInternalMisses = true;
+               for (const el of document.querySelectorAll('*')) {
+                 void el.tagName; void el.nodeName; void el.id; void el.className;
+                 void el.classList; void el.children; void el.childNodes;
+                 void el.parentNode; void el.nextSibling; void el.firstChild;
+                 void el.textContent; void el.innerHTML; void el.attributes;
+                 void el.style; void el.value; void el.checked; void el.type;
+                 void el.nodeType; void el.isConnected; void el.ownerDocument;
+                 void el.dataset; void el.hidden; void el.shadowRoot;
+                 el.setAttribute('data-x', '1'); void el.getAttribute('data-x');
+                 el.addEventListener('click', () => {});
+                 el.dispatchEvent(new Event('click'));
+                 void el.getBoundingClientRect();
+                 void el.matches('div'); void el.closest('div');
+               }
+               const box = document.querySelector('input[type=checkbox]');
+               box.checked = true; void box.checked;
+               const text = document.querySelector('input[type=text]');
+               text.value = 'typed'; void text.value;
+               document.querySelector('#d').innerHTML = '<span>new</span>';
+               document.createElementNS('http://www.w3.org/2000/svg', 'circle').tagName;
+               void document.body.textContent;"#,
+        )
+        .expect("runs");
+
+    let missed: Vec<(String, usize)> = script
+        .unsupported()
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("internal miss: "))
+        .collect();
+    assert!(
+        missed.is_empty(),
+        "these reads of our own fields walked the prototype chain to the \
+         sentinel; declare them with `declareInternals`: {missed:#?}"
     );
 }
 

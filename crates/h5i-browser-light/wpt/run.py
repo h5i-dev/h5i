@@ -241,6 +241,13 @@ def run_one(args):
                  # which is a score that depends on the other processes on the
                  # box. See `--script-seconds`.
                  "--script-seconds", str(int(script_seconds)),
+                 # WebIDL member decoration: enumerable members and the brand
+                 # check that makes an accessor reached on a prototype throw.
+                 # `idlharness` checks both on every member of every interface
+                 # and no page does, so the engine installs it only when asked
+                 # — it cost 15 ms of the 83 ms a script realm took, on every
+                 # page. Asked for here, so this number means what it meant.
+                 "--webidl-conformance",
                  *grants, url],
                 mem_mb,
             ),

@@ -829,6 +829,18 @@ struct ViewArgs {
     #[arg(long, default_value_t = 0, value_name = "SECONDS")]
     script_seconds: u64,
 
+    /// Install the WebIDL member decoration: enumerable interface members, and
+    /// the brand check that makes an accessor reached on a prototype throw.
+    ///
+    /// **For instruments.** `idlharness` checks both on every member of every
+    /// interface; a page reads `el.href` and never asks whether the descriptor
+    /// is enumerable. Installing it rebuilds every descriptor of every interface
+    /// prototype, which measured 15 ms of the 83 ms a script realm cost, on
+    /// every page, for something one harness looks at. `wpt/run.py` passes
+    /// this; nothing else needs to.
+    #[arg(long)]
+    webidl_conformance: bool,
+
     #[arg(long, default_value_t = 1280)]
     width: u32,
 
@@ -1147,6 +1159,7 @@ fn factory_for(half: &Half, net: &NetArgs, view: &ViewArgs) -> Result<PageFactor
             script: view.script,
             script_budget: (view.script_seconds > 0)
                 .then(|| std::time::Duration::from_secs(view.script_seconds)),
+            webidl_conformance: view.webidl_conformance,
             navigation_budget: std::time::Duration::from_secs(view.navigation_seconds),
         },
     );
