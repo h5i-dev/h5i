@@ -207,7 +207,14 @@ pub fn transcript(
     let (status, said) = run(session, &argv, &work)?;
     let read = collect(&work.host, Some(literal_prefix(want)), max_bytes);
 
-    let mut note = describe(&read, want, status, &said);
+    // `record` appends the box receipt itself, so this hands it the plain
+    // reading. Decorating here *and* there put `Box receipt 4f2a91be. Box
+    // receipt 4f2a91be.` in the audit — a doubled evidence claim, in the lane
+    // whose entire value is that its claims are exact.
+    let plain = describe(&read, want, status, &said);
+    record(root, session, &work, &argv, status, &plain);
+
+    let mut note = plain;
     // The box's own receipt for this run, when there is one. It is the
     // strongest evidence this lane produces — a row h5i wrote from outside the
     // helper, naming the policy the run was subject to — so the reply points at
@@ -215,7 +222,6 @@ pub fn transcript(
     if let Some(receipt) = box_receipt(session, &work) {
         note.push_str(&format!(" Box receipt {receipt}."));
     }
-    record(root, session, &work, &argv, status, &note);
 
 
     Ok(Outcome {
@@ -1414,6 +1420,33 @@ mod tests {
 
     /// A child that wrote nothing to stderr gets no banner, and its *stdout*
     /// must not be promoted into a complaint.
+    /// The receipt is appended by `record` for the audit row and by
+    /// `transcript` for the reply. Doing both to one string put it in twice.
+    #[test]
+    fn the_box_receipt_is_claimed_once_and_not_twice() {
+        let dir = std::env::temp_dir().join(format!("h5i-dup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("stderr.log"),
+            "\u{25c8}  receipt f31bdc823671183e (box env/human/x, policy 47084e) \u{b7} exit 0\n",
+        )
+        .unwrap();
+        let work = workspace_at(&dir);
+        let session = session_at(
+            bs::Placement::Box { name: "x".into() },
+            bs::Lane::EngineClaimed,
+        );
+
+        let mut note = "1 cue(s) in en".to_string();
+        if let Some(receipt) = box_receipt(&session, &work) {
+            note.push_str(&format!(" Box receipt {receipt}."));
+        }
+        assert_eq!(note.matches("Box receipt").count(), 1, "{note}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_quiet_boxed_child_has_no_complaint_rather_than_a_borrowed_one() {
         let dir = std::env::temp_dir().join(format!("h5i-box-quiet-{}", std::process::id()));

@@ -135,10 +135,10 @@ pub struct Track {
     pub src: String,
     /// Whether this track was fetched, or only listed.
     ///
-    /// A listed-not-fetched track is the normal case: [`Selection`] fetches one
-    /// track per media element unless told otherwise, and an agent reading the
-    /// reply needs to know the difference between "no cues" and "not asked
-    /// for".
+    /// A listed-not-fetched track is the normal case: [`chosen`] reads at most
+    /// two per media element, one of the words and one outline, so every other
+    /// language a page declares is listed and not read. An agent reading the
+    /// reply needs the difference between "no cues" and "not asked for".
     pub fetched: bool,
     /// The receipt this fetch was recorded under.
     ///
@@ -168,7 +168,7 @@ impl Track {
     /// `chapters` stays in: chapter titles are an outline of the media, which
     /// is the cheapest useful reading of it there is.
     pub fn carries_text(&self) -> bool {
-        matches!(self.kind.as_str(), "subtitles" | "captions" | "chapters")
+        SPOKEN.contains(&self.kind.as_str()) || OUTLINE.contains(&self.kind.as_str())
     }
 
     /// The cues as `[MM:SS] text`, which is the shape a model reads.
@@ -184,6 +184,20 @@ impl Track {
             .join("\n")
     }
 }
+
+/// Track kinds that carry what was **said**.
+///
+/// One list, referenced by both the predicate and the selection. They were
+/// written out separately for a while, which is two places that have to agree
+/// about the same fact and can therefore stop agreeing.
+const SPOKEN: &[&str] = &["subtitles", "captions"];
+
+/// Track kinds that carry an **outline** of what was said.
+///
+/// Apart from [`SPOKEN`] because the two are chosen independently: a page gets
+/// one of each, since thirty languages are the same words thirty times while an
+/// outline is different information.
+const OUTLINE: &[&str] = &["chapters"];
 
 /// One timed line.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -354,7 +368,7 @@ impl Transcript {
                 }
                 if !track.fetched {
                     body.push_str(
-                        "listed, not read. Name its language with `--lang`, or pass `--all`.\n",
+                        "listed, not read. Name its language with `--lang`.\n",
                     );
                     continue;
                 }
@@ -577,9 +591,9 @@ pub fn chosen(media: &Media, selection: &Selection) -> Vec<usize> {
             .or_else(|| among.first().copied())
     };
 
-    let mut picked: Vec<usize> = pick(of_kind(&["subtitles", "captions"]))
+    let mut picked: Vec<usize> = pick(of_kind(SPOKEN))
         .into_iter()
-        .chain(pick(of_kind(&["chapters"])))
+        .chain(pick(of_kind(OUTLINE)))
         .collect();
     // Document order, so a reading of one page is the same reading twice.
     picked.sort_unstable();
