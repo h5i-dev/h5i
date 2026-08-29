@@ -2632,6 +2632,18 @@ so "what was enforced" is never a matter of trust.</p>
 <p>Runtime scoping is not cosmetic: a Claude box must not get Codex's credentials
 or egress to OpenAI, because a prompt-injected agent could otherwise read the
 <em>other</em> runtime's token and use it against an allowlisted host.</p>
+<p>A note on the one grant nobody would think to write. The built-in read set
+carries the handful of paths <code>/etc/resolv.conf</code> is a symlink <em>to</em>
+(<code>/mnt/wsl/resolv.conf</code> on WSL, the systemd-resolved and resolvconf locations
+under <code>/run</code>), one file each. <code>/etc</code> alone is not enough, because Landlock
+follows the link to a path the box was never granted, and what that costs does
+not look like a denied file: <code>getaddrinfo</code> answers "Temporary failure in name
+resolution" and a <code>net.mode = "host"</code> box reads as a machine with no network.
+The entries are the same on every host whether the files exist or not, because
+a grant resolved from the local <code>/etc</code> would give one profile a different
+policy digest on every machine. <strong>A custom profile that sets <code>fs.read</code>
+replaces that list</strong>, so a box of your own with <code>mode = "host"</code> needs the line
+for your host, which <code>readlink -f /etc/resolv.conf</code> names.</p>
 <p>Custom profiles live in <code>.h5i/env.toml</code>:</p>
 <pre><code class="language-toml">[profile.review]
 isolation = &quot;supervised&quot;

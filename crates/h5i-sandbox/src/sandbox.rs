@@ -4123,6 +4123,34 @@ resources = { mem = "2G", fsize = "100M", cpu = "5s" }
         assert!(err.to_string().contains("profile 'fetch' not found"), "{err}");
     }
 
+    /// A `net.mode = "host"` box that cannot resolve a name is a box that looks
+    /// like a host with no network, and the cause is one symlink: `/etc` is
+    /// granted, `/etc/resolv.conf` points outside it, and Landlock follows the
+    /// link. The grant is the same on every host whether or not the file is
+    /// there, because a digest that varied with `/etc` could not promise that
+    /// two boxes with one digest were allowed the same things.
+    #[test]
+    fn the_resolver_config_is_granted_wherever_it_actually_lives() {
+        let p = Profile::builtin("default", IsolationClaim::Process);
+        // WSL, which is where this was found.
+        assert!(p.fs_read.iter().any(|s| s == "/mnt/wsl/resolv.conf"), "{:?}", p.fs_read);
+        // systemd-resolved, the common case everywhere else.
+        assert!(
+            p.fs_read.iter().any(|s| s == "/run/systemd/resolve/stub-resolv.conf"),
+            "{:?}",
+            p.fs_read
+        );
+        // One file each. `/run` itself is not a grant, and neither is the
+        // directory holding the stub.
+        assert!(!p.fs_read.iter().any(|s| s == "/run"), "{:?}", p.fs_read);
+        assert!(!p.fs_read.iter().any(|s| s == "/mnt/wsl"), "{:?}", p.fs_read);
+
+        // The same list on an unconfined profile's absence of one: nothing is
+        // granted there at all, so the entries cannot leak in through it.
+        let open = Profile::builtin("default", IsolationClaim::Workspace);
+        assert!(open.fs_read.is_empty(), "{:?}", open.fs_read);
+    }
+
     #[test]
     fn builtin_passes_term_for_interactive_sessions() {
         let p = Profile::builtin("default", IsolationClaim::Process);

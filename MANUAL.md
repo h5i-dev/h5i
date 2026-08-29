@@ -2662,6 +2662,19 @@ Runtime scoping is not cosmetic: a Claude box must not get Codex's credentials
 or egress to OpenAI, because a prompt-injected agent could otherwise read the
 *other* runtime's token and use it against an allowlisted host.
 
+A note on the one grant nobody would think to write. The built-in read set
+carries the handful of paths `/etc/resolv.conf` is a symlink *to*
+(`/mnt/wsl/resolv.conf` on WSL, the systemd-resolved and resolvconf locations
+under `/run`), one file each. `/etc` alone is not enough, because Landlock
+follows the link to a path the box was never granted, and what that costs does
+not look like a denied file: `getaddrinfo` answers "Temporary failure in name
+resolution" and a `net.mode = "host"` box reads as a machine with no network.
+The entries are the same on every host whether the files exist or not, because
+a grant resolved from the local `/etc` would give one profile a different
+policy digest on every machine. **A custom profile that sets `fs.read`
+replaces that list**, so a box of your own with `mode = "host"` needs the line
+for your host, which `readlink -f /etc/resolv.conf` names.
+
 Custom profiles live in `.h5i/env.toml`:
 
 ```toml
