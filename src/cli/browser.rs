@@ -1713,13 +1713,17 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
     // property of the profile, it is a property of the placement.
     let files = h5i_core::env::box_tmp_file(&h5i_root, &manifest, BROWSER_SERVICE);
     let (control_in_box, control_on_host) = match &files {
+        // The box always has a path, and it is always the one `box_tmp_file`
+        // built — qualified where the box's `/tmp` is shared with the host's.
+        // Only the host's view of it can be missing: an image-backed tier keeps
+        // that `/tmp` inside the image, and a tier whose mapping h5i cannot
+        // name is refused rather than guessed at. Inventing a bare
+        // `/tmp/h5i-browser.sock` here, as this used to, put the socket back on
+        // the shared unqualified name two boxes would fight over.
         Some((in_box, on_host)) => (
             in_box.with_extension("sock"),
-            Some(on_host.with_extension("sock")),
+            on_host.as_ref().map(|p| p.with_extension("sock")),
         ),
-        // Image-backed: the box's /tmp is inside the image. The engine still
-        // needs a path, and it is the box's own; this machine simply cannot
-        // watch it.
         None => (
             PathBuf::from("/tmp")
                 .join(BROWSER_SERVICE)
@@ -1872,10 +1876,12 @@ fn spawn_in_box(name: &str, dir: &Path, opts: &StartOptions) -> anyhow::Result<S
         logs: bs::Logs {
             actions: files
                 .as_ref()
-                .map(|(_, on_host)| on_host.with_extension("actions.jsonl")),
+                .and_then(|(_, on_host)| on_host.as_ref())
+                .map(|p| p.with_extension("actions.jsonl")),
             requests: files
                 .as_ref()
-                .map(|(_, on_host)| on_host.with_extension("requests.jsonl")),
+                .and_then(|(_, on_host)| on_host.as_ref())
+                .map(|p| p.with_extension("requests.jsonl")),
         },
         boundary_enforced,
         stop: Box::new(move || {

@@ -1182,8 +1182,17 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
     // `Unavailable`, which is the one an auditor has to see. The path is the
     // only thing that tells them apart.
     let helpers_path = dir.join(HELPERS_FILE);
-    let helpers_exists = helpers_path.exists();
-    let helpers = fs::read_to_string(&helpers_path).ok();
+    // The *reason* the read failed, not `exists()`. `exists()` answers false
+    // for any metadata error — an unreadable session directory, a stale mount —
+    // so a log h5i could not open would have been reported as one that never
+    // existed, which is the misreport this distinction is here to prevent, in
+    // the failure mode most likely to cause it.
+    let helpers = fs::read_to_string(&helpers_path);
+    let helpers_absent = helpers
+        .as_ref()
+        .err()
+        .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+    let helpers = helpers.ok();
     let handovers = control_journal(&dir);
     let read_at = now();
 
@@ -1277,14 +1286,15 @@ pub fn audit(root: &Path, session: &Session) -> Audit {
             } else {
                 Availability::Read
             },
-            helpers: match (&helpers, helpers_exists) {
+            helpers: match (&helpers, helpers_absent) {
                 (Some(text), _) if text.trim().is_empty() => Availability::Empty,
                 (Some(_), _) => Availability::Read,
-                // There, and h5i could not read it. Nothing can be concluded
-                // from its silence, which is exactly what `Unavailable` says.
-                (None, true) => Availability::Unavailable,
                 // Not there: no helper ever ran for this session.
-                (None, false) => Availability::Empty,
+                (None, true) => Availability::Empty,
+                // There, or unknowable. Either way h5i could not read it, and
+                // nothing can be concluded from its silence — which is exactly
+                // what `Unavailable` says.
+                (None, false) => Availability::Unavailable,
             },
         },
         events: log.since(0).into_iter().cloned().collect(),

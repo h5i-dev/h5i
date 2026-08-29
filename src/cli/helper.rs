@@ -783,6 +783,12 @@ struct Read {
     automatic: bool,
     cues: Vec<h5i_browser_light::transcript::Cue>,
     truncated: Option<String>,
+    /// Tracks that arrived and did not fit the reply's byte ceiling.
+    ///
+    /// Named rather than silently absent: a caller that asked for every track
+    /// and got four has to be able to tell "there were four" from "there were
+    /// forty and this is where they stopped".
+    dropped: Vec<String>,
     /// The other tracks that arrived, parsed, in tag order.
     ///
     /// `--all` downloads every authored track, and reporting one of them made
@@ -905,28 +911,32 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize, keep_extra: bool) -
         let mut left =
             max_bytes.saturating_sub(read.cues.iter().map(|c| c.text.len()).sum::<usize>());
         for path in subtitles.iter().filter(|p| *p != first).filter(|_| keep_extra) {
-            if left == 0 {
-                read.truncated.get_or_insert_with(|| {
-                    format!(
-                        "the other tracks passed the {max_bytes} byte ceiling for this reply \
-                         and are not carried. Ask for one with `--lang`."
-                    )
-                });
-                break;
-            }
             let Ok(text) = std::fs::read_to_string(path) else {
                 continue;
             };
             let (cues, truncated) = h5i_browser_light::transcript::parse(&text, left);
-            if cues.is_empty() {
+            if !cues.is_empty() {
+                left = left.saturating_sub(cues.iter().map(|c| c.text.len()).sum::<usize>());
+                read.extra.push(Extra {
+                    tag: tag_of(path),
+                    cues,
+                    truncated,
+                });
                 continue;
             }
-            left = left.saturating_sub(cues.iter().map(|c| c.text.len()).sum::<usize>());
-            read.extra.push(Extra {
-                tag: tag_of(path),
-                cues,
-                truncated,
-            });
+            // Nothing came back, and *why* decides whether a caller is owed a
+            // sentence. `parse` reports `truncated` when it stopped at the byte
+            // ceiling, so an empty result with that set is a track the budget
+            // pushed out; without it the file simply had no cues.
+            //
+            // The guard here used to be `left == 0`, which almost never held:
+            // `parse` stops *before* the cue that would exceed the ceiling, so
+            // `left` is a small remainder rather than zero, and every remaining
+            // track was parsed to nothing and dropped in silence. Under `--all`
+            // that lost the second through fortieth tracks with no note.
+            if truncated.is_some() {
+                read.dropped.push(tag_of(path).unwrap_or_else(|| "(unnamed)".into()));
+            }
         }
     }
     read
@@ -1013,10 +1023,10 @@ fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> Strin
         )
     };
 
-    if !read.cues.is_empty() {
+    if read.cue_total() > 0 {
         let mut note = format!(
             "{} cue(s){}{}",
-            read.cues.len(),
+            read.cue_total(),
             read.language
                 .as_deref()
                 .map(|l| format!(" in {l}"))
@@ -1031,6 +1041,14 @@ fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> Strin
             note.push_str(&format!(
                 ". The transcript arrived and the rest of the run did not: {}",
                 reason()
+            ));
+        }
+        if !read.dropped.is_empty() {
+            note.push_str(&format!(
+                ". {} more track(s) ({}) passed this reply's byte ceiling and are not \
+                 carried; ask for one with `--lang`.",
+                read.dropped.len(),
+                read.dropped.join(", ")
             ));
         }
         return note;
@@ -1849,6 +1867,14 @@ mod tests {
             carried <= 600 + 64,
             "four tracks came back at {carried} bytes against a 600 byte ceiling"
         );
+        // And the tracks the ceiling pushed out are *named*. Asserting only the
+        // ceiling is what let them vanish silently: `parse` stops before the
+        // cue that would exceed it, so the old `left == 0` guard never fired
+        // and every remaining track was dropped without a word.
+        assert_eq!(read.dropped.len(), 3, "de, fr and it did not fit");
+        let note = describe(&read, "en", Some(0), "");
+        assert!(note.contains("3 more track(s)"), "{note}");
+        assert!(note.contains("byte ceiling"), "{note}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1871,6 +1897,14 @@ mod tests {
         let read = collect(&dir, Some("en"), 4096, true);
         assert!(read.cues.is_empty(), "the chosen track parsed to nothing");
         assert_eq!(read.cue_total(), 1, "and the reply still carries one cue");
+        // And the prose agrees with the counts. It used to branch on the chosen
+        // track, so a reply carrying a fenced `## track de` transcript was
+        // captioned "this video has no subtitles at all, in any language" —
+        // the same disagreement `cue_total` was added to end, left in the half
+        // a model actually reads.
+        let note = describe(&read, "en", Some(0), "");
+        assert!(note.starts_with("1 cue(s)"), "{note}");
+        assert!(!note.contains("no subtitles"), "{note}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

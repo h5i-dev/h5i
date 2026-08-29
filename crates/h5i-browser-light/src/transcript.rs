@@ -773,22 +773,32 @@ fn strip_markup(text: &str) -> String {
     while let Some(ch) = chars.next() {
         match ch {
             '<' => {
-                // A `<` with no `>` after it at all is a literal `<` in
-                // out-of-spec text, which is routine in scraped caption files;
-                // consuming to end of input there discarded the rest of the
-                // cue. The test is whether a `>` exists, not how far away it
-                // is: bounding the scan instead made a legitimately long closed
-                // tag — `<c.a-generated-class-name…>` past the bound — come out
-                // verbatim in the transcript, which is the same class of
-                // mistake pointing the other way.
-                let rest: String = chars.clone().collect();
-                let Some(end) = rest.find('>') else {
+                // One pass, and the buffer is what makes the unterminated case
+                // safe: scan to `>`, and if the input ends first put back the
+                // `<` and everything after it rather than dropping it.
+                //
+                // Two cleverer versions preceded this and both were worse. A
+                // 128-character bound made a legitimately long closed tag come
+                // out as markup in the transcript. Looking ahead for `>` fixed
+                // that and made this quadratic — a fresh copy of the remaining
+                // text per `<`, on input that is *not yet* bounded, since
+                // `MAX_CUE_BYTES` is applied to what this returns. A caption
+                // body with no blank line and fifty thousand `<` is then tens
+                // of gigabytes of copying: a hang, reachable from a file this
+                // lane fetches and explicitly does not trust.
+                let mut tag = String::new();
+                let mut closed = false;
+                for inner in chars.by_ref() {
+                    if inner == '>' {
+                        closed = true;
+                        break;
+                    }
+                    tag.push(inner);
+                }
+                if !closed {
                     out.push('<');
+                    out.push_str(&tag);
                     continue;
-                };
-                let tag: String = rest[..end].to_string();
-                for _ in 0..tag.chars().count() + 1 {
-                    chars.next();
                 }
                 // `<v Roger Bannister>` names the speaker of everything after
                 // it. Rendered as a prefix rather than dropped: a two-person
@@ -847,25 +857,31 @@ fn strip_markup(text: &str) -> String {
 /// combinator, and either way the selector matches an element that is not the
 /// one it was minted for.
 fn is_css_ident(id: &str) -> bool {
+    // css-syntax-3's own rule rather than an approximation of it. Every code
+    // point at or above U+0080 is an identifier code point, which is what makes
+    // `café` in either normal form work, and Devanagari, and every combining
+    // mark — an earlier version tested `is_alphanumeric` instead and rejected
+    // all of those, dropping a perfectly good handle on the ground.
+    fn starts(c: char) -> bool {
+        c.is_alphabetic() || c == '_' || c >= '\u{80}'
+    }
+    fn continues(c: char) -> bool {
+        starts(c) || c.is_ascii_digit() || c == '-'
+    }
+
     let mut chars = id.chars();
     let Some(first) = chars.next() else {
         return false;
     };
-    // A leading digit ends the identifier, and so does a leading `-` followed
-    // by one: `#-1a` does not parse. A bare `-` is not an identifier either.
-    if first.is_ascii_digit() {
-        return false;
-    }
-    if first == '-' && !chars.clone().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
-        return false;
-    }
-    // An allowed set rather than `!c.is_ascii()`, which admitted every
-    // non-ASCII character including the invisible ones. `collapse` drops
-    // whitespace, and U+200B is not whitespace — so a zero-width space rode
-    // through into a selector that names nothing.
-    id.chars().all(|c| {
-        c.is_alphanumeric() && !c.is_whitespace() && !c.is_control() || c == '-' || c == '_'
-    })
+    // A leading `-` starts an identifier when a letter, `_` or a second `-`
+    // follows it: `--foo` is as valid as `-foo`, and `#-1a` and a bare `-` are
+    // not identifiers at all.
+    let start_ok = if first == '-' {
+        chars.clone().next().is_some_and(|c| starts(c) || c == '-')
+    } else {
+        starts(first)
+    };
+    start_ok && id.chars().all(continues)
 }
 
 fn attr(node: &Node, name: &str) -> Option<String> {
@@ -1008,22 +1024,39 @@ mod tests {
         assert!(is_css_ident("main-video_2"));
         assert!(is_css_ident("café"));
         assert!(is_css_ident("-leading-dash-then-letter"));
+        assert!(is_css_ident("--custom-property-shaped"), "a second dash also starts one");
+        assert!(is_css_ident("नमस्ते"), "every code point above U+0080 is one");
+        assert!(is_css_ident("cafe\u{301}"), "and so is a combining mark");
         assert!(!is_css_ident("video.main"), "a class follows the id");
         assert!(!is_css_ident("two words"), "a descendant combinator");
         assert!(!is_css_ident("2fast"), "an identifier cannot start with a digit");
         assert!(!is_css_ident("-1a"), "nor a dash and then one");
         assert!(!is_css_ident("-"), "a bare dash is not an identifier");
-        assert!(!is_css_ident("--"), "nor two");
-        // `collapse` drops whitespace and U+200B is not whitespace, so a
-        // zero-width space rode through into a selector that names nothing.
-        assert!(!is_css_ident("play\u{200b}er"), "a zero-width space");
-        assert!(!is_css_ident("play\u{00a0}er"), "a no-break space");
+        // A no-break space is whitespace, so `collapse` has already turned it
+        // into a real space by the time an id reaches here, and the space is
+        // what this rejects.
+        assert!(!is_css_ident("play er"));
         assert!(!is_css_ident(""));
     }
 
     /// The bound treated a legitimately long *closed* tag as unterminated and
     /// put the markup verbatim into the transcript — the same mistake as
     /// eating the cue, pointing the other way.
+    /// The quadratic version of this hung on input it is handed directly: a
+    /// caption body with no blank line is one cue, `MAX_CUE_BYTES` is applied
+    /// to what `strip_markup` *returns*, and a fresh copy of the remainder per
+    /// `<` is tens of gigabytes at this size. It finishes instantly or it does
+    /// not finish.
+    #[test]
+    fn many_unterminated_tags_do_not_take_quadratic_time() {
+        let body = "< ".repeat(60_000);
+        let (cues, _) = parse(
+            &format!("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n{body}\n"),
+            DEFAULT_MAX_BYTES,
+        );
+        assert_eq!(cues.len(), 1);
+    }
+
     #[test]
     fn a_long_but_closed_tag_is_still_stripped() {
         let long_class = "a-generated-class-name".repeat(12);

@@ -4754,18 +4754,20 @@ pub fn box_tmp_file(
     h5i_root: &Path,
     m: &EnvManifest,
     name: &str,
-) -> Option<(PathBuf, PathBuf)> {
+) -> Option<(PathBuf, Option<PathBuf>)> {
     let policy = load_policy(h5i_root, m).ok()?;
-    if policy.claim.image_backed() {
-        return None;
-    }
     // The same leaf in both views, because they name one directory entry: at
     // the redirected tiers it is the bare name in a directory the box owns, and
     // at the workspace tier it carries the env id because that directory is the
     // host's own `/tmp`, shared with every other box on the machine.
     let leaf = box_tmp_leaf(m, name, tmp_is_redirected(&policy));
     let in_box = PathBuf::from(box_tmp_root(&policy)).join(&leaf);
-    let on_host = box_tmp_on_host(h5i_root, m, &policy)?.join(&leaf);
+    // The host view is the half that can be missing; the box always has a path
+    // and it is always the qualified one. Returning `None` for the pair instead
+    // made the caller invent its own bare `/tmp/<name>`, which is the shared,
+    // unqualified path `box_tmp_leaf` exists to avoid — the collision, put back
+    // by the fix for it.
+    let on_host = box_tmp_on_host(h5i_root, m, &policy).map(|dir| dir.join(&leaf));
     Some((in_box, on_host))
 }
 
