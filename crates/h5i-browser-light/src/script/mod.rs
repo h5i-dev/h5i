@@ -161,6 +161,23 @@ fn compiled_prelude() -> Result<boa_engine::Script, String> {
     })
 }
 
+/// Compile the prelude now, so the next realm on this thread does not have to.
+///
+/// Speculative by nature: this is called while a navigation is in flight, before
+/// anyone knows whether the page has any script at all, because that is the only
+/// window in which the compile overlaps anything (§B15.12a). A page that turns
+/// out to have no script has thrown the work away — which is why the caller is
+/// careful about *when* it speculates, and why the compile is only ever paid
+/// once per thread however many times this is called.
+///
+/// Errors are dropped rather than returned. A prelude that will not compile is a
+/// broken build, it will fail again at [`Script::with_options`] a moment later
+/// with the realm's own error, and reporting it here would attach it to the
+/// navigation instead of to the realm it actually stops.
+pub fn warm_prelude() {
+    let _ = compiled_prelude();
+}
+
 /// What building one realm cost, by phase.
 ///
 /// Kept because the realm is most of what a small page costs (§B8.9) and the

@@ -477,6 +477,49 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
     }
 }
 
+/// Whether to compile the browser prelude while this navigation is in flight.
+///
+/// The compile is ~67 ms and was the last fixed cost on the critical path of a
+/// page that runs script (§B15.12a). It can be hidden inside the navigation's
+/// own network wait, but only speculatively: the decision has to be made before
+/// the document exists, so it cannot ask the one question that would settle it,
+/// which is whether the page has any script.
+///
+/// So it asks the two things it *can* know, and both are about whether the bet
+/// can lose rather than whether it will win.
+///
+/// **Scripting has to be on.** With `script` off no realm is ever built for any
+/// page, so this would be waste on all of them rather than on some.
+///
+/// **There has to be a wait to hide it in.** Loopback and the non-network
+/// schemes answer in about a millisecond, so a local page that turns out to
+/// have no script would pay the whole compile as added latency. Measured over
+/// the project's corpus (64 pages, 2026-08-29) the bet never once lost: 92% of
+/// pages run script, and the scriptless ones are *slower* to fetch than the
+/// scripted ones, the fastest at 117 ms against a ~67 ms compile — the compile
+/// would have to nearly double before one corpus page regressed. But every page
+/// in that corpus was remote. Local ones are not in the evidence, which is why
+/// they are excluded here instead of assumed to behave like the rest.
+/// Being wrong in the cautious direction costs an optimisation; being wrong the
+/// other way costs 67 ms of somebody's page load. So the trailing dot of a
+/// fully-qualified `localhost.` is stripped before asking, which
+/// [`crate::policy::is_loopback`] does not do. That function is *not* changed to
+/// match: it decides what the allowlist lets through by default, and widening
+/// what counts as the local machine is a policy decision that should be taken
+/// on its own terms rather than as a side effect of making pages faster.
+fn worth_warming(url: &Url, options: &PageOptions) -> bool {
+    if !options.script {
+        return false;
+    }
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    !crate::policy::is_loopback(host.strip_suffix('.').unwrap_or(host))
+}
+
 impl Page {
     /// Fetch a URL and load it.
     ///
@@ -497,7 +540,13 @@ impl Page {
         let mut followed: Vec<String> = Vec::new();
 
         for _ in 0..=MAX_META_REFRESH_HOPS {
-            let outcome = broker.fetch(&target, Initiator::Navigation);
+            let outcome = if worth_warming(&target, &options) {
+                broker.fetch_while(&target, Initiator::Navigation, &mut || {
+                    crate::script::warm_prelude();
+                })
+            } else {
+                broker.fetch(&target, Initiator::Navigation)
+            };
             if let Some(error) = outcome.error {
                 return Err(H5iError::Metadata(format!("could not open {target}: {error}")));
             }
@@ -2616,6 +2665,49 @@ mod tests {
     use super::*;
     use crate::policy::Policy;
     use crate::receipt::MemorySink;
+
+    #[test]
+    fn the_prelude_is_warmed_only_where_the_bet_cannot_lose() {
+        let scripted = PageOptions {
+            script: true,
+            ..Default::default()
+        };
+        let at = |s: &str| Url::parse(s).expect("url");
+
+        // A remote page that may run script: the case the measurement covers,
+        // where 92% of pages use the realm and the rest are slow enough to hide
+        // the compile in anyway.
+        assert!(worth_warming(&at("https://docs.example/guide"), &scripted));
+        assert!(worth_warming(&at("http://docs.example/guide"), &scripted));
+
+        // Scripting off means no realm is ever built, so this would be waste on
+        // every page rather than on some.
+        assert!(!worth_warming(&at("https://docs.example/"), &PageOptions::default()));
+
+        // Nothing local. These answer in about a millisecond, so a scriptless
+        // one would pay the whole compile as added latency — and local pages are
+        // exactly what the corpus measurement does not cover.
+        for local in [
+            "http://localhost:3000/",
+            "http://localhost./",
+            "http://dev.localhost/",
+            "http://127.0.0.1:8080/app",
+            "http://127.13.9.4/",
+            "http://[::1]:5173/",
+            "file:///tmp/page.html",
+            "data:text/html,<p>hi",
+        ] {
+            assert!(
+                !worth_warming(&at(local), &scripted),
+                "{local} has no wait to hide a 67ms compile in"
+            );
+        }
+
+        // A name that merely looks like loopback is not loopback, and must not
+        // lose the optimisation by string-matching.
+        assert!(worth_warming(&at("http://127.0.0.1.evil.test/"), &scripted));
+        assert!(worth_warming(&at("https://localhost.evil.test/"), &scripted));
+    }
 
     fn page_from(html: &str, policy: Policy, sink: Arc<MemorySink>) -> Page {
         let broker = crate::net::LocalBroker::new(policy, sink, None).expect("broker");

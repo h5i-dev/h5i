@@ -412,7 +412,7 @@ pub fn is_internal_address(addr: std::net::IpAddr) -> bool {
     }
 }
 
-fn is_loopback(host: &str) -> bool {
+pub(crate) fn is_loopback(host: &str) -> bool {
     // `localhost` and its subdomains resolve to loopback by convention.
     if host == "localhost" || host.ends_with(".localhost") {
         return true;
