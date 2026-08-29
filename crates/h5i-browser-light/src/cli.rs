@@ -658,13 +658,6 @@ enum SessionVerb {
         /// finds `en-GB`.
         #[arg(long, value_name = "LANG")]
         lang: Option<String>,
-        /// Fetch every text track rather than one per media element.
-        ///
-        /// One per element is the default because a well-localised player
-        /// declares thirty languages, and fetching all of them spends thirty
-        /// requests of the page's budget to answer a question about one.
-        #[arg(long)]
-        all: bool,
         /// The ceiling on caption text carried out of one track.
         #[arg(long, value_name = "BYTES")]
         max_bytes: Option<usize>,
@@ -1614,7 +1607,6 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
         SessionVerb::Transcript {
             url,
             lang,
-            all,
             max_bytes,
             at,
         } => (
@@ -1623,7 +1615,6 @@ fn session(verb: SessionVerb) -> Result<(), H5iError> {
                 "verb": Verb::Transcript.name(),
                 "url": url,
                 "lang": lang,
-                "all": all,
                 "max_bytes": max_bytes,
             }),
         ),
@@ -2507,7 +2498,7 @@ mod tests {
             vec!["h5i-browser-light", "session", "click", "--selector", "a.next"],
             vec!["h5i-browser-light", "session", "structured"],
             vec!["h5i-browser-light", "session", "transcript"],
-            vec!["h5i-browser-light", "session", "transcript", "--lang", "en", "--all"],
+            vec!["h5i-browser-light", "session", "transcript", "--lang", "en"],
             vec!["h5i-browser-light", "session", "markdown", "--url", "https://x.test/"],
             vec!["h5i-browser-light", "session", "script", "--save", "/tmp/s.json"],
             vec!["h5i-browser-light", "replay", "/tmp/s.json"],

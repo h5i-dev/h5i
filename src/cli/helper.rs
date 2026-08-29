@@ -169,7 +169,6 @@ pub fn transcript(
     session: &bs::Session,
     url: &str,
     lang: Option<&str>,
-    all: bool,
     max_bytes: usize,
 ) -> anyhow::Result<Outcome> {
     let url = check_url(url)?;
@@ -193,113 +192,43 @@ pub fn transcript(
     // `--lang 'en.*'` is the escape hatch, and a run that matched nothing names
     // it along with the tags the video actually has.
     let want = lang.unwrap_or("en");
-    // `--all` means the same thing on both lanes: every track the media
-    // actually carries. On the `<track>` lane that is what the markup declares,
-    // one to a few dozen. Here it has to be said with two flags rather than
-    // one, because yt-dlp folds machine translations into `all` the moment
-    // `--write-auto-subs` is on — three hundred languages on an ordinary
-    // YouTube video, and nine hundred on a popular one.
-    //
-    // So `--all` drops the automatic flag and asks only for the tracks somebody
-    // wrote. A single language still asks for both, because a video whose only
-    // transcript is machine-generated is exactly the case this lane exists to
-    // reach — and that asymmetry is why `--all` needs the second pass below:
-    // without it, `--all` on such a video returns nothing while passing no flag
-    // at all returns the transcript, and a flag that asks for more must never
-    // hand back less.
-    let langs = if all {
-        // `live_chat` is a chat transcript rather than a subtitle track, and on
-        // a long stream it is enormous. Excluded by name, the way yt-dlp's own
-        // documentation excludes it.
-        "all,-live_chat".to_string()
-    } else {
-        want.to_string()
-    };
 
-    let mut argv = build_argv(&url, &langs, &work.in_helper, !all);
-    let (mut status, mut said) = run(session, &argv, &work)?;
-    // `want` goes to yt-dlp as a **regex** and to `collect` as a literal, so
-    // the chooser gets the literal head of it. Without this the escape hatch
-    // this lane recommends by name — `--lang 'en.*'`, printed by `describe` —
-    // matched nothing in the chooser: no tag equals or starts with `en.*`, so
-    // selection fell through to whatever sorted first, and `-` sorts before `.`
-    // so `en-de` won. The translation-of-a-translation bug, handed to a caller
-    // who followed this tool's own advice.
-    let mut read = collect(&work.host, Some(literal_prefix(want)), max_bytes, all);
-    record(root, session, &work, &argv, status, &describe(&read, want, status, &said));
-
-    // The second pass, and only for `--all` on a video that turns out to have
-    // no authored captions at all.
+    // One tag, one invocation, both kinds of caption for it.
     //
-    // The info file the first pass wrote is what makes this decidable without
-    // guessing: asked for subtitles it could not supply, yt-dlp still writes it
-    // and still lists what the video has, in both kinds.
-    //
-    // How long that automatic list is varies by video — some report only their
-    // source tracks, others the whole translated set — and it deliberately does
-    // not matter here, because `fallback_tag` takes exactly one tag out of it.
-    // The bound is on what gets *asked for*, not on what gets listed, which is
-    // the same bound `--all` dropping the automatic flag was buying.
-    let mut fell_back = None;
-    if all
-        && read.cues.is_empty()
-        && read.authored.is_empty()
-        && let Some(tag) = fallback_tag(&read.automatic_tags, want)
-    {
-        argv = build_argv(&url, &tag, &work.in_helper, true);
-        let (second_status, second_said) = run(session, &argv, &work)?;
-        status = second_status;
-        said = second_said;
-        // The fallback fetched exactly one track, so there is nothing extra to
-        // carry even though `--all` is what got us here.
-        read = collect(&work.host, Some(literal_prefix(&tag)), max_bytes, false);
-        record(
-            root,
-            session,
-            &work,
-            &argv,
-            status,
-            &describe(&read, &tag, status, &said),
-        );
-        fell_back = Some(tag);
-    }
+    // There used to be an `--all` here that dropped `--write-auto-subs` so that
+    // yt-dlp's `all` would not expand to the several hundred languages YouTube
+    // machine-translates into — and then a second invocation to put the
+    // automatic track back for a video that had no authored one, because
+    // otherwise `--all` returned less than passing no flag. Two passes, a
+    // shared byte budget, a per-track label and a dropped-track note, all to
+    // serve a flag whose only honest meaning here was "the same words in forty
+    // languages". It is gone, and so is the machinery.
+    let argv = build_argv(&url, want, &work.in_helper);
+    let (status, said) = run(session, &argv, &work)?;
+    let read = collect(&work.host, Some(literal_prefix(want)), max_bytes);
 
     let mut note = describe(&read, want, status, &said);
-    // Only when the second pass actually produced something. Appended
-    // unconditionally it followed `failed: HTTP Error 429` with "fell back to
-    // its automatic transcript in `en`" — a claim that a transcript arrived, in
-    // the same sentence as the reason none did.
-    if let Some(tag) = fell_back.as_ref().filter(|_| !read.cues.is_empty()) {
-        note.push_str(&format!(
-            ". No authored captions on this video, so `--all` fell back to its automatic \
-             transcript in `{tag}`."
-        ));
-    }
-    // The box's own receipt for this invocation, when there is one. It is the
+    // The box's own receipt for this run, when there is one. It is the
     // strongest evidence this lane produces — a row h5i wrote from outside the
     // helper, naming the policy the run was subject to — so the reply points at
     // it rather than leaving the two records to be matched by time.
     if let Some(receipt) = box_receipt(session, &work) {
         note.push_str(&format!(" Box receipt {receipt}."));
     }
+    record(root, session, &work, &argv, status, &note);
+
 
     Ok(Outcome {
         reply: render(&url, session, &read, &note),
-        // The last argv that ran. Each invocation has its own row in the helper
-        // log, which is where the whole sequence is: a `--all` that fell back
-        // ran twice, and a record showing one of them would be a record of a
-        // command that is not the one that produced the answer.
         argv,
         status,
-        answered: read.cue_total() > 0,
+        answered: !read.cues.is_empty(),
         note,
     })
 }
 
-/// Append one row per invocation.
+/// Append one row for the run.
 ///
-/// Per invocation rather than per verb, because the argv is the thing this row
-/// exists to state and a `--all` that falls back runs two different ones.
 /// Written whatever happened, including a failure: "h5i ran yt-dlp and it
 /// exited 1" is the row an auditor needs most, and a log that only recorded
 /// successes would report a quiet session where a program ran and failed.
@@ -348,28 +277,6 @@ fn literal_prefix(pattern: &str) -> &str {
         Some(at) => &pattern[..at],
         None => pattern,
     }
-}
-
-/// Which automatic track to fall back to, out of the ones the video has.
-///
-/// Bounded to exactly one, because the whole point of `--all` dropping the
-/// automatic flag is not to ask for hundreds. The order is what a caller would
-/// expect: the language they named, then anything beginning with it, then a
-/// bare language code — a tag with no `-` is a source transcript rather than a
-/// translation of one, which is what `de-en` means — then whatever is first.
-fn fallback_tag(automatic: &[String], want: &str) -> Option<String> {
-    let want = want.to_ascii_lowercase();
-    automatic
-        .iter()
-        .find(|tag| tag.eq_ignore_ascii_case(&want))
-        .or_else(|| {
-            automatic
-                .iter()
-                .find(|tag| tag.to_ascii_lowercase().starts_with(&want))
-        })
-        .or_else(|| automatic.iter().find(|tag| !tag.contains('-')))
-        .or_else(|| automatic.first())
-        .cloned()
 }
 
 /// Refuse a URL this lane should not be handed.
@@ -540,16 +447,12 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
 
 /// The command line, built here and recorded exactly as built.
 ///
-/// `automatic` decides whether machine transcriptions are in scope, and it is
-/// what makes `all` mean the same thing here as it does on the `<track>` lane.
-/// yt-dlp resolves `--sub-langs all` against the languages it is *willing to
-/// write*, and `--write-auto-subs` is what puts several hundred machine
-/// translations into that set (`YoutubeDL.py`, `available_subs`). Asking for
-/// every language with automatic captions on is therefore not "every track this
-/// video has", it is 314 requests on the first video this lane was pointed at
-/// and 940 on the second: a rate limit within seconds, and nothing anybody
-/// wanted.
-fn build_argv(url: &str, langs: &str, out: &str, automatic: bool) -> Vec<String> {
+/// One tag, and both kinds of caption for it. A video whose only transcript is
+/// machine-generated is exactly the case this lane exists to reach, so
+/// `--write-auto-subs` is not optional; and the tag is exact, so asking for
+/// both costs one file rather than the several hundred languages YouTube will
+/// machine-translate into.
+fn build_argv(url: &str, langs: &str, out: &str) -> Vec<String> {
     let mut argv: Vec<&str> = vec![
         // Nothing from a config file. A `~/.config/yt-dlp/config` could
         // otherwise add flags h5i did not choose — a proxy, a cookie file, a
@@ -570,10 +473,8 @@ fn build_argv(url: &str, langs: &str, out: &str, automatic: bool) -> Vec<String>
         // machine's transcription are different evidence, and `describe` says
         // which arrived.
         "--write-subs",
+        "--write-auto-subs",
     ];
-    if automatic {
-        argv.push("--write-auto-subs");
-    }
     argv.extend([
         "--sub-langs",
         langs,
@@ -783,20 +684,6 @@ struct Read {
     automatic: bool,
     cues: Vec<h5i_browser_light::transcript::Cue>,
     truncated: Option<String>,
-    /// Tracks that arrived and did not fit the reply's byte ceiling.
-    ///
-    /// Named rather than silently absent: a caller that asked for every track
-    /// and got four has to be able to tell "there were four" from "there were
-    /// forty and this is where they stopped".
-    dropped: Vec<String>,
-    /// The other tracks that arrived, parsed, in tag order.
-    ///
-    /// `--all` downloads every authored track, and reporting one of them made
-    /// those requests pay for nothing: the tag list in the reply comes from the
-    /// info file whether they were downloaded or not, so a caller learned
-    /// nothing from the downloads that it did not already know. The CLI help
-    /// says "read every text track", and this is that.
-    extra: Vec<Extra>,
     /// The language tags this video *has*, from the info file rather than from
     /// what happened to be downloaded.
     ///
@@ -818,12 +705,7 @@ struct Read {
 /// (`en.*`), so more than one file can legitimately arrive — `en` and `en-orig`
 /// both match — and picking the alphabetically first would hand back the
 /// machine transcription when the author's own captions are sitting beside it.
-///
-/// `keep_extra` carries the tracks beyond the chosen one, and follows `--all`
-/// rather than "did more than one file arrive": a `--lang` pattern also brings
-/// back several, and the caller who wrote one asked for a language, not for
-/// every rendering of it.
-fn collect(dir: &Path, want: Option<&str>, max_bytes: usize, keep_extra: bool) -> Read {
+fn collect(dir: &Path, want: Option<&str>, max_bytes: usize) -> Read {
     let mut read = Read::default();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return read;
@@ -895,72 +777,8 @@ fn collect(dir: &Path, want: Option<&str>, max_bytes: usize, keep_extra: bool) -
             read.truncated = truncated;
         }
 
-        // Everything else that arrived, and only when every track was asked
-        // for.
-        //
-        // `--all` is not the only thing that downloads more than one file: a
-        // `--lang` **pattern** does too, and `en.*` against YouTube brings back
-        // `en` and `en-en`, the author's captions and a machine translation of
-        // English into English. Rendering both there is noise on top of the one
-        // transcript the caller asked for. `--all` is the flag that says "every
-        // text track", so it is the flag this follows.
-        // **One budget across the whole reply**, not one per file. `max_bytes`
-        // bounds a track, and once `--all` carries every track the reply grew
-        // with the number of languages a video has: forty authored tracks meant
-        // forty times the ceiling in a single answer to an agent.
-        let mut left =
-            max_bytes.saturating_sub(read.cues.iter().map(|c| c.text.len()).sum::<usize>());
-        for path in subtitles.iter().filter(|p| *p != first).filter(|_| keep_extra) {
-            let Ok(text) = std::fs::read_to_string(path) else {
-                continue;
-            };
-            let (cues, truncated) = h5i_browser_light::transcript::parse(&text, left);
-            if !cues.is_empty() {
-                left = left.saturating_sub(cues.iter().map(|c| c.text.len()).sum::<usize>());
-                read.extra.push(Extra {
-                    tag: tag_of(path),
-                    cues,
-                    truncated,
-                });
-                continue;
-            }
-            // Nothing came back, and *why* decides whether a caller is owed a
-            // sentence. `parse` reports `truncated` when it stopped at the byte
-            // ceiling, so an empty result with that set is a track the budget
-            // pushed out; without it the file simply had no cues.
-            //
-            // The guard here used to be `left == 0`, which almost never held:
-            // `parse` stops *before* the cue that would exceed the ceiling, so
-            // `left` is a small remainder rather than zero, and every remaining
-            // track was parsed to nothing and dropped in silence. Under `--all`
-            // that lost the second through fortieth tracks with no note.
-            if truncated.is_some() {
-                read.dropped.push(tag_of(path).unwrap_or_else(|| "(unnamed)".into()));
-            }
-        }
     }
     read
-}
-
-impl Read {
-    /// Cues across every track this reply carries.
-    ///
-    /// `read.cues` is the *chosen* track, and once `--all` carries the others
-    /// the two diverge: a chosen track that parsed to nothing while `de` and
-    /// `fr` parsed fine reported `empty: true, cues: 0` beside a fenced
-    /// transcript of hundreds of lines, so a caller keying on either discarded
-    /// a transcript it had been handed.
-    fn cue_total(&self) -> usize {
-        self.cues.len() + self.extra.iter().map(|e| e.cues.len()).sum::<usize>()
-    }
-}
-
-/// One track beyond the chosen one.
-#[derive(Default)]
-struct Extra {
-    tag: Option<String>,
-    cues: Vec<h5i_browser_light::transcript::Cue>,
-    truncated: Option<String>,
 }
 
 /// The language tags out of an info file's `subtitles` / `automatic_captions`.
@@ -1023,10 +841,10 @@ fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> Strin
         )
     };
 
-    if read.cue_total() > 0 {
+    if !read.cues.is_empty() {
         let mut note = format!(
             "{} cue(s){}{}",
-            read.cue_total(),
+            read.cues.len(),
             read.language
                 .as_deref()
                 .map(|l| format!(" in {l}"))
@@ -1041,14 +859,6 @@ fn describe(read: &Read, want: &str, status: Option<i32>, stderr: &str) -> Strin
             note.push_str(&format!(
                 ". The transcript arrived and the rest of the run did not: {}",
                 reason()
-            ));
-        }
-        if !read.dropped.is_empty() {
-            note.push_str(&format!(
-                ". {} more track(s) ({}) passed this reply's byte ceiling and are not \
-                 carried; ask for one with `--lang`.",
-                read.dropped.len(),
-                read.dropped.join(", ")
             ));
         }
         return note;
@@ -1104,23 +914,6 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
         "cues": read.cues,
         "truncated": read.truncated,
     });
-    let mut tracks = vec![track];
-    for extra in &read.extra {
-        tracks.push(json!({
-            "kind": "captions",
-            "language": extra.tag,
-            "default": false,
-            "src": url,
-            "fetched": true,
-            // Computed, not assumed. Extras only arrive under `--all`, which
-            // asks for authored tracks alone, so `false` is right today — and
-            // right by accident, which is how the chosen track's label came to
-            // be wrong for the one case that mattered. Ask the info file.
-            "automatic": extra.tag.as_deref().is_some_and(|tag| is_automatic(read, tag)),
-            "cues": extra.cues,
-            "truncated": extra.truncated,
-        }));
-    }
     let media = json!({
         "kind": "video",
         "src": url,
@@ -1129,14 +922,14 @@ fn render(url: &str, session: &bs::Session, read: &Read, note: &str) -> Value {
         "uploader": read.uploader,
         "captions": read.authored,
         "automatic_captions": read.automatic_tags,
-        "tracks": tracks,
+        "tracks": [track],
     });
 
     json!({
         "ok": true,
         "url": url,
-        "empty": read.cue_total() == 0,
-        "cues": read.cue_total(),
+        "empty": read.cues.is_empty(),
+        "cues": read.cues.len(),
         "source": NAME,
         // The sentence that keeps the request log's claim true. Said in the
         // reply and not only in the audit, because the reply is what a model
@@ -1237,29 +1030,18 @@ fn text(url: &str, session: &bs::Session, read: &Read, note: &str) -> String {
         out.push_str(&format!("note: {truncated}\n"));
     }
 
-    let render_cues = |cues: &[h5i_browser_light::transcript::Cue]| {
-        cues.iter()
-            .map(|cue| {
-                format!(
-                    "[{}] {}",
-                    h5i_browser_light::transcript::stamp(cue.start),
-                    cue.text
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let mut body = render_cues(&read.cues);
-    for extra in &read.extra {
-        body.push_str(&format!(
-            "\n\n## track {}\n",
-            extra.tag.as_deref().unwrap_or("(unnamed)")
-        ));
-        if let Some(truncated) = &extra.truncated {
-            body.push_str(&format!("note: {truncated}\n"));
-        }
-        body.push_str(&render_cues(&extra.cues));
-    }
+    let body = read
+        .cues
+        .iter()
+        .map(|cue| {
+            format!(
+                "[{}] {}",
+                h5i_browser_light::transcript::stamp(cue.start),
+                cue.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     out.push_str(CONTENT_BEGIN);
     out.push('\n');
@@ -1322,7 +1104,7 @@ mod tests {
     /// media may be fetched by it.
     #[test]
     fn the_recorded_argv_cannot_be_added_to_by_a_config_file() {
-        let argv = build_argv("https://site.example/v", "en.*", "/tmp/x/%(id)s", true);
+        let argv = build_argv("https://site.example/v", "en.*", "/tmp/x/%(id)s");
         assert!(argv.contains(&"--ignore-config".to_string()), "{argv:?}");
         assert!(argv.contains(&"--skip-download".to_string()), "{argv:?}");
         assert!(argv.contains(&"--no-playlist".to_string()), "{argv:?}");
@@ -1344,7 +1126,7 @@ mod tests {
         std::fs::write(dir.join("abc.en-orig.vtt"), format!("{vtt}automatic\n")).unwrap();
         std::fs::write(dir.join("abc.en.vtt"), format!("{vtt}authored\n")).unwrap();
 
-        let read = collect(&dir, Some("en"), 4096, false);
+        let read = collect(&dir, Some("en"), 4096);
         assert_eq!(read.language.as_deref(), Some("en"));
         assert_eq!(read.cues[0].text, "authored");
         assert!(!read.automatic);
@@ -1355,7 +1137,7 @@ mod tests {
         assert_eq!(read.cues[0].text, "authored");
 
         // Asked for the automatic one by name, it is what comes back.
-        let read = collect(&dir, Some("en-orig"), 4096, false);
+        let read = collect(&dir, Some("en-orig"), 4096);
         assert_eq!(read.cues[0].text, "automatic");
         assert!(read.automatic, "and it is labelled as machine-transcribed");
 
@@ -1376,7 +1158,7 @@ mod tests {
             std::fs::write(dir.join(format!("v.{tag}.vtt")), format!("{vtt}{tag}\n")).unwrap();
         }
 
-        let read = collect(&dir, Some("en"), 4096, false);
+        let read = collect(&dir, Some("en"), 4096);
         assert_eq!(read.language.as_deref(), Some("en"));
         assert_eq!(read.cues[0].text, "en", "an exact tag match wins over a prefix one");
         assert_eq!(read.language.as_deref(), Some("en"));
@@ -1428,35 +1210,9 @@ mod tests {
     /// the third is what got rate-limited on the first live run.
     #[test]
     fn the_default_language_is_an_exact_tag_and_not_a_prefix() {
-        let argv = build_argv("https://x.test/v", "en", "/tmp/x/%(id)s", true);
+        let argv = build_argv("https://x.test/v", "en", "/tmp/x/%(id)s");
         let at = argv.iter().position(|a| a == "--sub-langs").expect("flag");
         assert_eq!(argv[at + 1], "en", "not `en.*`: {argv:?}");
-    }
-
-    /// The one that would have hurt somebody else. yt-dlp resolves
-    /// `--sub-langs all` against the languages it is willing to *write*, and
-    /// `--write-auto-subs` puts every machine translation into that set: 314 on
-    /// the first video this lane was pointed at, 940 on the second. Asking for
-    /// all of them is several hundred requests to a third party from one flag,
-    /// a rate limit within seconds, and nothing anybody wanted.
-    ///
-    /// So `--all` asks only for the tracks somebody wrote, which is what `--all`
-    /// means on the `<track>` lane too.
-    #[test]
-    fn all_asks_for_authored_tracks_and_not_every_machine_translation() {
-        let every = build_argv("https://x.test/v", "all,-live_chat", "/tmp/x/%(id)s", false);
-        assert!(every.contains(&"--write-subs".to_string()), "{every:?}");
-        assert!(
-            !every.contains(&"--write-auto-subs".to_string()),
-            "with automatic captions on, `all` is every language YouTube can translate \
-             into: {every:?}"
-        );
-
-        // A single language still asks for both: a video whose only transcript
-        // is machine-generated is exactly what this lane exists to reach, and
-        // it is one file either way.
-        let one = build_argv("https://x.test/v", "en", "/tmp/x/%(id)s", true);
-        assert!(one.contains(&"--write-auto-subs".to_string()), "{one:?}");
     }
 
     fn session_at(placement: bs::Placement, lane: bs::Lane) -> bs::Session {
@@ -1587,7 +1343,7 @@ mod tests {
         // `run` execs, so the argv is checked rather than run: what matters is
         // that the box is named and the helper is inside it.
         assert!(matches!(session.placement, bs::Placement::Box { .. }));
-        let argv = build_argv("https://x.test/v", "en", "/tmp/helper/%(id)s", true);
+        let argv = build_argv("https://x.test/v", "en", "/tmp/helper/%(id)s");
         assert!(argv.last().is_some_and(|a| a == "https://x.test/v"));
     }
 
@@ -1752,12 +1508,10 @@ mod tests {
         std::fs::write(dir.join("v.en.vtt"), format!("{vtt}authored\n")).unwrap();
         std::fs::write(dir.join("v.en-de.vtt"), format!("{vtt}translated\n")).unwrap();
 
-        let read = collect(&dir, Some(literal_prefix("en.*")), 4096, false);
+        let read = collect(&dir, Some(literal_prefix("en.*")), 4096);
         assert_eq!(read.language.as_deref(), Some("en"));
         assert_eq!(read.cues[0].text, "authored");
-        // A pattern brings back several files and the caller asked for one
-        // language, so the translation beside it is not rendered too.
-        assert!(read.extra.is_empty(), "a --lang pattern is not --all");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1781,7 +1535,7 @@ mod tests {
         )
         .unwrap();
 
-        let read = collect(&dir, Some("en"), 4096, false);
+        let read = collect(&dir, Some("en"), 4096);
         assert!(read.automatic, "the tag is only in automatic_captions");
         assert!(describe(&read, "en", Some(0), "").contains("automatic captions"));
 
@@ -1792,119 +1546,9 @@ mod tests {
             r#"{"subtitles":{"en":[]},"automatic_captions":{"en":[]}}"#,
         )
         .unwrap();
-        let read = collect(&dir, Some("en"), 4096, false);
+        let read = collect(&dir, Some("en"), 4096);
         assert!(!read.automatic, "yt-dlp prefers the authored track and so do we");
 
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// `--all` downloads every authored track and used to report one, so the
-    /// extra requests bought nothing a caller could not already read off the
-    /// tag list. The CLI help says "read every text track".
-    #[test]
-    fn every_downloaded_track_is_reported_and_not_just_the_chosen_one() {
-        let dir = std::env::temp_dir().join(format!("h5i-allrep-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n";
-        for tag in ["en", "de", "fr"] {
-            std::fs::write(dir.join(format!("v.{tag}.vtt")), format!("{vtt}said in {tag}\n"))
-                .unwrap();
-        }
-
-        // Without `--all` the caller asked for one language and gets one.
-        assert!(collect(&dir, Some("en"), 4096, false).extra.is_empty());
-
-        let read = collect(&dir, Some("en"), 4096, true);
-        assert_eq!(read.language.as_deref(), Some("en"));
-        assert_eq!(read.cues[0].text, "said in en");
-        let extra: Vec<&str> = read
-            .extra
-            .iter()
-            .filter_map(|e| e.tag.as_deref())
-            .collect();
-        assert_eq!(extra, vec!["de", "fr"], "the other two are carried too");
-        assert_eq!(read.extra[0].cues[0].text, "said in de");
-
-        // One file is the ordinary path and has no extras to carry.
-        let _ = std::fs::remove_file(dir.join("v.de.vtt"));
-        let _ = std::fs::remove_file(dir.join("v.fr.vtt"));
-        assert!(collect(&dir, Some("en"), 4096, true).extra.is_empty());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// One budget across the whole reply. `max_bytes` bounds a track, and once
-    /// `--all` carries every track the reply grew with the number of languages
-    /// a video has.
-    #[test]
-    fn every_track_together_stays_inside_one_ceiling() {
-        let dir = std::env::temp_dir().join(format!("h5i-budget-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut vtt = String::from("WEBVTT\n\n");
-        for i in 0..40 {
-            vtt.push_str(&format!(
-                "00:00:{:02}.000 --> 00:00:{:02}.000\n{}\n\n",
-                i % 60,
-                (i + 1) % 60,
-                "word ".repeat(10)
-            ));
-        }
-        for tag in ["en", "de", "fr", "it"] {
-            std::fs::write(dir.join(format!("v.{tag}.vtt")), &vtt).unwrap();
-        }
-
-        let read = collect(&dir, Some("en"), 600, true);
-        let carried: usize = read.cues.iter().map(|c| c.text.len()).sum::<usize>()
-            + read
-                .extra
-                .iter()
-                .flat_map(|e| e.cues.iter())
-                .map(|c| c.text.len())
-                .sum::<usize>();
-        assert!(
-            carried <= 600 + 64,
-            "four tracks came back at {carried} bytes against a 600 byte ceiling"
-        );
-        // And the tracks the ceiling pushed out are *named*. Asserting only the
-        // ceiling is what let them vanish silently: `parse` stops before the
-        // cue that would exceed it, so the old `left == 0` guard never fired
-        // and every remaining track was dropped without a word.
-        assert_eq!(read.dropped.len(), 3, "de, fr and it did not fit");
-        let note = describe(&read, "en", Some(0), "");
-        assert!(note.contains("3 more track(s)"), "{note}");
-        assert!(note.contains("byte ceiling"), "{note}");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// `empty` and `cues` describe the whole reply, not the chosen track. A
-    /// chosen track that parses to nothing beside extras that parse fine said
-    /// `empty: true` over a transcript of hundreds of lines.
-    #[test]
-    fn the_counts_describe_what_the_reply_carries() {
-        let dir = std::env::temp_dir().join(format!("h5i-counts-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        // `en` is present and parses to nothing; `de` is real.
-        std::fs::write(dir.join("v.en.vtt"), "WEBVTT\n").unwrap();
-        std::fs::write(
-            dir.join("v.de.vtt"),
-            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nGesagt.\n",
-        )
-        .unwrap();
-
-        let read = collect(&dir, Some("en"), 4096, true);
-        assert!(read.cues.is_empty(), "the chosen track parsed to nothing");
-        assert_eq!(read.cue_total(), 1, "and the reply still carries one cue");
-        // And the prose agrees with the counts. It used to branch on the chosen
-        // track, so a reply carrying a fenced `## track de` transcript was
-        // captioned "this video has no subtitles at all, in any language" —
-        // the same disagreement `cue_total` was added to end, left in the half
-        // a model actually reads.
-        let note = describe(&read, "en", Some(0), "");
-        assert!(note.starts_with("1 cue(s)"), "{note}");
-        assert!(!note.contains("no subtitles"), "{note}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1946,30 +1590,6 @@ mod tests {
         // And with nothing to show for it, the same stop *is* a failure.
         let empty = describe(&Read::default(), "en", Some(-1), stopped);
         assert!(empty.starts_with("failed:"), "{empty}");
-    }
-
-    /// A flag that asks for more must never hand back less. `--all` drops the
-    /// automatic flag so it does not ask YouTube for three hundred languages,
-    /// and on a video whose only transcript is machine-generated that made
-    /// `--all` return nothing where passing no flag returned the transcript.
-    /// The fallback picks exactly one automatic track.
-    #[test]
-    fn the_all_fallback_picks_one_track_in_the_order_a_caller_expects() {
-        // The language they named wins.
-        assert_eq!(fallback_tag(&["de".into(), "en".into()], "en").as_deref(), Some("en"));
-        // Then anything beginning with it.
-        assert_eq!(fallback_tag(&["en-GB".into(), "de".into()], "en").as_deref(), Some("en-GB"));
-        // Then a source transcript over a translation of one: `de-en` is
-        // German rendered from English, `de` is what was actually said.
-        assert_eq!(
-            fallback_tag(&["fr-en".into(), "de".into()], "en").as_deref(),
-            Some("de"),
-            "a bare tag is a source track"
-        );
-        // Then whatever there is.
-        assert_eq!(fallback_tag(&["fr-en".into()], "en").as_deref(), Some("fr-en"));
-        // And nothing to fall back to is not a fallback.
-        assert_eq!(fallback_tag(&[], "en"), None);
     }
 
     #[test]

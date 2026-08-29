@@ -566,10 +566,14 @@ requests` that paid for the text.
 
 Media with **no** track is reported as media with no track, not as silence: that
 is the fact that says the words exist only in the audio, and it is the one a
-caller routes on. One track per media element is read by default, because a
-well-localised player declares thirty languages; `--lang en` names one, and
-`--all` reads every text track. Chapters count as text. `metadata` tracks do
-not, being machine payload the page reads with script.
+caller routes on.
+
+At most two tracks are read per media element: one of the **words**, and the
+**outline** of them. A well-localised player declares thirty languages and they
+are the same words thirty times, so `--lang en` names which one; a `chapters`
+track is different information rather than a translation, so it is read
+alongside. `metadata` tracks are machine payload the page reads with script, and
+`descriptions` is for a screen reader; neither is a transcript.
 
 #### When the captions are not in the markup: `--via yt-dlp`
 
@@ -621,16 +625,11 @@ Four things are deliberate:
 - **`--ignore-config` is passed**, so a `~/.config/yt-dlp/config` cannot add
   flags h5i did not choose. The argv in the audit is what actually ran.
 
-`--all` means the same thing on both lanes: every track the media actually
-carries. Here that takes two flags rather than one, because yt-dlp folds
-YouTube's machine translations into `all` the moment automatic captions are
-requested, which is several hundred downloads for a question about one video. So
-`--all` asks only for the tracks somebody wrote. When a video turns out to have
-none, it runs a second time for one automatic track and says so in the note: a
-flag that asks for more must never hand back less, and without that second pass
-`--all` returned nothing on a video whose only transcript is machine-generated
-while passing no flag at all returned it. Both invocations appear in the audit,
-with their own argv, because that is what actually ran.
+One tag, one invocation, and both the author's captions and the machine
+transcript for it — the second because a video whose only transcript is
+machine-generated is exactly what this lane is for. Which languages a video has
+is listed either way, from the metadata, so nothing is downloaded to find that
+out.
 
 `--lang` is an **exact** tag, because yt-dlp matches it with a regex
 `fullmatch` and widening is not free: YouTube answers `en.*` with `en` plus

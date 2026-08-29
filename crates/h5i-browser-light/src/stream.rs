@@ -2122,7 +2122,6 @@ fn control_verb_inner(
                     .get("lang")
                     .and_then(Value::as_str)
                     .map(str::to_string),
-                all: request.get("all").and_then(Value::as_bool).unwrap_or(false),
                 max_bytes: request
                     .get("max_bytes")
                     .and_then(Value::as_u64)

@@ -524,13 +524,6 @@ pub enum BrowserCommands {
         /// finds `en-GB`. Every track is listed either way.
         #[arg(long, value_name = "LANG")]
         lang: Option<String>,
-        /// Read every text track rather than one per media element.
-        ///
-        /// One per element is the default: a well-localised player declares
-        /// thirty languages, and reading all of them spends thirty of the
-        /// page's requests to answer a question about one.
-        #[arg(long)]
-        all: bool,
         /// The ceiling on caption text carried out of one track.
         #[arg(long, value_name = "BYTES")]
         max_bytes: Option<usize>,
@@ -933,7 +926,6 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             session,
             url,
             lang,
-            all,
             max_bytes,
             via,
             json,
@@ -945,7 +937,6 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
                     &helper,
                     url,
                     lang,
-                    all,
                     max_bytes,
                     json,
                 );
@@ -955,9 +946,6 @@ pub fn run(action: BrowserCommands) -> anyhow::Result<()> {
             if let Some(lang) = lang {
                 argv.push("--lang".into());
                 argv.push(lang);
-            }
-            if all {
-                argv.push("--all".into());
             }
             if let Some(max) = max_bytes {
                 argv.push("--max-bytes".into());
@@ -2270,7 +2258,6 @@ fn via_helper(
     helper: &str,
     url: Option<String>,
     lang: Option<String>,
-    all: bool,
     max_bytes: Option<usize>,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -2327,7 +2314,6 @@ fn via_helper(
         &session,
         &target,
         lang.as_deref(),
-        all,
         max_bytes.unwrap_or(h5i_browser_light::transcript::DEFAULT_MAX_BYTES),
     )?;
 
@@ -2367,7 +2353,6 @@ fn via_helper(
     helper: &str,
     _url: Option<String>,
     _lang: Option<String>,
-    _all: bool,
     _max_bytes: Option<usize>,
     _json: bool,
 ) -> anyhow::Result<()> {

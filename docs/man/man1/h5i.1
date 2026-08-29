@@ -1838,7 +1838,7 @@ What the page's media **says**: `<track>` captions, fetched and parsed
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS SYNOPSIS
-\fBtranscript\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-url\fR] [\fB\-\-lang\fR] [\fB\-\-all\fR] [\fB\-\-max\-bytes\fR] [\fB\-\-via\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+\fBtranscript\fR [\fB\-s\fR|\fB\-\-session\fR] [\fB\-\-url\fR] [\fB\-\-lang\fR] [\fB\-\-max\-bytes\fR] [\fB\-\-via\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SS OPTIONS
@@ -1851,11 +1851,6 @@ Go here first, then read. One round trip where `navigate` and then this would be
 .TP
 \fB\-\-lang\fR \fI<LANG>\fR
 Prefer this language. Prefix\-matched against `srclang`, so `en` finds `en\-GB`. Every track is listed either way
-.TP
-\fB\-\-all\fR
-Read every text track rather than one per media element.
-
-One per element is the default: a well\-localised player declares thirty languages, and reading all of them spends thirty of the page\*(Aqs requests to answer a question about one.
 .TP
 \fB\-\-max\-bytes\fR \fI<BYTES>\fR
 The ceiling on caption text carried out of one track

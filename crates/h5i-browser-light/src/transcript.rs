@@ -197,18 +197,24 @@ pub struct Cue {
 
 /// Which tracks to actually fetch.
 ///
-/// The default is one track per media element, not all of them: a
-/// well-localised player declares thirty languages, and fetching every one
-/// would be thirty requests against the page's budget to answer a question
-/// about one. The listing is complete either way, so a caller that wanted a
-/// different language can see it is there and ask again.
+/// At most two per media element: what was **said**, and the **outline** of it.
+///
+/// Not all of them, because a well-localised player declares thirty languages
+/// and fetching every one is thirty requests to answer a question about one.
+/// The listing is complete either way, so a caller that wanted a different
+/// language can see it is there and ask again.
+///
+/// There used to be an `all` here that fetched every readable track, and it was
+/// the wrong axis. Thirty languages of one video are the same words thirty
+/// times; a `chapters` track is *different information*, an outline rather than
+/// a translation. Sorting them into one flag meant the only thing that flag was
+/// genuinely good for could not be had without also paying for the twenty-nine
+/// that were redundant. Chapters are read by default now, and the flag is gone.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Selection {
     /// Prefer this language. Matched against `srclang` case-insensitively, by
     /// prefix, so `en` matches `en-GB`.
     pub language: Option<String>,
-    /// Fetch every text track rather than one per element.
-    pub all: bool,
     /// The per-track ceiling on caption text.
     pub max_bytes: usize,
 }
@@ -217,7 +223,6 @@ impl Default for Selection {
     fn default() -> Self {
         Self {
             language: None,
-            all: false,
             max_bytes: DEFAULT_MAX_BYTES,
         }
     }
@@ -535,44 +540,50 @@ fn normalise_kind(raw: Option<&str>) -> String {
 /// Indices into each media element's `tracks`, so a caller can report what it
 /// is about to spend before spending it.
 pub fn chosen(media: &Media, selection: &Selection) -> Vec<usize> {
-    let readable: Vec<usize> = media
-        .tracks
-        .iter()
-        .enumerate()
-        .filter(|(_, track)| track.carries_text())
-        .map(|(index, _)| index)
-        .collect();
-
-    if selection.all {
-        return readable;
-    }
+    // The two kinds are picked separately because they answer different
+    // questions. One track of the words, and one outline of them.
+    let of_kind = |wanted: &[&str]| -> Vec<usize> {
+        media
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, track)| wanted.contains(&track.kind.as_str()))
+            .map(|(index, _)| index)
+            .collect()
+    };
 
     // A language the caller named wins over the page's own default, because
     // the caller naming one is the more specific instruction. Prefix-matched:
     // `en` should find `en-GB`, and a page that ships only `en-GB` is not a
-    // page with no English.
-    if let Some(want) = selection.language.as_deref().map(str::to_ascii_lowercase)
-        && let Some(index) = readable.iter().copied().find(|index| {
-            media.tracks[*index]
-                .language
-                .as_deref()
-                .map(str::to_ascii_lowercase)
-                .is_some_and(|have| have.starts_with(&want) || want.starts_with(&have))
-        })
-    {
-        return vec![index];
-    }
+    // page with no English. Then the page's own `default`, then the first: a
+    // page that marked a track default marked it for a reason, and guessing
+    // past that would be the engine overruling the page about its own content.
+    let pick = |among: Vec<usize>| -> Option<usize> {
+        if let Some(want) = selection.language.as_deref().map(str::to_ascii_lowercase)
+            && let Some(index) = among.iter().copied().find(|index| {
+                media.tracks[*index]
+                    .language
+                    .as_deref()
+                    .map(str::to_ascii_lowercase)
+                    .is_some_and(|have| have.starts_with(&want) || want.starts_with(&have))
+            })
+        {
+            return Some(index);
+        }
+        among
+            .iter()
+            .copied()
+            .find(|index| media.tracks[*index].default)
+            .or_else(|| among.first().copied())
+    };
 
-    // Then the page's own `default`, then the first readable one. A page that
-    // marked a track default marked it for a reason, and guessing past that
-    // would be the engine overruling the page about its own content.
-    readable
-        .iter()
-        .copied()
-        .find(|index| media.tracks[*index].default)
-        .or_else(|| readable.first().copied())
+    let mut picked: Vec<usize> = pick(of_kind(&["subtitles", "captions"]))
         .into_iter()
-        .collect()
+        .chain(pick(of_kind(&["chapters"])))
+        .collect();
+    // Document order, so a reading of one page is the same reading twice.
+    picked.sort_unstable();
+    picked
 }
 
 /// Fetch the chosen tracks and parse them, through the broker like anything
@@ -1217,19 +1228,49 @@ mod tests {
         assert_eq!(chosen(&media, &selection), vec![0], "en finds en-GB");
     }
 
+    /// The outline is read alongside the words, because it is different
+    /// information rather than a translation of the same information.
+    /// `metadata` is machine payload the page reads with script, and
+    /// `descriptions` is for a screen reader; neither is a transcript.
     #[test]
-    fn all_fetches_every_readable_track_and_still_skips_the_machine_ones() {
+    fn one_spoken_track_and_the_outline_beside_it() {
         let media = media_with(&[
             ("captions", "en", false),
             ("metadata", "en", false),
             ("chapters", "en", false),
             ("descriptions", "en", false),
         ]);
+        assert_eq!(chosen(&media, &Selection::default()), vec![0, 2]);
+    }
+
+    /// One language of the words, not thirty. A well-localised player declares
+    /// thirty and they are the same words thirty times.
+    #[test]
+    fn only_one_language_of_the_spoken_track_is_read() {
+        let media = media_with(&[
+            ("captions", "en", true),
+            ("subtitles", "de", false),
+            ("subtitles", "fr", false),
+        ]);
+        assert_eq!(chosen(&media, &Selection::default()), vec![0]);
+    }
+
+    /// And the outline follows the language too, rather than being taken from
+    /// whichever chapters track happens to come first.
+    #[test]
+    fn the_outline_follows_the_language_that_was_asked_for() {
+        let media = media_with(&[
+            ("captions", "en", true),
+            ("chapters", "en", false),
+            ("chapters", "de", false),
+        ]);
         let selection = Selection {
-            all: true,
+            language: Some("de".into()),
             ..Selection::default()
         };
-        assert_eq!(chosen(&media, &selection), vec![0, 2], "metadata and descriptions are not prose");
+        // No German words on this page, so the English captions stand; the
+        // German outline is the one that was asked for and exists.
+        assert_eq!(chosen(&media, &selection), vec![0, 2]);
     }
 
     #[test]
