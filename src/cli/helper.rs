@@ -243,6 +243,7 @@ fn check_url(raw: &str) -> anyhow::Result<String> {
 }
 
 /// Where the helper writes, in both views of the filesystem.
+#[derive(Debug)]
 struct Workspace {
     /// The directory as **this machine** sees it, which is where the output is
     /// read back from.
@@ -280,10 +281,17 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
                     anyhow::anyhow!("this session's record does not name the box's own /tmp")
                 })?
                 .join("helper");
-            // `None` is the image-backed tier, whose `/tmp` is not on this
-            // machine's filesystem at all. Refused rather than worked around:
-            // the helper would run and write somewhere h5i cannot read, and the
-            // result would be a successful-looking run that produced nothing.
+            // `None` means this machine cannot see the box's `/tmp` at all: an
+            // image-backed tier is the designed reason, and a session that died
+            // before its record was complete is the accidental one. Either way
+            // it is refused rather than worked around, because the helper would
+            // run, write somewhere h5i cannot read, and hand back a
+            // successful-looking run that produced nothing.
+            //
+            // The message does not name a cause it cannot check. It used to say
+            // "keeps its /tmp inside its image", which is one of the two and
+            // reads as a fact about the tier — wrong, and confidently so, for a
+            // workspace box whose record simply has no witness in it.
             let on_host = session
                 .control
                 .witness
@@ -291,9 +299,11 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
                 .and_then(|p| p.parent())
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "box `{name}` keeps its /tmp inside its image, so h5i cannot read \
-                         back what a helper writes there. Open the session on a tier whose \
-                         /tmp is on this machine, or read this URL with `--via` unset."
+                        "h5i cannot see box `{name}`'s /tmp from here, so it cannot read back \
+                         what a helper writes there. This session's record names no host-side \
+                         view of it, which is how an image-backed tier looks and also how a \
+                         session that never fully came up looks. Check `h5i browser status`, \
+                         or read this URL with `--via` unset."
                     )
                 })?
                 .join("helper");
@@ -1014,13 +1024,22 @@ mod tests {
     }
 
     fn session_at(placement: bs::Placement, lane: bs::Lane) -> bs::Session {
+        session_with_control(placement, lane, None, None)
+    }
+
+    fn session_with_control(
+        placement: bs::Placement,
+        lane: bs::Lane,
+        file: Option<&str>,
+        witness: Option<&str>,
+    ) -> bs::Session {
         let mut session: bs::Session = serde_json::from_value(serde_json::json!({
             "id": "br_test", "engine": "h5i-light",
             "placement": placement, "lane": lane,
             "url": "https://site.example/", "started_at": "2026-01-01T00:00:00Z",
             "expires_at": null, "storage": "ephemeral", "policy_digest": "sha256:0",
             "restored_from": null, "state": "live", "ended_at": null, "end_reason": null,
-            "control": {"channel": "socket", "file": null, "witness": null, "pid": null},
+            "control": {"channel": "socket", "file": file, "witness": witness, "pid": null},
         }))
         .expect("a session record");
         session.lane = lane;
@@ -1058,6 +1077,78 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// The two views of one directory, which is the whole of what makes a
+    /// boxed run readable: the helper writes at the box's path and h5i reads at
+    /// this machine's, and the session record is where both come from rather
+    /// than being re-derived here.
+    #[test]
+    fn a_boxed_run_names_the_directory_in_both_filesystems() {
+        let session = session_with_control(
+            bs::Placement::Box { name: "wsbox".into() },
+            bs::Lane::EngineClaimed,
+            Some("/tmp/h5i-browser.sock"),
+            Some("/home/u/.h5i/env/wsbox/tmp/h5i-browser.sock"),
+        );
+        let work = workspace(Path::new("/state"), &session).expect("both views");
+        assert_eq!(work.in_helper, "/tmp/helper/%(id)s", "the box's own path");
+        assert_eq!(
+            work.host,
+            Path::new("/home/u/.h5i/env/wsbox/tmp/helper"),
+            "and this machine's view of the same directory"
+        );
+    }
+
+    /// Refused, not worked around. The helper would otherwise run, write where
+    /// h5i cannot read, and hand back a successful-looking run that produced
+    /// nothing.
+    #[test]
+    fn a_box_whose_tmp_this_machine_cannot_see_is_refused() {
+        let session = session_with_control(
+            bs::Placement::Box { name: "imagebox".into() },
+            bs::Lane::EngineClaimed,
+            Some("/tmp/h5i-browser.sock"),
+            None,
+        );
+        let err = workspace(Path::new("/state"), &session)
+            .expect_err("no host view, no run")
+            .to_string();
+        assert!(err.contains("cannot see box `imagebox`'s /tmp"), "{err}");
+        // It must not assert a cause it cannot check: an image-backed tier and
+        // a session that never came up look identical from here.
+        assert!(err.contains("never fully came up"), "{err}");
+    }
+
+    #[test]
+    fn a_host_run_writes_beside_the_session() {
+        let session = session_at(bs::Placement::Host, bs::Lane::EngineClaimed);
+        let work = workspace(Path::new("/state"), &session).expect("a host workspace");
+        assert!(work.host.ends_with("helper"), "{:?}", work.host);
+        assert!(work.in_helper.ends_with("helper/%(id)s"), "{}", work.in_helper);
+        assert_eq!(
+            work.in_helper,
+            work.host.join("%(id)s").display().to_string(),
+            "on the host the two views are one directory"
+        );
+    }
+
+    /// The lane's refusal to leave the box. A boxed session runs the helper in
+    /// its box or not at all: falling back to the host would move the session's
+    /// network to a boundary its caller did not choose.
+    #[test]
+    fn a_boxed_session_carries_the_helper_into_the_box() {
+        let session = session_with_control(
+            bs::Placement::Box { name: "wsbox".into() },
+            bs::Lane::EngineClaimed,
+            Some("/tmp/h5i-browser.sock"),
+            Some("/tmp/host-view/h5i-browser.sock"),
+        );
+        // `run` execs, so the argv is checked rather than run: what matters is
+        // that the box is named and the helper is inside it.
+        assert!(matches!(session.placement, bs::Placement::Box { .. }));
+        let argv = build_argv("https://x.test/v", "en", "/tmp/helper/%(id)s", true);
+        assert!(argv.last().is_some_and(|a| a == "https://x.test/v"));
     }
 
     #[test]
