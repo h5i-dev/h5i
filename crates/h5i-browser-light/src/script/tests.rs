@@ -4096,6 +4096,45 @@ fn a_constructed_text_node_is_a_text_node_and_not_the_document() {
 }
 
 #[test]
+fn a_bad_node_id_is_an_error_rather_than_the_document() {
+    // Rust's float-to-integer cast saturates, so `NaN as usize` is 0 — and node
+    // 0 is the document. Every argument that was not a number at all therefore
+    // named the most consequential node in the tree, and named it silently.
+    // That is how `new Text("x")` came back with `nodeType === 9`.
+    //
+    // The prelude cannot produce these any more, so this reaches past it to the
+    // primitives, which is where the rule has to hold: the next bad id will come
+    // from somewhere nobody has thought of yet.
+    let (_page, mut script) = page_and_script("<html><body><p id='p'>hi</p></body></html>");
+    for bad in ["'x'", "NaN", "-1", "1.5", "Infinity", "{}", "[]", "''", "'1'", "true"] {
+        let answer = script
+            .eval_value(&format!(
+                "(() => {{ try {{ return 'got ' + String(__h5i.nodeKind({bad})) }} \
+                   catch (e) {{ return 'refused' }} }})()"
+            ))
+            .unwrap();
+        assert_eq!(answer, "refused", "__h5i.nodeKind({bad}) was accepted");
+    }
+
+    // `undefined` is the exception, and not an accident: `document` carries no
+    // `_id` — every reflected accessor uses `this._id === undefined` as its
+    // WebIDL brand check, so giving the document one would make it pass for an
+    // element — and every path that hands `document._id` to a primitive means
+    // the document. 9 is DOCUMENT_NODE.
+    assert_eq!(script.eval_value("String(__h5i.nodeKind(undefined))").unwrap(), "9");
+    assert_eq!(script.eval_value("String(__h5i.nodeKind(null))").unwrap(), "9");
+
+    // It is a coercion ban, deliberately. `Number([])` and `Number("")` are both
+    // 0, which is the document, so a rule that let JavaScript coerce first would
+    // leave the same hole in a narrower shape. An id is a number or it is an
+    // error; `"1"` is refused along with the rest.
+    // And the document still answers as itself through the paths that rely on
+    // it, rather than through a NaN that happened to land on the right node.
+    assert_eq!(script.eval_value("document.nodeType").unwrap(), "9");
+    assert_eq!(script.eval_value("document.querySelector('#p').textContent").unwrap(), "hi");
+}
+
+#[test]
 fn a_node_cannot_be_put_inside_itself() {
     // The rule that makes the hang above impossible to reach again, from any
     // direction rather than from the one that was found.

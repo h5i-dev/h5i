@@ -2095,7 +2095,7 @@ impl PageFactory {
     /// Load whatever a form asked for, through the same broker as everything
     /// else. A refused submission is an error the agent reads, not a blank page.
     pub fn open_submission(&self, submission: &Submission) -> Result<Page, H5iError> {
-        self.begin_navigation();
+        let _navigating = self.begin_navigation();
         let outcome = self.broker.send_from(
             &submission.url,
             Initiator::Navigation,
@@ -2205,12 +2205,16 @@ impl PageFactory {
     /// Before the navigation's own request, deliberately: resetting afterwards
     /// would give the page that just spent its allowance a clean slate for the
     /// subresources it is about to ask for.
-    fn begin_navigation(&self) {
+    fn begin_navigation(&self) -> crate::budget::HardStop {
         self.broker.reset_budget();
+        // Held by the caller until the page is built, which is the span every
+        // deadline in this engine is supposed to cover and the one where none of
+        // them reach layout. See `HardStop`.
+        crate::budget::HardStop::arm(self.options.navigation_budget)
     }
 
     pub fn open(&self, url: &Url) -> Result<Page, H5iError> {
-        self.begin_navigation();
+        let _navigating = self.begin_navigation();
         // Leaving an origin drops its cookies — in `finish`, against the origin
         // actually loaded rather than the one asked for. See
         // `cookies::Jar::retain_origin` for why that bound exists and what it
@@ -2228,7 +2232,7 @@ impl PageFactory {
     /// The same as [`PageFactory::from_html`], but from bytes whose encoding is
     /// not yet known — so the document gets to say what it is written in.
     pub fn from_bytes(&self, bytes: &[u8], content_type: Option<&str>, base_url: &Url) -> Page {
-        self.begin_navigation();
+        let _navigating = self.begin_navigation();
         self.finish_reporting(Page::from_bytes(
             bytes,
             content_type,
@@ -2240,7 +2244,7 @@ impl PageFactory {
     }
 
     pub fn from_html(&self, html: &str, base_url: &Url) -> Page {
-        self.begin_navigation();
+        let _navigating = self.begin_navigation();
         self.finish_reporting(Page::from_html(
             html,
             base_url,

@@ -35,8 +35,65 @@ fn arg_string(args: &[JsValue], index: usize, context: &mut Context) -> JsResult
         .to_std_string_escaped())
 }
 
-fn arg_id(args: &[JsValue], index: usize, context: &mut Context) -> JsResult<usize> {
-    Ok(args.get_or_undefined(index).to_number(context)? as usize)
+/// The node the prelude has no id for.
+///
+/// `document` is an object literal on the JavaScript side, not a wrapper, and it
+/// deliberately carries no `_id`: every reflected accessor uses
+/// `this._id === undefined` as its WebIDL brand check, so giving the document
+/// one would make it pass for an element. Every path that hands `document._id`
+/// to a primitive therefore hands over `undefined`, and every one of them means
+/// this node.
+const DOCUMENT_NODE_ID: usize = 0;
+
+/// A node id argument, or an error naming what turned up instead.
+///
+/// This used to be `to_number(...)? as usize`, and that cast is why a text node
+/// could be the document. Rust's float-to-integer cast saturates: `NaN as usize`
+/// is **0**, and so is every negative number — and node 0 is the document. So
+/// any argument that was not a number at all became a valid id for the most
+/// consequential node in the tree, silently.
+///
+/// `new Text("x")` produced exactly that (see the prelude's `FROM_ID`), and
+/// appending the result made the document its own descendant, which hung layout
+/// for as long as anyone let it. That particular door is shut on both sides now;
+/// this is the rule underneath it, so the next bad id is an error rather than a
+/// different node.
+///
+/// The one non-numeric argument that is *not* a mistake is `undefined`, which is
+/// what `document._id` reads as. It means the document, it has always meant the
+/// document, and it says so here rather than arriving through a NaN.
+/// What a primitive says when it is handed something that is not an id.
+///
+/// Named as ours rather than as the page's: nothing a page writes reaches here
+/// directly, so an id that is not a number is this engine having lost track of
+/// one of its own nodes.
+fn bad_node_id(saw: &str) -> JsError {
+    JsError::from_opaque(
+        js_string!(format!(
+            "a node id has to be a whole number, and this one is `{saw}`. That is \
+             a bug in this engine, not in the page."
+        ))
+        .into(),
+    )
+}
+
+fn arg_id(args: &[JsValue], index: usize, _context: &mut Context) -> JsResult<usize> {
+    let value = args.get_or_undefined(index);
+    if value.is_undefined() || value.is_null() {
+        return Ok(DOCUMENT_NODE_ID);
+    }
+    // A *number*, not something a number can be made of. JavaScript's coercion
+    // is happy to turn `[]` and `""` into 0, and 0 is the document — so a rule
+    // written in terms of `to_number` would leave the same hole in a narrower
+    // shape. Every id this side ever sees came from `this._id`, which is a
+    // number or it is nothing.
+    let Some(number) = value.as_number() else {
+        return Err(bad_node_id(value.type_of()));
+    };
+    if !number.is_finite() || number.is_sign_negative() || number.fract() != 0.0 {
+        return Err(bad_node_id(&number.to_string()));
+    }
+    Ok(number as usize)
 }
 
 /// Read a JS array of `[name, value]` pairs.

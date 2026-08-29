@@ -290,7 +290,7 @@ pub struct BrokerClient {
 /// lost: there is no result to flush on this path — the broker that would have
 /// received one is gone — and the line above went to stderr, which Rust does
 /// not buffer.
-fn stop_now(code: i32) -> ! {
+pub(crate) fn stop_now(code: i32) -> ! {
     #[cfg(unix)]
     unsafe {
         libc::_exit(code)
