@@ -4683,7 +4683,7 @@ pub fn browser_request_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> 
     if policy.claim.image_backed() {
         return None;
     }
-    let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
+    let backing = box_tmp_on_host(h5i_root, m, &policy);
     Some(backing.join("browser-requests.jsonl"))
 }
 
@@ -4708,7 +4708,7 @@ pub fn browser_action_log(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf> {
     if policy.claim.image_backed() {
         return None;
     }
-    let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
+    let backing = box_tmp_on_host(h5i_root, m, &policy);
     Some(backing.join("browser-actions.jsonl"))
 }
 
@@ -4733,7 +4733,7 @@ pub fn box_tmp_file(
         return None;
     }
     let in_box = PathBuf::from(box_tmp_root(&policy)).join(name);
-    let on_host = private_tmp_backing(&m.dir(h5i_root).join("tmp")).join(name);
+    let on_host = box_tmp_on_host(h5i_root, m, &policy).join(name);
     Some((in_box, on_host))
 }
 
@@ -4760,8 +4760,42 @@ pub fn browser_control_file(h5i_root: &Path, m: &EnvManifest) -> Option<PathBuf>
     if policy.claim.image_backed() {
         return None;
     }
-    let backing = private_tmp_backing(&m.dir(h5i_root).join("tmp"));
+    let backing = box_tmp_on_host(h5i_root, m, &policy);
     Some(backing.join("agent-browser").join("h5i-light.control"))
+}
+
+/// The box's `/tmp`, as **this machine** sees it, from a *freshly loaded*
+/// policy.
+///
+/// [`prepare_private_tmp`] gives a box a `/tmp` of its own at two tiers and
+/// **only** two, and does nothing at the others — so at the workspace tier a
+/// box writes to the host's real `/tmp`. Every reader of a file in a box's
+/// `/tmp` used to assume the redirect always happened and watch
+/// `<env>/tmp/...`, a directory nothing would ever create: `browser open --in`
+/// on a workspace box started an engine that came up correctly, put its control
+/// socket at `/tmp/h5i-browser.sock`, and was declared dead thirty seconds
+/// later because h5i was watching somewhere else.
+///
+/// **The policy must not have been prepared yet.** That is the difference
+/// between this and [`host_tmp_root`], which reads the recorded `home_bind`
+/// instead and says in its own comment why re-deriving the condition broke it:
+/// once `prepare_private_tmp` has run, the bare `/tmp` grant has been rewritten
+/// to the backing path and this predicate answers "no redirect" for a box that
+/// has one. Here the policy comes straight from [`load_policy`], the grants are
+/// as the profile wrote them, and the predicate is the same one the preparer
+/// will apply.
+fn box_tmp_on_host(h5i_root: &Path, m: &EnvManifest, policy: &ResolvedPolicy) -> PathBuf {
+    let redirected = matches!(
+        policy.claim,
+        IsolationClaim::Process | IsolationClaim::Supervised
+    ) && (policy.profile.fs_read.iter().any(|p| p == "/tmp")
+        || policy.profile.fs_write.iter().any(|p| p == "/tmp"));
+    if redirected {
+        private_tmp_backing(&m.dir(h5i_root).join("tmp"))
+    } else {
+        // No redirect: what the box calls `/tmp` is what this machine calls it.
+        PathBuf::from(box_tmp_root(policy))
+    }
 }
 
 fn host_tmp_root(policy: &ResolvedPolicy, _env_dir: &Path) -> Option<PathBuf> {
