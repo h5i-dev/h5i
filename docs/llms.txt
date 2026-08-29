@@ -4,7 +4,7 @@
 
 ## Start here
 
-- [Features](https://h5i.dev/features/): Product overview, the browser session, isolation tiers, the forum, output gate, and console.
+- [Features](https://h5i.dev/features/): Product overview: the fast agent browser, five isolation tiers to place it in, the read-only dashboard, and the output gate.
 - [Drive a browser session](https://h5i.dev/guides/drive-a-browser-session/): Open a session, read the page, act on it, and read back what it reached.
 - [First box](https://h5i.dev/guides/first-box/): Install h5i and take one task from box creation to a reviewed patch.
 - [Workflow](https://h5i.dev/workflows/): The complete browse, contain, work, inspect, export, apply loop.
