@@ -174,8 +174,7 @@ pub fn transcript(
 ) -> anyhow::Result<Outcome> {
     let url = check_url(url)?;
     let work = workspace(root, session)?;
-    let _ = std::fs::remove_dir_all(&work.host);
-    std::fs::create_dir_all(&work.host)?;
+    scrub(&work)?;
 
     // The default is written down once, here, and used for **both** the pattern
     // yt-dlp is given and the file chosen out of what comes back. Deriving it
@@ -362,6 +361,44 @@ fn check_url(raw: &str) -> anyhow::Result<String> {
     Ok(parsed.to_string())
 }
 
+/// Start from a directory this run just made, or refuse.
+///
+/// **Not a tidy-up.** [`collect`] reads whatever `.vtt` and `.info.json` it
+/// finds here and reports it as the transcript, so anything left in this
+/// directory by anyone becomes an answer h5i hands a model with an `evidence:`
+/// line and a box receipt beside it. The directory is host-global on a
+/// workspace-tier box — that box's `/tmp` *is* the host's — so on a shared
+/// machine any other user can create it first, plant a file, and make it
+/// undeletable.
+///
+/// This used to be `let _ = remove_dir_all(...)` followed by `create_dir_all`,
+/// which is exactly the wrong pair for that: the wipe's failure was discarded
+/// and `create_dir_all` is happy with a directory that already exists, so a
+/// planted transcript survived both calls and was read. `create_dir` refuses an
+/// existing directory, which turns "somebody else owns this path" from a silent
+/// read of their content into a refusal.
+fn scrub(work: &Workspace) -> anyhow::Result<()> {
+    match std::fs::remove_dir_all(&work.host) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => anyhow::bail!(
+            "could not clear {} before running the helper: {e}. Anything left there would be \
+             read as this run's transcript, so h5i will not run over it.",
+            work.host.display()
+        ),
+    }
+    if let Some(parent) = work.host.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::create_dir(&work.host).map_err(|e| {
+        anyhow::anyhow!(
+            "could not create {} for the helper: {e}. It must be a directory this run made, \
+             because whatever is in it is read as the transcript.",
+            work.host.display()
+        )
+    })
+}
+
 /// Where the helper writes, in both views of the filesystem.
 #[derive(Debug)]
 struct Workspace {
@@ -382,10 +419,30 @@ struct Workspace {
 /// re-computing the box's tmp mapping is the same rule the rest of this file
 /// follows: two places that must agree about a path are two places that can
 /// stop agreeing.
+/// The workspace directory's name, which has to carry the session id.
+///
+/// A bare `helper` is unique per session on the host, where the parent is the
+/// session's own directory. In a box it is not: the parent is the box's `/tmp`,
+/// and on a workspace-tier box that is the **host's** `/tmp`, so every box on
+/// the machine and every process on it would share one `/tmp/helper`. Two boxes
+/// reading transcripts at once would clear each other's output mid-run, and
+/// anything a third party left there would be read as this run's answer.
+///
+/// The id rather than the name: a name can be reused once the session it named
+/// has ended, which is what makes it comfortable to type and useless here.
+fn leaf(session: &bs::Session) -> String {
+    format!("helper-{}", session.id)
+}
+
 fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
     match &session.placement {
         bs::Placement::Host => {
-            let dir = bs::dir(root, &session.id).join("helper");
+            // Already per-session here, since the parent is the session's own
+            // directory. Named the same way anyway: one rule for where the
+            // helper writes is one rule to check, and a reader comparing the
+            // two arms should not have to work out whether the difference
+            // matters.
+            let dir = bs::dir(root, &session.id).join(leaf(session));
             Ok(Workspace {
                 in_helper: dir.join("%(id)s").display().to_string(),
                 host: dir,
@@ -400,7 +457,7 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
                 .ok_or_else(|| {
                     anyhow::anyhow!("this session's record does not name the box's own /tmp")
                 })?
-                .join("helper");
+                .join(leaf(session));
             // `None` means this machine cannot see the box's `/tmp` at all: an
             // image-backed tier is the designed reason, and a session that died
             // before its record was complete is the accidental one. Either way
@@ -426,7 +483,7 @@ fn workspace(root: &Path, session: &bs::Session) -> anyhow::Result<Workspace> {
                          or read this URL with `--via` unset."
                     )
                 })?
-                .join("helper");
+                .join(leaf(session));
             Ok(Workspace {
                 in_helper: in_box.join("%(id)s").display().to_string(),
                 host: on_host,
@@ -1266,10 +1323,10 @@ mod tests {
             Some("/home/u/.h5i/env/wsbox/tmp/h5i-browser.sock"),
         );
         let work = workspace(Path::new("/state"), &session).expect("both views");
-        assert_eq!(work.in_helper, "/tmp/helper/%(id)s", "the box's own path");
+        assert_eq!(work.in_helper, "/tmp/helper-br_test/%(id)s", "the box's own path");
         assert_eq!(
             work.host,
-            Path::new("/home/u/.h5i/env/wsbox/tmp/helper"),
+            Path::new("/home/u/.h5i/env/wsbox/tmp/helper-br_test"),
             "and this machine's view of the same directory"
         );
     }
@@ -1298,8 +1355,12 @@ mod tests {
     fn a_host_run_writes_beside_the_session() {
         let session = session_at(bs::Placement::Host, bs::Lane::EngineClaimed);
         let work = workspace(Path::new("/state"), &session).expect("a host workspace");
-        assert!(work.host.ends_with("helper"), "{:?}", work.host);
-        assert!(work.in_helper.ends_with("helper/%(id)s"), "{}", work.in_helper);
+        assert!(work.host.ends_with("helper-br_test"), "{:?}", work.host);
+        assert!(
+            work.in_helper.ends_with("helper-br_test/%(id)s"),
+            "{}",
+            work.in_helper
+        );
         assert_eq!(
             work.in_helper,
             work.host.join("%(id)s").display().to_string(),
@@ -1396,6 +1457,54 @@ mod tests {
     /// and a very large value would turn the budget into no budget, which is
     /// the thing it exists not to be. Nonsense falls back to the default rather
     /// than to either edge.
+    /// A box's `/tmp` is the host's on a workspace-tier box, so a directory
+    /// named only `helper` there is shared by every box and every process on
+    /// the machine. `collect` reads whatever it finds, so that is a path by
+    /// which anyone can hand a model a transcript.
+    #[test]
+    fn the_workspace_is_named_for_the_session_so_two_boxes_cannot_share_one() {
+        let a = session_with_control(
+            bs::Placement::Box { name: "one".into() },
+            bs::Lane::EngineClaimed,
+            Some("/tmp/h5i-browser.sock"),
+            Some("/tmp/h5i-browser.sock"),
+        );
+        let mut b = a.clone();
+        b.id = "br_other".into();
+
+        let wa = workspace(Path::new("/state"), &a).unwrap();
+        let wb = workspace(Path::new("/state"), &b).unwrap();
+        assert_ne!(wa.host, wb.host, "two sessions, two directories");
+        assert_ne!(wa.in_helper, wb.in_helper);
+        assert!(wa.host.to_string_lossy().contains("br_test"), "{:?}", wa.host);
+    }
+
+    /// The directory has to be one this run made. `collect` reads whatever is
+    /// in it and reports it as the transcript, so a wipe whose failure is
+    /// discarded plus a `create_dir_all` that is happy with an existing
+    /// directory is how somebody else's file becomes h5i's answer.
+    #[test]
+    fn a_workspace_that_could_not_be_cleared_is_refused_rather_than_read() {
+        let dir = std::env::temp_dir().join(format!("h5i-scrub-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let work = workspace_at(&dir.join("work"));
+
+        // A clean run makes the directory.
+        scrub(&work).expect("first run creates it");
+        assert!(work.host.is_dir());
+
+        // And a second run starts from a new one rather than from what is there.
+        std::fs::write(work.host.join("planted.en.vtt"), "WEBVTT\n").unwrap();
+        scrub(&work).expect("second run clears it");
+        assert!(
+            std::fs::read_dir(&work.host).unwrap().next().is_none(),
+            "the planted file survived into a run that would have read it"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_budget_override_is_clamped_and_nonsense_keeps_the_default() {
         assert_eq!(budget_from(None), BUDGET);
