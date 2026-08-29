@@ -846,40 +846,40 @@
      SLIDE 3 — The problem
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1120px;">
+  <div style="width:100%;max-width:1180px;">
     <div class="section-tag">The problem</div>
-    <h2>The web is the one input <span class="red">you did not write</span>.</h2>
+    <h2>Browsers built for people are<br><span class="red">a poor fit for agents</span>.</h2>
 
-    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">the log</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">You cannot prove what it reached</span>
-        <span class="ml" style="font-size:1.2rem;">A driver attached to a browser reconstructs the network afterwards. Gaps look like silence.</span>
+    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:18px;margin-top:22px;align-items:stretch;">
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the engine</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Human features waste compute</span>
+        <span class="ml" style="font-size:1.02rem;">Tabs, extensions, device sync, and a full interactive UI consume memory and CPU that agents do not need.</span>
       </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the output</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Agents need structured content</span>
+        <span class="ml" style="font-size:1.02rem;">Pixels and raw HTML add noise and tokens when the agent needs a compact, machine-readable page.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
         <span class="pill red">the page</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">A page is an instruction channel</span>
-        <span class="ml" style="font-size:1.2rem;">Text written to look like your operator reads exactly like your operator.</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Every page is untrusted input</span>
+        <span class="ml" style="font-size:1.02rem;">Prompt injections can manipulate an agent into harmful actions, including leaking credentials.</span>
       </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">the terminal</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Page bytes reach your screen</span>
-        <span class="ml" style="font-size:1.2rem;">An escape sequence in a title repaints the line above the answer it came in.</span>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the profile</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">A personal browser carries personal access</span>
+        <span class="ml" style="font-size:1.02rem;">Cookies, logged-in accounts, local services, and private networks become available to the agent.</span>
       </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">host access</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">The agent&#39;s browser is your browser</span>
-        <span class="ml" style="font-size:1.2rem;">Your cookie jar, your logged-in sessions, your reachable network.</span>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the record</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Automation logs are difficult to audit</span>
+        <span class="ml" style="font-size:1.02rem;">Clicks alone do not show every request, blocked connection, human takeover, or session ending.</span>
       </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">the session</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">A crash looks like a click that failed</span>
-        <span class="ml" style="font-size:1.2rem;">A silently restarted browser leaves the agent reasoning about a page that is gone.</span>
-      </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">containment</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Sandboxing is all or nothing</span>
-        <span class="ml" style="font-size:1.2rem;">Tools either demand a container up front or offer no boundary at all.</span>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">app testing</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Untrusted code runs directly on your machine</span>
+        <span class="ml" style="font-size:1.02rem;">Generated code, dependencies, a development server, and the browser often share the host without isolation.</span>
       </div>
     </div>
   </div>
@@ -889,17 +889,41 @@
      SLIDE 4 — The solution
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1040px;">
+  <div style="width:100%;max-width:1180px;">
     <div class="section-tag">The solution</div>
-    <h2>h5i answers <span class="red">all six</span>.</h2>
+    <h2>h5i is built for <span class="red">agent workloads<br>and agent risks</span>.</h2>
 
-    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the log</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Fail-closed records</span><p class="feat-desc" style="margin-top:6px;">No record, no fetch. Denials are logged with their reason.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the page</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Content stays data</span><p class="feat-desc" style="margin-top:6px;">Fenced for the model, stripped of escapes, script off by default.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the terminal</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Nothing repaints your screen</span><p class="feat-desc" style="margin-top:6px;">Every relayed string is scrubbed and capped, and says when it was.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">host access</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">A fresh jar every session</span><p class="feat-desc" style="margin-top:6px;">No host profile, no inherited login, no shared cookie store.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the session</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Endings are written down</span><p class="feat-desc" style="margin-top:6px;">died, expired, evicted. A verb on a dead session exits 69, never restarts.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">containment</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">One flag, same verbs</span><p class="feat-desc" style="margin-top:6px;">--in &lt;box&gt; adds a boundary without changing a single command.</p></div>
+    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:18px;margin-top:22px;align-items:stretch;">
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the engine</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">A lightweight engine for agent tasks</span>
+        <span class="ml" style="font-size:1.02rem;">~5&times; faster reads with ~80% less peak memory on simple websites.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the output</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Structured pages instead of visual noise</span>
+        <span class="ml" style="font-size:1.02rem;">Agents receive compact outlines with <span class="mono">@ref</span> handles for reading, clicking, typing, and extraction.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the page</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Limit the damage of prompt injection</span>
+        <span class="ml" style="font-size:1.02rem;">Page content is marked as untrusted, while sandboxing and network rules restrict what a manipulated agent can reach.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the profile</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Every session starts with a fresh profile</span>
+        <span class="ml" style="font-size:1.02rem;">No inherited cookies or logged-in accounts. Credentials can be brokered or entered by a human.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the record</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Every action and request is reviewable</span>
+        <span class="ml" style="font-size:1.02rem;">Allowed and denied requests, human takeovers, crashes, and session endings appear in one timeline.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">app testing</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Sandbox the entire web workflow</span>
+        <span class="ml" style="font-size:1.02rem;">Place the agent, code, dependencies, development server, and browser inside one boundary.</span>
+      </div>
     </div>
   </div>
 </div>
