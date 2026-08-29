@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i Features: the browser session, isolation tiers, and the evidence it leaves</title>
-  <meta name="description" content="One binary. A browser session an agent drives by id and you audit by reading its request log, because the engine is the HTTP client and refuses any fetch it cannot record. Around it: five isolation tiers a session can be placed in, a credential broker that keeps keys on the host, a Git-backed forum for several agents, and an output gate returning a reviewable patch with execution logs.">
-  <meta name="keywords" content="sandboxed collaboration, multi-agent teams, agent message forum, multi-agent coordination, ai agent sandbox, coding agent containment, claude code sandbox, codex sandbox, isolation tiers, egress allowlist, execution receipt, disposable dev environment, agent browser, h5i box">
+  <title>h5i Features: a fast browser for agents, the sandbox around it, and one dashboard over both</title>
+  <meta name="description" content="h5i lets agents browse the web, run code and test apps without unrestricted access to your machine. A fast, lightweight browser they drive from the command line, five isolation tiers to place it in, and one read-only dashboard showing active sessions, blocked requests and proposed changes. One Rust binary, local-first, Apache 2.0, no hosted service.">
+  <meta name="keywords" content="agent browser, headless browser for ai agents, browser automation for llm agents, ai agent sandbox, web app testing agent, coding agent containment, claude code sandbox, codex sandbox, isolation tiers, egress allowlist, execution receipt, disposable dev environment, prompt injection containment, h5i box">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -20,8 +20,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Features: the browser session, isolation tiers, and the evidence it leaves">
-  <meta property="og:description" content="A browser session an agent drives by id and you audit by reading its log. The engine is the HTTP client, so it refuses any fetch it cannot record. Place the same session in a sandbox to add a witness outside the browser. No SaaS, no daemon.">
+  <meta property="og:title" content="h5i Features: a fast browser for agents, the sandbox around it, and one dashboard over both">
+  <meta property="og:description" content="A fast, lightweight browser agents control from the command line, with pages returned as structured snapshots and every action and request recorded. Place the session in a sandbox when a task needs a tighter boundary, then review it all from one screen.">
   <meta property="og:url" content="https://h5i.dev/features/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
   <meta property="og:image:width" content="2293">
@@ -30,8 +30,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i Features: the browser session, isolation tiers, and the evidence it leaves">
-  <meta name="twitter:description" content="Fail-closed request records, fenced page content, enforced human takeover, and five isolation tiers to place a session in. Auditable by default, containable on demand.">
+  <meta name="twitter:title" content="h5i Features: a fast browser for agents, the sandbox around it, and one dashboard over both">
+  <meta name="twitter:description" content="Read pages ~5x faster with ~80% less peak memory, control where the browser can connect, take over the sensitive steps, and review every session from one read-only dashboard.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
   <meta name="twitter:image:alt" content="The h5i box console: every box with its tier, status and one signal on the left, and on the right the refused-egress finding, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced">
 
@@ -129,7 +129,7 @@
           "name": "What is h5i?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "h5i (pronounced high-five) is a secure, auditable browser for AI agents. An agent drives a session by id and reads an outline with @ref handles; you read the request log the engine wrote as it went. Because the engine is the HTTP client, every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused, so a request that is not in the log did not happen. Sessions run on your machine by default with no containment claimed. Around the browser, h5i also gives each agent a disposable box for the code, the toolchain and the dev server, and a Git-backed forum for several agents to coordinate on. It is one Rust binary: no server, no daemon, no SaaS."
+            "text": "h5i (pronounced high-five) lets agents browse the web, run code and test apps without unrestricted access to your machine. It is three things. A fast, lightweight browser an agent drives from the command line, which returns pages as structured snapshots and records every action and request. A sandbox to place that browser in, along with the agent, the code, the dependencies and the dev server, at whichever of five isolation tiers the task needs. And a read-only dashboard over both. It is one Rust binary: no server, no daemon, no SaaS."
           }
         },
         {
@@ -213,15 +213,17 @@
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://h5i.dev/features/"}]}
   </script>
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"ItemList","name":"h5i features: the auditable sandbox for AI coding agents","itemListElement":[
-    {"@type":"ListItem","position":1,"name":"Disposable workspace (h5i box): the code is copied in; no host directory is mounted read-write into the agent's reach"},
-    {"@type":"ListItem","position":2,"name":"Five isolation tiers (workspace, process, supervised, container, microvm): auto picks the strongest the host can run; an explicit tier fails closed"},
-    {"@type":"ListItem","position":3,"name":"Credential and network broker: no key enters the box; egress is an allowlist enforced at L3/L4, L7 or in a guest netstack"},
-    {"@type":"ListItem","position":4,"name":"Browser in the box (agent-browser + h5i box view): a fresh Chrome profile the agent drives and a human can take over"},
-    {"@type":"ListItem","position":5,"name":"Output gate (h5i box export): a path-validated patch, a report, and an execution receipt; the only way out"},
-    {"@type":"ListItem","position":6,"name":"Sealed execution receipt: append-only JSONL written where the box has no write path, every record labelled with the lane that observed it"},
-    {"@type":"ListItem","position":7,"name":"Box console (h5i ui): the whole fleet on one read-only screen; every route is a GET"},
-    {"@type":"ListItem","position":8,"name":"Warm dependency caches (h5i box cache): keyed by lockfile digest, mounted read-only, written only by a box with no agent in it"}
+  {"@context":"https://schema.org","@type":"ItemList","name":"h5i features: a fast browser for AI agents, the sandbox around it, and one dashboard over both","itemListElement":[
+    {"@type":"ListItem","position":1,"name":"A fast, lightweight browser (h5i browser open): ~5x faster page reads with ~80% less peak memory in benchmarks on simple websites"},
+    {"@type":"ListItem","position":2,"name":"Pages as structured snapshots (h5i browser snapshot): a compact outline with @ref handles instead of raw HTML or screenshots"},
+    {"@type":"ListItem","position":3,"name":"A fail-closed session record (h5i browser audit): actions, requests, blocked connections, human takeovers and how the session ended, in one timeline"},
+    {"@type":"ListItem","position":4,"name":"Egress control (net.egress): only the sites the task needs; redirects out of the allowlist are blocked before they leave and recorded with the reason"},
+    {"@type":"ListItem","position":5,"name":"Human takeover (h5i browser take, login, --secret): drive the logins, payments and approvals yourself; credentials are used without returning to the model"},
+    {"@type":"ListItem","position":6,"name":"Five isolation tiers (workspace, process, supervised, container, microvm): auto picks the strongest the host can run; an explicit tier fails closed"},
+    {"@type":"ListItem","position":7,"name":"The whole workflow inside (h5i box . / --pr / <url>): agent, code, dependencies, dev server and browser in one disposable environment"},
+    {"@type":"ListItem","position":8,"name":"Credentials that stay on the host: injected into approved requests, never readable files inside the sandbox"},
+    {"@type":"ListItem","position":9,"name":"Box console (h5i ui): every sandbox, session, blocked request and proposed change on one read-only screen; every route is a GET"},
+    {"@type":"ListItem","position":10,"name":"Output gate (h5i box export): a path-validated patch, a report, and an execution receipt; the only way out"}
   ]}
   </script>
   <link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
@@ -253,21 +255,22 @@
   <div class="container">
     <div class="section-head reveal">
       <span class="section-tag">Feature Overview</span>
-      <h1 class="section-title">A browser you can read back. A boundary when you want one.</h1>
-      <p class="section-sub"><strong style="color:var(--text)">Driving a browser and observing one are different jobs, and most tools only do the first.</strong> h5i&#39;s engine <em>is</em> the HTTP client, so the request log is a decision record written before the bytes moved rather than a trace assembled beside the network. Sessions run here by default, with no containment claimed; one flag places the same session inside a sandbox, which adds a witness outside the browser. One Rust binary, no daemon, no SaaS.</p>
+      <h1 class="section-title">A fast browser, a secure sandbox, and one place to see it all.</h1>
+      <p class="section-sub">h5i lets agents browse the web, run code and test apps without giving them unrestricted access to your machine.</p>
       <div class="divider"></div>
     </div>
 
-    <!-- Canonical definition + the five parts -->
+    <!-- The three parts, beside the commands that reach them -->
     <div class="ws-def reveal">
       <div class="ws-def-text">
-        <h3>What is an auditable browser session?</h3>
-        <p>A lifetime that holds one page state, one cookie jar, one request log and one policy, addressed by an id. Every request it makes is checked against that policy and written down before the bytes move, and a fetch that cannot be recorded does not happen.</p>
-        <p class="ws-eq">Session = page + jar + policy + fail-closed log.<br>Box = the sandbox a session, an agent and a dev server can be placed in.</p>
-        <p style="color:var(--text-faint);font-size:0.84rem">A session on the host is not sandboxed and h5i does not say it is. It is not a defence against a targeted kernel exploit below the microvm tier, and it does not classify what a page says. It records what was reached and limits what can be.</p>
+        <h3>Three parts, and the first one stands alone</h3>
+        <p><strong style="color:var(--ink)">Browser.</strong> A fast, lightweight browser agents can control from the command line. Pages come back as structured snapshots, while actions and network requests are recorded for review.</p>
+        <p><strong style="color:var(--ink)">Sandbox.</strong> Every session starts with lightweight isolation. For stronger protection, place the browser, the agent, and the dependencies together inside a container or a microVM.</p>
+        <p><strong style="color:var(--ink)">Dashboard.</strong> See active agents, browser sessions, blocked requests, resource usage and proposed changes from one read-only screen.</p>
+	<br><p class="ws-eq">Session = page + jar + policy + fail-closed log.<br>Box = the sandbox a session, an agent and a dev server can be placed in.</p>
       </div>
       <div class="ws-stack">
-<pre><span class="wk-root">A session</span>  <span class="wk-cmd">the whole agent-facing surface</span>
+<pre><span class="wk-root">A browser session</span>  <span class="wk-cmd">the whole agent-facing surface</span>
 ├─ Page, jar, policy         <span class="wk-cmd">h5i browser open</span>
 ├─ Outline with @refs        <span class="wk-cmd">h5i browser snapshot</span>
 ├─ Fail-closed request log   <span class="wk-cmd">h5i browser requests</span>
@@ -275,164 +278,118 @@
 └─ A recorded ending         <span class="wk-cmd">h5i browser close</span>
 
 <span class="wk-root">A box</span>  <span class="wk-cmd">optional, and where you put a session</span>
-├─ Disposable workspace      <span class="wk-cmd">h5i box create</span>
+├─ Disposable workspace      <span class="wk-cmd">h5i box .</span>
 ├─ Sandboxed agent           <span class="wk-cmd">h5i box shell</span>
 ├─ Egress at the boundary    <span class="wk-cmd">.h5i/env.toml</span>
-├─ A forum for several       <span class="wk-cmd">h5i forum create</span>
-└─ Output gate               <span class="wk-cmd">h5i box export</span></pre>
+├─ Watch it, or take over    <span class="wk-cmd">h5i box view</span>
+└─ Output gate               <span class="wk-cmd">h5i box export</span>
+
+<span class="wk-root">One screen</span>  <span class="wk-cmd">every box and session at once</span>
+└─ Read-only console         <span class="wk-cmd">h5i ui</span></pre>
       </div>
     </div>
 
     <div class="feat-grid">
-      <!-- ── Collaboration ───────────────────────────────── -->
-      <div class="pillar-tag reveal" id="browsing">Browsing<span>what the agent <em>read</em>, and what it actually <em>reached</em></span></div>
+      <!-- ── Browsing ────────────────────────────────────── -->
+      <div class="pillar-tag reveal" id="browsing">Browsing<span>Give agents a browser you can control.</span></div>
       <div class="feat-card flagship reveal">
-        <span class="feat-cmd">h5i browser open &#183; snapshot &#183; click &#183; requests &#183; close</span>
-        <div class="feat-name">A request log that cannot be incomplete</div>
-        <div class="feat-desc">The engine is the HTTP client, so the order is fixed: check the policy, write the decision, then touch the wire. If the record cannot be written the fetch is <strong>refused</strong>, so there is no path that reaches the network quietly. Denials are logged with their reason, so the log shows what was attempted and not only what succeeded, and a redirect out of the allowlist is refused at the hop rather than followed and explained afterwards.</div>
+        <span class="feat-cmd">h5i browser open</span>
+        <div class="feat-name">Run more browser tasks</div>
+        <div class="feat-desc">In our benchmarks, h5i reads pages <strong>~5&times; faster</strong> with <strong>~80% less peak memory</strong>. Sessions start quickly and can run in parallel without the overhead of a conventional browser.</div>
+        <div class="feat-proves">the cost of reading a page decides how many pages an agent can afford to read.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i browser snapshot &#183; click &#183; type</span>
+        <div class="feat-name">Pages in a format agents can use</div>
+        <div class="feat-desc">h5i returns a compact page outline with <code>@ref</code> handles instead of noisy HTML or screenshots. Agents can read, click, type and extract structured data directly.</div>
+        <div class="feat-proves">a handle names an element; a screenshot only names a pixel.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i browser audit &#183; requests</span>
+        <div class="feat-name">Review the complete session</div>
+        <div class="feat-desc">Browser actions, network requests, blocked connections, human takeovers, crashes and how the session ended are kept in one timeline.</div>
         <div class="feat-proves">a request that is not in the log did not happen.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">br_7k2xqa</span>
-        <div class="feat-name">One noun, whatever is underneath</div>
-        <div class="feat-desc">A session is the only thing an agent has to learn. <code>start</code> prints an id, every verb names it, <code>close</code> ends it. The process that renders the page, the port it listens on and whether it is inside a box are all implementation, and none of them appear in a command. That is what lets <code>--in &lt;box&gt;</code> change the security posture without changing a single verb or a single answer.</div>
-        <div class="feat-proves">placement is a flag, not a second product.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">engine-claimed &#183; host-observed</span>
-        <div class="feat-name">Two lanes, never merged</div>
-        <div class="feat-desc">A host session&#39;s log is fail-closed, complete, and still the browser describing itself: h5i calls that <strong>engine-claimed</strong> and prints it on every status line. A boxed session whose box enforces an egress allowlist at its boundary is additionally seen from outside the thing being described, and only then is it <strong>host-observed</strong>. A box that lets the browser reach the whole network corroborates nothing and does not earn the upgrade.</div>
-        <div class="feat-proves">being in a box is not evidence; enforcement outside the engine is.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i browser audit</span>
-        <div class="feat-name">One timeline, and it says who is speaking</div>
-        <div class="feat-desc">The request log is the network layer on its own. The audit merges it with
-          the verbs the agent asked for, the moments a human took the controls, and the ending, ordered
-          across all three. <strong>The lanes are never merged</strong>: the engine&#39;s rows are its own
-          account of itself, the handovers and the lifecycle are h5i&#39;s, written from outside, and every
-          row carries which. A log h5i could not read is reported as <code>unavailable</code>, because an
-          empty timeline and an unwatched session are different findings.</div>
-        <div class="feat-proves">&#8220;was a human driving when that form was submitted&#8221; is a question about two logs at once.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">exit 69</span>
-        <div class="feat-name">Endings are written down</div>
-        <div class="feat-desc">A session directory outlives the session, so <code>closed</code>, <code>died</code>, <code>expired</code> and <code>evicted</code> stay answerable afterwards, and an id is never reused. A verb sent to a session that is not live is refused with its own exit code and <strong>never silently restarted</strong>, because an agent whose retry cannot tell &#8220;the session is gone&#8221; from &#8220;the click did not work&#8221; quietly starts a second browser and loses both the page and the record of losing it. <code>--restore</code> inherits the storage into a new id, with the inheritance recorded.</div>
-        <div class="feat-proves">a gap in the record is a state, not an absence.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i browser take &#183; release &#183; login</span>
-        <div class="feat-name">A person can take the wheel</div>
-        <div class="feat-desc">The agent holds control by default and a human <em>takes</em> it rather than asking: mutating verbs pause, reads keep working because watching never collides, and handing control back forces a re-snapshot since the page moved underneath. For a boxed session the pause is <strong>enforced</strong>, because every verb is carried in from the host and the host is outside the box. For a host session it is advisory, and <code>take</code> says so rather than letting you assume otherwise.</div>
-        <div class="feat-proves">the arrangement decides whether a lock is a boundary; h5i names which one you have.</div>
+        <span class="feat-cmd">net.egress = [ &hellip; ]</span>
+        <div class="feat-name">Control where the browser can connect</div>
+        <div class="feat-desc">Allow only the websites and services the task requires. Other requests, including redirects to unapproved destinations, are blocked before they leave and recorded.</div>
+        <div class="feat-proves">denials are findings, not silence.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">UNTRUSTED PAGE CONTENT</span>
-        <div class="feat-name">Page text stays data</div>
-        <div class="feat-desc">A snapshot arrives inside a fence that tells the model the text within is information about a page, not instructions. Escape sequences never survive the relay, because <code>ESC</code> in a page title is a page repainting the terminal it is printed into. Strings, arrays and nesting are capped with the truncation <strong>stated in the value</strong> rather than performed quietly, and page JavaScript is off unless asked for, which removes the delivery channel outright.</div>
-        <div class="feat-proves">h5i does not classify what a page says; it limits what a persuaded agent can reach.</div>
+        <div class="feat-name">Limit the damage of prompt injection</div>
+        <div class="feat-desc">Page content is marked as untrusted. If a page still manipulates the agent, it can reach only the files and network destinations the sandbox policy allows.</div>
+        <div class="feat-proves">h5i does not detect injection; it bounds what a persuaded agent can reach.</div>
+      </div>
+      <div class="feat-card reveal">
+        <span class="feat-cmd">h5i browser take &#183; release &#183; login &#183; --secret</span>
+        <div class="feat-name">Take over sensitive steps</div>
+        <div class="feat-desc">Take control for logins, payments or approvals, then hand the session back to the agent. Credentials can be typed by you or substituted from the host by name.</div>
+        <div class="feat-proves">handing control back invalidates the agent&#39;s page refs, so it re-reads before it acts.</div>
       </div>
 
-      <div class="pillar-tag reveal" id="forum">Collaboration<span>what the agents can <em>tell</em> each other, and what they still cannot <em>do</em></span></div>
+      <!-- ── Sandbox ─────────────────────────────────────── -->
+      <div class="pillar-tag reveal" id="sandbox">Sandbox<span>Isolate the browser, or everything the agent runs.</span></div>
       <div class="feat-card flagship reveal">
-        <span class="feat-cmd">h5i forum create &#183; attach &#183; revoke &#183; close</span>
-        <div class="feat-name">A forum the sandboxes cannot reach</div>
-        <div class="feat-desc">Two agents in two boxes have no way to reach each other. They post to threads the <strong>host</strong> owns, and the host decides what each box gets to see. A box has exactly two forum-shaped holes in it, and both already existed: a read-only inbox in, and the single writable spool that was already drained after every session. No socket, no port, no token. <code>create</code>, <code>attach</code>, <code>revoke</code> and <code>close</code> are refused inside a box no matter who asks, and that refusal is a courtesy: the refs those verbs write are outside every grant the box holds.</div>
-        <div class="feat-proves">the strongest access control here is the absence of an API.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">sender &#183; role &#183; box &#183; policy digest &#8592; stamped by the host</span>
-        <div class="feat-name">The box writes <em>what</em>, never <em>who</em></div>
-        <div class="feat-desc">The staged record has fields for a thread, a kind, a body and attachments, and <strong>no field for a sender</strong>, a role, a box id or a policy digest. Those are stamped by the host from the environment the record was found in, so a record that names itself <code>"sender": "human"</code> does not have that field read, because the field does not exist in the format. You can watch it happen: <code>h5i forum read</code> puts the host's knowledge on the line above the fence and one agent's claim inside it.</div>
-        <div class="feat-proves">identity is not validated on the way in; it is written on arrival.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i forum create --ceiling &lt;profile&gt;</span>
-        <div class="feat-name">A ceiling every participant is confined under</div>
-        <div class="feat-desc">A thread names a profile every box on it must be confined <em>under</em>. At <code>attach</code>, the box's enforced policy, read from its digest-verified <code>policy.resolved.toml</code> rather than a worktree file an agent could have edited, is checked across every dimension that widens reach: network mode and egress, secret grants, authenticated egress, filesystem read and write grants, AF_UNIX, loopback ports and host-side secret extractors. A box that exceeds any of them is <strong>refused</strong>, not quietly re-confined to fit. <code>attach</code> also refuses a <code>workspace</code>-tier box outright, because that tier enforces nothing.</div>
-        <div class="feat-proves">a message can change what a peer decides; it cannot change what that peer can do.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">h5i forum remote &#183; --branch-refs &#183; h5i forum wait</span>
-        <div class="feat-name">Git as the transport and the durable history</div>
-        <div class="feat-desc">Forum state is Git refs, synced under an <strong>append-only union</strong>, so a deleted conversation comes back from any honest clone on the next sync, and <code>--branch-refs</code> publishes it where the forge's own protection rules apply. There is no service to run on either side: an agent's whole notification story is <code>h5i forum wait</code>, which polls a directory the box already has mounted, and on the host the process already supervising a running box moves its mail. Refusals are recorded rather than swallowed: a revoked sender's post still lands, carrying the refusal.</div>
-        <div class="feat-proves">host-observed is evidence, peer-claimed is testimony, and rows are labelled either way.</div>
-      </div>
-
-      <!-- ── Containment ─────────────────────────────────── -->
-      <div class="pillar-tag reveal">Containment<span>what the agent <em>cannot</em> reach, decided before it starts</span></div>
-      <div class="feat-card flagship reveal">
-        <span class="feat-cmd">h5i box . &#183; --pr &#183; &lt;url&gt; &#183; --new</span>
-        <div class="feat-name">A disposable box, shaped by where the code came from</div>
-        <div class="feat-desc">Your own repository gives you a real git worktree on its own branch, sharing the object store, so <code>h5i box apply</code> can land the work back locally. A URL, a pull request or <code>--new</code> gives you a <strong>detached</strong> box: its own repository, yours neither read nor written after creation, and the inherited <code>origin</code> remote dropped so the box arrives holding no network handle. The policy is resolved, written out and hashed <em>before</em> any state exists on disk, so an unsatisfiable request fails closed rather than leaving half a box behind.</div>
-        <div class="feat-proves">external code can never land by momentum: <code>apply</code> refuses on a detached box.</div>
-      </div>
-      <div class="feat-card reveal">
         <span class="feat-cmd">isolation = workspace | process | supervised | container | microvm</span>
-        <div class="feat-name">Five tiers, each labelled with what it honestly claims</div>
-        <div class="feat-desc">Landlock, seccomp and namespaces on Linux; Seatbelt on macOS; rootless Podman for portability; and a microVM with its own kernel through microsandbox. <code>auto</code> picks the strongest the host can run, and an explicit tier <strong>fails closed</strong> rather than downgrading, because a silent downgrade puts a claim in the record the run never had. <code>h5i box probe</code> runs a functional self-test rather than reading capability bits.</div>
+        <div class="feat-name">Start with the right level of isolation</div>
+        <div class="feat-desc">Browser sessions use lightweight process isolation by default. Choose stronger network isolation, a rootless container or a microVM</div>
         <div class="feat-proves">the tier you asked for is the tier you got, or creation refused.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">[profile.X.net] egress = […]</span>
-        <div class="feat-name">Egress allowlists, named by OSI layer</div>
-        <div class="feat-desc"><code>supervised</code> enforces at <strong>L3/L4</strong>: default-drop nftables in a private netns, DNS pinned by a hosts file, and a seccomp-notify gate on <code>socket()</code> that denies <code>AF_NETLINK</code> so the ruleset cannot be flushed from inside. <code>container</code> enforces at L7 with a CONNECT proxy, which binds proxy-respecting tooling only. <code>microvm</code> evaluates it in the guest's own network stack. Same field, three different guarantees, and h5i says which one you got.</div>
-        <div class="feat-proves">"egress control" is never one word here: the claim is stated per tier.</div>
+        <span class="feat-cmd">h5i box . &#183; --pr 1234 &#183; &lt;url&gt; &#183; --new</span>
+        <div class="feat-name">Keep the entire testing workflow inside</div>
+        <div class="feat-desc">Place the agent, the source, the dependencies, the development server and the browser inside one disposable environment.</div>
+        <div class="feat-proves">install scripts from a stranger&#39;s branch run in there, not in your shell.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">[[profile.X.auth]] &#183; h5i box secrets</span>
-        <div class="feat-name">Credentials that never enter the box</div>
-        <div class="feat-desc">The model API key stays on the host; a reverse proxy injects it into outbound requests, scoped per runtime, so a Claude box cannot reach the OpenAI credential. Any other service is declared the same way: a host, a host-side credential variable, and the base-URL variable the client reads. The per-box HOME copy strips credential-shaped entries at any depth, including anything ending <code>.pem</code>, <code>.key</code>, <code>_rsa</code> or <code>_ed25519</code>.</div>
+        <div class="feat-name">Keep credentials access under control</div>
+        <div class="feat-desc">Model and service credentials stay on the host and are inserted into approved requests without becoming readable files inside the sandbox.</div>
         <div class="feat-proves">a prompt-injected agent has no reusable token to read or exfiltrate.</div>
       </div>
 
-      <!-- ── Evidence ──────────────────────────────────── -->
-      <div class="pillar-tag reveal">Evidence<span>observed from outside, stored where the box cannot reach it</span></div>
+      <!-- ── Dashboard ───────────────────────────────────── -->
+      <div class="pillar-tag reveal" id="dashboard-features">Dashboard<span>See every agent and sandbox from one place.</span></div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i box export &lt;name&gt; --out ./review</span>
-        <div class="feat-name">The output gate</div>
-        <div class="feat-desc">Three files. <code>patch.diff</code>, path-validated against symlink escapes, a nested <code>.git</code> and agent-introduced gitlinks. <code>report.md</code>, ordered by how much you should trust each section, with denied egress attempts first and the agent's own proposal last. <code>receipt.json</code>, every observed execution with the policy digest that was enforced. It refuses to overwrite a non-empty directory, and secret redaction and size caps apply to all three.</div>
-        <div class="feat-proves">the box has no write path to your machine; getting work out is a step you take.</div>
+        <span class="feat-cmd">h5i ui</span>
+        <div class="feat-name">Monitor the whole workflow</div>
+        <div class="feat-desc">See which sandboxes are running, what isolation they use, which pages agents are viewing, what commands ran and which network requests were blocked.</div>
+        <div class="feat-proves">nothing on the console is a score, and the console cannot act.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i box log &#183; status &#183; inspect --capture</span>
-        <div class="feat-name">A sealed execution receipt</div>
-        <div class="feat-desc">An append-only JSONL log per box. The box's entire write window under its own directory is its <code>spool</code>; the receipt log and its payloads are <em>siblings</em> of that spool, outside every grant. The box stages a record and the host ingests it, so there is no path from inside to a record the host already wrote. Exits and resource usage come from the supervisor's <code>wait4</code>, egress from the allowlist proxy's own log.</div>
-        <div class="feat-proves">the record is generated from observation, not from the agent's account of itself.</div>
-      </div>
-      <div class="feat-card reveal">
-        <span class="feat-cmd">source: host-env-run | viewer | tee-shim | inbox-capture</span>
-        <div class="feat-name">Every record names who observed it</div>
-        <div class="feat-desc">Host-observed and box-claimed evidence never blur into one number, because the lane is a required field on every record and the console labels every row with it. An agent can stage extra records or stop writing them; both are visible as a gap against host-observed exits, and h5i does not claim more than that.</div>
+        <span class="feat-cmd">source: host-observed | box-claimed</span>
+        <div class="feat-name">Review records the agent cannot rewrite</div>
+        <div class="feat-desc">Execution results, resource usage and denied connections are stored outside the sandbox, where the box has no write path.</div>
         <div class="feat-proves">you can tell testimony from observation without trusting either.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i ui</span>
-        <div class="feat-name">The box console, read-only by construction</div>
-        <div class="feat-desc">The whole fleet on one screen: every box with its tier and status, the policy actually enforced, and a flight recorder of one row per receipt across five lanes. Red means the egress allowlist refused a destination and nothing else is ever red; amber means look at this; grey means the evidence is weak. <strong>Every route is a <code>GET</code></strong>, so there is no mutating surface to guard. Loopback only, with a session token kept in memory so no box can read it.</div>
-        <div class="feat-proves">nothing on the screen is a score, and the console cannot drive a box.</div>
+        <span class="feat-cmd">h5i box export &lt;name&gt; --out ./review</span>
+        <div class="feat-name">Bring work out deliberately</div>
+        <div class="feat-desc">Export a proposed patch, a readable report and the associated execution record. Nothing is applied to your repository until you review and accept it.</div>
+        <div class="feat-proves">getting work out is a step you take, not something the box can do.</div>
       </div>
 
-      <!-- ── Working in it ──────────────────────────────── -->
-      <div class="pillar-tag reveal">Working in it<span>the parts that make autonomy actually usable</span></div>
+      <!-- ── Working with h5i ────────────────────────────── -->
+      <div class="pillar-tag reveal" id="working">Working with h5i<span>Security that fits into real agent workflows.</span></div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">agent-browser &#183; h5i box view &#183; h5i browser take</span>
-        <div class="feat-name">A browser in the box, with two interfaces</div>
-        <div class="feat-desc">Chrome and a fresh profile live inside, so nothing you are logged into on the host is logged in there. The agent drives it; you watch the same viewport and take the controls when you want. The stream port is never published: h5i enters the box's network namespace by pid, connects from inside, and hands the socket back out. <code>--term</code> draws the page in your terminal and binds nothing at all.</div>
-        <div class="feat-proves">frames flow out always; input flows in only for the control-lock holder.</div>
+        <span class="feat-cmd">h5i skill install &#183; show &#183; path</span>
+        <div class="feat-name">Works with the agents you already use</div>
+        <div class="feat-desc">Any agent that can run command-line tools can use h5i.</div>
+        <div class="feat-proves">an agent acts on stale documentation without hesitating, then reports your tool as broken.</div>
       </div>
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i box cache refresh &#183; ls &#183; mounts</span>
-        <div class="feat-name">Warm dependency caches</div>
-        <div class="feat-desc">Cold install is the difference between a twenty-second box and a four-minute one. One cache per project and ecosystem, keyed by a digest of that ecosystem's lockfiles; a cache whose key no longer matches is stale and <em>never handed to a box</em>. Mounted read-only, which costs nothing because every package manager falls back to fetching what it cannot find, and written only by a box with no agent inside and egress narrowed to the registries.</div>
-        <div class="feat-proves">no mutable surface is ever shared between an agent box and anything else.</div>
+        <div class="feat-name">Reuse dependencies safely</div>
+        <div class="feat-desc">Read-only caches avoid downloading and rebuilding the same dependencies for every sandbox. Caches are keyed by the project&#39;s lockfile digest and mounted read-only.</div>
+        <div class="feat-proves">cold install is the difference between a twenty-second box and a four-minute one.</div>
       </div>
       <div class="feat-card reveal">
-        <span class="feat-cmd">h5i skill install &#183; show &#183; path</span>
-        <div class="feat-name">The agent skill, embedded in the binary</div>
-        <div class="feat-desc">The skill is compiled in at build time, so it cannot document flags the installed binary does not have. That matters more for agents than for people: an agent acts on stale documentation without hesitating, then reports that your tool is broken. The in-box agent gets it the same way, from the binary already in the box, so nothing is baked into an image and nothing is copied from host to box.</div>
-        <div class="feat-proves">the documentation an agent reads is an artefact of the build, not a file that rots separately.</div>
+        <span class="feat-cmd">h5i box share &#183; h5i join</span>
+        <div class="feat-name">Share the app, not the sandbox</div>
+        <div class="feat-desc">Expose only the development server an agent built, without exposing your machine or the rest of the sandbox. Share it over an encrypted peer-to-peer connection.</div>
+        <div class="feat-proves">this is the one path that lets something in, and it is scoped to one port.</div>
       </div>
     </div>
 
@@ -440,25 +397,22 @@
     <div class="pick-table reveal">
       <table>
         <thead>
-          <tr><th>I need to…</th><th>Use</th></tr>
+          <tr><th>I need to&hellip;</th><th>Use</th></tr>
         </thead>
         <tbody>
-          <tr><td>Give an agent a confined place to work on my repo</td><td><code>h5i box .</code></td></tr>
-          <tr><td>Let two confined agents work one problem together</td><td><code>h5i forum create</code></td></tr>
-          <tr><td>Put a box on that conversation, with a role</td><td><code>h5i forum attach</code></td></tr>
-          <tr><td>Bring in an agent on another machine</td><td><code>h5i forum remote</code></td></tr>
-          <tr><td>Build and run someone else's pull request safely</td><td><code>h5i box --pr 1234</code></td></tr>
+          <tr><td>Let an agent browse a website</td><td><code>h5i browser open &lt;url&gt;</code></td></tr>
+          <tr><td>Give an agent an isolated copy of my repository</td><td><code>h5i box .</code></td></tr>
+          <tr><td>Run and test an external pull request</td><td><code>h5i box --pr 1234</code></td></tr>
+          <tr><td>Watch or take over the browser</td><td><code>h5i box view &lt;name&gt;</code></td></tr>
           <tr><td>See what this host can actually enforce</td><td><code>h5i box probe</code></td></tr>
-          <tr><td>Get the work out, with the evidence</td><td><code>h5i box export</code></td></tr>
-          <tr><td>Watch the page the agent is driving</td><td><code>h5i box view</code></td></tr>
-          <tr><td>Look at every box at once</td><td><code>h5i ui</code></td></tr>
+          <tr><td>Review and export the agent&#39;s work</td><td><code>h5i box export &lt;name&gt;</code></td></tr>
+          <tr><td>Monitor every active sandbox</td><td><code>h5i ui</code></td></tr>
         </tbody>
       </table>
     </div>
-    <p class="pick-cap reveal">The loop: <code style="font-family:var(--mono);color:var(--red-text)">box .</code> &#8594; agent works inside <code style="font-family:var(--mono);color:var(--red-text)">box shell</code> &#8594; <code style="font-family:var(--mono);color:var(--red-text)">box diff</code> &#8594; <code style="font-family:var(--mono);color:var(--red-text)">box export</code> &#8594; <code style="font-family:var(--mono);color:var(--red-text)">git apply --3way</code>.</p>
+    <p class="pick-cap reveal">The loop: <code style="font-family:var(--mono);color:var(--red-text)">browser open</code> &#8594; the agent reads and acts &#8594; <code style="font-family:var(--mono);color:var(--red-text)">browser audit</code>. Add a boundary and it becomes <code style="font-family:var(--mono);color:var(--red-text)">box .</code> &#8594; <code style="font-family:var(--mono);color:var(--red-text)">box shell</code> &#8594; <code style="font-family:var(--mono);color:var(--red-text)">box export</code> &#8594; <code style="font-family:var(--mono);color:var(--red-text)">git apply --3way</code>.</p>
   </div>
 </section>
-
 <!-- ── Use Cases ─────────────────────────────────────────────── -->
 <section id="usecases">
   <div class="container">
@@ -812,7 +766,7 @@
     <div class="faq-list">
       <details class="faq-item" open>
         <summary>What is h5i?</summary>
-        <div class="faq-answer">h5i (pronounced <em>high-five</em>) is sandboxed collaboration for multi-agent teams. Agents in separate boxes share threads, findings, reviews and votes on a Git-backed forum, while each box holds the code, the agent process, the toolchain, the dependencies, the dev server and a browser inside one enforced boundary. Nothing of your machine is inside a box, no message carries a capability, and nothing leaves except a patch, a report and an execution receipt you exported deliberately. It is one Rust binary: no server, no daemon, no SaaS.</div>
+        <div class="faq-answer">h5i (pronounced <em>high-five</em>) lets agents browse the web, run code and test apps without unrestricted access to your machine. It is three things. A <strong>fast, lightweight browser</strong> an agent drives from the command line, which returns pages as structured snapshots and records every action and request. A <strong>sandbox</strong> to place that browser in, along with the agent, the code, the dependencies and the dev server, at whichever of five isolation tiers the task needs. And a <strong>read-only dashboard</strong> over both. Nothing leaves a box except a patch, a report and an execution receipt you exported deliberately. It is one Rust binary: no server, no daemon, no SaaS.</div>
       </details>
       <details class="faq-item">
         <summary>How do agents in separate sandboxes talk to each other?</summary>
@@ -853,8 +807,8 @@
   <div class="cta-glow"></div>
   <div class="container">
     <div class="cta-inner">
-      <h2 class="cta-title">Give your agent a browser, not your browser.</h2>
-      <p class="cta-sub">Run <code style="font-family:var(--mono);color:var(--red-text)">h5i browser open</code> to open a session in seconds, then <code style="font-family:var(--mono);color:var(--red-text)">h5i box probe</code> to see what your machine can enforce when you want the session contained. One binary, local-first, no hosted h5i service. Apache 2.0.</p>
+      <h2 class="cta-title">Let agents browse. Keep control.</h2>
+      <p class="cta-sub">Run fast, lightweight browser tasks and web app testing with sandboxing, network controls and complete session records built in. One binary, local-first, no hosted h5i service. Apache 2.0.</p>
       <div class="hero-actions">
         <a href="https://github.com/h5i-dev/h5i" class="btn btn-primary">Star on GitHub</a>
         <a href="/workflows/" class="btn btn-ghost">Read the workflow</a>

@@ -357,7 +357,7 @@ pub struct EnvManifest {
     pub policy_digest: String,
     /// sha256 of `policy.effective.json` as written at create — the enforced
     /// kernel-tier configuration for the canonical captured-run shape
-    /// (ROADMAP.md §V2). `None` for tiers with no kernel-mechanism dump
+    /// (ROADMAP.md §P1). `None` for tiers with no kernel-mechanism dump
     /// (workspace/container/microvm, and everything off Linux) and for envs
     /// from before it existed. Runs rewrite the file at the apply seam and pin
     /// that run's digest in its capture record; this is the create-time
@@ -366,7 +366,7 @@ pub struct EnvManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_digest: Option<String>,
     /// The filesystem-authority validator's verdict on the create-time
-    /// effective config (ROADMAP.md §VF.4): the effective grants are a subset
+    /// effective config (ROADMAP.md §P2): the effective grants are a subset
     /// of the declared policy, writes were declared writable, no read-only
     /// overlay is writable, and (Unix) no grant escapes the worktree by a
     /// symlink. `None` for tiers with no kernel-mechanism dump and for envs
@@ -2343,7 +2343,7 @@ pub fn create_with_remote(
     Ok(manifest)
 }
 
-/// Write the create-time `policy.effective.json` baseline (ROADMAP.md §V2):
+/// Write the create-time `policy.effective.json` baseline (ROADMAP.md §P1):
 /// the enforced kernel-tier configuration for the canonical captured-run
 /// shape, produced by the same `compute_effective` that
 /// `build_confined_command` applies at run time. `None` when the tier has no
@@ -2368,7 +2368,7 @@ fn write_effective_baseline(
         &shape,
     );
     let digest = cfg.write_to(&env_dir.join(crate::effective::EFFECTIVE_CONFIG_FILE))?;
-    // Opt-in only (§VF.4): with `H5I_FS_AUTHORITY_ENFORCE` unset, no verdict is
+    // Opt-in only (§P2): with `H5I_FS_AUTHORITY_ENFORCE` unset, no verdict is
     // computed or recorded, so the manifest is byte-for-byte as before.
     let verdict = crate::fs_authority::enforce_enabled()
         .then(|| crate::effective::validate_effective(policy, &work, &cfg));
@@ -2385,7 +2385,7 @@ fn write_effective_baseline(
 }
 
 /// sha256 of the env's `policy.effective.json` as the just-finished invocation
-/// left it — the digest a capture record pins (§V2). `None` when no kernel
+/// left it — the digest a capture record pins (§P1). `None` when no kernel
 /// tier wrote one. Hashed from the file bytes, not recomputed: the record
 /// attests to what is on disk.
 #[cfg(target_os = "linux")]
@@ -5729,7 +5729,7 @@ fn run_inner(
         prepare_box_reach(h5i_root, m, &work, &mut policy, cache_write, true)?;
     let cargo_env = prepare_cargo_env(&work, &policy)?;
     announce_unmapped_resources(&policy);
-    // §V2: a kernel-tier invocation serializes what it enforces to
+    // §P1: a kernel-tier invocation serializes what it enforces to
     // `policy.effective.json`, written inside `build_confined_command` at the
     // apply seam; this run's capture record pins the digest below.
     #[cfg(target_os = "linux")]
@@ -6219,7 +6219,7 @@ pub fn shell(
     );
     // `apply_user_egress` already ran inside `prepare_box_reach`.
     announce_unmapped_resources(&policy);
-    // §V2: the interactive session serializes what it enforces too — its
+    // §P1: the interactive session serializes what it enforces too — its
     // capture record pins the digest, same as a run.
     #[cfg(target_os = "linux")]
     {

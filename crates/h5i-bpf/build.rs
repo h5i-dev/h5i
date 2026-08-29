@@ -9,8 +9,7 @@
 //!
 //! It is soft in exactly one direction, though. `H5I_BPF_REQUIRE=1` turns
 //! every skip below into a hard failure, and that is what the CI job for this
-//! lane sets — the shape `H5I_DRT_REQUIRE` already established for the Lean
-//! lane. A binary that silently shipped without its detector would be the
+//! lane sets. A binary that silently shipped without its detector would be the
 //! worst of both worlds: a `runtime` block that always says `unavailable` and
 //! a reader who takes that for a quiet box.
 //!

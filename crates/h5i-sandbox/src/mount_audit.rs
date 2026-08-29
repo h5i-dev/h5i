@@ -1,4 +1,4 @@
-//! The mount-realization audit (ROADMAP.md §VF.5). `validate_effective` checks
+//! The mount-realization audit (ROADMAP.md §P3). `validate_effective` checks
 //! the *plan*; this checks what the kernel actually realized. After setup, the
 //! supervisor reads the child's `/proc/<pid>/mountinfo` and diffs the realized
 //! mounts against the plan (the `EffectiveConfig` binds): a bind that did not
@@ -6,10 +6,10 @@
 //! shape of the runc 2025 mount-swap / masked-path CVEs — detected here and
 //! failed closed, rather than trusted.
 //!
-//! Honest bounds (§VF.5): `mountinfo` exposes mount topology and flags, not the
+//! Honest bounds (§P3): `mountinfo` exposes mount topology and flags, not the
 //! installed Landlock ruleset or seccomp filter, and a symlink race that leaves
 //! topology unchanged is not visible here — those are prevented by construction
-//! (§VF.5b), and this audit is the net under that discipline, not a substitute.
+//! (§P4), and this audit is the net under that discipline, not a substitute.
 //!
 //! The parse and diff are pure (they take the `mountinfo` text), so they are
 //! unit-tested against synthetic input; only reading the file is Linux-only.
@@ -79,8 +79,7 @@ fn parse_mountinfo(text: &str) -> Vec<Realized> {
 /// with the plan for the audited targets.
 ///
 /// The last realized mount at a target wins (later mounts stack on top), so a
-/// target's effective read-only-ness is that of its topmost mount — the same
-/// last-mount-wins rule the H5iFs `Mount` model proves about (§VF.2).
+/// target's effective read-only-ness is that of its topmost mount.
 pub fn audit_mounts(expected: &[ExpectedMount], mountinfo: &str) -> Vec<MountMismatch> {
     let realized = parse_mountinfo(mountinfo);
     let mut mismatches = Vec::new();
@@ -111,7 +110,7 @@ pub fn expected_mounts(cfg: &crate::effective::EffectiveConfig) -> Vec<ExpectedM
 }
 
 /// Read `/proc/<pid>/mountinfo` for a stopped child and audit it against the
-/// plan. Linux only; the caller runs this at the exec barrier (§VF.5), after
+/// plan. Linux only; the caller runs this at the exec barrier (§P3), after
 /// the child has finished setup and before it execs.
 #[cfg(target_os = "linux")]
 pub fn audit_pid(pid: u32, expected: &[ExpectedMount]) -> std::io::Result<Vec<MountMismatch>> {

@@ -2611,7 +2611,7 @@ pub(crate) fn build_confined_command(
     let caps = probe_host_for(policy.claim);
     resolve(p, &caps)?;
 
-    // ── The effective configuration (ROADMAP.md §V2) ──
+    // ── The effective configuration (ROADMAP.md §P1) ──
     // Computed once by `effective::compute_effective` and consumed below for
     // the Landlock path sets and the bind lists, so the serialized dump and
     // the enforcement are the same values by construction. The semantics
@@ -2656,7 +2656,7 @@ pub(crate) fn build_confined_command(
         interactive,
     };
     let eff = crate::effective::compute_effective(policy, &work, abi_int, &shape);
-    // The filesystem-authority gate (ROADMAP §VF.4), fully opt-in: it does not
+    // The filesystem-authority gate (ROADMAP §P2), fully opt-in: it does not
     // run — no host measurement, no cost, no behavior change — unless
     // `H5I_FS_AUTHORITY_ENFORCE=1`. When on, re-check the effective config
     // against the declared policy at this single spawn chokepoint (so a run
@@ -2667,7 +2667,7 @@ pub(crate) fn build_confined_command(
         if !verdict.confined() {
             return Err(H5iError::Metadata(format!(
                 "filesystem-authority validator refused the effective config \
-                 (ROADMAP §VF.4): fs_subset={} writes_confined={} cache_readonly={} — the \
+                 (ROADMAP §P2): fs_subset={} writes_confined={} cache_readonly={} — the \
                  resolved grants are not a subset of the declared policy; refusing the run \
                  (fail-closed)",
                 verdict.fs_subset, verdict.writes_confined, verdict.cache_readonly
@@ -2676,7 +2676,7 @@ pub(crate) fn build_confined_command(
         if verdict.symlink_clean == Some(false) {
             eprintln!(
                 "h5i: warning: a granted path resolves outside the worktree through a \
-                 symlink (ROADMAP §VF.5) — the run continues, but this is a boundary signal"
+                 symlink (ROADMAP §P3) — the run continues, but this is a boundary signal"
             );
         }
     }

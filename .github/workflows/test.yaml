@@ -127,7 +127,7 @@ jobs:
     timeout-minutes: 25
     env:
       # Fail the build rather than ship a binary whose detector is permanently
-      # `unavailable`. The same shape as H5I_DRT_REQUIRE in the Lean lane.
+      # `unavailable`.
       H5I_BPF_REQUIRE: "1"
       # This job is about the Rust and the C, not the console bundle.
       H5I_SKIP_WEB_BUILD: "1"
@@ -243,9 +243,10 @@ jobs:
           H5I_SKIP_WEB_BUILD: "1"
         run: cargo test --locked --verbose --workspace --lib
 
-  # The man page (man/man1/h5i.1) and the /manual/ HTML (docs/manual/index.html)
-  # are GENERATED, not hand-edited: the man page from the clap CLI via
-  # `scripts/gen_man.sh`, the HTML from MANUAL.md via `scripts/gen_manual.py`.
+  # The man page (docs/man/man1/h5i.1) and the /manual/ HTML
+  # (docs/manual/index.html) are GENERATED, not hand-edited: the man page from
+  # the clap CLI via `scripts/gen_man.sh`, which renders it with
+  # `examples/gen_man.rs`; the HTML from MANUAL.md via `scripts/gen_manual.py`.
   # This job regenerates both and fails if the committed copies drift, so a
   # change to the CLI flags or to MANUAL.md can never land with a stale manual.
   # Reproducibility: the man page is pinned by Cargo.lock (`--locked` build) +
@@ -334,7 +335,7 @@ jobs:
 
       - name: Fail if the generated manuals or published docs are stale
         run: |
-          if git diff --quiet -- man/man1/h5i.1 docs; then
+          if git diff --quiet -- docs; then
             echo "man page and docs/ are up to date"
             exit 0
           fi
@@ -347,7 +348,7 @@ jobs:
           echo "If you only edited a file under docs/_static, run this instead:"
           echo "    python3 scripts/stamp_assets.py"
           echo "----------------------------- drift -----------------------------"
-          git --no-pager diff --stat -- man/man1/h5i.1 docs
+          git --no-pager diff --stat -- docs
           exit 1
 
   # Compile-check every release target on PRs/main so cross-target breakage

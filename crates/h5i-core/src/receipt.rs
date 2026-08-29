@@ -144,7 +144,7 @@ pub struct ExecRecord {
     pub policy_digest: Option<String>,
     /// sha256 of `policy.effective.json` — the kernel-tier enforced
     /// configuration, serialized at the apply seam inside
-    /// `build_confined_command` (ROADMAP.md §V2). Absent for tiers that write
+    /// `build_confined_command` (ROADMAP.md §P1). Absent for tiers that write
     /// no dump and for records from before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_digest: Option<String>,
@@ -152,9 +152,8 @@ pub struct ExecRecord {
     /// effective Landlock grants
     /// overlap this box's — cross-box influence possible through the shared
     /// path each entry names (`env/<agent>/<slug> via <path>`). Empty is the
-    /// strong answer: by the machine-checked noninterference theorem
-    /// (`lean/H5iSpec/Noninterference.lean`), boxes with a clean check
-    /// cannot influence each other through their granted filesystems. Scope
+    /// strong answer: a clean check in both directions means neither box can
+    /// influence the other through their granted filesystems. Scope
     /// is exactly the grant lists — binds, network, and host processes
     /// outside any box are not covered, and a listed overlap may be closed
     /// in practice by a bind (the private `/tmp` redirect notably); the

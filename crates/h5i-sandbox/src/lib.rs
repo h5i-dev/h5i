@@ -19,14 +19,13 @@ pub mod auth_proxy;
 pub mod cgroup;
 pub mod container;
 /// The effective configuration a kernel-tier invocation applies
-/// (ROADMAP.md §V2) — Linux only, like the mechanisms it describes.
+/// (ROADMAP.md §P1) — Linux only, like the mechanisms it describes.
 #[cfg(target_os = "linux")]
 pub mod effective;
-/// The filesystem-authority validator ported from the Lean `H5iFs`
-/// (ROADMAP.md §VF.4). Pure and cross-platform; differential-tested against
-/// `h5i-spec --validate` by `tests/validate_drt.rs`.
+/// The filesystem-authority validator (ROADMAP.md §P2): the per-run
+/// translation validation of the effective config against declared intent.
 pub mod fs_authority;
-/// The mount-realization audit (ROADMAP.md §VF.5): diff realized
+/// The mount-realization audit (ROADMAP.md §P3): diff realized
 /// `/proc/<pid>/mountinfo` against the planned binds before exec.
 pub mod mount_audit;
 pub mod microvm;
