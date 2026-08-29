@@ -648,14 +648,17 @@ enum SessionVerb {
     /// and a play button. Most players ship captions, and a caption file is
     /// prose with timestamps.
     ///
+    /// Two tracks per media element at most: one of the words, and the outline
+    /// of them from a `chapters` track when the page has one.
+    ///
     /// Nothing here decodes audio. Media with no `<track>` is reported as
     /// exactly that, which is the fact that routes a caller elsewhere.
     Transcript {
         /// Go here first, then read.
         #[arg(long, value_name = "URL")]
         url: Option<String>,
-        /// Prefer this language. Prefix-matched against `srclang`, so `en`
-        /// finds `en-GB`.
+        /// Prefer this language, for the words and for the outline alike.
+        /// Prefix-matched against `srclang`, so `en` finds `en-GB`.
         #[arg(long, value_name = "LANG")]
         lang: Option<String>,
         /// The ceiling on caption text carried out of one track.

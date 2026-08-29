@@ -207,21 +207,22 @@ pub fn transcript(
     let (status, said) = run(session, &argv, &work)?;
     let read = collect(&work.host, Some(literal_prefix(want)), max_bytes);
 
-    // `record` appends the box receipt itself, so this hands it the plain
-    // reading. Decorating here *and* there put `Box receipt 4f2a91be. Box
-    // receipt 4f2a91be.` in the audit — a doubled evidence claim, in the lane
-    // whose entire value is that its claims are exact.
-    let plain = describe(&read, want, status, &said);
-    record(root, session, &work, &argv, status, &plain);
-
-    let mut note = plain;
+    let mut note = describe(&read, want, status, &said);
     // The box's own receipt for this run, when there is one. It is the
     // strongest evidence this lane produces — a row h5i wrote from outside the
     // helper, naming the policy the run was subject to — so the reply points at
     // it rather than leaving the two records to be matched by time.
+    //
+    // **Appended exactly here, and nowhere else.** `record` used to add one
+    // too, which is how a reordering put `Box receipt 4f2a91be. Box receipt
+    // 4f2a91be.` in the audit — a doubled evidence claim in the lane whose
+    // whole value is that its claims are exact. Two places that decorate one
+    // string is a bug waiting for an edit; one place cannot double it, and the
+    // row and the reply now say the same sentence for the same reason.
     if let Some(receipt) = box_receipt(session, &work) {
         note.push_str(&format!(" Box receipt {receipt}."));
     }
+    record(root, session, &work, &argv, status, &note);
 
 
     Ok(Outcome {
@@ -241,15 +242,13 @@ pub fn transcript(
 fn record(
     root: &Path,
     session: &bs::Session,
-    work: &Workspace,
+    _work: &Workspace,
     argv: &[String],
     status: Option<i32>,
     note: &str,
 ) {
-    let mut note = note.to_string();
-    if let Some(receipt) = box_receipt(session, work) {
-        note.push_str(&format!(" Box receipt {receipt}."));
-    }
+    // Written verbatim. Decorating here as well as at the call site is what
+    // doubled the receipt claim once already.
     let _ = bs::record_helper(
         root,
         &session.id,
@@ -259,7 +258,7 @@ fn record(
             name: NAME.to_string(),
             argv: argv.to_vec(),
             status,
-            note: Some(note),
+            note: Some(note.to_string()),
         },
     );
 }
@@ -1418,35 +1417,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A child that wrote nothing to stderr gets no banner, and its *stdout*
-    /// must not be promoted into a complaint.
-    /// The receipt is appended by `record` for the audit row and by
-    /// `transcript` for the reply. Doing both to one string put it in twice.
+    /// `record` writes what it is handed, and adds nothing.
+    ///
+    /// The caller decorates the note with the box receipt; `record` used to as
+    /// well, so a reordering put the claim in the audit row twice. This reads
+    /// the row back off disk rather than rebuilding the string locally — the
+    /// first attempt at this test asserted that one append produces one match,
+    /// which was true before the fix as well and guarded nothing.
     #[test]
-    fn the_box_receipt_is_claimed_once_and_not_twice() {
-        let dir = std::env::temp_dir().join(format!("h5i-dup-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+    fn record_writes_the_note_verbatim_and_claims_no_receipt_of_its_own() {
+        let root = std::env::temp_dir().join(format!("h5i-rec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let work_dir = root.join("work");
+        std::fs::create_dir_all(&work_dir).unwrap();
+        // A receipt line is there for `record` to find, if it were still looking.
         std::fs::write(
-            dir.join("stderr.log"),
+            work_dir.join("stderr.log"),
             "\u{25c8}  receipt f31bdc823671183e (box env/human/x, policy 47084e) \u{b7} exit 0\n",
         )
         .unwrap();
-        let work = workspace_at(&dir);
+        let work = workspace_at(&work_dir);
         let session = session_at(
             bs::Placement::Box { name: "x".into() },
             bs::Lane::EngineClaimed,
         );
 
-        let mut note = "1 cue(s) in en".to_string();
-        if let Some(receipt) = box_receipt(&session, &work) {
-            note.push_str(&format!(" Box receipt {receipt}."));
-        }
-        assert_eq!(note.matches("Box receipt").count(), 1, "{note}");
+        record(
+            &root,
+            &session,
+            &work,
+            &["yt-dlp".to_string()],
+            Some(0),
+            "1 cue(s) in en. Box receipt f31bdc823671183e.",
+        );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let log = std::fs::read_to_string(
+            bs::dir(&root, &session.id).join(bs::HELPERS_FILE),
+        )
+        .expect("the helper log");
+        assert_eq!(
+            log.matches("Box receipt").count(),
+            1,
+            "record added one of its own: {log}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A child that wrote nothing to stderr gets no banner, and its *stdout*
+    /// must not be promoted into a complaint.
     #[test]
     fn a_quiet_boxed_child_has_no_complaint_rather_than_a_borrowed_one() {
         let dir = std::env::temp_dir().join(format!("h5i-box-quiet-{}", std::process::id()));

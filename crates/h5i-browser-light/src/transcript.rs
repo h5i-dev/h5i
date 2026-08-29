@@ -367,9 +367,18 @@ impl Transcript {
                     continue;
                 }
                 if !track.fetched {
-                    body.push_str(
-                        "listed, not read. Name its language with `--lang`.\n",
-                    );
+                    // `--lang` is only a lever for the kinds this verb reads. A
+                    // `descriptions` or `metadata` track is never selected
+                    // whatever language is named, so offering that flag there is
+                    // a dead end: the caller reruns, gets the same line back,
+                    // and has learned nothing. Say what is actually true of it.
+                    body.push_str(if track.carries_text() {
+                        "listed, not read. Name its language with `--lang`.\n"
+                    } else {
+                        "not read: this kind of track is not a transcript. \
+                         `metadata` is payload the page reads with script, and \
+                         `descriptions` is written for a screen reader.\n"
+                    });
                     continue;
                 }
                 if let Some(note) = &track.truncated {
@@ -1137,6 +1146,33 @@ mod tests {
         );
         assert_eq!(cues.len(), 1);
         assert!(cues[0].text.contains("whole of it"), "{}", cues[0].text);
+    }
+
+    /// `--lang` is only a lever for the kinds this verb reads, so offering it
+    /// for a `metadata` track sends a caller round a loop that cannot end.
+    #[test]
+    fn a_track_this_verb_never_reads_is_not_offered_a_language_flag() {
+        let mut found = discovered(
+            r#"<html><body><video src="/v.mp4">
+                 <track kind="captions" srclang="en" default src="/cc/en.vtt">
+                 <track kind="metadata" srclang="en" src="/cc/m.vtt">
+               </video></body></html>"#,
+        );
+        // As `read` would leave them: the captions fetched, the metadata not.
+        found.media[0].tracks[0].fetched = true;
+        found.media[0].tracks[0].cues = vec![Cue {
+            start: 1.0,
+            end: 2.0,
+            text: "words".into(),
+        }];
+
+        let rendered = found.render("https://site.example/");
+        assert!(rendered.contains("not a transcript"), "{rendered}");
+        assert_eq!(
+            rendered.matches("Name its language with `--lang`").count(),
+            0,
+            "the metadata track has no language that would help: {rendered}"
+        );
     }
 
     #[test]

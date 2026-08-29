@@ -506,6 +506,12 @@ pub enum BrowserCommands {
     /// and a caption file is prose with timestamps — which is what a model
     /// reads well and what audio is not.
     ///
+    /// Two tracks per media element at most: one of the **words**, and the
+    /// **outline** of them from a `chapters` track when the page has one. Thirty
+    /// languages of a video are the same words thirty times, so `--lang` names
+    /// which one; an outline is different information, so it comes too. Every
+    /// track the page declares is listed either way.
+    ///
     /// Nothing here decodes audio: the tracks are fetched through the same
     /// broker as any image, policy-checked and receipted, and media with no
     /// `<track>` is reported as exactly that rather than as silence.
@@ -520,11 +526,17 @@ pub enum BrowserCommands {
         /// so a redirect is not silent.
         #[arg(long, value_name = "URL")]
         url: Option<String>,
-        /// Prefer this language. Prefix-matched against `srclang`, so `en`
-        /// finds `en-GB`. Every track is listed either way.
+        /// Prefer this language, for the words and for the outline alike.
+        ///
+        /// Prefix-matched against `srclang`, so `en` finds `en-GB`. Falls back
+        /// to the track the page marked `default`, then to the first. Every
+        /// track is listed either way.
         #[arg(long, value_name = "LANG")]
         lang: Option<String>,
-        /// The ceiling on caption text carried out of one track.
+        /// The ceiling on caption text carried out of **one** track.
+        ///
+        /// Per track rather than per reply, so a media element with both words
+        /// and an outline can carry up to twice this.
         #[arg(long, value_name = "BYTES")]
         max_bytes: Option<usize>,
         /// Read it with an outside program instead of from the page's markup.

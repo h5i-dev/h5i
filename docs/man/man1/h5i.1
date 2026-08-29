@@ -1850,10 +1850,14 @@ Which session, when more than one is open. A name from `\-\-session` at open tim
 Go here first, then read. One round trip where `navigate` and then this would be two, and the reply still names the URL it ended up on so a redirect is not silent
 .TP
 \fB\-\-lang\fR \fI<LANG>\fR
-Prefer this language. Prefix\-matched against `srclang`, so `en` finds `en\-GB`. Every track is listed either way
+Prefer this language, for the words and for the outline alike.
+
+Prefix\-matched against `srclang`, so `en` finds `en\-GB`. Falls back to the track the page marked `default`, then to the first. Every track is listed either way.
 .TP
 \fB\-\-max\-bytes\fR \fI<BYTES>\fR
-The ceiling on caption text carried out of one track
+The ceiling on caption text carried out of **one** track.
+
+Per track rather than per reply, so a media element with both words and an outline can carry up to twice this.
 .TP
 \fB\-\-via\fR \fI<HELPER>\fR
 Read it with an outside program instead of from the page\*(Aqs markup.
