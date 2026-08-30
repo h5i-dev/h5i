@@ -709,6 +709,29 @@
   .sb-payoff { margin-top: 22px; text-align: center; font-size: 1.28rem; color: var(--text-dim); }
   .sb-payoff b { color: var(--ink); font-weight: 700; }
 
+  /* ── Sandbox boundary (the sandbox slide): what stays out, the workflow
+       loop inside the wall, and the only three things that leave. ── */
+  .sbx { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; margin-top: 20px; }
+  .sbx-side { flex: 0 0 218px; display: flex; flex-direction: column; gap: 8px; }
+  .sbx-h { font-family: var(--mono); font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase; }
+  .sbx-h.no { color: var(--danger); }
+  .sbx-h.ok { color: var(--green); }
+  .sbx-item { border: 1px solid; border-radius: 10px; padding: 9px 12px; font-size: 0.9rem; line-height: 1.3; }
+  .sbx-item.no { border-color: rgba(224,36,27,0.45); background: rgba(224,36,27,0.06); color: #ffd9d4; }
+  .sbx-item.ok { border-color: rgba(98,201,140,0.4); background: rgba(98,201,140,0.05); color: var(--text); }
+  .sbx-gate { flex: 0 0 76px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-family: var(--mono); }
+  .sbx-gate .g-ar { font-size: 1.15rem; line-height: 1; }
+  .sbx-gate .g-lb { font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; text-align: center; line-height: 1.3; }
+  .sbx-gate.no { color: var(--danger); }
+  .sbx-gate.ok { color: var(--green); }
+  .sbx .sb-box { flex: 1 1 auto; padding: 26px 24px; }
+
+  /* the workflow loop that lives inside the wall */
+  .sbl { position: relative; z-index: 1; background: var(--bg); border-radius: 10px; padding: 16px 14px; display: grid; grid-template-columns: 1fr 26px 1fr; grid-template-rows: auto 18px auto; align-items: center; justify-items: center; gap: 7px; }
+  .sbl-n { width: 100%; border: 1px solid var(--border); background: var(--bg-term); border-radius: 10px; padding: 10px 10px; font-size: 0.9rem; line-height: 1.25; text-align: center; }
+  .sbl-n.core { border-color: rgba(98,201,140,0.45); background: rgba(98,201,140,0.06); color: var(--green); font-family: var(--mono); font-weight: 700; }
+  .sbl-a { font-family: var(--mono); font-size: 0.95rem; color: var(--red-text); line-height: 1; }
+
   /* ── The receipt (slide 6): recall terminal + evidence checklist ── */
   .rc-cols { display: flex; gap: 34px; width: 100%; align-items: center; margin-top: 18px; }
   .rc-cols .terminal { flex: 1; min-width: 0; }
@@ -778,6 +801,9 @@
     /* Fixed label-column widths force horizontal overflow on a phone */
     .ref-layer .ref-name, .ref-git .ref-name,
     .rec-k, .verdict .vk, .rung .rk, .ps-lbl { min-width: 0; width: auto; }
+    .sbx { flex-direction: column; }
+    .sbx-side { flex: none; width: 100%; }
+    .sbx-gate { flex-direction: row; gap: 10px; }
     .bflow { flex-direction: column; }
     .barr { min-width: 0; flex-direction: row; justify-content: center; gap: 22px; }
     .pr-sec { flex-direction: column; gap: 4px; }
@@ -997,38 +1023,52 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — The sandbox (sealed workspace, walls, blocked calls)
+     SLIDE 6 — The sandbox (the workflow loop inside one boundary)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:16px;">
   <div style="width:100%;max-width:1120px;">
     <div class="section-tag">The sandbox</div>
-    <h2>One <span class="red">sealed box</span> per agent.</h2>
-    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, network egress is allowlisted, credentials never enter, and every denial is recorded. An everyday box is ready in under 200&nbsp;ms.</p>
+    <h2>Put the agent&#39;s entire workflow<br>inside <span class="red">one boundary</span>.</h2>
+    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, egress is allowlisted, every denial is recorded, and an everyday box is ready in under 200&nbsp;ms.</p>
 
-    <div class="sb-stage" role="img" aria-label="Diagram: a brick wall seals an agent running with permissions off. The fs wall blocks reading ~/.ssh/id_rsa, the net wall blocks connecting to internal-billing.corp, and the task still finishes inside the box.">
+    <div class="sbx" role="img" aria-label="Diagram: host files and credentials, internal services and unapproved websites are blocked at the sandbox wall. Inside, the agent, its code and dependencies, the dev server and the h5i browser run as one loop. Only a reviewed patch, a report and an execution record leave on export.">
+    <div class="sbx-side">
+      <span class="sbx-h no">stays outside</span>
+      <div class="sbx-item no">Host files and credentials</div>
+      <div class="sbx-item no">Internal services</div>
+      <div class="sbx-item no">Unapproved websites</div>
+    </div>
+      <div class="sbx-gate no">
+        <span class="g-ar">&#10005;&#9656;</span>
+        <span class="g-lb">blocked</span>
+      </div>
       <div class="sb-box">
-        <div class="sb-label">🛡️ env/you/webapp · sealed</div>
-        <div class="terminal">
-          <div class="terminal-bar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">agent in the box · permissions off</span>
-          </div>
-          <div class="terminal-body"><pre><span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">claude --dangerously-skip-permissions</span>
-<span style="color:#ff7a59;font-size:1.15em;">✻</span> <span class="t-bold">Claude Code</span> <span class="t-cmt">· permissions off</span>
-
-<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(cat ~/.ssh/id_rsa)</span>
-  <span class="t-red">⛔ blocked: outside fs.read</span>
-<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(curl https://internal-billing.corp/api)</span>
-  <span class="t-red">⛔ 403: not on the net.egress allowlist</span>
-<span class="t-ai">●</span> <span class="t-bold">Edit</span><span class="t-out">(sync/worker.py)</span> <span class="t-pass">✓</span>
-<span class="t-cmt">task finished inside $WORK · every command captured</span></pre></div>
+        <div class="sb-label">&#128737;&#65039; sandbox &#183; one boundary</div>
+        <div class="sbl">
+          <div class="sbl-n">Agent</div>
+          <div class="sbl-a">&#9656;</div>
+          <div class="sbl-n">Code and<br>dependencies</div>
+          <div class="sbl-a">&#9650;</div>
+          <div></div>
+          <div class="sbl-a">&#9660;</div>
+          <div class="sbl-n core">h5i browser</div>
+          <div class="sbl-a">&#9666;</div>
+          <div class="sbl-n">Dev server</div>
         </div>
       </div>
-      <div class="sb-block fs"><span class="bl">✋ fs wall · blocked</span><span class="bt"><b>~/.ssh/id_rsa</b> · outside fs.read</span></div>
-      <div class="sb-block net"><span class="bl">✋ net wall · blocked</span><span class="bt"><b>internal-billing.corp</b> · not on net.egress</span></div>
+      <div class="sbx-gate ok">
+        <span class="g-ar">&#9656;</span>
+        <span class="g-lb">on export</span>
+      </div>
+    <div class="sbx-side">
+      <span class="sbx-h ok">only these leave</span>
+      <div class="sbx-item ok">Reviewed patch</div>
+      <div class="sbx-item ok">Report</div>
+      <div class="sbx-item ok">Execution record</div>
+    </div>
     </div>
 
-    <p class="sb-payoff">The agent <b>still finishes the task</b>. Only the <span class="green">reviewed diff</span> is merged.</p>
+    <p class="sb-payoff">The agent <b>still finishes the task</b>. Only the <span class="green">reviewed patch</span> is merged.</p>
   </div>
 </div>
 
