@@ -5962,8 +5962,32 @@
   /// Same arrangement for `:modal`: `showModal` stamps it, `close` lifts it.
   const MODAL_OPEN_CLASS = "__h5i_modal_open__";
 
+  /// `:heading` and `:heading(n)`, rewritten to the tags they mean.
+  ///
+  /// Selectors 4 adds them and Stylo 0.19 rejects both, so every use was a
+  /// SyntaxError — 277 subtests across `css/selectors/heading` and the
+  /// `headingoffset` files, every one of which reported the selector as
+  /// invalid rather than as not matching. The same textual-rewrite road
+  /// `:popover-open` and `:modal` already take, and cheaper than either
+  /// because there is no state to stamp: `:heading` *is* h1 through h6.
+  ///
+  /// A level outside 1-6 selects nothing — `:heading(7)` and `:heading(0)`
+  /// are well-formed and match no element — so they become `:not(*)` rather
+  /// than an error. `hgroup` and `role="heading"` are deliberately not
+  /// included; the suite asserts both do **not** match.
+  const HEADING_TAGS = ":is(h1,h2,h3,h4,h5,h6)";
+
+  function headingLevels(argument) {
+    const levels = String(argument).split(",")
+      .map((one) => Number(one.trim()))
+      .filter((level) => Number.isInteger(level) && level >= 1 && level <= 6);
+    return levels.length ? `:is(${levels.map((n) => `h${n}`).join(",")})` : ":not(*)";
+  }
+
   function checkSelector(selector) {
     const text = String(selector)
+      .replace(/:heading\(([^)]*)\)/gi, (_, argument) => headingLevels(argument))
+      .replace(/:heading\b/gi, HEADING_TAGS)
       .replace(/:popover-open\b/g, "." + POPOVER_OPEN_CLASS)
       .replace(/:modal\b/g, "." + MODAL_OPEN_CLASS);
     if (!api.validSelector(text)) {
