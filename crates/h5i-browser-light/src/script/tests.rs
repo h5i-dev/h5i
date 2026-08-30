@@ -3530,7 +3530,16 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // value `getPropertyValue` would, and `sheet.media` being live rather than
     // a snapshot. Those found 67 subtests between them, so the surface was
     // wrong in ways the coverage numbers had been quietly paying for.
-    const BUDGET_KIB: usize = 280;
+    // 281, and this KiB is a **speed** purchase rather than a surface one,
+    // which is a first for this budget. `classList.add` measured 100 us against
+    // 2 us for the `setAttribute` underneath it, and it is the largest single
+    // JS cost on a component-shaped page — 35 ms of an 88 ms load. Two causes,
+    // both in code this file guards: `_all()` tokenised with a regex into a
+    // `Set` and back out through a spread (43 us, four intermediates), and the
+    // indexed proxy sat in front of every internal `this._node` read inside
+    // every method. Hand-rolled tokenising plus binding methods to the target
+    // takes `add` to 25 us and `contains` to 10 us — 4x each.
+    const BUDGET_KIB: usize = 281;
 
     assert!(
         !super::PRELUDE.contains("/*"),

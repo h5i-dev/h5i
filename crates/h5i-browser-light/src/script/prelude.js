@@ -859,14 +859,64 @@
   // `class` is the famous one, but `rel` is a token list too, and so are
   // `sandbox` and `headers`. Parameterising the attribute is the difference
   // between one implementation and four.
+  /// Tokenised class strings, keyed on the attribute text they came from.
+  /// See `DOMTokenList._all`.
+  const tokenSets = new Map();
+
+  /// `/[ \t\n\f\r]/.test(name)` without the regex, for the same reason.
+  function hasAsciiWhitespace(text) {
+    for (let at = 0; at < text.length; at++) {
+      const code = text.charCodeAt(at);
+      if (code === 32 || code === 9 || code === 10 || code === 12 || code === 13) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   class DOMTokenList {
     constructor(node, attribute) { this._node = node; this._attr = attribute; }
+    /// The ordered token *set*: `class="a a b"` is two tokens, not three, and
+    /// `length`, iteration and indexing all see the deduplicated view. Only
+    /// `value` reports the raw attribute.
+    ///
+    /// **Hand-rolled and memoised, because this is the hot path of the whole
+    /// class API.** It was `raw.split(/\s+/).filter(Boolean)` into a `Set` and
+    /// back out through a spread: four intermediates and a regex, measured at
+    /// **43 us** against 2 us for the `getAttribute` underneath it — Boa is
+    /// slow at regex and at `Set`, and every `add`, `remove`, `contains`,
+    /// `toggle`, `length` and index read pays it. One pass over the string with
+    /// `charCodeAt` allocates one array and touches neither.
+    ///
+    /// Memoised on the attribute text, the way the style declaration is: the
+    /// same class string is tokenised once for the realm however many elements
+    /// carry it, which on a component page is most of them. **The array is
+    /// shared, so no caller may mutate it** — `add` copies, `remove` filters,
+    /// and everything else reads.
     _all() {
-      const raw = api.getAttr(this._node._id, this._attr) || "";
-      // An ordered *set*: `class="a a b"` is two tokens, not three, and
-      // `length`, iteration and indexing all see the deduplicated view. Only
-      // `value` reports the raw attribute.
-      return [...new Set(raw.split(/\s+/).filter(Boolean))];
+      const raw = api.getAttr(this._node._id, this._attr);
+      if (!raw) return [];
+      const known = tokenSets.get(raw);
+      if (known !== undefined) return known;
+      const out = [];
+      let start = -1;
+      for (let at = 0; at <= raw.length; at++) {
+        const code = at < raw.length ? raw.charCodeAt(at) : 32;
+        const space = code === 32 || code === 9 || code === 10
+          || code === 12 || code === 13;
+        if (!space) {
+          if (start < 0) start = at;
+          continue;
+        }
+        if (start >= 0) {
+          const token = raw.slice(start, at);
+          if (!out.includes(token)) out.push(token);
+          start = -1;
+        }
+      }
+      if (tokenSets.size > 512) tokenSets.clear();
+      tokenSets.set(raw, out);
+      return out;
     }
     /// Through `setAttribute`, **not** `api.setAttr`.
     ///
@@ -913,7 +963,7 @@
       if (tokens.includes("")) {
         throw new DOMException("the token must not be empty", "SyntaxError");
       }
-      const spaced = tokens.find((token) => /[ \t\n\f\r]/.test(token));
+      const spaced = tokens.find(hasAsciiWhitespace);
       if (spaced !== undefined) {
         throw new DOMException(
           `the token \`${spaced}\` must not contain whitespace`,
@@ -985,12 +1035,26 @@
     /// reporting picked it up as `DOMTokenList.0` and `DOMTokenList.-1`, an
     /// engine gap recorded under two names because nothing implemented either.
     static _indexed(target) {
+      // Methods and getters run against the **target**, never the proxy.
+      //
+      // `this` inside `add` reads `_node` and `_attr`, and when `this` is the
+      // proxy every one of those internal reads pays a trap — the same cost
+      // the note above `collection()` records for wrapping a NodeList, and the
+      // reason `contains` measured 17 us after its tokenising had already been
+      // made free. Binding once and caching keeps method identity stable, which
+      // pages compare.
+      const bound = new Map();
       return new Proxy(target, {
         get(list, key, receiver) {
+          void receiver;
           if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
             return list._all()[Number(key)];
           }
-          return Reflect.get(list, key, receiver);
+          const value = Reflect.get(list, key, list);
+          if (typeof value !== "function") return value;
+          let fn = bound.get(key);
+          if (fn === undefined) { fn = value.bind(list); bound.set(key, fn); }
+          return fn;
         },
         has(list, key) {
           if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
