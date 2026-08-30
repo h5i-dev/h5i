@@ -709,6 +709,51 @@
   .sb-payoff { margin-top: 22px; text-align: center; font-size: 1.28rem; color: var(--text-dim); }
   .sb-payoff b { color: var(--ink); font-weight: 700; }
 
+  /* ── Page-to-snapshot (the browser slide): a loaded page on the left, the
+       outline the agent actually reads on the right, h5i between them. ── */
+  .rt { display: flex; align-items: stretch; justify-content: center; gap: 10px; width: 100%; }
+  .rt-cap { font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 7px; display: block; }
+  .rt-col { flex: 1 1 0; display: flex; flex-direction: column; }
+
+  /* the loaded page, drawn as a wireframe */
+  .pgm { flex: 1; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-term); overflow: hidden; }
+  .pgm-bar { display: flex; align-items: center; gap: 5px; padding: 7px 9px; border-bottom: 1px solid var(--border); }
+  .pgm-bar i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.16); }
+  .pgm-bar i:nth-child(1) { background: #ff5f57; }
+  .pgm-bar i:nth-child(2) { background: #febc2e; }
+  .pgm-bar i:nth-child(3) { background: #28c840; }
+  .pgm-url { flex: 1; height: 7px; border-radius: 4px; background: rgba(255,255,255,0.07); margin-left: 4px; }
+  .pgm-body { padding: 12px 13px; display: flex; flex-direction: column; gap: 8px; }
+  .pgm-row { display: flex; gap: 7px; align-items: center; }
+  .pgm-b { height: 8px; border-radius: 3px; background: rgba(255,255,255,0.1); }
+  .pgm-b.img { height: 30px; background: rgba(255,255,255,0.055); border-radius: 4px; }
+  .pgm-logo { width: 13px; height: 13px; border-radius: 3px; background: rgba(255,255,255,0.2); flex: none; }
+  .pgm-nav { font-size: 0.63rem; color: var(--text-dim); white-space: nowrap; }
+  .pgm-nav.dim { color: var(--text-faint); }
+  .pgm-search { border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px;
+                font-size: 0.6rem; color: var(--text-faint); white-space: nowrap; }
+  .pgm-h1 { font-size: 0.95rem; font-weight: 700; color: var(--ink); line-height: 1.1; }
+  /* the three elements the outline on the right keeps */
+  .keep { border-bottom: 1px dashed rgba(98,201,140,0.65); }
+  .pgm-ad { border: 1px dashed rgba(224,36,27,0.45); border-radius: 4px; color: var(--danger);
+            font-family: var(--mono); font-size: 0.55rem; letter-spacing: 0.08em; text-align: center; padding: 4px 2px; }
+
+  /* the session the agent actually drives */
+  .rt-term { flex: 1; display: flex; }
+  .rt-term .terminal { flex: 1; box-shadow: none; font-size: 0.82rem; line-height: 1.65; }
+  .rt-term .terminal-body { display: flex; align-items: center; }
+
+  .rt-mid { flex: 0 0 214px; display: flex; flex-direction: column; justify-content: center; }
+  .rt-mid .bnode.core .bn { font-size: 1.55rem; white-space: nowrap; }
+  .rt-ar { display: flex; flex-direction: column; align-items: center; gap: 2px; font-family: var(--mono); color: var(--red-text); }
+  .rt-ar .ac { font-size: 1.05rem; line-height: 1; }
+  .rt-ar .al { font-size: 0.6rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-faint); }
+  .rt-back { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px;
+             font-family: var(--mono); font-size: 0.72rem; color: var(--text-faint); }
+  .rt-back .ln { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(98,201,140,0.5), rgba(98,201,140,0.12)); }
+  .rt-back .ln.r { background: linear-gradient(90deg, rgba(98,201,140,0.12), rgba(98,201,140,0.5)); }
+  .rt-back .lb { color: var(--green); white-space: nowrap; }
+
   /* ── Sandbox boundary (the sandbox slide): what stays out, the workflow
        loop inside the wall, and the only three things that leave. ── */
   .sbx { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; margin-top: 20px; }
@@ -801,6 +846,8 @@
     /* Fixed label-column widths force horizontal overflow on a phone */
     .ref-layer .ref-name, .ref-git .ref-name,
     .rec-k, .verdict .vk, .rung .rk, .ps-lbl { min-width: 0; width: auto; }
+    .rt { flex-direction: column; }
+    .rt-mid { flex: none; }
     .sbx { flex-direction: column; }
     .sbx-side { flex: none; width: 100%; }
     .sbx-gate { flex-direction: row; gap: 10px; }
@@ -976,48 +1023,82 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 5 — The browser (the round trip, and what comes back)
+     SLIDE 5 — The browser (a loaded page in, an outline out)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:18px;">
   <div style="width:100%;max-width:1080px;">
     <div class="section-tag">The browser</div>
     <h2>Run more browser sessions<br><span class="red">without losing control</span>.</h2>
 
-    <div class="bflow" style="margin-top:24px;">
-      <div class="bnode">
-        <span class="bt">the agent</span>
-        <span class="bn">Claude Code, Codex,<br>your own</span>
+    <div class="rt" style="margin-top:22px;" role="img" aria-label="Diagram: a loaded web page full of layout, images and ads enters the h5i browser on the left; a three-line outline with @ref handles comes out on the right. The agent drives the same session back through h5i.">
+      <div class="rt-col">
+        <span class="rt-cap">the web &#183; what a page loads</span>
+        <div class="pgm">
+          <div class="pgm-bar"><i></i><i></i><i></i><span class="pgm-url"></span></div>
+          <div class="pgm-body">
+            <div class="pgm-row">
+              <span class="pgm-logo"></span>
+              <span class="pgm-nav keep">Getting started</span>
+              <span class="pgm-nav dim">API</span>
+              <span class="pgm-nav dim">Blog</span>
+              <span style="flex:1;"></span>
+              <span class="pgm-search keep">Search &#9906;</span>
+            </div>
+            <div class="pgm-row"><span class="pgm-h1 keep">Documentation</span></div>
+            <div class="pgm-row"><span class="pgm-b" style="flex:3;"></span><span class="pgm-b" style="flex:2;"></span></div>
+            <div class="pgm-row">
+              <span class="pgm-b img" style="flex:1;"></span>
+              <div class="pgm-ad" style="flex:0 0 58px;">AD</div>
+            </div>
+            <div class="pgm-row"><span class="pgm-b" style="flex:4;"></span><span class="pgm-b" style="flex:1;"></span></div>
+            <div class="pgm-row">
+              <span class="pgm-b img" style="flex:1;"></span>
+              <span class="pgm-b img" style="flex:1;"></span>
+              <div class="pgm-ad" style="flex:0 0 58px;">TRACKER</div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="barr">
-        <div class="leg fwd"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">open &#183; click &#183; type</span></div>
-        <div class="leg bak"><span class="ac">&#9666;&#9666;&#9666;</span><span class="al">structured page</span></div>
+
+      <div class="rt-mid">
+        <div class="rt-ar"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">page bytes</span></div>
+        <div class="bnode core" style="margin:8px 0;">
+          <span class="bt">one local binary</span>
+          <span class="bn">h5i browser</span>
+        </div>
+        <div class="rt-ar"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">outline, not pixels</span></div>
       </div>
-      <div class="bnode core">
-        <span class="bt">one local binary</span>
-        <span class="bn">h5i browser</span>
-      </div>
-      <div class="barr">
-        <div class="leg fwd"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">policy-checked request</span></div>
-        <div class="leg bak"><span class="ac">&#9666;&#9666;&#9666;</span><span class="al">page bytes</span></div>
-      </div>
-      <div class="bnode">
-        <span class="bt">the web</span>
-        <span class="bn">docs, data,<br>your web app</span>
+
+      <div class="rt-col">
+        <span class="rt-cap">the agent &#183; what it runs, and what comes back</span>
+        <div class="rt-term">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+              <span class="terminal-path">the agent's session</span>
+            </div>
+            <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs --allow docs.rs</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>
+  <span class="t-ai">@e1</span> <span class="t-out">heading "Documentation"</span>
+  <span class="t-ai">@e2</span> <span class="t-out">link "Getting started"</span>
+  <span class="t-ai">@e3</span> <span class="t-out">searchbox "Search"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e2</span> <span class="t-pass">&#10003;</span></pre></div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px;text-align:left;align-items:stretch;">
-      <div class="feat-card" style="padding:1.1rem 1.15rem;"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.15rem;line-height:1.2;color:var(--green);">~5&times; faster reads</span><p class="feat-desc" style="margin-top:6px;font-size:0.98rem;">~80% less peak memory.</p></div>
-      <div class="feat-card" style="padding:1.1rem 1.15rem;"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.15rem;line-height:1.2;color:var(--green);">Pages agents can use</span><p class="feat-desc" style="margin-top:6px;font-size:0.98rem;">Compact snapshots with <span class="mono">@ref</span> handles.</p></div>
-      <div class="feat-card" style="padding:1.1rem 1.15rem;"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.15rem;line-height:1.2;color:var(--green);">Every session is reviewable</span><p class="feat-desc" style="margin-top:6px;font-size:0.98rem;">Actions, requests, denials, and endings.</p></div>
+    <div class="rt-back">
+      <span class="ln"></span>
+      <span class="lb">&#9666; the agent drives the same session &#183; open &#183; click &#183; type</span>
+      <span class="ln r"></span>
     </div>
 
-    <div class="terminal" style="margin-top:16px;text-align:left;">
-      <div class="terminal-bar">
-        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-        <span class="terminal-path">what the agent receives</span>
-      </div>
-      <div class="terminal-body"><pre><span class="t-ai">@e1</span> <span class="t-out">heading "Documentation"</span>   <span class="t-ai">@e2</span> <span class="t-out">link "Getting started"</span>   <span class="t-ai">@e3</span> <span class="t-out">searchbox "Search"</span></pre></div>
+    <div class="g4" style="margin-top:16px;">
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">~5&times;</span><span class="ml" style="font-size:0.88rem;">faster reads</span></div>
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">~80%</span><span class="ml" style="font-size:0.88rem;">less peak memory</span></div>
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">300k+</span><span class="ml" style="font-size:0.88rem;">web standards tests passed</span></div>
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:1.75rem;">Auditable</span><span class="ml" style="font-size:0.88rem;">every action is recorded</span></div>
     </div>
   </div>
 </div>
