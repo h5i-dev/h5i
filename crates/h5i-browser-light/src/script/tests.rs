@@ -2616,7 +2616,19 @@ fn a_doctype_and_a_processing_instruction_can_be_made_and_read() {
              const out = [];
              const dt = document.implementation.createDocumentType("svg", "pub", "sys");
              out.push(dt.nodeType, dt.name, dt.publicId, dt.systemId, dt instanceof DocumentType);
+             // An empty name is **legal**, and this test used to assert the
+             // opposite. DOM dropped the `Name`-production check from
+             // `createDocumentType`, and the suite is unambiguous about it: of
+             // the 81 cases in `DOMImplementation-createDocumentType`, 79 must
+             // succeed — "", "1foo", "@foo", "a.b:c" — and only "edi:>" and
+             // "edi:a " throw. What survives is the pair of characters that
+             // would break serialising `<!DOCTYPE name>`, which is the same
+             // rule the processing instruction below applies to `?>`.
              try { document.implementation.createDocumentType("", "", ""); out.push("empty-ok"); }
+             catch (e) { out.push(e.name); }
+             try { document.implementation.createDocumentType("edi:>", "", ""); out.push("gt-ok"); }
+             catch (e) { out.push(e.name); }
+             try { document.implementation.createDocumentType("edi:a ", "", ""); out.push("space-ok"); }
              catch (e) { out.push(e.name); }
              const pi = document.createProcessingInstruction("xml-stylesheet", "href='a.css'");
              out.push(pi.nodeType, pi.target, pi.data);
@@ -2626,7 +2638,10 @@ fn a_doctype_and_a_processing_instruction_can_be_made_and_read() {
            </script>"#,
     );
     assert!(
-        text.contains("10|svg|pub|sys|true|InvalidCharacterError|7|xml-stylesheet|href='a.css'|InvalidCharacterError"),
+        text.contains(
+            "10|svg|pub|sys|true|empty-ok|InvalidCharacterError|InvalidCharacterError|\
+7|xml-stylesheet|href='a.css'|InvalidCharacterError"
+        ),
         "doctype/PI construction is wrong:\n{text}\nconsole: {console:?}"
     );
 }

@@ -197,6 +197,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("encodingFor", 1, encoding_for),
         ("decodeBytes", 3, decode_bytes),
         ("parseUrl", 2, parse_url),
+        ("urlWithUserinfo", 3, url_with_userinfo),
         ("viewport", 0, viewport),
         ("readCookies", 0, read_cookies),
         ("writeCookie", 1, write_cookie),
@@ -2403,6 +2404,38 @@ fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 /// contains a correct URL parser, and a second one in the prelude would
 /// disagree with it about exactly the cases that matter — percent-encoding,
 /// default ports, and what counts as an origin.
+/// `url.username = x` and `url.password = x`, performed by the parser.
+///
+/// Not a string rebuild followed by a re-parse, and the difference is the whole
+/// reason this exists: the URL Standard percent-encodes userinfo with its own
+/// set, and a *raw* control character in an authority is a parse **failure** —
+/// so serialising `https://\0test@host/` and handing it back would drop the
+/// write instead of storing `%00test`. `url::Url` already implements the
+/// spec's steps, so they are called rather than reimplemented in JavaScript.
+///
+/// A URL that cannot have a username or password (an opaque path such as
+/// `data:` or `mailto:`) answers null, and the setter leaves the URL alone —
+/// which is what the standard says to do rather than an error this invented.
+fn url_with_userinfo(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let href = arg_string(args, 0, context)?;
+    let field = arg_string(args, 1, context)?;
+    let value = arg_string(args, 2, context)?;
+    let Ok(mut url) = url::Url::parse(&href) else {
+        return Ok(JsValue::null());
+    };
+    let wrote = if field == "username" {
+        url.set_username(&value)
+    } else {
+        // An empty password is *absent*, not present-and-empty: the
+        // serialisation drops the colon, which is what a browser shows.
+        url.set_password(if value.is_empty() { None } else { Some(&value) })
+    };
+    if wrote.is_err() {
+        return Ok(JsValue::null());
+    }
+    Ok(js_string!(url.to_string()).into())
+}
+
 fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let href = arg_string(args, 0, context)?;
     let base = arg_string(args, 1, context).unwrap_or_default();
@@ -2440,8 +2473,14 @@ fn parse_url(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     };
 
     let out = boa_engine::object::ObjectInitializer::new(context).build();
-    let fields: [(&str, String); 8] = [
+    let fields: [(&str, String); 10] = [
         ("href", url.to_string()),
+        // The userinfo half. It was read as "" and written nowhere, on the
+        // grounds that the parser did not surface it — but `url::Url` has had
+        // both all along, so `url-setters-stripping` failed 226 subtests
+        // against a component this engine could already see.
+        ("username", url.username().to_string()),
+        ("password", url.password().unwrap_or_default().to_string()),
         ("protocol", format!("{}:", url.scheme())),
         ("host", url.host_str().map(|h| match url.port() {
             Some(port) => format!("{h}:{port}"),

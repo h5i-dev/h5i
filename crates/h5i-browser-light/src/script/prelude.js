@@ -1584,17 +1584,26 @@
   /// `createDocumentType` then reading name/publicId/systemId back — and the
   /// insertion path says no honestly rather than pretending.
   class DocumentTypeNode {
-    constructor(name, publicId, systemId) {
+    /// `owner` is the document `createDocumentType` was called on — null for
+    /// the page's own, which cannot be named here because `document` is built
+    /// further down this file.
+    constructor(name, publicId, systemId, owner) {
       this.name = name;
       this.publicId = publicId;
       this.systemId = systemId;
+      this._owner = owner ?? null;
     }
     get nodeType() { return 10; }
     get nodeName() { return this.name; }
-    get ownerDocument() { return document; }
+    get ownerDocument() { return this._owner ?? document; }
     get parentNode() { return null; }
     get childNodes() { return []; }
     get textContent() { return null; }
+    // `null`, not `undefined`, and the difference was 76 of this file's 79
+    // failures: DOM gives every node a `nodeValue`, and a doctype's is null.
+    // Absent, it read as `undefined`, which is the one value an equality check
+    // against null does not forgive.
+    get nodeValue() { return null; }
     // The namespace trio answers null for a doctype in every branch, which is
     // the spec's own table.
     lookupNamespaceURI() { return null; }
@@ -6382,7 +6391,16 @@
         // An opaque path (`data:`, `mailto:`) has no authority to edit.
         return `${protocol}${pathname}${search}${hash}`;
       }
-      return `${protocol}//${host}${pathname}${search}${hash}`;
+      // Userinfo is carried through. It used to be dropped here, which was
+      // invisible only because `username` and `password` were hard-coded to "";
+      // with them readable, `url.host = "x"` on `https://u:p@a/` would have
+      // quietly deleted the credentials.
+      const user = p.username ?? "";
+      const secret = p.password ?? "";
+      const userinfo = user || secret
+        ? `${user}${secret ? `:${secret}` : ""}@`
+        : "";
+      return `${protocol}//${userinfo}${host}${pathname}${search}${hash}`;
     }
     _tryAdopt(candidate) {
       const p = api.parseUrl(String(candidate), "");
@@ -6445,12 +6463,25 @@
       this._tryAdopt(this._serializeWith({ hash }));
     }
     get origin() { return this._parts.origin; }
-    // The userinfo half this engine's parser does not surface: read as the
-    // empty string, writes are dropped rather than mangled into the host.
-    get username() { return ""; }
-    set username(value) { void value; }
-    get password() { return ""; }
-    set password(value) { void value; }
+    /// The userinfo half.
+    ///
+    /// Both were hard-coded to "" with a note saying the parser did not surface
+    /// them. It always had: `url::Url` carries a username and a password, and
+    /// reading them was one line each. The setters go back through the parser
+    /// rather than rebuilding the href here, because the URL Standard
+    /// percent-encodes userinfo with its own set and a raw control character in
+    /// an authority is a parse failure — `url.username = "\0test"` has to
+    /// store `%00test`, which a re-parse of a hand-built string cannot do.
+    get username() { return this._parts.username ?? ""; }
+    set username(value) {
+      const href = api.urlWithUserinfo(this._parts.href, "username", String(value));
+      if (href !== null) this._tryAdopt(href);
+    }
+    get password() { return this._parts.password ?? ""; }
+    set password(value) {
+      const href = api.urlWithUserinfo(this._parts.href, "password", String(value));
+      if (href !== null) this._tryAdopt(href);
+    }
     toString() { return this.href; }
     toJSON() { return this.href; }
     /// The two statics, which are the non-throwing way to ask. A page testing
@@ -7598,6 +7629,58 @@
     return wrapSelectionWith(sel, document.createElement(tag));
   }
 
+  /// `document.implementation`, for whichever document asked.
+  ///
+  /// It used to be an object literal inside the page document's getter, so a
+  /// document produced by `createHTMLDocument` — which is a real thing pages
+  /// build and then call `createDocumentType` on — had no `implementation` at
+  /// all, and the whole of `DOMImplementation-createDocumentType` died on
+  /// `aDocument.implementation` being undefined.
+  ///
+  /// `owner` is null for the page's own document, because `document` is built
+  /// further down this file and cannot be named here.
+  function domImplementation(owner) {
+    return observed({
+      hasFeature: () => true,
+      /// A doctype is three strings and a nodeType; refusing it was never a
+      /// capability question. Validated like any qualified name — the test file
+      /// is mostly a sweep of names that must be rejected.
+      /// A doctype is three strings and a nodeType; refusing it was never a
+      /// capability question.
+      ///
+      /// It validated against XML's `Name` production, and **that is no longer
+      /// the rule.** DOM dropped the Name check from `createDocumentType`: of
+      /// the 81 cases the suite tests, 79 must *succeed* — `""`, `"1foo"`,
+      /// `"@foo"` and `"a.b:c"` among them — and the only two that throw are
+      /// `"edi:>"` and `"edi:a "`. What is left is the pair of characters that
+      /// would break the serialisation `<!DOCTYPE name>`: a `>` ends the
+      /// declaration early and whitespace splits the name, turning the rest
+      /// into markup. That is the same reasoning `createProcessingInstruction`
+      /// already applies to `?>` a few lines above, and it is the reason the
+      /// check survives at all rather than an inherited habit.
+      createDocumentType: (name, publicId, systemId) => {
+        const text = String(name);
+        if (/[>\s]/.test(text)) {
+          throw new DOMException(
+            `\`${text}\` would not survive serialising as \`<!DOCTYPE ${text}>\``,
+            "InvalidCharacterError",
+          );
+        }
+        return new DocumentTypeNode(text, String(publicId), String(systemId), owner);
+      },
+      // The same shape `DOMParser` produces, which is what this is for: a
+      // detached document to build markup in. It shares this engine's one tree,
+      // so it is a subtree presented as a document rather than a second one —
+      // enough for building and querying, which is all it is used for.
+      createHTMLDocument: (title) =>
+        new DOMParser().parseFromString(
+          `<title>${String(title ?? "")}</title>`, "text/html",
+        ),
+      // A second *live* document is genuinely out of reach — there is one tree,
+      // and it is the page.
+    }, "document.implementation");
+  }
+
   /// `new DOMParser().parseFromString(html, "text/html")`.
   ///
   /// How a library turns a string of markup into something it can query —
@@ -7629,6 +7712,7 @@
         head,
         nodeType: 9,
         contentType: kind,
+        get implementation() { return domImplementation(this); },
         get title() {
           const found = body.querySelector("title");
           return found ? found.textContent : "";
@@ -8003,30 +8087,7 @@
     // something this engine is missing.
     namespaceURI: undefined,
     ownerDocument: null,
-    get implementation() {
-      return observed({
-        hasFeature: () => true,
-        /// A doctype is three strings and a nodeType; refusing it was never a
-        /// capability question. Validated like any qualified name — the test
-        /// file is mostly a sweep of names that must be rejected.
-        createDocumentType: (name, publicId, systemId) => {
-          validateQualifiedName(String(name));
-          return new DocumentTypeNode(String(name), String(publicId), String(systemId));
-        },
-        // The same shape `DOMParser` produces, which is what this is for: a
-        // detached document to build markup in. It shares this engine's one
-        // tree, so it is a subtree presented as a document rather than a second
-        // one — enough for building and querying, which is all it is used for.
-        createHTMLDocument: (title) =>
-          new DOMParser().parseFromString(
-            `<title>${String(title ?? "")}</title>`,
-            "text/html",
-          ),
-        // A second document is genuinely out of reach here — there is one tree,
-        // and it is the page. A page using this to parse HTML off to the side
-        // gets a named refusal instead of a silently broken document.
-      }, "document.implementation");
-    },
+    get implementation() { return domImplementation(null); },
 
     // The famous one. Legacy code uses `document.all` to detect old IE, and the
     // detection works because it is the only object in JavaScript that is
