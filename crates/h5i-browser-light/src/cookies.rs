@@ -1,91 +1,27 @@
-//! The cookie jar, and the four narrowings that make it safe to have one.
+//! The cookie jar, and the narrowings that keep it safe.
 //!
-//! Cookies are the first thing this engine holds that is worth stealing. Until
-//! now a session had no memory at all, so there was nothing an injected page
-//! could aim at; a jar changes that, and the defences have to arrive with it
-//! rather than after it (ROADMAP §11 item 5.5).
+//! A cookie is host-only unless it says otherwise, and a `Domain` must pass all
+//! four rules: it is not a public suffix, or `evil.co.uk` sets a cookie for
+//! `bank.co.uk`; the request host is inside it on a label boundary, so
+//! `attackerexample.com` cannot claim `Domain=example.com`; an IP-address host
+//! gets no `Domain`, there being no tree above an address; and `__Host-` forbids
+//! it outright. The suffix list is compiled in (the `psl` crate), never fetched,
+//! and going stale is safe because the list only grows.
 //!
-//! # `Domain`, honoured over a public suffix list
+//! SameSite and Secure are enforced at store time: `SameSite=None` without
+//! `Secure` is refused, an https cookie never travels over http, and cross-site
+//! is decided on registrable domains so `a.example.com` and `b.example.com` are
+//! one site.
 //!
-//! A cookie is host-only unless it says otherwise. When it does, the `Domain`
-//! attribute is honoured under the rules a browser actually enforces, and the
-//! load-bearing one needs a list: **the domain must not be a public suffix.**
-//! Without that, a page on `evil.co.uk` sets `Domain=co.uk` and every later
-//! request to `bank.co.uk` carries the cookie.
+//! **Persistence is opt-in.** The jar dies with the process unless h5i passed
+//! `--cookie-jar`, the only caller of [`Jar::persist_to`]. The file is `0600`,
+//! written temp-then-rename, and rewritten on change rather than at exit,
+//! because `close` and `service_stop` SIGKILL the session. [`Jar::retain_origin`]
+//! keeps it to one origin, not a browsing history.
 //!
-//! This was refused for exactly that reason until the list arrived. The stated
-//! cost was real and is now paid off: a site that logs you in at `example.com`
-//! and serves the app from `www.example.com` stays logged in. Four rules stand
-//! between that and the failure above, and a cookie must pass all of them:
-//!
-//! 1. **The domain must not be a public suffix.** `Domain=co.uk`,
-//!    `Domain=com`, `Domain=github.io` are all refused.
-//! 2. **The request host must be within it**, on a label boundary.
-//!    `Domain=example.com` may not be set by `attackerexample.com`, which a
-//!    plain suffix test would have allowed.
-//! 3. **A host that is an IP address gets no `Domain` at all.** There is no
-//!    domain tree above an address to widen into.
-//! 4. **`__Host-` still forbids it outright**, which is the prefix's whole
-//!    purpose: it is how a server says "this one is mine alone".
-//!
-//! The list is compiled in (the `psl` crate) rather than fetched, so nothing
-//! here depends on the network to decide where a credential may go. It goes
-//! stale between version bumps, and it does so safely: the list only grows, so
-//! an out-of-date copy refuses suffixes it has not heard of rather than
-//! accepting them.
-//!
-//! # SameSite, recorded and enforced where it can be
-//!
-//! Parsed and stored rather than dropped. `SameSite=None` without `Secure` is
-//! refused at store time, which is the rule that stops a cross-site cookie
-//! travelling in the clear. The cross-site *request* distinction itself is
-//! computed on registrable domains — the same list, so `a.example.com` and
-//! `b.example.com` are one site — rather than on bare host equality, which
-//! would have called every subdomain a third party.
-//!
-//! # In memory unless h5i asks for a file, and it has to ask by name
-//!
-//! The jar lives in the process and dies with it. That was the whole story
-//! until `h5i browser open --restore` needed a jar to inherit and there was
-//! none to inherit — the flag copied a `cookies.json` that nothing wrote, so a
-//! login could never outlive the session that performed it and the help text
-//! said otherwise (ROADMAP §B19.6).
-//!
-//! So there is now exactly one way to put this on a disk: [`Jar::persist_to`],
-//! called by the engine only when h5i passed `--cookie-jar`, with a path h5i
-//! chose inside the session's own directory. Four properties keep that from
-//! being a hole:
-//!
-//! * **Nothing defaults it on.** No path, no file, and `open`/`read` never pass
-//!   one — a one-shot read is still a complete logout at exit.
-//! * **The file is owner-only** (`0600` on Unix), written through a temporary
-//!   file and renamed, so a reader never sees half a jar and a crash never
-//!   leaves a truncated one.
-//! * **It is written when it changes, not at shutdown.** A session that is
-//!   SIGKILLed — which is how `close` and `service_stop` end one — would lose a
-//!   shutdown hook entirely, and a jar that survives only a polite exit is a
-//!   jar that is missing exactly when it is needed.
-//! * **It stays unreadable to the agent.** No verb returns a cookie value, and
-//!   this adds none. The file is for the *next session*, reached through
-//!   `--restore`, which hands it back to another engine and never to a model.
-//!
-//! What is written is what the jar holds, and [`Jar::retain_origin`] means that
-//! is one origin's cookies rather than a browsing history. That is a narrower
-//! artifact than a browser's cookie store and it is the right size for what it
-//! is for.
-//!
-//! # Never readable by the agent
-//!
-//! No verb returns a cookie value, and the request log records *how many*
-//! cookies crossed rather than which. An agent driving this engine can be
-//! logged in without ever being able to read the credential that makes it so,
-//! which is the property that makes a stolen snapshot worth less than a stolen
-//! jar.
-//!
-//! # Secure is enforced, not decorative
-//!
-//! A cookie set over https is never sent over http, so a downgrade cannot
-//! collect it. `__Secure-` and `__Host-` prefixes are enforced at store time.
+//! **Never readable by the agent.** No verb returns a cookie value; the request
+//! log counts cookies rather than naming them. The persisted file is for the
+//! next engine via `--restore`.
 
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -1355,7 +1291,7 @@ mod persistence_tests {
         Url::parse(text).expect("test url")
     }
 
-    // --- persistence (ROADMAP §B19.6, item 8) -----------------------------
+    // --- persistence (roadmap-history.md §B19.6, item 8) -----------------------------
 
     #[test]
     fn a_login_survives_into_the_next_session() {

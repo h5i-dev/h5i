@@ -1,48 +1,29 @@
 //! The box console: `h5i ui`.
 //!
-//! One screen for the question the CLI answers a box at a time — *what is the
-//! fleet doing, and what has pressed on a boundary?* It is the sandbox half of
-//! the old workbench dashboard, rebuilt on what the contained-environment
-//! product actually keeps: manifests, the resolved policy, the env event log,
-//! and [`crate::receipt`] — the append-only record of everything that ran.
+//! One screen for what the CLI answers a box at a time: what is the fleet doing,
+//! and what has pressed on a boundary? Built over manifests, the resolved
+//! policy, the env event log and [`crate::receipt`].
 //!
-//! # Read-only, and structurally so
-//!
-//! Every route is a `GET`. There is no mutating handler to guard, so the
-//! console needs no CSRF story and cannot be turned into a remote control for
-//! someone's boxes: `shell`, `run`, `export`, `apply` and `rm` stay in the CLI,
-//! where a human types them. That was the original dashboard's rule and it is
-//! worth keeping — a monitoring surface that cannot act is a much smaller thing
-//! to get wrong.
-//!
-//! # What guards it
+//! **Read-only, structurally.** Every route is a `GET`, so there is no mutating
+//! handler to guard, no CSRF story, and no way to turn this into a remote
+//! control for someone's boxes. A monitoring surface that cannot act is a much
+//! smaller thing to get wrong.
 //!
 //! The old `h5i serve` bound loopback and trusted everyone who could reach it,
-//! which on a developer machine means every process and every page. This one
-//! follows [`crate::view`]'s discipline instead:
+//! which on a developer machine is every process and every page. This follows
+//! [`crate::view`]'s discipline: loopback only, a per-session token minted at
+//! `bind` and held in memory rather than on disk, traded by the page for a
+//! `SameSite=Strict` cookie, and foreign origins refused by `Origin` *and*
+//! `Sec-Fetch-Site`. The second is not belt-and-braces: `Origin` is absent on a
+//! markup-driven GET, and two loopback ports are different origins on the same
+//! site, so without it any other local port could `<img src>` this console with
+//! its cookie attached.
 //!
-//! * **Loopback only**, on a port h5i chose.
-//! * **A per-session token**, minted at `bind` and printed once in the URL.
-//!   It lives in this process's memory — nothing on disk, so nothing a box can
-//!   read. The page trades it for a `SameSite=Strict` cookie, which a
-//!   cross-site request never carries.
-//! * **Foreign origins refused**, by `Origin` *and* by `Sec-Fetch-Site`. The
-//!   second is not belt-and-braces: `Origin` is absent on a markup-driven GET,
-//!   and `SameSite=Strict` constrains cross-*site* requests only — two loopback
-//!   ports are different origins and the same site. Without it, a page on any
-//!   other local port could `<img src>` this console with its cookie attached
-//!   and nothing in the head to refuse.
-//!
-//! # Honesty
-//!
-//! The dashboard this replaces had a risk classifier behind its red/amber/grey
-//! badges. That module was cut with the provenance surface, and nothing here
-//! invents a score to replace it. [`Signals`] is arithmetic over receipts and
-//! nothing else: red means **enforcement fired** (the egress proxy refused a
-//! destination), amber means a run failed or timed out or the page reported
-//! errors, and grey means the evidence is weak — either nothing was confined
-//! (`workspace` tier) or every record came from inside the box. None of those
-//! is an accusation, and the UI never renders a number the receipts don't hold.
+//! **Honesty.** The dashboard this replaces had a risk classifier; nothing here
+//! invents a score to replace it. [`Signals`] is arithmetic over receipts: red
+//! means enforcement fired, amber means a run failed or the page reported
+//! errors, grey means the evidence is weak. None is an accusation, and the UI
+//! never renders a number the receipts do not hold.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1080,7 +1061,7 @@ pub struct BrowserStream {
 const STREAM_CAP: usize = 4000;
 
 /// `GET /api/box/:agent/:slug/browser?since=N` — the browser terminal's stream
-/// (ROADMAP M11a).
+/// (roadmap-history.md M11a).
 ///
 /// A `GET` like every other route here, and for the same reason: the console
 /// watches and never drives. Taking the control lock and typing into a page go

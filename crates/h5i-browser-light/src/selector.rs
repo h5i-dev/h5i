@@ -1,35 +1,26 @@
 //! A durable handle for an element, beside the ordinal one.
 //!
-//! `@e5` names *a position in the walk that minted it*, which is why the
-//! session refuses one against a reading the page has moved on from (see
-//! `stream::resolve_ref`). That check makes the ordinal safe; it does not make
-//! it durable. A recorded session made of ordinals replays into a different
-//! page, and an agent that wants to come back to the same element after a
-//! navigation has nothing to come back with.
+//! `@e5` names a position in the walk that minted it, and the session refuses
+//! one against a reading the page has moved on from (`stream::resolve_ref`).
+//! That makes the ordinal safe, not durable: a recorded session made of ordinals
+//! replays into a different page.
 //!
 //! So each ref also carries the **simplest CSS selector whose first match is
-//! that element**, built the way Lightpanda's `SelectorPath` builds one:
+//! that element**, built the way Lightpanda's `SelectorPath` builds one: start
+//! from the element's own segment; if that is not already unique-first, walk
+//! ancestors and prepend one **only when it shrinks the match count**, since an
+//! ancestor that narrows nothing is length with no information; then fall back
+//! to a strict `a > b > c` chain.
 //!
-//! 1. Start from the element's own segment.
-//! 2. If that is not already unique-first, walk ancestors and prepend one **only
-//!    when it shrinks the match count** — an ancestor that narrows nothing is
-//!    length with no information.
-//! 3. Fall back to a strict `a > b > c` chain.
+//! **Every candidate is verified with the same matcher the action verbs use.** A
+//! generated selector the engine's own `querySelectorAll` would resolve
+//! differently is worse than no selector, because it looks like a handle.
 //!
-//! And the part that makes it worth having: **every candidate is verified with
-//! the same matcher the action verbs use.** A generated selector that the
-//! engine's own `querySelectorAll` would resolve differently is worse than no
-//! selector, because it looks like a handle.
-//!
-//! ## What is not built
-//!
-//! Lightpanda disambiguates with `:has()` before falling back to
-//! `:nth-of-type`, which produces markedly more robust selectors on
-//! machine-generated markup. That is not here: it needs `:has()` support in the
-//! selector parser this engine borrows, which is unverified, and shipping a
-//! generator that emits selectors the matcher then rejects would produce
-//! exactly the plausible-looking handle this module exists to avoid. The
-//! fallback chain below is what is verified to work.
+//! Not built: Lightpanda disambiguates with `:has()` before falling back to
+//! `:nth-of-type`, which is markedly more robust on machine-generated markup. It
+//! needs `:has()` in the borrowed selector parser, which is unverified here, and
+//! emitting selectors the matcher then rejects would produce exactly the
+//! plausible-looking handle this module exists to avoid.
 
 use blitz_dom::BaseDocument;
 

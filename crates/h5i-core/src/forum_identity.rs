@@ -1,53 +1,28 @@
 //! Who is behind a forum origin: enrollment, principals, and the vote policy.
 //!
-//! The forum's identity story is layered, and each layer is only as strong as
-//! what actually backs it:
+//! Three layers, each only as strong as what backs it. A **sender** is a display
+//! name a worktree picked, free to mint. An **origin** is the machine stamp from
+//! [`crate::forum::host_origin`], unforgeable locally but plain text on the
+//! wire. A **principal** is a forge account bound to an origin by an enrollment.
 //!
-//! - a **sender** is a display name a worktree picked. Free to mint, never an
-//!   authority.
-//! - an **origin** is the machine stamp from [`crate::forum::host_origin`].
-//!   One per host, unforgeable *locally* (a box cannot reach it), but plain
-//!   text on the wire: a hostile peer can write any origin it likes.
-//! - a **principal** is a forge account — `github.com/user/12345678` — bound
-//!   to an origin by the enrollment this module implements.
+//! An enrollment is a signed record saying "this account operates this machine,
+//! and here is the SSH public key that proves it". The key is the one the member
+//! already pushes with, so the forge publishes it at
+//! `https://github.com/<login>.keys` and nobody has to run a key server.
 //!
-//! ## What an enrollment is
+//! It proves, offline, that the record was not altered and came from whoever
+//! holds the key; tying that key to the account needs the forge, done once at
+//! enrollment. It does **not** buy per-post authentication, since posts are
+//! stamped rather than signed, so a hostile host can still write another host's
+//! origin. What it narrows is the consequence: an unenrolled origin counts for
+//! nothing under the principal vote rule.
 //!
-//! A small signed record: "the account `principal` operates the machine
-//! `origin`, and here is the SSH public key that proves it". The key is the
-//! one the member already pushes with, which is the whole trick — the forge
-//! already publishes every user's SSH keys at `https://github.com/<login>.keys`,
-//! so the forge *is* the key server and nobody has to run one. Enrolling costs
-//! one command and zero key management, which keeps the promise the rest of
-//! the remote design makes: a team should not have to operate anything.
-//!
-//! ## What it proves, and what it does not
-//!
-//! The record is signed with the member's SSH key and the key is pinned in the
-//! record, so any peer can check, offline, that the record was not altered and
-//! was written by whoever holds that key. Checking that the key really belongs
-//! to the named account needs the forge (`verify` fetches the account's
-//! published keys), and is done once at enrollment and re-checkable on demand.
-//!
-//! What enrollment does **not** yet buy is per-post authentication: ordinary
-//! posts are still stamped, not signed, so a hostile host can still write
-//! another host's origin on a post. Enrollment narrows the damage — an origin
-//! nobody enrolled counts for nothing under the principal vote rule — and it
-//! puts the key in place that per-post signing would need. That escalation is
-//! deliberate future work, not an oversight; see the module-level notes on
-//! [`crate::forum::Vouch`] for the honesty rules that govern the meantime.
-//!
-//! ## Merge rules
-//!
-//! Enrollments and the policy live on the forum's meta ref and travel with it,
-//! so two clones can hold diverged copies. Both merges are deterministic in
-//! either direction, because two clones that merge each other must converge:
-//!
-//! - **enrollments**, per origin: the same principal re-enrolling takes the
-//!   newer record (key rotation); two *different* principals claiming one
-//!   origin keep the earlier record (first binding sticks — the safe direction,
-//!   an origin cannot be quietly re-bound by whoever merges last).
-//! - **policy**: the newer `set_at` wins, and on a tie the stricter rule wins.
+//! Both merges are deterministic in either direction, because two clones merging
+//! each other must converge. Per origin, the same principal re-enrolling takes
+//! the newer record (key rotation) and two different principals claiming one
+//! origin keep the earlier, so an origin cannot be quietly re-bound by whoever
+//! merges last. For policy, the newer `set_at` wins, and a tie goes to the
+//! stricter rule.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

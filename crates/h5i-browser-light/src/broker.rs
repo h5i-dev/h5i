@@ -1,37 +1,27 @@
 //! The broker, as a named set of operations rather than a struct.
 //!
-//! Everything that decides and records lives behind this trait: the allowlist,
-//! the wire, the receipt sink, the cookie jar, the per-page budget and the
-//! secrets. Everything that parses a stranger's bytes — the HTML parser, the
-//! cascade, the layout, the image decoders, the script realm — calls *through*
-//! it and holds none of it.
+//! Everything that decides and records is behind this trait: the allowlist, the
+//! wire, the receipt sink, the cookie jar, the per-page budget and the secrets.
+//! Everything that parses a stranger's bytes calls *through* it and holds none
+//! of it.
 //!
-//! # Why a trait and not a struct
+//! Two implementations, and the second is the point.
+//! [`crate::net::LocalBroker`] does the work in this process, exactly as the
+//! engine has always run. [`crate::ipc::BrokerClient`] asks another process,
+//! leaving the renderer a socket to its parent and nothing else: no policy to
+//! edit, no jar to read, no sink to silence, no `H5I_SECRET_*` in its
+//! environment. The claim "a request not in the log did not happen" is otherwise
+//! only as strong as the parsers sharing an address space with the recorder.
 //!
-//! Two implementations, and the second is the point:
-//!
-//! * [`crate::net::LocalBroker`] does the work here, in this process. One
-//!   process, exactly as this engine has always run.
-//! * [`crate::ipc::BrokerClient`] asks another process to do it. The renderer
-//!   holds a socket to its parent and nothing else — no policy to edit, no jar
-//!   to read, no sink to silence, no `H5I_SECRET_*` in its environment.
-//!
-//! The claim this engine makes is "a request that is not in the log did not
-//! happen", and in one process that claim is only as strong as the parsers
-//! sharing the address space with the recorder. Splitting moves the recorder
-//! somewhere a compromised parser cannot reach it. See ROADMAP §B18.
-//!
-//! # The rule for adding to this trait
-//!
-//! Every method here becomes a message a hostile renderer may send at will, in
-//! any order, with any arguments. So the operations are the ones that were
-//! measured (§B18.6) and no more: nothing that hands back a live reference to
-//! broker state, and nothing that lets the caller name a *thing* the broker
-//! holds rather than a *request* the broker decides about. The cookie jar is
-//! the worked example — it used to be reachable as `broker.jar()`, which
-//! cannot cross a process boundary and, on this side of it, would have handed
-//! the page's parsers the session. It is three operations now, and
-//! `HttpOnly` is enforced inside them.
+//! **The rule for adding a method:** every one becomes a message a hostile
+//! renderer may send at will, in any order, with any arguments. So the
+//! operations are the ones that were measured (roadmap-history.md §B18.6) and no
+//! more. Nothing hands back a live reference to broker state, and nothing lets
+//! the caller name a *thing* the broker holds rather than a *request* it decides
+//! about. The jar is the worked example: it used to be `broker.jar()`, which
+//! cannot cross a process boundary and on this side of it would have handed the
+//! page's parsers the session. It is three operations now, with `HttpOnly`
+//! enforced inside them.
 
 use std::sync::Arc;
 

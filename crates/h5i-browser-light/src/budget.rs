@@ -1,35 +1,25 @@
 //! What one page is allowed to spend before the engine stops answering it.
 //!
-//! # The gap this fills
+//! Every other limit is **per request**: a response size cap, a redirect count,
+//! a timeout. None bounds a page that makes *many* requests, so a script in a
+//! loop, each fetch individually well-behaved, could keep the engine busy
+//! indefinitely. The receipts would faithfully record all ten thousand, and
+//! recording a runaway is not bounding it.
 //!
-//! Every limit this engine had was **per request**: a response size cap, a
-//! redirect count, a per-request timeout. None of them bounds a page that makes
-//! *many* requests. A script in a loop, each fetch individually well-behaved,
-//! could keep an engine busy indefinitely and there was nothing to say stop —
-//! the receipts would faithfully record every one of ten thousand requests, and
-//! recording a runaway is not the same as bounding it.
+//! **Per navigation, not per session**, because of who is spending. A page
+//! fetching in a loop is untrusted code the engine cannot otherwise stop. An
+//! agent navigating twenty times is the principal exercising its own authority,
+//! and bounding that would be the engine deciding how much work its operator may
+//! ask for. So the counters reset on navigation: a fresh page is a fresh
+//! decision by the agent. A session-wide ceiling is coherent and unbuilt, since
+//! the failure it would prevent belongs to the thing driving the engine rather
+//! than to a page inside it.
 //!
-//! # Why per navigation, and not per session
-//!
-//! Because of who is spending. A page fetching in a loop is untrusted code the
-//! engine cannot otherwise stop, and that is what a budget is for. The *agent*
-//! navigating twenty times is the principal exercising its own authority, and
-//! bounding that would be this engine deciding how much work its own operator
-//! may ask for. So the counters reset when the agent navigates, and a page gets
-//! a fresh allowance because a fresh page is a fresh decision by the agent.
-//!
-//! A session-wide ceiling on top of this is a coherent thing to want and is not
-//! built: nothing has asked for one, and the failure it would prevent —
-//! an agent looping on `navigate` — is a failure of the thing driving the
-//! engine rather than of a page inside it.
-//!
-//! # Exceeding is a refusal, not a crash
-//!
-//! Over budget, the next request is denied and recorded as denied, with
-//! `budget-exceeded` as the reason. The page sees a failed fetch, which is a
-//! thing pages handle; the agent sees the refusal in the request log and in the
-//! snapshot's notes. Nothing is torn down, because a page that spent its
-//! allowance has still rendered whatever it managed and that is worth reading.
+//! **Exceeding is a refusal, not a crash.** The next request is denied and
+//! recorded as denied with `budget-exceeded`. The page sees a failed fetch,
+//! which pages handle; the agent sees it in the request log and the snapshot's
+//! notes. Nothing is torn down, because a page that spent its allowance has
+//! still rendered whatever it managed.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};

@@ -1,52 +1,30 @@
 //! A WebSocket client, for the one case this engine is uniquely good at.
 //!
-//! The argument for building this is narrower than "pages use WebSocket". It is
-//! that **this engine's stated advantage is reach** (ROADMAP §B11.3): a cloud
-//! browser cannot open `localhost:3000`, a staging host, or anything behind a
-//! VPN, and for a coding agent that is most of what it needs to look at. A dev
-//! server's hot-module-reload channel is a WebSocket. So the place this engine
-//! alone can reach was also the place it rendered a half-built page, and
-//! §B11.5.9's "a live application shows nothing without them" is not a general
-//! gap so much as a hole in the middle of the case we win.
+//! This engine's advantage is reach (roadmap-history.md §B11.3): a cloud browser
+//! cannot open `localhost:3000`, a staging host, or anything behind a VPN, which
+//! is most of what a coding agent needs to look at. A dev server's
+//! hot-module-reload channel is a WebSocket, so the place this engine alone can
+//! reach was also the place it rendered a half-built page.
 //!
-//! ## What is built, and what is refused by name
+//! **`ws://` and `wss://`.** The old refusal said `wss://` needed a raw TLS
+//! stream the HTTP client does not expose, which was true of `reqwest` and had
+//! been generalised into a property of the engine. A socket that owns its
+//! transport needs nothing from the HTTP client, and this one carries `rustls`
+//! directly. The policy path is untouched: check, receipt, then dial.
 //!
-//! **`ws://` and `wss://`.** The refusal that used to stand here said `wss://`
-//! "needs a raw TLS stream, which the HTTP client here does not expose". That
-//! was true of `reqwest` and had been quietly generalised into a property of
-//! the engine, which it never was: a socket that **owns its transport** needs
-//! nothing from the HTTP client. Lightpanda gets `wss://` for free for exactly
-//! this reason — its socket is a curl handle, and curl carries the TLS. Here
-//! the socket carries `rustls` directly, and both crates were already in the
-//! tree through `reqwest`'s own TLS.
+//! **Loopback only whenever an egress proxy is configured.** A raw socket does
+//! not go through the proxy `reqwest` was given, and inside a box that proxy is
+//! how the sandbox's allowlist stays in the path, so a non-loopback socket is
+//! refused whenever `$H5I_EGRESS_PROXY` is set. Loopback is exempt because the
+//! proxy already excludes it, so nothing in the path is bypassed.
 //!
-//! The policy path is untouched: check, receipt, *then* dial, and every frame
-//! receipted after that. TLS changes what the bytes travel through, not who
-//! decided they could.
-//!
-//! **Loopback only, whenever an egress proxy is configured.** This is the
-//! important one, and it is unchanged by TLS: the refusal was never about
-//! encryption. A WebSocket is a raw socket, so it does not go through
-//! the proxy that `reqwest` was configured with — and inside a box that proxy is
-//! how the sandbox's own allowlist stays in the path. Rather than quietly open a
-//! hole in it, a non-loopback socket is refused whenever `$H5I_EGRESS_PROXY` is
-//! set. Loopback is exempt because the proxy already excludes it
-//! (`NoProxy::from_string("localhost,127.0.0.1,::1")` in [`crate::net::LocalBroker`]),
-//! so nothing is being bypassed that was ever in the path.
-//!
-//! ## Every frame is receipted
-//!
-//! The engine's central claim is that the receipt is not an observation of the
-//! network, it *is* the network. A socket open for ten minutes carrying four
-//! hundred messages could be honoured two ways: receipt the handshake only, and
-//! quietly stop covering everything after it — which is exactly the CONNECT-gate
-//! blindness this engine exists to remove — or receipt every frame.
-//!
-//! Every frame. Each one is written as an ordinary request/response pair with
-//! `WS-SEND` or `WS-RECV` as its method, so the console, `h5i box watch` and the
-//! export bundle all show socket traffic **with no changes to any of them** and
-//! no new phase for an old reader to skip. It costs a sink write per frame,
-//! which is the price of the guarantee rather than an oversight.
+//! **Every frame is receipted.** The receipt is not an observation of the
+//! network, it *is* the network, so a socket open ten minutes carrying four
+//! hundred messages cannot be receipted at the handshake alone: that is the
+//! CONNECT-gate blindness this engine exists to remove. Each frame is written as
+//! an ordinary request/response pair with `WS-SEND` or `WS-RECV` as its method,
+//! so the console, `h5i box watch` and the export bundle need no changes and no
+//! old reader has a new phase to skip.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;

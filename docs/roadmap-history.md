@@ -1,0 +1,9159 @@
+# ROADMAP history: h5i as a contained agentic development environment
+
+Superseded 2026-08-27 by the browser positioning in
+[`ROADMAP.md`](../ROADMAP.md), and kept because the machinery it describes
+exists and is tested. Read it as the reference for the box, the worktree, the
+viewer, the share path and the phases that built them, not as the product's
+framing. Where it disagrees with `ROADMAP.md`, `ROADMAP.md` wins.
+
+Sections 1 to 12 are the environment: scope, architecture, phases, and the
+decisions behind them. Section 10 holds decisions taken, section 11 what was
+open when this was current. Live code still cites these numbers, so they keep
+their identifiers.
+
+The status notes below were written while this was the live plan and are
+preserved as written.
+
+**M0 through M5 are built. M6 is mostly built. M7 (the terminal viewer) is
+built but undriven.** What is not done, stated plainly so it is not read as
+finished:
+
+- The exit criteria for M4, M5 and M7 have none of them been demonstrated with
+  a real agent or a real person in the loop. Every piece each of them needs is
+  built and tested.
+- The control lock is not enforced on the agent's side (section 11.1).
+- `npx skills add` is unverified, for lack of a Node 22 runtime.
+- There is no demo video.
+- `/blog/` and `/pitch/` still argue the old positioning.
+
+M7 earns a read for one thing beyond its own feature. It found that **every
+human takeover through the web viewer had been silently doing nothing** since
+M5, for the same reason two of M4's findings existed: a message the other side
+never dispatches looks exactly like enforcement and enforces nothing (5.10.1).
+
+---
+
+## 1. The new one-liner
+
+> Give coding agents full autonomy to build and test web apps inside a
+> disposable environment, without exposing your machine or your credentials.
+
+The product is a **contained agentic development environment**: a throwaway box
+that holds the code, the agent, the toolchain, the dev server, and a real
+browser, with nothing of the host inside it and nothing leaving it except a
+reviewed patch.
+
+PR review stays as the sharpest demo and the first buyer workflow ("run outside
+or AI generated code safely"), but it is no longer the product boundary. A PR is
+just one way to fill the box.
+
+## 2. Five components
+
+Everything we build maps to exactly one of these. Anything that maps to none is
+out of scope.
+
+1. **Disposable workspace.** The code is *copied* into the box: a PR, an
+   existing repo, a fresh project, and every dependency it pulls. No host
+   directory is mounted read write into the agent's reach.
+2. **Sandboxed coding agent.** Claude Code or Codex, its child processes, MCP
+   servers, package managers, builds, tests, and the dev server all run inside
+   the same boundary. A runaway agent stays in the box.
+3. **Credential and network broker.** No SSH key, GitHub token, model API key,
+   cloud credential, Docker socket, or personal browser profile enters the box.
+   A host side broker authenticates the calls the policy allows, and egress is
+   an allowlist.
+4. **Browser in the box, two interfaces.** Chrome and its profile live inside.
+   The agent drives it through a CLI; the human watches the same viewport and
+   can take over. The host browser never connects to the target app.
+5. **Output gate.** At the end you export a patch, a report, screenshots, and an
+   execution receipt, after inspection. The agent has no direct write path to
+   the host.
+
+The value is not any single one of these. It is that code, agent, dev server,
+browser, and export sit inside one boundary that both the agent and the human
+can operate.
+
+## 3. Scope cut
+
+### 3.1 What survives
+
+- `crates/h5i-sandbox/` in full: `sandbox.rs`, `sandbox_policy.rs`,
+  `container.rs`, `supervisor.rs`, `seccomp_notify.rs`, `cgroup.rs`,
+  `secrets.rs`, `secrets_broker.rs`, `auth_proxy.rs`. This is the moat.
+- `crates/h5i-core/src/env.rs` as the lifecycle engine, minus its couplings
+  (see 3.3).
+- The container profile model: `.h5i/env.toml`, isolation tiers, `net.egress`
+  allowlist plus the host side CONNECT proxy, resource limits, env allowlist,
+  the tee shim observation path.
+- `containers/Containerfile.agent-{claude,codex}` as the base for the agent box.
+
+### 3.2 What goes
+
+Every subsystem that exists to record provenance rather than to contain
+execution:
+
+- CLI surfaces: `capture`, `recall` (log, blame, objects, search, context,
+  memory), `audit`, `compliance`, `maturity`, `vibe`, `team`, `orchestra`,
+  `msg`, `pr`, `notes`, `push`/`pull`/`share`, `serve`, `mcp`, `resume`,
+  `status`, `doctor`, `migrate-remote`, `setup-remote`.
+- Modules: `repository.rs`, `blame.rs`, `metadata.rs`, `ctx.rs`, `msg.rs`,
+  `team.rs`, `memory.rs`, `prompt_score.rs`, `attention.rs`, `recap.rs`,
+  `review.rs`, `risk.rs`, `rules.rs`, `compliance.rs`, `radio.rs`, `pr.rs`,
+  `lfs.rs`, `session_log.rs`, `ui.rs`, `server.rs`, `vibe.rs`, `resume.rs`,
+  `mcp.rs`.
+- The MCP server in full, including the `h5i_env_*` tool family. 3.0k lines in
+  `mcp.rs` plus its CLI entry point, and with it the `#![recursion_limit =
+  "512"]` in `lib.rs`, which exists only for that file's `json!` literal.
+- The whole `crates/h5i-orchestra/` crate.
+- The embedded web dashboard `web/`, the `plugin/` directory, the `web` cargo
+  feature, and the axum dependency.
+
+  **Partly reversed, 2026-08-05.** The dashboard's twelve provenance views are
+  gone for good, but its *Sandbox* view was the one screen that described boxes
+  rather than commits, and losing it left no way to see the fleet at a glance.
+  `web/`, the `web` feature and axum are back, scoped to that one screen and
+  nothing else: `h5i ui`, read-only (every route is a GET), loopback-only and
+  token-gated, built on manifests, the resolved policy, the env event log and
+  `receipt.rs`. `risk.rs` is *not* back. The badges are arithmetic over
+  receipts, so nothing on the screen is a score. See `crates/h5i-core/src/server.rs`.
+- Git notes, `refs/h5i/{notes,context,memory,msg,team}`, and the sharing
+  machinery over them.
+
+Rough size: the workspace is ~95k lines of Rust today, of which `h5i-core` is
+~63k and the root binary ~14k. The target after the cut is a binary plus two
+crates in the 20k to 25k range.
+
+### 3.3 The couplings that make this real work
+
+`env.rs` is 9.2k lines and does not stand alone today. It reaches into:
+
+| Coupling | Where | Replacement |
+| --- | --- | --- |
+| `crate::objects` evidence captures | run/shell capture, `ingest_shell_spool` | new `receipt.rs`: a box local, append only JSONL of commands, exits, timings, egress hosts, file diffs, with the same secret redaction |
+| `crate::ctx` reasoning branch | `pin_worktree_context`, `fork_branch_no_switch`, context merge on apply | drop. The reasoning branch is a provenance feature, not a containment feature |
+| `crate::msg` / `crate::team` | env inbox, `submit`, `submit_review`, `record_agent_reply` | drop with the orchestra |
+| `crate::repository` git notes | `H5I_NOTES_REF` reads and writes on propose/apply/inspect | drop. Export carries the receipt as a file, not as a note |
+| `crate::msg::sanitize_display` | terminal injection defense on untrusted strings | keep, move into a small `redact.rs` next to the receipt writer |
+
+The mediated commit path validation in `env.rs` (canonicalized `$WORK`
+allowlist, nested `.git` rejection, symlink escape rejection, gitlink round
+trip) is not provenance. It **is** the output gate, and it moves to the export
+path unchanged.
+
+## 4. Command surface
+
+```
+h5i box .                    # snapshot the current repo into a box
+h5i box <repo-url>           # clone an external repo into a box
+h5i box --pr <N|url>         # review a PR in a box
+h5i box --new                # empty box, agent builds from zero
+
+h5i box ls | status <name> | rm <name> | gc
+h5i box shell <name>         # attach a confined interactive session
+h5i box run <name> -- <cmd>  # one policy enforced command
+h5i box view <name>          # open the human viewer for this box
+h5i box export <name>        # inspect and emit patch, report, receipt
+h5i box probe                # host capability report
+h5i box allow <host>         # persistent egress allowlist entry
+h5i box cache ls|refresh|rm  # per project warm dependency caches
+
+h5i browser status|take|release   # the control lock, and who holds it
+h5i browser url  # the viewer URL for this box
+
+h5i skill install|show|path      # write or print the embedded agent skill
+
+h5i ui                           # the box console: the whole fleet, read-only
+```
+
+`h5i dev *` and `h5i env *` stay as hidden aliases through one release, then
+are removed. The command is `box` because that is the noun everything else uses.
+
+The non-interactive lifecycle verbs (create, run, export, ls, status, and the
+rest of the reporting set) take `--json` and emit a stable envelope on stdout,
+human notes on stderr: that contract is the programmable surface an SDK would
+wrap, and it is specified in 6.2.
+
+**Driving the browser is `agent-browser`, not `h5i`** (7.). Inside the box the
+agent runs it directly:
+
+```bash
+agent-browser open http://localhost:3000
+agent-browser snapshot                     # accessibility tree with @refs
+agent-browser click @e2
+agent-browser fill @e3 "test@example.com"
+agent-browser screenshot shot.png
+```
+
+h5i's own browser surface is deliberately three verbs: the control lock, and
+the viewer URL. Wrapping forty automation verbs would buy nothing but drift.
+
+## 5. Architecture
+
+### 5.1 Workspace: copy in, not mount
+
+Today `$WORK` is a real git worktree on the host, bind mounted into the
+container at `/work`. That is convenient and it is the wrong boundary for this
+product: a container escape or a careless `--mount` reaches host files, and the
+worktree keeps the host repo's `.git` in the blast radius.
+
+Target: the box gets a **copy**. Sources are a `git archive` of the working
+tree, a clone of a URL, a fetched `refs/pull/<n>/head`, or nothing. The copy
+lives in a container volume owned by the box. The host repo is opened read only
+at creation time, and never again during the run.
+
+Consequences to design for:
+
+- Round trip is by patch, not by shared inode. Export writes a patch the host
+  applies. Nothing writes into the host repo without a human step.
+- Dependency install happens in the box, once, and the box keeps its own package
+  caches. Warm caches across boxes are a committed feature, designed in 5.8.
+- The kernel tiers (`process`, `supervised`) keep the worktree backend, since
+  they have no volume abstraction. `container` becomes the default tier for
+  `h5i box`, and the copy in model is container only at first.
+
+### 5.2 Where the browser runs
+
+The first draft of this section put the browser in a second container and
+reached for a Podman **pod** to share a network namespace with the agent. That
+was the wrong starting point, for two reasons found while planning M4.
+
+**One: the supervised tier already has stronger network scoping than the
+container tier.** `supervised` puts the box in a private network namespace and
+enforces `net.egress` with **nftables rules pinned to resolved IPs**, DNS
+pinned by a hosts file, and a seccomp-notify gate on `socket()`. That is L3/L4:
+a program that ignores proxy settings still cannot reach an off-list address.
+The container tier's allowlist is an HTTP/HTTPS CONNECT proxy, which only binds
+proxy-respecting tooling. The container tier buys **portability**, not tighter
+network control, and this document said the opposite for two drafts.
+
+**Two: one box is simpler than two.** Put the browser in the *same* box as the
+agent and the dev server on `localhost:3000` is reachable with no netns
+sharing, no pod, no port publishing and no second image. At the kernel tiers
+the "image" is the host filesystem under Landlock grants, so the browser is a
+profile change: grant Chrome and the agent-browser binary, and launch the
+daemon inside the box.
+
+So M4 targets a single supervised box:
+
+```
+box (supervised)   private netns, nftables egress allowlist, Landlock, seccomp
+├── the agent, its builds and tests, the dev server on localhost:3000
+├── headless Chrome (no X: --headless=new)
+└── the agent-browser daemon, driven over the CLI
+```
+
+The container tier is the **portability** path, and once the browser lives in
+the same box it costs almost nothing: an image with Chrome and agent-browser
+(`containers/Containerfile.browser`), a `/dev/shm` big enough for a renderer,
+and the host-path grants skipped because the image provides them. All three are
+built. The pod split was the expensive part, and dropping it took the cost with
+it.
+
+One thing this costs, and it should be stated: our seccomp deny-list blocks the
+namespace syscalls Chrome's own sandbox needs, so Chrome runs with
+`--no-sandbox` inside the box. h5i's box is the boundary, not Chrome's; the
+same is true under rootless Podman. It is a real reduction in defence in depth
+and it belongs in the limits section rather than in a footnote.
+
+### 5.3 Browser control
+
+The automation itself is **agent-browser** (7.), running inside the `browser`
+container. h5i does not reimplement clicking. What h5i owns is everything
+around it:
+
+- The daemon and its CDP port stay inside the box's network namespace. Nothing
+  is published to the host; the human viewer reaches the stream through an
+  h5i-owned forward with a per box token (5.9).
+- Chrome runs with a **fresh profile created in the box**. No host profile, no
+  host cookie jar, no host extension, no host history.
+- Chrome's egress is the box's egress: at `supervised` that is the nftables
+  allowlist, which needs no cooperation from Chrome at all. Loopback stays open
+  so the dev server is always reachable. agent-browser's own
+  `--allowed-domains` is set from the same policy as a second, in-process
+  layer.
+- **AI features off.** agent-browser's `chat` and the dashboard's AI panel send
+  page content to an external gateway. In a box that is an exfiltration path
+  with a friendly name, so `AI_GATEWAY_API_KEY` is never injected and `chat` is
+  refused by policy.
+- Downloads, uploads, and clipboard resolve inside the box. A download lands in
+  `/work/.h5i/downloads` and is subject to the export gate like any other file.
+- Every browser command, plus console and network errors, lands in the receipt.
+
+### 5.4 Control lock
+
+Neither agent-browser nor CDP arbitrates between two clients: the agent's CLI
+session and a human typing into the stream can both dispatch input at the same
+moment, and the result is a mess neither of them can reason about. The lock is
+h5i's, and Neko's `request / release / take / give / reset` is the semantic
+model we copy.
+
+- The agent holds control by default.
+- A human interaction in the viewer takes control. Automation pauses at the next
+  command boundary, and the next agent browser command returns a typed "control
+  held by human" error rather than fighting for the pointer.
+- On release, the agent must re snapshot before acting, because the DOM it
+  remembers is stale.
+- Exactly one automation client per box. Multi agent shared *control* is out of
+  scope: two clients steering one browser is a race with no arbiter, and the
+  control lock exists precisely so it cannot happen. This says nothing about
+  several boxes coordinating — see part T, whose whole design is that agents
+  exchange information and never share a driver, a credential, or a grant.
+
+### 5.5 Credentials
+
+- Model API: the key stays on the host. `auth_proxy.rs` already injects it into
+  outbound requests from the box, scoped per runtime, so a Claude box cannot
+  reach the OpenAI credential or vice versa. Keep, make it default on rather
+  than opt in.
+- **Any other service: the same mechanism, generalized.** An earlier draft of
+  this section proposed a GitHub "capability helper": a host side process
+  serving a fixed verb set (fetch a PR head, read issue text, open a draft
+  PR). That is the wrong shape for this repository. It overfits h5i to one
+  vendor, and the next request is GitLab, then Jira, then whatever else, each
+  adding vendor code to a tool whose job is the boundary.
+
+  The general primitive is the one already here: a **host side proxy that
+  injects a credential for an allowlisted host and never lets the box hold
+  it**. Generalize `auth_proxy.rs` from "the model API" to "any host named in
+  the profile, with a credential resolved host side", and GitHub becomes a
+  policy entry rather than a feature:
+
+  ```toml
+  [profile.review.net]
+  egress = ["api.github.com"]
+  [profile.review.auth."api.github.com"]
+  header = "Authorization: Bearer ${GITHUB_TOKEN}"   # resolved on the host
+  ```
+
+  **The shape this has to take is a decision, not a detail.** `auth_proxy.rs`
+  today is a *reverse* proxy: the box is handed a base-URL override
+  (`ANTHROPIC_BASE_URL`) pointing at a loopback listener that injects the real
+  credential and forwards to one pinned upstream host. Generalizing it has two
+  candidate shapes, and they are not equivalent:
+
+  1. **Reverse proxy per grant** (small, honest, limited). The profile names a
+     host, the env var holding the credential host side, and the base-URL
+     variable the client respects. Nothing new is invented: it is the existing
+     mechanism with the hard-coded runtime table replaced by profile data. The
+     limit is real and must be stated: it only works for clients you can point
+     at a different origin, so `curl https://api.github.com` still goes nowhere.
+  2. **Forward proxy with header injection** (general, expensive). `HTTPS_PROXY`
+     plus per-host injection means terminating TLS in the proxy, which means a
+     CA the box trusts. That is a substantially larger security surface: a box
+     that trusts an h5i CA is a box whose TLS you have taken responsibility for.
+
+  Option 1 is the one to build first, precisely because its limit is legible.
+  Option 2 should not be reached for until something concrete needs it, and
+  when it is, it needs its own design note rather than an afternoon.
+
+  Restricting *what* the box may do with that credential is authorization, and
+  it belongs where it is already solved: a fine-grained token, scoped to one
+  repository and the operations you meant. If a generic rule is wanted later it
+  is a method/path condition on the proxy, still policy data, not vendor code.
+  Vendor ergonomics (a friendly `gh`-shaped CLI) belong in a separate tool.
+
+  Worth noting how little is left after that: `h5i box <pr>` already fetches
+  the PR head **host side, before the box exists**, so the demo workflow needs
+  no credential in the box at all.
+- Everything else routes through `secrets_broker.rs` with a per grant record.
+- Per env HOME state already exists (`prepare_home_state`, `policy.home_binds`)
+  and is a copy of the host agent config, seeded once, never written back.
+  Audit what that copy actually carries and strip anything credential shaped
+  from the seed rather than trusting the copy.
+
+### 5.6 Output gate
+
+`h5i box export` produces, after showing a summary and asking:
+
+- `patch.diff`: the tree diff, path allowlisted to `$WORK`, no nested `.git`, no
+  symlink escapes, no agent introduced gitlinks. Reuses today's mediated commit
+  validation.
+- `report.md`: what the agent says it did.
+- `screenshots/`: what the browser actually rendered.
+- `receipt.json`: commands with exit codes and wall or CPU or RSS, egress hosts
+  contacted and which were denied, files touched, policy digest, image digest,
+  and the tier that was actually enforced.
+
+Secret redaction and size caps apply to all four. The receipt is the honest
+part of the export: it is generated from observation, not from the agent's
+account of itself.
+
+### 5.7 Receipt integrity
+
+The receipt is generated **inside** the box, by the shell shim and the browser
+daemon. That is acceptable, and the only property that has to hold is that the
+agent cannot rewrite what has already been recorded.
+
+Today that property comes from **sealing, not from an fd**, and it is already
+true:
+
+- The box's write window under its env directory is exactly `<env>/spool`. The
+  receipt log (`<env>/receipt.jsonl`) and the stored payloads
+  (`<env>/receipts/`) are siblings of that spool, outside every grant. The box
+  stages a record; the host ingests it. There is no path from inside to a
+  record the host has already written. (`prepare_env_capture_spool`, pinned by
+  a unit test and an integration test.)
+- Ordering and timestamps are the host's, applied at ingest.
+- Two fields are host observed and never taken from the box: process exits and
+  resource usage come from the supervisor's `wait4`, and egress comes from the
+  allowlist proxy's own log.
+- Every record carries the **lane** that observed it (`host-env-run` is host
+  observed; `tee-shim` and `inbox-capture` are box claimed), so the two kinds
+  of evidence never blur together.
+
+What an agent can still do is stage *extra* records, or stop writing. Both are
+visible: a gap between host observed exits and box reported commands is itself
+a receipt finding. We do not claim more than that, and the docs say it in these
+terms.
+
+An inherited-fd writer (records streamed to a host collector over a pipe, no
+file in the box at all) remains the stronger design, because it also removes
+the staging window. It is worth doing when the container tier's spool becomes
+the common path, not before: the sealing argument above already covers the
+"cannot rewrite" half, which is the half that matters for trust.
+
+### 5.8 Warm caches
+
+Cold dependency install is the difference between a 20 second box and a four
+minute box, so caches are in scope rather than deferred.
+
+- One cache per project and ecosystem, keyed by a digest of that ecosystem's
+  lockfile set, under `.git/.h5i/cache/<eco>/<key>/`. **Built** (`h5i box cache
+  ls|mounts|rm`, `crates/h5i-core/src/cache.rs`, unit tested). A cache whose
+  key no longer matches the project is listed as stale and never handed to a
+  box: packages resolved for a different dependency set are a silent, hard to
+  explain wrong answer.
+- Mounted **read only** into the agent box at the ecosystem's cache path
+  (`~/.cargo/registry`, `~/.npm`, `~/.cache/uv`, …). A read only cache is a
+  correctness problem for nothing: every package manager falls back to fetching
+  what it cannot find. **Built**: `ResolvedPolicy::ro_binds` (runtime-only, never
+  serialized, so it cannot move a pinned digest) is applied as `MS_BIND` then
+  `MS_REMOUNT | MS_RDONLY` on the kernel tiers and as `--mount ...,ro` at the
+  container tier. `h5i box cache mounts` prints exactly what a box would get.
+- Writing to a cache happens only in a dedicated `h5i box cache refresh` box,
+  which runs the install step alone, with egress narrowed to the registry hosts
+  and no agent inside it. The cache is populated by a build, never by an agent
+  session. **Built**: `ResolvedPolicy::cache_write` is a single optional
+  writable bind, produced only by `h5i box cache refresh` and reachable from no
+  profile, so an agent box cannot make its own cache writable. The bind targets
+  the same path the read-only mount later exposes, so what is fetched is
+  exactly what a later box sees, and the throwaway box is removed whether the
+  fetch succeeded or not.
+
+  One thing refresh cannot do for you: no built-in profile fits it. `default`
+  denies network (it is the build/test profile) and the agent profiles grant a
+  model API instead, so a refresh box needs a project-declared profile whose
+  egress is the registry hosts and nothing else. `refresh` refuses with that
+  profile written out, ready to paste, rather than creating a box whose fetch
+  could not have worked.
+- `h5i box cache ls|refresh|rm` are the whole surface. A box records which cache
+  volume and which digest it used, in the receipt.
+
+This keeps the property that matters: no mutable surface is shared between an
+agent box and anything else.
+
+### 5.9 The viewer forward
+
+agent-browser's stream server assumes a friendly localhost: connect to the
+WebSocket and you can both watch and type. Inside a pod that is fine, because
+nothing else is in the pod. It is not fine on a developer machine with a
+browser on it.
+
+So the port is never published. `h5i box view` starts a small forward the host
+owns. It reaches into the box's private network namespace the same way the
+supervisor already does (h5i is the parent process and holds the pid), rather
+than by opening a hole in the netns:
+
+- It binds `127.0.0.1` only, on a port h5i chose, and prints the URL.
+- Every connection presents a **per box token**, minted at box creation and
+  never written into the box.
+- It refuses cross origin WebSocket handshakes, so a page the human happens to
+  have open cannot reach into a running box.
+- It enforces the control lock (5.4) on the input direction: frames flow out
+  always, input flows in only for the holder.
+
+That is the whole trusted surface between the human and the box, and it is
+about as small as this can be made.
+
+### 5.10 The terminal viewer
+
+**Built** (`crates/h5i-core/src/termview/`, `h5i box view --term`). The web
+viewer reaches the human through their host browser, which leaves one awkward
+beat in the story: everything runs in the box, except the watching, which
+happens in the most credential-laden program on the host. The terminal viewer
+closes that beat. It renders the boxed viewport in the terminal itself, in a
+split pane next to the agent, and over SSH when the box host is remote. It is
+also the demo the launch needs: one recording showing agent, dev server, and
+boxed browser in a single terminal frame.
+
+The line for the story is: **the browser is untrusted, the terminal is the
+trusted path.**
+
+**It is not a client of the forward, and that changed during the build.** The
+first plan had the TUI connect to `h5i box view` over loopback with the per-box
+token. That is a listener and a credential bought for nothing: the viewer runs
+in the same process as the CLI the human typed, so it can do what the forward
+does: fork, enter the box's user and network namespaces by pid, connect, and
+take the socket back over `SCM_RIGHTS`. So `--term` binds no port, mints no
+token, and serves no page. There is nothing for another local process to
+connect to, so there is nothing to authenticate. The forward keeps its token
+because it must listen; this does not.
+
+What it is made of, and what each part is for:
+
+- **`ws.rs`**: a WebSocket client, roughly the RFC 6455 subset one connection
+  to one server needs. Everything the box sends is untrusted: reserved opcodes
+  and reserved bits are refused, a masked server frame is refused, lengths are
+  capped before they become allocations, and fragmented messages cannot grow
+  past the cap across frames.
+- **`proto.rs`**: the stream's messages. Pinned to what agent-browser actually
+  dispatches (`input_mouse` / `input_keyboard` / `input_touch`) rather than to
+  what the DOM calls them, for reasons in the bug note below.
+- **`image.rs`**: `zune-jpeg`, which forbids unsafe code, with dimensions
+  capped before decode. Frames are scaled to the pixel size they will actually
+  be displayed at, because every byte crosses a PTY and over SSH that is the
+  whole cost of the viewer.
+- **`kitty.rs`**: the graphics protocol, generated **by the viewer and only by
+  the viewer**. `q=2` on every render command, so the terminal's replies never
+  land in the middle of the keystrokes being translated into page input. Direct
+  transmission only: the file and shared-memory mediums are faster and only
+  work when the terminal is on this machine.
+- **`input.rs`**: terminal bytes to CDP events, including the two places a
+  terminal and a browser genuinely disagree: a terminal reports presses with no
+  releases (so the pair is synthesized, and press-and-hold does not work), and
+  it reports cells rather than pixels (so clicks map through the placement, at
+  cell resolution).
+- **`status.rs`**: the row the page cannot reach.
+- **`term.rs`**: raw mode, alternate screen, mouse and bracketed paste, all
+  behind an RAII guard that restores on every path out.
+
+Three properties worth stating plainly:
+
+- **The viewer generates every escape sequence.** The box supplies compressed
+  pixels inside a WebSocket message and nothing else. Terminal output is an
+  escape surface (OSC 52 clipboard writes, title and hyperlink control, the
+  graphics protocol's own file-reading mediums, parser bugs), and no byte from
+  the box reaches the PTY. This is `sanitize_display` applied to pixels instead
+  of strings.
+- **A trusted status line.** Row one is the viewer's: box, mode, lock holder,
+  origin, egress, console errors. A page cannot draw there, and it cannot be
+  clicked through into the page either. The origin is sanitized on the way in
+  (escape sequences *and* bidi overrides, which needed a fix in `redact.rs`, since
+  they are not control characters and the existing pass let them through) and
+  it is never the field that gets truncated: a URL too long for the row loses
+  its path, and an origin too long for the row is cut from the **left**, since
+  shortening `bank.example.evil.test` from the right is the spoof itself.
+- **Two modes, because a terminal makes them natural.** VIEW is read-only and
+  leaves the mouse to the terminal, so selection and scrollback still work.
+  INTERACT takes the control lock: reaching for the controls *is* taking them,
+  which is the lock's own rule and the only sensible one here, since the
+  terminal is busy being the viewer and there is no other window to run
+  `h5i browser take` in. `Ctrl-]` is reserved to get back out, because raw mode
+  hands the viewer every other key.
+
+**Still open, and deliberately not built yet.** LOGIN mode, withholding frames
+and snapshots from the agent while a human types a credential, rests on the
+agent-side enforcement decision in 11.1, and shipping it as advisory would
+overstate it. Pixel-resolution mouse reporting (`?1016`) would place clicks
+better, but a terminal that does not support it keeps reporting cells with no
+way to tell, which is the quiet-wrong-answer shape this codebase keeps getting
+bitten by. The file and shared-memory transmission mediums are the local
+fast path. tmux passthrough is untested.
+
+And the claim, at its real size: this shrinks the TCB of *watching*, it does
+not add a boundary. "The box cannot send escape sequences to your terminal"
+already held for the web viewer, because the box cannot reach the PTY at all.
+The delta is that a small Rust module plus a memory-safe JPEG decoder replaces
+a host Chrome tab as the thing doing the watching, plus the status line and the
+mode model that only a terminal makes possible. The stronger "entirely
+untrusted guest" framing waits for the microVM backend, like every other claim
+of that shape.
+
+**terminal-browser (zenbu-labs, MIT) is the reference, not the base.** Its
+architecture runs Chromium *on the host* (Electron offscreen rendering, a
+native input helper, macOS only today), which is the trust inversion of ours,
+and its hard problems are the ones h5i has already solved on the other side of
+the boundary. What we took is the Kitty graphics rendering technique and the UX
+patterns; what we did not take is Electron on the host, a host Chromium, or an
+input helper.
+
+#### 5.10.1 The bug this work found in the web viewer
+
+`viewer.html` sent `mousedown`, `keydown`, `wheel`, the DOM event names.
+agent-browser's stream server dispatches on `input_mouse`, `input_keyboard` and
+`input_touch`, and falls through to `_ => {}` for everything else. So **every
+human takeover through the web viewer was a no-op**, and silently: the socket
+stayed healthy, frames kept arriving, and the forward counted the input frames
+as forwarded. The receipt would have recorded "a human drove this box" for a
+session in which nothing a human did reached the page.
+
+M5 verified the *gate* (input dropped without the lock, forwarded with it) and
+that is exactly what it verified; nothing checked that a forwarded frame moved
+anything. It is the same class as the M4 findings: a variable the tool never
+reads, a message the server never dispatches. Both look like enforcement and
+enforce nothing.
+
+Fixed, with the correct message names, CDP's string button names, a
+`clickCount` (a press with zero is not a click as far as Chrome is concerned),
+and `text` omitted rather than nulled on key-up. Pinned by a test that reads the
+page and refuses a DOM event name. The stale control indicator was fixed at the
+same time and for a related reason: with input working, a display permanently
+reading "agent" would tell someone who had just taken the lock that it had
+failed. There is no channel to push updates on, since the stream is a straight relay,
+so the holder is stamped into the page at serve time and the page says that
+is what it is.
+
+### 5.11 Share: the first inbound path (built, 2026-08-10)
+
+Everything else in this document is about what leaves the box. Share is about
+what comes in: a second person, on their own machine, trying the web app the
+agent built while it still runs inside the box. The demand is the ngrok use
+case ("here, click around") without the part where a tunnel URL quietly
+exposes a dev server that was never meant to face the internet, and without
+standing up an account, a domain, or a server of ours.
+
+**Port sharing, not viewer sharing, and that is a use-case decision.** Two
+shapes were on the table. Sharing the *viewer*, the agent-browser stream of
+5.9 carried over the network instead of loopback, reuses the forward and the
+terminal viewer almost whole, but it ships pixels: one viewport, one control
+lock, no independent navigation, no devtools on the other end, no feel for the
+app's own latency. Sharing the *port* puts the real app in the other person's
+own browser, which is what "try it" means. The viewer share is a different
+feature (a joint review session), not a cheaper version of this one, so it is
+not a prerequisite and does not gate this; if it lands later, it lands on the
+same bridge.
+
+**The bridge is the feature; transports are plugins under it.** `h5i box
+share` starts a host-side process with three jobs, none of which depend on how
+the bytes travel:
+
+- **Reach the dev server.** The box's port is never published. The bridge
+  enters the box's network namespace by pid and dials loopback per connection,
+  exactly the seam the viewer forward and the terminal viewer already use
+  (5.9, 5.10). Nothing inside the box learns *who* is visiting: a quick tunnel
+  hands its origin `Cf-Connecting-Ip`, `Cf-Ipcountry` and `X-Forwarded-For`,
+  and the gate drops every one of them before the box sees a byte, because a
+  person who clicked a link agreed to look at a page and not to identify
+  themselves to somebody else's agent. What the box can tell is that it is
+  behind a proxy: `Host` and `X-Forwarded-Proto` stay, because a dev server
+  builds its URLs out of them and a share that broke every link on the page
+  would not get used. The netns
+  gains no hole, and the box's egress policy is untouched: the bridge is a
+  host process, outside the boundary, like the CONNECT proxy.
+- **Hold the capability.** A ticket minted at share time is the whole access
+  model: it names the box, the port, an expiry, and a secret; possession is
+  authorization, and possession is all of it: a ticket is a bearer capability,
+  so forwarding the text admits everyone it reaches under the one grant.
+  Measured, because this line used to claim the opposite: two `h5i join`
+  processes on one ticket both reached the dev server and both appear in the
+  receipt against the same grant. Mint one ticket per person if you want
+  `h5i box share revoke` to cut off one person rather than all of them; `stop`
+  ends the session for everyone. No account on either side. (As shipped, minting a
+  second ticket works on `--tunnel` shares only; see 5.11.1.)
+- **Write the ingress receipt.** Every lane in 5.7 observes egress. This is
+  the first inbound evidence: peer, connection times, requests proxied, bytes,
+  and the transport actually used (direct, relayed, tunnel), in the same
+  receipt the export already carries. A share session that left no record
+  would be the one part of a box's life the receipt is silent about, which is
+  exactly the kind of gap this document exists to refuse.
+- **Measure time with a clock nobody can move.** Ticket expiry and the
+  session length are elapsed time, not wall-clock subtraction. A backward NTP
+  step was measured putting an hour back onto every live grant and writing a
+  receipt that read `0s` for a two-minute session with `closed` before
+  `opened`. The timestamps in a receipt are still clock readings and can be
+  wrong; the receipt says so on a `clock` line when they are, because an
+  evidence artifact that quietly clamps an absurdity to a plausible number is
+  worse than one that admits it.
+
+**Transport one: iroh.** Peer-to-peer QUIC, end-to-end encrypted, NAT
+traversal with public relays as fallback for the hard cases; the relay sees
+addresses and volume, never plaintext. The ticket carries the node addressing,
+so there is nothing to configure. `--direct-only` refuses to move application
+bytes over a relay: a peer that cannot get a direct path is turned away, and the
+share stays up for anyone who can.
+The other end runs `h5i join <ticket>`, which terminates the QUIC connection
+and serves the app on the joiner's loopback, and that listener repeats 5.9's
+lesson on someone else's machine: a bare local port is reachable by every page
+and process the joiner has open, so the local URL carries a token and the
+proxy refuses without it. iroh is a real dependency tree (QUIC, TLS), so it
+is a cargo feature in the `web` pattern: default on, and a build without it
+loses `share`/`join` and nothing else.
+
+**Transport two: Cloudflare quick tunnel, because the joiner may not be a
+developer.** P2P requires `h5i` on both ends, and the person you most want
+clicking the prototype (a designer, a PM, a customer) will not install a
+CLI. `h5i box share --tunnel` shells out to `cloudflared` and hands back a
+plain URL any browser opens. The same bridge still fronts it: the URL embeds
+the ticket token, the bridge checks it and the expiry on every request, and
+revocation still works mid-session. The capability degrades from "hold the
+secret" to "hold the link", not to nothing. The honest costs, which the docs
+must state rather than blur: TLS terminates at Cloudflare, so this mode is
+not end-to-end and Cloudflare can read the traffic; `cloudflared` is an
+external binary we neither pin nor ship; and quick tunnels are explicitly not
+a production service (concurrency caps, no SSE). It is the no-install mode,
+not the default mode.
+
+**What the joiner is exposed to, stated up front.** The app being shared is
+agent-written, untrusted code, and port sharing renders it in the joiner's own
+browser. That is the point, and it is also the exposure, the same one as
+clicking any link a colleague sends. One asymmetry is worth writing down: in
+P2P mode the app is served from the joiner's loopback, and a loopback origin
+is exempt from the browser's private-network protections, so a hostile page
+has an easier path at the joiner's own local services than the same page on a
+public origin would. Tunnel mode, ironically, keeps those protections, because
+the origin is public. `h5i join --isolated`, opening the proxy in a box of the
+joiner's own, is the strong answer for a joiner who has h5i anyway; it should
+exist, and it should not be pretended that the no-install audience will use
+it.
+
+**What this is not.** Not a deployment path: sessions are bounded by the
+ticket's expiry and die with the bridge. Not a relay business: the public iroh
+relays are someone else's rate-limited infrastructure, fine for fallback and
+for measuring how often fallback actually happens, and running or selling
+relay capacity is a SaaS with an abuse desk attached, out of scope by the
+same decision that says no server (10.). And not the old `share`: 3.2 deleted
+a `push`/`pull`/`share` that moved git notes between repositories; this one is
+`h5i box share`, on the box noun, and the collision ends there.
+
+The surface, as built:
+
+```
+h5i box share <name> [--port 3000] [--expire 60m] [--label alex]
+h5i box share <name> --direct-only               # refuse relayed app bytes
+h5i box share <name> --tunnel                    # cloudflared; plain URL
+h5i box share ls|status|grant|revoke|stop
+h5i join <ticket> [--port N]                     # the other machine
+```
+
+#### 5.11.1 What shipped, and what it cost to be honest about
+
+`crates/h5i-share/`, ~12k lines with 187 tests, behind a default-on `share`
+feature on the binary and a default-on `p2p` feature inside the crate (iroh 1.0,
+`tls-ring` only). A `--no-default-features` build has no `share` verb rather
+than a broken one, and `--no-default-features` on the crate alone keeps the
+tunnel transport with no QUIC stack compiled in.
+
+Four decisions made during the build that the proposal above did not contain:
+
+- **The fork into the box happens once, at startup, and the helper stays.** The
+  viewer forward forks per connection, which is fine for one WebSocket and wrong
+  for a share: a share runs an async runtime, and `fork()` in a process with a
+  thread pool inherits one thread plus whatever locks the others held. So
+  `Dialer::spawn` runs while the process is still single-threaded and keeps a
+  helper alive in the box's namespaces, answering a one-byte "connect me" over a
+  socketpair. Belt and braces on top: everything below the fork is
+  allocation-free (stack-built `/proc/<pid>/ns/…`, `SocketAddr` rather than
+  `(&str, u16)`), so a caller who ignores the ordering rule gets a helper that
+  cannot deadlock rather than one that does so occasionally.
+- **A box with no network of its own is refused, not shared.** Without one,
+  "the box's port 3000" and "this machine's port 3000" are the same port, and
+  sharing it would publish whatever happened to be listening. This is the one
+  refusal in the feature that exists purely because the alternative is a silent
+  wrong answer. The condition checked is "is there a process of this box in a
+  network namespace of its own", not a list of tiers: a `process`-tier box gets
+  one when its profile denies egress and shares the host's when it does not, so
+  a tier list would be advice that is wrong half the time. The message names
+  which of the two things is missing: no session, or no network.
+- **Authorization is per connection, read from disk, and revocation has a
+  watchdog.** `share revoke` runs in a different process, so a cached grant table
+  would be a revoke that appeared to work. On the P2P path it is per *stream*,
+  which means one TCP connection into the box: a revoke stops the next one. For
+  the connections already open, a one-second watchdog closes them. Without that
+  second half, revoking would work on everyone except the person actually there.
+- **A share carries at most 64 connections into the box.** Refused rather than
+  queued, because a queue turns a flood into latency for the person who is
+  legitimately using the share and hides that anything happened; and answered
+  with a `503`, not a `401`, because "your link is bad" is the wrong thing to
+  tell someone whose link is fine. The count goes in the receipt on its own
+  line, so load and credential failures never read as each other.
+- **One connection carries one request, because connection pools are shared.**
+  Both HTTP fronts gate a connection when its first request arrives, which is
+  equivalent to gating every request only if a connection cannot carry a second
+  one. It can: `cloudflared` pools connections to the origin and reuses them for
+  the next request from *any* visitor, and browsers pool per origin the same
+  way, so an unauthorized request could ride in on a connection someone else's
+  credential opened.
+
+  The first version of this sent `Connection: close` upstream and called it
+  enforcement. It was not: the box runs agent-written code, and a dev server
+  that answers keep-alive leaves the front holding an ungated pipe. The second
+  review caught exactly that, so the front now reads the head plus the declared
+  body and then **stops reading the client**, which needs nothing from the box.
+  Two things fall out. A chunked request body has to be *parsed* rather than
+  just copied, because forwarding one request means knowing where it ends and a
+  chunk stream only says so in its own framing. It was refused with a `501`
+  for two rounds, which meant no streamed upload worked at all. And an upgrade
+  earns its two-way pipe only after the box answers `101`,
+  with the request required to carry both `Upgrade` and `Connection: upgrade`.
+  A lone `Upgrade:` header is something any client can attach to a request that
+  will never upgrade, and it was an opt-out from the whole rule.
+
+  A third round found the other half: the *response* was relayed untouched, so a
+  box answering keep-alive told the visitor's browser to reuse a connection this
+  proxy would never read again: an intermittent hang, and a `502` for every
+  POST a client will not retry. The response head is rewritten to `close` now
+  and framed by its `Content-Length`. Security intact throughout; liveness had
+  been traded away silently.
+
+  All three rounds are worth recording together: nothing in the suite would have
+  caught any of them, because nothing in the suite pools connections. The tests
+  that pin them run against a dev server written specifically to ignore
+  `Connection: close`.
+
+- **Per-port cookies fixed one leak and opened another.** Naming the joiner's
+  cookie after its port stopped two `h5i join` sessions logging each other out.
+  It also meant a *second* share's credential was, from any given front's point
+  of view, just another cookie, and cookies ignore the port, so the browser
+  sent both to both, and each front dutifully forwarded the other's to
+  agent-written code. Reading our own cookie by exact name and dropping every
+  cookie whose name starts with the share prefix are two different rules, and
+  the difference was the one property the gate exists for. The test that had
+  been written for the first fix asserted the leak as correct behaviour, which
+  is the more useful lesson: a test can pin a bug as a feature.
+- **Revocation is per grant all the way down.** The watchdogs first asked
+  whether the *share* was spent, which is true only when no grant admits
+  anybody, so revoking one peer while another was still connected left the
+  revoked peer's open streams running, and the CLI printed "any connection that
+  peer had is dropped within a second" while that was false. Each connection now
+  watches the grant that admitted it. Same class of thing as `--direct-only`,
+  which was checked once at setup and never again: a direct path can die and
+  iroh will fall back to a relay, so a promise checked once is a preference.
+  Both are polled for the life of the connection now.
+- **Streams are served concurrently, and that was a real bug first.** The first
+  cut awaited each stream to completion before accepting the next, which
+  serialises every share behind whichever connection is longest-lived, for a
+  dev server, the hot-reload socket that never ends. Found by the in-process
+  end-to-end test hanging, which is the argument for having written it.
+
+**Not built, deliberately.** `h5i join --isolated` (opening the shared page in a
+box of the joiner's own) is designed in this section and has no implementation;
+the warning at join time is what stands in for it today. Viewer sharing is not
+built and was never in this milestone.
+
+**Not built, and it is a gap rather than a choice.** `h5i box share grant` mints
+a second ticket for a *tunnel* share only. A P2P ticket needs the running
+endpoint's addressing, and only the serving process has it, so the verb refuses
+rather than handing out a ticket that names nowhere. The procedure that works is
+to stop the share and start a fresh one, reissuing tickets to everybody
+including the peer already connected; a *second concurrent* share is refused by
+`session::claim`, so it is not a way round this. Closing it needs
+the serving process to answer a request from another process, which is a channel
+this feature does not otherwise need, so it waits for someone to want it.
+
+## 6. Distribution: the CLI is the product, the skill is the interface
+
+`h5i` is a single Rust binary with no server, no daemon, and no SaaS. That makes
+the distribution story short, and it means the **agent facing interface is a
+skill**, following the pattern already used by `h5i-db`:
+
+```bash
+npx skills add h5i-dev/h5i     # installs the skill from skills/h5i/
+```
+
+Repository layout to converge on:
+
+```
+skills/h5i/
+  SKILL.md                    # one page: when to reach for a box, the loop, the guardrails
+  references/
+    boxes.md                  # create, run, shell, status, export lifecycle
+    browser.md                # the h5i browser verb set and the snapshot format
+    policy.md                 # profiles, egress, caches, what is and is not enforced
+    export.md                 # the output gate and reading a receipt
+    troubleshooting.md        # probe output, tier fallbacks, common denials
+```
+
+Notes on shape:
+
+- **The skill replaces `.claude/h5i.md` and `plugin/`.** Both are Claude Code
+  specific and predate the pivot. One skill, runtime neutral, is the single
+  place the usage rules live.
+- **Two audiences, one skill.** The host side agent needs "make a box, hand work
+  to it, read the export". The in box agent needs "you are inside a box, here is
+  `h5i browser`, here is what is denied and why". SKILL.md routes between them by
+  checking `$H5I_BOX` rather than shipping two skills.
+- **The skill does not install the binary.** `npx skills add` writes Markdown.
+  The binary keeps `install.sh` plus prebuilt release artifacts, and the agent
+  images bake it in. SKILL.md's first line has to handle "the binary is missing"
+  without guessing.
+- Skill prose is under a total budget, the way `h5i-db`'s is: SKILL.md stays
+  around 100 to 150 lines and pushes detail into `references/`, which are loaded
+  only when needed.
+
+### 6.1 The binary carries the skill
+
+`skills/h5i/` is embedded into the binary at build time (`include_str!` over the
+directory), and the CLI can write it back out:
+
+```bash
+h5i skill install [--target <dir>] [--runtime claude|codex|cursor]
+h5i skill show [<reference>]      # print SKILL.md or one reference page to stdout
+h5i skill path                    # where an install would write
+```
+
+This is how the in box agent gets the skill, and it removes the two bad options:
+nothing is baked into the image, and nothing is copied from host to box.
+
+What it buys beyond convenience:
+
+- **No version drift.** A skill that documents flags the installed binary does
+  not have is worse than no skill. Embedding makes the skill a property of the
+  binary, and `h5i skill install` stamps the version it wrote.
+- **The in box copy can be box specific.** `h5i skill install` inside a box
+  knows the tier that was actually enforced, the egress allowlist, the cache
+  mounts, and whether a desktop is attached. It can render the policy section
+  with the real values instead of describing the general case. An agent that is
+  told exactly what is denied stops trying to work around it.
+- **`h5i skill show` is a cheap in context lookup.** A reference page on demand,
+  from the binary, with no file to find.
+- **Bootstrap becomes one line.** Box creation runs `h5i skill install` as part
+  of its own setup, alongside the profile and the shell rc it already writes.
+
+`npx skills add h5i-dev/h5i` stays as the front door for people who do not have
+the binary yet. Same bytes, since both come from `skills/h5i/` in this repo, and
+a test asserts the embedded copy matches the checked in one.
+
+### 6.2 The programmable surface: a JSON contract first, an SDK second
+
+The model is `remote-agent-browser` (Vercel Labs, `~/Ref/remote-agent-browser`).
+Its whole SDK is about 1,200 lines of TypeScript: spawn a command in the
+sandbox, parse the JSON envelope, hand back a typed result. The programmable
+experience developers like lives almost entirely in the CLI's machine readable
+output, not in the wrapper. That is the order of work here too: the contract is
+the product, the SDK is packaging.
+
+**No daemon.** The SDK spawns the `h5i` binary as a subprocess and parses
+`--json` output. This keeps the "one Rust binary, no server" decision intact,
+and it does not conflict with the No MCP decision: MCP was cut because it put a
+host side *agent* inside the box's interface. An SDK puts the developer's
+*orchestrator* on the host and the agent in the box, which is the direction
+`box run` already serves.
+
+**The JSON contract.** Every lifecycle verb an SDK would call takes `--json`
+and emits a stable envelope on stdout, with human notes on stderr. As of
+2026-08-05 that covers the full loop: `create` (the manifest, same shape as
+`status --json`, plus the workspace path), `run` (box id, policy digest,
+capture id, exit code, timing, peak rss, the recorded redacted output, and the
+full receipt record; the exit code still passes through), `export` (the export
+summary: files changed, patch bytes, receipts, denied egress count,
+redactions), plus the verbs that already had it: `list`, `status`, `diff`,
+`log`, `inspect`, `compare`, `capabilities`, `doctor`, `secrets`, `ports`,
+`allow`, and `--version`. This is scriptable today from shell, CI, or an
+agent's Bash tool, with no SDK at all.
+
+**The SDK mapping is mechanical.** `create()` is `box create --json`, `exec()`
+is `box run --json`, `browser.run([...])` is `box run -- agent-browser ...`
+(the daemon is already in the box, so no new host-to-box channel exists),
+`diff()` is `box diff --json`, `export()` is `box export --json`, `events()` is
+`box log --json`, `close()` is `box rm`. One deliberate omission: an
+`agent.run(prompt)` that shells out to a per-call headless `claude -p` is the
+wrong primitive. If the SDK grows an agent handle it should hold a resident
+session (a `box shell` it can send to and wait on), and the first release can
+ship without it: exec, browser, diff, and export are enough for the derivative
+projects that matter (PR screenshot bots, dependency evaluators, visual
+regression CI, browser-use evals).
+
+**Sequencing.** The contract lands now. `@h5i/sdk` (TypeScript, a postinstall
+that fetches the release binary the way esbuild and biome do) waits until the
+first buyer workflow has been demonstrated end to end, because the SDK
+amplifies a story that has to exist first. Python follows demand, not the
+roadmap. The acquisition logic: every third party repository whose README says
+`npm install @h5i/sdk` is distribution, and the closest fit between the
+boundary's value and an SDK consumer is CI (run an untrusted PR, build it,
+drive it in the box's browser, post the screenshots and the receipt).
+
+## 7. The browser layer: agent-browser, not a viewer of our own
+
+An earlier draft of this roadmap had us reimplementing Neko's capture, encode
+and input core in Rust so the human could watch the box. That plan is dropped.
+**agent-browser** (Vercel Labs, Apache-2.0, `~/Ref/agent-browser`) already is
+both halves of what we needed, and it is a native Rust CLI:
+
+- **Automation.** `open / snapshot / click / fill / press / hover / select /
+  scroll / screenshot / eval / wait`, plus semantic locators (`find role button
+  click --name "Submit"`). Snapshots are accessibility trees with `@e2` style
+  refs, which is exactly the token-cheap shape a model needs. It speaks CDP
+  directly: no Playwright, no Node at runtime.
+- **The human viewer.** Every session runs a WebSocket server that streams the
+  viewport as JPEG frames (CDP `Page.startScreencast`) **and accepts input
+  events back** (`Input.dispatchMouseEvent` / `KeyEvent` / `TouchEvent`). Their
+  own words for it are "pair browsing where a human can watch and interact
+  alongside an AI agent". Frame quality, size and rate are tunable per box.
+
+What that buys us, beyond not writing it:
+
+- **The desktop stack disappears.** No Xorg, no GStreamer, no PulseAudio, no
+  window manager, no supervisord. Headless Chrome plus one binary. The browser
+  container drops from a Neko-runtime-sized image to something an agent box can
+  reasonably carry, and the attack surface shrinks with it.
+- **One less protocol to design.** Frames and input already have a defined
+  WebSocket message format, and there is a reference client (their dashboard) to
+  check ours against.
+- **It matches our distribution model.** Native Rust, installable via cargo or
+  npm, and it ships a skill of its own.
+
+What stays ours, and it is not small:
+
+1. **The boundary.** The stream port and the CDP port never leave the box's
+   network namespace. The viewer is reached through an h5i-owned forward with a
+   per box token (5.9). agent-browser assumes a friendly localhost; we do not.
+2. **The control lock** (5.4). Two clients can dispatch input at once and
+   nothing upstream arbitrates. That is ours to enforce.
+3. **Policy.** Fresh profile, proxy settings, `--allowed-domains` derived from
+   `net.egress`, AI chat disabled, downloads landing under the export gate.
+4. **Receipts.** Browser commands, console errors and failed requests are
+   evidence and belong in the receipt like any other observation.
+
+The cost is a third-party dependency on the critical path. We pin a version,
+depend on the **CLI** surface rather than internal APIs, and keep the fallback
+in view: it is Apache-2.0 Rust, so vendoring or forking stays available if the
+project moves somewhere we cannot follow.
+
+**Neko is not gone, it is deferred.** CDP screencast shows the page viewport and
+nothing else. The day the product needs a real desktop (a native app under
+test, browser chrome, a file picker, devtools as a human sees them), an X plus
+streaming tier comes back, and Neko is the reference design for it. Nothing in
+the boundary, the lock or the receipt changes when it does.
+
+### 7.1 Two engines, one policy (proposed, 2026-08-07)
+
+A survey on 2026-08-07 (Cloudflare's Kitesurf announcement, Lightpanda, and a
+read of agent-browser upstream) changed what "the browser" can mean here.
+Kitesurf is a browser engine rewritten for agents: Rust (Blitz for HTML and
+layout, Stylo for CSS, Boa for JS) compiled to WASM and run as disposable
+isolates behind a single egress worker that owns every network request and
+every cookie jar. It passes 215,000+ Web Platform Tests, speaks CDP and MCP,
+treats every page load as untrusted input, keeps no persistent authenticated
+sessions, and Cloudflare says it will be open-sourced for self-hosting.
+Lightpanda (Zig, html5ever plus V8, CDP) is the same camp, and agent-browser
+upstream already selects between Chrome and Lightpanda with `--engine`. The
+part that matters to us is not the cloud: it is that non-Chromium engines an
+agent can actually use now exist, and the ecosystem has converged on CDP as the
+interface, so an engine swap does not orphan the tooling.
+
+The h5i-shaped observation: **our egress proxy is a blind CONNECT gate, so
+browser receipts can only name hosts.** The proxy sees
+`CONNECT docs.example.com:443` and nothing else; the evidence for "what did
+the agent read" is whatever the post-run console drain catches. An engine whose
+network stack *is* our proxy inverts that. Every request and response becomes
+first-class evidence, per-request policy needs no MITM CA because we are the
+client, and for untrusted origins script execution can be off entirely, which
+removes the delivery channel for most page-borne prompt injection instead of
+trying to filter it.
+
+Stated precisely, because Chromium can get partway there: CDP's Fetch domain
+lets a mediator pause every request Chromium makes and allow, deny, rewrite or
+record it, so request-level receipts and per-request policy are available on
+the Chromium path too, through the M8 sidecar (7.2). What a mediator cannot
+make them is **fail-closed**: attach races, freshly created targets and
+workers, event buffer limits and disconnects all mean CDP coverage is
+monitored rather than guaranteed. The engine's claim is narrower and stronger:
+if the log is not running, the request does not happen, and a page script is
+never evaluated unless a profile line granted it, checked before evaluation
+rather than filtered after. With a JS engine in the binary the honest words
+are "off by default, gated by policy"; "absent by construction" is reserved
+for a `--no-js` feature build, if one is ever worth cutting.
+
+The model this points at is **two engines, routed by origin, one policy**:
+
+- **Loopback, the agent's own dev server: Chromium.** Verifying that a modern
+  app renders, hot-reloads and runs its client-side code is the hardest compat
+  case there is, and the content is the agent's own code. Fidelity wins, and
+  today's stack stays exactly as built.
+- **The untrusted web (docs, search, issue trackers): the light engine.**
+  Reading rarely needs a JIT, receipts matter more than pixels, and the model
+  wants a tree, not a frame. Containment wins.
+
+Two things fall out of this split without being built. **Video and WebGL
+never enter the light engine's scope**: a coding agent testing a video player
+is testing its own app, which is loopback, which is the Chromium path, where
+both already work. Kitesurf has to name them as gaps because it has no
+Chromium half; we do. And **authenticated sessions, Kitesurf's other stated
+gap, are answered by the control lock we already ship**: the agent hits a
+login wall, the human takes the viewer, logs in, hands back, and the agent
+resumes from a fresh snapshot (5.4). Watching stays the default posture and
+input stays an explicit take; a local-first tool with a human present should
+use that human, not imitate a cloud service that cannot have one.
+
+The routing rule lives next to `net.egress` in the profile, not in the agent's
+moment-to-moment choice: the agent must not get to pick the weaker-policy
+engine for a hostile page. Two degenerate profiles fall out for free:
+`browser` as it exists today (Chromium only, nothing changes), and a
+`browser-lite` with no Chromium at all: no Chrome preflight, no 12 GiB limit,
+plausible at the microvm tier where the Chromium stack has never been proven.
+
+The staged path, cheapest first:
+
+1. **Engine as a profile knob.** agent-browser already abstracts the engine;
+   a profile field that sets `--engine lightpanda` costs almost nothing and
+   changes no seam we own (socket dir, egress env, evidence drain all stay).
+   What it buys is the real data: where a light engine actually breaks on our
+   loop, before we bet anything on one.
+2. **Origin routing.** agent-browser is one engine per daemon session, so
+   per-origin routing means either two sessions with h5i choosing at navigate
+   time, or our own layer in front (7.2 builds that layer for other reasons).
+   This step is a design decision, not a big build, but it is honest to say
+   the session model does not give it to us for free.
+3. **The lightweight visual engine.** A crate of ours: Blitz and Stylo for
+   parse, layout and paint, Boa (off by default, policy-gated) for the
+   minority of pages that need script, and fetch wired directly into the
+   egress proxy's stack so the receipt *is* the network log. Beyond fail-closed logging, an owned engine can bind what no
+   mediator can: a human-approved form submission mints a **single-use
+   capability** for that origin and those fields, page script cannot spend it,
+   and every request carries its provenance (agent, human, or page script) as
+   a structural fact instead of an inference over event timing. **Assembled,
+   not written**: the component stack is the same open-source Rust Kitesurf
+   builds on, and the build-versus-adopt call waits for Kitesurf's open-source
+   drop before choosing which pieces are ours.
+
+What we do not do is write HTML, CSS, JS or rasterization primitives from
+scratch: the engine is assembled from Blitz, Stylo and Boa, focused on what
+an agent needs. Section 7's argument is unchanged: Chromium plus
+agent-browser stays the fidelity path, docs-grade pages are the light
+engine's compatibility bar rather than React, and the light engine earns its
+place on the strength of receipts and a containment story Chromium
+structurally cannot give us.
+
+**Superseded in part, 2026-08-08.** The survey above is accurate and still
+worth reading; its *conclusion* is not. "Two engines, one policy" assumed
+routing lets a box avoid Chromium, and it does not:
+`sandbox_policy::browser_read_grants()` chains every engine's candidates, so an
+`h5i-light` box grants Chrome's and agent-browser's paths anyway and the
+environment still installs and updates Chromium. Routing saves runtime RSS and
+nothing else. §12 records the decision that replaced it: one local engine that
+runs script and renders on demand, with Chromium kept as the fidelity fallback
+rather than as the answer to "what about JavaScript".
+
+### 7.2 Owning the daemon socket (proposed; the interception point open item 1 asks for)
+
+Open item 1 records that the control lock is advisory because no h5i process
+sits between the agent and agent-browser. The upstream read says the
+interception point exists and is small: the daemon's entire control surface is
+newline-delimited JSON over one filesystem-bound `AF_UNIX` socket,
+`{"id", "action", ...}` in, `{"success", "data", "error"}` out, one line each
+way, every action serialized under a single mutex. That is a protocol a
+supervisor can hold in a few hundred lines.
+
+The shape: the daemon's real socket moves to a path the box has no grant for,
+and the path the box is given (`AGENT_BROWSER_SOCKET_DIR`) carries an
+h5i-owned listener that forwards line by line. The design consequence is that
+the daemon stops being an in-box child and becomes an h5i-launched sidecar,
+because a daemon spawned by the agent's own CLI can only ever bind where the
+agent can also reach. That is the shape the macOS shim already has (h5i
+launches Chrome itself and attaches agent-browser to it), so it is a
+convergence, not a fork; and it must not move the boundary: the sidecar stays
+in the box's netns, under the box's egress, with nothing published.
+
+What one mediated socket buys, in order of value:
+
+1. **The lock becomes real.** `control::check` runs on every mutating verb,
+   and `HeldByHuman` / `NeedsResnapshot` come back as the daemon's own typed
+   error. Read-only verbs pass untouched, which is exactly the split 5.4
+   wants: watching never collides.
+2. **Per-action receipts.** navigate, click, fill, eval land in the receipt as
+   they happen, with their arguments. Today's evidence is a post-run console
+   drain; this is the action log, and it is the browser-side analogue of the
+   egress tally.
+3. **A browser action policy.** Upstream's `ActionPolicy` (allow / deny /
+   confirm over action names, about 200 lines) is the right vocabulary, worth
+   adopting as a per-profile manifest: `eval` deniable, `credentials_*` and
+   `state_*` deniable, and a `confirm` tier for consequential actions, which
+   is where the whole field landed on injection containment (per-site grants
+   plus human confirmation). The confirm channel is the viewer.
+4. **The CDP side of the same sidecar.** Owning the daemon means owning its
+   browser, so the sidecar can attach CDP `Fetch.requestPaused` and give the
+   Chromium path request-level evidence and per-request policy: method,
+   origin, initiator and verdict in the receipt, not just the CONNECT line.
+   This lane is recorded as best-effort, because CDP coverage fails open
+   (7.1); the fail-closed version of the same lane is M10's reason to exist.
+
+The honest costs: an h5i process on the browser hot path; a dependency on the
+daemon's wire protocol, which is an internal surface, against section 7's
+stated preference for the CLI boundary (mitigated the same way: pinned,
+forkable, and the protocol is one page); and the sidecar launch is new
+lifecycle code where today the daemon manages itself.
+
+## 8. Phases
+
+Each phase ends with a green `cargo test` and a demo that runs on a stock
+rootless Podman host.
+
+> **Suite status, 2026-08-05.** `cargo test --lib` is green across the
+> workspace (391 tests, of which 66 are the terminal viewer's) and clippy is
+> clean with `--all-targets --all-features` and with `--no-default-features`. Three `env_integration` tests fail on this WSL2 host with a
+> worktree-stat error (`box_git_grants_stay_fail_closed_outside_env_namespace`,
+> `box_git_status_and_commit_work_inside_process_tier`,
+> `process_tier_confines_fs_and_network`). They fail identically at
+> `e4488b064`, before any of this work, so it is host drift rather than a
+> regression, but it is drift nobody has diagnosed, and the process tier is
+> not actually covered here until someone does.
+
+### M0. Freeze and branch: done
+
+`dev` is the integration branch and this
+roadmap is on it.
+
+### M1. Amputation: done
+
+Section 3.2 is deleted (~77k lines). `receipt.rs`,
+`refstore.rs`, `redact.rs`, `source.rs` extracted; `env.rs` is free of
+`objects`, `ctx`, `msg`, `team` and `repository`. The whole lifecycle works
+with no git notes and no context refs, clippy is clean over the workspace, and
+the `web` feature is gone rather than off.
+
+### M2. `h5i box` and copy in: done
+
+New command surface with `env` aliased
+(short form, `ls`, hidden alias). Export gate replacing `propose`/`apply`
+(patch + report + receipt bundle, refuses to overwrite). `h5i skill install`
+from the embedded skill. Receipt integrity by sealing, with the test that pins
+it (5.7). All four sources: this repository, a pull request, a repository URL,
+and `--new`.
+
+The copy-in landed as **detached boxes**: for a URL or `--new`, the box gets a
+git repository of its own inside its directory, the host repository is never
+touched (no branch, no worktree, no objects), the inherited `origin` remote is
+dropped so the box cannot reach a network handle nobody granted it, and `apply`
+and `rebase` refuse and point at `export`. That is the boundary the phase was
+for, and it holds on every tier rather than only under a container volume.
+
+### M3. Agent in box hardening: done
+
+Warm caches in full: the store, the
+lockfile keying, the staleness rule, `h5i box cache ls|mounts|rm|refresh` and
+the **read-only mount** on every tier are built and tested (5.8). (An earlier
+revision of this line said `refresh` was not built; it landed in e75020358,
+with the writable bind reachable from no profile and the refusal that names the
+registry-only profile it demands.)
+Also done: the credential-seed audit (the per-box HOME copy now drops
+credential-shaped entries at any depth (`credentials*`, `.netrc`, ssh keys,
+`*.pem`/`*.key`/`*.p12`), keeping only the runtime's own token, which it cannot
+function without), and the credential proxy, which was already default-on but
+did not engage for a `browser` box.
+Also done: profile-declared authenticated egress (5.5, option 1): a reverse
+proxy per grant, the credential resolved host side and never placed in the box,
+part of the pinned digest, and fail-closed when the host-side variable is
+unset. GitHub is a policy entry, not a feature. Option 2 (a TLS-terminating
+forward proxy) stays unbuilt and unneeded.
+
+### M4. Browser: done
+
+The live runs were worth more than the code around them. What they found, in
+order:
+
+1. ~~**The `supervised` + agent-profile `EINVAL` happens when the box's
+   workspace is under `/tmp`**, because the agent profile redirects `/tmp` to a
+   per-env scratch and that shadows the worktree.~~ **Wrong, and withdrawn.** A
+   `create`-time refusal for that layout was written and it rejected this
+   suite's own fixtures: every `tempfile` repo is under `/tmp`. Checked
+   directly instead: a supervised box whose workspace is under `/tmp` sees its
+   workspace, runs commands, and drives the full browser loop. The bind-ordering
+   fix in 86dddafe0 (mount `/tmp` last) had already handled it. The working
+   behaviour is now pinned by a test rather than guarded by a phantom.
+2. With that out of the way, a `browser` box at `supervised` creates and runs,
+   and `agent-browser --version` answers from inside it.
+3. `agent-browser`'s daemon put its control socket in `$XDG_RUNTIME_DIR`
+   (`/run/user/<uid>`), which no box has a write grant for, and failed with
+   "Failed to create socket directory: Permission denied" long after create
+   said everything was fine. **Fixed**: `AGENT_BROWSER_SOCKET_DIR` now points at
+   the box's own `/tmp`, which every tier grants and the kernel tiers make
+   per-env.
+4. `agent-browser doctor` **from inside a box** is the tool for the rest of
+   this, and it immediately caught a bug in our own policy: pinning
+   `AI_GATEWAY_API_KEY` to an empty string *enabled* chat, because
+   agent-browser tests for the variable's presence. The box reported
+   "AI_GATEWAY_API_KEY present (chat enabled)", the opposite of the intent.
+   **Fixed** by not injecting it at all (it is not in `env.pass` either, so it
+   is absent), and verified from inside: "chat command disabled".
+5. Doctor also confirms the profile's grants work: **Chromium 130 is found** at
+   the granted `~/.cache/ms-playwright` path.
+6. **The daemon exited during startup with no output, and it was our socket
+   gate, not Chrome.** The supervised tier notifies on `socket()` and denied
+   `AF_UNIX` unconditionally, with no way for a profile to ask for it; the
+   daemon's control socket is a filesystem-bound `AF_UNIX` listener, so it got
+   `EPERM` on the first thing it did. `Profile::unix_sockets`
+   (`[profile.X.net] unix = true`) is that way to ask, and `browser` sets it.
+
+   The grant is narrower than it sounds, which is why it can exist: abstract
+   sockets are scoped by the private netns, filesystem-bound ones by Landlock,
+   and `/tmp`, where `.X11-unix`, `tmux-*` and an ssh-agent live, is a per-env
+   scratch at the kernel tiers. The residual is a host socket under a granted
+   path, so it stays opt-in per profile and lands in the digest.
+
+   The silence was upstream's, and worth recording: the daemon redirects its own
+   stderr to `/dev/null` before failing **unless** `AGENT_BROWSER_DEBUG` is set,
+   in which case it writes to `$AGENT_BROWSER_SOCKET_DIR/<session>.log`. That log
+   is the only place the real error appears; `--debug` alone does nothing.
+
+7. **Two variables we set were not variables agent-browser reads.**
+   `AGENT_BROWSER_HEADLESS` does not exist (it is `AGENT_BROWSER_HEADED`, and
+   headless is what a falsey value means), and neither does
+   `AGENT_BROWSER_DISABLE_CHAT`: chat is gated on `AI_GATEWAY_API_KEY`
+   presence alone. A variable the tool never reads reviews as enforcement while
+   enforcing nothing, so both are gone and the tests assert their absence.
+
+Nothing here could have been found by reading the code, which is the argument
+for driving the loop before building more on top of it.
+
+That gap, **no test in the suite ran an agent-family profile at
+`supervised`**, the only kernel tier that can host an agent or browser box
+(`process` refuses the egress the profile needs), is why both surprises were
+available to find, and it is now closed. The test that would have caught the
+daemon failure asserts both directions: a `browser` box binds a
+filesystem-bound `AF_UNIX` listener, and a `default` box on the same host and
+tier still gets `EPERM`, so the grant cannot silently become tier-wide.
+
+Built: the `browser` built-in profile (the agent profile plus the browser
+surface, runtime scoping intact, egress never wider than the agent's),
+host-path discovery for the kernel tiers with a fail-closed create that names
+what to install, `containers/Containerfile.browser` for the container tier, and
+`/dev/shm` sized from the policy so a renderer does not die on Podman's 64 MiB
+default. **No pod, no second image, no Podman requirement** (5.2).
+`--allowed-domains` is derived from the enforced `net.egress` (plus loopback,
+which never appears in an allowlist but is the whole point of a dev server),
+headless is pinned through the variable that actually exists, and the AI gateway
+is refused by absence, the only mechanism upstream has.
+
+**Browser evidence in the receipt** is built (`crates/h5i-core/src/browser.rs`).
+After a run that drove the browser, h5i asks the page what happened and records
+the console errors, uncaught exceptions and failed requests, then surfaces them
+in `report.md` above the agent-authored proposal. Four properties make it
+evidence rather than decoration: h5i picks the moment, a host-side cursor keyed
+to a session fingerprint keeps each record to its own slice, a browser command
+with no browser to ask is recorded `unavailable` rather than as a clean page,
+and a host-side socket check keeps the drain from *starting* a browser just to
+report an empty console.
+
+Verified live on a supervised browser box against a page that logs a console
+error, throws a `TypeError` and fetches a missing URL: all four findings reach
+the receipt, the export bundle and `report.md`.
+
+Exit criterion **not yet demonstrated**: an agent fixing a real UI bug using
+only agent-browser output as its feedback. Every piece it needs is built and
+proven by hand; nobody has run the loop with an agent in it.
+
+### M5. Viewer: done
+
+The control lock
+(`crates/h5i-core/src/control.rs`, `h5i browser status|take|release`): the
+agent holds control by default, a human *takes* it rather than asking, and
+handing it back sets a stale-handle flag that refuses the agent's next mutating
+action until it re-snapshots. Read-only verbs stay available throughout,
+because watching never collides. Nothing upstream arbitrates this, which is
+why it is ours.
+
+The forward (`crates/h5i-core/src/view.rs`, `h5i box view`, `h5i browser url`)
+serves the agent-browser stream to loopback. The box's port is never published:
+h5i enters the box's user and network namespaces by pid, connects from inside,
+and hands the socket back over `SCM_RIGHTS`, the fd-handoff the supervisor
+already uses. All four gates verified live against a supervised browser box:
+loopback only; a per-box token minted at create and kept outside every path the
+box can read or write (401 without, 401 on a wrong one); cross-origin
+handshakes refused (403) even with a valid token; and the control lock on the
+input direction, with input *dropped* rather than rejected so someone who clicks
+before taking control keeps a live viewer. Sessions land in the receipt and the
+export under a `viewer` lane, and the report calls out a session where a human
+drove.
+
+Three bugs found, all the same kind: quiet failures producing a plausible
+wrong answer rather than an error, and each worth remembering:
+
+- The live registry records h5i's **host-side** pid, which is in the host's
+  netns. Entering it succeeds, finds nothing listening, and reads as a broken
+  box. Fixed by walking the session's process tree for the first descendant
+  whose netns differs from ours.
+- A stray CRLF in the relayed handshake is not a protocol error the server
+  reports. It is two bytes read as the start of the client's first frame, after
+  which the handshake completes and the viewer hangs.
+- Returning `Result<u64>` from the input pump discarded the forwarded-input
+  count on the error path, which is exactly the path a human takes by closing
+  the tab. The export would have recorded them as never having touched the box.
+
+Exit criterion **not yet demonstrated end to end**: a human takes over mid-run,
+finishes a form, hands control back, and the agent continues from a fresh
+snapshot. The takeover, the input gating and the stale-handle refusal are each
+verified; a real person finishing a real form is not something this session
+could run.
+
+### M6. Skill and story: mostly done
+
+`skills/h5i/` is written against the
+real surface and the binary carries it; the missing fifth page
+(`references/browser.md`) is written. The README, MANUAL.md, `man/h5i.1` and
+`docs/manual/index.html` all describe the product that exists. The manual was
+3,900 lines of `capture`/`recall`/`audit`/`team`/`mcp`, and is rewritten around
+the boundary. The landing page is rewritten too, and the embedded mock of the
+deleted `h5i serve` workbench is gone with its CSS and its film driver. Seven
+guides plus `/features/` and `/workflows/` teach deleted commands, so each
+carries a banner and is `noindex` rather than being quietly left.
+
+**Remaining**: `npx skills add h5i-dev/h5i` is still unverified: the `skills`
+CLI needs Node >= 22.20 and no such runtime was available to test it; the repo
+layout and frontmatter were checked against what the CLI discovers. There is no
+demo video. `/blog/` and `/pitch/` still argue the old positioning, and
+rewriting them means choosing the launch message, which is open question 2.
+
+### M7. Terminal viewer: built and driven
+
+`h5i box view --term` (5.10). The
+module is unit tested (the WebSocket client also round-trips over a real
+socket), clippy is clean, and the web viewer's silent input bug is fixed and
+pinned (5.10.1).
+
+The loop was driven end to end against a live supervised `browser` box serving
+a page on its own loopback, on a pty with a real window size: watch, `i` to take
+the lock, type and click, `Ctrl-]` to hand it back, `q` to leave. What that
+proved, in order: `connect_in_netns` into the box, the WebSocket handshake, real
+JPEG frames decoded and scaled (an 800×400 image in 100×20 cells, aspect
+preserved, 624 continuation chunks), the previous frame deleted only after the
+next was placed, the control lock flipping to `human` and back to `agent`, mouse
+tracking taken and returned, the alternate screen restored on a clean exit, and
+the status line picking up the page's real URL. The receipt recorded `12
+frame(s) forwarded to the page` ("hello" as ten key events plus a press and a
+release) and flagged `a human drove this box` from the input count, which is
+the take-and-hand-back case that comparing the holder at open and close would
+have missed.
+
+Two things it found that no amount of reading would have. A pty with no window
+size makes `TIOCGWINSZ` succeed and report zeroes, and the viewer dutifully
+scaled the page into one cell and transmitted a **1×1 pixel image** with no
+error anywhere; `Size::or_fallback` now supplies 80×24. And the first harness
+stopped reading before sending `q`, which is why it looked as though the
+alternate screen was never exited, worth remembering as a way to mistake a
+test artifact for a terminal-corrupting bug.
+
+Still **not demonstrated**: a real person, at a real Kitty-protocol terminal,
+looking at the page. Everything under it is exercised; the last inch is a human
+being, and a tool shell is not a TTY.
+
+**Post M7.** A full-desktop tier when something needs more than a page viewport
+(X plus streaming, Neko as the reference design), microVM backend, macOS.
+
+### M8. The mediated socket: proposed (7.2)
+
+The agent-browser daemon becomes
+an h5i-launched sidecar and its socket path is h5i's listener. Exit criteria:
+an agent's `agent-browser click` during a human takeover is refused with the
+typed error, not advised; every mutating verb appears in the receipt with its
+arguments; a profile denies `eval` and the denial lands in the receipt; and
+the Fetch evidence lane (7.2 item 4) shows a granted request with its
+initiator and a denied one with its verdict, marked best-effort. This closes
+open item 1 and is worth doing before any engine work, because the mediation
+layer is where origin routing (7.1) would live anyway.
+
+### M9. Second engine: proposed (7.1)
+
+`engine` as a profile field, pinned
+in the digest with its version like any other policy choice, Lightpanda as
+the first non-Chromium value. The knob's real shape is "any CDP endpoint",
+not "Lightpanda": agent-browser already drives engines over CDP, so this is
+the slot M10's binary later fills with no new plumbing, and agent-browser
+stays the one automation surface for every engine behind it. The subset an
+engine must speak is automation plus the screencast domain
+(`Page.startScreencast` / `screencastFrame` / `screencastFrameAck`), because
+the whole shipped viewer stack, stream server through terminal panes, sits
+downstream of that domain and follows any engine that implements it. **No silent
+fallback**: an unsupported page fails closed and names the retry ("this page
+needs MediaSource; recreate with `--browser chromium`"), because a fallback
+to Chromium is not an optimization, it is a security-policy change: an API
+absent by construction in one engine exists in the other, so the box's
+capability surface must not move without a create. The engine and its
+version land in the receipt. Exit criteria: a `browser-lite` box with no
+Chromium installed answers `doctor`, snapshots a real documentation site,
+and the full loop's failure modes on a light engine are written down here.
+No routing yet: one engine per box.
+
+### M10. The lightweight visual engine: tier 1 built, 2026-08-07
+
+`crates/h5i-browser-light`, a standalone binary: static render, agent
+snapshot, screenshot, and the fail-closed request log. Blitz + Stylo +
+vello_cpu assembled behind our own broker; 42 tests; clippy clean with and
+without default features. Driven live against a local page and a real site.
+
+Built **ahead of its gates**, and that should be said plainly: M9 has not run,
+so there is no compatibility data yet, and Kitesurf's open-source drop has not
+landed, so the build-versus-adopt call was made without it. What that buys is
+a working artifact to measure instead of a design to argue about; what it
+costs is that tier 2/3 scope is still guesswork, and the CI lockfile grew by
+137 packages to carry the engine.
+
+Two findings from driving it, neither available by reading:
+
+1. **A denied resource must be *completed*, not dropped.** Blitz counts a
+   resource pending until its `NetHandler` is called, and `paint_scene`
+   refuses to paint while any critical resource is pending, so the obvious
+   way to write a deny (return without calling the handler) renders every page
+   permanently blank. Fail-closed means "completed with nothing", and there is
+   a test on it.
+2. **`system-fonts` is a build-time native dependency.** Blitz's font
+   discovery pulls `yeslogic-fontconfig-sys`, which needs libfontconfig
+   headers to compile: portable engine, non-portable build. Fonts are
+   discovered and registered at runtime instead, which also makes "no fonts"
+   a state `doctor` reports rather than a blank screenshot nobody can explain.
+
+#### Tier 2, and the numbers
+
+**Tier 2 built, same day.** `h5i-browser-light serve`: a WebSocket that speaks
+the viewers' own format (base64 JPEG in a JSON envelope, `status` carrying the
+viewport, `config`/`ack` pacing), plus a `.stream` file so the existing
+discovery finds it. Scroll and link-click work; a click on a refused link
+returns `page_error` and keeps the page. Frames are driven by change, not by a
+clock: with no script, at rest the process sends nothing, and an `ack` alone
+never produces a frame. Verified with a protocol-level client that does its own
+handshake and masking, so the compatibility check is against the spec rather
+than against our own encoder.
+
+**The numbers, measured rather than hoped for.** Median of 5 after a warm-up,
+same host, self-contained local pages, peak summed RSS across the process tree:
+
+| | one-shot, 39 KB docs page | idle with a page held open |
+| --- | --- | --- |
+| h5i-browser-light | 72 ms / 33 MB | 37.5 MB |
+| chromium `headless_shell` | 356 ms / 479 MB | 383.8 MB |
+| chromium (full) | 644 ms / 799 MB | — |
+
+That is ~5x faster and ~15x lighter one-shot, ~10x lighter at rest, so the
+memory exit criterion is met in both the states it named. Three caveats travel
+with it and belong in any repetition of it: cold start is included and
+dominates Chromium's time (fair for a one-shot agent invocation, not a
+steady-state throughput claim); the pages carry no JavaScript, so Chromium is
+paying for an engine it is not using and a script-driven page would reverse the
+comparison entirely; and software rasterisation will narrow the time gap on
+heavy CSS.
+
+Still open at this tier: no script; input stops at scrolling and link clicks
+(no typing, no form submission); and the live view has been driven by a
+protocol-level test client rather than by `h5i box view` against a real box.
+What is missing in that last one is the run, not the plumbing.
+`H5I_BROWSER_STREAM_FILE` puts the `.stream` under the box's `agent-browser`
+directory, which is where the viewers' discovery already scans.
+
+#### What landed after, 2026-08-08
+
+**Tier 2's open item closed.** The live view has now been driven by
+`h5i box view` against a real `h5i-light` box rather than by a protocol-level
+client: the forward attaches and renders, the console's frame relay pulls a
+1280x720 JPEG through the same session, input is dropped while the agent holds
+the control lock and flows the moment a human takes it, so the lock is enforced
+on an engine with no mediator behind it, which had never been checked. Two
+defects fell out of the run, both fixed:
+
+1. **A readable file could fail to open.** `open ./page.html` reported "invalid
+   path" when `canonicalize` failed, because the fallback handed a *relative*
+   path to `Url::from_file_path`, which refuses one. The walk fails for a
+   working directory the box can reach by fd and not by name, which is any
+   repo under `/tmp`, since that is the directory the supervised tier
+   overmounts. The message named the path when the problem was the walk.
+2. **`serve` accepted one viewer at a time.** The accept loop handled
+   connections sequentially, so opening the console's page tab left
+   `h5i box view` hanging in the backlog with no error. Two viewers could not
+   coexist, which nothing had tried.
+3. **Scrolling only ever worked on unstyled pages.** The scroll range came from
+   the root element's `size.height`, which a stylesheet saying
+   `html, body { height: 100% }` pins to the viewport while the article
+   overflows it, so Blitz reported Wikipedia's 16477px page as 720px and every
+   scroll clamped to zero. The fix reads `size.height.max(content_size.height)`,
+   which is the same formula Blitz's own `scroll_viewport_by` uses. Every local
+   test page was unstyled, so the whole suite agreed with the bug. Found by
+   pointing the thing at Wikipedia, which is the entire argument for doing that.
+
+**The resident session, 2026-08-08 (§12.1).** `serve` now holds a page
+that several viewers and a control channel share, and
+`h5i-browser-light session status|snapshot|navigate|click` drives it. A control
+verb that moves the page broadcasts to every viewer, so the live view shows the
+page *the agent* is driving, so the caveat M11a's page pane had to print is gone
+for this engine. Ack pacing moved from a structural accident ("one frame per
+client message") to per-viewer state, holding the *newest* frame rather than
+queueing a backlog, and nothing is encoded at all when no one is watching.
+
+The architecture was chosen by the compiler, not by preference: **`Page` is not
+`Send`**: `BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
+`Box<dyn FontMetricsProvider>`, so the obvious `Arc<Mutex<Session>>` does not
+exist. One thread owns the page and everything else reaches it by channel. That
+is the shape a multi-driver session wants regardless; here it was not optional.
+
+**Untrusted-content marking, 2026-08-08 (§12.1).** The rendered snapshot
+now fences page content and names it as data. Pulled ahead of its position in
+the list because §11 called it "the only item on this list whose absence is a
+live hole rather than a missing feature" while ranking it fourth, and it depends
+on nothing. Writing the test found the hole that made the fence worth having:
+`href` was the one page-derived field the walker did not collapse, and an HTML
+attribute value may contain a literal newline, so the field that could forge
+the fence was the field nobody had thought of as text.
+
+**The agent-actions pane had no source on this engine, 2026-08-08.** Found by
+someone running an agent in an `h5i-light` box and noticing the pane stayed
+empty while the agent worked. It was empty *by construction*: the pane is fed by
+`browser-actions.jsonl`, which the mediator writes, and
+`engage_browser_mediation` returns `None` for any engine agent-browser cannot
+drive. Before the resident session that was harmless: there were no verbs to
+miss. Adding verbs made it a monitoring surface that silently under-reported,
+which is the failure this codebase keeps writing tests against.
+
+`serve` now writes its own action log (`$H5I_BROWSER_ACTIONS`), ingested as a
+fourth source into `BoxStream::poll` and rendered **box-claimed**, not
+host-observed. That distinction is the point rather than a caveat: h5i sits on
+no socket between an agent and this engine because the engine *is* the browser,
+and a row claiming otherwise would launder the box's own account into evidence
+h5i gathered. The pane note is engine-aware for the same reason. Each verb is
+recorded before it runs and again after (no record, no action), which is a
+guarantee against accident, not against a box that has decided to lie.
+
+Measured before shipping, because it sits on the verb path: **7µs per verb**
+against **42ms** for the single frame encode a scroll triggers when a viewer is
+attached. 0.017% of one frame.
+
+**§11 items 5.2a and 5.5 built, 2026-08-08.** Typing, form submission and a
+cookie jar, shipped together because separately none of them reaches a login.
+Verified end to end against a real login site: type into two fields, submit a
+POST, follow the 303, hold the session cookie, and come back to `welcome alice`
+on a later navigate.
+
+Blitz owns the form submission algorithm and dispatches to a navigation
+provider, so the engine hands it one that *captures* the request rather than
+performing it: the encoding is upstream's, the wire stays ours, and a
+submission is policy-checked and receipted like everything else. `Broker::send`
+generalises `fetch` rather than sitting beside it, because every guarantee lives
+in that loop and a POST that took a shortcut would be the one request with no
+receipt.
+
+The cookie jar is deliberately narrower than a browser's, and §12's LOGIN-mode warning
+is why the narrowings arrived with it rather than after:
+
+- **Host-only.** `Domain` is ignored. Honouring it correctly needs a public
+  suffix list; without one, `evil.co.uk` can set a cookie for `co.uk`. The cost
+  is that cross-subdomain logins do not persist. That is a missing feature;
+  sending a session cookie to the wrong origin would be a vulnerability.
+- **In memory only**, so restarting the session is a complete logout.
+- **Never readable by the agent**: no verb returns a value, `status` reports a
+  count, and the request log records how many cookies crossed rather than which.
+  A credential in a receipt is a credential in every export it reaches.
+- `Secure` and the `__Secure-`/`__Host-` prefixes enforced, and a redirected
+  POST downgraded to a bodyless GET on 301/302/303 so a password is not replayed
+  to whatever a server names next.
+
+Two bugs the tests caught rather than review. The request-path matcher used
+RFC 6265's *default-path* derivation, which exists only to fill in a missing
+`Path` attribute, so a cookie set at `Path=/admin` was never sent to `/admin`.
+And `scroll_height` was tried for the scroll range before the fix above: taffy
+measures overflow *within* a box, which is zero for an unstyled page whose root
+simply grew.
+
+#### Still open, and one correction
+
+**LOGIN mode is not built**, and it is the one item this entry was
+warned about: §12 pairs LOGIN mode with cookies precisely because a session
+with cookies is the first version of this browser where a stolen credential is
+worth having. Until it lands, a human taking over to type a password does so on
+a page the agent can still snapshot. File uploads are dropped rather than read,
+which is a deliberate refusal to acquire filesystem reach. Tier 3 (policy-gated
+script) is now in scope, and the cost of putting it there is §12.5.
+
+**Corrected 2026-08-08.** This entry also said "nothing wires h5i to this
+engine yet: M9's `--engine` knob does not exist, so using it in a box is
+still manual", which was true the day tier 2 shipped and stopped being true
+three commits later on the same branch. `--engine h5i-light`, or
+`[profile.X] engine`, pins the engine in `policy.resolved.toml` and so in the
+digest; `browser_env` hands that engine `H5I_BROWSER_ALLOW` (the box's own
+`net.egress`, loopback included) and `H5I_BROWSER_RECEIPTS` pointing at the
+box's spool, and skips the agent-browser shim, whose job is to launch Chrome
+and attach a driver, neither of which applies to an engine h5i runs itself.
+Using this engine in a box is a create-time flag. The entry is left standing
+rather than edited away because the gap it records is the real lesson: a
+milestone's "still open" list ages against the commits that follow it.
+
+The original entry follows.
+
+**M10 (as proposed).** The h5i-native engine of 7.1 step 3. With M8's Fetch lane already delivering best-effort
+request receipts on Chromium, the engine's case is what mediation cannot
+give: fail-closed logging (no running log, no request), script off by
+default and checked by policy before evaluation, and the single-use
+form-submission capability with structural provenance.
+
+The shape is a **standalone binary**, a workspace crate with its own bin,
+not a library h5i links. h5i launches it as a process, hands it the egress
+proxy endpoint and a receipts channel, and the engine answers with a
+capability manifest (`javascript`, `screenshot`, `video: false`, ...) so h5i
+never guesses at what is unimplemented. It speaks the CDP subset the M9 knob
+defines, automation plus the screencast domain, so it plugs into the
+existing driver, the M8 mediation and the whole viewer stack with no new
+plumbing, and fail-closed becomes a protocol property: no receipts channel,
+no fetch. This is the agent-browser pattern applied to our own
+component (a pinned binary behind a protocol boundary, section 7), and it
+prices the risk correctly: if the engine fails, h5i is untouched; if it
+succeeds, it can stand as a product of its own. One honesty requirement
+travels with the standalone story: bare on a host, outside a box, it is
+just a light browser, and its containment claims are made only where the
+proxy and the receipt store exist.
+
+The build is **tiered**, each tier shipping value on its own so the hardest
+one can slip without taking the milestone with it:
+
+1. **Static render.** Blitz and Stylo parse and lay out, `captureScreenshot`
+   and the snapshot verbs work, no JS. Docs-grade reading with full receipts
+   is already useful and already demo-able here.
+2. **Live view.** The screencast domain with adaptive frames: zero at rest, a
+   frame on mutation, 20-30 fps under animation, latest-frame-wins with
+   `screencastFrameAck` as the backpressure. The light engine's viewer is
+   read-only, and that is not a walk-back of 5.4: the control lock and human
+   takeover stay on the Chromium path, which is where login walls route
+   anyway (7.1).
+3. **Script, policy-gated.** Boa, with the event loop owned by the host
+   process (network completions, timers, microtasks, rAF, then
+   style/layout/paint, then the frame), and `fetch` registered as a host
+   function so a page script never holds a socket: every request goes policy
+   check, receipt append, then the wire. Off by default; the grant is a
+   profile line pinned in the digest, and the capability manifest reports
+   `javascript: false` while it is absent. The cost lives in the web
+   bindings (DOM, events, timers, observers), not in Boa, and Test262
+   conformance says nothing about the web platform, which is why this tier
+   is last.
+
+Exit criteria are numbers, not adjectives: less memory than headless
+Chromium on the same page, both at rest and while screencasting; roughly
+100ms from action to updated frame locally; rest-state CPU near zero.
+"Rust, therefore light" is a hypothesis until measured.
+
+Gated on two things: M9's findings say a light engine is actually usable for
+the reading half of the loop, and Kitesurf's open-source release has landed so
+the build-versus-adopt call is made with the code on the table, not the blog
+post.
+
+### M11. The developer-mode viewer: built, 2026-08-07
+
+`d` in the terminal viewer splits the screen: the page keeps the top, and a
+console/error pane takes the bottom third. What it shows was already arriving
+and being thrown away. `ConsoleError` and `PageError` carried their text and the
+viewer kept only a counter. Page text is passed through `sanitize_display`
+before it is drawn, because a console message is untrusted input and would
+otherwise repaint the viewer's own chrome.
+
+The layout and the pane renderer are pure functions (`termview/panes.rs`) with
+the split, the truncation, the bounded buffer and the sanitising all tested.
+`App` stays the thin thing that positions and writes, which is why any of it is
+testable at all. A terminal shorter than 16 rows keeps the whole page rather
+than showing two useless slivers.
+
+Not built: a per-request network pane. Nothing on the viewer's stream carries
+requests, and the mediator's records are host-side, so that needs a source
+rather than a layout.
+
+**M11 (as proposed).** The terminal
+viewer's default becomes a developer view rather than a page view: for a
+coding agent's overseer, the rendered page alone is the least informative
+pane. Something like
+
+```
+┌───────── page ──────────┬────── snapshot ───────┐
+│    rendered frames      │ e12 button "Submit"   │
+│                         │ e13 textbox "Email"   │
+├──────── console ────────┼────── network ────────┤
+│ TypeError at App.tsx:42 │ 200 GET  /api/user    │
+│                         │ 500 POST /api/save    │
+├─────────────────── actions ─────────────────────┤
+│ click @e12 · fill @e13 "a@b.c" · snapshot       │
+└─────────────────────────────────────────────────┘
+```
+
+The composition is cheap because every pane's source exists or arrives with
+M8: termview already decodes frames (5.10), the drain already collects
+console and network errors, and the mediated socket plus the Fetch lane turn
+per-action and per-request evidence into live streams instead of a post-run
+artifact. Input keeps the lock's semantics untouched: watching is the
+default, `i` still takes control, and the takeover is how a login wall gets
+answered (7.1). This is also the demo surface the open item 2 candidate
+wants: the receipts, watched live.
+
+Full loop the demo has to show:
+
+```
+agent edits code -> starts dev server -> opens the app with h5i browser
+  -> reads the accessibility tree -> clicks and fills -> reads console and
+  network errors -> screenshots -> fixes the code -> human watches or takes over
+  -> export patch, report, screenshots, receipt
+```
+
+### M11a. The browser terminal: the event model and the evidence panes, built 2026-08-08
+
+The half this entry called durable, and said would land
+first, has: `browser_events` is the one stream, and the console reads it.
+
+* **The model** (`crates/h5i-core/src/browser_events.rs`). Every event carries
+  its lane *and* its grade, kept apart because they answer different questions
+  and the interesting case needs both: our own engine's request log is
+  **box-claimed** (written inside the box) and **fail-closed** (the engine will
+  not fetch what it cannot record). Chromium's Fetch lane is box-claimed and
+  best-effort. One "trusted" flag could not have said that. `caused_by` is set
+  only where the source carries the link (a response to its request by
+  sequence number, a refusal to the action that provoked it) and nowhere else,
+  so no arrow on the screen is drawn from two things merely having happened at
+  about the same time. Ingest sanitises every box string once, here, rather than
+  in each renderer, because M11b writes this same text straight to a PTY.
+* **Three real sources**, no placeholders: the light engine's request log, the
+  mediator's actions, and the drained page evidence.
+* **The mediator now writes its actions as data.** They were only ever on the
+  receipt as *rendered text*, so a reader wanting them back would have had to
+  parse a display format, the quiet-wrong-answer shape this file keeps
+  recording. `browser-actions.jsonl` sits beside `receipt.jsonl`, host-side,
+  where the box cannot write, and the round trip is pinned by a test.
+* **In `h5i ui`, on the console's own terms.** One `GET`, the same token gate,
+  no second web surface. Every row shows its lane and grade as words rather than
+  as a colour, selecting a row lights what it caused and what caused it, the
+  network pane names its engine's evidence grade in its header, and a dropped
+  count is rendered rather than hidden.
+
+#### Driven against a real box
+
+**Not only a test client**, which is the gap M10 recorded and
+this milestone was gated on not repeating. The real engine opened a page with
+two refused subresources, wrote its own log into the box's `/tmp`, and the
+console served the stream: both denials as `box-claimed` / `fail-closed`, each
+with a `policy-verdict` naming the request that caused it; the cursor returning
+only the tail on the next poll; an unauthenticated request refused with 401. Two
+guards checked by making them fail: a Chromium box with that same log planted in
+its `/tmp` yields **nothing**, because only our engine's log may wear the
+fail-closed grade, and the mediator's sidecar shows up `host-observed` on the
+box that has one.
+
+**The finding, which cost the first live attempt.** `ResolvedPolicy::home_binds`
+is `#[serde(skip)]`, so `host_tmp_root`, correct for a live run and the
+only caller it had, returns `None` for **every** policy loaded back from disk.
+The console asked a live-run question of a stored policy and got a silently
+empty stream for a session that had one: enforcement-shaped code answering
+"nothing to show" instead of "I cannot tell". The reader now takes the path from
+`private_tmp_backing`, the same function that placed it.
+
+#### Second pass, same day: its own tab, and the reader made honest
+
+* **The stream is incremental and session-aware, which was a bug fix rather
+  than an optimisation.** The first reader re-parsed every source per poll and
+  numbered from 1 each time: stable only while files grow by appending, and
+  they do not: every run clears the box's private `/tmp`, so a second browser
+  run restarts the request log at zero bytes and restarts the numbering with
+  it. A console tab open across two runs would have kept its cursor and
+  silently dropped the head of the new session. The console now holds a byte
+  offset per source, notices a file that got *shorter*, and emits
+  `session-reset` as a visible row; ids never restart. Pinned by five tests
+  driven against real files, including the partial-line and vanished-file
+  cases, and confirmed live: with a viewer holding a stale cursor, a second run
+  produced the reset row and then the new session's events, where before it
+  produced nothing.
+* **A per-box Browser tab.** Evidence is a scroll of what happened; the browser
+  terminal is a live instrument, and wedging it between Services and the
+  timeline gave it a few hundred pixels. It now takes the pane. The tab appears
+  only for a browser box, and selecting another box returns to Evidence rather
+  than showing a browser view of something that has no browser.
+* **A page pane that says what it cannot show.** It reports whether a live view
+  is running in the box (the same `.stream` discovery `h5i box view` uses) and
+  names the command to attach, because the console watches and the *forward*
+  carries pixels and input with the control lock on it. For an `h5i-light` box
+  it states the engine-level caveat plainly: that engine has no resident
+  session, so each `open` renders its own page and exits, and a live view shows
+  **that** process's page rather than the one the agent is driving. An
+  unlabelled viewport there would have been the most convincing wrong answer on
+  the screen.
+
+One bug this pass created and caught before it shipped, worth recording because
+it is the same shape twice: the new `session-reset` event was added server-side
+while the console's own union type and pane router still knew six kinds, so the
+row was dropped silently in the browser, the swallow that had just been fixed
+one layer down, moved one layer up. Found by grepping the *served bundle* for
+the divider text rather than by trusting a green typecheck, which could not see
+it: an unknown variant simply matched no case.
+
+#### Third pass: the console carries pixels
+
+The page pane shows the box's page,
+rendered by our own engine inside the box. The frame lane is joined, and the way
+it is joined is the point:
+
+* **A reader, not a proxy.** A background thread per watched box enters the
+  box's user and network namespaces by pid, connects to the stream server, and
+  reads, the same route `h5i box view --term` takes (`view::connect_in_netns`),
+  reusing the same hardened WebSocket client (`termview::ws`, which refuses
+  reserved opcodes, masked server frames and oversized lengths). Nothing new
+  listens; the box gains no reachability it did not have.
+* **The console's structural guarantee survives.** Every route is still a `GET`,
+  because the frame is served *as* a `GET` returning `image/jpeg`, with `nosniff` so
+  crafted bytes cannot be re-read as anything else, `no-store` so a frame of
+  somebody's page does not settle into a disk cache. And the relay is
+  one-directional by construction: the only messages it can send upstream are
+  `config` and `ack`, there is no path from an HTTP request to a write on that
+  socket, and a test greps this module for `input_*` so the day someone adds one
+  the build says so. Typing into a page still has exactly one door: the forward,
+  which enforces the control lock.
+* **Change-driven, end to end.** The stream reports the newest frame's sequence
+  number and the page keys its `<img>` on it, so an unchanged page is zero
+  requests rather than a timer redrawing a still picture, the engine's own rule,
+  carried up to the browser.
+* **The picture is labelled.** A frame is **box-claimed**: the box's rendering of
+  its own page. Nothing derived from it reaches the trusted status row, and the
+  `h5i-light` caveat sits under the image rather than being left for a reader to
+  infer: that engine has no resident session, so a served view shows the page
+  the *serving* process opened, which need not be the one the agent is driving.
+
+Driven end to end rather than asserted: the engine served a page inside a
+supervised box, the console found the `.stream`, crossed the namespace, and
+returned a 1280×720 JPEG at `frame_seq 2` with the right headers; stopping the
+in-box server flipped `live_view` to false, dropped the relay, and the frame
+route went to 204. One test was rewritten on the way: clippy caught it
+comparing two constants, which is a tautology that would have passed with the
+size check deleted; it now drives the real decoder with real base64.
+
+#### Still open, and none of it is dressing
+
+The
+accessibility snapshot has no live source (it is a CLI verb today). Takeover is
+not wired here: the console remains read-only and input still goes through
+`h5i box view`, so the read-only-by-default / interact-under-the-lock rule below
+is *stated* by this milestone and *enforced* by the forward, which is one
+surface short of the exit criterion. Nothing links an agent action to the
+requests it caused, since neither the mediator's records nor the engine's log carries
+the other's id, so "selecting an action surfaces its correlated request" holds
+only for the verdict it provoked, and closing it is a change at the *sources*,
+not in the viewer. M11b has not started, so the claim that two readers agree is
+untested. The original entry follows.
+
+**M11a (as proposed).** M11 put
+the developer view in the terminal; this puts the full one where it can
+actually breathe, inside `h5i ui`. The design motif is a trading terminal.
+Hyperliquid is the reference, the way terminal-browser was for 5.10: what we
+take is the information model (peer panes of equal rank, change-driven row
+highlights, an always-on status bar), not the skin. The reasoning is the same
+one M11 recorded: for an agent's overseer the rendered page is the *least*
+informative pane, so page viewport, accessibility snapshot, agent actions,
+network requests, console, and policy verdicts sit side by side at equal rank:
+what the agent saw, what it did, what moved on the wire, and what h5i
+refused, in one view.
+
+**One web surface, not a second one.** This lives in the existing console:
+same axum server, same embedded bundle, same `web` feature, same loopback
+bind. The console's own rule, every route is a GET, stands; the live data
+and the input direction ride the per-box forward that already exists (5.9),
+with its per-box token and its lock check on input. The console gains a view,
+not a write path.
+
+**Not a read-only browser.** The viewer is read-only by default, interactive
+only while holding the control lock (5.4), and taking the lock is itself a
+recorded policy event: the takeover and the window in which human input
+flowed belong in the receipt next to the verbs the mediator refused during
+it. This is the terminal viewer's VIEW/INTERACT model (5.10) given a second
+skin, not a new input policy; a viewer that could never take over would
+delete M5's takeover story, and one that could always type would delete the
+lock.
+
+**The durable half is the event model, and it lands first.** One stream from
+the browser runtime (frames, snapshots, actions, requests, console, policy
+verdicts, metrics), with every event stamped with its session, ordinal,
+timestamp, kind, a `caused_by` back-reference, and its **lane**:
+host-observed or box-claimed, the same two kinds of claim the receipt
+already keeps apart. The web view, the terminal view, and the exported
+receipt all read this one stream, which is what makes the viewer a live
+receipt rather than a dashboard that happens to resemble one: selecting an
+action shows the request, console output, and verdict that carry its id.
+The panes inherit the honesty rules with the data: the status bar shows
+host-derived values only (box-claimed metrics are labeled, not promoted),
+and the network pane names its evidence grade per engine: h5i-light's
+fail-closed request log is authoritative, the Chromium path's Fetch lane is
+best-effort, and a pane that showed both alike would read as enforcement
+where there is none. Update budgets are per pane, not global: the viewport
+is change-driven (the light engine idles at zero frames by design; ~30fps
+is a Chromium screencast ceiling, not a target), status ticks slowly, rows
+batch, histories are bounded rings.
+
+The host browser trusts this page with nothing new: it renders pixels and
+structured events, target HTML never enters the viewer's DOM, box strings
+render as text (`sanitize_display`'s rule, applied in a second place), and
+the CSP names no external origin.
+
+Exit criteria: the console shows a live box with every pane labeled by lane;
+selecting an action surfaces its correlated request, console output, and
+verdict; a takeover started from the viewer types into the page and lands in
+the receipt as a policy event alongside the agent verbs refused during it;
+the network pane states its evidence grade per engine; and the TUI showing
+the same session shows the same events, because divergence between the two
+viewers is a bug in the model, not a difference of skin.
+
+Gated on the shared event stream existing (this milestone's own first half)
+and on M10's open item being closed first, the live view driven by a real
+`h5i box view` against a real box, because a polished terminal over a
+stream never exercised end to end inverts this file's own priorities.
+
+### M11b. Terminal watch mode: proposed, 2026-08-08
+
+The shipped terminal
+viewer (5.10, M7, M11) re-pointed at the same event stream and kept,
+deliberately smaller: viewport, trusted status row, latest actions, console
+errors, denied requests, panes cycled rather than tiled. It is the SSH and
+demo surface ("or stay entirely inside the terminal"), and it does not
+chase pane parity with M11a: the investment moves to the web view, and the
+TUI's job is to watch, take the lock when a login wall demands it, and prove
+the event model has two independent readers. Nothing shipped is discarded.
+
+### M11c. Two audit surfaces: a decision stream, and the page beside its cost. Proposed, 2026-08-19
+
+M11a built the event model and the console's evidence panes; M11b keeps a
+smaller terminal viewer over the same stream. Both are surfaces for **watching a
+box**. This entry adds the two that are missing, and they are missing in
+different directions: one is for the person running the box, the other is for
+the person reading the page.
+
+The framing that produced both: **a log is not an answer.** `receipt.jsonl` with
+two thousand rows is evidence and nobody reads it. The questions a human
+actually arrives with are few — did anything leave, was anything refused, what
+did the agent read before it wrote this, is this record real — and an audit
+surface should be shaped like those questions rather than like the storage.
+Only the first two are in this milestone.
+
+#### 1. `h5i box watch`: one line per decision
+
+A non-interactive stream of policy decisions as they are made. Not a viewer:
+no viewport, no panes, no cycling, no lock. It is the `tail -f` of the receipt
+and it is meant to be piped, grepped and left running in a second pane.
+
+```
+$ h5i box watch mybox
+14:02:11  net      ALLOW  GET   https://docs.rs/blitz/0.3.0/  (12 KB, 84ms)
+14:02:11  net      DENY   GET   https://telemetry.example.com/collect
+                                 net.egress does not list this host; nothing left
+14:02:12  browser  click  @e3 "Sign in"
+14:02:12  net      ALLOW  POST  https://app.local/login  (cookies: 1)
+14:02:13  exec     cargo test
+```
+
+**This is distinct from M11b and does not replace it.** M11b is a pane-based
+TUI with a viewport, which is a thing you sit in front of. This is a line
+stream, which is a thing you leave running. The distinction is worth keeping
+because the reason to build it is behavioural rather than technical: trust in a
+sandbox is built by watching it once, seeing it behave, and then stopping. A
+surface that must be opened and attended to is a surface that is not used after
+the first week, and `--deny-only` is the form that can be left on forever.
+
+Requirements that follow from the rest of this file:
+
+* **Third reader of one stream.** M11a's whole point is that `browser_events`
+  is the single stream; M11b was gated on proving it had two independent
+  readers. This is the third, and it must consume the same model, including
+  `lane` and `grade` as words. A row whose grade is `box-claimed` says so here
+  too; the terse format is not licence to drop the qualifier that makes the row
+  honest.
+* **Sanitised once, at ingest.** Already true (M11a), and load-bearing here
+  because this writes box-supplied strings straight to a terminal, exactly as
+  M11b does.
+* **Refusals are the headline.** `--deny-only` is the flag; a run that refused
+  nothing should be able to say that in one line rather than in silence.
+* **`--json` is the record, the default is the answer.** The same split the
+  session verbs use.
+
+#### 2. The page beside what it cost
+
+The console draws a network pane and a viewport. It does not draw them
+*together*, and for this engine that is the picture no other browser can
+produce: the rendered page, and directly beneath it every request that was made
+to render it, each with its verdict. "What did looking at this page cost, and
+what was refused while I looked" is one glance rather than two panes and a
+correlation done by eye. `caused_by` (M11a) already carries the links needed to
+draw it.
+
+Second, and smaller to build than to decide: **draw the fence.** The snapshot
+wraps page content in `--- BEGIN/END UNTRUSTED PAGE CONTENT ---` (§12.1) because
+that is the moment attacker-controlled text reaches something deciding what to
+do next. The console currently renders page-derived text without that boundary
+being visible, so the human reader is given *less* framing than the model is.
+Rendering the same fence in the UI costs almost nothing and removes an
+asymmetry that is hard to defend once noticed.
+
+Neither of these is a new evidence source. Both are M11a's stream, arranged so
+the arrangement itself carries the argument.
+
+#### What was considered and rejected: putting receipts in git
+
+The tempting version of "make the evidence live where review already happens"
+is a receipt digest in a commit trailer, or the bundle summary in
+`git notes --ref=h5i`. It is cheap, it survives forever, and it appears in the
+pull request without anyone opening a tool.
+
+**Refuse it.** Two reasons, and the second is the one that settles it:
+
+1. It is a second export path that does not pass the export gate. §5.6's
+   redaction and size caps apply to `h5i box export`; a note written beside it
+   inherits none of that, and receipts carry URLs, hostnames and query strings
+   that are exactly where a token ends up.
+2. **It is unretractable.** A note or trailer that has been pushed is on every
+   clone and in every fork, and a force-push does not recall it. Every other
+   evidence path in this design is a local artifact that a person chooses to
+   hand over. This one publishes by default, and "the agent's record leaked the
+   credential the agent was careful with" is a failure this project should not
+   be able to have.
+
+Recorded here so it is refused in review rather than re-argued. If the pull
+request really is the right place for this, the thing to put there is a
+reference to a bundle, produced by the gate, that someone chose to share.
+
+#### Order, and what this does not include
+
+`h5i box watch` first: it is small, it consumes a stream that already exists,
+and it is the surface that makes the guarantee visible day to day. The paired
+view second. The fence line can land with either.
+
+Deliberately **not** in this milestone, and both larger than it:
+
+* **`h5i box why <name>`**, a provenance query rather than a log reader
+  (`--reached <host>`, `--wrote <path>`). The interesting one, and the one that
+  has to be honest about a hard limit: what the receipt holds is *temporal
+  co-occurrence*, not causation. "The agent read these pages before it wrote
+  this file" is true and useful; "these pages caused this file" is not
+  something the record supports. It is buildable only if it says which of the
+  two it is, in the output, every time. Left out until that wording is settled,
+  because the failure mode of getting it wrong is this project's worst one.
+* **`h5i verify <bundle>`**, the third-party check, which needs §B11.5.16's
+  signed receipt before it means anything. Its UX shape is a one-line verdict
+  followed by an explicit statement of what the record does **not** cover, which
+  is the same instinct as `capabilities` (§12) and `unsupported()` (§B8.4)
+  applied to the audit trail. That paragraph is the differentiating part of the
+  feature, not a caveat attached to it.
+
+### M12. Share: built, 2026-08-10 (5.11, 5.11.1)
+
+The bridge first, because it
+is the part both transports share and the part that touches the boundary:
+netns dial-in, the grant table with mint / verify / expire / revoke, the HTTP
+gate, and the ingress receipt lane. Then iroh and `h5i join`. Then the quick
+tunnel on the same bridge. Viewer sharing was explicitly not in this milestone
+and is not built.
+
+#### What was verified, and how
+
+**What is demonstrated, and by what.** The suite covers the whole P2P chain
+end to end in-process (QUIC handshake, greeting, grant table, the dialer's fd
+handoff, the byte pump) with a wrong ticket refused on the same connection and
+a revoke written by another process stopping the next one. The tunnel front is
+driven exactly as `cloudflared` drives it, including against a dev server
+written to ignore `Connection: close`, which is what pins the one-request rule.
+The gate's promise that the share credential never reaches the box is pinned by
+reading the rewritten head.
+
+**Run for real on 2026-08-10, and this is the part that was open.** A live
+`supervised` box with a dev server inside it, shared over iroh, joined from a
+second `h5i` process, and fetched with `curl`:
+
+- the invite bounced to a cookie (`h5i_share_40959`, port-scoped as designed)
+  and the box's HTML came back through the joiner's loopback proxy;
+- the path was **direct**, hole punching rather than a relay, with the endpoint's
+  real addresses in the ticket;
+- a request with no cookie and one with a wrong cookie both got `401`, and
+  neither reached the box;
+- `h5i box share revoke` from a third process cut the peer off; the joiner
+  printed the sharer's own close reason rather than a transport error;
+- the export's receipt named the peer, the grant and its label, the window, the
+  connection count, the byte counts and the path:
+  `08e03775419e… via direct — grant 38bd63e2 (reviewer), 14s, 1 connection,
+  97 in / 412 out`. The connection count is *one*, because the redirect and
+  both refusals were answered by the joiner's own proxy and never crossed,
+  which is the gate working, visible in the evidence.
+
+**Re-run on 2026-08-10 after the third round of fixes**, because that round
+rewrote the response path: seven sequential requests each on their own
+connection (the receipt says so), `Connection: close` in every answer, and a
+`HEAD` returning in five milliseconds where the version before it would have
+waited three hundred seconds for a body that a `HEAD` never has.
+
+**The tunnel, run for real on 2026-08-10.** `cloudflared` was installed and a
+quick tunnel carried live traffic over the internet: the invite link bounced
+into a `Secure` cookie, `GET`, `HEAD` and a 300 KB `POST` all came back from the
+box, an anonymous request and one with a wrong token both got `401`, and the
+receipt named the transport, the grant, six connections, 678 KB in and 676 KB
+out, one refusal, and the "not end-to-end encrypted" note.
+
+Two things the live run found that no test would have. A `POST` answered `501`
+and the first diagnosis, that `cloudflared` chunks every body and the proxy
+refused chunked, was **wrong**: the `501` came from the box's own
+`python -m http.server`, which has no `do_POST`. (Chunked request bodies are
+forwarded now rather than refused, which is a real improvement and was reachable
+from a direct client; it was not what that `501` was.) And killing the box's
+session left the share answering `502` forever with nothing said, because the
+dialer's helper lives *inside* the box's network namespace and keeps it alive
+after everything else in it has gone, so a box restarted afterwards gets a new
+namespace the share can never reach. The share now notices and ends.
+
+**The whole response matrix, run over both transports on 2026-08-10.** A dev
+server in a box answering a page, a `304`, a `HEAD`, a chunked response, a form
+`POST`, a chunked `POST` and an `Expect: 100-continue` upload, every shape the
+framing code had to be rewritten twice to get right, with an anonymous request
+refused alongside them. All of it in single-digit milliseconds on the P2P path.
+The two receipts record seven and six connections, which is one per request,
+which is the one-request rule visible in the evidence.
+
+**Hot reload, run for real on 2026-08-10, over both transports.** A dev server
+in a box answering a `Sec-WebSocket-Key` handshake with a genuine `101`, driven
+from a client that speaks the frame format: `echo:reload-please` came back
+through a Cloudflare quick tunnel, and again over a direct P2P path. Both
+receipts record it as two connections, which is what a page plus a socket is.
+
+**Two peers and a per-person revoke, run for real on 2026-08-10.** A tunnel
+share with two grants: both admitted, `share revoke` on one, and the other kept
+working: `200` and `401` from the same URL a second apart. The receipt lists
+them separately by grant and label, with the revoked one's traffic still counted
+and the refusal recorded as revoked rather than unknown. That is the property
+the whole grant model exists for and it had never been exercised outside a test.
+
+Also verified live, and worth recording because it was a defect this branch
+introduced and fixed: two `h5i join` sessions on one machine, a browser holding
+both of their cookies, and the box seeing neither, only the app's own `sid=9`.
+
+#### The review rounds, and what each lens found
+
+**Rounds 8 to 10, and what live running kept finding.** A ticket expiring on
+its own, neither revoked nor interrupted, ends the share, writes the receipt,
+clears the record, and now tells the joiner why; that path was verified twice
+because the first fix for it was inert. A dev server that rejects a request
+before reading its body has its own answer relayed rather than replaced. And a
+`--tunnel` share with two grants had one of them revoked while the other kept
+working.
+
+**Rounds 11 to 14, and the two that would have bitten a real user.** A client
+that sends its request and then shuts down its write side, which is legal HTTP/1.1 and
+what anything built out of one write and one read does, had that EOF read as
+"the visitor left", so the relay stopped on the spot: a 2 MB download arrived as
+63 bytes, with a clean close and nothing recorded anywhere. And `h5i join` was
+hung up on by the sharer thirty seconds after connecting, because the sharer
+drops a connection that has never authorized a stream and the joiner did not
+open one until somebody visited the page, so the ordinary sequence (send a
+ticket, they join, *then* they open the browser) killed itself. The joiner now
+presents its ticket once at connect time, which fixes that and makes "joined" a
+statement about the ticket rather than about the network: a revoked ticket fails
+at `join` instead of at the first page load.
+
+The same rounds found `share status` rendering every share as `0m left` for its
+final minute, one column away from `expired`; `share grant` racing `share stop`
+closely enough to bring a stopped share back to life; a `revoke` on a crashed
+share reporting that connections had been dropped; a reused pid producing a
+share that could be neither stopped nor restarted by any verb; and Ctrl-C being
+swallowed for the whole six-second teardown on three of the four ways a share
+ends.
+
+**Round 15, and the fix that was worse than the bug.** Making Ctrl-C responsive
+during the teardown was done by arming the hard-exit watcher after the select.
+On the three exits where no signal had been delivered yet, that meant the
+operator's *first* Ctrl-C hit a watcher built for their second: it printed
+"interrupted again", threw the receipt away and exited. Pressing Ctrl-C once to
+get a prompt back destroyed the one artifact this feature exists to produce, and
+said they had done it twice. An interrupt during the ending now means "stop
+waiting", not "stop recording"; only a second one exits without a receipt.
+Verified live three times out of three.
+
+The same round found that the join-time ticket check, itself a fix from the
+previous round, went the whole way into the box, costing a connection to the
+dev server and one of the share's 64 slots per join; that a new joiner against
+an un-updated sharer would be told its ticket was revoked, forever, because the
+greeting changed without the ALPN changing; and that `clear`, `clear_now` and
+`forget` deleted whatever record was on disk without checking whose it was,
+which a `stop --force` followed by a fresh `share` turns into one process
+deleting another's grant table after its ticket has been given to a human.
+
+**Round 16 was a fuzzer rather than a reader**, on the argument that fifteen
+rounds of adversarial reading had started mostly finding the previous round's
+work. `crates/h5i-share/src/fuzz.rs` generates request and response heads from a
+grammar seeded with every awkward token the earlier rounds turned up, mutates
+them, and asserts the properties the rest of the crate is entitled to assume:
+the credential never reaches the box, a redirect never leaves the origin, one
+framing and one `Connection` on the way out, line discipline in both
+directions. It is deterministic, prints the seed for any failure, and
+`H5I_FUZZ_ROUNDS` turns it into a soak.
+
+Twenty million heads found two defects a person had not: `split_cookie` applied
+its "nothing named like ours goes upstream" rule on the branch where a cookie
+has an `=` and not on the branch where it does not, and a response head with no
+status line at all was relayed with a *header* promoted into the status line's
+place, which a browser reports as a protocol error and nobody can trace. Two of
+the four failures it reported were the invariants being wrong rather than the
+code, which is its own kind of useful: `007` is a legal `Content-Length` and a
+cookie named `999h5i_share` is somebody else's.
+
+**Rounds 16 to 26 changed the kind of reader**, on the argument that fifteen
+rounds of adversarial reading had started mostly finding the previous round's
+work. A fuzzer, an end-to-end script that automates the live checks that had
+been done by hand for five rounds, a leak hunt, a flake hunt, the two capacity
+ceilings nothing had ever driven, an accounting sweep of every counter, and,
+the one that found most, a review from the **joiner's** side, asking what a
+hostile *sharer* can do to the person who pasted their ticket.
+
+That last direction had never been examined. It found that the joiner's
+handshake had no deadline on any of its three steps, so a sharer who simply
+never answered left `h5i join` hung with nothing printed at all; that a page
+served on the joiner's loopback could register a service worker, which outlives
+the share and keeps control of that address afterwards; that a ticket's
+addressing went to iroh unexamined, so one naming `127.0.0.1:2375` made the
+joiner dial a service on its own machine; and that the QUIC close reason, which
+the sharer chooses, was printed to the joiner's terminal unsanitised, the same
+escape-injection the `box_id` fix had just closed, through the field next to it.
+
+The fuzzer needed a round of its own, too. Measured against the real parser,
+1.9% of its heads were parseable, **none** of two million carried both framings,
+and about one per run carried a credential, so "twenty million heads pass" was
+true and meant almost nothing. Sampling the line ending once per head rather
+than once per line, and leaving two thirds of heads unmutated, took those to
+18%, 0.8% and 0.8%; the test now asserts floors on all three, so a generator
+that stops reaching the code fails instead of passing.
+
+**Rounds 27 to 36** kept changing the lens. Two more directions had never been
+looked at, and both paid: a review from the **joiner's** side (what a hostile
+*sharer* can do to the person who pasted the ticket) and one of **how a live
+share interacts with the rest of h5i**: the lifecycle verbs, the export, the
+console, and the fact that a share holds a box's namespace open.
+
+The worst thing either found: **a share of a box at the `process` tier with a
+profile that denies egress can never work, and the docs recommended exactly
+that configuration.** Such a box gets a network namespace of its own with no
+loopback brought up in it, so nothing inside can reach even itself. The share
+started, printed a ticket, and left both people reading messages about a dev
+server that was running the whole time. It is refused now, by name, and the
+MANUAL and the skill no longer name that tier as an option.
+
+Second: **a share pins one namespace at startup and only asked whether the box
+had *any* session.** Every session gets a new namespace, so somebody who exits
+a shell and starts another, or who has a read-only observer attached while
+they restart, left the share serving a namespace nothing was in, with
+`share ls` reporting it healthy. It compares the namespace now.
+
+Third, and the same argument for the third time: the wire had four reply codes
+and no way to say "h5i cannot reach the box". The receipt learned to tell that
+apart from "your dev server is down" in round 19; the joiner's browser was
+still being told to go and ask the sharer to start a server that was running.
+
+**The three findings rounds 27-36 recorded and did not fix** are fixed now, and
+each was verified by reproducing it first.
+
+`cloudflared` outlived a `SIGKILL` of the share by more than twenty seconds,
+with its public `trycloudflare.com` hostname still registered and still
+pointing at a loopback port that had just been freed, so for that window
+anything on the machine that bound it was on the public internet under a
+hostname h5i minted. `kill_on_drop` is a destructor and `SIGKILL` skips
+destructors; `PR_SET_PDEATHSIG` is the kernel doing it instead. Measured: gone
+in one second, against twenty-plus with the change removed.
+
+macOS carried that hazard in full until it was closed the only way Darwin
+allows. `PR_SET_PDEATHSIG` is something a process asks *for itself*, so Linux
+sets it in the child between fork and exec; nothing can ask it on behalf of a
+binary h5i does not compile. So a watchdog process waits on `kqueue` for either
+the share or `cloudflared` to exit, and kills the tunnel if the share went
+first, a separate process precisely because a `SIGKILL` cannot skip what is
+not running the share's code. Both pids are watched, not just the share's: a
+watchdog armed on one pid alone would outlive the tunnel it was guarding and
+eventually `SIGKILL` whatever inherited the recycled number. Measured on macOS
+the same way: the public hostname survived the full ten-second observation
+window before, and the tunnel is gone within 250 ms after.
+
+`h5i box rm` did not know what a share was. A shared box is almost always also
+`running`, so the operator was told to abort the box and never that somebody
+outside was connected to it, and the check has to sit *above* the status guard
+or it is unreachable. Worse, a share that outlived the removal wrote its
+receipt afterwards, and `receipt::append` creates the directory it writes into:
+the box came back as a receipt log and a payload under a path with no manifest,
+which every tool answers "no environment named that" for and only `rm -rf`
+clears. The receipt is skipped when the box is gone, which loses it. The right
+trade, since it is evidence about something that no longer exists.
+
+And the console showed nothing at all while a box was open to somebody. The
+receipt lands when the share *ends*, so the one lane that lets somebody **in**
+was the one lane the console could not see while it was open. `shared_now` is
+on the box row now.
+
+The pattern across all fifteen rounds is worth recording, because it is the
+argument for having run them: **every round found real defects in the previous
+round's fixes**, and five of the sharpest were fixes that did nothing at all: a
+`Connection: close` the box could ignore, a shutdown signal that was sent after
+the shutdown, a flag that recorded truncation for the rarest of the four ways a
+response gets cut short, and a linger drain whose two dedicated tests both
+passed with it deleted, and a signal handler armed for a second Ctrl-C that
+caught the first. That linger drain is now documented as what it is: bounded,
+kept for the sake of the intermediary on a tunnel share, and not a thing we can
+show changes what a visitor receives on Linux.
+
+`--direct-only` has been run, and it does what it says on the half that can be
+run here: the share starts, the peer gets a direct path, traffic flows, and the
+receipt records `via direct`.
+
+**macOS now has a route, and it is a different argument rather than the same
+one ported.** A Seatbelt box has no namespace to enter and binds the host's
+loopback, so "the box's port 3000" and "this machine's port 3000" are one port,
+which is why an earlier macOS arm, deleted in round 51, was wrong to connect
+to it and call whatever answered the box. What replaces it (`share::owner`)
+asks Darwin which process holds the listening socket and shares it only when
+that process is in the box's tree; a stranger, or a second process sharing the
+address, is refused and named. The check is redone on every dial, so a dev
+server that exits cannot have its share inherited by whatever claims the port
+next.
+
+That this is not a theoretical hazard was demonstrated by the machine it was
+written on: port 3000 was held by the box's `python3 -m http.server` on `::`
+*and* by an unrelated `serve.py` on `127.0.0.1`, and a plain loopback connect
+reached the stranger. Run end to end on macOS: share, `h5i join`, a direct
+QUIC path, and the visitor receiving the box's directory listing rather than
+the stranger's page. The three outcomes were each exercised: the box's port
+shared, a stranger's port refused by name, and an empty port warned about
+rather than refused. Boxes at the `container` and `microvm` tiers on macOS live
+inside a VM where no host process holds the port; they are refused with that
+reason rather than "nothing is listening".
+
+**Nine review rounds over that route (36–44) found six defects, and the shape
+of them is the point.** Only one was in the reasoning; the rest were in what
+the code could *see*.
+
+- The pid-identity hardening added for `session_pid` turned `h5i box share`
+  **off** on macOS entirely: `proc_start_ticks` read `/proc`, answered `None`
+  everywhere else, and the verified reader skips records that cannot prove
+  themselves. Both halves were individually correct and tested; no test held
+  the three together, and the platform where it broke was the one CI cannot
+  run the command on.
+- A pid that changed hands between the tree snapshot and the socket scan was
+  vouched for by the snapshot. Re-asked upwards from the winner now.
+- Both kernel scans sized their buffer once and added fixed slack. The kernel
+  never says "there was more", and both lists are ordered, so a process that
+  opens descriptors faster than the guess can push its own listening socket off
+  the end of the scan, and a listener h5i cannot see is one it cannot refuse.
+  Both grow until the answer provably fits.
+- The refusal named the offending process, and that name is the executable's
+  file name, chosen by whoever started it. A binary named with a literal `ESC`
+  wrote escape sequences into the sentence an operator reads while deciding
+  whether their port has been taken. Sanitised through the same helper the rest
+  of the repository already used.
+- A newborn child inherits its parent's descriptors across `fork`, so between
+  `fork` and `exec` it really does hold the dev server's listening socket,
+  and judged against a snapshot taken microseconds earlier it is a *stranger*
+  co-holding the box's address, which is a refusal. A busy box therefore
+  refused its own visitors in proportion to how busy it was. Found by a
+  concurrency test on its first run, with `/usr/bin/true` reported as
+  co-holding a port.
+- And the module's own note claimed a refusal it could not make: a listener
+  belonging to another user is never *attributed* to the box, which is safe,
+  but neither can it be counted as a competitor, so "unambiguous" rested in
+  part on not having seen what this process may not see. Recorded as a limit
+  rather than argued away.
+
+The through-line: on Linux the namespace makes the guarantee true by
+construction, and there is nothing to observe. Here it is established by
+observation, and every defect but one was the observation being incomplete,
+which is the failure mode this approach has and the namespace does not, and is
+worth stating plainly wherever the two are compared.
+
+#### Still not demonstrated
+
+The two h5i processes were on one machine: a real
+direct QUIC path through the host's network stack, but not two machines on two
+networks. On macOS the two-machine half is likewise untried, and `SO_REUSEPORT`
+contention is covered by unit tests over the decision rule rather than by two
+real processes racing for one address. And `--direct-only` has never been
+exercised against a hole punch that actually *fails*. The refusal is the half
+that matters and it needs two hostile NATs to reach. Those are what remains of
+the exit criteria.
+
+### M13. The microvm tier, warmed: steps 1 and 2 built 2026-08-13, step 3 proposed
+
+The tier shipped correct and slow: one `msb run` per command, a full guest boot
+each time, torn down on drop, and — as 9. said until today — never booted end
+to end anywhere. A reading of forkd (deeplethe/forkd, a Firecracker runtime
+whose whole premise is fork-from-warm: each child `mmap`s a warmed parent's
+snapshot memory copy-on-write and spawns in ~100 ms instead of booting)
+sharpened what to do about that into three steps, in order, each gated on the
+one before.
+
+**First, demonstrate and measure: done, and it moved the plan.** The tier
+boots a real guest — a microvm box creates, runs, enforces its allowlist in
+the guest netstack, and exits 0 — so the "not yet demonstrated end to end"
+caveat is retired. The numbers are in `docs/benchmarks/microvm-boot.md`,
+taken with `scripts/bench_env_overhead.py`, which is committed so they can be
+re-derived rather than trusted. What it borrowed from forkd was the
+discipline, not a mechanism: every sample kept, the tier that could not run
+recorded with the probe's own refusal, and the null results written down.
+
+Three results changed what steps 2 and 3 should be:
+
+- **461 ms of fixed cost per command, and almost none of it is isolation.**
+  Subtracting each tier's own no-op cost, the VM's per-syscall charge is
+  −7.3 ms — noise around zero — and it does not slow CPU-bound work. The tier
+  is not a slow place to work, it is an expensive place to start, which is the
+  cost profile that amortises and the reason reuse leads.
+- **A third of that tax is the memory cap — and it belongs to step 2, not
+  before it.** Adding one h5i behaviour at a time to a bare `msb run` found
+  mounts nearly free (+17 ms for the full 16-mount set over a 74 MiB
+  `.git/objects`), egress rules free, and the preload script +9 ms — all three
+  inside the control's own 230–245 ms run-to-run drift, so read as no
+  measurable cost — but the profile's **8 GiB `mem_bytes` costs +154 ms on
+  every command**, scaling at roughly 20 ms per GiB.
+
+  This was first written up here as a free win available today. **That was
+  wrong, and testing it is what corrected it.** Guest RAM *is* the memory
+  limit at this tier, so simply lowering the number trades enforcement
+  headroom for latency. The trade can be avoided — `msb` takes a
+  `--max-memory` hotplug ceiling independently of `--memory`, and booting
+  `512M` with `--max-memory 8G` costs 237 ms against 384 ms — but
+  `--max-memory` **does not grow anything by itself** (a 512M/max-8G guest
+  fails a 1.5 GiB allocation exactly like a plain 512M one). Growth takes an
+  explicit `msb modify --memory`, which works on a live guest in ~9 ms, is
+  asynchronous ("converging"), and **keeps the cap honest**: 6 GiB against a
+  4 GiB ceiling still fails with `MemoryError`. But `modify` needs a named,
+  running sandbox, and today's tier destroys the guest after one command, so
+  there is no moment to issue it. The 141 ms is real, recoverable, and
+  reachable only once guests persist.
+- **The ordering inverts on macOS.** `microvm` runs a realistic short command
+  in 474 ms against `process` at 1604 ms and `supervised` at 1629 ms, because
+  those two add ~1.5 s to Python startup under Seatbelt while the VM adds
+  none. The strongest tier is the quickest of the three here. That Seatbelt
+  cost is undiagnosed, is not a fixed cost reuse can hide, and belongs to its
+  own investigation rather than to this milestone — but it means "microvm is
+  the slow tier" was never quite the right framing on this platform.
+
+**Second, amortize the boot: session-scoped guest reuse. Built 2026-08-13, and
+it delivered 10.7×.** Fixed cost per command fell from **461.0 ms to 43.0 ms**,
+which makes `microvm` the *cheapest* of the four tiers on this host —
+`workspace` is 53.0 ms, `process` 62.9 ms, `supervised` 98.9 ms. The strongest
+boundary is now also the least expensive to cross, because what is left at
+every tier is h5i's own CLI overhead and this path has the least host-side
+machinery to set up.
+
+`crates/h5i-sandbox/src/microvm.rs` grew a warm path beside the one-shot one,
+which stays and is still reachable by `H5I_MICROVM_NO_REUSE=1` — the escape
+hatch, and the per-command-freshness option 9. promises. **The guest name is a
+SHA-256 over its own create argv** (`h5i-<box>-<digest12>`), which is what makes
+the fail-closed rule structural instead of a check somebody has to remember:
+image, mounts, memory or egress change → different name → new guest → the old
+one reaped, so a box can never be served a guest still enforcing a policy it no
+longer has. Verified end to end: widening a box's allowlist rotated it from
+`…08839c…` to `…a4d7c6…`, the old guest was reaped, and the new one enforced
+the wider list. Deliberately *not* the pinned policy digest, which excludes the
+runtime-only mounts by design.
+
+Per-run credentials reach the guest through one small host-owned directory
+mounted at `/.h5i/run` rather than `msb exec -e`, preserving the property this
+module exists for — no value ever appears in a host command line — and the
+staged script is unlinked when the run ends. `cache_write` runs stay one-shot,
+being the only ones whose mount set differs from the box's.
+
+Two things the build found that the design had not:
+
+- **The 25 ms completion poll became the dominant cost** once the boot was
+  gone. It was flagged in the very first benchmark (2026-07-19) as inflating a
+  4 ms command to 30 ms, and it turned a 9 ms exec into 35 ms. A backoff
+  (1 ms doubling to 25 ms) brought h5i's reported wall to 10 ms, matching the
+  runtime's own cost, and the fixed cost from 65.5 ms to 43.0 ms.
+- **The orphan sweep had never reaped anything.** `marker_path("").parent()`
+  walked up past the marker directory (joining an empty component leaves a
+  trailing separator), so it scanned `/tmp` for names that live one level down,
+  matched nothing, and said nothing, being best-effort throughout. Harmless
+  while guests died with their process; not harmless now that they outlive it.
+  Fixed, with a test.
+
+A security review of the branch reported no exploitable finding, and closed two
+candidates for reasons worth keeping: the unvalidated-name path into
+`msb remove --force` was **pre-existing and strictly more reachable before**
+this work (the `parent()` bug meant the sweep read `/tmp` itself, so a marker
+needed no directory squat at all), and the 48-bit name digest is not grindable
+by anyone in the threat model — `sanitize_label`'s output is not in the hash
+input, so the box-controlled half of the name buys no freedom over it, and a
+colliding guest would mount a different workspace and fail loudly rather than
+run under a laxer allowlist.
+
+It did surface a real multi-user correctness bug, now fixed. **Markers decided
+which VMs get destroyed while living in a directory shared between logins.** On
+a shared Linux host whoever ran the tier first owned `/tmp/h5i-msb-live`;
+everyone else's marker writes then failed silently, so their guests were never
+reaped — and worse, their sweeps read the *first* user's markers and saw
+`exists() == false` for a workspace under a home they cannot traverse,
+concluding a live box was gone and removing its VM. Three changes: the marker
+directory is now per-user (`$XDG_RUNTIME_DIR/h5i/msb-live`, falling back to a
+uid-scoped temp path) and is refused unless it is a real directory this user
+owns that nobody else can write; `box_is_gone` distinguishes a definite
+`NotFound` from "cannot look", so an unreadable workspace costs a leaked VM
+rather than a destroyed one; and only names shaped like the ones this module
+emits (`h5i-` plus lowercase alphanumerics and dashes) may reach the runtime at
+all, which also means no marker can present a flag-shaped argument to `msb`.
+
+The original analysis, and what it was measured against:
+
+**The prerequisite was answered — `msb` supports this, and it is measured.** `msb create --name X`
+boots a guest detached and `msb exec X -- cmd` attaches to it over its agent
+relay socket without booting. Measured on the same host: **233.9 ms cold per
+command against 8.4 ms warm, 28× on the `msb` primitive alone**, and the warm
+path is independent of guest size (8.9 ms into an 8 GiB guest, the same as
+into a 512 MiB one), so reuse absorbs the memory cost of the previous
+paragraph as well. Against h5i's 461 ms of fixed cost, a warm guest reachable
+in ~9 ms is roughly **50×**. State persists across execs as expected.
+
+So the shape is: boot on a box's first command, exec later commands into the
+same guest, tear down with the box or an idle timer. This is backend-neutral
+and it is the only speed move that works on macOS, where libkrun has no
+snapshot or restore and fork-from-warm cannot exist. It is also the
+architectural unlock for three gaps 9. lists as costs: a persistent guest is
+what background services (`box service`), port-based share, and an in-guest
+tee shim each require before they can be built at this tier.
+
+**The semantics question is decided, and 9. now states it: reuse is the
+default.** Reuse means commands in a box stop getting a pristine guest each
+time, which reads as a weakening until you notice that `workspace`,
+`process`, `supervised` and `container` have all always shared state across a
+box's commands — the worktree is the whole point of a box. Per-command
+amnesia at `microvm` is an artifact of shelling to a one-shot `msb run`, not a
+promise the tier made, so ending it is alignment rather than a loss. The
+boundary that carries the security claim is box↔host and box↔box, and neither
+changes: separate boxes still get separate guests. Recreation per command
+stays available for anyone who wants today's behaviour; it just stops being
+the only option. The one hard requirement is the digest rule in 9. — a guest
+whose policy has changed underneath it is recreated, never reused.
+
+Not borrowed from forkd here, deliberately. Their answer to the same question
+is "fork a fresh child per task", which needs a memory-fork primitive `msb`
+does not have (its snapshots are disk-only and offline) and economics we do
+not have (~20–100 ms to re-create, against our 237–460 ms). It is also the
+weakest part of their implementation: `DESIGN.md:118-128` describes per-child
+overlayfs in the present tense, `grep` finds no overlayfs anywhere in the
+shipped code, and children in fact share one read-write rootfs file whose
+writes are cross-visible and durable — a cross-sandbox channel their
+`SECURITY.md` does not mention. The transferable lesson is the one their
+`/tmp`-as-tmpfs convention encodes (name one place where guest-local writable
+state belongs) plus the negative one: a design doc that drifts into the
+present tense about unbuilt behaviour is how that happens.
+
+It should carry the memory trick from step 1, because a persistent guest is
+what makes it usable: `msb create --memory 512M --max-memory <ceiling>` boots
+at 237 ms instead of 384 ms, one `msb modify --memory <ceiling>` at ~9 ms
+restores the enforced cap, and every exec after that is ~9 ms. That removes
+the +154 ms from the one boot per box which reuse alone cannot amortise, and
+the enforcement claim survives it. Two constraints the measurements attach to
+it: the resize is asynchronous, so a box whose first command immediately wants
+4 GiB may meet a guest that has not converged yet and needs the modify issued
+at create time rather than lazily; and **an exec can hang** (see the anomaly in
+`docs/benchmarks/microvm-boot.md` — twice in ~100, undiagnosed, unreproduced
+in 6 controlled attempts), so exec needs its own deadline the way `wait_vm`
+already gives `msb run` a host-side backstop.
+
+**Six prerequisites measured before writing any of it (2026-08-13), because
+two assumptions had already died that way.** None reshaped the design; one
+resized it. **A state check costs ~7.5 ms** (`msb list --format json`, the
+cheapest of list/status/ping), which is the same order as the exec it guards,
+so checking before every command roughly *doubles* per-command cost to ~16 ms
+rather than being free — still ~29× better than today, but it means one list
+per run, not one per decision, and it is the reason to keep guest state in the
+box manifest rather than re-derive it. **Mounts are live in both directions**:
+a host write after boot is visible inside a running guest and vice versa,
+which is what lets per-run credentials go through the existing `/.h5i/spool`
+mount instead of `msb exec -e`. **`--timeout` enforces exactly** (2 s killed at
+2.02 s, `rc=1`, "exec timed out after 2s"), so the profile wall clock survives
+the switch. **`--tty` works under a real pty** (guest reports `/dev/pts/0`,
+`TERM=xterm-256color`) and `--no-tty` under a pipe, so `box shell` and captured
+runs both keep their current shapes. **Eight concurrent execs into one guest**
+all returned their own correct output in 26 ms of wall clock, so a single warm
+guest is not a serialization point — which is what later makes `box service`
+and the browser sidecar plausible here. And **names take 128 characters,
+dots and underscores, but reject `/`**, so a box id like `env/human/slug` must
+be sanitized before it can carry a policy digest in the guest name.
+
+**h5i must track guest state, and `msb exec`'s auto-start is a trap.** An
+earlier draft of this section said the opposite, on the strength of upstream's
+"exec auto-starts a stopped sandbox" — measurement corrected it. Exec into a
+**running** guest is 8.5–9.3 ms. Exec into a **stopped** one is ~236 ms *and
+leaves it stopped*, so it is a one-shot boot wearing the fast path's name:
+every later exec pays the same again and the guest never re-warms. An explicit
+`msb start` (~143 ms) is what returns it to `running`, after which execs are
+9.3 ms again. So an idle timeout that stops a guest silently reverts the tier
+to its current per-command cost, permanently, until something starts it — the
+reuse design has to own the state machine rather than lean on exec's
+convenience.
+
+Four more things the upstream check turned up that the design has to carry.
+`--idle-timeout` and `--max-duration` exist but **have no default**, so a
+detached guest outlives its box unless h5i sets one — the orphan-marker sweep
+becomes load-bearing rather than a backstop, and `msb touch` is what keeps a
+guest alive during an active session. `msb exec` takes `-e KEY=value` on argv,
+which is the same `/proc/<pid>/cmdline` exposure the preload script exists to
+avoid, so that mechanism carries over unchanged and costs ~9 ms. There is **no
+daemon** — 0.2.x's `msb server` is gone and each sandbox is its own detached
+host process, so a pool's ceiling is host RAM. And the upstream repo has moved
+from `microsandbox/microsandbox` to `superradcompany/microsandbox`, so the
+references in our docs and error strings will rot. The lifecycle shape to
+extend is `SandboxGuard` and the orphan-marker sweep in
+`crates/h5i-sandbox/src/microvm.rs`, which already own naming and cleanup.
+
+**Third, on Linux only, a second backend: fork-from-warm — and step 1 lowered
+its priority.** Reuse gets a command to ~9 ms, so what remains for
+fork-from-warm is the *first* command of a box and fan-out across many boxes
+at once, not the steady state. It should be judged on that narrower prize
+rather than on the 50× headline, which step 2 already collects. Worth noting
+for the same reason: `msb` does have snapshots, but they are **disk-only and
+offline** — a stopped sandbox, no memory image — so the warm-fork primitive
+cannot be built on the macOS backend even in principle, and this step stays a
+Linux-only second backend rather than something to retrofit.
+
+The prize is a prewarmed agent snapshot — a parent guest with the agent CLI,
+node, and toolchain already resident — so a microvm box's *first* command
+skips a boot plus an agent cold start. forkd's pack format (sha256-pinned
+snapshot bundles on a serverless registry) is a distribution story parallel
+to our OCI images. The adapter seams are
+narrow and already isolated: the `Runtime` enum, the pure and fully-tested
+`build_run_argv`, and the two dispatch sites in `sandbox.rs`. The catch is
+disqualifying until fixed: forkd has no default-deny egress — its own
+README says so — and this tier advertises `egress_enforced_l3`, so under
+the fail-closed rule a forkd backend refuses every profile with an egress
+allowlist, which is most of them. The candidate closure is the netns forkd
+already gives each child: a netns is a natural L3 enforcement point, and
+the same egress-rule grammar the msb translation compiles from
+(`container::parse_egress_rule`) can compile to nftables rules programmed
+into it. That fix is upstreamable, the way forkd upstreamed its own
+Firecracker `MAP_SHARED` patch.
+
+**Not borrowed, deliberately.** The live-BRANCH stack — vendored
+Firecracker, userfaultfd write-protect, a seccomp workaround — is the
+highest-maintenance part of forkd and "start boxes fast" does not need it:
+plain restore-from-warm-snapshot works on stock Firecracker. KSM tuning is
+skipped on forkd's own negative result, and hugepages wait until the first
+step's measurements say the tail matters. And the core CoW primitive does
+not port to macOS at all — forkd's design doc rules macOS out because the
+mechanism *is* the host kernel's copy-on-write over `mmap(MAP_PRIVATE)` —
+so the macOS story stays msb plus reuse, and the platform split is stated,
+not smoothed over.
+
+### M14. `box service` at the microvm tier: built, 2026-08-14
+
+Services are the first of the three things M13 step 2 unlocks, and the one the
+other two wait on: a dev server has to exist before it can be shared or driven
+by a browser. `spawn_background` refuses every tier but `workspace` and
+`process` today, and the reason is not a missing feature — it is that **every
+mechanism in the service machinery is a host-process mechanism**, and a guest
+process is not a host process.
+
+| What a service needs | How it works today | Why it does not survive the boundary |
+|---|---|---|
+| Identity | a host pid from `spawn_background` | a guest process has no host pid |
+| Liveness | `pid_alive(rec.pid)` | asks the host about a guest pid |
+| Stop | `killpg` after `setsid` | cannot signal into the guest |
+| Logs | the child writes a host file directly | the guest cannot see a host path |
+| Ports | a *host* port allocated and injected as `PORT` | the server binds inside the guest; nothing listens on the host |
+
+**The one that is dangerous rather than merely absent** is identity, and it
+decides the shape of the whole design. `ServiceRecord.pid` is a host pid, and a
+guest pid put in the same field is not a different value — it is the *same
+number in a different namespace*. `pid_alive` would answer about an unrelated
+host process, and `service_stop`'s `killpg` would signal an unrelated host
+**process group**. So the record has to say where the pid lives, every consumer
+has to dispatch on that, and the host signal path has to **refuse** a guest
+record rather than fall through to the pid it cannot interpret.
+
+The design, then:
+
+**A record says which world its pid belongs to.** `ServiceRecord` gains a
+runtime discriminator carrying the guest name, `serde`-defaulted to the host
+variant so records written before this still parse. That name is also the
+cheapest liveness precondition there is: if it is not the box's *current* guest
+name, the service is dead by construction, because a policy change rotated the
+guest — no exec required to know it. Which is the second thing to state plainly:
+**rotating a guest kills its services**, since the guest is the machine they
+run on, and the records must be invalidated when it happens.
+
+**Launch is an exec that detaches.** `msb exec <guest> -- sh -c 'cd /work &&
+setsid nohup sh -c "<cmd>" >/.h5i/services/<name>.log 2>&1 & echo $!'`, taking
+the printed guest pid. `setsid` makes it a session leader, so a later
+`kill -TERM -<pid>` reaps the whole descendant tree — the same semantics the
+kernel tiers get from `killpg`, which is why the same `setsid` appears in
+`spawn_background`. Measured to survive: a server started this way answered
+after unrelated execs in between (`docs/benchmarks/microvm-exec-tunnel.md`).
+
+**Logs go through a mount, not a pipe.** `<env_dir>/services` mounted
+read-write at `/.h5i/services`, the guest redirecting into it, the host reading
+the same file. `service logs` and the stop-time capture ingest then work
+unchanged. The content is box-written and therefore untrusted, which the
+existing ingest already assumes — this changes who writes the bytes, not how
+they are treated.
+
+**Stop is the same escalation, one exec away.** `kill -TERM -<pgid>`, wait,
+escalate to `-KILL`, then ingest the log as evidence exactly as today.
+
+**Ports are guest ports, and `box ports` must say so.** This is the one place
+the user-visible semantics genuinely differ, so it should not be papered over.
+Two consequences, one of them a simplification:
+
+- *Dynamic allocation stops being necessary.* Host ports are allocated per env
+  because concurrent boxes share one host network and would collide. Each
+  microvm box has its own network stack, so nothing can collide: the service
+  binds the port its definition declares, and `PORT` is injected as that.
+- *Nothing on the host listens.* `box ports` at this tier is reporting a port
+  inside a machine, and reachability is `box share` — over the exec tunnel
+  measured in `docs/benchmarks/microvm-exec-tunnel.md`, not over a published
+  port.
+
+**Publishing the port with `msb -p` was considered and rejected.** It is
+create-time only, so the set of published ports becomes part of the guest's
+identity: changing a service definition would rotate the guest and kill every
+service running in it, and a box would carry an ingress hole for its whole life
+against the possibility of a share that most boxes never ask for. The tunnel
+opens nothing and works even on a `--no-net` box, which is the property worth
+protecting.
+
+**What does not change**, and deliberately: the service definition
+(`[service.<name>]` in `.h5i/env.toml`, digest-pinned), the records directory,
+the event log, the capture ingest at stop, and the whole CLI surface. Only the
+execution backend is new — `spawn_background` grows a microvm arm and a return
+type that can carry a guest name, rather than a second service subsystem.
+
+**Built, and verified end to end**: a declared service starts in the box's warm
+guest, `service status` reports it running, a dev server it starts answers
+`HTTP 200` from inside the box, a `box run` in between leaves it untouched,
+`service logs` reads the guest's log through the mount, and `service stop`
+reaps it and captures the log as evidence.
+
+Four things the build found that the design had not, three of them the same
+mistake wearing different clothes — *assuming a host mechanism survives the
+boundary*:
+
+- **The guest's identity is only as stable as the policy that builds it.**
+  `service_start` prepared a *different* policy than `run`: no capture spool,
+  no inbox, no cache mounts, no user egress. Different mounts, different create
+  argv, different guest — so starting a service created a second guest and
+  reaped the one `box run` was using, and the next `box run` reaped it straight
+  back, killing the service every time. Fixed by extracting `prepare_box_reach`
+  so both paths grant the same reach from one definition. Then it happened
+  *again*, two mounts smaller: the agent-config lockdown mounts are emitted
+  only when those files exist, and `run` creates them through
+  `ProtectedHookConfigGuard` while `service_start` did not. The lesson is
+  sharper than "call the same functions": **anything that makes the create argv
+  depend on transient state makes the guest unstable**, and there is now an
+  `H5I_DEBUG_MICROVM_ARGV=1` hatch that prints the argv, because the diff
+  between two of them is the only thing that shows which element moved.
+- **`kill` is a shell builtin, not a binary.** `msb exec … -- kill -0 <pid>`
+  returns 127 in a slim image, so every service read as dead and — worse — the
+  stop path signalled nothing at all while reporting success. Both go through
+  `sh -c` now.
+- **`$!` after `setsid` is the wrong pid.** `setsid` forks whenever it must
+  create a new session, so `$!` names a parent that exits immediately; the
+  recorded pid was dead on arrival, and once the number was recycled it named
+  an unrelated process for the stop path to signal. The service now writes its
+  own `$$` to a pidfile and then `exec`s, so the recorded pid *is* the service
+  and *is* the session leader `kill -TERM -<pid>` reaps as a group.
+
+An adversarial pass over the result found three more, the first of which was
+shipping a silent data-loss bug:
+
+- **The idle timeout killed the services.** A guest is created with
+  `--idle-timeout 30m`, and `msb` measures idleness in *commands* — it cannot
+  see that a dev server inside is busy serving. So a service died 30 minutes
+  after the operator's last h5i command, while still handling traffic, and the
+  box looked fine. Measured rather than reasoned about: a guest with a 20 s
+  bound stopped at ~25 s and took its service with it. A box that declares
+  services now gets **no** idle bound (`ResolvedPolicy::hosts_services`, read
+  from the pinned `[service.*]` set, which is known at create time — the bound
+  cannot be changed later). Such a guest is reclaimed by `box rm` and by the
+  sweep instead. The two are different guests by name, which is right: whether
+  a box may be stopped is part of what its guest is.
+- **Nothing had a deadline.** `service_alive`, `guest_state`, and guest
+  create/start all blocked forever. Given an `msb exec` that has been seen to
+  hang — rarely, still undiagnosed — `box service status` would hang with it,
+  with no way out but Ctrl-C. All of them now run under `run_bounded`; a query
+  that overruns reads as "not running", which is the safe direction.
+- **The escape hatch broke services silently.** With `H5I_MICROVM_NO_REUSE=1`,
+  a service would have been started in a warm guest while every `box run` got
+  its own throwaway one — so the box could never reach its own service, and
+  nothing would look wrong. Starting a service now refuses under that flag and
+  says why.
+
+A second review round, aimed at the fixes the first one produced, found nine
+more. Two are worth stating because they are the same mistake at different
+depths, and both were introduced *by* a fix:
+
+- **"I could not read the answer" is not "there is nothing there."** Round one
+  fixed `guest_state` so a failed or timed-out `msb list` no longer read as
+  `Absent` — because `Absent` is answered with `create --replace`, which
+  destroys a live guest and every service in it. Round two found the same bug
+  one layer down: `parse_guest_state` still returned `Absent` when the output
+  parsed as anything other than an array, so a banner line on stdout would have
+  done it on *every command*. Worse, the unit test asserted that behaviour, so
+  the bug had a test defending it. Only a well-formed list that does not name
+  the guest is `Absent` now; everything else is `Unknown`.
+- **A guest name is not a guest life.** A guest keeps its name across
+  `stop`/`start` and restarts its pids from 1, so a stale record naming pid 42
+  could match an unrelated process in the guest's next life — refusing a start
+  that should succeed, and signalling a process group that was never ours. The
+  record now carries the guest's kernel boot id, and a mismatch reads as dead.
+
+The rest: the service launcher was the last runtime call without a deadline;
+`wait_exec` joined its reader threads after killing the child, reintroducing
+the hang its own deadline exists to prevent; crashed runs left brokered
+credentials in a directory the long-lived guest can read, so it is swept before
+each use; `live_service_ports` still called host `pid_alive` on a record that
+may hold a guest pid, safe only by an accident of ordering; `env shell` was the
+one entry point never routed through `prepare_box_reach`, leaving the
+"one construction site" invariant true only by coincidence; and the benchmark
+harness resolved workload binaries on the host and executed them in the guest,
+which would abort the sweep for the very tier it exists to measure.
+
+Then, and only then, share (M15): the tunnel is measured and the isolation
+property is verified, but its remaining unknown is the in-guest forwarder — no
+slim image carries `nc` or `socat`, and `/dev/tcp` is a bash builtin — so a
+small static binary staged into a mounted directory is the first thing that
+work has to decide.
+
+### M17. The remote runner: R13.1 built, 2026-08-16
+
+A box placed on a second Linux machine, driven from the local h5i over SSH.
+Not a new isolation tier: a second axis, *placement*, beside the tier the box
+already declares. The repo, the manifest, policy resolution, receipts, and
+every credential stay on this machine; the other machine runs the same `h5i`
+binary as a per-connection worker under an SSH forced command, executes the
+container tier there, and hands back a quarantined git bundle the host turns
+into the same reviewable patch as today. The design authority is sections R1
+to R13, including the four sub-milestones (R13) and the decision points named
+there. **R13.1 — the crate, the protocol, pairing and probing — is built and
+verified against a real sshd**; R13.2 to R13.4 are not.
+
+### M18. Runtime detection: a kernel-observed lane, 2026-08-19
+
+An eBPF collector that watches a run from the kernel and puts what it saw in
+the run's receipt. Every evidence lane h5i had until now sits either at the
+boundary of the box (h5i as the parent process, the CONNECT proxy) or inside
+it (the tee shim, the browser), so each is defeated by the box declining to
+cooperate or by work happening below the outermost command. This lane is
+neither: the kernel reports `execve`, `connect` and `openat` whether or not
+anything in the box wanted them reported. It is observation only — nothing
+here can deny anything, and denial stays with Landlock, seccomp, the netns
+and the egress proxy — and it is `enabled = false` by default because it
+needs `CAP_BPF`, which an ordinary install does not have. The design
+authority is sections D1 to D14. **All five sub-milestones (D14) are built.**
+What is not demonstrated: the live attach path has been exercised only where
+the capability exists, so on a stock unprivileged install the honest answer
+this ships with is the `unavailable` block naming the missing capability.
+
+## 9. Limits we state up front
+
+Being explicit about these is a feature, since the claim is a security claim.
+
+- **The agent can send your source to the model API.** Containment stops the
+  agent from touching the host. It does not stop it from putting private code in
+  a prompt. That is a separate control (self hosted model, or no model egress at
+  all) and we will not imply otherwise.
+- **Shared kernel, unless you pick the microVM tier.** Podman and the kernel
+  tiers share the host kernel. Good against a runaway agent and against careless
+  dependency code. Not a claim against a targeted kernel exploit. The answer
+  ships as `isolation=microvm`, a microsandbox (`msb`) backend that boots the
+  same OCI images into a guest with its own kernel and filters egress by address
+  in the VM's network stack. What it costs is honest and stated in MANUAL.md: it
+  needs host virtualization (`/dev/kvm`, or Apple Silicon), it produces no
+  per-request egress tally, and it does not yet route the authenticated-egress
+  credential proxy. **Demonstrated end to end 2026-08-13** on Apple Silicon
+  with `msb` 0.6.8: a box creates, runs, enforces its allowlist in the guest
+  netstack, and exits 0. Two costs are now measured rather than assumed
+  (`docs/benchmarks/microvm-boot.md`). It **was** a full boot per command,
+  461 ms of it, because the guest was torn down after each one; **M13 step 2
+  (built 2026-08-13) gives each box one guest instead, and the per-command cost
+  is now 43 ms** — the cheapest of the four tiers on this host. What that costs
+  is stated one bullet down: a box's commands share a guest, as they already
+  shared everything at every other tier. The **8 GiB memory cap still costs
+  ~154 ms** at roughly 20 ms per GiB, but it is now paid once per box rather
+  than once per command, which is why recovering it via `msb`'s hotplug
+  (`--max-memory` plus a live `msb modify`) was measured, understood, and then
+  deliberately not built: it trades an async convergence window for a one-time
+  saving. The Linux/KVM path remains unmeasured.
+- **A box is the trust domain, not a command.** Successive commands in one box
+  share state, and that is the point rather than a leak: the workspace
+  persists, which is what a box *is* — a worktree plus a branch plus an agent
+  session, whose commands are meant to be related (build, then test, then
+  commit). So the boundary we claim is box↔host and box↔box. It is never
+  command↔command, at any tier. An agent that leaves a file behind or a
+  process running will meet them again on its next command, and a run that
+  depends on the previous one having happened is a supported way to use a box,
+  not a misuse of it.
+
+  **The `microvm` tier joined them on 2026-08-13** (M13 step 2). It used to
+  boot a guest per command and destroy it after, so guest-local state did not
+  survive to the next command — an artifact of shelling to a one-shot `msb
+  run` rather than a promise the tier made. Now a box gets one guest, so its
+  commands share `/tmp`, the process table, and anything written outside the
+  mounted workspace, exactly as they already did everywhere else.
+  `H5I_MICROVM_NO_REUSE=1` restores a fresh guest per command for anyone who
+  wants it.
+
+  Three things hold. The durable work product lives in `/work`, a host mount,
+  so it outlives the guest either way. **Reuse is scoped to one box under one
+  configuration**: the guest's name is a hash of the argv that created it, so a
+  changed profile, allowlist, image or mount set resolves to a different guest
+  and the previous one is reaped — a box cannot be served a guest still
+  enforcing a policy it no longer has, and this is structural rather than a
+  check that could be forgotten. The corollary is worth stating: **guest-local
+  state does not survive a policy change**, because that is a different guest
+  by construction. And separate boxes still get separate guests, so nothing
+  about box↔box isolation changes.
+- **A microvm box that declares a service keeps its guest until you remove it.**
+  A guest is normally stopped after 30 minutes idle. A box whose
+  `.h5i/env.toml` declares any `[service.*]` gets no such bound, because `msb`
+  measures idleness in commands and cannot see a dev server busy serving —
+  the bound would kill the service it was meant to protect, and it is fixed
+  when the guest is created, so it cannot be lifted later. The cost is real
+  and stated rather than hidden: such a box holds its `mem_bytes` allocation
+  from its first command until `box rm`, **even if the service is never
+  started**. Declared is the signal because started is not knowable in time.
+  `box rm` and the orphan sweep are what reclaim it.
+- **The container tier's egress scoping is L7.** Its allowlist is a proxy, so
+  it binds proxy respecting tooling only. The `supervised` tier enforces at
+  L3/L4 with nftables and does not have that hole, which is why M4 starts
+  there.
+- **Chrome runs with its own sandbox off.** Our seccomp deny list blocks the
+  namespace syscalls Chrome's sandbox needs, at every tier. h5i's box is the
+  boundary; Chrome's is not available inside it. That is one layer fewer than a
+  browser on the host has.
+- **Linux and macOS, by different means.** Linux confines with Landlock, seccomp
+  and namespaces; macOS confines with Seatbelt, and its `supervised` tier gets
+  its egress allowlist from the same host side proxy the container tier uses,
+  pinned by an SBPL rule that leaves the box no other outbound route. Two real
+  gaps on macOS: no syscall filter (Darwin has no seccomp) and no memory cap
+  (no cgroups, and `RLIMIT_AS` is not enforced against an mmap'd heap). Rootless
+  Podman runs natively on Linux and WSL2, and through a `podman machine` VM on
+  macOS.
+- **Cost.** A Chrome sidecar is still real RAM and CPU, even headless. Headless
+  boxes must stay first class, and the browser must be opt in per box.
+- **The viewport is not a desktop.** CDP screencast shows the page. Native
+  dialogs, browser chrome and anything outside the tab are invisible until the
+  full-desktop tier lands.
+- **A dependency on the critical path.** agent-browser is someone else's
+  release cadence. Pinned, CLI-boundary, forkable, but not ours.
+- **A share is a door, and `--tunnel` is a wider one.** `h5i box share` is the
+  only path that lets traffic *into* a box, and it is opt-in, expiring and
+  revocable per peer. The peer-to-peer transport is end-to-end encrypted and a
+  relay, if one is needed, moves sealed packets. `--tunnel` is not end to end:
+  Cloudflare terminates TLS and can read the traffic. That is a reasonable trade
+  for a prototype and it is never ours to assume, so it is printed when the
+  share starts and written into the box's receipt, not just documented here.
+  Two smaller edges: authorization is checked when a connection is established
+  and live connections are dropped within about a second of a revoke rather than
+  instantly; and the page a joiner opens is agent-written code running in their
+  browser, on a loopback origin that browsers exempt from private-network
+  protections, which is the one place `--tunnel`, on a public origin, is
+  actually the safer of the two.
+- **Browser mediation is enforcement, not containment.** The socket mediator
+  (M8) decides every verb the agent's CLI sends, which is the threat the
+  control lock was written for: an agent that does not know a human took the
+  wheel. It is not a boundary against an agent that goes looking, because the
+  daemon runs *inside* the box and a box has no internal privilege boundary.
+  Landlock grants are per-box, not per-process, so any socket the daemon can
+  bind the agent can reach directly. Moving the daemon outside the box would
+  close that and break the reason boxes exist: it could no longer reach the
+  dev server on the box's own loopback.
+
+## 10. Decisions taken
+
+- **The name stays `h5i`.** The five dimensions story goes away, the name does
+  not. Domain, install base, and binary name carry over untouched.
+- **Distribution is the CLI plus a skill.** One Rust binary, no server, and
+  `skills/h5i/` installed with `npx skills add h5i-dev/h5i`, mirroring
+  `h5i-db`. The repo layout changes to make that the front door (6.).
+- **The binary emits the skill.** `skills/h5i/` is embedded at build time and
+  `h5i skill install` writes it out, which is how it reaches the inside of a
+  box. Version drift disappears, and the in box copy can be rendered with that
+  box's actual policy (6.1).
+- **The browser layer is agent-browser** (Apache-2.0, native Rust), for both
+  automation and the human viewport stream. We do not reimplement Neko's core,
+  and the whole X/GStreamer/PulseAudio stack drops out of the design. h5i keeps
+  the boundary, the control lock, the policy and the receipts (7.). A
+  full-desktop tier, with Neko as its reference, is deferred until something
+  actually needs more than a page viewport.
+- **Warm caches are in scope.** Read only per project cache volumes, written
+  only by a dedicated refresh box with no agent in it (5.8).
+- **The receipt may be generated in the box**, provided the agent cannot
+  rewrite it. That is bought today by sealing (the receipt store sits outside
+  every write grant the box has) plus two host observed fields for cross
+  checking. The inherited-fd writer stays on the table as the stronger form
+  (5.7).
+- **`AF_UNIX` is a profile grant, not a tier property.** The supervised
+  tier's `socket()` gate denies the family by default, because `SCM_RIGHTS`
+  passes file descriptors. A profile opts in (`[profile.X.net] unix = true`),
+  and it is pinned in the digest. Granting it tier-wide to make one daemon work
+  would have widened every box to buy one; the `browser` profile asks, and
+  nothing else does.
+- **The programmable surface is the CLI's JSON contract, not a daemon.** An SDK
+  is a thin subprocess wrapper around the binary (the `remote-agent-browser`
+  shape, about 1,200 lines), published only after the first buyer workflow is
+  demonstrated. `create`/`run`/`export` gained `--json` on 2026-08-05, which
+  closes the loop the contract needs (6.2).
+- **The terminal viewer is an in-process client of the box's stream, and
+  terminal-browser is a reference, not a base** (5.10). It enters the box's
+  namespaces the way the forward does and takes the socket over `SCM_RIGHTS`,
+  so it binds no port and needs no token. The forward's token exists because
+  the forward has to listen, and this does not. The host gains one module and
+  three small dependencies: no Electron, no host Chromium, no input helper.
+  The box side is unchanged, so nothing in the boundary or the policy moved.
+  Both viewers write one receipt lane through one function, because two
+  near-identical formats is how an export ends up describing the same session
+  two different ways.
+- **No MCP.** `mcp.rs` and the `h5i_env_*` tools go with the rest. The premise
+  of MCP here was a host side agent reaching into a box, which is the shape this
+  product exists to eliminate. The agent is inside the box, and inside the box
+  the interface is the CLI plus the skill. There is no second interface to keep
+  in sync, and no tool schema to drift from the flags.
+
+## 11. Still open
+
+1. **Enforcing the control lock on the agent's side.** The lock is designed and
+   the viewer honours it: input from a human reaches the page only while they
+   hold it. What is *not* wired is the other direction: `control::check` exists
+   and returns `HeldByHuman` / `NeedsResnapshot` with the message an agent
+   should see, and nothing calls it. So an agent running `agent-browser click`
+   during a human takeover is not refused today; it is only told, if it asks.
+   The gap is the interception point, not the policy: there is no h5i process
+   between the agent and `agent-browser` at the kernel tiers, so this needs a
+   decision about where the check lives (a PATH shim, a skill-level convention,
+   or accepting that it is advisory) rather than more code in `control.rs`.
+
+   **Answered, 2026-08-07: the mediated socket (7.2, M8), built.** The
+   daemon's NDJSON control socket was a fourth option the original list
+   missed, and the only one the agent cannot route around: a PATH shim can be
+   bypassed by calling the binary by path, a convention enforces nothing, and
+   the socket is the one door every verb walks through.
+   `crates/h5i-core/src/browser_proxy.rs` decides every line against
+   `control::check` and a per-profile action policy, answers refusals in the
+   daemon's own shape, and records each action into a host-observed
+   `browser-proxy` receipt lane. **Verified against the real `agent-browser`
+   CLI** (`tests/browser_mediation.rs`): a read passes through and returns the
+   real page, a denied `eval` is refused and never evaluated, and a click
+   during a human takeover is refused while reads keep working.
+
+   Three findings, none available by reading:
+
+   - **`__agent_browser_internal_shutdown` is an escape hatch, not an
+     action.** The CLI sends it when it decides the running daemon does not
+     match the options it wants, then starts its own. Forwarded naively it
+     kills the daemon we mediate and the replacement is the agent's, on a
+     socket we do not own: mediation gone, with no error anywhere. It is
+     refused unconditionally.
+   - **`launch` is not a page change.** The CLI prefixes every command with
+     it, so classifying it as mutating refuses it during a takeover and takes
+     every read-only verb down with it, the opposite of 5.4's rule that
+     watching never collides.
+   - **The daemon's config fingerprint covers its options, not its path**, so
+     the real daemon can run on a path the box cannot reach with the mediator
+     in front, provided h5i launches it with the environment the box's CLI
+     will compute and mirrors `.version`/`.config` into the box-visible dir.
+
+   **The lifecycle landed too, and is enforced by default.** The daemon is
+   started by the *shim* rather than by h5i directly, which is what makes the
+   split possible at all: the shim already runs inside the box and invokes the
+   real binary twice, so it starts the daemon on a private path
+   (`/tmp/agent-browser-daemon`), mirrors the `.version`/`.config`/`.stream`
+   files the CLI checks, and then execs the CLI against the mediated path.
+   h5i's listener binds *before* the box runs. Waiting for a daemon first
+   would mean the box's own first call finds the mediated path empty and
+   starts an unmediated daemon on it, then connects upstream lazily.
+
+   Verified in a real supervised box: `agent-browser open` works through the
+   chain, the real daemon's socket lives in the private directory while the
+   visible one holds only mirrored files, a read passes through, and
+   `agent-browser eval` comes back
+   `✗ \`evaluate\` is denied for this box by its profile's browser action
+   policy (fail-closed)` with `browser mediation (2 action(s), 1 refused)` on
+   the receipt log.
+
+   Two more findings from that run. **Not every agent-browser word is a
+   command**. `url` and `status` are not, and using one to start the daemon
+   fails silently and leaves no daemon and no clue; `open about:blank` is the
+   cheap start that works. And **a box whose repo lives under `/tmp` cannot
+   see its own shim**: the per-env `/tmp` scratch shadows the host path the
+   shim sits on, `agent-browser` falls through to the system binary, and
+   mediation is bypassed with nothing to indicate it. That is the same
+   shadowing the M4 notes record, arriving somewhere new.
+
+   Related and now much smaller: **snapshot handle staleness across a takeover**
+   is modelled: `needs_resnapshot` is set on the take, survives a session that
+   never hands back, and clears only on an actual snapshot. It rests on the same
+   unenforced check.
+2. **First buyer workflow.** The positioning is broad enough to become a
+   platform pitch, which sells to nobody. The launch message should be one
+   workflow: run untrusted or AI generated code, see it in a real browser, keep
+   it off your machine.
+
+   **Candidate, 2026-08-07: name the runtime.** "h5i Browser: the browser
+   that runs where your coding agent runs." Kitesurf and Lightpanda are
+   browsers for agents browsing the web; this is a browser runtime for coding
+   agents building the web, and the demo is the full loop of section 8, which
+   already exists. It is packaging over M4-M7 plus M8, not new engineering,
+   with two constraints held from section 10: no separate binary (the surface
+   stays `h5i browser`, one-binary decision) and the wording is "an
+   agent-native browser runtime powered by Chromium", never an engine claim,
+   until M10 makes one true. The demo surface is M11's developer view.
+3. **Publishing `@h5i/sdk`.** Blocked on item 2 by decision, not by code: the
+   JSON contract it wraps is complete (6.2). First release scope is
+   `create`/`exec`/`browser`/`diff`/`export`/`close`, TypeScript only, binary
+   fetched on postinstall. No `agent.run()` until the resident session shape is
+   settled, and Python only when someone asks for it.
+4. **How engine selection grows from explicit to routed (7.1 step 2).**
+   **Deprioritised 2026-08-08 (§12.3): a box picks one engine at creation and
+   keeps it.** The first step is **built (M9, 2026-08-07)**: `[profile.X] engine = "..."` and
+   `--engine`, pinned in the digest, refusing by name when the engine's
+   tooling is absent, with no `auto` and no fallback. One correction the build
+   forced: 7.1 claimed the knob's shape is "any CDP endpoint … the slot M10's
+   binary later fills with no new plumbing", and that is **wrong**:
+   `h5i-browser-light` does not speak CDP, so agent-browser cannot drive it
+   and h5i runs it directly (`BrowserEngine::driven_by_agent_browser`). The
+   remaining sequence is unchanged: a `--browser auto` heuristic as a later
+   explicit opt-in, and per-origin routing last. What is not designed
+   is the routing step itself: agent-browser is one engine per daemon
+   session, so "loopback gets Chromium, the web gets the light engine" needs
+   either two sessions with h5i choosing at navigate time, or the mediation
+   layer of 7.2 doing the choosing per action. The second is cleaner and is
+   one more reason M8 goes first. Wherever it lands, routing inherits M9's
+   rule: an engine switch is a policy change, so it belongs in the digest and
+   the receipt, never in a silent fallback.
+5. **Build versus adopt for the lightweight visual engine (M10).** Kitesurf's announced
+   open-sourcing decides how much of the M10 crate is ours to write. Until
+   that drop, the only commitment is the shape: fetch through our proxy,
+   receipts as the network log, script off by default for untrusted origins.
+6. **The microvm plan's gating questions (M13): one answered, one still
+   open, one new.**
+
+   **Answered 2026-08-13: `msb` holds a sandbox open and execs into it.**
+   `msb create --name X` boots detached, `msb exec X -- cmd` attaches over
+   the guest's agent relay socket without booting, and `exec` auto-starts a
+   stopped sandbox so h5i need not track guest state. Measured at 8.4 ms warm
+   against 233.9 ms cold. The reuse step needs no upstream ask; what it needs
+   is an idle timeout, because `--idle-timeout` has no default and a detached
+   guest otherwise outlives its box.
+
+   **Still open: default-deny egress inside forkd's per-child netns.**
+   Whether the existing egress-rule grammar can compile to nftables rules
+   programmed into it. Without that, a forkd backend fails closed against
+   every profile with an egress allowlist and is not worth carrying. This one
+   needs a Linux host with KVM, which the 2026-08-13 run did not provide —
+   everything measured so far is macOS, and the Linux path is untested.
+
+   **New, and not a microvm question at all: why `process` and `supervised`
+   add ~1.5 s to Python startup on macOS.** Found while benchmarking
+   something else. It is not a fixed cost, so no amount of reuse hides it,
+   and it lands on the tiers macOS users get by default. The suspects are the
+   `/usr/bin/python3` Command Line Tools shim and SBPL evaluation over a
+   startup that opens hundreds of files; neither is established. Whether it
+   reproduces with a non-system interpreter is the cheapest next probe.
+
+## 12. The browser: a local engine that runs script, and the order to build it
+
+> **The work is in [the browser engine sections](#the-browser-engine)**, B1 to
+> B14, as of 2026-08-09. This section stays the authority on *scope and why*;
+> those are the authority on *order*, and carry the bindings backlog, the
+> security items script introduced, and the assessment of Thalora as a source to
+> read rather than adopt.
+
+**Rewritten 2026-08-08.** The previous version of this section ordered script
+*last* and argued it should wait for the microVM tier. That order has been
+reconsidered, and the reasoning that changed it is below. This is a deliberate
+change of direction, not an accretion: it widens §3's scope cut, which said keep
+`env` and `sandbox` and cut everything else. Read §12.5 before treating any of
+it as approved.
+
+### 12.1 What the previous sequence produced
+
+Its first four items are built. Recorded here because the sequence worked, and
+because what it found is the argument for the next one.
+
+* **A resident session** (old item 1). `serve` holds a page several viewers and
+  a control channel share. Built 2026-08-08, along with the finding that made it
+  the only possible shape: `Page` is not `Send`, so one thread owns the page and
+  everything else reaches it by channel.
+* **A real input surface and an agent interface** (old item 2). `session
+  status|snapshot|navigate|scroll|type|submit|click`, plus a cookie jar, so a
+  login works end to end. The skill is engine-aware.
+* **Untrusted-content marking** (old item 4), pulled forward because it was the
+  only item whose absence was a live hole. The snapshot is fenced, and the fence
+  rests on a tested one-line invariant rather than on a secret.
+
+Two items remain from that list and survive into this one unchanged in
+substance: **action-to-request correlation** (old item 3) and **LOGIN mode with
+takeover as a recorded event** (old item 5).
+
+### 12.2 The decision: a local, stateful browser that runs script
+
+Three things moved.
+
+**Two engines does not avoid Chromium.** 7.1 answered "what about script" with
+routing: light engine for reading, Chromium for the rest. But
+`browser_read_grants()` chains *every* engine's candidates, so an `h5i-light`
+box grants Chrome's and agent-browser's paths anyway, and the environment still
+installs Chromium, still updates it, still carries its surface. Routing saves
+runtime RSS and nothing else. That is the fact that undercuts the two-engine
+answer, and it is checkable in this repository rather than a matter of opinion.
+
+**The local position is unoccupied.** Kitesurf is cloud-first: it runs on
+Cloudflare Workers and depends on Dynamic Workers, Worker-to-Worker RPC and
+Static Assets. The open-sourcing language is "customers can deploy it to their
+own Cloudflare account", which is not "runs as a local binary inside a
+disposable sandbox next to the repository". Lightpanda runs script and does not
+render. Nobody is building a browser that runs script, renders on demand, and
+lives inside the coding agent's own sandbox.
+
+**Being one process is an advantage we can take and they cannot.** Kitesurf
+serialises a scene from its page realm to a separate renderer because that split
+*is* part of its security model. Ours is not: the box is the boundary. So DOM,
+style tree, layout tree, display list, tile cache and semantic tree can live in
+one process and update incrementally, which is exactly where their own numbers
+say the cost is. Cloudflare reports Kitesurf using 3-7x less CPU and memory than
+Chromium while being 1.7-1.8x *slower* in wall time, dominated by rasterisation
+and image encoding. Measured here independently, release build, 1280x720: encode
+5.9ms, alpha flatten 0.84ms, rasterise 1.2ms, whole page load 2.97ms. Two
+implementations of the same stack landing on the same bottleneck is evidence
+that it is structural.
+
+So the claim is not speed. By Kitesurf's own wall-time numbers this class of
+engine is slower than Chromium, and a benchmark table is a claim anyone can beat
+by shipping less browser. The claim is the closed loop:
+
+> The agent clicked Add. That click caused exactly one request, `POST
+> /api/items`. Here is the receipt, written before the request went out. Here is
+> the DOM delta it produced. Here is the frame the human saw.
+
+Chromium cannot produce that line, because its Fetch lane is best-effort and its
+records are host-observed at best. Kitesurf cannot easily produce it either,
+because the causal link spans its renderer split. It falls out here almost for
+free, for one reason: **script makes the receipts story stronger, not weaker.**
+Once `fetch` and XHR route through the existing broker, script-initiated traffic
+becomes policy-checked and receipted like everything else, which is the lane
+where every other engine's evidence is thinnest.
+
+**Engine choice: Boa, chosen rather than benchmarked into.** An earlier draft of
+this section made a three-engine shootout the first milestone. That was wrong,
+and it is worth saying why rather than quietly dropping it: the urgent thing is a
+real browser that works inside the sandbox, and the shootout was a proxy for a
+question the vertical slice answers directly. Build the slice, run a real
+application, and you have the number the benchmark was estimating.
+
+Boa is the right first engine for a reason stronger than "easiest". It is pure
+Rust, so it adds no C toolchain to a build this project has repeatedly paid to
+keep hermetic: `system-fonts` was turned off to avoid libfontconfig, and the
+cross-check matrix compiles this workspace for windows-msvc, darwin and musl.
+That last one is not theoretical. `ring`'s C build already blocks cross-checking
+to windows-msvc from a Linux host, and QuickJS or V8 would add another
+dependency of exactly that kind to the one crate that is meant to be portable.
+Boa costs nothing there.
+
+What Boa costs instead is speed, and the cost should be stated: it is an
+interpreter with no JIT, QuickJS generally benchmarks ahead of it, and V8 is an
+order of magnitude beyond both. Kitesurf uses V8 for page script and Boa mainly
+for `eval`, so Boa carries no precedent for web-app compatibility. A React
+production bundle does one large burst of compute at hydration, and that is
+where an interpreter is worst.
+
+So the engine sits behind a seam, and the trigger for revisiting it is a
+measurement from the real thing rather than a schedule item: **if hydration of
+the target application is slow enough to make the Chromium comparison
+embarrassing, that is the signal to swap.** Not before. The swap is affordable
+precisely because of the next paragraph.
+
+**The asset is the bindings layer, not the engine.** The Rust DOM is the single
+source of truth and JS objects are thin wrappers over stable `NodeId`s. A second
+tree inside the JS engine would let the snapshot, the paint, the events and the
+script state drift apart, and every bug after that is unfixable. Done this way,
+swapping Boa for QuickJS or V8 later costs the embedding glue and keeps the
+bindings.
+
+### 12.3 What this is not
+
+Named so they can be refused in review rather than argued about each time. None
+of these is in scope for the first version, and the README should say **limited
+JavaScript preview** rather than "JavaScript support":
+
+CDP and Playwright compatibility. The plugin API. Iframes. Service workers.
+WebSocket. Canvas and WebGL. Media. Chrome extensions. Pixel-perfect rendering.
+Vite's dev server, HMR and `import.meta.hot`. Cross-origin authenticated
+browsing.
+
+CDP is worth its own decision later rather than inheritance now: the argument
+for it is not ecosystem access but that agent-browser could then drive this
+engine, collapsing two agent interfaces into one. The argument against is that
+it is a second full surface next to a verb set that already exists and works.
+
+**And routing, which is the deliberate one.** §11 item 4 sketches a sequence
+that ends in per-origin routing: loopback to Chromium, the open web to the light
+engine. That is now **low priority, and not a goal of this direction at all.**
+A box picks one engine when it is created, and lives with it.
+
+The reason is that two browsers in one box is both heavy and strange. Heavy is
+obvious: Chromium's install, its updates and its surface, carried for a box that
+may never launch it. Strange is the part worth writing down, because the code
+already shows it. `sandbox_policy::browser_read_grants()` grants **every**
+engine's binaries rather than the pinned one, on the argument that the engine is
+enforced by what h5i launches. But an agent inside the box can invoke the other
+binary itself, which `browser_light_env` already concedes when it keeps
+`AGENT_BROWSER_ALLOWED_DOMAINS` set for an engine that never reads it: "if it
+does, this is the only thing standing between it and any host on the internet".
+So today the pin is a **launch choice, not a boundary**, and a box pinned to
+`h5i-light` still carries a Chromium an agent could start.
+
+Committing to one engine per box is what makes that honest. It narrows what a
+browser box installs, lets the grant list follow the pin, and turns the engine
+from something h5i happens to launch into something the box cannot step outside
+of. Whether the grants should actually narrow is a real question with a real
+counter-argument in that function's comment, about keeping the digest
+independent of host discovery. It is not settled here. It is only unblocked
+here, because it cannot even be asked while routing is a goal.
+
+If routing returns, it returns as an explicit opt-in after the engine can carry
+a real application on its own. Building it earlier means paying the two-browser
+cost permanently to avoid finishing the one engine that would remove it.
+
+### 12.4 The order
+
+Items 1 to 3 are together what "JavaScript support" means to someone using this.
+They are numbered apart because each carries its own design decision, not
+because any of them is optional: 1 makes script run, 2 says when its result is
+safe to read, 3 is script's network.
+
+1. **Embed Boa, and build the bindings layer, against a production React
+   build.** Embedding is the small half: a dependency, a `Context`, and
+   evaluating `<script>` text. The bindings are the work, and the reason this
+   milestone is named after them. Not a hand-written
+   `addEventListener` demo, which proves nothing about the shape of the problem,
+   and not the Vite dev server, which drags in WebSocket, HMR and native ESM in
+   one step. The surface is roughly: `window`, `document`, `Node`/`Element`/
+   `Text`, creation and insertion and removal, attributes, `classList`,
+   `querySelector`, `textContent`, events with capture and bubble, `click`/
+   `input`/`submit`, promises and the microtask queue, timers,
+   `requestAnimationFrame`, `fetch`/`Response`/`Headers`/`URL`, `location`,
+   `history`, `console`, `performance`, and invalidation of style, layout and
+   paint on mutation. Missing APIs are **logged as unsupported and surfaced in
+   the snapshot**, never silently stubbed: an agent needs to know the outline is
+   incomplete at the moment it reads it, which is the same rule the fence
+   follows.
+
+2. **Quiescence, reported rather than guessed.** "Run JS until settled" is a
+   subsystem, not a phrase. No pending microtasks, no timer due inside a stated
+   window, no in-flight brokered request, and a hard timeout. Playwright
+   deprecated `networkidle` for good reasons. The snapshot states which it was:
+   settled after 340ms, or still busy at cutoff. A snapshot that quietly
+   returned early is a wrong answer that looks like a right one.
+
+3. **`fetch` through the broker, and the correlation that falls out of it.**
+   Old item 3, and in this design it stops being extra work: the engine is the
+   one component that knows a click caused a request, and `browser_events`
+   already carries `caused_by` for exactly this and currently only wires
+   request to response. This is the differentiator, and it is a field we will
+   already be holding.
+
+4. **LOGIN mode, and takeover as a recorded policy event.** Old item 5, now
+   overdue rather than pending: the cookie jar it was supposed to arrive with
+   shipped on 2026-08-08 without it. Until it lands, a human taking over to type
+   a password does so on a page the agent can still snapshot.
+
+5. **The comparison, run and published with its caveats.** Same app, same host,
+   against Chromium: startup, peak RSS, navigate-to-ready, click-to-DOM-update,
+   click-to-visible-frame, idle CPU, binary size. Publish the losses too. If
+   click-to-visible-frame is worse, that is a finding about raster and encode
+   and it belongs next to the memory win, not behind it. This is also where the
+   engine question gets answered: click-to-DOM-update on a real application is
+   the number that says whether Boa stays, so the shootout that used to be
+   milestone one happens here, once, against something that matters.
+
+### 12.4a Built, 2026-08-09: items 1 to 3
+
+The vertical slice runs. An agent clicks, the page's script executes, its
+`fetch` goes through the broker and is receipted, the DOM changes, and the
+change is in the outline the agent reads:
+
+```
+$ h5i-browser-light session click @e1
+{"ok":true,"ref":"@e1","requests":["http://localhost:8231/api/item"],
+ "settled":"settled after 0ms"}
+```
+
+with all three legs in the request log: the navigation, `/app.js` fetched
+*before* it ran, and the `/api/item` the click caused.
+
+**What the shape turned out to be.** The Rust DOM is the single source of truth
+and JS objects are wrappers over `NodeId`s, as 12.2 required. What 12.2 did not
+anticipate is that the object model itself belongs in a **JavaScript prelude**
+rather than in Rust: event listeners, timer callbacks and promise resolvers are
+GC-managed values, and holding them on the Rust side means tracing them through
+Boa's collector. Putting them where Boa already owns their lifetime left a Rust
+surface of about twenty primitives taking ids and strings, and made
+capture/bubble propagation ordinary code instead of a lifetime problem.
+
+**Quiescence is a virtual clock.** Promise jobs and timers drain against a clock
+the engine advances, not the wall: a page's `setTimeout(1000)` costs an agent
+nothing, and two runs of the same page settle identically. That was chosen for
+determinism and turned out to matter more than the speed. It is the same
+argument as §12.4's "reported rather than guessed", applied to time itself.
+
+**Two things bit, and neither was performance.**
+
+1. **Boa does not compose with our tree.** Boa 0.20+ needs `icu_normalizer
+   ~2.0`; `parley`, which Blitz pulls for text, needs `^2.1.1`. Disjoint and
+   semver-compatible, so Cargo must unify and cannot. Boa 0.19 uses the 1.x
+   line, which is semver-*incompatible* and therefore allowed to coexist, so the
+   pin is 0.19 and the build carries two ICU stacks. Upstream has already moved
+   `main` to `~2.2.0`, so this unwinds on their next release. Worth noting that
+   the first thing to bite was dependency composition rather than speed, which
+   is the argument for building before benchmarking, made by accident.
+2. **A test hung and looked like a slow build.** Its fake server accepted two
+   connections while the test made one, so `join` waited forever. It read as
+   compile time, and was diagnosed as compile time, until the user checked. The
+   same pattern had already shipped in the cookie tests, where it worked only
+   because that test happened to make exactly two requests.
+
+**Boa 0.19's conformance was checked rather than assumed**, since it is two
+releases behind: eighteen syntax cases a bundler actually emits (optional
+chaining, nullish coalescing, class and private fields, generators,
+`Symbol.iterator`, `Proxy`/`Reflect`, spread, destructuring) all run, and
+microtasks drain.
+
+**Not cleared: a production React build.** §12.4 item 1 sets that as the bar and
+what runs today is a hand-written application. The gaps that will stop React
+first, in order: no ES modules or `import`; `MutationObserver`,
+`IntersectionObserver` and `ResizeObserver` report themselves missing rather
+than working; `getBoundingClientRect` returns zeros and says so. Each is
+recorded in the snapshot when a page asks for it, so the next attempt starts
+from a list rather than a guess.
+
+### 12.5 The gate that is not a milestone
+
+`capabilities.javascript` flipping to `true` is a change to the box's threat
+model, and it must be an explicit decision rather than the consequence of a
+prototype working.
+
+**What it spends.** Today the strongest security property this engine has is
+that no JavaScript engine is linked into it at all, so page-borne prompt
+injection has no delivery channel *by construction* rather than by filtering.
+The moment script runs, that sentence must stop being used, and the
+untrusted-content fence goes from a second line of defence to the only one.
+
+**Site isolation is the one thing the box does not replace.** Chromium's process
+model exists to contain a compromised renderer: filesystem, network privilege,
+crash isolation, and cross-origin theft. The box covers the first three at a
+stronger boundary than a renderer sandbox. It does not cover the fourth, because
+it protects the host from the box and says nothing about origin A and origin B
+sharing one address space. That did not matter while the engine held nothing
+worth stealing. It matters now: the cookie jar shipped on 2026-08-08, and script
+is what puts attacker-controlled input in the same process as it. Blitz and
+Stylo being Rust is the current mitigation, and adding a JS engine written in C
+or C++ is precisely what erodes it. Cheap options exist and one must be chosen
+before this ships: one origin per session, clearing the jar across origins, or
+keeping the jar out of the process that runs script.
+
+**The gate is honoured so far.** `capabilities.javascript` reports the *running*
+configuration, script is opt-in behind `--script`, and with it off a page's
+`<script>` elements are inert exactly as they were. Nothing has flipped by
+default, and nothing should until the rest of this subsection is answered.
+
+**Limits belong to the box, not to the engine's good behaviour.** Reliable
+in-engine interruption of a runaway script is hard; a wall-clock deadline and a
+memory ceiling enforced from outside are not. `builtin_browser` currently sets
+`mem_bytes` to 12GB and `max_procs` to 1024, both sized for a Chrome that spawns
+renderer processes. An `h5i-light` box running script should die at a few
+hundred megabytes.
+
+**And the containment underneath is still the weaker story.** The mediator is
+enforcement against a compliant agent, not containment against an evasive one
+(7.2, §9). Running untrusted script inside that is the step that makes the
+system less safe than it is today. The previous version of this section
+concluded that this waits on the microVM tier. That conclusion has not been
+refuted by anything above; it has been *outvoted* by the judgement that an agent
+browser which cannot run script is not a product. Both halves of that sentence
+should stay written down.
+
+
+---
+
+# The browser engine: the build log, B1 to B22
+
+Sections B1 to B22, 2026-08-09 to 2026-08-28. `ROADMAP.md` carries the engine's
+current state, the decisions that still govern it and the open work. This is the
+record of how it got there: the corpus runs, the WPT campaigns, the reference
+engines that were read, and the reversals. Live code cites these numbers, so
+they keep their identifiers.
+
+## B1. Where it is, 2026-08-09
+
+Built and verified end to end:
+
+* **Render, snapshot, screenshot, receipts.** Blitz owns the DOM, Stylo the CSS,
+  vello_cpu the raster. Every request is policy-checked and recorded *before* it
+  moves: no receipt, no request.
+* **A resident session.** `serve` holds a page several viewers and a control
+  channel share. `session status|snapshot|navigate|scroll|type|submit|click`.
+* **Cookies**, host-only and in memory, so a login works and nothing persists.
+* **A fenced snapshot**, so page text reaches an agent labelled as data.
+* **An action log**, box-claimed, so `h5i ui`'s agent-actions pane has a source.
+* **JavaScript, as a limited preview.** Boa plus a bindings layer; events with
+  capture and bubble; timers and microtasks on a virtual clock; `fetch` through
+  the broker. Opt-in behind `--script`.
+
+The sentence the whole design exists to produce, working today:
+
+```
+$ h5i-browser-light session click @e1
+{"ok":true,"ref":"@e1","requests":["http://localhost:8231/api/item"],
+ "settled":"settled after 0ms"}
+
+200 navigation  /index.html
+200 subresource /app.js      <- the script file, fetched before it ran
+200 subresource /api/item    <- what the click caused
+```
+
+Not cleared: **a production React build**, which §12.4 sets as the
+bar. What runs is a hand-written application of the right shape.
+
+---
+
+## B2. Architecture, and the constraints that chose it
+
+Three decisions were made by the compiler or the dependency graph rather than by
+preference. They are recorded because each one will look arbitrary later.
+
+**One thread owns the page.** `Page` is not `Send`: Blitz's `BaseDocument` holds
+an `Arc<dyn HtmlParserProvider>` and a `Box<dyn FontMetricsProvider>`, neither
+thread-safe. There is no `Arc<Mutex<Session>>` to be had. So the page has a
+single owning loop and everything else reaches it by channel. That is the right
+shape for a multi-driver session anyway; here it was not optional.
+
+**The Rust DOM is the single source of truth.** Every JS object naming a node is
+a wrapper over a `NodeId`. A second tree inside the engine would let the
+snapshot, the paint, the events and the script state drift apart, with nothing
+downstream able to say which was right.
+
+**The object model lives in a JavaScript prelude.** Listeners, timer callbacks
+and promise resolvers are GC-managed; holding them Rust-side means tracing them
+through Boa's collector. Putting them where Boa already owns their lifetime left
+a Rust surface of about twenty primitives taking ids and strings, and turned
+event propagation into ordinary code instead of a lifetime problem.
+
+**The Boa pin is 0.19 and it is a workaround.** Boa 0.20+ requires
+`icu_normalizer ~2.0`; `parley`, which Blitz pulls for text, requires `^2.1.1`.
+Disjoint and semver-compatible, so Cargo must unify and cannot. 0.19 uses the
+1.x line, semver-*incompatible* and therefore allowed to coexist, at the cost of
+two ICU stacks in the build. Upstream Boa's `main` is already at `~2.2.0`, so
+this unwinds on their next release. **Exit condition: Boa releases past that
+change.**
+
+---
+
+## B3. Security: what script bought and what it cost
+
+### B3.1 The loopback hole: **closed 2026-08-09**
+
+`Policy::check` took only a URL, and loopback is allowed unconditionally by
+default because the box's dev server is the point. Before script, an untrusted
+page could *cause* a loopback request but not read the response. With `--script`
+it could `fetch` the dev server, read the body, and POST it anywhere in
+`net.egress`: a read primitive against the code the agent is working on, past
+the egress proxy that never sees loopback.
+
+Closed by `Policy::check_from(url, document)`: loopback is reachable **from a
+loopback document**. A page served by the dev server may talk to it; a page from
+the open web may not. Tested both directions
+(`a_web_page_cannot_read_the_dev_server_and_never_reaches_the_wire`,
+`the_dev_servers_own_page_still_reaches_it`).
+
+Worth keeping in front of the reader: this was a **logic** bug, and Rust
+prevents none of them. "Fewer memory bugs" is honest; "safer browser" is earned
+by the origin model, not the language.
+
+### B3.2 Site isolation is the one thing the box does not replace
+
+Chromium's process model exists to contain a compromised renderer: filesystem,
+network privilege, crash isolation, and cross-origin theft. The box covers the
+first three at a stronger boundary than a renderer sandbox. It does not cover
+the fourth. It protects the host from the box and says nothing about two
+origins sharing one address space.
+
+That did not matter while the engine held nothing worth stealing. The cookie jar
+shipped on 2026-08-08 and script on 2026-08-09, so it mattered.
+
+**Answered 2026-08-09, by the second of the three options**: the jar is cleared
+on cross-origin navigation (`Jar::retain_origin`), so one session holds one
+origin's cookies and a page can never be in the same address space as another
+origin's session. The cost is stated where a user meets it: leaving an origin
+drops its login, and the snapshot says so rather than letting the agent discover
+it by being logged out. `document.cookie` additionally withholds `HttpOnly`,
+which is the line between what the wire carries and what script may read.
+
+### B3.3 The gate, still honoured
+
+`capabilities.javascript` reports the *running* configuration; script is opt-in;
+with it off, `<script>` elements are inert exactly as before. Nothing has
+flipped by default and nothing should until 3.1 and 3.2 are answered. See
+§12.5.
+
+---
+
+## B4. Three things that were wrong rather than missing: **all fixed**
+
+"Missing" is honest and reports itself. These were worse: they corrupted a page
+while looking like they worked, which is the failure mode the fence and the
+unsupported-API log exist to prevent, and they polluted every measurement taken
+before they were fixed. Kept here because the *class* is the lesson, not the
+three bugs.
+
+1. ~~`innerHTML` getter returned `textContent`~~: all markup stripped, so
+   `el.innerHTML = el.innerHTML` destroyed the subtree. Now a real serialisation.
+   The root cause was upstream of the getter: `DocumentConfig` never set an
+   `html_parser_provider`, so `set_inner_html` silently did nothing.
+2. ~~`createDocumentFragment()` returned a `<div>`~~: appending a fragment
+   injected a real element that broke `.parent > .child` and layout. Now a real
+   fragment, and one that can be searched (§B8.6).
+3. ~~`Element.style` did not exist~~: `el.style.display = 'none'` threw and
+   killed the script at that line. Now a real `StyleDeclaration`.
+
+The same class keeps recurring and is worth naming: **a plausible answer is
+worse than no answer.** `matchMedia` returning false to everything, `scrollTop`
+computed from the bounding rect, `structuredClone` via a JSON round trip, and
+`clientHeight` for `documentElement` were all this bug wearing different clothes.
+
+---
+
+## B5. The bindings backlog
+
+Ordered by what blocks real applications first. Cross-referenced against
+Thalora's surface (§B7) where that project has already mapped the ground, and
+marked **cheap** where Blitz or Stylo already holds the answer and we are merely
+refusing to give it.
+
+### Tier A: blocks nearly everything modern
+
+| | why | note |
+| --- | --- | --- |
+| ~~ES modules and `import()`~~ | every production bundle ships `<script type="module">` | **built**, through the broker; bare specifiers are refused rather than rewritten to a CDN |
+| ~~`Element.style` (CSSOM)~~ | `el.style.display = 'none'` is ubiquitous | **built** |
+| ~~`getBoundingClientRect`~~ | every popover, dropdown, drag and virtual list | **built**: Blitz computes `final_layout` already |
+| ~~`getComputedStyle`~~ | feature detection and measurement | **built**, via Stylo's `to_css_string`, not `Debug` |
+| ~~`MutationObserver`~~ | frameworks depend on it | **built**. The semantic delta went its own way in the end: diffing two outlines, not observing mutations (§B8.7) |
+| ~~`IntersectionObserver`, `ResizeObserver`~~ | lazy loading, virtual lists, responsive components | **built 2026-08-09**, driven from the settle loop (§B8.2) |
+| ~~`localStorage` / `sessionStorage`~~ | absence throws or breaks init paths | **built**, deliberately non-persistent; see §B6 |
+| ~~`history.pushState`~~ | SPA routing | **built**, and it moves `location` with it. For a while it did not, so a router reading its own route back got the page it had already left |
+
+### Tier B: blocks a large fraction of real applications
+
+All built, most of it driven by §B8 rather than by this list:
+
+* Real event types: `MouseEvent`, `KeyboardEvent`, `InputEvent`, `CustomEvent`
+  with `detail`, plus `on*` handler properties.
+* Form semantics: `input`/`change` on typing, checkbox, radio, `select` with a
+  live `selectedIndex`, `FormData`.
+* `closest()`, `matches()`, `dataset`, `cloneNode`, `insertAdjacentHTML`, a real
+  `DOMTokenList` over whichever attribute holds the tokens.
+* `AbortController`, `Headers`, `Request`, and **concurrent `fetch`**: six on
+  the wire at once, so an SPA's fan-out is no longer a waterfall of our making.
+* `window.scrollTo`, `scrollY`, and the viewport dimensions, which nothing had
+  ever exposed.
+
+### Tier C: the tail
+
+Built since, because a real page asked: **custom elements** (define, upgrade
+existing markup, the lifecycle callbacks), `TextEncoder`/`TextDecoder`,
+`structuredClone`, `crypto.getRandomValues` and `randomUUID` over the OS CSPRNG,
+`XMLHttpRequest` over the same queue `fetch` uses.
+
+Still absent, and still unscheduled: Canvas 2D, WebSocket, Workers,
+**WebAssembly**, Shadow DOM, SVG DOM, Streams. Shadow DOM is the interesting
+one. The application corpus includes two design-system sites that use it, and
+neither asked for it, because their documentation pages are server-rendered.
+That is the rule working: nothing here is added until a page in §B8 needs it.
+
+---
+
+## B6. What this browser deliberately is not
+
+A disposable sandbox removes most of a browser's surface as a *requirement*, not
+as a compromise. None of the following is planned, and each should be refused in
+review rather than re-argued:
+
+**Never**: tabs, bookmarks, history UI, downloads manager, password saving,
+autofill, extensions, sync, printing, DRM/EME, WebRTC, WebTransport, WebGPU,
+WebXR, Bluetooth/USB/Serial/HID/MIDI, camera, microphone, geolocation, sensors,
+desktop notifications, push, background sync, Service Workers, Cache Storage,
+File System Access, popups, multiple windows, picture-in-picture, fullscreen,
+XSLT, FTP.
+
+**Simplified rather than absent**, and always in memory:
+
+* cookies: session lifetime only, destroyed with the process
+* `localStorage`/`sessionStorage`: small maps, never a file
+* history: the current page and a short navigation list
+* clipboard: a sandbox-local buffer, never the host's
+* dialogs: `alert` to the console, `confirm` from policy, `prompt` refused
+* downloads: handed up to h5i as a response, never written as a file
+
+**Not cut, because cutting them makes this a static HTML renderer rather than a
+browser**: DOM mutation and query, CSS cascade with flex/grid/position/overflow,
+click/input/change/submit/focus/keyboard, promises and microtasks and timers,
+`fetch` with redirects and TLS, **ES modules**, forms, images, web fonts,
+navigation, the rendered result, and console plus exception capture.
+
+**No iframes.** Not "same-origin only": none. Each iframe is a second document,
+a second script realm and a navigation boundary. It is not a feature, it is a
+second browser.
+
+---
+
+## B7. Thalora: read it, do not adopt it
+
+`Brainwires/thalora-web-browser` (MIT, 216k lines of Rust, Boa-based, built for
+agents) is the same thesis and worth reading closely. It is proof that this much
+*can* be built on Boa. It is not evidence that this architecture gets you there
+faster, and three of its choices are worth studying specifically as things not
+to repeat.
+
+### B7.1 Why it cannot be a dependency
+
+1. **It is built on Boa's internals, not Boa's public API.** Its `Document` uses
+   `IntrinsicObject`, `BuiltInBuilder` and `StandardConstructors`, which upstream
+   Boa declares `pub(crate)`. That is why `engines/boa` is a submodule pointing
+   at their own fork. Using their bindings means owning a fork of a JavaScript
+   engine and its security updates.
+2. **Its DOM is its own**: `html5ever` plus `taffy`, state in
+   `Arc<Mutex<HashMap<..>>>`. Our bindings sit on Blitz's `BaseDocument`, which
+   is also what Stylo styles and what we paint. Porting means rewriting the body
+   of every binding; only the shape transfers.
+3. **It does not paint.** No rasteriser, no screenshot: `taffy` is layout only.
+   The visual half, which is what makes `h5i ui` possible and separates us from
+   Lightpanda, is not in there.
+
+It also uses hand-rolled CSS over `taffy` where we get **Stylo**, Firefox's
+production cascade, through Blitz. Moving toward their stack would be a
+compatibility downgrade.
+
+### B7.2 Three cautionary findings, checked against the source
+
+**It has the dual-DOM problem this design exists to avoid.** JavaScript mutates
+Boa-side element data; layout runs over a *separately re-parsed* tree:
+`renderer/layout_bridge.rs:212` calls `scraper::Html::parse`, and the CSS path
+builder walks scraper's `ElementRef`. So the DOM script sees and the DOM that is
+laid out are not one tree, synchronised through serialised HTML. That is exactly
+the drift §B2 refuses, and it is the strongest available argument for the
+`NodeId`-wrapper rule: mutations must apply to the Blitz DOM directly, never via
+an HTML string.
+
+**Its module loader bypasses its own network layer, and invents a CDN.**
+`module_loader.rs:129` builds a private `reqwest::blocking::Client`, so module
+fetches never pass whatever policy the rest of the browser applies. Worse,
+`module_loader.rs:103` maps bare specifiers to a CDN:
+
+```rust
+Ok(format!("https://esm.sh/{}", specifier))
+```
+
+`import "lodash"` silently becomes a request to `esm.sh`. That is not a web
+standard, and in a sandbox it is an unrequested external dependency introduced
+by the engine itself. **When we build ES modules (§B5 Tier A), every module fetch
+goes through the same broker as HTML, `fetch`, images and fonts, and a bare
+specifier that does not resolve is an error the agent reads, not a silent trip
+to a third party.**
+
+**It reports a thrown exception as success.** `renderer/execution.rs:256`, after
+printing the error:
+
+```rust
+Ok("undefined".to_string()) // Return success with undefined result
+```
+
+This is the failure mode this whole engine is organised against: silent-wrong is
+worse than missing. Our equivalent path returns the error, surfaces it in the
+page console, and the snapshot says when a page did not finish. Their README's
+"Chrome 131 compatibility" and "Zero Mock Implementations" should not be read as
+real-site compatibility evidence; the WASM-target stubs are honestly labelled,
+but `browser/selection.rs` returns a literal `"selected text"` placeholder, and
+the line above turns a broken page into a passing one.
+
+### B7.3 What it is genuinely worth
+
+Its module inventory is the best available map of which Web APIs an agent
+browser needs, written by someone who did the work: `dom/` is 25k lines,
+`events/` 7.6k, `storage/` 12k, with a file per API. §B5 cites it per row for
+exactly that reason.
+
+The right way to use it: **extract the backlog and the test cases, not the
+code.** For each API we take from their list, find the matching Web Platform
+Test and make that our test, so our compatibility claim rests on the standard
+rather than on their implementation. Their Boa binding *patterns* are worth
+reading; their DOM, network and renderer architecture is not worth adopting.
+
+## B8. Measure, then build
+
+Which APIs matter cannot be answered from a chair, and the instrument already
+exists: every unsupported call is counted and surfaced in the snapshot.
+
+**The corpus run.** Point the engine at fifty real sites with `--script`,
+collect the ranked counts, and let the priority order write itself:
+
+```
+note: this page used Web APIs this engine does not have
+      (Element.style x41, MutationObserver x6, closest x4)
+```
+
+An afternoon, and it turns §B5 from a considered guess into a table. It must
+happen *after* §B4, or the results measure our own bugs.
+
+Where the corpus and Thalora's inventory agree, build it. Where they disagree,
+the corpus wins: it is this decade's web, not a specification of it.
+
+### B8.1 First run, 2026-08-09
+
+28 sites: docs, references, wikis, standards, package pages, news, and a few
+script-heavy ones so the failures would be honest.
+
+```
+27/28 loaded; 23 gave a usable outline (>=5 lines)
+ 0 rendered materially more *with* script
+ 0 failed to settle within budget
+
+api                      sites  calls        console errors
+matchMedia                   4      5        17  could not load https (cross-origin, denied)
+document.cookie              3      7        13  TypeError
+IntersectionObserver         1      1         6  ReferenceError
+setInterval                  1      1
+```
+
+**It found three bugs before it found any missing APIs**, which is the argument
+for running it at all:
+
+* `<script type="application/json">` was being **executed**. Every `<script>`
+  ran regardless of `type`, so pages embedding state as JSON, github.com among
+  them, had it parsed as JavaScript, filling the console with syntax errors that
+  blamed the page.
+* **HTTP errors were rendered as the page.** crates.io answered 404, the engine
+  rendered the error body, and the outline came back empty with nothing anywhere
+  saying why. The status was in the request log and nowhere an agent looks.
+* **Missing APIs did not name themselves.** A global we never defined threw a
+  bare `ReferenceError`; a method on a half-defined object threw
+  `TypeError: not a callable function`. Neither reached the unsupported list, so
+  the measurement could not see them: the method depends on missing things
+  reporting themselves, and they were not.
+
+**The headline result: for the pages agents actually read, script adds nothing
+to the outline.** Not one of 28 sites rendered materially more with `--script`
+than without. Docs, references and wikis are server-rendered; script adds
+interactivity, not content. That is a real finding about the workload and it
+argues the reading case was close to solved before any of this.
+
+Two caveats keep it from being stronger than it is. The harness allows only the
+page's own host and a few common CDNs, so **17 cross-origin scripts were denied
+by policy** and those bundles never ran, so the script-heavy end of the corpus is
+therefore under-tested. And the remaining 13 TypeErrors and 6 ReferenceErrors are
+still anonymous: they come from pages touching DOM properties we return
+null/undefined for, which the `missingApi` list does not cover because they are
+not globals.
+
+**What the corpus asks for next**, in its own order: `matchMedia` (answered now,
+still recorded), `document.cookie`, `IntersectionObserver`, `setInterval`.
+
+`document.cookie` is the interesting one, because it looked like a deliberate
+refusal and turned out to be a false choice. See §B8.2.
+
+### B8.2 Second run, same day: the list is empty, and that is not the same as done
+
+All four were built, and the corpus now asks for nothing:
+
+```
+27/28 loaded; 23 gave a usable outline
+ 0 rendered materially more *with* script
+ 0 failed to settle
+
+api                      sites  calls        console errors
+(nothing)                                    17  could not load https (cross-origin, denied)
+                                             13  TypeError
+                                              6  ReferenceError
+```
+
+**An empty unsupported list beside 19 anonymous errors is a misleading result,
+and it is the honest state of things.** Those errors come from pages touching
+DOM *properties* that return null or undefined, not from globals, so
+`missingApi`, which covers globals, cannot name them. The instrument now
+reports nothing because it cannot see what is left, which is a different fact
+from there being nothing left. Naming those is the next measurement problem, and
+it has to be solved before another run means much.
+
+### B8.3 Fixing the instrument, which was the actual next task
+
+Two blind spots, closed:
+
+* **Unknown properties on objects we own.** `wrap()` and `document` now return a
+  `Proxy` whose `get` records a name that is on neither the prototype chain nor
+  the object itself. A property we implement takes the plain path, and so does
+  an expando the page assigned and reads back, so **a working page records
+  nothing at all**: the list stays a list of gaps rather than a log of traffic.
+* **Undeclared globals.** No proxy can trap `Sentry.init(...)`: it throws before
+  any object is consulted. The thrown `ReferenceError` carries the name, so
+  `note_error` reads it back. Only identifier-shaped names are accepted, because
+  the list is read by an agent and a page must not get to write into it by
+  throwing a chosen string.
+
+The run immediately after named 15 properties where there had been fog, and a
+second pass named five globals. Answering both rounds moved the errors:
+
+| | before | naming fix | answered |
+|---|---|---|---|
+| named asks | 0 | 15 | 14 |
+| `TypeError` | 13 | 13 | 10 |
+| `ReferenceError` | 6 | 6 | 3 |
+
+**`TypeError` went 8 → 10 partway through, and that was progress.** Exposing
+`HTMLElement` let `class X extends HTMLElement` get *further* before failing, at
+`customElements.define`, which the list now names. A count going up because
+pages reach deeper is the shape of a real measurement.
+
+Two things the remaining list should not be misread as:
+
+* **`$` is not an engine gap.** It is jQuery, from a CDN the corpus policy
+  denied. The page is right to fail; the fix is a policy decision about asset
+  hosts, not a binding.
+* **The residual `TypeError`s are mostly selector misses**: `querySelector`
+  returning null for markup that genuinely is not there. That is correct
+  behaviour, reported honestly, and no amount of API work removes it. Naming
+  *where* it happened needs source positions from Boa, which is a separate job.
+
+### B8.4 Answering the named list, and what it caught in the answers
+
+Everything §B8.3 surfaced is built. In order of what they were worth:
+
+* **Custom elements, for real.** `define` upgrades the markup already on the
+  page, delivers the initial values of `observedAttributes`, and runs
+  `connectedCallback` once the node is genuinely in the tree. Defining without
+  upgrading would have been the worse kind of half-support: a page that renders
+  its markup server-side and defines its components in a deferred bundle, which is most
+  of them, would register everything, see no error, and render nothing. The id
+  reaches the constructor out of band through a construction slot, because
+  `super()` takes no arguments and the class never sees the node it is
+  attaching to.
+* **Real comment nodes**, so a template library's anchor stays out of the
+  outline an agent reads instead of appearing as stray text.
+* **`scrollTop`/`scrollHeight`/`clientHeight`** answering from the document
+  rather than from the element's own box, since `scrollTop + clientHeight >=
+  scrollHeight` is how every bottom-of-page check is written and it has to be
+  *true at the bottom*. `clientHeight` already existed, computed from the
+  bounding rect, which for `documentElement` is the page height rather than the
+  window, so the idiom read "already at the bottom" everywhere.
+* **`window.innerWidth`/`innerHeight`/`scrollY`** and the scroll methods, which
+  nothing had ever exposed. This one the instrument could not have found:
+  nothing wraps the global object, so they were simply undefined, and a layout
+  that measures instead of asking `matchMedia` got `NaN` out of its own
+  arithmetic. Found while chasing an unrelated scroll bug.
+* `compareDocumentPosition`, `contains`, `getRootNode`, `isConnected`,
+  `defaultValue`, `getElementsByTagName`, `getElementsByName`, `importNode`,
+  `createNodeIterator`/`createTreeWalker`, and `implementation`, which names
+  `createHTMLDocument` as refused rather than handing back a broken document,
+  because a second document really is out of reach when there is one tree.
+
+**The run after that caught three bugs in the answers themselves**, which is the
+argument for the instrument in one line:
+
+| reported | what it actually was |
+|---|---|
+| `Element._h5iConnected` | *our own* bookkeeping flag, stored on the node, read before it was set |
+| `Element.tagName` | a page reading `tagName` off a **text** node; every node was labelled "Element" |
+| `$`, still | jQuery that *loaded and threw*, not one that was refused |
+
+All three are fixed: the flag moved off the nodes, labels follow the node's
+actual type, and a script that throws is recorded as not-run alongside one that
+was refused: its globals are undefined either way.
+
+That left one ask, `Text.tagName`, and it was a false positive worth a rule:
+**a gap is only a gap if a real browser would have answered.** An element
+property read off a text node returns undefined in every engine there is, so
+claiming it would have sent us building something that does not exist. The
+proxy now stays quiet in exactly that case, and `document.namespaceURI` and
+`ownerDocument` are defined-as-undefined and null for the same reason.
+
+### B8.5 Where the corpus stands
+
+```
+27/28 loaded; 23 gave a usable outline; 0 failed to settle
+asks: (none)
+errors: 33, of which 0 are anonymous
+        17  cross-origin subresources the corpus policy denied
+         3  "`$` is missing because a script this page needed did not run: ..."
+        13  page errors, each prefixed with the script it came from
+```
+
+**Zero anonymous errors is the number that matters**, not the empty ask list.
+Every remaining line names either a request we refused or the script that
+threw. Boa 0.19 gives neither a line number nor a stack, so the script element
+is the finest locus available; a real position needs engine support we do not
+have, and that is now the only thing in the way of an agent debugging a page it
+is reading.
+
+One page also rendered materially more *with* script for the first time: the
+Rust book, 35 lines to 171, which is the first evidence in this file that
+running script buys an agent anything at all on a real documentation site.
+
+What the four turned into:
+
+* **`matchMedia` answers from the real viewport.** Returning `false` to
+  everything is not neutral: a responsive layout asks and then commits to the
+  branch it was told, so a wrong answer is a wrong page rather than a missing
+  feature. `min-width`, `max-width`, `orientation` and `prefers-color-scheme`
+  have correct answers at a fixed viewport with a known scheme; a feature
+  outside that set still records itself.
+* **`document.cookie` exists, and honours `HttpOnly`.** The earlier framing,
+  that exposing it would break "an agent can be logged in without reading the
+  credential", was a false choice, because a browser has the same problem and
+  solved it: a session cookie is almost always `HttpOnly`, and that flag is
+  exactly the line between what the wire carries and what script may see. The
+  jar had been parsing `HttpOnly` and dropping it, which was harmless until
+  script existed and is not now. Page script sees the non-`HttpOnly` cookies;
+  the session stays out of reach.
+* **`setInterval` repeats**, and deliberately does *not* hold the page open.
+  Waiting for a perpetual timer to drain would mean a page with a clock, a
+  carousel or an autosave could never be described as settled, and every
+  snapshot of it would carry a "still busy" note that told an agent nothing.
+  Virtual time advances only as far as pending one-shot work requires, and
+  intervals fire along the way.
+* **`IntersectionObserver` and `ResizeObserver`** are driven from the settle
+  loop rather than a frame clock, because this engine has no frames at rest and
+  an observer waiting for a repaint would never fire at all. Intersection
+  reports edges rather than every settle, so a page that lazy-loads on entry is
+  told once.
+
+---
+
+### B8.6 A second corpus: applications, not documents
+
+The document corpus reached zero asks and zero anonymous errors, and then
+stopped being informative, **because four of its 28 pages still rendered
+nothing and not one of them was a missing API**:
+
+| site | why | not |
+|---|---|---|
+| crates.io | server answered **404** to a request that sent no `Accept` | an API gap |
+| stackoverflow | **403** bot wall, rendering as one line | an API gap |
+| json.org | a `<meta refresh>` this engine never followed | an API gap |
+| vitejs.dev | redirected to vite.dev, correctly refused, unhelpfully explained | an API gap |
+
+That inverted the plan: the next frontier was the network layer and the honesty
+of the report around it, not more bindings. All four are fixed (§B8.8), and
+crates.io answers 200 and json.org renders 299 lines instead of 1.
+
+So the corpus was **pointed at applications instead** (SPAs, interactive demos,
+design systems) because a documentation corpus will never ask for routing,
+storage or template cloning when it contains nothing that does them. It named,
+immediately and specifically:
+
+* **`<template>.content`**, and this was not a small gap. Its absence made
+  `template.content.cloneNode(true)` throw `cannot convert 'null' or 'undefined'
+  to object`, which was the *entire text* of **fifteen module failures**. Clone,
+  query, fill, append is how every framework renders a row.
+* **Scoped selector queries that do not scope.** `query_selector_all` always
+  starts at the document root and the engine narrowed by ancestry afterwards, so
+  a **detached** subtree was invisible, which is every cloned template before it
+  is inserted, exactly when a framework searches one. Stylo's fast path consults
+  the document's id and class caches and reports "handled, nothing found" rather
+  than falling through, so scoped queries now walk the subtree and match element
+  by element. `matches()` had the same bug and answered false for anything
+  detached.
+* **`location.pathname`**, which was undefined, and `pushState`, which never
+  moved the address at all.
+* `relList`, `attributes`, `firstElementChild`, `getAnimations`,
+  `document.contentType`, `meta.content`, `on*` handlers.
+
+### B8.7 What the instrument caught in its own reflection, twice more
+
+* **A framework's private field is not an API gap.** Solid reads
+  `document._$DX_DELEGATE` before setting it, and the ask list carried it as
+  something this engine was missing. No web platform property begins with `_` or
+  `$`.
+* **"module failed" names nothing**: the same anonymity §B8.3 removed from
+  script errors, one level up. Modules now carry their specifier into the
+  failure. The reporting proxy also watches `location`, `history`, `navigator`,
+  `performance`, the storages and `crypto`, which is where the last unnamed
+  failures were hiding.
+
+**The corpus now lives in the repository**, after a crash took the only copy
+along with the scratchpad it sat in. `corpus/run.py` is the network instrument;
+`tests/corpus.rs` is the part CI runs: the same patterns against local
+fixtures, asserting the two properties that matter, and it found two real bugs
+the moment it was written.
+
+Applications corpus: 20/20 load, one ask left, **zero anonymous errors**.
+Fourteen module failures remain, each now attributed to a named bundle. Going
+further needs source positions, which is the concrete cost of the Boa
+constraint below and the clearest argument for revisiting it.
+
+### B8.8 The network layer
+
+Not bindings, and the reason four pages read as empty:
+
+* **Request fidelity.** No `Accept`, no `Accept-Language`, and a user agent that
+  named only the crate. The agent string is honest rather than imitative. It
+  names this engine and does not claim to be Chrome, and is now one constant
+  shared with `navigator.userAgent`, because a page that branches on it
+  server-side and again in script must see the same string twice.
+* **`<meta refresh>`** is followed, with a hop limit and a visited set, and a
+  refresh further out than 15 seconds is *reported* rather than followed: that is
+  a page updating itself, not a redirect.
+* **A refused redirect names its target.** Following it automatically would let
+  a server route us out of the allowlist; saying where it wanted to go costs
+  nothing.
+* **Bot challenges are named**, because a challenge page renders to almost
+  nothing and its outline is otherwise indistinguishable from an empty page.
+* **`fetch` is concurrent**: six on the wire at once, the browsers' per-host
+  figure, chosen so a page with two hundred images cannot become two hundred
+  threads inside a box with a memory ceiling. Waiting on the wire uses *real*
+  time against its own budget, since the virtual clock is free to advance and a
+  round trip is not.
+
+### B8.9 What it costs, measured
+
+`cargo run --release --example perf`. Numbers from one WSL2 laptop, and it
+drifts by 10% between runs, so read the ratios rather than the digits.
+
+**First, a correction to what this section used to say.** Its `script` column
+counted the realm twice. A script-enabled factory runs the page's scripts inside
+`from_html`, through `finish_page`, and the benchmark then called `run_scripts`
+again — which does not no-op, it builds a second realm and runs every script a
+second time. At 15.9 ms a realm the error looked like noise; at 58 ms it was
+most of the number, which is how it was finally caught. Only the benchmark was
+affected: `finish_page` is the sole caller in the product.
+
+```
+reading a page                no script     script     outline
+10 sections  (~90 nodes)           2.8ms    25.6ms       60 lines
+100 sections (~900 nodes)         14.7ms    45.2ms      500 lines
+500 sections (~4500 nodes)        81.5ms   160.5ms      500 lines
+
+starting the script realm          21ms per page
+the floor under a scripted page    22ms      (one section: almost all fixed cost)
+
+the realm, by phase             first realm   later realms
+  context                            368 µs        3.0 ms
+  primitives                          53 µs         35 µs
+  prelude compile                   67.0 ms        0.9 µs
+  prelude run                       15.5 ms       12.4 ms
+  total                             83.0 ms       15.4 ms
+
+a DOM property read
+  plain object                      68 ns
+  watched node, known property     198 ns
+  watched node, read from tree     740 ns
+  watched node, remembered         300 ns    (a tag cannot change; it is asked once)
+
+one native call
+  a number back (nodeKind)         136 ns
+  a string back (tagName)          190 ns
+  a string each way (getAttr)      270 ns
+
+queries, 200 calls each
+  document.querySelectorAll        405 µs
+  section.querySelectorAll          20 µs
+  iterating a 400-node result      213 µs
+```
+
+**The realm went from 63 ms to 21 ms a page**, and it is no longer most of a
+small page: 87% of the ten-section row before, about 60% now. What moved is the
+prelude's parse and compile, paid by every page for a source that never changes
+and now paid once per thread. §B15.12a records why that was refused for as long
+as it was and what changed.
+
+Read the phase table as a within-run comparison and nothing more. The two
+columns come from one run on one thread, which is what makes them comparable;
+across three runs the first-realm total was 83.0, 101.3 and 79.8 ms and the
+later-realm total 15.4, 20.1 and 16.1 ms. The ratio holds at about five to one
+and the saving at 60–80 ms, but no single digit in that table is worth quoting
+on its own, and the older 63 ms figure was measured on a quieter day than the
+83 ms one beside it.
+
+Two things in the phase table are worth reading rather than skipping. **The
+compile does not shrink, it relocates**: the first realm on a thread still pays
+all 67 ms, so a one-shot `h5i browser read` is helped only by what overlaps it,
+while a session serving many navigations pays it once. And **a later realm's
+context costs ~3 ms against the first realm's ~400 µs**, reproducibly across all
+three runs — it builds its intrinsics against a GC heap that already holds the
+template and a previous realm. How much of that the template is responsible for
+is not known: a second realm in a process was probably always dearer than the
+first, and there was no phase column to show it before. It is 3 ms against 67
+either way, which is why it was recorded rather than chased.
+
+The per-read and per-call rows were re-measured and left alone. They moved
+between runs by as much as 25% on this box in either direction, which is wider
+than the 10% this section claims and wide enough that nothing below the page
+level should be read as having changed.
+
+Code, not bytes: blanking all 164 KiB of comments in a 443 KiB prelude changed
+parse time by **nothing measurable**. The documentation is free; only what the
+parser tokenises is not. `the_eagerly_parsed_prelude_stays_within_its_budget`
+holds the line at 275 KiB, because the file grew 4,692 lines in two commits
+during a coverage push and took the realm from 15.9 ms to 82.8 ms with nothing
+saying so — every test passed, since a slower engine is not a wrong one. What a
+KiB costs has fallen with the compile: about 45 µs per page to *run*, plus
+245 µs on the first page of a thread to compile, against ~150 µs per page before.
+
+#### What came out, and what each was worth
+
+1. **The WebIDL member decoration is a tier.** `idlharness` checks that every
+   interface member is enumerable and that an accessor reached on a prototype
+   throws; no page asks either. Rebuilding every descriptor of every interface
+   prototype cost **15 ms of 83**, on every page, and it now lives in a source
+   Boa is handed only under `--webidl-conformance`, which `wpt/run.py` passes.
+2. **The gap reporting moved to the end of the prototype chain.** It was a
+   `Proxy` in front of every wrapper, so it fired on reads that found what they
+   asked for: **799 ns of the 882 ns** a known property cost, against 82 ns for
+   a plain object. A read that misses already walks the whole chain, so the
+   sentinel sits where only a miss arrives. Known reads went to ~200 ns, and a
+   compromise went with it — the proxy passed the raw target as receiver to
+   avoid double-trapping, which made a miss inside a page's own getter
+   invisible.
+3. **The engine stopped paying a trap to ask itself a question.** `get tagName()`
+   reads `this._nsuri` to learn whether the element came from `createElementNS`,
+   and for everything the parser made it never did — so the most-read accessor
+   in the engine walked its whole prototype chain into a proxy, 1415 ns against
+   the 196 ns its native call costs. `declareInternals` answers at the first
+   hop, and `an_internal_read_never_reaches_the_sentinel` is the guard for the
+   next such field.
+4. **Every settle stopped waiting on a sleeping thread.** The deadline watchdog
+   polled a flag every 20 ms and was *joined*, so a settle that finished in
+   50 µs sat in `join` until the thread woke. A 20 ms tax on every settle and
+   every agent `wait`, spent asleep, and intermittent — a race between the body
+   finishing and the watchdog reaching its first sleep, so half the runs looked
+   fine. A condition variable, and the deadline is unchanged.
+
+Three tiers exist so far (`conformance`, `sockets`, `has`, 12 KiB together) and
+the mechanism is cheap to extend, but its ceiling is low: 272 of the 284 KiB of
+code is DOM core that every page uses. The one tier still worth building is the
+form-control extras, ~48 KiB and ~7 ms, which needs the free-variable analysis
+that splitting a shared closure demands.
+
+#### Measured and rejected, so nobody tries again
+
+* **Precomputing the known property names**, so the old proxy trap did a hash
+  lookup instead of walking the prototype chain: no change. The cost was Boa
+  dispatching into a JavaScript trap at all, which is why the answer in the end
+  was to stop standing in front of the object.
+* **Raising the loop bound from 5 to 50 million**: turned a site that returned
+  in three minutes into one that had not returned in four.
+* **Interning the uppercased tag names**, and building the attribute answer
+  without its two intermediate `String`s: no change either. A native call costs
+  ~136 ns of dispatch before it does anything at all, so shaving the work at the
+  far end of it is shaving the small half. The allocations went anyway; the
+  cache did not, because it was state for nothing. What worked was not making
+  the call: `tagName` is remembered on the wrapper, 740 ns to 300 ns.
+* **Stripping comments before handing the source to Boa**: no change, per the
+  measurement above. Worth recording because the idea is obvious and the file is
+  a third comments by volume.
+* **Reusing the compiled prelude across pages**, which would remove the 42 ms of
+  parse and compile and is the only 3x-class win left. A `CodeBlock` owns its
+  `InlineCache` entries, and those hold live shape-to-slot mappings, so reusing
+  one carries the last page's object shapes into the next page's lookups. That
+  is a sharper reason than the interner one this section used to give, and it
+  names the upstream change that would unblock it: reset the caches on reuse, or
+  hang them off the realm rather than the code block.
+
+Reusing the *realm* across navigations is refused on other grounds and still is:
+a page could leave state for whatever loads next, which is the same reason the
+cookie jar is cleared across origins.
+
+#### The history this replaces
+
+The Boa revision bump, measured before and after, and still the strongest
+argument for pinning a revision over a five-month-old release:
+
+```
+a DOM property read              on 0.19      on main
+  plain object, no proxy            775 ns       92 ns
+  watched node, known property     2460 ns      706 ns
+  watched node, read from tree     6173 ns     1534 ns
+```
+
+Three earlier changes, each of which still holds:
+
+1. **A page with no script no longer builds a realm.** A page with nothing to
+   run was paying the whole fixed cost for a realm never asked a question. It is
+   also reported correctly: "had none to run" is a different fact from "script
+   is off", and a page with no script is *settled* rather than unknown.
+2. **Collections are no longer watched.** Wrapping a query result in the
+   reporting proxy cost **3.9x on iteration**, because every index read went
+   through a trap and `for (const el of query)` is the hottest line in DOM code.
+3. **`matches()` is a direct predicate.** It had been asking the *parent* for all
+   matching descendants and checking membership, which made `closest()` walk a
+   subtree per ancestor: quadratic on any page whose framework calls it in a
+   render loop.
+
+### B8.10 Source positions, and what they found
+
+Boa 0.21 maps a program counter back to a source position. It is pinned by
+**revision of upstream `main`**, not by release: the 0.21.1 release pins three
+icu crates to `~2.0.0`, which excludes what parley requires, and parley arrives
+through blitz. Upstream relaxed those pins after the release, so a pinned commit
+needs no fork and no patched source, and buys five months of engine and parser
+fixes over a five-month-old tag, which turned out to matter.
+
+Two other routes were tried and rejected with evidence. **Vendoring** the two
+crates worked and cost 7.5 MB and 508 files for a two-line change. **Forking**
+at `v0.21.1` plus one commit also worked, and is one commit, one file, six
+lines, but it is a fork to carry, and upstream `main` had already made the same
+change for free.
+
+Errors now read:
+
+```
+inline script #2: TypeError: cannot convert 'null' or 'undefined' to object
+    at inner (inline script #2:2:18)
+    at outer (inline script #2:3:32)
+    at <main> (inline script #2:4:6)
+```
+
+The *path* mattered as much as the line: a source built from bytes carries none,
+so every frame said `unknown at :2:18`, and a line number without a file is
+barely better than nothing when a page has nine scripts.
+
+**Module failures: 14 → 4.** The positions named every cause within an hour:
+
+| named cause | fix |
+| --- | --- |
+| `EventTarget is not defined` | a real base class, independent of the tree; a store is not a node |
+| `HTMLAnchorElement`, `HTMLButtonElement`, `HTMLTemplateElement`, … | the per-tag constructor family, all aliasing `Element` |
+| `Invalid URL: /assets/…` | `import.meta.url`, which bundlers resolve every sibling asset against |
+| `RuntimeLimit: exceeded recursive calls` | Boa's 512-frame default, which Next.js exceeded while merely initialising |
+| `DOMParser is not defined` | parse-to-subtree, with no script inside it running |
+| `not a callable function` | collections that were not collections; see below |
+
+That last one was the instrument's blind spot again, and the most instructive.
+The reporting proxy watched `document` and nodes but **not the collections and
+token lists this engine builds itself**, so `querySelectorAll(...).item(0)` was
+undefined and calling it produced exactly that unnamed error. Collections and
+`DOMTokenList` are now watched, and immediately named their own gaps:
+`createElementNS` (every framework that draws an SVG icon), `after`/`before`/
+`replaceWith`/`replaceChildren`, `toggleAttribute`, `localName`, the namespaced
+attribute methods, `createRange` and `elementFromPoint`.
+
+`StyleDeclaration` is deliberately *not* watched: it answers any CSS property by
+design, so it has no name it is missing, and wrapping one proxy in another
+defeats the `in` check the reporting one depends on.
+
+### B8.11 Three things that are not ours, stated plainly
+
+1. **A Boa parser bug**, and it was worth doubting before reporting. The first
+   version of this note blamed a comment; the second blamed modules. Both were
+   wrong, and testing the doubt produced a far sharper bug:
+
+   ```js
+   var   a = 1
+   , b = 2;        // parses
+   let   a = 1
+   , b = 2;        // SyntaxError: unexpected token ','
+   const a = 1
+   , b = 2;        // SyntaxError
+   let   a
+   , b;            // SyntaxError
+   ```
+
+   All four are valid JavaScript: node runs them, as script and as module. The
+   asymmetry is the finding: **`var` handles it and `let`/`const` do not**, so
+   this is a defect in the lexical-declaration path rather than a deliberate
+   choice about semicolon insertion. Per the grammar a `,` continues a
+   `BindingList`, so it is not an offending token and no semicolon may be
+   inserted.
+
+   Confirmed with this engine entirely out of the path: `Context::default()`,
+   `Source::from_bytes`, no host, no module loader, no HTML, so it is not ours.
+   Minified bundles that keep `/*! @license */` comments between declarators
+   produce exactly this shape, which is how lit.dev fails.
+
+   Not fixable here, and not worth working around: rewriting a page's own source
+   would move every line number we just gained and could corrupt string
+   literals, the plausible-wrong answer again. What *is* ours is that the
+   failure names the script it came from and does not take the rest of the page
+   with it, which `a_script_the_parser_cannot_read_is_named_and_does_not_take_the_page_with_it`
+   pins.
+2. **Two sites exceed any reasonable timeout** (lit.dev, material-web), and the
+   cause is that they now get *further*. `DOMParser` unlocked execution that used
+   to fail early, and removing the lying feature-detection stubs sent pages down
+   polyfill paths they had previously skipped. lit.dev went from failing in
+   seconds to **seven minutes** of real work.
+
+   Two bounds were added and the second one works, for one of the two shapes a
+   slow page has:
+
+   * **Many jobs.** Boa's job executor checks a cancellation token between jobs,
+     and `get_cancellation_token` hands it out as an `Arc<AtomicBool>`, so a
+     watchdog thread can set it, which is the only wall-clock lever the engine
+     offers. A page building 200,000 promise jobs is now stopped at 15 seconds,
+     renders what it had, and says so in the engine's own voice. This is the
+     shape a promise-driven page actually has.
+   * **One long job.** lit.dev looked like the other shape: a module graph
+     evaluating depth-first inside a *single* job, beyond any token check.
+
+   **That second diagnosis was wrong, and wrong in the most useful direction.**
+   The page was not pathological; *this engine* was slow enough to make it look
+   that way. `appendChild` into the document cost 40 µs against 13 µs for a
+   detached one, because every insertion walked to the root to ask whether it
+   was connected and then walked the inserted subtree looking for custom
+   elements, on pages that had defined none. An early return when nothing is
+   defined, and a native `isConnected` that walks in Rust instead of one call
+   per ancestor, took it to **7 µs, the same as the detached case**.
+
+   lit.dev went from three and a half minutes to fifty seconds, material-web
+   from a timeout to forty-five, and both now *return*. A second pass on the
+   mutation-record path: the old value of an attribute was read from the tree,
+   and a record object with two arrays allocated, on every write, whether or not
+   anything was observing, took the hot operations to:
+
+   ```
+   createElement    5.5 µs      textContent  2.0 µs
+   setAttribute     4.0 µs      appendChild  4.0 µs
+   ```
+
+   from 7 / 8.5 / 18 / 40.5 µs before either pass.
+
+   **And then the sites did not get faster**, which is the part worth writing
+   down. lit.dev renders in 0.27s without script and 46s with it, of which 0.5s
+   is network; the DOM is no longer where the time goes. Nor are the budgets: a
+   shared deadline across the script phase and the settle, which used to add up,
+   changed nothing either, because the time is inside a *single* evaluation
+   that neither a between-jobs token nor a between-scripts budget can interrupt.
+
+   So the original diagnosis was half right and recorded too confidently in both
+   directions. The engine was slow enough to turn a heavy page into a hang, and
+   fixing that was worth four times on the hot path; what is left really is one
+   uninterruptible unit of work, and bounding it needs an interrupt inside the
+   interpreter loop. That is still upstream, and it is now the only thing
+   standing between this engine and a page like lit.dev.
+3. **Total CPU is unbounded.** Boa exposes no wall-clock interrupt, so the
+   engine bounds what it can (one loop, recursion depth, stack size) and a
+   caller that cannot wait must impose its own timeout. Raising the loop bound
+   from 5 to 50 million turned a site that returned in three minutes into one
+   that had not returned in four; the bound stays low enough to return, and
+   trips are reported so a thin outline is explained rather than mysterious.
+
+Both limits had to move together: raising the frame count alone changed nothing,
+because the *stack size* was what a deep call actually hit.
+
+### B8.12 A page's own errors, made legible
+
+`console.error(someError)` rendered as `{}`, because an Error has no enumerable
+own properties and the console used `JSON.stringify`. remix.run produced **1487
+lines saying exactly that**, and the message, the one part an agent needed,
+was what got thrown away. Errors now render as name, message and trace;
+functions and DOM nodes say what they are; and an object that stringifies to
+`{}` reports its constructor rather than an empty shape.
+
+---
+
+### B8.13 Insertion was not moving nodes, which is what a keyed diff is made of
+
+preactjs.com rendered 178 lines without script and 65 with it, with no errors
+and nothing on the unsupported list: its shell and its sidebar, and nothing
+where the article should be. Four things had to be ruled out before the cause
+showed itself: the content JSON arrived (35 KB, 200), `DOMParser` parsed all
+31 KB of it correctly (557 elements, 108 body children), the page settled rather
+than being cut off, and the walk a markup renderer performs over a parsed tree
+worked exactly as it should.
+
+The bug was one line below all of that. **Inserting a node that already had a
+parent lost it:**
+
+```
+built                    ABC   (3 children)
+insertBefore(C, A)       AB    (2)   <- C gone
+insertBefore(A, B)       B     (1)   <- A gone
+```
+
+The DOM defines insertion as removing the node from its old parent first. This
+engine skipped that, and the tree underneath drops a node inserted while still
+parented, so every *move* was a deletion. That is the operation a keyed diff is
+built out of: preact reorders by re-inserting nodes it already holds, and each
+reorder threw one away until the article was gone.
+
+Detaching first fixes it, and preactjs.com now reads **178 lines with script,
+matching its prerendered reading exactly**.
+
+Two things worth keeping from how it was found. The failure was invisible to
+every instrument in this project (no error, no unnamed API, no anonymous
+console line) because nothing was *wrong* from the page's point of view; it
+asked for a move and got a deletion. And the fixture harness had been running
+every page's scripts twice, since `PageFactory::from_html` already runs them:
+harmless for a script that assigns, wrong for one that appends. Both were found
+by writing a test that appends.
+
+---
+
+### B8.14 Shadow DOM, flattened, and where the interrupt actually is
+
+**Shadow DOM is built**, after two sites asked for `Element.shadowRoot` once the
+performance work let them run far enough to want it. That is the rule this file
+keeps: nothing is built until a page asks, and lit.dev and material-web asked.
+
+This engine has one tree and blitz has no notion of a shadow one, so a shadow
+root is a **view of the host element** and everything a component renders into
+it lands in the host. The trade is stated rather than discovered:
+
+* **Kept**: the content renders and is therefore readable, `host` and `mode`
+  answer, `nodeType` is 11, a closed root is not handed out, and light children
+  are projected into a `<slot>` if the component declares one, otherwise held
+  aside, because a browser stops rendering them and showing a component's input
+  beside its output would be worse than showing neither.
+* **Lost**: encapsulation. `document.querySelector` reaches inside a shadow root
+  here and would not in a browser, and styles do not scope.
+
+That is the same flattening a browser's own accessibility tree performs, and for
+an engine whose product is a readable account of a page it is the right half to
+keep.
+
+**The interrupt exists, and not where it is needed.** §B8.11 recorded that Boa
+exposes no way to stop a running evaluation. That was wrong:
+`Script::evaluate_async_with_budget` is public, and the VM yields to the caller
+every N instructions: a real interrupt, for classic scripts. `Module` has only
+`evaluate()`, with no budgeted variant, and lit.dev is modules end to end. So
+the mechanism is there, the upstream ask has a precise shape,
+`Module::evaluate_async_with_budget`, and until it exists a module graph is
+still one uninterruptible unit.
+
+---
+
+### B8.15 A review pass: what it found in its own work
+
+Going back over what had been built, rather than forward.
+
+**Our own accessors were paying the reporting trap twice.** A getter invoked
+with the proxy as `this` pays another trap for every `this._id` it reads, so
+each accessor cost two. Passing the raw target as the receiver:
+
+```
+nodeType     2.15 -> 0.85 µs      tagName      1.80 -> 0.95 µs
+parentNode   2.75 -> 1.55 µs      children    10.45 -> 7.75 µs
+```
+
+What it narrows is stated where the code is: a getter *defined by the page* on
+its own class now runs with the target as `this`, so an unknown property read
+inside one is not reported. Methods are unaffected, and the reporting that has
+found real bugs has always been about properties a page reads *off* a node.
+
+Two smaller ones on the same path: a node's kind is fixed when it is created and
+was being asked of the tree on every `nodeType` read, and the document node's id
+is constant and was being re-derived on every step of every upward walk.
+
+**The ask list was being buried by generated keys.** jQuery and Sizzle stamp
+elements with names like `jQuery360062973586668224961` and
+`sizzle1786301869537` and read them before writing them; one corpus page
+produced **5265 such "gaps"** and put them at the top of the list. No web
+platform property carries a six-digit run, because it would have to be typed by
+a person, so those are filtered, alongside the `_` and `$` prefixes already
+filtered for the same reason.
+
+**Where the application corpus stands after all of it:** 20/20 load, 17 usable
+outlines, 2 render materially more with script, **0 render less**, 0 anonymous
+errors, and **1 site** that cannot be read with script at all: lit.dev, whose
+module graph is the one uninterruptible unit left (§B8.14).
+
+---
+
+### B8.16 The "cosmetic" duplication was text nodes being immutable
+
+preactjs.com rendered its version as `v11.0.0-beta.111.0.0-beta.1`. It looked
+cosmetic and was filed that way. It was not.
+
+Reproduced with real preact against the page's actual markup: a single text
+node `v1.0.0` hydrated against a vnode with two text children, which is what a
+prerendered page gives a component that renders `v{version}`:
+
+```
+before   kids=1  text="v1.0.0"
+after    kids=2  datas=["v1.0.0", "1.0.0"]      <- ours
+after    kids=2  datas=["v", "1.0.0"]           <- a browser
+```
+
+Preact assigns `dom.data = 'v'` to the node it is reusing. **That write did
+nothing**, because writing to a text node took the path meant for elements:
+clear the children, which a text node has none of, and append a new text child, which
+is meaningless. Blitz has `set_node_text` for exactly this and it was never
+called.
+
+So text nodes were immutable, and that is the single most common mutation any
+reactive UI performs: every framework updates text by assigning `.data` or
+`.nodeValue` to a node it already holds. The duplication was one visible symptom
+of a general failure to apply text updates at all.
+
+preactjs.com now reads **178 lines with script, matching its prerendered
+reading**, and shows `v11.0.0-beta.2`, the version it *fetched*, where before it
+showed the stale prerendered `beta.1` twice. The update applies now.
+
+Worth noting how it was found: not by reading the DOM code, but by reproducing
+the page's exact shape against the real library and comparing what each engine
+ends up with. The bug was three layers below where it showed.
+
+---
+
+### B8.17 Measured against Chromium
+
+`corpus/compare.py`, on this machine, both engines asked to do the same job:
+fetch a page, run its script, produce a readable serialisation. Peak resident
+memory is sampled across the **whole process tree**, because Chromium is
+multi-process and measuring only the process we launched would flatter this
+engine by several hundred megabytes for nothing.
+
+```
+page                    h5i                 chromium
+documentation page       59 MiB   0.6s       513 MiB   0.8s
+reference page           76 MiB   1.2s       563 MiB   0.4s
+wiki article             73 MiB   0.5s       585 MiB   0.6s
+news front page          56 MiB   0.9s       537 MiB   0.7s
+single-page app          77 MiB   0.4s       541 MiB   0.4s
+framework docs site      77 MiB   1.3s       580 MiB   1.0s
+
+median peak RSS          76 MiB              563 MiB      7.4x less
+median wall               0.9s                 0.7s       ~30% slower
+install size           34 MiB               302 MiB      8.9x smaller
+processes per page          1                    7
+```
+
+**What these numbers are, and are not.**
+
+They are honest about the trade: this engine holds a page in about a seventh of
+the memory, in one process rather than seven, from a binary a ninth the size,
+and it is *slower*, because Chromium has a JIT and this has an interpreter.
+Anyone quoting the memory figure without the speed one is quoting half a
+measurement.
+
+They are also not a claim of equivalence, and the corpus in §B8.6 is the reason:
+of twenty applications, this engine reads seventeen usefully and **one not at
+all**. Chromium reads all twenty. The right sentence is "a seventh of the memory
+for the pages it can read", and the second half of that is doing real work.
+
+The comparison deliberately records what each run actually *read*, so a run that
+produced nothing cannot appear as a fast, small success. The counts are not
+comparable to each other. Ours is a summarised outline capped at 300 lines,
+Chromium's is a raw DOM dump, and they are there to prove each engine did the
+work, not to be divided by one another.
+
+Worth stating for anyone reaching for these in a comparison: this is one page
+per process, which is how an agent reads. A long-lived Chromium amortises its
+browser and GPU processes across many tabs and would look better per page.
+
+---
+
+### B8.18 Two more corpora, and the crash they found
+
+Two writing systems' worth of blind spot, and a shape of page neither corpus
+contained.
+
+**International**: fourteen pages in CJK, Arabic, Hebrew, Persian, Thai,
+Devanagari, Greek, Cyrillic and Vietnamese. Text shaping, bidi and CJK line
+breaking all run through parley, and every page measured until now was Latin: in
+an engine whose entire product is extracted text, none of it had ever been
+exercised. **14/14 load, 14 usable outlines, zero errors, zero anonymous
+errors**, and the extracted text is correct, checked character by character
+rather than by line count, because a corpus that counts lines would happily
+report three hundred lines of mojibake.
+
+**Structures**: big tables, forms, search results, plain RFCs, and markup old
+enough to predate the conventions the rest of the web settled on. This one paid
+immediately.
+
+**The GNU bash manual crashed the engine.** One megabyte of single-page HTML,
+and blitz panics with `attempt to subtract with overflow` in layout
+construction. A panic is the one outcome an agent cannot act on: not a thin
+page, not an error it can read, but a dead process and no answer at all.
+
+Layout now runs behind a guard. The panic is caught, the document is read in
+whatever state layout reached, and the snapshot says so: the page returns **500
+lines and a note** where it used to return a stack trace and an exit code. The
+first failure is kept rather than the last, because a later pass that happens to
+survive does not undo the fact that the tree was laid out incompletely.
+
+`AssertUnwindSafe` is the honest part of that: the document is behind a
+`RefCell` a panic may leave mid-update, and reading a possibly-incomplete tree is
+exactly the risk being taken in exchange for not having a dead process.
+
+Also found and not yet built: `document.write` (caniuse), `CSSStyleSheet`,
+`document.respec` (W3C specs). And pypi's search page is a JavaScript-detection
+interstitial the challenge matcher does not recognise, which is a gap in the
+matcher rather than in the engine.
+
+---
+
+### B8.19 Two of the three were worth building; one was not an API
+
+`document.write`, `CSSStyleSheet` and `document.respec` came out of the
+structures corpus. Checking each before building it turned out to matter.
+
+**`document.respec` is not a web API.** The W3C pages call
+`document.respec.ready.then(...)`: it is ReSpec's own global, a page expando in
+the same class as Solid's `_$DX_DELEGATE`, and implementing it would have been
+implementing someone's variable name. It stays reported, and the ask list
+carrying it is the cost of a filter that cannot know every library's field.
+
+**`document.write` is emulated where it can be and refused where it cannot.** A
+browser inserts at the parser's position; this engine parses the whole document
+before running anything, so that position does not exist, but `currentScript`
+does, and inserting after it is the same place for the one deliberate use:
+caniuse.com writes `<style>.static-only{display:none}</style>` from an inline
+script. Called with no script running, a browser would implicitly `open()` and
+**wipe the page**; that is refused by name instead, because the call would have
+been harmless during parsing and the difference is this engine's script timing
+rather than the page's intent.
+
+**`CSSStyleSheet` is backed by a real `<style>` element**, so an adopted sheet's
+rules reach Stylo rather than being remembered and ignored. `cssRules` is
+deliberately left undefined: this engine does not model rules individually, and
+answering an empty list for a sheet that plainly has rules is the confident
+wrong answer it keeps having to refuse.
+
+**And a bigger thing fell out of testing them.** The written
+`<style>display:none</style>` did not hide anything, because **the outline does
+not filter hidden content at all**. `display: none`, `visibility: hidden` and
+the `hidden` attribute all appear in the reading:
+
+```
+paragraph 'visible'
+paragraph 'display none'          <- a user cannot see this
+paragraph 'visibility hidden'     <- nor this
+paragraph 'hidden attribute'      <- nor this
+```
+
+That is a fidelity problem and a safety one. This engine's product is a faithful
+account of what a page shows, and text a user cannot see is the classic vehicle
+for instructions aimed at whatever is reading, and the fence in §B1 exists for
+exactly that threat and this walks around it. It is the next thing to fix, and
+it deserves care rather than a quick filter: content revealed later by script,
+and the difference between `display: none` and off-screen accessibility text,
+both decide whether a filter helps or quietly deletes the page.
+
+---
+
+### B8.20 Driving a page, and the sentence that contradicted itself
+
+**Every corpus until now loaded a page and read it. None clicked anything.** An
+agent's loop is read, act, read the difference, so two thirds of what this
+engine is for went unmeasured, while the session verbs, the semantic delta and
+the action-to-request correlation were all built and tested only in isolation.
+
+`tests/corpus.rs` now drives as well as reads. Four fixtures, each asserting on
+what the *delta* reports rather than on the page, because a change nobody can
+see is the same as no change:
+
+* typing into a field and submitting adds an item, and the delta names the new
+  item without reporting the rest of the page as replaced;
+* clicking a filter that rewrites a list reports the items that went and **not**
+  the footer that did not;
+* clicking something inert reports *no change*, which is a result an agent needs
+  rather than the page handed back to be re-read;
+* a router click moves the view and the address together, while the document's
+  own URL stays put: the router moved, not the fetch.
+
+They pass, which is worth stating plainly: the interaction path works, and it
+had never been measured end to end.
+
+**And `<noscript>` was in the outline.** A browser shows that content only when
+script is off; this engine showed it always. So a page whose script ran
+perfectly still handed an agent the sentence *"JavaScript is disabled in your
+browser"*, not a cosmetic slip but a direct contradiction of the reading it
+appeared in. crates.io's **entire outline was that sentence**.
+
+crates.io now reports zero lines and a note saying so, which is the honest
+answer: its SvelteKit app really does render nothing here. Why it does remains
+undiagnosed: the entry shape reproduces perfectly in isolation, dynamic
+`import()`, `currentScript.parentElement` and all 75 subresources check out
+individually, and it is better recorded as unexplained than as fixed.
+
+pypi's search page joins the challenge matcher, which also normalises
+typographic apostrophes: pypi writes "couldn't" with U+2019, and a matcher that
+only knew `'` would have missed it while looking like it had checked.
+
+---
+
+### B8.21 Hidden content is no longer read, and Chromium settled the argument
+
+The outline carried `display: none` content, the `hidden` attribute, and
+`visibility: hidden`. Two problems, and the second is the serious one: the
+outline claims to be an account of what a page *shows*, and invisible text is the
+classic vehicle for instructions aimed at whatever is reading it, the threat the
+untrusted-content fence exists for, walked around by text a human never meets.
+
+`display: none` and `hidden` are filtered now, asked of the style engine rather
+than re-derived: a node with no primary styles is not rendered, and a node with
+styles can still resolve to `display: none`, which is the common case because it
+is what a stylesheet says. The first attempt checked only the former and filtered
+the attribute while missing every CSS rule; the difference between the two took
+a probe to find.
+
+**`visibility: hidden` is deliberately kept.** That content occupies its space,
+is routinely toggled by script, and is a shape off-screen accessibility text
+sometimes takes; filtering it would risk deleting page content to fix a smaller
+problem.
+
+**The measurement then produced an alarming number, and it was right.** The Rust
+book fell from 171 lines to **6**. That is the failure mode this change was
+warned against, silently deleting a page, so it was checked against Chromium
+rather than reasoned about: Chromium's DOM for the same page carries
+`<html class="js light">` and **no `sidebar-visible` class**, so mdBook's sidebar
+is not shown there either.
+
+The six lines are the chapter: its heading, its opening paragraph, its list. The
+165 that went were navigation **no reader ever sees**, and this engine had been
+handing them to agents as page content. A number that looks like a regression is
+worth checking against a browser before it is treated as one, and worth checking
+before it is treated as a success, which is the same discipline pointing the
+other way.
+
+---
+
+## B10. What is next, 2026-08-09
+
+> **Superseded in part by §B11.** This section is the queue as it stood before
+> Kitesurf was re-read against a built engine; §B11.5 is the current one. Kept
+> because items 1 and 2 record how they were closed, and because item 4 is a
+> useful example of the rule working: Shadow DOM was listed here as "if and when
+> a page asks", a page asked, and §B8.14 built it.
+
+Tiers 0 through 4 of the plan this section replaces are done. What the work
+itself surfaced, in the order the evidence supports:
+
+1. ~~The fourteen module failures~~: **four left** (§B8.10), each with a stack
+   trace. Two are the Boa parser bug of §B8.11 and are upstream's to fix.
+2. ~~Boa 0.21~~: **done**, pinned by revision on the dependency itself rather
+   than through `[patch.crates-io]`: `=1.0.0-dev` *looked* like a pin and pinned
+   nothing, since upstream's `main` carries that version string while changing
+   daily. The commit hash now sits in the manifest of the crate that depends on
+   it, where a reader looks for it, and nothing else in the workspace depends on
+   boa so the patch indirection bought nothing (§B8.10).
+   The pin should move to a release when boa cuts one, and the `[patch]` block
+   deleted then. That is no longer a thing to remember:
+   `scripts/check_boa_release.sh` asks crates.io on every CI run whether a
+   published boa's icu requirements have stopped clashing with blitz's parley,
+   and fails the build the day one has. It reads parley's requirement from the
+   lockfile rather than assuming it, so it stays true when blitz moves, and it
+   has a floor at 0.21, the first version with source positions, because
+   older releases predate the icu dependency and so "do not clash" while being
+   unusable. The first draft recommended 0.17 for exactly that reason.
+3. **Two sites that now time out**, lit.dev and material-web, because they get
+   further than they used to. Either the engine gets faster or the corpus learns
+   to report a partial render as a result rather than a failure.
+3. **The realm costs ~20ms to start** and is rebuilt per page. A resident
+   session that reuses one realm across navigations would remove it from every
+   step after the first. Measured, not guessed; see §B8.9.
+4. **Shadow DOM**, if and when a page in §B8 asks. Two design-system sites in the
+   application corpus use it and neither asked, because their docs pages are
+   server-rendered. Adding it now would be building for a page we have not met.
+5. **A corpus that needs a login.** Everything measured so far is public, so
+   LOGIN mode and the cookie jar are tested but not *exercised* against a real
+   session-gated application. That is the next honest extension of §B8, and the
+   one most likely to find something surprising.
+
+The rule that produced everything above stays: **nothing is built until a page
+asks for it, and an instrument that cannot name what is missing is fixed before
+anything it failed to name.**
+
+---
+
+## B11. Kitesurf, re-read against a built engine, 2026-08-09
+
+§7.1 surveyed Kitesurf on 2026-08-07 and drew the routing rule from
+it: two engines, by origin, one policy. That section remains the authority on
+*position*. This one is narrower and later. The engine now exists, so the
+question is no longer "what does this mean for scope" but **"what does the
+comparison change about the order of work"**, which is what this file is for.
+
+### B11.1 The stack is less shared than it looks
+
+Read casually, Kitesurf is this engine with a Cloudflare account attached: Blitz
+for HTML and layout, Stylo for CSS, Parley for text shaping, Rust throughout.
+The JS is the exception and it is the important one. **Page script runs on V8**,
+because a Worker already is V8; Boa appears only for `eval`, as a stand-in until
+Workers exposes dynamic evaluation natively. §B7.1 recorded this and
+it stands.
+
+Three things follow, and the first two are corrections to a comparison that is
+tempting to make and wrong:
+
+* **The wall-time figures are not comparable.** Kitesurf reports 1.7-1.8x slower
+  than Chromium; §B8.17 measured this engine at roughly 1.3x. That is not a win.
+  Theirs includes an isolate boundary and a WASM-compiled DOM; ours includes an
+  interpreter where theirs has a JIT. Different corpora, different hardware,
+  different bottlenecks. Neither number bounds the other and neither should be
+  quoted against the other.
+* **Boa still carries no precedent.** The hope that Kitesurf's success validated
+  Boa for real web applications does not survive reading what Kitesurf runs
+  script on. It does not use Boa for that. This engine is the precedent, which
+  means §B8's corpus is not a nice-to-have measurement, it is the only evidence
+  that exists. The swap trigger at §B7.1 is unchanged.
+* **Memory is the comparison that survives.** Kitesurf reports 4.7-7.0x less
+  than Chromium; §B8.17 measured 7.4x. Those are close, measured the same way,
+  and both are large. This is the number to state.
+
+### B11.2 What the comparison does not change
+
+Three of Kitesurf's stated gaps are already answered here and should not be
+re-opened as work:
+
+* **Video and WebGL.** Not in scope for the light engine, and not a gap, because
+  a coding agent testing a video player is testing its own application, which is
+  loopback, which routes to Chromium. Kitesurf must name these because it has no
+  Chromium half. We do (§B7.1).
+* **Persistent authenticated sessions.** Kitesurf cannot have them; this is the
+  one place where "there is a human at this machine" is a capability and not a
+  limitation. `session login` hands the page to the person at the viewer and
+  takes it back (§B5.4, §B8.20). Answered, though see 11.6.
+* **Speed.** Never the claim, for the reason at the top of this file: shipping
+  less browser beats any benchmark table, so a benchmark table is not a moat.
+
+### B11.3 What it does change: two gaps, and one advantage never stated
+
+**Gap 1: CDP.** The ecosystem converged on the Chrome DevTools Protocol, and
+Kitesurf speaks it, which means everything already written against Playwright,
+Puppeteer and `chrome-remote-interface` works there and not here. This engine
+has a bespoke JSON control channel that nothing else targets. The session state
+that CDP would need already exists behind `serve`; what is missing is the wire
+format and an honest account of the subset.
+
+**Gap 2: conformance.** Kitesurf can say 215,000+ Web Platform Tests. This
+engine can say seventy pages across four corpora. The corpora have been worth
+every hour spent on them and they found things WPT never would, because they are
+real pages. But they cannot answer "what fraction of the platform is
+implemented", and that is the question every capability decision below depends
+on. **This is an instrument gap before it is a capability gap**, which by this
+file's own rule puts it ahead of the capabilities it would measure.
+
+**The advantage: reach.** A cloud browser cannot open `localhost:3000`, a
+staging host, an internal admin panel, or anything behind a VPN. For a *coding*
+agent that is not an edge case, it is a large share of everything it needs to
+look at. This has never been written down as a property of the design, and it is
+a stronger and more concrete statement than "local-first" or "private": it is
+not that we decline to send the page elsewhere, it is that for these pages there
+is nowhere to send it from. It belongs beside receipts in how this engine is
+described.
+
+### B11.4 MCP: decided against, 2026-08-09
+
+Kitesurf ships an MCP server and this engine will not, because the two are
+answering different questions. MCP exists to give an agent a tool surface across
+a process boundary it cannot cross. **Here there is no such boundary**: the
+agent runs on this machine, in the same box as the engine, and
+`h5i-browser-light session snapshot` is already a tool it can call. A protocol
+server would wrap the CLI in a socket so that the thing on the other end could
+call the CLI.
+
+The condition that would reopen this is specific: an agent that must drive this
+engine **without being able to run a subprocess**. If one appears, MCP is the
+right answer for it and this decision was still right until then.
+
+Note that CDP (11.3) is not the same call and does not fall to the same
+argument. MCP would re-expose verbs the CLI already exposes to a caller that can
+already call them; CDP would let a large body of *existing* software drive this
+engine, none of which is going to be rewritten against our CLI.
+
+### B11.5 The queue
+
+Ordered by what the evidence supports, not by size.
+
+**First, because it is the least-verified thing we claim.**
+
+1. **A corpus that needs a login.** Unchanged from §B10.5 and now more urgent, not
+   less: 11.2 names authenticated sessions as an answered gap, and it is answered
+   by a mechanism that has never been exercised against a real session-gated
+   application. The strongest claim in this file rests on the least-tested code
+   in it.
+
+**Second, because everything after it is better informed.**
+
+2. **Run the Web Platform Tests.** Start where the corpus already lives:
+   `dom/`, `html/dom/`, `css/cssom/`. Needs a `testharness.js` driver, a
+   committed baseline, and a CI gate on regression rather than on an absolute
+   number.
+3. **Publish the number, whatever it is.** A measured forty thousand is worth
+   more than an unmeasured claim, and an engine that names what it cannot do
+   (§B8.3) does not get to make an exception for its own conformance.
+
+**Third, the interoperability work, sized once 2 has told us what we can claim.**
+
+4. **A CDP subset over WebSocket.** The useful floor: `Target` attach/create,
+   `Page.navigate|captureScreenshot|loadEventFired`,
+   `Runtime.evaluate|callFunctionOn|consoleAPICalled`,
+   `DOM.getDocument|querySelector|getBoxModel`,
+   `Input.dispatchMouseEvent|dispatchKeyEvent`, `Network` request/response
+   events plus cookie get and set, `Emulation.setDeviceMetricsOverride`.
+5. **The unimplemented half of CDP must be loud.** A partial protocol that
+   answers to the name of the whole one is the `missingApi` lie at protocol
+   scale (§B8.4): Playwright will call methods we do not have, and a silent or
+   plausible answer there is worse than an error, for exactly the reason a
+   plausible wrong answer is worse than no answer anywhere else in this engine.
+   An unimplemented method returns a named error and the conformance list is
+   published.
+6. **REST quick actions**: screenshot, extract, PDF. Nearly free once 4 exists.
+
+**Fourth, the gaps the corpus itself found.** These are §B8's list and are ordered
+by how many pages asked.
+
+7. Boa `Module::evaluate_async_with_budget` (lit.dev evaluates unbounded, §B8.14),
+   the Boa `let`/`const` parser bug (§B8.11), the blitz layout panic (§B8.18). All
+   three are upstream's and all three are filed.
+8. **Canvas 2D**, the largest single missing API by corpus demand.
+9. **WebSocket and EventSource.** A live application shows nothing without them.
+10. **IndexedDB**, in memory only, consistent with §B6's storage line.
+11. **`getComputedStyle` answers almost nothing** (`color` came back empty). It
+    is implemented far enough to look implemented, which §B8.3 established is the
+    worst state for anything in this engine to be in.
+12. **crates.io renders nothing** and the cause is still unknown. SvelteKit-
+    shaped; the entry path was verified working in isolation, so the failure is
+    somewhere the isolation removed.
+
+**Fifth, performance, none of which is urgent.**
+
+13. **Reuse the realm across navigations.** ~20ms per page, rebuilt every time,
+    measured in §B8.9.
+14. **Cache the prelude's bytecode.** Three thousand lines of JavaScript parsed
+    per realm.
+15. There is no JIT and there will not be one. The cost is stated in 11.1 and
+    the answer to it is 11.3's reach and §B8.17's memory, not a faster
+    interpreter.
+
+**Sixth, the moat, which is mostly already built and under-described.**
+
+16. **Receipts as a checkable artifact.** The one thing Kitesurf's announcement
+    does not address at all. Today the guarantee is "no receipt, no request" and
+    it is true; what it is not is *verifiable by someone who does not trust the
+    binary that wrote it*.
+17. **Measure and state the delta snapshot** (§B8.20). No comparable engine
+    appears to have one, and re-reading three hundred lines after every click is
+    the shape everyone else's agent loop is stuck in.
+
+### B11.6 Two conflicts to settle deliberately
+
+Both are cases where §B6's "never" list collides with something 11.5 wants. Each
+should be decided in writing rather than discovered in a corpus run.
+
+**Login flows use iframes and popups; §B6 refuses both.** The strongest claim in
+11.2 is persistent authenticated sessions, and real-world OAuth is an iframe or
+a popup almost every time. §B5.4's human handoff sidesteps part of this, because
+a person at the viewer can complete a flow the engine could not drive, but it
+does not help when the flow needs a second browsing context to *exist* at all.
+Either §B6 gains a narrow, argued exception for authentication boundaries, or the
+login claim is honestly scoped down to form posts. It cannot stay as it is: item
+11.5.1 will decide this whether or not it is decided first, and it is better
+written down in advance.
+
+**PDF.** §B6 refuses "printing", by which it meant the print UI, and item 11.5.6
+wants `printToPDF`. These are not the same feature: one is chrome around a page,
+the other is a serialisation of it, and an agent asked to keep a record of what
+it read wants the second. Recommended as an exception, on the grounds that the
+raster path (`blitz-paint`, vello_cpu) already produces everything it needs.
+
+---
+
+## B12. Running WPT, 2026-08-09 to 08-10
+
+§B11.5.2 argued that seventy corpus pages cannot answer "what fraction of the
+platform is implemented", and put conformance ahead of the capabilities it
+would measure. This is that work. The rule it operates under is §B8's: **an
+instrument that cannot name what is missing is fixed before anything it failed
+to name**, and the instrument needed fixing three times before its numbers were
+worth quoting.
+
+### B12.1 The instrument
+
+`wpt/serve.py` serves a WPT checkout and substitutes one file.
+`resources/testharnessreport.js` is shipped by WPT as an empty seam for a vendor
+to fill, so ours fills it and the results come back through the console, which
+`open --json` already reports. **Nothing was added to the engine to make it
+measurable.** An instrument that requires the subject to grow a port for it is
+measuring something other than the subject.
+
+`wpt/run.py` keeps six outcomes apart and lets only three contribute subtests:
+
+| | |
+| --- | --- |
+| `ok` / `harness_error` / `harness_timeout` | the harness reported. Real data. |
+| `no_report` | the engine exited cleanly and the harness never reported. **Unmeasured, not zero.** |
+| `engine_timeout` / `engine_crash` | unmeasured. |
+
+`no_report` is the bucket worth chasing: it is where one engine gap stops a file
+before it can say what it failed, so emptying it moves the score in steps rather
+than in ones. Every fix in 12.2 came out of it.
+
+`wpt/sweep.sh` runs one directory at a time and `wpt/merge.py` totals them.
+Chunked for a reason learned the hard way: a single process holding two hours of
+results loses all of them when something kills it, and something did. Each test
+process also runs under an address-space cap, because several WPT files allocate
+until something gives and without a cap the kernel picks the victim, which on
+this 8 GiB box was the whole session rather than the test.
+
+### B12.2 Twenty files, four bugs, and a suite that scored zero
+
+The first twenty files scored **0**. Not because the engine was that far off:
+one missing binding stopped testharness.js before its first assertion.
+
+* **`self` was undefined.** testharness walks `w != w.parent` from `self` before
+  it can run anything. Added with `parent`, `top`, `frames`, `length`,
+  `frameElement` and `opener`, not stubs, because §B6 refuses iframes and
+  popups, so this document is always a top-level context and every value is what
+  a real browser reports for one.
+* **The load lifecycle was never fired.** No `DOMContentLoaded`, no `load`, and
+  `document.readyState` was the constant `"complete"`. That constant is exactly
+  why four corpora never caught it: it makes the *common* idiom work (read
+  `readyState === "loading"`, otherwise initialise now), so every page took the
+  immediate branch and nothing looked wrong. The other branch never arrived.
+  testharness gates every result it will ever report on one `load` listener with
+  no readyState fallback, so it scored nothing while looking merely slow.
+* **`insertBefore` with an unparented reference node killed the process**, which
+  WPT does on purpose. A panic is not a DOM error: it takes the page, the
+  snapshot and the receipts with it.
+* **`insertAdjacentText` was missing**, which blocked eight files at once
+  because testharness renders its own results table with it.
+
+Twenty files went 0 → 199. The fifth fix is the one that found the fourth:
+**timer errors now carry a stack**. They said only "timer threw" and withheld
+the one thing a caller needs. That has since been applied to all eight callbacks
+that swallow an error: a listener, a timer, an observer are each detached from
+whatever scheduled them, so the message is all the reader gets.
+
+### B12.3 What the instrument was getting wrong about itself
+
+Two corrections, both of which made the engine look worse than it is:
+
+**276 of 1,503 files never load testharness.js.** Reftests compare renderings
+and crashtests only have to not crash; neither can report a result no matter how
+well the engine runs it. They were sitting in the unmeasured bucket looking like
+engine failures. Counted and named separately, unmeasured fell from 643 to 367
+without a single test changing behaviour.
+
+**A large share of WPT is not on disk.** `x.any.js` becomes `x.any.html`,
+`x.any.worker.html` and more at serve time, and a static server cannot produce
+them. 3,833 such endpoints are skipped and the count is printed, so the
+denominator is never mistaken for "all of WPT".
+
+### B12.4 The baseline, and what it asked for
+
+First full on-disk sweep: **33,754 subtests passing of 212,028 scored**, 25,393
+files, of which 16,857 reported and 8,536 did not. 36,450 further files were
+skipped as unscoreable and 3,833 as generated. §B12.8 records where that number
+went and, more usefully, how much of the gap was measurement rather than engine.
+
+The most valuable output is not the score, it is the demand list: every API the
+tests asked for and this engine does not have, counted. The top of it:
+
+```
+3944  Element.hasChildNodes        1197  getComputedStyle(margin-left)
+2208  Element.sheet                1012  getComputedStyle(scale)
+1571  document.styleSheets          972  Element.offsetTop
+1501  Element.getContext            926  getComputedStyle(z-index)
+1468  Element.setHTMLUnsafe         863  navigator.serviceWorker
+```
+
+`hasChildNodes` is one line and was asked for 3,944 times, more than twice
+anything else. Nothing in four hand-picked corpora used it and everything in the
+DOM test suite does. That is the case for a conformance suite in one sentence.
+
+### B12.5 What was built, and what was deliberately not
+
+**Typed reflection.** `dir` is an enumerated attribute whose IDL getter answers
+"" for anything that is not one of its keywords, so `setAttribute("dir", "5%")`
+reads back as "" in a browser and read back as "5%" here. WPT sets every
+reflected attribute to sixty-odd hostile values and checks exactly that, which
+is how an engine scores zero on an attribute it believed it had. There is now
+one `reflect()` with a type per shape (string, nullable, bool, long, ulong,
+enumerated, url), and `long` implements the spec's rules for parsing integers,
+which are not `Number()`.
+
+**Per-tag interfaces.** Sixty tags now carry their own class and the spec's
+reflection table, because `colSpan` belongs to `<td>` and hanging it on every
+element makes `"colSpan" in div` true, the same lie the removed `missingApi`
+stubs told.
+
+**Every computed longhand.** The note in `computed_style` claimed Stylo had no
+generic accessor to bind against, so six properties were hand-listed and
+everything else answered "". That was a wrong belief about the dependency, not a
+considered scope: `computed_value_to_string` does exactly this. `color` came
+back empty (§B11.5.11) and now returns `rgb(0, 0, 0)`.
+
+**Not chased at the time: the legacy CJK encoding tests.** ~~They need legacy
+encoder tables in the URL serialiser, wptserve variants, and `<iframe>`, which §B6
+refuses outright: the clearest opportunity this suite offers to move a number
+without improving the engine for anyone.~~
+
+**That paragraph was wrong on all three counts, and §B12.10 is the correction.**
+The struck text is kept because the shape of the error is worth more than the
+conclusion was:
+
+* **~17,000 was the wrong size.** Measured before the generated endpoints and
+  before the timeout fix; the block is **220,367** unpassed subtests, the
+  largest in WPT by a factor of two.
+* **`<iframe>` is not required.** The `iframe { display:none }` in those files is
+  dead boilerplate from a shared template. 162,892 of the subtests are `-href-`
+  tests: build an `<a href>` in a euc-jp document and read `.href` back. No
+  iframe, no form, no `.py` handler.
+* **It is a real feature, not a scoring artefact.** This engine ignores
+  `<meta charset>` outright: `document.characterSet` is `undefined`, and a
+  euc-jp page's URLs are percent-encoded as UTF-8. An agent reading a legacy
+  Japanese page gets the wrong answer today. "Without improving the engine for
+  anyone" was simply false.
+
+The error was reading a *sample* failure message and generalising from the file
+name around it, rather than asking what the assertion needed. Three sentences of
+confident scope-cutting, none of them checked.
+
+### B12.6 Reading the number honestly
+
+Three things move this score and only one of them is engineering:
+
+1. **Implementing more.** On a fixed nine-directory sample, 5,345 → 6,876.
+   html/dom alone, 3,223 → 6,035 across the two reflection commits.
+2. **Measuring more.** Going from nine directories to all 223 took the total to
+   33,754 without a line of engine code. This is legitimate, since Kitesurf's 215,000
+   is across all of WPT too, but it is not improvement, and a report that
+   blurred the two would be worth nothing.
+3. **Counting more honestly**, which moves it *down* as often as up.
+
+So the targets are worth restating in those terms, and the restatement below is
+the *original* one, kept because it was wrong in an instructive way:
+
+> **10,000 is passed**, and mostly by (2). **50,000** is reachable by (1), the
+> demand list is mechanical work, and 8,536 files still report nothing at all.
+> **100,000** is not reachable on this path. It needs the generated endpoints,
+> which means serving what wptserve serves, and whole subsystems this engine
+> does not have and mostly should not: canvas, service workers, XSLT.
+
+All three targets were passed, and the last one was passed without any of the
+subsystems that paragraph said it required. §B12.8 is why.
+
+### B12.7 What is next
+
+1. **Empty the `no_report` bucket.** 8,536 files report nothing; the causes are
+   already grouped by the runner and the top few will cover most of them.
+2. **CSSOM**: `Element.sheet`, `document.styleSheets`. 3,779 asks between them.
+3. **The remaining computed values**: shorthands, custom properties, and the
+   layout-dependent resolutions Stylo alone cannot know.
+4. **A CI gate on regression**, not on an absolute number: the baseline is
+   committed, and a change that drops it should have to say why.
+
+### B12.8 Where the number actually was, 2026-08-10
+
+> Superseded by §B13.2: the total is now 333,690. This section stays as written
+> because what it says about *why* the number moved is unchanged, and because
+> §B13.3 is the same lesson arriving a second time: a large number that comes
+> from one place has to say so.
+
+**117,331 subtests passing of 585,474 scored**, 26,052 files, 25,252 of which
+report. That is up from 33,754, and it is worth being exact about how much of
+that is the engine getting better and how much is this file learning to read.
+
+Three changes account for most of it, and only one is an engine change.
+
+**The engine was being killed while testharness drew a table.**
+`html/dom/reflection-tabular.html` took 40.6 seconds and scored **zero**, because
+the harness's process timeout fired first. Those forty seconds were not tests:
+testharness renders one DOM row per subtest into `#log` when it finishes, and
+that file has forty thousand of them. The tests themselves are about half a
+second of DOM work.
+
+`setup({ output: false })`, a documented harness setting and what the official
+WPT runner uses, turns the rendering off. Results already came back through the
+completion callback, so the table was pure overhead.
+
+    reflection-tabular   40.6s → 1.98s
+    html/dom, whole dir  minutes → 26s
+    html/dom passing     6,234 → 43,429
+
+The timeout had been raised to 120 seconds an hour earlier, on the reading that
+this engine needed more wall clock than a JIT to run the same test. That reading
+was true and irrelevant: a generous timeout was paying a harness cost rather than
+removing it. **The first measurement said "this engine is too slow for these
+tests"; the second said "these tests spend their time drawing a table nobody
+reads".** Only one of those is about the engine, and tens of thousands of
+subtests were written off on the strength of the wrong one.
+
+**A computed style did not declare its properties.** `"color" in
+getComputedStyle(el)` was false for every property: the object is a proxy with
+only a `get` trap, and `in` asks `has`. WPT's `test_computed_value` asserts
+exactly that on its first line and is *the* helper for CSS parsing tests, so
+thousands of subtests failed before comparing a value. css-color went 1,213 →
+4,509 without one line of colour code changing: Stylo already supported
+`color-mix()`, `oklch()`, relative colours and `color()`, and this engine was
+already serialising them correctly. The tests could not get far enough to look.
+
+**Style was never recomputed on demand** (§B12.5's list), which is what the
+CSSOM tests needed and what any page that builds its DOM in script needs.
+
+The pattern across all three, and across §B8's history: **a large failure cluster
+usually has one cheap structural cause, not N expensive ones.** Three for three
+here. An hour of reading actual failure messages has repeatedly been worth more
+than a week of implementing what the failure count seemed to ask for.
+
+#### What this does and does not claim
+
+It does not claim the engine is fast. A 40-second file becoming a 2-second file
+is the harness no longer being measured; the engine is still an interpreter and
+still around 1.3x Chromium's wall time on real pages (§B8.17). Conformance
+measured with a fair harness and speed on real pages are separate claims and
+should stay separate.
+
+It does not claim parity with a browser. 453,864 subtests still fail, and the
+largest blocks are named in §B12.5 and §B12.10: legacy document encodings (in
+progress), the combinatorial half of `execCommand`, and the multi-origin
+security suites that need wptserve's Python handlers.
+
+It does claim that the number is honest. Nothing was counted that was not run,
+`NOTRUN` and `TIMEOUT` are reported separately from `FAIL`, files that cannot be
+scored are named rather than blamed on the engine, and every subtest counted here
+was already passing before the harness stopped killing it.
+
+### B12.9 The gate, and why it is not in CI
+
+`wpt/gate.sh` runs five directories against a committed floor in
+`wpt/baseline.json`. It is a **local** instrument, run before a change that
+touches the engine's DOM or CSS surface, not a CI job, and the first attempt to
+make it one is worth recording, because it failed for a reason that is not about
+runtime.
+
+A pass count is only a floor if the corpus is fixed. WPT is not: the CI runner
+sparse-checked-out its own revision and scored `encoding` out of 142,445
+subtests where this machine scored it out of 229,349. Both numbers were right
+about different corpora. Comparing a count against a moving upstream measures
+upstream, and would have failed builds that changed nothing.
+
+Wall-clock made it worse rather than caused it: several of those directories
+only score what they score because large files finish inside a timeout, so a
+slower runner loses subtests without anything regressing.
+
+So CI keeps the *behaviours* instead, hermetically. `src/script/tests.rs` has a
+"what WPT found" block: the lifecycle firing, named globals, typed reflection,
+per-tag properties, computed style declaring itself and recomputing on demand,
+stylesheet rules that write back, `TextDecoder` validating its label, unhandled
+rejections reported, and the two crashes a page could use to kill the engine.
+Those are fixed things, they run in a second, and they fail only when the engine
+changes.
+
+The floor still exists for the case it was built for: this branch gave back
+3,142 subtests in `html` to a settle-loop rewrite, and nothing caught it but a
+manual diff. `wpt/gate.sh` is what to run before believing a refactor was free.
+
+---
+
+## B13. Legacy document encodings, and a number that needs a caveat
+
+§B12.5 wrote the legacy CJK encoding tests off in three sentences. All three were
+wrong, the correction is recorded in place there, and this section is what
+happened when the work was actually done.
+
+### B13.1 What was missing
+
+This engine decoded every document as UTF-8. A page served as euc-jp came out as
+replacement characters, `document.characterSet` did not exist, and a link's
+query was percent-encoded from the wrong bytes. An agent reading a legacy
+Japanese page got the wrong answer and was told nothing about it.
+
+`src/encoding.rs` settles the two things a document's encoding decides.
+
+**Which encoding.** BOM, then the transport's `Content-Type`, then the markup's
+`<meta charset>` or `<meta http-equiv>`, then UTF-8. The prescan stops at 1024
+bytes because the HTML standard's does, and that bound is load bearing rather
+than an optimisation: a declaration further down cannot be honoured, because by
+then a parser has committed. Agreeing with a browser about pages that declare
+too late is the point.
+
+**How a query is encoded.** The URL Standard encodes a query with the
+*document's* encoding, and a code point that encoding cannot represent becomes
+an HTML numeric character reference. `丂` in a euc-jp page is `%26%2319970%3B`,
+where this engine answered `%E4%B8%82`, the right escape of the wrong bytes,
+which is the shape of wrong answer that is hardest to notice.
+
+That needed the per-character encoder rather than `encoding_rs::encode`. The
+bulk call renders an unmappable code point as the literal `&#19970;`, and `&`,
+`#` and `;` are not in the query percent-encode set, so they pass through and
+the answer becomes `&%2319970;`. The URL Standard appends `%26%23`, the decimal
+value and `%3B` (the reference *already* percent-encoded) precisely so a
+generated reference cannot be mistaken for a real separator.
+
+Also found on the way: local files were loaded with `read_to_string`, which
+**refuses** a file that is not valid UTF-8, exactly the file this path most
+needs to open.
+
+### B13.2 The number, and why it is checked rather than quoted
+
+**333,690 subtests passing of 584,707 scored**, from 117,331. 26,052 files run,
+25,249 of which report.
+
+That is a large enough jump in one commit to deserve disbelief, so it was
+checked three ways before being written down.
+
+* **Nothing is counted twice.** 25,247 distinct test files across the sweep,
+  none run more than once. The largest single file reports 21,269 subtests under
+  21,269 distinct names.
+* **The answers are right.** The same page was run in Chromium 1140 and the
+  output is byte-identical, including two cases where Python's own `euc_jp`
+  codec *disagrees*: Python encodes U+4E02 into JIS X 0212, and WHATWG's euc-jp
+  decodes that plane but never encodes to it. Matching the browser rather than
+  the naive codec is not something reached by accident.
+* **The engine is doing it, not the harness.** `document.characterSet` reports
+  EUC-JP, the text decodes as itself, and an unmappable code point becomes a
+  numeric reference, each asserted in `src/script/tests.rs`.
+
+### B13.3 The caveat that has to travel with it
+
+**70% of every passing subtest comes from twenty files.** The top eleven are all
+`*-encode-href-*.html`: one behaviour (encode a character into a URL query)
+repeated once per codepoint across the CJK range, for five encodings.
+
+| framing | subtests |
+| --- | --- |
+| Headline total | 333,690 |
+| **Excluding the encoding directory** | **107,904** |
+| Excluding just the CJK block | 116,428 |
+| From the top twenty files alone | 235,977 |
+
+Files that pass *completely*: **1,882** of the 20,506 with any scored subtest.
+
+So 333,690 is true and describes one feature with an enormous test count rather
+than broad platform coverage. Both halves of that sentence have to be said
+together, and §B12.6's rule applies unchanged: implementing more, measuring more
+and counting more honestly are three different things, and only the first is
+engineering.
+
+**The Kitesurf comparison: withdrawn, 2026-08-19.** This section previously
+worked an arithmetic argument to the conclusion that Kitesurf's stated
+"215,000+ tests passing" could not include the CJK block, and therefore that a
+like-for-like reading put this engine at about half their breadth. The argument
+was wrong, and it is worth keeping the wreckage because the mistake is a tidy
+example of the thing this file keeps warning about.
+
+It ran: the CJK `encode-href` block is 217,263 subtests, which is larger than
+Kitesurf's whole stated total, so they cannot be passing it. That inference
+treats a block as **pass-all-or-none**. Nothing requires an engine to pass every
+subtest in a directory, and partial coverage is the normal case for all of them,
+including this one. An engine passing 150,000 of that block has a total entirely
+consistent with 215,000 and a number that includes CJK encoding. The premise
+does not support the conclusion, and the like-for-like table built on it does
+not stand.
+
+What actually follows is narrower and less satisfying: **the two numbers are not
+comparable in either direction.** Two reasons, and either is sufficient. Their
+harness is not this one, and this one cannot reach workers, `.py` handlers or
+TLS, so it scores 584,707 subtests where a full wptserve run reaches roughly two
+million: the denominators are different corpora. And the composition of their
+number is not published, so subtracting our CJK block while leaving theirs in
+place would be a comparison rigged in our own favour, which is the same error in
+the other direction.
+
+So there is no defensible comparison here, and this file should not have printed
+one. **The claim that survives is entirely about this engine and needs no
+competitor at all:** 333,690 is true, 65% of it is one block, and both halves
+have to be said together.
+
+The failure mode is §B12.8's, arriving in a new place. That entry recorded that
+a large failure cluster usually has one cheap structural cause, and that an hour
+of reading actual failure messages beats a week of implementing what a count
+seemed to ask for. This is the same lesson pointed at a *comparison*: an
+arithmetic argument that felt conclusive was doing the work that reading the
+other engine's published methodology should have done. Comparative claims about
+someone else's number need their methodology, not our calculator.
+
+### B13.4 What this is worth, plainly
+
+The engineering is worth having on its own: a legacy page now reads correctly,
+which is a real capability an agent needs and did not have. The score is a
+consequence, not the reason, and the twenty-file concentration is the reason to
+say so out loud rather than let a headline imply 333,690 distinct capabilities.
+
+---
+
+## B14. Reviewing the engine against a real browser, 2026-08-10
+
+The reviews in §B8 and §B11 read code and reasoned about specs. This one diffed
+behaviour against Chromium 1140, and the difference in yield is the finding
+worth keeping: **thirteen bugs in an afternoon, four of them in code whose
+comments explicitly argued for the wrong answer.** Reasoning about what an
+engine should do had been checking the reasoning, not the engine.
+
+The method is a page of one-assertion-per-line probes, run in both engines and
+compared. `wpt/` finds gaps against a specification; this finds disagreements
+with the thing the user will actually compare against.
+
+### B14.1 The encoding work, three days old and already wrong
+
+* **Existing percent-escapes were destroyed.** The query was decoded after
+  parsing and re-encoded, which cannot work: once `url::Url` has run, an
+  author's `%41` and a `%E4%B8%82` the parser made from a raw `丂` are both just
+  `%XX`. `?x=%41` became `?x=A`; `?100%25` became `?100%`, an escape the page
+  wrote turned into an invalid one. Now encoded from the raw text before any
+  parser touches it.
+* **An undeclared legacy page was destroyed**: the worst of the three, because
+  it is the document the module exists to rescue. Undeclared bytes fell back to
+  UTF-8, so a windows-1252 page had every high byte replaced by U+FFFD:
+  `café naïve` read as `caf<?> na<?>ve`. The fallback is now asymmetric on
+  purpose, and the asymmetry is the point: windows-1252 read as UTF-8 loses the
+  text outright, while UTF-8 read as windows-1252 is mojibake but lossless.
+  Given a guess must be made, take the recoverable wrong answer.
+* An empty query reported `"?"` where a browser reports `""`.
+
+### B14.2 A code block is not one long line
+
+Every `<pre>` arrived as a single run-on line, which for an engine that reads
+documentation is a poor reading of the thing it reads most.
+
+The fix is not to stop collapsing. `Snapshot::render`'s fence rests on **no
+page-derived value spanning a line**, because a value that can start a line can
+forge the closing marker. So a `<pre>` is split on its own breaks and each piece
+becomes an outline line, collapsed individually with its own indent and `- `.
+The invariant is untouched and the structure survives, verified by putting the
+literal closing marker inside a `<pre>` and watching it come back as
+`[fence marker removed]`.
+
+### B14.3 Nine more, from sixty-four assertions
+
+`{ once: true }` was read at registration and never consulted at dispatch, so
+listeners fired every time, and the same handler registered twice made two
+listeners where a browser makes one. An invalid selector answered `null` instead
+of throwing, which is indistinguishable from "no such element", so a page with a
+typo took its not-found branch and never learned why. `textContent = null` wrote
+the four characters `null`. `tabIndex` answered -1 for links and buttons, telling
+a page nothing was focusable. `isEqualNode`, `normalize` and `isSameNode` were
+absent and `compareDocumentPosition` called connected nodes disconnected. Style
+serialisation lost its trailing semicolon, and emptying a declaration removed
+the attribute instead of leaving `""`.
+
+63 of 64 cases now match Chromium exactly.
+
+### B14.4 The one that is not a bug: `Intl`
+
+`Intl` is undefined, so `toLocaleString()` answers `1234.5` where a browser
+answers `1,234.5`, and `toLocaleDateString()` returns a full date string rather
+than `12/31/1969`. A page that formats numbers or dates for display shows
+different text to this engine than to a person.
+
+Enabling boa's `intl_bundled` **does not build**: it wants `icu_provider 2.2`,
+which conflicts with what parley already pins through blitz. That is the same
+disjoint-ICU wall that dictated the boa revision pin in the first place (§B12.2),
+arriving from the other side. It is recorded here rather than filed as a task,
+because nothing in this repository can move it: it needs the two ICU lines
+upstream to converge.
+
+### B14.5 What this says about how to look
+
+Three review passes on this engine have now found bugs at very different rates.
+Reading code found some. Running a conformance suite found more, and found the
+*instrument's* faults as a side effect. Diffing against a browser found the most
+per hour, and, the part worth internalising, **it found bugs in code whose own
+comments had reasoned carefully to the wrong conclusion.** A comment cannot
+falsify itself. Another implementation can.
+
+---
+
+## B15. Two more reference engines, and the bug reading them found, 2026-08-19
+
+§B11 read Kitesurf against a built engine and asked what the comparison changed
+about the *order* of work. This section does the same for two engines that are
+closer to us in purpose than Kitesurf is: **Lightpanda** (`~/Ref/browser`, Zig,
+V8 plus html5ever, CDP and MCP) and **Obscura** (`~/Ref/obscura`, Rust, V8 via
+deno_core, CDP and MCP, ~132k lines across nine crates). Both describe
+themselves as headless browsers *for AI agents*. Neither has receipts, a policy
+layer, or a box; both have an agent-driving surface several times the size of
+ours.
+
+The comparison is therefore lopsided in a useful way. It says almost nothing
+about the engine and a great deal about **the verbs on top of it**, which is
+where the honest reading is that we are behind.
+
+### B15.1 What the reading found first: a ref resolves against a page the agent never saw
+
+Before any of the design comparison, the read found a defect in our own control
+channel, and it is the kind §B8.3 singles out as the worst state for anything
+here to be in: a plausible wrong answer that looks like a right one.
+
+`type`, `submit` and `click` each take a **fresh** snapshot at action time and
+resolve the agent's `@ref` against that (`stream.rs:863`, `:885`, `:917`):
+
+```rust
+let snapshot = session.page.snapshot();
+let Some(entry) = snapshot.resolve(reference) else { ... };
+```
+
+References are minted by walk order (`snapshot.rs:590`):
+
+```rust
+let id = format!("e{}", self.next_ref);
+self.next_ref += 1;
+```
+
+So `e5` does not name an element. It names **the fifth actionable thing in this
+walk**. The agent read snapshot *N* and is acting against snapshot *N+1*, taken
+now. If anything moved in between — a settle that ran, a script mutation, an
+element inserted earlier in document order — `e5` resolves to a *different
+element*, `click` succeeds, and the reply says `{"ok": true, "ref": "e5"}`.
+Nothing anywhere detects it.
+
+There is no memory-safety problem: the node id is freshly minted, so the click
+lands on a real node. That is precisely what makes it bad. The failure is
+silent, it is indistinguishable from success, and the engine's whole claim is
+that it does not hand an agent a plausible lie.
+
+**The minimum fix** is a generation counter: stamp each snapshot, return it,
+require it back on any verb taking a `@ref`, and refuse a mismatch by name
+rather than acting on it. That converts a silent wrong action into a loud one
+and is a small change.
+
+**The right fix** is two handle types, which is §B15.4.
+
+This is also a comment on method. §B14.5 ranked three ways of looking and put
+"diff against another implementation" first, because a comment cannot falsify
+itself. Reading two *other* agent-facing APIs found this in an afternoon, and
+neither the corpus (§B8) nor WPT (§B12) would ever have found it: the page is
+conformant, the render is right, and the wrong element is clicked.
+
+### B15.2 The two engines, and what is not comparable
+
+Stated first, so nothing below is quoted against the wrong baseline.
+
+* **Neither is a fair speed or conformance comparison.** Both run V8. Obscura
+  ships a 14.5k-line `bootstrap.js` baked into a V8 startup snapshot; Lightpanda
+  hand-writes its DOM in Zig against V8 directly. We run Boa, an interpreter,
+  for the reason §B11.1 gives. None of the three numbers bounds another.
+* **Neither has our reach.** §B11.3 named this as an advantage never written
+  down; it survives contact with two more engines. Obscura's SSRF gate denies
+  loopback and RFC1918 *by default* (`client.rs:573`, installed as reqwest's own
+  DNS resolver), which is the correct default for a scraper and the exact
+  opposite of what a coding agent needs. Ours allows loopback by default because
+  loopback is the dev server (`--no-loopback` takes it away).
+* **Neither has receipts**, and the shape of what they do have is instructive.
+  Obscura's CDP `Network.*` events are **batched and emitted after navigation
+  completes**, reconstructed from a stored list; anything watching requests live
+  sees a compressed, out-of-time picture. That is the failure mode §7.1
+  predicted for any engine observing its own network from beside it rather than
+  being it.
+
+What *is* comparable is the verb surface: **8 session verbs here, 27 in
+Lightpanda, 36 in Obscura.** That gap is not padding. It is the difference
+between an agent that finishes a task and one that stalls and re-snapshots.
+
+### B15.3 One verb table, and why it is a security change
+
+Our verb set is written out three times and nothing makes the three agree: the
+clap `SessionVerb` enum (`main.rs:239`), a hand-built JSON payload in
+`session()` (`main.rs:~470`), and a string `match verb` (`stream.rs:715`).
+
+Lightpanda's answer is the single best structural idea in either codebase. One
+exhaustive `Tool` enum (`tools.zig:229`), and every per-tool property is an
+**exhaustive switch** on the tag: `isRecorded`, `isAsync`, `needsLocator`,
+`producesData`, `waitsForReadiness`, `navigatesToUrl` (`tools.zig:261-330`).
+Adding a tool is a compile error until every consumer has made an explicit
+choice. Four front-ends read that one table: MCP, LLM tool-calling, a slash
+command REPL, and script replay. In Rust this is free.
+
+Here it is not only tidiness. **LOGIN mode's refusal is a string allowlist**
+(`stream.rs:711`):
+
+```rust
+if session.login && !matches!(verb, "status" | "login") {
+```
+
+The default is refusal, so the failure direction is safe, and a *new* verb is
+refused until someone thinks about it. But the allowlist itself is two string
+literals: one typo opens a read path during credential entry, and no test that
+does not already know the typo will catch it. As a predicate on the enum
+(`fn readable_during_login(self) -> bool`) it cannot be typoed, and the
+exhaustive match forces every future verb to answer the question.
+
+Do this first. Everything after it is cheaper once it exists, and §B15.10's MCP
+decision stops being expensive to reverse.
+
+### B15.4 Two handle types, because one of them has to be recordable
+
+Both engines mint durable handles; ours are ordinals (§B15.1).
+
+**Lightpanda has both kinds, deliberately.** `backendNodeId` is a registry keyed
+on **DOM node pointer identity** (`cdp/Node.zig:38`), so an id survives arbitrary
+mutation and resolves to the same element or to nothing. On navigation the whole
+registry is reset, because every pointer in it dangles. That is the cheap
+intra-page handle.
+
+The durable one is `SelectorPath` (`browser/SelectorPath.zig:53`): the *simplest
+CSS selector whose first match is the target*, built greedily from the target
+outward, prepending an ancestor segment only when it shrinks the match count,
+preferring `#id` then `[data-testid]`/`[name]` then a `:has()` distinguisher
+found by BFS, and only then falling back to `:nth-of-type`. Each candidate is
+verified with **the same query function `click` and `fill` use**, so the
+selector is correct by the same resolution rule that will later resolve it.
+
+Obscura's approach is the one to refuse: it writes `data-obscura-ref="e3"` into
+the DOM (`obscura-mcp/src/lib.rs:1217`) and resolves via an attribute selector.
+Cheap, and wrong for us — a receipts engine that mutates the page has a snapshot
+that no longer describes the page as served.
+
+Why two kinds rather than the better one: **the durable handle is what makes a
+session replayable**, which is §B15.9. Lightpanda shapes its API around this and
+says so to the model, in the guidance it ships with the protocol: *"NEVER pass
+backendNodeId to click/fill/hover/selectOption/setChecked … backendNodeId calls
+cannot be recorded as reusable JavaScript, so any session that uses them is not
+replayable."* The recordability constraint is made visible in the API rather
+than discovered at save time.
+
+### B15.5 Waiting: the primitive we already have is the better one, and it is not exposed
+
+We have **no `wait_for` at all**. On a script page an agent's only option is
+snapshot-and-hope.
+
+Both engines converged on the same default from opposite directions, and it is
+worth recording because it is counter-intuitive: **do not wait for network idle
+by default.** Lightpanda waits for `load` and says why — *"on real sites
+trackers/timers keep the network from ever fully idling, so it just rides the
+timeout"* (`tools.zig:1972`). Obscura had to drop its CDP default all the way to
+`domcontentloaded` because full-load pushed github.com and reddit.com past the
+25s mark while clients timed out at 15s (`domains/page.rs:~1030`). Idle is an
+explicit escalation in both.
+
+Our `Settled { elapsed_ms, timers_run, cut_off, pending_timers }` on a **virtual
+clock** is a better primitive than either, and this file has never said so.
+Theirs are wall-clock heuristics with hardcoded fudge. Obscura's adaptive settle
+(`obscura-js/src/runtime.rs:1989`) is the most sophisticated version and carries
+a 150ms quiet window, a 1000ms external-work grace, a 500ms observable-activity
+tail, a 5000ms synchronous-task floor, and a hardcoded 5s idle deadline that
+**marks the page `NetworkIdle` even when the deadline is what ended the loop**
+(`page.rs:2691`). Ours is deterministic, reproducible across runs, and costs a
+page's `setTimeout(1000)` nothing.
+
+It is also *more complete than theirs on the axis their heuristics exist to
+approximate*: our fetch is synchronous underneath, so there is no in-flight
+request for a settle to miss. The thing they are estimating, we know.
+
+What to build: `wait_for {selector | text, timeout}` and `wait_for_script
+{expr}`, driven by the existing settle loop, plus one borrowed rule from
+Lightpanda's wait predicate (`Runner.zig:287`) — **resolve when there is nothing
+left to wait *on*, even if the requested milestone never arrived**, rather than
+spinning to the timeout. And keep reporting, never guessing: a wait that ended
+because the page went quiet without the condition holding is a different answer
+from one that timed out, and both are different from success.
+
+### B15.6 Errors that name the recovery
+
+A refusal here is `{"ok": false, "error": "<prose>"}`. Both engines converged on
+named codes plus a recovery sentence, addressed to the reader that is actually
+there. Lightpanda's (`tools.zig:762`):
+
+```
+NodeNotFound: the selector or backendNodeId matched nothing on the current page.
+Re-inspect the page (tree/interactiveElements) for fresh node ids, or omit
+backendNodeId to target the document root.
+FrameNotLoaded: no page is loaded — call goto (or pass a url) first.
+```
+
+Three things to take:
+
+1. **A `code` field** beside the prose, so a caller branches without parsing.
+   Obscura is the counter-example: every handler error becomes CDP `-32601`
+   regardless of meaning (`dispatch.rs:539`), and every page failure collapses
+   into `PageError::NetworkError(String)` — timeouts, DNS, SSRF blocks and
+   robots.txt denials are one variant. An agent cannot branch on that.
+2. **In-band versus protocol failures.** A selector that matched nothing in an
+   `extract` is content the model should read and fix; a policy refusal is a
+   protocol error. Lightpanda splits exactly there (`mcp/tools.zig`), and
+   returning the first as an error kills the self-correction loop.
+3. **Pre-parse diagnostics** that name the offending field and list the valid
+   values (`diagnoseArgs`, `tools.zig:2060`): `state: "fast"` should produce
+   *"invalid state 'fast'. Expected one of: load, domcontentloaded, …"* rather
+   than a raw parse failure.
+
+One small accommodation worth copying verbatim: Lightpanda treats
+`backendNodeId: 0` as omitted, because zero-filling models send `0` for unset
+(`tools.zig:2098`).
+
+### B15.7 The verbs that are missing, and the one nobody else can have
+
+Ranked by how often an agent loop stalls without them: `select_option`, `press`
+(a key), `set_checked`, `back` / `forward` / `reload`, `get_attribute`, `count`,
+`find_element {role, name}`, `links`, `console`.
+
+And then **`requests`**, which is ours alone. Exposing the request log through
+the control channel is a verb no other engine can offer honestly, because no
+other engine *is* the HTTP client. Lightpanda has no equivalent. Obscura's is
+the batched, after-the-fact reconstruction of §B15.2. Ours is the decision
+record that was written before the bytes moved, and the agent driving the page
+should be able to read it without leaving the session.
+
+This is the same argument §12 made for the engine existing at all, arriving at
+the verb layer. It also closes a gap in the agent's own loop: today an agent
+that wants to know whether its click caused a request has to be running with
+`--script` and read the `requests` field of the click reply, or go find the
+receipts file.
+
+### B15.8 Extraction, and a markdown view
+
+Both engines have a selector-to-JSON extraction DSL and both have markdown.
+Ours has neither, and the token economics of an agent loop say both matter.
+
+Lightpanda's `extract` is the better design (`tools.zig:917`): field name to
+selector, `[...]` for all matches, `{"selector":…, "attr":…}` for an attribute
+with `href`/`src` resolved absolute, `[{selector, fields:{…}}]` for one object
+per match with relative sub-selectors, and `limit`. One rule is worth copying
+exactly: an empty array is a valid result, but **if every top-level key comes
+back null it throws**, in-band, with
+
+```
+extract: no schema selector matched any element — inspect the page with
+tree/markdown and retry with corrected selectors
+```
+
+An unmatched schema is a mistake the model should be told about; an empty result
+set is not.
+
+Markdown is a denser read than the a11y outline for the "read the untrusted web"
+case that is this engine's stated purpose, and it is cheap over the Blitz DOM.
+Note the two gaps in Obscura's converter (`obscura-js/src/markdown.rs:7`) so we
+do not reproduce them: no GFM header separator row is ever emitted, so its
+tables are not valid markdown, and ordered-list items all render as literal
+`1. `. Whatever we emit, the fence of §12.1 applies to it unchanged.
+
+### B15.9 Credentials by indirection, which is the answer LOGIN mode is not
+
+Lightpanda's `$LP_*` scheme is the strongest single idea in either engine for
+our threat model, and it is better than what we have.
+
+End to end: only the `LP_` namespace is readable (`tools.zig:2166`); `getEnv`
+with no argument returns **the names, never the values**; substitution happens
+*inside the browser process* so the secret never enters model context; `fill`
+echoes the **placeholder** back in its result rather than the value
+(`tools.zig:626`); and the recorder reverse-substitutes on every append,
+iterating by value length descending (`tools.zig:2221`) so a short secret that
+is a substring of a longer one cannot leak a suffix. There is a test asserting
+a prompt-injected `fill('$SECRET')` cannot exfiltrate a non-`LP_` variable.
+
+This matters more here than there, because **it has no hole and LOGIN mode
+does.** §12's LOGIN mode is honest about being half built: it refuses the
+documented read path but does not withhold frames, and the README says plainly
+that an agent that goes looking can attach to the viewer socket and watch the
+same pixels. There is no moment in the indirection scheme when the secret is on
+screen, so there is nothing to watch.
+
+It also fits the rule the cookie jar already follows. `session status` reports a
+cookie *count* and never a value; the request log records how many cookies
+crossed and never which. A credential used by name and never by value is the
+same rule at the input side, and the receipt can say `used $H5I_ACME_PASSWORD`
+without that being a credential in every export the receipt reaches.
+
+The two compose rather than compete. LOGIN mode stays for interactive OAuth this
+engine cannot drive at all (and §B11.6's iframe/popup conflict is still
+unsettled and still has to be decided in writing). `$H5I_*` covers form posts,
+which is most of what an agent meets.
+
+### B15.10 The moat: a recording that replays deterministically
+
+Lightpanda records every state-mutating verb into replayable JavaScript
+(`script/Recorder.zig`), with three mechanisms worth taking: an emit-once
+preamble; a one-step rewrite window that downgrades a preceding `goto` to
+`domcontentloaded` when the next command supersedes the wait; and secret
+scrubbing on every append. Recording is *filtered* — a verb that used an
+ephemeral handle is dropped, so an unreplayable session simply produces a
+shorter script rather than a broken one.
+
+We already write `$H5I_BROWSER_ACTIONS`, and §12.1 already makes the guarantee
+that each verb is recorded before it runs and again after. Making that log
+**replayable** is a small step from where it stands, and it buys something
+neither engine can have:
+
+**Our settle runs on a virtual clock, so a replay is deterministic.** Both of
+theirs are wall-clock, so a replay is a re-run with different timing and a
+different answer. A recorded run, plus the request log it produced, plus a
+replay that lands identically, is a browser session that can be **re-executed
+and diffed**. That is the browser-side form of what §B11.5.16 wants from
+receipts — an artifact checkable by someone who does not trust the binary that
+wrote it — and it is a stronger position than any benchmark table, for the
+reason at the top of this file.
+
+It depends on §B15.4. A recording made of ordinals replays into a different
+page; a recording made of verified selectors replays into the same one.
+
+### B15.11 Two decisions to make deliberately, not discover
+
+**MCP.** §B11.4 decided against it: the agent runs in the same box, and
+`h5i-browser-light session snapshot` is already a tool it can call, so a
+protocol server would wrap the CLI in a socket for a caller that can already
+call the CLI. That argument is unchanged and still correct **for h5i's own
+boxed agent**. What the comparison adds is that both of these engines ship MCP
+as their *primary* agent surface, so it is also how anything outside h5i would
+ever drive this engine. The recommendation is to keep the decision and note
+that §B15.3 defuses it: with one verb table carrying schemas, an MCP server is
+a few hundred lines over it. The reopening condition at §B11.4 stands as
+written.
+
+**CDP.** §B11.5.4 ranks a subset third, and Obscura is a detailed and
+discouraging cost estimate. The protocol is the small part; the compatibility
+is the work. Distinct session ids per attach because a target can carry two
+client sessions (`dispatch.rs:239`); `canAccessOpener` in every `TargetInfo` or
+chromiumoxide panics; rewriting the main document's `requestId` to the
+`loaderId` because Puppeteer identifies the navigation response that way, *and*
+aliasing the stored body so `getResponseBody(loaderId)` resolves; a required
+event ordering with `requestWillBeSent` before `frameNavigated`; execution
+context ids cleared and reseeded per navigation, with an invented
+`__puppeteer_utility_world__` if the client registered none. Each of those is a
+client bug worked around, not a protocol feature.
+
+And the failure mode is exactly the one §B11.5.5 predicted, in the shipped code:
+`DOM.setAttributeValue` and `DOM.removeNode` are **silent no-ops**
+(`domains/dom.rs:222`), and `DOMSnapshot.captureSnapshot` returns **synthetic
+geometry** — every node a 1280x18 box stacked vertically (`domsnapshot.rs:232`)
+— in a build where real layout exists a call away. An agent framework that
+trusts those bounds gets garbage and is told nothing. That is the `missingApi`
+lie at protocol scale, and it is what a partial CDP costs when the conformance
+list is not published first.
+
+Recommendation: CDP moves *behind* the agent-loop work in §B15.12, and if it is
+built, the conformance list ships before the endpoint does.
+
+### B15.12 What not to copy
+
+**Obscura's stealth stack**, in full. Half of `bootstrap.js`'s fingerprint layer
+is a seeded PRNG producing plausible-but-false GPU strings, canvas noise,
+battery levels and heap sizes, plus a `Function.prototype.toString` patch that
+masks itself and a `getOwnPropertyNames` filter that hides its own globals. It
+is competent and it is the exact inverse of this engine's thesis: every one of
+those is a plausible lie a page cannot detect, engineered so it cannot be
+detected. We are not evading anyone, and a receipts engine that spoofs its own
+identity has given up the argument.
+
+The **catalogue** is worth keeping in one direction only. It is a list of what
+pages actually probe for, and a page reading `WEBGL_debug_renderer_info` or
+enumerating `navigator.plugins` is telling us something about itself. That
+belongs in `unsupported()` as a routing signal (§B8.4), which is machinery we
+already have.
+
+Also not to copy: **`DOM.setAttributeValue` as a no-op** and **synthetic
+DOMSnapshot geometry** (§B15.11); **writing refs into the DOM** (§B15.4);
+**batched network events** (§B15.2); and Obscura's documented-but-absent
+`localStorage` persistence, where dropping the JS isolate on every navigation
+means web storage does not survive a same-origin navigation, let alone a
+restart, while `docs/Persist-cookies-and-storage.md` promises a file. §B6 already
+commits us to in-memory storage; the lesson is that the *documentation* has to
+say so.
+
+### B15.12a The performance items, measured: two noes and one that was refused twice before it was built
+
+§B11.5.13 and §B11.5.14 list two performance items — reuse the realm across
+navigations, and cache the prelude's bytecode. Both were attempted. The first
+must never be built; the second was built in August 2026 and is the largest
+single saving this engine has taken. A third optimisation that looked obvious
+was measured and reverted. Recorded together because the pattern is the point,
+and the pattern turned out to cut both ways.
+
+The prices moved while this section was being wrong about them. The realm was
+~20 ms a page when this was written, ~63 ms by the time it was re-examined, and
+is ~15 ms now. The prelude was three thousand lines and is ten thousand. §B8.9
+carries the current numbers.
+
+**Realm reuse: refused, on grounds §B11.5 did not weigh.** A realm carries
+everything the previous document's script put in it — globals, patched
+prototypes, retained closures. Reusing one across a navigation means a page can
+set attacker-controlled state, cause a navigation, and have that state visible
+to the document it navigated to. That is a boundary this engine would be
+removing to save twenty milliseconds. Obscura, a far larger engine in the same
+space, drops and recreates its entire JS runtime on every navigation for exactly
+this reason, and says so in the code. The note now lives on `Page::run_scripts`
+so the item is refused in review rather than re-attempted.
+
+**Prelude bytecode caching: built, 2026-08-29, and this section had two reasons
+for refusing it that were both wrong.** Kept in full, because being wrong twice
+in the same place about the same thing is the useful part.
+
+The first reason was that `boa_engine::Script::parse` interns identifiers into
+the context's own interner and binds the result to that context's realm, so a
+parsed script is not a portable artifact. True of the *parse*, and irrelevant to
+the artifact: by the time compilation is done a `CodeBlock` holds no `Sym` at
+all. Its constants are `JsString`, `Gc<CodeBlock>`, `JsBigInt` and `Scope`, and
+nothing in it can reach an interner. The claim was made about the input and
+believed about the output.
+
+The second reason, added when this was re-examined on Boa 0.22, was that a
+`CodeBlock` owns its `InlineCache` entries and reusing one across realms would
+carry the last page's object shapes into the next page's property lookups.
+Also wrong, and checkably so: a `CacheEntry` holds a **`WeakShape`**, and a
+lookup compares it by address after upgrading it. An object in the next realm
+has that realm's shapes, so it can never match an entry left by the last one;
+a dead entry is dropped on the next lookup rather than hit. There was no
+contamination to prevent. What does accumulate is the `megamorphic` flag, which
+is permanent, so code reused across many realms would eventually stop caching
+altogether — a performance decay, not a leak, and fixed by the same one-line
+reset that was proposed for the wrong reason.
+
+What made it buildable was the owner's ruling that a minimal Boa fork is
+acceptable where a vendored in-tree engine crate (§B22, stylo) is not. The
+fork carries one commit: `Script::bind_to_realm`, which returns a script sharing
+this one's compiled code but running in another realm, with the inline caches
+cleared and fresh `[[LoadedModules]]`. It refuses a script whose top level
+declares `let`, `const` or `class` — those become bindings the compiler
+addresses by *position* in the scope of the realm it compiled against, so a
+second realm's scope would not have them. Top-level `var` and `function` are
+instantiated by name on the global object and are portable. The prelude is one
+IIFE and declares nothing at the top level at all, which is why it qualifies.
+
+**The isolation this does not touch.** The realm refusal above stands unchanged,
+and the distinction is the whole safety argument: instructions are shared,
+state is not. Every page still gets its own realm, its own global object, its
+own prototypes and its own module map. `a_realm_shares_the_preludes_code_and_
+none_of_its_state` asserts it from the page's side and the fork's own
+`what_one_realm_does_to_the_shared_code_is_not_visible_to_the_next` from Boa's.
+
+Worth 67 ms of the 83 a realm cost, taking it to ~15 ms, and taking a
+ten-section scripted page from 72 ms to 26 ms. §B8.9 carries the phase table and
+the two costs that did not go away: the first realm on a thread still pays the
+whole compile, and building a context on a warmer GC heap costs ~3 ms more than
+it did.
+
+**Who this helps, stated plainly, because it is not everyone.** The saving is
+per *thread*, and a renderer serves a session's navigations on one. So a session
+pays the compile on its first page and never again, and every number above is
+that second-page-onward case. A one-shot `h5i browser read <url>` builds one
+realm in a fresh process and is not helped at all — it pays exactly what it paid
+before. Making the first page cheaper is a different problem, and it is the one
+below.
+
+### B15.12b The compile moved into the navigation's own wait, 2026-08-29
+
+The first realm on a thread still paid the whole 67 ms, and a one-shot
+`h5i browser open` never has a second. That compile is now paid while the
+navigation's own request is in flight: `Broker::send_while` hands the renderer's
+idle window to a caller with something to do, and `BrokerClient` writes the
+request, runs the work, then blocks on the answer. The broker is a separate
+process, so that window is real. It is a reordering rather than parallelism —
+Boa's heap is thread-local and `Gc` is not `Send`, so the compile can never go
+to a worker thread.
+
+**It is speculative, which is the whole difficulty.** The decision comes before
+the document exists, so it cannot ask whether the page has script, and a page
+with none builds no realm and would have paid nothing. `worth_warming` asks the
+two things it can know: scripting must be on, and there must be a wait to hide
+the compile in.
+
+**Measured before building.** Over the corpus, 64 pages: 92% run script, and the
+scriptless ones fetch *slower* than the scripted ones — 117 ms at the fastest
+against a ~67 ms compile. Not one page lost, and the compile would have to
+nearly double before one did. Six pages were dropped as bot-challenge responses,
+which are not the page, arrive fast, and carry their own script, so they land as
+false wins in exactly the region that decides this. Every page measured was
+remote, so loopback and the non-network schemes are excluded in code rather than
+assumed to behave like the rest.
+
+**Measured after, and the first answer was wrong.** An end-to-end A/B of two
+binaries said 171 ms saved. That is more than the compile being hidden, so it
+could not be the change, and it was not: `before` and `after` ran back to back on
+the same URL, handing the second warm DNS, a resumable TLS session and a warm
+CDN. With the order alternating, the eight-page median fell to **−6 ms** — the
+effect is 67 ms against pages that take 0.9 to 39 seconds and swing by hundreds
+of milliseconds, so it simply is not resolvable there.
+
+It is resolvable on pages fast enough to show it. Three pages under 1.5 s, 20
+repetitions, order alternating, **59 paired runs**:
+
+    after faster in 44/59            sign test p = 0.0001
+    median delta                     +106 ms
+    95% bootstrap CI                 [+53, +139] ms
+    predicted (the compile hidden)   +63 to +82 ms
+
+The interval excludes zero and contains the prediction. The point estimate sits
+above the ceiling, which is what a wide interval on a noisy box looks like
+rather than a saving larger than the thing being saved.
+
+**The bug this shipped with, because it is the more useful half.** Warming
+before a realm exists inverted the order in which two thread-locals are first
+touched — the template's and Boa's GC heap — and the template then dropped `Gc`
+handles into a heap already torn down. The symptom is not a wrong answer:
+everything succeeds, and the process aborts as the thread ends with
+`tcache_thread_shutdown(): unaligned tcache chunk detected`. Every test passed
+on the commit before, because building a realm touches Boa's heap first and the
+order happened to be safe. The fix is `ManuallyDrop`, so the thread-local has no
+destructor and the order cannot matter.
+
+Three things about it are worth keeping. Rust does not specify thread-local
+destructor order, so anything holding a `Gc` in one **must not be dropped** —
+this is a rule, not an incident. A latent crash can hide behind a green suite
+when the failure is in teardown rather than in the work. And it was found only
+because a test was written for the *link* the wall clock could not measure;
+the measurement that could not see the win did not see the crash either.
+
+**And the one that looked free was measured and was not there.** The settle loop
+made *five* separate `context.eval` calls per round, three of them on the hot
+path and one building its source with `format!`. Combining the three into a
+single prelude hook is obviously less work, so it was built — and then measured
+against the corpus, three runs each way:
+
+    before   9.87s  9.62s  9.66s
+    after    9.86s  9.82s  9.93s
+
+No gain, inside noise, possibly worse. Parsing a twenty-character string is not
+what a page load costs, and the change added a packed-integer protocol between
+Rust and JS for nothing. Reverted.
+
+The lesson was §B8's own, arriving from the other direction: **the rule against
+building what no page asked for applies to performance too.** All three were
+reasoned from the shape of the code rather than from a measurement, and all
+three were wrong — two dangerous, one merely useless.
+
+**The lesson now has a second half, and it is the more expensive one.** The
+refusals were reasoned from the shape of the code too, and one of them was
+wrong for six months. Both of its stated reasons named a specific structure —
+the interner, the inline caches — and neither was checked against that
+structure; `CodeBlock` has no interner reference and `CacheEntry` holds a weak
+shape, and thirty minutes of reading either file would have said so. A refusal
+recorded with a plausible mechanism reads exactly like a refusal recorded with a
+verified one, and it stops the next person looking. So: **when this file refuses
+something for a reason in the code, the reason has to cite the code**, the way
+§B8.9's rejections cite their measurements.
+
+The closing claim here was wrong in the same way, and correcting it corrects
+the shape of the win too. "The ceiling on this whole area is small anyway: the
+corpus runs 35 pages in 9.7s, so a realm at 20ms is about 7% of the total even
+if it were free" — the realm was 63 ms by then, not 20, so it was about a third
+of that run rather than 7%.
+
+But the corpus cannot show the saving at all, and it is worth being exact about
+why. `corpus/run.py` calls `subprocess.run` **once per URL**: every page gets a
+process, every process builds exactly one realm, and the first realm on a thread
+is the one that pays the whole compile. The corpus should be unchanged, and if
+it ever *improves*, something is sharing a process between pages that should not
+be. The yardstick for this change is a session — `h5i browser open` and then
+navigate — where the compile is paid on the first page and by no other.
+
+### B15.13 The queue: built, 2026-08-19
+
+All nine landed, plus `h5i box watch` and the console work of M11c. What follows
+is the queue as written, with what each turned into. Three of them produced a
+different answer than the one they were specified with, and those are the
+entries worth reading.
+
+**Item 1 was a live defect, and the fix is narrower than it looks.** A ref is now
+honoured only against the reading it was served in. The check is an equality
+test on one ref, not a proof the document is unchanged, and the code says so:
+it catches every case where the *handle* has come to mean something else, which
+is the failure that was silent, and claims nothing more. Typing and scrolling
+renumber nothing, so the login loop still runs without a re-read between steps.
+
+**Item 3 turned out to be a different feature than specified.** Because the
+settle runs on a virtual clock *and* runs to quiescence, a page's own
+`setTimeout(1000)` has already fired by the time any verb is served. `wait_for`
+therefore does not usually wait — it **answers**, with three outcomes rather
+than two: found; not found and the page has nothing left to run, so waiting
+cannot change it; not found and the page was still working. The middle one is
+the one worth having, and collapsing it into "timed out" would be the same lie
+this file refuses elsewhere.
+
+**Item 8's cost was the receipt schema, not the transport.** A socket carrying
+four hundred messages could have been honoured by receipting the handshake
+alone, and this engine's central claim would then have quietly stopped covering
+the bytes after it. Every frame is receipted, written as an ordinary
+request/response pair with `WS-SEND`/`WS-RECV` as the method — so the console,
+`box watch` and the export bundle all show socket traffic with **no changes to
+any of them**. `wss://` and remote `ws://` behind a proxy are refused by name;
+SSE reconnection is refused because an engine that silently re-dialled would be
+making requests the agent never asked for.
+
+**Item 9 produced three negative results**, recorded in §B15.12a: realm reuse
+refused on security grounds the queue had not weighed, prelude caching not
+buildable with this Boa for a checkable reason, and an obvious-looking loop
+optimisation measured and reverted.
+
+Two things were found on the way that were nobody's item. A **password field's
+value was read straight back out by `snapshot`**, so a credential typed by a
+human during LOGIN mode was readable by the agent the moment that mode ended —
+the mode's whole purpose, defeated one verb later. And the console showed
+page-derived text to a person with no fence around it, while fencing the same
+text for the model.
+
+Still open, and unchanged: §B11.5.1 (a corpus that needs a login) is now the
+oldest thing on this list, and §B15.9's credential work changes what it would be
+testing. §B15.10's replay is the natural next build, and item 5's durable
+selector was the dependency it was waiting on.
+
+#### The queue as written
+
+Ordered by leverage, not size. Items 1 and 2 make everything after them cheaper.
+
+1. **Snapshot generation counter, and refuse a stale `@ref`.** §B15.1. Small,
+   and it converts a silent wrong action into a named refusal.
+2. **One verb table with predicates**, replacing the three hand-kept copies, and
+   LOGIN mode's allowlist becomes one of the predicates. §B15.3.
+3. **`wait_for` / `wait_for_script`**, over the settle loop, with "resolve when
+   nothing is left to wait on" and a reported reason. §B15.5.
+4. **An error taxonomy**: a `code` field, a recovery sentence, in-band versus
+   protocol split, pre-parse diagnostics. §B15.6.
+5. **A durable handle** (`SelectorPath`-style, verified with the same query
+   function the actions use) reported beside the ordinal ref. §B15.4.
+6. **The missing verbs**, `requests` first because it is the one that is ours.
+   §B15.7.
+7. **`extract` and a markdown view.** §B15.8.
+8. **`$H5I_*` credential indirection**, and the receipt line that names a
+   credential without carrying it. §B15.9.
+9. **Replay**: the action log becomes a script, and a replay is diffed against
+   the request log it reproduces. §B15.10. Depends on 5.
+
+Items 10 and beyond are §B11.5's existing queue, minus its two performance
+entries, which §B15.12a closes as refused and unbuildable respectively. Nothing here
+displaces §B11.5.1 (a corpus that needs a login), which remains the
+least-verified thing this file claims — and §B15.9 changes what that corpus is
+testing, so it should be built after item 8 rather than before it.
+
+---
+
+## B16. Lightpanda below the verb line, 2026-08-26
+
+§B15 read Lightpanda's agent surface — the tool table, the recorder, the
+selector path, the credential indirection — and its queue is built. This read
+is the other half: the engine underneath. The load pipeline, the settle loop,
+the network stack, the memory strategy and the protocol servers, read
+systematically against our own with both catalogued at the same depth.
+
+Facts to pin first, because they change what the comparison is allowed to
+claim:
+
+* **Lightpanda has no layout engine.** What it has is a deliberate fake:
+  elements are 5×5 boxes, a node's `y` is its document-order index times five
+  pixels, `<body>` is 1920 × 100,000,000, and the comments on
+  `contentWidth`/`contentHeight` (`Element.zig:1533`) are candid that the two
+  are mutually contradictory on purpose — each axis independently assumes the
+  arrangement that *produces* overflow, because under-reporting overflow is
+  what wedges measure-then-mutate loops. `Page.captureScreenshot` returns an
+  **embedded static PNG** (`cdp/domains/page.zig:23`), and `printToPDF` an
+  embedded PDF. That is §B15.11's `missingApi` lie at protocol scale, shipped,
+  in the second of the two engines we have now read. Among the three of us,
+  real pixels are ours alone.
+* **Its settle runs on the wall clock.** A page's `setTimeout(1000)` costs a
+  Lightpanda caller a real second; two runs of one page can differ. §B15.10's
+  replay-and-diff position rests on our virtual clock and nothing in this read
+  weakens it.
+* **Its network stack is libcurl** — the multi interface, nghttp2, BoringSSL,
+  brotli — with a browser-shaped policy layer on top. It did not write an HTTP
+  client, which is the correct decision for its goals and unavailable for
+  ours: our client *is* the receipt mechanism.
+
+So the engine-level comparison is lopsided in the opposite direction from
+§B15's: there the verbs were behind and the engine was fine; here the verbs
+are settled and what the reading found is in the load path. Mostly in ours.
+
+### B16.1 Three costs in our own load path, found by contrast
+
+The method note of §B15.1 repeats: reading another implementation found in an
+afternoon what neither the corpus nor WPT would ever surface, because a slow
+page is conformant and renders correctly.
+
+**1. We negotiate no compression.** reqwest is built with
+`default-features = false, features = ["blocking", "rustls-tls"]`
+(`Cargo.toml`), so the `gzip`/`brotli` features are off, and no code path sets
+`Accept-Encoding` — the string does not occur in `src/`. Every document,
+stylesheet and bundle this engine has ever fetched arrived identity-encoded,
+commonly three to five times its compressed size. Lightpanda ships brotli,
+gzip and deflate through curl and thinks about it never. Nothing in our design
+argues for this; it is not a trade, it is an omission the receipts question
+never noticed because a receipt records that bytes moved, not that three times
+too many did.
+
+**2. Subresources are fetched one at a time, on the parse thread, over
+HTTP/1.1.** `BrokerNet::fetch` (`net.rs:640`) is the whole adapter: Blitz asks
+for a resource, the broker blocks on the wire, the handler completes before
+returning. N subresources are N sequential round trips, and with the `http2`
+feature absent there is no multiplexing to soften it. The Cargo comment states
+this as a chosen shape — "a browser that fetches one subresource at a time is
+a browser whose receipt order is its request order" — and §B16.2 argues that
+sentence defends the claim at the wrong place.
+
+**3. Fonts are re-read from disk on every navigation.** `PageFactory::fonts()`
+(`engine.rs:1325`) calls `fonts::load` fresh, which `fs::read`s each candidate
+file and builds a new parley `Collection`, and it is called from all four page
+construction paths (`engine.rs:1362`, `:1433`, `:1451`, `:1461`) — up to the
+24-font budget of files per page load, for a font set that cannot change
+between navigations of one session. Unlike item 2 this has no comment arguing
+for it. It is bug-shaped: `FontSetup` is not shared because nothing made it
+shareable.
+
+Per §B15.12a's own lesson, none of these carries a promised number. Each entry
+in §B16.10 names the measurement that gates it; the corpus instrument (§B8)
+measures pages end to end and is the right harness, run against the network
+corpus rather than local fixtures, since two of the three are network effects.
+
+### B16.2 The preload scanner, and what "serial" actually protects
+
+Lightpanda buffers the whole document before parsing — the same
+buffer-then-parse shape we have, so no gap either way there — and then runs a
+**preload scanner** first: a tokenizer-only pass over the complete HTML
+(`src/html5ever/prescan.rs`, ~200 lines, modelled on Servo's
+`dom/servoparser/prefetch.rs`) that reports every `<script src>`, module
+preload and the first `<base href>`, so their transfers start before the tree
+builder reaches them. The comment beside it names the failure it removes:
+without this, N large blocking scripts download serially.
+
+That is exactly our shape, minus the fix. And the receipt argument for keeping
+it does not hold at the layer it is made. The engine's claim is **no receipt,
+no request**: the decision record is written before any bytes move. That is a
+claim about *ordering of decision and dispatch per request*, not about
+requests being in flight one at a time. A prescan pass that walks the
+document's resource list, policy-checks each URL, writes each receipt, and
+only then lets transfers overlap, preserves the claim exactly — the receipt
+log becomes the decision order, which it already is. Redirects stay per-hop
+policy-checked per transfer, unchanged. What changes is only that transfer N+1
+no longer waits for transfer N's bytes.
+
+The mechanical route does not even need Blitz's `NetProvider` to become
+async: the prescan primes the broker, transfers run on a small pool (the JS
+`fetch` path already runs six in flight through the shared client,
+`host.rs:203`), and `BrokerNet::fetch` becomes "join the transfer that is
+already running, or start one" instead of "start one now and wait". The same
+prescan output also answers `<link rel=preload>` for free.
+
+If the decision goes the other way — serial is kept — then the Cargo comment
+should say what it is actually buying, because "receipt order" is not it.
+
+### B16.3 The settle loop: name the page that will never finish
+
+Two rules from Lightpanda's scheduler are worth taking because they are about
+honesty, not speed. A task that reschedules itself **never blocks completion**
+(`Scheduler.zig:137`: "a task that endlessly reschedules itself would keep the
+page alive forever"), and once timer nesting reaches depth ten, further
+reschedules stop blocking too (`Timers.zig:20`) — the comment names
+`requestAnimationFrame` loops as the common case.
+
+Our virtual clock makes the *cost* of this problem zero — a self-rescheduling
+timer burns no wall time — but not the *answer*. A page whose only remaining
+work is a self-rescheduling interval rides `SETTLE_BUDGET_MS` to the cut-off
+(`script/mod.rs:773`) and every `wait_for` on it answers `budget`: "the page
+was still working, so it may yet appear". For an animation loop that is a
+plausible lie. The page is not on its way anywhere; the condition will not be
+met by waiting; the honest answer is the middle one.
+
+The fix is not to copy `blocks_done` — collapsing "only periodic work
+remains" into `quiescent` would be its own small lie, since a repeating timer
+*can* change the DOM. It is to detect the state (every pending timer is a
+repeat, or past a nesting depth, and no fetch is outstanding) and report it as
+what it is: a fourth `end` beside `met`/`quiescent`/`budget`, or `quiescent`
+with a named caveat, in the same spirit as `open_sockets`. Which of those two
+shapes is right should be decided when it is built; what §B15.13's item 3
+established is only that the distinction must not be erased.
+
+### B16.4 The snapshot economy
+
+Lightpanda's semantic tree is aggressively pruned for model context, and three
+of its heuristics (`SemanticTree.zig:200-233`, `:524`) transfer directly:
+
+* a **structural role** (generic, list, row, cell, navigation …) whose
+  computed name is just its descendants' text concatenated, with no explicit
+  `aria-label`, emits no name — otherwise every wrapper div hoists its
+  subtree's text and the real text nodes then look redundant;
+* a StaticText child whose text is a substring of its parent's name is
+  dropped;
+* a named leaf-semantic node — link, button, heading — does not walk its
+  children at all.
+
+Ours caps at 500 lines and truncates; theirs compresses before it ever needs
+to cap. The difference is the difference between a snapshot that fits and one
+that fits *and still contains the bottom of the page*. This is measurable in
+the corpus harness (outline bytes per page, before and after) and should be.
+
+The second economy is turns, not tokens: every Lightpanda read tool accepts an
+optional `url` and navigates before reading, and its model guidance says to
+prefer `markdown {url}` over `goto`-then-`markdown` — one round trip where an
+agent otherwise spends two. On our side that is a `url` argument on the read
+verbs, and with §B15.3's table built it is an exhaustive-match question each
+verb must answer rather than a scattering of flag code.
+
+Not taken from the same file: their per-session loading knobs
+(`LP.configureLoading` — skip subframes, workers, external stylesheets). We
+have no subframes or workers to skip, and stylesheet loading is what makes our
+visibility filtering true rather than approximate. If a cheap text-only read
+mode is ever wanted, it should be argued on its own, not imported.
+
+### B16.5 Cookies: the PSL is a table, not a service
+
+The `Domain` attribute was refused (§12's cookie narrowings) because honouring
+it without a public suffix list lets `evil.co.uk` set a cookie for `co.uk`,
+and the stated cost was real: a site that authenticates at `example.com` and
+serves from `www.example.com` logs out between requests. §B11.5.1's login
+corpus will hit this on its first multi-subdomain target.
+
+Lightpanda shows the missing piece is small. Its PSL is a **generated static
+table** compiled into the binary (`src/data/public_suffix_list.zig`, a
+comptime perfect-hash set regenerated by a script), consulted for both the
+Domain check and SameSite's registrable-domain computation, with the
+label-boundary check that stops `attackerexample.com` matching `example.com`
+(`Cookie.zig:324`). No fetch, no file, no staleness at runtime. In Rust the
+same shape is the `psl` crate or a `phf` table generated in CI.
+
+With that in hand, `Domain` can be honoured under the same fail-closed rules
+(reject public suffixes, reject non-suffix boundaries), and the other three
+narrowings stay exactly as written: in memory, never readable by an agent,
+`Secure`/prefixes enforced. This closes a stated cost without reopening a
+stated principle.
+
+### B16.6 The allowlist checks a name; the wire connects to an address
+
+Our policy layer decides on origins — names. Lightpanda's SSRF guard runs at
+a different layer: curl's open-socket callback hands it the **resolved
+sockaddr**, and the CIDR check runs there (`network/http.zig:240`), which
+means a hostname that passes every name-level check and then resolves to
+loopback or RFC1918 space is still refused. A name-level allowlist cannot do
+that: DNS rebinding is precisely an allowed name resolving somewhere the
+policy never saw.
+
+For us the exposure is narrow — inside a box the egress proxy is the
+enforcement point, and loopback is deliberately allowed — but the engine also
+runs bare, the README's request-log claims apply there too, and "the receipt
+says `docs.example.com` while the bytes went to `10.0.0.1`" is exactly the
+plausible-wrong-record this file refuses everywhere else. reqwest does not
+expose a socket hook, but it does expose `resolve()` overrides: resolve first,
+check the addresses against the policy, pin the checked answer for the
+request. That keeps check and connection on the same addresses, which is the
+property the socket hook provides.
+
+### B16.7 `wss://`, and a reason that was narrower than stated
+
+The refusal of `wss://` says "it needs a raw TLS stream the HTTP client here
+does not expose", which is true of reqwest and was quietly generalised into a
+property of the engine. Lightpanda gets `wss://` for free because its socket
+owns its transport — the WebSocket easy handle carries TLS, ALPN and proxying
+itself. The same shape exists in our ecosystem: `tungstenite` over a rustls
+stream is a socket that owns its transport, and the front half —
+`authorise_socket`, receipt, then dial — is unchanged, as is the per-frame
+receipting.
+
+What this does *not* change: a remote `ws://` or `wss://` is still refused
+whenever an egress proxy is configured, because a raw socket steps around the
+proxy that carries the box's allowlist, and that argument never depended on
+TLS. What it opens is `wss://` to loopback (dev servers behind local TLS) and
+remote `wss://` on bare-host runs, where today the refusal message blames a
+missing capability rather than a policy. Low urgency; recorded because the
+stated reason was implementation-specific and the file should not carry it as
+architecture.
+
+### B16.8 Notes for the CDP item, still queued behind the agent loop
+
+§B15.11 kept CDP behind the agent-loop work and required the conformance list
+to ship before the endpoint. This read adds two notes to that file, one
+mechanical and one confirming:
+
+* Lightpanda counts every CDP method it does not implement
+  (`cdp_unknown_commands`, `CDP.zig:344`, surfaced in its metrics endpoint).
+  That is the conformance list's live complement: the published list says what
+  is honestly absent, the counter says which absences real clients actually
+  hit, in what volume. If CDP is built, both ship together.
+* Its compatibility layer is a catalogue of client bugs worked around — a
+  fake startup target because Puppeteer expects one, TCP keepalive instead of
+  WebSocket ping because go-rod panics on pings and chromedp logs them as
+  malformed, `Page.getFrameTree` shaped for Stagehand — confirming Obscura's
+  discouraging cost estimate from the second source. The protocol is the small
+  part; the clients are the work.
+
+Also seen and noted, not taken: **WebMCP** (`navigator.modelContext` — pages
+declaring their own tool manifests to the browser, surfaced as CDP events).
+It is a bet that websites will ship agent-facing tools, and it is cheap for
+Lightpanda because its whole surface is protocol-shaped. For us it is a new
+inbound channel from untrusted page content to the agent, which is the
+boundary this engine exists to harden. Reopen if the corpus ever meets a page
+that ships one.
+
+### B16.9 What not to copy, this pass
+
+**Silent canvas stubs.** Lightpanda ships 61 `.noop = true` bridge functions —
+`fillRect`, `arc`, `save`/`restore` — so canvas code runs and draws nothing,
+silently. §B8.4 already names silent stubbing as the worst state for anything
+here. But the comparison does sharpen §B11.5.8 (Canvas 2D, the largest
+corpus-demand item): both reference engines fake or stub canvas because
+neither has a rasteriser. We have one — the paint path is `blitz-paint` over
+vello_cpu — so a *real* Canvas 2D is cheaper for this engine than for either
+of them, and when the corpus item is paid it should be paid for real, not with
+their stubs.
+
+**The pseudo-layout.** It is their load-bearing necessity, not a model for an
+engine that has Taffy. If a skip-layout fast path is ever proposed here, the
+`contentWidth`/`contentHeight` comments are the spec for what a fake must
+guarantee to avoid wedging real pages — and the fact that the spec is that
+subtle is the argument for not building one.
+
+**Wall-clock settling, SQLite-backed persistence, phone-home telemetry.** The
+first would trade away determinism (§B15.10's replay position), the second is
+§B6's storage line, the third is not what this engine is.
+
+**Missing-API stack traces**: Lightpanda's unknown-property interceptor
+records the JS stack of the first occurrence. Our `unsupported()` machinery
+already exists and already ranks by count; first-seen stacks are a debug-build
+nicety to remember, not an item.
+
+### B16.10 The queue
+
+Every item carries its gate. Per §B15.12a, the performance entries are built
+*after* their before-measurement exists, and reverted if the after fails to
+move it; the honesty and capability entries are gated by the rule of §B8 —
+a page, or a stated claim, has to be asking.
+
+1. **Negotiate compression.** Enable reqwest's `gzip` and `brotli`; decide
+   and document what the receipt's byte count means afterwards (wire bytes
+   and decoded bytes are different facts; the receipt should name the one it
+   records, and arguably both). Gate: network-corpus wall clock and bytes,
+   before and after. §B16.1.
+2. **Load fonts once per factory.** Share one `FontSetup` across navigations
+   of a session. Gate: measure the per-navigation cost first so the record
+   has a number; this one is a defect fix regardless. §B16.1.
+3. **Prescan and overlap subresource transfers**, HTTP/2 on. Receipts stay
+   decision-ordered; per-hop redirect checks unchanged; the prescan output
+   also serves `<link rel=preload>`. If refused, rewrite the Cargo comment to
+   say what serial actually buys. Gate: a network-corpus page with many
+   subresources, before and after. §B16.2.
+4. **Name the page that will never finish.** "Only self-rescheduling work
+   remains" becomes a reported settle outcome rather than `budget`. Gate:
+   a corpus fixture with an animation loop, asserting the answer. §B16.3.
+5. **Snapshot pruning**: structural-name suppression, StaticText dedup,
+   leaf short-circuit. Gate: outline bytes per corpus page, before and
+   after, with a diff review that the dropped lines were in fact redundant.
+   §B16.4.
+6. **`url` on the read verbs** — navigate and read in one round trip, as a
+   verb-table question. §B16.4.
+7. **`Domain` cookies over a compiled PSL**, SameSite computed on registrable
+   domains; the other cookie narrowings unchanged. Gate: §B11.5.1's login
+   corpus meeting a multi-subdomain site — which it will. §B16.5.
+8. **Resolve-then-check-then-pin** for bare-host runs, so the address the
+   policy checked is the address the socket dials. §B16.6.
+9. **`wss://` over an owned transport**, when a page asks; the proxy-bypass
+   refusal for remote sockets stands. §B16.7.
+
+Nothing here displaces §B15.13's two open items: replay (§B15.10) remains the
+natural next build on the verb side, and §B11.5.1's login corpus remains the
+oldest and least-verified claim in this file — item 7 above is best built
+against it, not before it.
+
+### B16.11 What was built, 2026-08-26
+
+Nine capabilities, in one pass, plus §B15.10's replay which this work made
+buildable. What is *not* here is §B16.10's items 1 to 3 — compression, the
+preload scan, the font fix — because each is gated on a before-measurement and
+§B15.12a's lesson is that a performance change reasoned from the shape of the
+code is a change that gets reverted.
+
+**The settle escape hatch produced a fourth answer rather than the copied
+one.** Lightpanda's rule is that a self-arming task stops blocking completion;
+adopting only that would have folded an animating page into `quiescent`, which
+claims nothing can change, and a repeating timer changes the DOM. So `periodic`
+is a fourth `end` beside `met`/`quiescent`/`budget`. Two existing tests asserted
+the old behaviour on `function again(){ setTimeout(again, 1) } again()` — the
+exact shape the hatch exists for — and were rewritten; the "page that never
+settles" case they were really testing now uses a timer past the budget, which
+is a page that genuinely ran out of time.
+
+**The snapshot work turned out to be a correctness fix, not a token one.**
+`text_content()` concatenates a subtree, so a list item wrapping a heading, a
+paragraph and a link reported one line reading `TitleBody textRead more` and
+then suppressed all three as prose it claimed to have said. It had said them
+simultaneously, unreadably, in an outline whose purpose is structure. Scoped to
+*block* descendants: `<p>see <a>here</a></p>` and `<h2><a>Section</a></h2>` are
+shapes the existing prose rule reads well and neither changed.
+
+**Two of the nine found existing bugs.** `wss://` surfaced that `ws://` and
+`wss://` were never mapped to their HTTP twins, so an allowed remote socket was
+refused for "could not derive an origin" — a denial whose reason pointed at the
+URL when the answer was the allowlist; it had stayed hidden because the proxy
+rule refuses remote sockets first inside a box. And Canvas needed a user-agent
+rule before anything reached the page: an inline `<canvas>` measured zero by
+zero in Blitz, so the drawing worked, the pixels existed, `toDataURL` returned
+them, and the rendered page was blank.
+
+**Canvas is the clearest case of not copying the conclusion.** Both reference
+engines fake it — Lightpanda with sixty-one silent no-ops — because neither has
+a rasteriser. This one does, so what is implemented rasterises through
+`vello_cpu` and composites into the page, and what is not reports itself by
+name through the same channel as every other missing Web API. That split is the
+whole difference between this and a stub, and it is enforced by the bridge
+answering `false` for an operation it does not know rather than returning
+quietly. The unbuilt operations are *present* rather than absent, which inverts
+the usual rule for one reason: canvas drawing is incremental, and a throw on the
+fourth of thirty calls loses the other twenty-six.
+
+**`Domain` cookies paid off a stated cost.** §12's refusal was correct while
+there was no list; the list is a compiled-in table, so the refusal cost more
+than it bought. Four rules replace it, and the one that matters is the label
+boundary — `attackerexample.com` may not claim `example.com`, which a bare
+suffix test allows.
+
+**The address check strengthens the engine's own claim rather than adding a
+feature.** The allowlist decides about a name and the bytes go to an address;
+Lightpanda closes that at curl's open-socket hook, and reqwest has none, so the
+checked addresses are *pinned* through a custom resolver instead. A name that is
+not in the map fails closed rather than being looked up, because failing open
+there means connecting somewhere nobody approved.
+
+Also shipped: `--url` on every read verb; a `structured` verb; batch
+`open <url>...` sharing one broker, jar and font set; and an unknown-verb
+counter, which is the one item here that exists to tell us what to build next
+rather than to do something.
+
+**A test was strengthened on the way past.** The skill's "teaches the verbs this
+binary has" check matched a bare verb name, so `script` passed on the `--script`
+flag and `structured` on the phrase "structured data" — two verbs an agent could
+not have found were reported as documented. It now requires `session <verb>` as
+a command.
+
+Still open and unchanged: §B16.10 items 1 to 3 with their gates, §B11.5.1's
+login corpus, and the §B11.6 iframe/popup question, which none of this touched.
+
+---
+
+## B17. The same-origin policy, and the hole §B16 widened, 2026-08-26
+
+A third reading — Lightpanda and Obscura together, against the engine as §B16
+left it — found something neither corpus nor WPT would have: **this engine had
+no same-origin policy at all**, and the cookie work in §B16 had just made that
+worse.
+
+### B17.1 The finding, and how §B16 sharpened it
+
+The allowlist answers **"may this engine connect?"**. A browser's same-origin
+policy answers **"may this document read what came back?"**. Those are
+different questions, and only the first was being asked. `Broker::send_from`
+checked the allowlist, checked the address, wrote the receipt, and handed the
+response body to whoever asked — including page script, for any origin the
+operator had granted.
+
+So: allow two origins, and a script on either could `fetch` the other and read
+it. The allowlist had said yes, correctly, to the question it was asked.
+
+**And §B16 turned an unauthenticated read into an authenticated one.** While
+cookies were host-only (§12's refusal of the `Domain` attribute) a cross-origin
+read carried no credential worth having. §B16 added `Domain` over a public
+suffix list — right on its own terms, and it paid off a cost §12 had stated —
+and in doing so put the session cookie on requests a *different* origin's
+script had caused. `net.rs` attached the jar to every request unconditionally.
+The combination is a script on one allowlisted origin reading another origin's
+pages as the logged-in user.
+
+Neither change was wrong alone. The pair was, and that is worth recording
+plainly: **§B16 shipped a capability whose safety depended on a control that
+did not exist**, and nobody noticed because each half was reviewed against its
+own argument. The lesson is not "be more careful with cookies"; it is that a
+credential-widening change needs the question *who may read the response* asked
+out loud, and this file had never asked it.
+
+### B17.2 What was built
+
+`src/cors.rs` is the policy, pure and testable; `net.rs` enforces it. The shape
+that matters:
+
+* **`Requester` has three cases, not two.** "The agent named this URL" and "a
+  page with no origin of its own asked" both look like the *absence* of an
+  origin, and collapsing them into an `Option` gives the second the authority
+  of the first — precisely backwards. An agent typing a URL has its own
+  authority and no boundary to cross; a `file:` page is same-origin with
+  nothing. `Agent` / `Document(origin)` / `Opaque`.
+* **`send_script` is a separate entry point from `send_from`**, rather than a
+  flag on one. The two callers are asking different questions, and answering
+  both through one door with no argument between them is how the second went
+  unasked for as long as it did.
+* **Credentials are the default-safe direction.** `credentials: "same-origin"`
+  is `fetch`'s own default, so a cross-origin request carries no session unless
+  the page asks for one *and* the server opts in twice — an explicit origin
+  echo and `Access-Control-Allow-Credentials: true`. A `*` with credentials is
+  refused rather than honoured, because a server that said "anyone may read
+  this" has not said "anyone may read this as the logged-in user".
+* **Preflights are real requests.** Policy-checked and receipted like anything
+  else, so a caller reading two requests where the page made one is reading the
+  truth. Not cached: `Access-Control-Max-Age` would make it cheaper and is one
+  more piece of state that can be wrong.
+* **A cross-origin redirect taints the origin.** From that hop on the request
+  sends `null`, so a server cannot launder a read by bouncing it somewhere that
+  answers `*`.
+* **Response headers are filtered** to the safelist plus
+  `Access-Control-Expose-Headers`, and `*` does not widen a credentialed
+  response. `Set-Cookie` is never exposed by name.
+* **`no-cors` is sendable and opaque** — status 0, no headers, no body — and
+  reported as `type: "opaque"` so a page can tell it from a failure. `no-cors`
+  with `credentials: "include"` is refused outright: an opaque response cannot
+  be checked, so a credential sent with one could never be shown to have been
+  permitted.
+
+Deliberately not modelled: CORB/ORB, which defend a shared process against a
+timing side channel. Every document here gets its own realm and the realm is
+destroyed on navigation (§B15.12a), so the thing they protect is already gone.
+
+### B17.3 What this does not change
+
+Navigations, subresources and the read verbs are untouched: they run through
+`send_from`, which passes `Requester::Agent`, and are unrestricted exactly as
+before. The same-origin policy constrains *pages*, not the agent driving them,
+and conflating the two would have broken every verb in the engine to fix a hole
+in one of them.
+
+### B17.4 Compression, and why the engine decodes it itself
+
+§B16.10 item 1, out of order and without its measurement gate, because it is
+not a speculative optimisation: the engine had never sent an `Accept-Encoding`
+header at all, so every document, stylesheet and bundle it had ever fetched
+arrived identity-encoded. That is an absent capability, not a guess about where
+time goes, and §B15.12a's rule was written for the second.
+
+**`reqwest` will negotiate and decode transparently, and that was tried first.**
+It strips `Content-Encoding` and `Content-Length` after decoding — correctly,
+since neither describes the body any more — and with them goes the compressed
+size, which is the number that says what the request actually cost. An engine
+whose claim is that its request log *is* the network rather than an observation
+of it cannot delegate that measurement to a layer that then discards it. It is
+the CONNECT-gate blindness this engine exists to remove, in miniature.
+
+So the client advertises encodings and this crate decodes them. Both sizes are
+measured rather than read off a header, so they are right under chunked
+transfer and cannot be contradicted by a `Content-Length` that disagrees with
+the body:
+
+    200 GET http://…/ (12426 bytes, 114 on the wire gzip, 2ms)
+
+**And the decoded size is capped, not only the wire size.** A few kilobytes of
+zeroes is gigabytes of zeroes; a browser that decoded without a limit would let
+any allowed origin exhaust the box's memory with one response. Doing the
+decoding here is what makes that cap possible at all — under transparent
+decompression the expansion happens inside the client, past any limit this
+engine could impose.
+
+An encoding the engine cannot decode is an error rather than a body passed
+through undecoded, because handing compressed bytes to the HTML parser renders
+a page of binary: a wrong answer that looks like a broken site.
+
+Two of §B16.10's three remain: the preload scanner with parallel subresources
+and HTTP/2 (item 3), and the per-navigation font reload (item 2).
+
+### B17.5 A navigation deadline and a per-page network budget
+
+Two bounds this engine did not have, and the reason it did not is the same for
+both: **every limit here was per request.** A response size cap, a redirect
+count, a per-request timeout — each bounds one request, and none of them bounds
+a page that makes many. A script fetching in a loop, each request individually
+well-behaved, could keep the engine busy indefinitely, and the receipts would
+faithfully record every one of ten thousand of them. Recording a runaway is not
+the same as bounding it.
+
+**Per navigation, not per session, and the distinction is about who is
+spending.** A page fetching in a loop is untrusted code the engine cannot
+otherwise stop. An agent navigating twenty times is the principal exercising its
+own authority, and bounding that would be this engine deciding how much work its
+own operator may ask for. So the counters reset when the agent navigates: a
+fresh page is a fresh decision. A session-wide ceiling on top is coherent and is
+not built, because the failure it prevents is a failure of the thing *driving*
+the engine rather than of a page inside it.
+
+Exceeding is a refusal, not a teardown. The next request is denied and recorded
+as denied with `budget-exceeded`; the page sees a failed fetch, which pages
+handle; and the snapshot carries a note, because a page that ran out of
+allowance is a page whose reading is **incomplete** — the same class of fact as
+"this page had not finished", and an agent that is not told reads a half-loaded
+page as the whole one.
+
+**The navigation deadline is the cheap half of "make JavaScript stoppable".**
+The expensive half — a killable worker process — was considered and not built:
+`Page` holds an `Rc<RefCell<BaseDocument>>` and is pinned to its thread, so
+moving script into a separate process means moving the document with it and
+splitting the engine in two. That is a large architectural change for a bounded
+liveness gap, and inside a box there is already a supervisor. What the deadline
+buys instead is that every phase which *is* interruptible now shares one number:
+a page that spends thirty seconds on the network does not then get a fresh
+twenty to run its script in, which it did before.
+
+It does not bound a single runaway job. Boa checks its cancellation token
+between jobs and `LOOP_ITERATION_LIMIT` guards a loop; a job that is neither is
+still beyond reach, and saying so is better than implying the deadline covers
+it.
+
+### B17.6 Three control verbs, and why `set_checked` is first
+
+`press`, `select` and `set_checked` are the gaps both reference engines have
+filled and this one had not: with none of them an agent meets a checkout form,
+cannot choose a shipping option, and either falls back to evaluating script or
+abandons the task.
+
+**`set_checked` is the one that matters most, and it is not the obvious one.**
+Clicking a checkbox is what an agent would reach for, and a click is a
+*toggle*: it ends up on or off depending on what the page was serving, so the
+same recorded step reaches a different state on a later run. Setting a state is
+idempotent, and that is the difference between a replay that lands where the
+original did and one that lands somewhere by coincidence. It is the clearest
+case so far of §B15.10's rule reaching back into the verb design: the recording
+format decided which verb was worth having.
+
+Three details are the engine's rather than the spec's:
+
+* **A radio turns off the rest of its group.** Nothing else here implements the
+  exclusivity, and a form submitted with two of a group checked is a wrong
+  answer that a page would never have produced.
+* **Already-in-that-state is a success and not a change.** The reply says
+  `changed: false` and no events fire, or a replay would dispatch a `change`
+  the original run never dispatched and a page that re-renders on it would
+  diverge.
+* **`select` reports and records the *value*, not the text.** The agent read
+  the label; the form submits the value. Recording the label would make a
+  script that breaks on a redesign that changed nothing but wording.
+
+`press` is deliberately not `type`. One verb whose meaning depended on whether
+its argument happened to name a key would be a verb nobody could read, and the
+keys that *do* something — Enter, Escape, Tab — are a different act from
+entering text. It fires keydown, keypress and keyup, because a page may be
+listening on any of the three, and the key is JSON-encoded into the event
+because a quote in it would otherwise close the literal and leave the rest as
+code.
+
+**The clap invariant test earned its place immediately.** All three verbs take
+"a ref and a value, or `--selector` and the value", which is the shape that
+broke `session type` in the previous commit — an optional positional before a
+required one, which clap refuses at parser-construction time. The test added
+after that bug caught all three before they shipped, and the resolution now
+lives in one `two_positionals` helper rather than four copies whose error
+messages would drift apart.
+
+### B17.7 A role locator, over one accessible-name computation
+
+`find --role button --name "Sign in"` addresses the element a snapshot line
+called `- button "Sign in"`, and every action verb takes the same handle.
+
+**The sharing is the requirement, not an optimisation.** A locator with its own
+idea of what a button is called would eventually fail to find an element the
+outline had just described in exactly those words, and an agent handed two
+answers to "what is this called" has no way to choose between them. So
+`snapshot::role_and_name` is one function and both callers go through it.
+
+Getting there meant making the computation right, and it was not:
+
+* **Page content beat `aria-label`.** An icon button labelled
+  `aria-label="Close"` containing a `×` glyph was reported as `×` — unusable as
+  a handle and meaningless in an outline. The author's label is the more
+  specific statement and wins, which is what the accessible-name computation
+  says.
+* **`<label>` beat nothing.** A field named only by its label — the commonest
+  shape on the web — was reported by its `placeholder`, or by its `name`
+  attribute, or not at all. A label now sits where the computation puts it,
+  above the placeholder and below the author's own `aria-label`. One existing
+  test pinned the old order and was wrong rather than broken.
+* **`aria-labelledby` was not read**, and it is how a control borrows a nearby
+  heading for its name.
+* **An explicit `role=` was ignored.** `<div role="button">` is a button to
+  everything else that reads the page, and reporting it as an anonymous
+  container is the engine disagreeing with the author about their own markup.
+
+**And `aria-hidden` turned out to be a fence problem, not an ergonomics one.**
+It was not honoured at all. Adding it to the role computation stopped hidden
+elements being *addressable*; the text inside them was still printed, because
+text does not go through that computation. Content a screen reader is told to
+ignore is one of the places instructions aimed at *whatever is reading the
+page* get put, and it walks straight past the untrusted-content fence if the
+fence never sees it — the same argument the `display: none` filter was already
+written from. The whole subtree is now skipped.
+
+Two bugs came out of driving a real form rather than a test. `aria-hidden` is
+**inherited**, so checking only the element found a `<button>` inside a hidden
+wrapper and called it addressable. And `label_for` used `?` in the walk that
+looks for a wrapping `<label>`, which returned from the whole function the
+moment it ran out of ancestors — making the `for=` lookup after it unreachable
+for every control that was not already wrapped, which is most of them. Both are
+tested now, and both are the kind a corpus would not have caught: the page is
+conformant and the outline was plausible.
+
+Refusing an ambiguous match is deliberate. Several elements with one role and
+name is a page where picking one would be this engine deciding which the agent
+meant; the refusal lists the candidates so the next attempt can be exact. And
+`--name` matches exactly, because a substring match would make `--name Save`
+hit "Save as draft" and "Discard without saving".
+
+---
+
+## B18. The broker/renderer split, proposed 2026-08-27
+
+Status: **steps 1 and 2 built, 2026-08-27. Step 3 is not.** `h5i browser open`
+runs two processes now: a broker holding the policy, the wire, the receipts, the
+jar, the budget and the secrets, and a renderer holding the DOM, the cascade,
+the decoders and the script realm and none of the rest. The seam is
+`broker::Broker`; the transport is `ipc`; the renderer's environment is scrubbed
+of `H5I_SECRET_*`. Nothing user-visible changed and there is no new subcommand.
+
+**What is still true after step 2, and must keep being said.** The renderer
+holds no socket *of the engine's* — and it is not yet stopped from opening one
+of its own, because its network namespace is still the broker's. So a
+compromised parser cannot read the jar, edit the allowlist, silence the sink or
+enumerate the secrets, and it *can* still connect somewhere and not be in the
+log. The receipt claim upgrades at step 3, not here. §B18.8 is why step 3 is not
+a line in `profile_for`.
+
+The default session sandbox landed first (`h5i-core::browser_sandbox`), and it
+sharpened the case for this rather than replacing it. That sandbox contains what
+a compromised engine could *do* — its files, its environment, its allocations —
+and cannot contain what it could *reach*, because `NetMode` has two values and a
+browser needs the one that says yes. This is the change that closes the other
+half, and it closes it in the one place the product's central claim lives.
+
+### B18.1 Why the claim needs it
+
+"A request that is not in the log did not happen" holds while the engine is
+intact, and only then. The broker that decides and records is in the same
+process as the parsers that read the page, so a bug in Blitz, Stylo, an image
+decoder or Boa takes the recorder along with the renderer. Today's honest
+framing is that this is **the integrity of normal operation, not resistance to
+compromise**, and the README says so.
+
+Splitting moves the recorder somewhere the page cannot reach. A renderer with no
+socket cannot fetch at all without asking, so the log stops being the engine's
+account of itself and becomes an account written by a component the page never
+touched.
+
+### B18.2 The line
+
+Not "renderer versus network". **What parses attacker bytes** versus **what
+makes and records decisions**.
+
+| | sandboxed renderer | trusted broker |
+| --- | --- | --- |
+| HTML parse, DOM (blitz-dom) | ● | |
+| CSS cascade (stylo) | ● | |
+| layout, text shaping (taffy, parley) | ● | |
+| image decode, font loading | ● | |
+| paint (vello_cpu) | ● | |
+| script (boa) and the DOM API | ● | |
+| snapshot / markdown / extract / structured | ● | |
+| policy: allowlist, redirect hops, rebinding, internal addresses | | ● |
+| the wire (reqwest) | | ● |
+| the receipt sink, fail-closed | | ● |
+| the cookie jar | | ● |
+| secret substitution | | ● |
+| the control channel and the control lock | | ● |
+| the action log | | ● |
+
+The renderer gets no filesystem beyond its own scratch and no network syscall at
+all. That is also what tightens the session sandbox: with the renderer holding
+no socket, its profile can move from `net.mode = host` to `deny` — an empty
+network namespace — which is a one-line change to `browser_sandbox::profile_for`
+and the whole reason this ordering is right.
+
+### B18.3 The cases the table does not settle
+
+**Cookies: the gain is narrower than it first looks.** The obvious claim — "the
+renderer would see only the non-HttpOnly subset" — is already true where it
+matters most: `Jar::document_cookie` returns exactly that, script can neither
+read nor overwrite an `HttpOnly` cookie, and `dom_api.rs` goes through it. The
+same-origin work in §B17 closed that.
+
+What the split adds is one step further out. Page script is already fenced off
+from the jar; the **renderer binary** is not, because the jar is in its address
+space. So the gain is against a compromised *engine*, not against a hostile
+*page*, and those are different threats with different likelihoods. Worth
+having, and not worth describing as though `document.cookie` were leaking
+today.
+
+**Secrets: the split has a limit, and it must not be oversold.** Substitution
+happens on the way into a field (`stream.rs`, the `type` verb), so the broker
+resolves the placeholder and the renderer receives the *value* to put in the
+input. A compromised renderer captures it. What the split protects is every
+credential that was not typed: today a compromised engine reads all of
+`H5I_SECRET_*`, afterwards it reads the ones actually used. Going further would
+mean injecting at the HTTP layer rather than the DOM layer, which works for a
+form post and not for JS-driven auth. That is the boundary, and it belongs in
+the docs the day this ships.
+
+> **Corrected 2026-08-27, on building it.** "It reads the ones actually used" is
+> not what step 2 delivers, and the docs say the accurate thing instead.
+> `substitute` is an *operation*, so a compromised renderer can resolve every
+> name `secret_names` returns rather than only the one it was told to type. The
+> narrowing is real and it is about the **set**, not the count: the renderer's
+> environment holds no `H5I_SECRET_*` at all, so it reaches what this session
+> was granted and not what the machine has — which unconfined is everything.
+> "The ones actually used" becomes true when the control channel moves to the
+> broker (the §B18.2 table), because only then does the broker know which field
+> is being typed into. Until that, claiming it would be the kind of sentence
+> this section exists to refuse.
+
+**The asker's origin is the renderer's word.** Found on building it, and it
+belongs beside the other four. Half of this engine's policy reasons about *who
+is asking*: the loopback rule refuses a page from the open web reaching the
+box's dev server, and the same-origin check decides whether the document that
+asked may read the answer. Both take the asking document as an argument, and
+after the split that argument arrives from the renderer. A renderer that claims
+"the agent named this URL" gets the answer the agent would have got.
+
+This is not a regression — the same code chose the origin before the split,
+because it was the same code — and it is not fixed by the split either. It is
+the shape of a real tightening: the broker knows every document it has served,
+so it could refuse to attribute a request to one it never answered with. That
+narrows an invented origin to a previously-served one, which is worth having
+and is not what step 2 built. Until then, "the broker decides" is exactly true
+of the allowlist and the address, and true of the origin rules only for a
+renderer that is telling the truth about which page it is on.
+
+**`@ref` resolution stays in the renderer.** Handles are Blitz node ids and live
+with the DOM. The broker keeps the *record* of what it served, for the audit. A
+compromised renderer accepting a ref it never served buys an attacker nothing:
+it does not need to be tricked into clicking.
+
+**Frames stay bytes.** The renderer paints; the broker relays without decoding.
+This is already the posture — `termview` decodes JPEG host-side with a
+`#![forbid(unsafe_code)]` decoder precisely because those bytes were made inside
+the box — and the split must not quietly move a decoder to the trusted side.
+
+### B18.4 The lane needs a third value
+
+`engine-claimed` and `host-observed` do not describe what this produces. The
+broker is not the engine describing itself, and it is not h5i observing from
+outside a box boundary: it is a component inside the session's own trust domain
+that the page cannot influence.
+
+So a third value — `broker-attested` or whatever survives review — and it should
+be named **before** the implementation, because the temptation at that point
+will be to call it `host-observed`, which is exactly the upgrade this codebase
+refuses everywhere else.
+
+### B18.5 What it costs
+
+An IPC round trip per subresource. The engine already fetches subresources
+serially, and the crate's own manifest says why: "a browser that fetches one
+subresource at a time is a browser whose receipt order is its request order". So
+this adds latency to an existing shape rather than changing it. Worth measuring
+before and after; not an architectural objection.
+
+One thing it makes better for free: when the renderer dies the broker knows,
+with a status, so a session becomes `died` for a stated reason instead of h5i
+inferring it from a vanished process.
+
+### B18.6 The seam, measured
+
+The methods that would cross, from the current tree:
+
+- `fetch`, `fetch_from`, `send_from`, `send_script` — request/response, direct.
+- `policy`, `has_proxy`, `budget`, `set_budget_limits` — small, direct.
+- `authorise_socket`, `record_socket_frame`, `open_event_stream` — **streaming**,
+  not request/response. WebSocket and SSE need a channel, not a call.
+- `jar()` — **returns a live reference**, at twelve call sites. This is the one
+  that cannot be transported as written; it has to become operations
+  (`cookie_header_for(url)`, `store_set_cookie(url, header)`,
+  `document_cookie(url)`), which is also what produces the HttpOnly split in
+  §B18.3.
+
+Roughly ten operations plus two streams. The files that move or change:
+`net.rs`, `wsclient.rs`, `sse.rs`, `script/host.rs`, `engine.rs`.
+
+### B18.6b What the sandbox still lets the renderer read
+
+Recorded 2026-08-27, from a measurement rather than a reading of the code, and
+deliberately **not** fixed: the fix is small, invisible, and closes half a hole,
+which is the shape of work this section exists to replace.
+
+`browser_sandbox::profile_for` starts from `Profile::builtin`, so it inherits
+`default_fs_read()` whole: `/usr`, `/lib`, `/bin`, `/sbin`, `/etc`, `/nix`,
+`/opt`, `/tmp`, `/proc`. Writes are confined (`$WORK` plus the two `/dev`
+sinks) and `$HOME` is granted nothing and denies `~/.ssh`, `~/.aws`,
+`~/.config/gh`, `~/.config/h5i` outright. Reads are not confined in the same
+sense. Verified by opening an unrelated `chmod 600` file in `/tmp` from inside
+the default sandbox: it renders.
+
+`/tmp` is the interesting entry, because it is where another agent's scratch,
+another box's spool and short-lived credentials sit. Dropping it from this one
+profile was tried and works — ordinary reads, loopback and public, are
+unaffected, and a `/tmp` file that was not the target becomes
+`Permission denied`. `$WORK` does not need it: a read's scratch directory lives
+under `/tmp` but is granted as its own rule.
+
+It was not taken, for two reasons:
+
+- **It closes half.** Granting only the named local target breaks that page's
+  own sibling subresources (`a.html` and its `s.css`). Granting the target's
+  parent directory re-grants all of `/tmp` whenever the target is directly in
+  it, which is the common case. Only a target one directory deeper actually
+  gains anything.
+- **Nothing above `/tmp` moves.** `/etc` and `/proc` stay readable either way,
+  so "the renderer cannot read files it was not given" is not reachable by
+  subtracting entries from this list. It is reachable by §B18's split, where the
+  half that parses the page holds no socket and can be given a profile written
+  for a process that only parses.
+
+So this is a §B18.7 step 3 concern, not a patch: when the renderer's profile is
+*authored* rather than inherited, `default_fs_read` stops being the thing that
+decides what a hostile page can read. Until then the honest statement — the one
+the CLI already makes — is that the default sandbox contains the engine's
+*writes* and its environment, not its reads.
+
+**Updated 2026-08-27, after step 2.** The renderer is its own process now and
+this paragraph is still true, because the renderer's profile is *inherited* and
+not authored: it is the Landlock domain the broker was already in, which
+`execve` carries across unchanged. Becoming a separate process was necessary
+and, on its own, not sufficient — see §B18.8 for why the authoring has to happen
+outside both halves.
+
+### B18.7 Order
+
+1. **The seam, still one process.** ✅ Built. `broker::Broker` is the named set
+   of operations; `net::LocalBroker` is the implementation that does the work
+   here. `jar()` became `document_cookie` / `store_cookie` / `keep_only_origin`,
+   which is where the `HttpOnly` split now lives. `budget()` returned a live
+   `&Budget` and returns an `Allowance` — a reading — because there is nothing
+   to borrow across a process. The two streams became one `Channel` trait with
+   `send` / `drain` / `close`, which is exactly the surface `dom_api.rs` was
+   already using.
+2. **Two processes.** ✅ Built. `ipc::BrokerClient` implements the trait over a
+   socket; `cli::become_broker` builds the broker, spawns the renderer, serves
+   until it exits, and exits with its status. Both halves are internal:
+   `h5i browser open` is unchanged and there is no subcommand for either — the
+   same conclusion §"The id is not the interface" reached about session ids,
+   applied to processes.
+3. **Tighten the renderer's profile** to `net.mode = deny`, and add the third
+   lane value with the tests that keep it apart from `host-observed`. Not built,
+   and not for want of a line: see §B18.8.
+
+Step 1 was worth doing whether or not step 2 followed: a broker reachable only
+through a named set of operations is a broker whose surface is written down.
+
+#### What step 2 turned out to cost, and to buy
+
+- **The renderer is spawned by the broker re-execing itself** with a hidden
+  `--brokered` flag and the socket as its standard input. An inherited
+  descriptor rather than a port (nothing on the machine can connect to it) or a
+  path (nothing to clean up). The child's argv is the parent's, unchanged: two
+  halves that parsed different command lines would be two engines that could
+  disagree about what was asked for.
+- **The confinement came for free**, and this was the pleasant surprise. The
+  session sandbox already grants read on the engine's own binary — a confined
+  `execve` needs it — so the broker can start the renderer from inside it, and
+  Landlock's domain is inherited and cannot be relaxed. The renderer is
+  confined exactly as the single process was, with no change to
+  `browser_sandbox` at all.
+- **A dead broker takes the renderer with it.** The reply thread sees EOF and
+  the renderer stops, because a renderer that cannot fetch or receipt and whose
+  parent is gone is not a browser. Verified by killing the broker of a resident
+  session: no orphan, and `h5i browser close` still reads the record.
+- **Secrets are the measurable gain today.** `H5I_SECRET_*` is removed from the
+  renderer's environment, along with the receipts path, the proxy and the
+  allowlist. Substitution is a broker operation, so an intact renderer receives
+  the value for the field it was told to fill and holds no other — and a
+  compromised one reaches what this session was *granted* rather than what the
+  machine holds, which is the narrowing that is actually delivered. See the
+  correction in §B18.3: "the ones actually used" waits on the control channel
+  moving, and until then saying it would be a sentence this file exists to
+  refuse.
+
+  Measuring it turned up that the claim had never been true in the other
+  direction either: `--secret NAME` set `profile.secrets` and nothing consumed
+  it, so under the default sandbox a named credential never reached the engine
+  at all and `h5i browser env` answered "no credentials" for one it had been
+  told to carry. `browser_sandbox` now declares `secret_grants` beside the name
+  list and `h5i browser` brokers them through `secrets_broker` like any other
+  run, on both the confined and the unconfined path — fail-closed is a property
+  of the promise, not of the sandbox. `--secret` with `--in` is refused rather
+  than ignored: a box declares its grants in `.h5i/env.toml`, and `spawn_in_box`
+  never read the flag.
+- **Redaction had to become a batch.** It runs over every string in every
+  control reply; one round trip per string would have made it the most expensive
+  thing the control channel does. `redact_all` is the operation, and the default
+  implementation is still the loop.
+- **The control channel did not move**, and the table in §B18.2 still says it
+  should. It is renderer-side for now, which means the reply an agent reads is
+  written by the untrusted half. That is a smaller hole than it sounds — the
+  renderer holds the terminal either way — and it is the next thing to move
+  after step 3.
+
+### B18.8 Why step 3 is not one line in `profile_for`
+
+The plan said `net.mode = deny` for the renderer was "a one-line change to
+`browser_sandbox::profile_for`". It is not, and the reason is worth writing down
+before somebody spends an afternoon on it.
+
+The renderer is spawned **by the broker**, and the broker is already inside the
+sandbox. Applying a second, tighter confinement from there needs a new network
+namespace, and `unshare` and `setns` are both on this codebase's own seccomp
+deny-list (`seccomp_deny_program`). The broker cannot make a namespace it is
+denied the syscall for. Landlock could be stacked — domains nest — but the
+network cannot.
+
+So the confinement has to be authored **outside** both halves, and there are two
+shapes:
+
+- **`h5i browser` creates the socket pair and spawns both.** It is unconfined,
+  so it can resolve two policies and start two children — the broker with
+  `net.mode = host`, the renderer with `Deny` and a profile written for a
+  process that only parses (no `/tmp`, no resolver grants, no `/etc` beyond what
+  a font needs). It costs the broker its `wait()` on the renderer, which becomes
+  an EOF instead — the split already treats EOF as the renderer exiting, so the
+  code is there.
+- **A launcher handed to the broker.** `h5i-browser-light` gains a trait, and
+  `h5i __engine` — which links `h5i-core` — registers an implementation that
+  execs the renderer confined. The crate graph allows it (nothing depends on
+  `h5i-browser-light` but the binary), and it keeps "the broker spawns the
+  renderer" literally true. It does not solve the syscall problem: the launcher
+  runs in the broker, and the broker is the process seccomp is filtering.
+
+The first is the one that works. The second is the one that reads better, and
+would only work if the broker were left unconfined — which is the wrong trade,
+because the broker parses server bytes too (TLS records, headers, gzip and
+brotli streams) and wants a sandbox of its own.
+
+Recording this because the honest version of the current state is *"the renderer
+is confined exactly as much as the whole engine was, and no more"* — the split
+moved what a compromised parser can **reach in memory**, not yet what it can
+**reach on the network**.
+
+## B19. Obscura, second pass: the instruments, not the verbs, 2026-08-27
+
+§B15 read Obscura and Lightpanda across the *verb line* and settled what to take
+there. This pass reads two things that pass did not have: the engine as it
+stands today, which has grown a native rendering pipeline and an MCP server
+since; and `obscura-benchmark`, the companion repository that holds every
+instrument Obscura measures itself with. `obscura-benchmark` is not mentioned
+anywhere in this file, and it is where the useful material is.
+
+The finding, stated first, because it inverts the shape of §B15:
+
+> **The verb-line comparison is closed. The instrument comparison is not.**
+> Almost everything §B15 queued at the verb line has been built (§B15.13,
+> §B17.6, §B17.7). Nothing has been built against the way Obscura *measures*,
+> and that is now the larger of the two gaps.
+
+### B19.1 The two engines, as of today
+
+| | `h5i-browser-light` | Obscura |
+| --- | --- | --- |
+| Rust | 36,666 lines, one crate | 132,253 lines, nine crates |
+| script shim | 5,795 lines (`prelude.js`), Boa | 14,493 lines (`bootstrap.js`), V8 via `deno_core` |
+| DOM and CSS | Blitz plus Stylo, assembled | `html5ever` plus `selectors` plus its own cascade (`css.rs` 10,350, `style.rs` 10,924) |
+| layout and paint | Blitz plus `vello_cpu` | its own, 66,530 lines: forked `taffy`, forked `cosmic-text`, `tiny-skia` |
+| driver surface | 28 CLI subcommands, 20 session verbs | CDP server, 37 MCP tools, `fetch`/`scrape` CLI, embeddable `obscura` crate |
+| record of what was fetched | receipts, fail-closed, written before the bytes move | CDP `Network.*` events, reconstructed and emitted after navigation (§B15.2) |
+| identity on the wire | one honest UA naming this engine (`net.rs:40`) | `--stealth`: a real Chrome TLS ClientHello, cipher order, and matching `navigator` (§B15.12) |
+| default reach | allowlist; loopback allowed, because loopback is the dev server | deny loopback and RFC1918 by default, `--allow-private-network` to opt in |
+
+The size ratio is worth reading carefully rather than quoting. **We are about a
+quarter of their line count, and most of the difference is the renderer they
+wrote and we borrowed.** Subtract `obscura-render` (66,530) and the two engines
+are within a factor of two on the part both projects wrote by hand. That is the
+honest framing of "lightweight", and it is a different sentence from the one a
+raw line count invites.
+
+The second thing worth naming: **they took the opposite bet on the renderer and
+it is not obviously wrong.** Owning layout and paint bought them a `printToPDF`
+that is real (`obscura-browser/src/pdf.rs`, 1,027 lines), an activity-driven
+screencast, a CDP `Emulation` domain, and geometry that DOM APIs and screenshots
+share instead of disagreeing about. Borrowing Blitz bought us all of that
+cheaply for the parts Blitz has and none of it for the parts it does not. We
+should not re-litigate the choice. We should notice that the *cost* of the
+choice is now visible: it is the list in §B19.7.
+
+### B19.2 Their conformance number, and the one instrument worth taking
+
+Obscura reports WPT three ways, from `crates/triage`:
+
+| tier | subtests | what it is |
+| --- | --- | --- |
+| Core | 318,916 / 382,891 (83.3%) | the DOM/HTML/URL/fetch scraping contract |
+| Relevant | 420,319 / 494,422 (85.0%) | Core plus JS-observable correctness needing no layout |
+| Full | 503,413 / 839,489 (60.0%) | the whole suite, "for transparency" |
+
+**Do not compare these to our 333,690 (§B13.2).** §B13.3 already withdrew one
+such comparison and the reasons it gave apply here unchanged and with more
+force: different harness, different corpus, and in this case a denominator that
+is not even the same order of magnitude (584,707 against 839,489). Any table
+putting the two side by side would be the §B13.3 error committed a second time,
+by the same route, with a different competitor.
+
+What *is* transferable is the shape of the report, and it is precisely the thing
+§B13.3 said we were missing. Their tiers live in
+`crates/triage/src/tiers.list`: 163 lines, one `<tier> <prefix>` rule per line,
+first match wins, with a header stating the rule the file is built on:
+
+> The split is by CAPABILITY, not by outcome: a directory is excluded only when
+> it needs a capability Obscura intentionally does not implement (layout /
+> rendering, a media pipeline, real hardware, or a live network peer), never
+> because its tests happen to fail.
+
+That is a **published, auditable, diffable declaration of scope**, and it is the
+answer to the problem §B13.3 diagnosed and then solved with a paragraph of
+prose. Our caveat ("70% of every passing subtest comes from twenty files") is
+true, is correctly stated, and lives only in this document, where it travels
+only as far as somebody reading this document. A tiers file makes it structural:
+the encoding directory becomes one tier among several rather than a footnote,
+and a reader can check the claim by reading a table instead of trusting us.
+
+Two properties of theirs are worth copying exactly, and one is worth refusing:
+
+* **Copy: exclusion is by capability, and the reason is on the line.** A
+  directory is out because we do not implement service workers, not because it
+  scores badly.
+* **Copy: the file is the source of truth for the published number.** A tier is
+  not a query somebody typed once.
+* **Refuse: three tiers where the third is "everything".** "Full 60%" invites
+  exactly the reading their own header warns against. Ours should be scoped
+  tiers plus an explicit *unscoped remainder* count, so the denominator is
+  always visible and never rounded into a percentage.
+
+For us the tiers would not be theirs. Ours split around what an agent reading a
+page actually needs, and §B6's refusals (no iframes, no popups, no workers) are
+already the exclusion list, written down years before the instrument that would
+use them.
+
+### B19.3 The denominator, and the part of WPT we have decided we cannot reach
+
+`wpt/run.py`'s docstring says it plainly: WPT generates a large share of its
+endpoints at serve time, a static server cannot serve them, and the summary
+prints how many were skipped so the denominator is never mistaken for all of
+WPT. That was the right call for the instrument as built, and §B12.1's reason
+for building it that way is still good: nothing was added to the engine to make
+it measurable.
+
+Obscura's runner does not accept that ceiling. `scripts/run-wpt.sh` starts
+**`./wpt serve`**, the real wptserve, on the real `web-platform.test` hostnames,
+after `./wpt manifest` has expanded every generated variant
+(`crates/wpt-runner/src/manifest.rs` walks the manifest's variant arrays and
+skips only the content hash). That is what puts `.any.html`, `.any.worker.html`,
+the `.py` handlers, the HTTPS variants and the cross-origin subdomains inside
+their denominator and outside ours.
+
+The reason to revisit this now is not the score. It is that **three subsystems
+this engine has grown since §B12 are only testable on that server**:
+
+* §B17's same-origin policy and CORS. Every meaningful CORS test needs a second
+  origin, which needs the WPT subdomains, which needs their hosts file.
+* §B16.5's PSL cookies. Cookie scoping tests are about `Domain=` across
+  registrable boundaries, which is again several hostnames.
+* §B17.4's compression. `Content-Encoding` behaviour is served by wptserve's
+  handlers, not by files on disk.
+
+So we currently have three of the engine's most security-relevant subsystems
+tested by our own unit tests and by nothing external, and the external suite
+that would test them is one shell script away. The cost is real and should be
+stated: it needs a WPT checkout that is not pristine (a hosts file entry, and
+`./wpt serve` running), which is exactly what §B12.1's "pristine checkout"
+design chose to avoid. The proposal is not to replace `wpt/serve.py`. It is a
+**second backend** for `wpt/run.py`, off by default, so the static instrument
+stays the one CI can run and the wptserve instrument is what a conformance
+claim is made from.
+
+A second, cheaper borrow from the same runner: it has **two engine backends**,
+one process per test (`fetch`) and a persistent CDP connection with a worker
+pool. Ours is one process per test only, which is why a full sweep is measured
+in hours. The first idea here was to point `run.py` at a resident session, and
+it does not survive contact with the code: the harness reads its results out of
+`open --json`'s console channel, and a session does not expose console output
+per navigation, so that backend would first need a new verb. The next idea was
+batching: `open` takes several URLs in one process, one JSON object per page,
+with the shared broker's records already sliced per page (`cli.rs:1885`), so N
+test files per invocation would amortise process start and font loading and is
+a change to `run.py` alone. **That was built, measured and reverted: identical
+scores, and 5x slower on `dom`, for a structural reason.** See §B19.12. Both
+speedups proposed in this section turned out to be wrong, and neither was timed
+before it was written down.
+
+### B19.4 The four instruments they have and we do not
+
+Their benchmark repo has seven tracks. Two of them we already have and ours is
+better in one respect worth recording. Four we do not have at all.
+
+**We already have, and ours is better:** the head-to-head against Chromium.
+`corpus/compare.py` samples peak RSS across the **whole process tree**, and says
+why: Chromium is a browser, a renderer, a GPU process and a zygote, and
+measuring only the launched process would flatter us by several hundred
+megabytes for no reason. Their `compare/head-to-head.py` reads GNU `time -v`
+Maximum RSS of the launched process. Their reported "Chrome 190 MB" is therefore
+a floor, not a measurement, and their own `compare/scale.py` (which uses
+`psutil`) reports 8.1 GB for eight Chrome workers, which is the same number
+measured properly. Ours is the sounder method and it is not written down
+anywhere but in that file's docstring.
+
+**We do not have, ranked by what they would find here:**
+
+1. **A reliability sweep with a classifier.** `reliability/sweep.py` does a
+   one-level BFS from a seed list to build ~1,500 real URLs, runs the engine
+   over all of them at concurrency, and sorts each outcome into
+   `CRASH` / `PANIC` / `CAP_HIT` / `HANG` / `HANG_HARD` / `THIN` / `OK` from the
+   exit code and stderr. The classes are the point: `CAP_HIT` exists because a
+   cyclic reparent once made `descendants()` loop forever, so the guard against
+   it has a named bucket in the instrument that would show it coming back.
+   This is §B8's own doctrine ("an instrument that cannot name what is missing")
+   applied to *crashing* rather than to *missing features*, and it is the one
+   thing on this list we have no substitute for. `corpus/run.py` reads 35 pages
+   and reports what they asked for; it does not sweep, does not classify, and a
+   panic in it looks like a page that failed.
+2. **An offline capability suite with vendored frameworks.** `obstacle-course/`
+   is 33 self-contained fixtures with React 18, Preact and Vue 3 pinned into
+   `vendor/`, each setting a deterministic value the runner asserts, each timed.
+   It is their authoritative behavioural gate and `AGENTS.md` requires 33/33
+   before any change lands. `tests/corpus.rs` is the same idea and is narrower
+   by construction: its fixtures are hand-written reductions of things the
+   network corpus found, so it can only ever contain regressions of bugs we
+   already had. It cannot answer "does Vue 3 mount", which is a question an
+   agent's user will ask on day one.
+3. **Failure triage that groups.** `crates/triage` deduplicates WPT failures
+   into root causes and prints the top error signatures per spec area. We have
+   the raw material for this and already use it: `run.py`'s `unsupported` map
+   is exactly this instrument in miniature, and §B12.2's "twenty files, four
+   bugs" is what it found. It stops at one directory at a time. Rolling it up
+   across a sweep is a merge, and `wpt/merge.py` already exists.
+4. **Speed as a tracked number.** Every obstacle-course stage is timed, and
+   `AGENTS.md` makes performance a hard constraint with a stated noise floor of
+   plus or minus 10% and a required interleaved A/B methodology. §B15.12a is our
+   equivalent lesson learned the expensive way, three optimisations reasoned
+   from code shape and all three wrong. The lesson it drew was "measure", and no
+   standing measurement was left behind.
+
+**One caution about their repo, and it is a lesson rather than a jab.** Its
+README opens by stating Obscura "has no rendering, layout, or paint pipeline",
+and the results are dated 2026-07-03 against commit `b5039a8`. Obscura's own
+README now headlines native rendering, and `obscura-render` is half the
+codebase. The instrument's *framing* rotted while its numbers stayed
+reproducible. This file has the same exposure at larger scale: §B13.3's
+withdrawn comparison is the shape of it, and the corpus harnesses in §B19.5 are
+the shape of it in code.
+
+### B19.5 Two harnesses in our own tree are pointed at a binary that does not exist
+
+Checked while looking for our answer to their obstacle course. Both fail to
+start, for the same reason, and neither says so anywhere:
+
+* `corpus/run.py:34` defaults to `target/debug/h5i-browser-light`.
+* `corpus/compare.py:28` uses `target/release/h5i-browser-light`.
+
+That binary was removed when the engine became a library reached through
+`h5i __engine` (see `Cargo.toml`'s comment, and `wpt/run.py`'s docstring, which
+records this exact path as "a trap now" and was updated). Both scripts also
+invoke `<bin> open <url> --json`, which is the argv the engine still takes.
+
+**Checked again while writing the todo list: the fix is not "the path plus one
+argument".** The path is the visible half. The other half is that the engine's
+policy now denies every remote origin unless `--allow` grants it
+(`Policy::new()` permits nothing but loopback, `cli.rs:703`), there is no
+allow-everything spelling (`*.host` is the widest wildcard, `policy.rs:83`),
+and the corpus scripts pass no `--allow` at all — they were written when the
+engine's default was open. So with the path fixed, every remote page is refused
+before the first byte, and per-URL wildcard grants would still refuse the
+third-party subresources whose behaviour is half of what the corpus measures.
+An instrument that points the engine at the open web needs an explicit,
+loudly-named grant — a decision, not a patch, and it is item 1 of §B19.10.
+
+The consequence is worth stating rather than just the bug: **§B8's corpus, the
+instrument this document credits with finding most of the engine's real work,
+has not run since the self-exec change**, and `compare.py`, the source of every
+memory and latency claim about this engine against Chromium, has not run either.
+Any such number in this file predates the broker/renderer split (§B18), which is
+the change most likely to have moved it.
+
+### B19.6 `--restore` copies a file nothing writes
+
+`h5i browser open --restore <id>` documents itself as seeding a new session's
+storage from one that has ended, and `seed_storage` (`src/cli/browser.rs:1903`)
+copies `cookies.json` out of the old session's directory. Nothing in the
+workspace writes `cookies.json`: `cookies.rs:48` says "The jar lives in the
+process and dies with it", and it is accurate. `source.exists()` is therefore
+always false and the flag is a silent no-op.
+
+This is §B15.12's own finding about Obscura ("documented-but-absent
+`localStorage` persistence, where the documentation has to say so") reproduced
+in our tree, at the point where it costs the most: the flag exists to carry a
+login across sessions, and §B15.9 and the LOGIN-mode design both lean on a human
+authenticating once. Today the human authenticates once per session, forever.
+
+Two ways out, and they are not the same feature:
+
+* **Make the flag honest now.** Either refuse `--restore` with "this session
+  never wrote a jar" or delete it. Small, and it stops the promise.
+* **Write the jar, receipted.** A cookie file is credential material, so it is
+  not a `--storage-dir` in our design; it is a host-owned artifact with the same
+  treatment secrets already get (§B15.9's indirection). The shape that fits: the
+  jar is written on session end into the session's own directory, `--restore`
+  names one definite ended session as it already does, and the inheritance is
+  written into the new session's record, which the current help text says
+  happens and which is the part of the design that is already right.
+
+Obscura's `--storage-dir` is the wrong model for us and their own
+`browser_storage_state` / `browser_set_storage_state` pair is the interesting
+one: it is Playwright-shaped, which means a session's authenticated state is a
+value an agent can hold, name and hand back. That is compatible with receipts in
+a way a shared directory on disk is not.
+
+### B19.7 The verb line, re-counted
+
+§B15.2 counted 8 session verbs here against 36 in Obscura and called the gap the
+difference between an agent that finishes and one that stalls. It is now 20
+session verbs and 28 CLI subcommands against 37 MCP tools, and the remaining
+difference is no longer padding either. What they have that we do not, with what
+each is actually for:
+
+| theirs | what it buys | our position |
+| --- | --- | --- |
+| `browser_screenshot` | the agent sees the page it is acting on | **the real gap.** `--screenshot` is on `open` only (`cli.rs:104`); a resident session can only emit JPEG frames to the human's live view (`stream.rs:296`). An agent driving a session cannot capture it. |
+| `back` / `forward` / `reload` | undo a wrong click without re-navigating from scratch | we have no history at all. `reload` is the cheap half and is worth having on its own. |
+| tabs (`tab_new`/`list`/`switch`/`close`) | one session, several pages | the ROADMAP's own table says tab is agent-facing "when there is more than one page in a session". There is never more than one. |
+| `get_cookies` / `set_cookie` / `clear_cookies` | inspect and seed auth | deliberately absent, and it should stay deliberate: handing an agent the cookie is exactly what LOGIN mode exists to avoid. `--dump cookies` including HttpOnly is the version to refuse loudly rather than to have and not document. |
+| `console_messages` | see what the page's script complained about | we surface console output in `open --json` and in snapshot notes, not as a verb on a live session. |
+| `evaluate` | arbitrary JS | refused, correctly. A verb that runs arbitrary script is a verb whose receipt says nothing. |
+| `pdf` | a page as a document | needs print layout, which Blitz does not give us. §B11.5 and §B11.6 already queue it. Cost is now known to be large: theirs is 1,562 lines across two files on top of a renderer they own. |
+
+Only the first three are worth building. The screenshot verb is the one to build
+first and it is nearly free: `Page::screenshot_png` exists, the session holds the
+page, and the verb table (§B15.3) is where it goes.
+
+### B19.8 Import maps: the page names the destination, so the engine does not have to
+
+`script/modules.rs` refuses bare specifiers, and the reason is one of the better
+paragraphs in this codebase: a loader that rewrites `import "lodash"` to a CDN
+turns one line of page script into an unrequested request to a third party
+chosen by the engine. That is right and should not change.
+
+`<script type="importmap">` is the standard's answer to exactly this, and it
+does not have the property the refusal is aimed at: **the page declares the
+mapping, so the engine is not choosing anything.** Obscura implements it in
+`obscura-js/src/import_map.rs`, 455 lines. Every resolved URL still goes through
+our broker, still gets policy-checked, still gets a receipt, and the receipt is
+strictly more informative than today's outcome, which is a refusal that records
+nothing about where the page wanted to go.
+
+This is the rare item that increases both capability and auditability, and the
+refusal it modifies stays intact for its actual target: a bare specifier with no
+import map is still an error naming what would have to exist.
+
+### B19.9 What not to copy, second pass
+
+§B15.12 refused the stealth stack in full and that refusal is unchanged and
+correct. Three additions, since this pass read further:
+
+* **`--proxy` as a scraping feature.** Obscura's is a per-invocation flag
+  pointed at residential proxy pools, and their `AGENTS.md` carries affiliate
+  codes for four providers. Ours is `H5I_EGRESS_PROXY`, set by h5i, and it is an
+  *enforcement point*, not a route. A CLI flag that lets the caller choose the
+  proxy is a CLI flag that lets the caller step around the allowlist that proxy
+  enforces, which `net.rs:250` already says in as many words. Keep it as an
+  environment variable set by the thing doing the enforcing. SOCKS5 support
+  (their `reqwest` has `socks`, ours does not) is the same question and gets the
+  same answer.
+* **`--user-agent` as a free-text override.** `net.rs:40` shares one honest UA
+  between the wire and `navigator`, and the comment gives the reason: a page
+  that branches on it server-side and again in script must see the same answer
+  both times. An override that changes one and not the other is a bug factory,
+  and an override that changes both is the stealth argument wearing a smaller
+  hat. If a site gates on UA and an agent legitimately needs past it, the honest
+  form is a *named* profile whose value is in the receipt, not a string flag.
+* **`--obey-robots` as a boolean.** Their cache answers allow/deny and the
+  request either happens or does not. §B15.6's rule applies: a denial an agent
+  cannot branch on is a denial an agent cannot recover from, and that section
+  already names robots.txt denials as one of the variants that needs a name. If
+  we take robots at all it is as a *receipt annotation* first: record that the
+  origin asked us not to, on the record, and let policy decide. "The page said
+  not to and we did anyway, and here is the line that says so" is a thing only a
+  receipts engine can offer.
+
+### B19.10 The todo list, made concrete, 2026-08-27 (second pass)
+
+Rewritten the same day it was first drafted, after checking each item against
+the code instead of against the section that proposed it. Two claims did not
+survive the check and are corrected above (§B19.3's session backend, §B19.5's
+"one argument"). Grouped by shape rather than ranked 1–9, because the first
+group is measured in hours and the last in weeks, and a flat ranking hid that.
+
+**Small and immediate — each is one sitting, none blocks another:**
+
+1. **Refuse `--restore`** (§B19.6). One check in `src/cli/browser.rs`: if the
+   source jar does not exist — and today it never does — fail with *"session
+   `<id>` left no storage to restore"* instead of silently seeding nothing.
+   The real persistence work is item 8; this stops the false promise today.
+2. **A `screenshot` verb on the session** (§B19.7). `Page::screenshot_png`
+   exists (`engine.rs:1277`); the verb goes into the §B15.3 table, which forces
+   the two answers that matter: it does not mutate, and it is **refused during
+   LOGIN mode** — it reads the page, and the page during LOGIN holds what the
+   human is typing. The PNG lands as a host-named artifact in the session
+   directory, like every other session artifact; the reply carries the path.
+3. **`reload`** (§B19.7). The cheap half of history: re-navigate to the current
+   URL through the existing `navigate` machinery. `back`/`forward` are
+   deliberately deferred until an agent transcript shows one stalling for lack
+   of them — §B8's rule, applied to verbs.
+4. **Batch WPT files per process in `wpt/run.py`** (§B19.3, corrected).
+   `open` already takes several URLs in one invocation with per-page records;
+   the runner change is grouping and splitting the JSON array. No engine work.
+   *(Built 2026-08-27, measured, reverted: identical scores and 5x slower on
+   `dom`. §B19.12 has the numbers and the reason.)*
+
+**The instrument decision, then the instruments it unblocks:**
+
+5. **An instrument-grade grant** (§B19.5). The corpus and any future sweep need
+   the engine pointed at the open web, and the policy deliberately has no
+   spelling for that. The options: (a) per-URL wildcard grants, which still
+   refuse third-party subresources and so change what the corpus measures; or
+   (b) an explicit engine flag — `--allow-any-remote` or similar — that is loud
+   in the name, prints on the placement line, and is receipted like every
+   grant. (b) is the honest one: the corpus's whole point is watching what a
+   page asks for, and an instrument that pre-filters the asks is measuring its
+   own allowlist. The flag does not weaken the product default; it names a mode
+   the instruments were silently assuming.
+6. **Repair `corpus/run.py` and `corpus/compare.py`** (§B19.5). The path
+   (`h5i __engine open ...`) plus the item-5 grant. Until both land, §B8's
+   corpus is a description of an instrument, and every memory number against
+   Chromium in this file predates the broker split.
+7. **The reliability sweep** (§B19.4). Same grant dependency as item 6 —
+   without it, 1,500 pages of refused subresources drown the classes in THIN.
+   Outcome classes for this engine: CRASH / PANIC / HANG / HANG_HARD / THIN /
+   OK, plus **REFUSED** — main document stopped by policy — which their sweep
+   does not need and ours does, because a refusal is a correct outcome here and
+   must not be counted as a failure. Seeds: the corpus lists plus a one-level
+   crawl, per their `sweep.py`.
+8. **Jar persistence, designed rather than patched** (§B19.6's second option).
+   The session writes its jar into its own directory on clean end (0600, owner
+   only), `--restore` reads it, and the inheritance line the help text already
+   promises becomes true. The design questions to settle before code: HttpOnly
+   cookies must be included or a restored login is no login, which makes the
+   file credential material — so it gets the scrubber's treatment on any path
+   that prints it, and a decision about whether a box-placed session may write
+   it at all. `browser_storage_state`'s shape (state as a value, named and
+   handed back) is the model, not `--storage-dir`'s (state as a shared
+   directory).
+
+**The reporting work — independent of everything above:**
+
+9. **A tiers file for the WPT report, plus the triage rollup** (§B19.2, and
+   §B19.4's item 3, merged because they touch the same two scripts).
+   `wpt/tiers.list` in their format — one `<tier> <prefix>` per line, first
+   match wins, exclusion only by capability with §B6 as the source of the
+   exclusions — read by `check.py` and `merge.py`; and `merge.py` learns to
+   merge the per-directory `unsupported` maps so the top asks across a whole
+   sweep are one table instead of 191 files. Scoped tiers plus an explicit
+   unscoped remainder; no "Full" percentage.
+10. **The wptserve backend, http-only** (§B19.3). `./wpt manifest` +
+    `./wpt serve` behind a `--wptserve` flag on `run.py`, grants spelled
+    `http://web-platform.test:8000` and `http://*.web-platform.test:8000`,
+    which the wildcard grammar already carries scheme and port through
+    (`policy.rs`'s `wildcards`). **HTTPS variants are out of scope and the reason
+    is structural:** the engine trusts `webpki-roots` and deliberately exposes
+    no way to add a root (the hermetic-build rule), and WPT serves its own CA.
+    The http half still covers most of what §B19.3 wants it for — the
+    cross-origin CORS suites, cookie scoping across subdomains, and the
+    `Content-Encoding` handlers.
+
+**The feature work, in the order the instruments would justify it:**
+
+11. **Import maps** (§B19.8). Parse `<script type="importmap">` before module
+    resolution in `script/modules.rs`; a mapped specifier resolves and goes
+    through the broker like any URL, a bare one without a map keeps today's
+    refusal verbatim.
+12. **Offline capability fixtures, timed** (§B19.4's items 2 and 4, merged).
+    A handful of stages, not 33: React 18 UMD render, Vue 3 mount,
+    SSR-hydrate, and a `pushState` mini-SPA, vendored pinned, each asserting a
+    deterministic value through `--json`. Each stage timed, **reported and not
+    gated** — a timing gate in CI is a flake factory, and §B15.12a's lesson was
+    "measure before optimising", which a report satisfies and a gate does not.
+
+Not queued, decided, unchanged from the first draft: no `--proxy` flag, no
+`--user-agent` flag, no cookie read/write verbs, no stealth layer (§B19.9).
+CDP and MCP stay where §B15.11 put them; the §B15.3 verb table now exists, so
+the MCP estimate is if anything lower than when it was written.
+
+### B19.11 What was built, 2026-08-27
+
+All twelve items were taken. **Eleven shipped and one was measured and
+reverted**, which is the outcome that earned its place in this file: item 4 was
+reasoned from the shape of the code, built, measured, and was wrong in the same
+way §B15.12a's three optimisations were wrong.
+
+**The engine (items 1, 2, 3, 5, 8, 11).** 576 tests pass, from 552; the 24 new
+ones are named below by what they pin rather than by what they cover.
+
+* **`--allow-any-remote`** (`policy.rs`, item 5). The instrument grant, and the
+  keystone the corpus and the sweep were both blocked on. It widens the *name*
+  check and nothing else, which took one more change than expected:
+  `check_address` sends an IP-literal host back to the allowlist, so a blanket
+  grant would have become a route into RFC 1918 space by spelling. The
+  allowlist match is now split out as `Policy::listed`, and `check_address`
+  asks that narrower question. Four tests hold the line: a public name
+  resolving inward is still refused, `http://10.0.0.7` is still refused unless
+  somebody named it, a web page still may not reach loopback, and the default
+  still reaches nothing.
+* **`screenshot`** (item 2), the first user of `browser_session::artifact_path`,
+  which was written for exactly this and had no caller. h5i names the file, the
+  engine chooses only the bytes, and the PNG goes to a path rather than into the
+  reply — a base64 image would have been silently truncated at the scrubber's
+  256 KiB cap and arrived as a corrupt file, which is the plausible-wrong answer
+  this engine exists to refuse. Verified end to end: 19,352 bytes, 1280x720,
+  and **refused during LOGIN mode**, which is the answer the verb table forced.
+* **`reload`** (item 3), routed through `navigate_to` rather than given its own
+  path, so it is policy-checked, drops the served refs, and reports a refusal
+  exactly as `navigate` does. `back`/`forward` stay unbuilt: §B8's rule.
+* **The cookie jar persists** (`cookies.rs`, item 8) when and only when h5i
+  passes `--cookie-jar`. Written on change rather than at exit, because `close`
+  and `service_stop` end a session with a signal and a shutdown hook would
+  never run; `0600`; temp-then-rename. The flag lives on `NetArgs` beside
+  `--receipts`, not on `serve`, because after the §B18 split the renderer holds
+  no jar and `local_broker` is the one place both halves reach.
+* **`--restore` is honest** (item 1) and now has something to restore. Verified
+  the whole way round: log in on one session, close it, `--restore` into a new
+  one, and the server sees `sid=s3cr3t`. A session that left no jar is refused
+  by name with the three reasons it could be missing.
+* **Import maps** (`script/import_map.rs`, item 11). `imports` and `scopes`,
+  longest-prefix-wins, values resolved against the document. The refusal keeps
+  its exact target — a bare specifier with *no* map still names what would have
+  to exist — and the map is read from the parsed tree before the first script,
+  so nothing at runtime can move a graph that is already resolving. Ten unit
+  tests plus four through the real pipeline, including that a map is never
+  executed as script (it is JSON, and running it is the `application/json`
+  trap) and that a malformed one is reported and ignored *whole*.
+
+**The instruments (items 6, 7, 9, 10, 12).**
+
+* **`harness.py`** is new and is the actual fix for §B19.5. The bug was not
+  three wrong paths, it was that there were three of them; one module now owns
+  where the engine is, how it is invoked, and what an instrument is granted.
+* **The corpus runs again** (item 6), for the first time since the self-exec
+  change. Its hand-built allowlist is gone with it: a site's host, a wildcard,
+  and six named CDNs meant a page pulling from a seventh looked like an engine
+  failure. First run found real work — `Element.jquery` 826 calls on one page,
+  `selector :has()`, `document.compatMode`.
+* **`reliability/sweep.py`** (item 7) crawls one level from the corpus seeds and
+  sorts outcomes into CRASH / PANIC / HANG / HANG_HARD / REFUSED / THIN / OK.
+  **REFUSED is ours and is not in Obscura's sweep**, because a policy refusal is
+  this engine working; counting it as a failure would make a narrow allowlist
+  look like an unstable engine. First run: 60 URLs, 0 engine bugs, 0 REFUSED.
+* **`wpt/tiers.list` and `wpt/tiers.py`** (item 9) do what §B13.3 asked for in
+  prose. Run against the August sweep the table says, by construction:
+  **core 59,953 passing, encoding 225,786, and the headline is 79% encoding.**
+  Nobody has to remember the caveat any more. One thing was got wrong first and
+  is worth keeping: the fold was per *directory*, which is wrong for `css` —
+  one result file, 75,000 subtests, straddling core (`css/cssom`), excluded
+  (`css/css-animations`) and unscoped. Classified as a directory it matched
+  nothing and the remainder became the second-largest row in a table whose
+  whole purpose is that the remainder is small. It folds per test now, and the
+  unscoped remainder is 175 of 2,491 across 111 named areas.
+* **The triage rollup** in `merge.py` (item 9) groups failure *messages* by
+  shape across a whole sweep. It paid for itself on the first run: 8,425
+  subtests failing on one unhandled-rejection shape, 3,460 on `cannot convert
+  'X' or 'X' to object`, 2,396 on `not a callable function`. That is §B12.2's
+  "twenty files, four bugs" mechanised.
+* **`wpt/wptserve.py`** (item 10) runs against WPT's own server, with the real
+  subdomains and the `.py` handlers — which is what puts §B17's CORS, §B16.5's
+  PSL cookies and §B17.4's compression under external test for the first time.
+  The overlay is installed into the checkout and restored in a `finally`,
+  including on Ctrl-C. **The https variants are dropped by name**, because
+  wptserve serves them under its own CA and this engine trusts `webpki-roots`
+  with no way to add a root: a trust decision recorded as a conformance result
+  would be exactly the kind of number this harness exists to avoid.
+* **`capability/`** (item 12), nine stages, offline, frameworks vendored.
+  **9/9 pass**: React 18, Preact, Vue 3 including its runtime template
+  compiler, Preact hydration, a fetch+pushState SPA, the modern-language and
+  platform surface, timer/microtask ordering, and the import map from item 11.
+  Median 169 ms. Timing is printed and **not gated** — a latency gate in CI is
+  a flake factory, and §B15.12a asked for a measurement, not a tripwire.
+
+### B19.12 Item 4, measured and reverted, which is the useful half
+
+Batching WPT files into one engine process was the "speedup that needs
+nothing": `open` already takes several URLs and slices its records per page, so
+twelve files per process would amortise process start and font loading. It was
+built, and it produced **identical scores** and was slower nearly everywhere.
+
+| directory | files | one per process | batched (12) |
+| --- | --- | --- | --- |
+| `dom` | 587 | **75.3s** | 392.0s |
+| `css/cssom` | 190 | 22.8s | **20.5s** |
+| `domparsing` | 60 | **2.6s** | 3.1s |
+| `url` | 34 | **1.7s** | 2.2s |
+
+`dom` settles it, and the cause is structural rather than a matter of tuning:
+
+* **A batch shares a process, so a batch that crashes loses every file in it.**
+  Correctness therefore requires re-running a failed batch one file at a time —
+  and WPT is a corpus where crashing and hanging files are common, so on `dom`
+  most batches split and most files ran twice.
+* **Batching takes the harness's per-file timeout away.** The ceiling becomes
+  per-process, so one hanging file holds eleven others instead of being killed
+  on its own worker while the rest proceed.
+* **The ceiling was never large.** `dom` runs at about 7.9 files/s on four
+  jobs, so a file costs ~0.5s and process start is well under a tenth of that.
+  Nothing batching could have recovered was worth either of the above.
+
+So the code is reverted and the measurement is kept, on `run_one`, where the
+next person to have this idea will read it before having it. §B19.3 claimed
+this was "the speedup that needs nothing"; it needed a measurement, and the
+claim above it — that pointing `run.py` at a resident session would be the
+largest speedup — had already been withdrawn for a different reason on the same
+day. Two speedups proposed, two wrong, neither measured before being written
+down.
+
+**This is the fourth time.** §B15.12a recorded three optimisations reasoned from
+the shape of the code — realm reuse, prelude bytecode caching, and a combined
+settle hook — of which two were dangerous and one was useless. The lesson it
+drew was that the rule against building what no page asked for applies to
+performance too. It applies to *instruments* as well, and the tell is the same
+every time: a sentence in this file that says a change will be fast, written
+before anything was timed.
+
+
+## B20. Chasing 80%, and what the concentration actually looks like, 2026-08-27
+
+The question was how to get WPT coverage to 80%. The first thing the data said
+is that "80% of what" has three answers and only one of them is honest, and the
+second is that the gap is far more concentrated than anyone had assumed.
+
+### B20.1 What 80% means, given §B19.2's tiers
+
+| tier | before this work | to reach 80% |
+| --- | --- | --- |
+| core | 59,953 / 120,522 (49.7%) | +36,464 |
+| encoding | 225,786 / 229,349 (98.4%) | already past |
+| relevant | 985 / 19,020 (5.2%) | +14,231 |
+| **scoped total** | **286,724 / 368,891 (77.7%)** | **+8,388** |
+
+The scoped total is *already* 77.7%, and reaching 80% by that reading needs
+almost nothing — which is precisely the §B13.3 trap the tiers file was built to
+close: the encoding block is carrying it, and adding encoding subtests would be
+gaming a number rather than improving an engine. **Core at 80% is the honest
+target**, and it is the one everything below is measured against.
+
+### B20.2 The gap is thirty files
+
+Sorting core's unpassed subtests by file:
+
+| | share of the core gap |
+| --- | --- |
+| top 30 files | **52.8%** |
+| top 100 files | 65.5% |
+| top 400 files | 79.9% |
+
+Half the work is in thirty files. That is the §B12.2 shape again — a large
+cluster with few causes — and it means the productive move is never "implement
+more of the platform", it is "read what those thirty files say".
+
+### B20.3 The reader did not lowercase what the writer did (+10,847)
+
+Eleven of the top fifteen files shared one failure message, verbatim:
+
+    assert_equals: getAttribute() expected (string) "" but got (object) null
+
+DOM §4.9 lowercases the qualified name for an element in the HTML namespace, on
+`getAttribute`, `hasAttribute`, `setAttribute` and `removeAttribute` alike.
+`set_attr` and `remove_attr` did; `get_attr` did not, and `hasAttribute`
+inherited the bug through the same op.
+
+It stayed invisible until the *harness* was read rather than the engine: WPT's
+reflection harness passes the **IDL** name straight through to both calls
+(`html/dom/reflection.js`: `domName = idlName`), so `setAttribute("accessKey")`
+stored `accesskey` and `getAttribute("accessKey")` answered null. Every
+camelCase reflected attribute failed on every element in all eleven
+`reflection-*.html` files.
+
+    html/dom  43,744 -> 54,591 of 60,514 scored  (72.3% -> 90.2%)
+
+The fix is namespace-conditional, and that is not pedantry: the HTML parser
+case-corrects SVG attributes, so an `<svg>` really does hold one named
+`viewBox`, and a blanket lowercase would have traded one silent wrong answer
+for another. `set_attr` lowercasing *unconditionally* was the same bug pointing
+the other way — `svg.setAttribute("viewBox", …)` stored `viewbox` and rendered
+nothing. All three share one normaliser now, because `guard_mutation` two
+hundred lines below records what happened the last time a defect of this shape
+was patched at each call site as it was found.
+
+### B20.4 An instrument that was fine, and an analysis that was not
+
+The first read of the data said 27% of the core gap sat behind
+`TypeError: not a callable function`, which does not name the callee — and
+therefore that the instrument had to be fixed before anything else, per §B8.
+
+**That was wrong, and the correction is the useful part.** 87% of those
+subtests already carry the name, in the `unsupported` side-channel the engine
+has had since §B8.4. The analysis was reading `failures[].message` and never
+joining the two channels. The engine names `Element.getHTML`,
+`Element.setSelectionRange`, `document.createProcessingInstruction` and the
+rest perfectly well; the script asking the question was the blind one.
+
+Joined, and weighted by the unpassed subtests of the files that ask (calls
+alone rank a hot loop above a blocker), the demand list is the ranked work
+queue this section is built on. The genuine blind spot — named in neither
+channel — is 292 files and 1,813 subtests.
+
+### B20.5 `getHTML`, and a 6,908-subtest file that is not a 6,908-subtest win
+
+`shadow-dom/declarative/gethtml.html` is the largest single file in core: 6,908
+unpassed, zero passing. It was queued as the biggest available win. It is not,
+and the breakdown says so exactly:
+
+* **380 subtests** need only `getHTML()` to equal `innerHTML`. Built, and
+  measured at exactly +380.
+* **6,528 subtests** need a shadow root serialised as `<template
+  shadowrootmode=…>` followed by the light children — and this engine has one
+  tree. A shadow root here is a *view of its host*, the component's output and
+  the light content are siblings in the same element, and nothing distinguishes
+  them afterwards.
+
+So the string a browser produces cannot be reconstructed, and emitting the
+flattened content under a `<template shadowrootmode>` header would be markup
+that parses, looks right, and describes a tree that never existed. It is
+recorded through `unsupported()` instead.
+
+The lesson is §B12.8's, inverted. That entry says a large failure cluster
+usually has one cheap structural cause; this one has a single *expensive*
+structural cause, and the file's size said nothing about which. **A subtest
+count is a measure of how much a test file repeats itself, not of how much work
+its failure represents.**
+
+### B20.6 Interface objects: forty-seven names, and three bugs behind them
+
+Forty-seven interface globals were missing — `Document`, `Response`,
+`NodeList`, `HTMLCollection`, `Storage`, `CSSRule` and the rest — of which
+several had full implementations behind them and only lacked the name.
+
+**Why this is not the `missingApi` stub §B8.4 deleted.** That rule is about
+*feature detection*: a name that exists and answers wrongly sends a page down a
+branch it cannot recover from. A page writing `nodes instanceof NodeList` is
+not detecting a feature, it is asking what it is holding, and the honest
+answers are yes and no — never `ReferenceError`. So each interface object
+carries a `Symbol.hasInstance` performing the real brand check against the
+shape this engine builds, and `new NodeList()` still throws exactly as it does
+in a browser.
+
+Adding them surfaced three real bugs that had nothing to do with WPT:
+
+* **`CharacterData` was `Text`.** A duplicate key in the globals literal, so
+  the later binding won and `comment instanceof CharacterData` was **false**
+  for a class the comment genuinely extends.
+* **`option.value = x` was silently lost.** The setter took the editor path,
+  which an option does not have, and stashed the value where the option's own
+  getter never looks — taking `new Option(label, value)` with it.
+* **`fetch` resolved an object literal.** It had the right fields, which reads
+  identically until something asks what it is: `Response` was not a global, so
+  `new Response(...)` was a ReferenceError and `res instanceof Response` could
+  not be written at all.
+
+And one that was ours all along: **interface objects were enumerable on the
+global.** WebIDL §3.7 says otherwise, `Object.assign` creates enumerable data
+properties, and `idlharness` checks it *first* for every interface — so the
+cost was a subtest per interface across every `idlharness` file in the suite,
+spent before anything about the interface was examined.
+
+### B20.7 `new Document()`, and a score that depended on machine load
+
+Exposing `Document` as non-constructible took `html/dom/idlharness.https.html`
+from 269 passing to reporting **nothing at all**. `new Document()` is legal —
+DOM §4.5 gives Document a constructor — and the test builds one in its setup,
+so a brand that threw killed the file. That is §B8.4's own hazard in a new
+costume: a name that exists and answers wrongly, added by the change that was
+supposed to stop names being absent.
+
+Made constructible, the file went from 373 subtests to **6,408, with 1,896
+passing**. And then it became *unstable*: sometimes `ok`, sometimes
+`no_report`, depending on nothing but how loaded the machine was.
+
+The cause is `SCRIPT_PHASE_BUDGET`, a twenty-second wall-clock ceiling on a
+page's script. The file legitimately needs about twenty seconds to parse the
+IDL and build its tests, so it lands exactly on the line. The guard is right —
+it is what stops a page whose promise chain never settles — and a conformance
+harness is precisely where a runaway and a merely slow page are hard to tell
+apart from outside.
+
+**A run whose score depends on the other processes on the box is not a
+measurement**, so `--script-seconds` lets an instrument say so, for the same
+reason and with the same limits as §B19.5's `--allow-any-remote`: it announces
+itself, it changes nothing for anyone who does not pass it, and the navigation
+deadline still bounds the whole load. `wpt/run.py` passes 60.
+
+    html/dom  54,591 -> 56,241 of 66,549 scored
+
+### B20.8 `testdriver-vendor.js`: the second empty seam
+
+`resources/testdriver-vendor.js` ships as a **zero-byte file**, for exactly the
+reason `testharnessreport.js` does: it is where a vendor plugs its automation
+in. Unfilled, `test_driver.click()` rejects with "not implemented by
+testdriver-vendor.js" and every test built on it fails on a missing harness
+rather than on anything about the engine — 633 files in core.
+
+Filled in `wpt/serve.py`, beside the reporter, with no engine change at all.
+`click` and `send_keys` are implemented by dispatching the events the action
+would produce, which is the action rather than a simulation of it; `bless` (706
+call sites) is built on `click` upstream, so one function unlocks both.
+Everything needing authority this engine does not have — permissions, virtual
+sensors, virtual authenticators, a second browsing context — keeps testdriver's
+own rejection, because a shim that resolved those would turn "the harness
+cannot do this" into "the engine got the wrong answer".
+
+`action_sequence` is refused for a narrower reason: it is a pointer and key
+state machine with its own tick semantics, and approximating it would make a
+class of failures untraceable.
+
+### B20.9 A comparison that was measured against the wrong thing
+
+Partway through, `shadow-dom` appeared to have regressed by 192 subtests and
+three `reference-target` files by 587. Bisecting found the same directory
+scoring 41 of 473 both with and without every change in this section: the
+comparison was against `results-2026-08-10`, and the difference was a month of
+drift in the engine and in the WPT checkout.
+
+The rule this earns is small and was being broken all day: **a before/after
+comparison needs a before taken from the current commit.** A stale artifact is
+a different engine and a different corpus, and it will attribute someone else's
+work — in either direction — to yours. Every number in this section is against
+a freshly measured baseline for that reason.
+
+### B20.10 The second pass: types, names, and two features that were declared and never acted on
+
+Four more rounds, each found the same way — read what the failures say, fix the
+cause rather than the file.
+
+**The reflection *type system*, which is per-element and therefore never
+small.** Four bugs, all of them repeating on every element in every
+`reflection-*.html`:
+
+* **`-0`.** `Number("-0")` is negative zero, an IDL long is an integer, and
+  testharness compares with `Object.is` semantics — so `tabindex="-0"` failed
+  `assert_equals(0)` everywhere. `tabIndex` has its own parser and needed the
+  same fix twice.
+* **Out of the 32-bit range is "not a valid integer"**, not a large number.
+* **`[LegacyNullToEmptyString]`** on the legacy colour attributes: `bgColor =
+  null` writes `""`. Marked per attribute, because everywhere else `null`
+  really does stringify.
+* **`action`/`formAction` answer with the document's address** when unset. A
+  form whose action reads `""` submits somewhere different from one that reads
+  the page's URL.
+
+Plus nine element interfaces the table never had — meter, progress, iframe,
+del, q, th, thead, tfoot, colgroup — where `ins` was present and `del` was not,
+`td` was present and `th` was not. A missing entry is not one attribute
+missing; it is every attribute of that element failing at once.
+
+    html/dom  56,241 -> 57,080
+
+**Custom element names, and two wrong turns worth more than the fix.**
+`define` enforced one rule of eight. Implementing the rest took
+`valid-custom-element-names.html` from 222 of 1,975 to **1,975 of 1,975** — but
+only after two mistakes:
+
+1. The first implementation used `PotentialCustomElementNameChar`, which is
+   the **superseded** production. whatwg/html#7991 replaced it with "a valid
+   element local name", which *excludes* rather than includes. So the old rule
+   rejected names that are now legal, and failed the file in the opposite
+   direction from the one it was written to fix. **Implementing from memory of
+   a spec is implementing a spec that may have moved.**
+2. `whenDefined` did not validate. Once `define` threw correctly, the test
+   reached `await promise_rejects_dom(t, 'SyntaxError', whenDefined(bad))` and
+   hung there — taking all 5,900 subtests with it, and turning a +1,753 into a
+   -222 until it was found. **A promise that never settles is the worst of the
+   three answers**: a caller cannot tell it from a component that has not
+   loaded, so it waits out its own timeout instead of handling an error it
+   could have handled at once.
+
+**Popovers and `<dialog>`: declared and never acted on.**
+`html/semantics/popovers` was 3,846 unpassed against 20 passing, and the reason
+was not that the feature is large: the `popover` attribute *reflected*, and
+nothing anywhere did anything with it. `<dialog>` was the same shape — `open`
+reflected, and `show`, `showModal` and `close` were all absent, so a dialog
+could be described and never opened.
+
+Both are now real as far as the DOM goes: the state machine, the exceptions,
+the `beforetoggle`/`toggle` pair with its cancel-on-open-only asymmetry, the
+`popovertarget` invoker, `returnValue`. What is deliberately not real is the
+**top layer** — this engine has no separate paint layer, so an open popover
+renders where it sits and a modal dialog does not block the page behind it.
+That is a rendering property; the API contract a page scripts against is not,
+and the two halves are worth separating rather than refusing the feature whole.
+
+Three things fell out of building it that the tests would not have said
+directly:
+
+* `<div popover>` has the value `""`, which maps to the **auto** state. Without
+  the alias it fell through to `invalid` and every bare popover reported
+  `"manual"` — the one state that does *not* close its peers, so they stacked.
+* `popover` is **nullable**: an element without the attribute reports `null`,
+  which is how a page asks "is this a popover at all". Reporting `""` made
+  every element look like one.
+* An invoker runs **after** the click and only if it was not cancelled, so the
+  click event has to be held and asked. Dispatching and discarding it made
+  `preventDefault()` in a handler do nothing.
+
+**URL and body plumbing.** `new URLSearchParams(otherParams)` walked the
+object's own keys, copied the internal `_pairs` field, and serialised as
+`_pairs=a%2Cb` — a params object emitting its own implementation. It takes any
+iterable of pairs now, plus `sort()`, `size`, proper form-urlencoded output
+(`+` for space and the escapes `encodeURIComponent` leaves alone), the
+`URL.parse`/`canParse` statics, and `formData`/`arrayBuffer`/`blob` on both
+`Request` and `Response`.
+
+    url  68 -> 148 of 499
+
+### B20.11 Four more, and the shape of what is left
+
+**Popovers and `<dialog>`, measured.** `html/semantics` 2,839 -> **4,642**, and
+`html/dom` +418 alongside. The feature was not large; it was unwired.
+
+**`DOMTokenList`, four gaps in one type.** `replace()` was absent — 262 corpus
+asks — indexed access answered `undefined`, and neither validation existed, so
+`classList.add("")` wrote a trailing space and `classList.add("a b")` wrote a
+token that read back as *two*. That last one is the bad kind of bug: a class a
+page added could not be removed again.
+
+**`createElementNS` accepted anything**, which is why
+`dom/nodes/Document-createElementNS.html` scored **1 of 596** — the file is
+almost entirely a sweep of names that must be rejected. It validates the XML
+`Name` production now and keeps `InvalidCharacterError` ("that is not a name")
+apart from `NamespaceError` ("that name and that namespace may not go
+together"), because pages catch them separately.
+
+    dom  2,022 -> 2,629
+
+### B20.12 Forms, which was the one large block that was just work
+
+§B20.11 named `html/semantics/forms` as the only big remaining cluster that
+needed no design reversal. It was **723 passing of 4,870**, and the reason was
+not subtlety: the constraint validation API did not exist at all. Nine files
+scored 1 of 920 between them, every one failing on *"the validity attribute
+doesn't exist"* before reaching what it meant to check.
+
+**Built, in the order the failures ranked them:**
+
+* **Constraint validation.** `validity`, `willValidate`, `validationMessage`,
+  `checkValidity`, `reportValidity`, `setCustomValidity`, and the form-level
+  pair. The barred-from-validation clause is the part worth reading: a disabled
+  control that reported itself invalid would block a form the user cannot even
+  reach, so barred elements are always valid *including* when a custom error
+  was set. `reportValidity` is identical to `checkValidity` here and says so —
+  the difference is that a browser shows the message, and there is no UI to
+  show it in.
+* **Text-field selection.** `selectionStart`/`End`/`Direction`,
+  `setSelectionRange`, `setRangeText` with all four select modes, `select`. The
+  selection lives on this side rather than in the layout engine, because it has
+  to answer for a detached control too. `<input type=number>` reports `null`
+  rather than 0, which is the distinction a page tests before using it.
+* **Numeric inputs.** `valueAsNumber`, `valueAsDate`, `stepUp`, `stepDown`,
+  `showPicker`, all keyed off one table so a type is steppable in one place
+  rather than four that can disagree. NaN rather than `undefined` for a type
+  with no numeric form: `undefined` says "this engine lacks the property", NaN
+  says "this control holds no number".
+* **`<input type=color>` sanitisation**, `files` returning `null` off a
+  non-file input, and `form.autocomplete` defaulting to `on`.
+
+**Three bugs that had nothing to do with forms fell out of it.**
+
+* **An empty `<input>` read as `" "`.** blitz seeds a laid-out input's editor
+  with a single space, and the value getter applied its whitespace-is-unseeded
+  rule to `<textarea>` only. So `if (!input.value)` was **false** for an empty
+  field: every page and every agent testing a form for emptiness got the wrong
+  answer, and `required` could never fire. Found only because constraint
+  validation asked the question a different way.
+* **`cloneNode` copied `class` and `style` and nothing else.** A clone lost its
+  `id`, its `href`, its `data-*` and every hook a page had put on it — so a
+  cloned `<template>` came out stripped. The form-control cloning steps (the
+  value and the dirty value flag) were missing with them.
+* **`click()` on a disabled control dispatched a click.** A page that disables
+  a control to stop it being used still saw it used, with the form in whatever
+  state the disabling was meant to protect.
+
+    html/semantics/forms  723 -> 2,012 of 4,655
+    html/dom              57,498 -> 58,073
+    dom                   2,629 -> 2,651
+    gate                  288,183 -> 288,780, no regression
+
+What is left in forms is genuinely different in kind: form *submission*
+(`multipart/form-data`, `text/plain`, the submission algorithm), `:focus` in
+the selector engine, and `color()` CSS parsing. Submission is the largest and
+is the one worth taking next — it is the half of a form this engine can
+observe better than anything else, because it *is* the HTTP client.
+
+### B20.13 Submission, and the boundary it ran into
+
+The rest of forms was submission, and §B20.12 said it was worth taking because
+this engine *is* the HTTP client. Built:
+
+* **Form ownership, which is not containment.** `formOwnerOf` honours the
+  `form` content attribute, and the bug it fixes is a wrong answer rather than
+  a missing one: `form=""` names no id and therefore has no owner, but the old
+  code read the attribute for truthiness and fell through to the ancestor
+  search — reporting the surrounding form, when taking a control *out* of the
+  form it sits in is the entire purpose of the attribute. `form.elements` now
+  asks the same question, so a control with `form="thisId"` is submitted from
+  anywhere on the page.
+* **The entry list**, properly: the submitter is an entry (skipping every
+  button meant a server could not tell which one was pressed), `_charset_` is
+  filled in by the engine, a `<datalist>` descendant is a suggestion and never
+  an entry, and disabled and unnamed controls are excluded.
+* **The `formdata` event**, which fires with the list under construction rather
+  than a copy — that is the documented replacement for the hidden inputs a page
+  used to inject.
+* **`requestSubmit` and `submit`**, which differ in the two ways that matter:
+  the first validates and fires a cancelable `submit`, the second does neither.
+  Implementing them as one function is the obvious shortcut and would make
+  `form.submit()` called from inside a `submit` handler recurse.
+
+Neither *navigates*, and that is deliberate rather than unfinished: this engine
+drives navigation through its own verbs so that an agent and a receipt both see
+it, and a form submitting itself out from under that would be a request nothing
+decided on.
+
+**A bug found by this that had nothing to do with forms.** `form.elements` came
+back empty, because it compared `formOwnerOf(el) === this` — and `wrap()` hands
+back the `observed` proxy while a getter runs with the raw target as `this`, by
+design (`observed` passes the target as receiver to avoid paying a trap per
+field read). So a proxy and its target are two objects for the same node, and
+identity comparison silently answers "different" for **every element**. Any
+code anywhere comparing two wrappers with `===` has the same defect; there is
+now a `sameNode` helper saying so.
+
+    html/semantics/forms  2,012 -> 2,051 of 4,655
+
+**And the boundary.** The remaining mass in `form-submission-0` is three
+enctype files at 62 subtests each plus the double-submit pair, and every one of
+them submits into an `<iframe>` and waits for its load. That is §B6's refusal,
+reached from a third direction — after declarative shadow DOM (§B20.5) and
+`html/browsers/origin`. The submission *algorithm* is now implemented and
+observable; what is not reachable is being navigated by it.
+
+### B20.14 Where core stands, and what 80% would actually take
+
+**58.5%** — 76,760 of 131,201 — from 49.7%, measured across all nineteen core
+directories, 9,492 files, on a freshly built binary. The session moved roughly
+15,000 subtests.
+
+80% is +28,200 from here, and the honest reading of the remaining mass is that
+**the cheap shared causes are spent.** Four blocks hold most of it, and two of
+them are decisions rather than work:
+
+| block | unpassed | what it is |
+| --- | --- | --- |
+| `gethtml.html` + declarative shadow DOM | ~7,100 | needs a real shadow tree. §B6 chose flattening, and §B20.5 is where that choice becomes a number. |
+| `html/dom/idlharness` | 4,496 | correct IDL shapes — prototypes, descriptors, inheritance — on every interface. Grind, not design. |
+| `html/semantics/forms` | 4,147 | validity API, text-field selection, submission. **The one large block that is just work.** |
+| `fetch` | 4,539 | 260 of 467 files time out on abort semantics, which a synchronous fetch cannot provide. |
+
+So the path to 80% runs through two product decisions — whether a shadow root
+is a real tree, and whether `fetch` stays synchronous underneath — plus the
+forms block and a long tail. None of that is discovered by pointing the harness
+at more directories; it was discovered by reading what the failures said, which
+is the only method in this section that has worked at all.
+
+**A caution on the number itself.** 58.5% is the core tier as `tiers.list`
+defines it, and §B12.6's three ways to move a score all applied today:
+implementing more (most of it), measuring more (`idlharness` becoming
+reportable at all, which added 6,000 subtests to the denominator as well as
+1,896 to the numerator), and counting more honestly. The first is the only one
+that is engineering, and the tier table is what keeps the three visible.
+
+### B20.15 The three boundaries, decided, 2026-08-28
+
+§B20.14 ended on three blocks that were "blocked on a product decision, not on
+effort", holding roughly 19,000 of the 23,600 subtests between the engine and
+80%. The decision was put, and made, and this entry is the record — argued on
+the product's terms, because §B20.5 already established that a WPT subtest
+count measures how much a test file repeats itself, not how much a gap costs.
+The question for each was: *what does an agent driving a real page lose?*
+
+**1. No second browsing context — kept, with one carve-out.** The real-web
+cost is concentrated and real: payment iframes, OAuth popups, embedded
+CAPTCHAs are exactly the tasks agents get asked to do. But supporting it
+honestly is the most expensive item in the engine: two origins in one realm is
+precisely the hazard `cookies.rs` documents — the box protects the host from
+the page and says nothing about two origins sharing an address space, which is
+why `retain_origin` drops the jar on every origin change. A cross-origin
+iframe reintroduces the problem that rule exists to bound, and doing it right
+is what Chromium calls site isolation. For an engine whose thesis is
+auditability, "two origins, one process, one realm" is a worse position than
+"no iframes".
+
+The carve-out: **`window.open` is not an iframe problem — it maps onto h5i's
+own session model.** A popup is a second page, and h5i already has named
+sessions. So `window.open` should become a *named refusal carrying a recovery*
+("this page wants a second page; open one with `--session`"), per §B15.6's
+rule that a denial an agent cannot branch on is a denial it cannot recover
+from. Queued.
+
+*Revisit trigger:* the corpus's `unsupported` counts — real agent tasks dying
+on iframes — never WPT. And the first step if it fires is same-origin
+`srcdoc` iframes only, which raise no isolation question, not the full
+feature.
+
+**2. Flattened shadow root — kept, and this is the one defended hardest.**
+The 7,140-subtest figure is the most misleading number on the table: 6,528 of
+it is one file serialising `<template shadowrootmode>` strings. The
+flattening is not a shortcut but an *aligned* choice — it is what the
+accessibility tree does, and the accessibility tree is what the snapshot is
+modeled on. An agent wants the component's rendered output, readable, in the
+page; a real shadow tree would break the one-tree invariant that snapshot,
+paint and events all rely on, to buy encapsulation — a property that serves
+page authors and actively hurts page readers.
+
+The one real cost is **style scoping**: a component-heavy page can misrender
+because styles leak across the boundary. *Revisit trigger:* corpus pages
+visibly misrendering from leakage — and the fix would be scoping in the
+cascade, not a second tree. Never `gethtml.html`.
+
+**3. Synchronous fetch — not a boundary at all, reclassified.** The other two
+are derived from the product's claims; this one is an implementation ceiling
+wearing a boundary's clothes. Fail-closed requires *decide and record before
+the bytes move* — nothing in that forces the transport to block. The
+`Cargo.toml` comment defends synchrony with "receipt order is request order",
+but decision order can be preserved without serialised transport. The
+real-web costs are already on the record from §B16: serial subresource
+fetching is one of the three load-path costs the Lightpanda study named, and
+an abort that cancels nothing is why 260 of 467 fetch files time out.
+
+The decision is **do not build it for WPT**: run the repaired
+`corpus/compare.py` first (§B19.5's own unfinished business) and see whether
+serial fetch is where real-page latency actually goes. If it is, concurrent
+brokered fetch with real abort is ordinary engineering that *strengthens* the
+receipts story. If it is not, leave it. §B15.12a, applied before the mistake
+this time instead of after.
+
+#### The tiers.list edits, and the number moving for the third reason
+
+With 1 and 2 kept on purpose, 80% of the old core tier is not this engine's
+number — and the honest response is the one `tiers.list` was built for:
+declare the refusals as scope, with the reasons on the line, and let core
+measure what the engine actually claims to be. Three entries moved to
+`exclude`:
+
+| entry | reason on the line |
+| --- | --- |
+| `html/browsers/origin` | needs several live browsing contexts talking to each other |
+| `fetch/metadata` | observed through `window.open` + wptserve `.py` handlers; **the feature is still wanted** — this engine *is* the client and should send `Sec-Fetch-*` for real sites. Excluding the tests does not excuse the feature. |
+| `shadow-dom/declarative/gethtml.html` | one file, by exact path, so the rest of shadow-dom stays measured |
+
+And two that look like candidates and are **not** excluded, because excluding
+either would be exclusion by outcome wearing a capability's name: the
+form-submission enctype files (their *subject* is entry-list serialisation,
+which this engine claims — only the harness observes it through an iframe),
+and the fetch abort timeouts (an implementation ceiling, per decision 3, not a
+declared boundary). Both stay in core as honest losses.
+
+The effect, stated the way §B12.6 requires because this is its third way of
+moving a number — counting differently, not engineering:
+
+    core, old scope   81,120 / 130,958 = 61.9%
+    core, new scope   80,738 / 121,987 = 66.2%
+    moved out         8,971 scored, of which only 382 passed
+    80% now needs     +16,851
+
+Nothing got better; the denominator now says what the engine is. The moved-out
+block was 4% passing, which is exactly what a capability hole looks like from
+the outside — and also exactly why the exclusion had to be argued from the
+product rather than read off the score, since excluding your worst directory
+is what a gamed number looks like too. The difference between those two is
+that the reasons are on the line in `tiers.list`, where moving a line and
+re-running is the audit.
+
+## B21. Reopening two boundaries on task evidence, 2026-08-28
+
+§B20.15's revisit triggers fired the day they were written: task evidence — the
+operator's own agent runs, not WPT — showed real work blocked on frames and on
+fetch's abort behaviour. This section records what was reopened, how far, and
+where the line now is.
+
+### B21.1 Abort, made observable
+
+The claim in §B20.15 that "fetch is synchronous underneath" turned out to be
+half stale: script fetches have run on a thread pool (six slots) since the
+ticket queue landed. What was real is that **abort only took effect when the
+network answered** — the drain checked `signal.aborted` on arrival, so an
+`abort()` against a slow server rejected whenever the server got around to it,
+and against one that never answers, never. 260 of 467 fetch files timed out on
+exactly this shape.
+
+The fix distinguishes the two halves of abort, and implements the one a page
+can observe: **the promise rejects the moment the page says stop**, while the
+wire request runs to completion on its thread and its receipt stands — because
+the request *was* made, and a receipt that vanished when the page changed its
+mind would be a log of intentions rather than of traffic.
+
+Also corrected while there: the rejection reason is now a `DOMException` named
+`AbortError` — every consumer that distinguishes an abort from a failure does
+it by `e.name === "AbortError"`, and rejecting with a plain `Error` sent all of
+them down the failure branch. `AbortSignal.timeout()` (on the virtual clock,
+so a fetch-versus-timeout race settles deterministically here) and
+`AbortSignal.any()` came with it.
+
+**Measured.** `fetch/api/abort` goes from hanging its files to 32 of 96
+scored with three files still timing out — and the remainder is the static
+server's, not the engine's: the mid-download abort tests stream from
+wptserve's `infinite-slow-response.py`, a handler `wpt/serve.py` cannot run
+(§B19.3's wptserve backend is the road to those). Two shape fixes came out of
+reading the failures: every `Request` now mints a `signal` when the caller
+brings none — `request.signal` being null sent every page that wires abort
+through the request object down the wrong branch — and the whole gate moved
++23 alongside.
+
+### B21.2 `window.open`: the named refusal, built
+
+The §B20.15 carve-out, as specified: `window.open` returns `null` — the answer
+every page already handles, because it is what a popup blocker produces — and
+says why on the console and in the unsupported list, naming the recovery: open
+the URL in another session and drive both. Deliberately not a same-realm fake
+window, which would hand the opened page's globals to the opener — the
+two-origins-one-realm hazard wearing a friendlier face.
+
+### B21.3 Frames as content: the narrow reopening
+
+The decision §B20.15 kept — no second browsing context — stands. What task
+evidence forced is narrower and turns out to be buildable without touching the
+boundary: **a frame's document is fetched and its content flattened into the
+page**, exactly as a shadow root is flattened, readable in the snapshot and
+actionable by the verbs. The payment form inside the iframe mints refs like
+any other form.
+
+What crosses, and what does not:
+
+* Every frame fetch goes through the broker under its own initiator —
+  **`frame` in the request log** — so an auditor asking "did this page pull in
+  another document" gets the answer by name. The allowlist applies unchanged;
+  a refused frame is a *note the agent reads*, never an empty box.
+* **Its scripts never run** (stripped after the graft, and `javascript:`
+  frames are refused by name — script by another road). Running a second
+  document's script in this realm is the hazard the boundary exists for.
+* **Its styles do not apply** (also stripped): the host cascade applying a
+  foreign document's rules to the whole page would be a worse lie than
+  unstyled frame content.
+* **`contentDocument` still answers null.** A flattened frame is content, not
+  a browsing context.
+* Bounded at eight frames per page, nested included, and the bound is *said*
+  (§B16.10) — ad cascades nest without limit and every fetch spends the
+  page's own budget.
+
+Three findings from building it, each worth more than the feature:
+
+* **Fragment parsing inside `<iframe>` is raw text.** The first graft set the
+  frame's own innerHTML and produced one text node of escaped markup — the
+  HTML parser's rule, not a bug. The graft goes into a `<div>` container.
+* **Blitz styles nothing it will not render**, so the snapshot's
+  hidden-content defence — "no styles means hidden" — silently dropped every
+  grafted subtree. Inside a frame that inference is wrong: no styles means
+  *outside the styled tree*. The walk now carries an `in_frame` flag, and the
+  hiding vectors a page actually controls there — the `hidden` attribute,
+  inline `display:none`, `aria-hidden` — keep their teeth, verified by test.
+  What is lost is stylesheet-based hiding, whose stylesheet was stripped at
+  the graft and whose absence the frame note declares.
+* **The document-origin loopback rule fired on the first test draft**, refusing
+  a web page's frame from reaching the dev server. §B3.1 doing its job on a
+  road that did not exist when it was written; the test suite now pins it.
+
+### B21.4 What this did not reopen
+
+`tiers.list` is unchanged. `html/browsers/origin` still needs several live
+browsing contexts *scripting each other*; `fetch/metadata` still needs
+`window.open` that opens; the enctype files still observe submission through a
+frame's *load*, which a flattened frame does not perform. Frames-as-content
+moves what an agent can read and drive, which is what the task evidence asked
+for — it does not move what the excluded tests measure.
+
+
+## B22. One bool in a vendored stylo, and the mechanical clusters, 2026-08-28
+
+The 80% campaign's second front, on the branch after #569 merged. Gate:
+288,807 -> 290,137. Two kinds of work, and the first is one line long.
+
+### B22.1 `:has()`: parse was the only gate
+
+§B20's probe found selector invalidation working for descendants, siblings and
+`:not` — and `:has()` never matching. The cause sits in stylo 0.19's Servo
+selector parser: `parse_has()` is **hardcoded to `false`**. Not a preference,
+a constant; nothing outside a patch can turn it on.
+
+So `vendor/stylo` now exists: the crates.io tarball, byte-identical except for
+that one bool, pinned by `[patch.crates-io]` so Blitz's own stylo — the copy
+that parses stylesheets — is the same copy. The pattern is Obscura's
+taffy/cosmic-text one, the crate is 5.6MB, and `vendor/stylo/README-h5i.md`
+carries the exit condition: diff against the tarball on every bump, and drop
+the copy when upstream flips the bet.
+
+The bet was that the matching machinery underneath — the code Gecko ships —
+needed nothing. It held on every axis at once: `querySelector(':has()')`
+matches, the relative form (`:has(> .flag)`) matches, **stylesheet rules
+match, and invalidation works** — a class added by script restyles the
+`:has()` container. The corpus's `selector :has()` entry retires, and the
+refusal branch in `checkSelector` goes with it: a parse failure there is once
+again what it says, a selector no browser would accept.
+
+    css/selectors  2,115 -> 2,620
+
+> **Reversed, 2026-08-28, by owner decision.** The technical bet held; the
+> maintenance bet did not survive review. A 5.6MB in-tree copy of a
+> rendering-engine crate is a fork this project would have to carry across
+> every stylo bump, and the owner's judgment is that no WPT arithmetic pays
+> for that. `vendor/stylo` is deleted and the `[patch.crates-io]` entry with
+> it.
+>
+> **What replaces it:** the *query* half of `:has()` is evaluated in the
+> prelude (`withHasMarkers`), no fork required: each `:has(ARG)` group is
+> computed into a transient marker class — the engine's own matcher does the
+> matching, a leading `>`/`+`/`~` anchors through a scope marker, the
+> descendant form takes an ancestors-of-matches fast path — the selector is
+> rewritten to the marker, the ordinary query runs, and the markers are
+> removed before the call returns, invisible to observers and reactions. So
+> `querySelector`/`querySelectorAll`/`matches`/`closest` keep `:has()`.
+> **Stylesheet rules** using `:has()` are the half that stays lost: they go
+> through Stylo's parser inside Blitz and are dropped there, which takes the
+> `has-in-*` styling/invalidation suites with them (§B22.11's root-restyle
+> hint stays — sibling combinators still need it). The clean exit for that
+> half is the first Blitz release that depends on stylo >= 0.20 (0.20.0 is
+> published; check `parse_has` there when Blitz moves).
+
+### B22.2 The mechanical clusters: tables transcribed, not invented
+
+Everything else in the round is a spec table this engine had approximated:
+
+* **The ARIA enumerated table, per attribute.** The first cut (§B20) declared
+  all twenty as `{missing: null, invalid: ""}`, and the uniformity was the
+  bug: `ariaHidden`'s missing value *means* not-hidden ("false"),
+  `ariaChecked`'s means there is no checkedness to report (null), and
+  `ariaCurrent` preserves any claim of currency as "true". Transcribed from
+  the spec, with `nullable` as its own flag because several attributes remove
+  on null while reading a missing attribute as "false".
+  `html/dom`: 58,079 -> 59,078.
+* **`createEvent`, both directions of the table.** An alias constructs the
+  *mapped* interface — `createEvent("MouseEvents")` has MouseEvent.prototype —
+  and a name off the table throws NotSupportedError even when the interface
+  exists, because createEvent is a legacy door the spec stopped widening.
+  Returning a generic Event for every name got both directions wrong at once.
+  With it came the interfaces the table names (BeforeUnloadEvent, DragEvent,
+  TextEvent, the Device* pair) and the `init*Event` methods.
+* **Doctypes and processing instructions construct.** Three strings and a
+  nodeType each; refusing them was never a capability question. Both validate
+  their names, and a PI's data may not contain `?>` — which would end the
+  instruction early on serialisation and turn the rest into markup.
+* **The namespace trio** (`lookupNamespaceURI`, `lookupPrefix`,
+  `isDefaultNamespace`), with the answers an HTML document gives — the spec's
+  walk collapses to a table over the only tree shape this engine holds, which
+  is not a stub, it is what the full algorithm computes here.
+* **`createElementNS` carries its namespace on the wrapper.** The one tree is
+  an HTML tree, so `namespaceURI`, `prefix` and the original-case local name
+  live on the cached JS wrapper: an SVG `circle` reports `circle` (not
+  `CIRCLE`), its namespace, and its prefix, while layout keeps treating the
+  node as the HTML-parsed name underneath.
+
+    dom  2,672 -> 3,003
+
+### B22.3 The interface objects idlharness could never see
+
+The idlharness deep-dive found one structural cause wearing four failure
+shapes: **the per-tag classes were real and the globals were aliases.** The
+reflection table has minted a genuine `HTMLOptionElement` (prototype carrying
+`label`, `value`, the lot) since §B15's per-tag work — and §B20's
+interface-globals literal then *overwrote* every such name with the bare
+`Element` alias, because `Object.assign` last-write-wins and the literal came
+later. So `window.HTMLOptionElement.prototype` was empty while every actual
+option used an internal class no test could reach, and `instanceof
+HTMLOptionElement` was true for a `<div>`.
+
+The fix is one expression — the alias fills only names the per-tag block left
+— plus the WebIDL plumbing idlharness checks per attribute: **brand guards**
+(reading `HTMLElement.prototype.title` with the prototype as `this` throws
+TypeError instead of dereferencing an `_id` that is not there), **enumerable
+accessors** (WebIDL interface members are enumerable; class syntax defaults
+the other way), and **class strings** (`Object.prototype.toString` on a `<p>`
+says `[object HTMLParagraphElement]`).
+
+And one regression caught by the per-directory measure before it could land:
+deduping by interface *name* — §B20 had added `th`, `colgroup`, `thead`,
+`tfoot`, `del` and `q` as their own table entries, duplicating names the
+`SHARED` map already handled, so the loop minted **two distinct classes with
+one name**: elements constructed with one while the global was the other, and
+`col instanceof HTMLTableColElement` was false for a col whose
+`constructor.name` said otherwise. One class per name now, holding the union.
+
+    idlharness       2,493 -> 2,842 passing
+    html/dom         59,078 -> 59,435
+    html/semantics   5,999 -> 6,383
+    gate             290,137 -> 290,494, no regression
+
+### B22.4 Open popovers, and the two lies visibility told
+
+The popover cluster (~1,700 subtests) came down to two false answers and a
+missing API family, and the diagnosis mattered more than the patch.
+
+**The engine could not show a popover — at all.** Blitz's UA sheet carries the
+standard's hiding rule, `[popover]:not(:popover-open):not(dialog[open])
+{ display: none; }`, and hard-codes the `:popover-open` pseudo-class to never
+match — so the rule applies to every popover forever, at specificity (0,3,1),
+which also outweighs any casual same-origin override. That produced a long
+false trail: marker-class UA rules that "didn't invalidate" were actually
+being outranked (there is no Stylo invalidation bug; author-origin equivalents
+worked because origin, not weight, decided). The fix is one UA rule keyed on
+the prelude's marker class, stacked to (0,5,0) so it outweighs the hider:
+`[popover][popover][popover][popover].__h5i_popover_open__ { display: block; }`.
+
+**`getClientRects()` returned a rect for everything**, including `display:
+none` elements — and `offsetWidth || getClientRects().length` is WPT's (and
+half the web's) visibility idiom, so every hidden element read as visible.
+Empty list now when the element generates no boxes.
+
+With visibility honest, the rest was contract work: repeated
+`showPopover()`/`hidePopover()` are silent no-ops (the spec's validity check
+never throws for a visibility mismatch — the throwing version failed ~1,175
+subtests across two files), `popoverTargetElement` became a real reflected
+element reference (attribute stamped to `""` on assignment, `null` while the
+target is disconnected), input invokers gated to the four button types, and
+the Invoker Commands API landed beside it: `CommandEvent`,
+`command`/`commandForElement` on buttons, the six built-in verbs acting on
+dialogs and popovers, `dialog.requestClose()` with its cancelable `cancel`,
+`form.reset()`, and submit/reset buttons that actually submit and reset their
+form on click. `oncommand`/`ontoggle`/`onbeforetoggle`/`oncancel`/`onclose`
+joined the handler set.
+
+    html/semantics   6,383 -> 8,024  (popovers dir: 1,732 -> ~2,600 of it)
+    dom              2,672 -> 3,003  (the getClientRects half)
+    core tier        69.2% at the start of this entry, recompute pending
+
+### B22.5–B22.13 The grind from 69% to the high seventies
+
+Nine commits, each its own story in the log; what belongs here is the
+pattern. Almost every point of coverage in this stretch came from one of
+three shapes of gap, and knowing the shapes made the next gap cheaper to
+find than the last:
+
+**Contracts the engine had half of.** The popover state machine existed but
+threw where the spec stays silent (§B22.4's follow-through); `<input>` had
+`value` but not the four value modes or a single sanitizer; options had a
+`selected` attribute but no selectedness *state*; scripts ran when the
+parser saw them but never when a page inserted one — the single largest
+real-web gap found in this campaign, since every script-loader works by
+injecting tags. In each case the feature "was there" and pages still broke,
+because the contract is the edges, not the middle.
+
+**Answers coming from the wrong authority.** `getClientRects()` said
+"visible" for hidden elements; `CSS.supports` and `'prop' in el.style`
+disagreed until both asked Stylo's content-gated parser; enumerated
+reflections folded Unicode case when the spec folds ASCII (WPT plants
+U+212A to catch exactly this); `innerText` ignored computed `white-space`
+until the walker read it. The recurring fix: find the one place that
+already knows, and ask it.
+
+**WebIDL shape, mechanically.** Interface constants, accessor names
+(`get title`), enumerability, brand guards (`this instanceof Interface`),
+collections as real classes over real arrays (prototype swapped, so array
+ergonomics survive), event-init fields as prototype accessors, ValidityState
+and ElementInternals as live interfaces. Individually tiny; ~2,000 subtests
+in aggregate, because idlharness checks every member of every interface.
+
+One engine-level find deserves its own line: Blitz hints the element and
+one parent on attribute flips, which is exactly not far enough for `:has()`
+and sibling combinators — a root-subtree re-match hint on every attribute
+mutation (folded into one resolve per settle by `styles_stale`) lit up the
+whole has-invalidation suite. And one crash: `Element.prototype.innerHTML`'s
+setter borrowed onto a doctype wrapper panicked the engine from page script;
+it now throws the TypeError it owed.
+
+    core tier   66.2% at branch start -> 75.7% (88,199 / 116,471, full fresh
+                sweep 2026-08-28) measured with the vendored :has() stylo;
+                ~74.5% after its removal (see the §B22.1 reversal note) —
+                the 80% mark is the next branch's target
+    html/semantics 5,999 -> 9,623 · html/dom 59,435 -> 62,092
+    css/selectors 2,115 -> 3,090, then the :has() share given back
+    css-conditional 881 -> 1,601 · custom-elements 2,217 -> 2,414
+    domparsing 172 -> 384 · dom 2,672 -> 3,278
+
+The pools where the next ~5,000 live, measured and ranked: the idlharness
+file itself (2,628 still failing — the missing-global family is mostly
+capability interfaces this engine deliberately refuses to fake),
+html/semantics' script/img/media/dialog clusters (~6,400), dom's XML-document
+family (`createDocument` and the case rules, ~600), cssom/cssom-view
+serialization and scroll geometry, and the fetch/api JS surface
+(Headers/Request/Response conformance, ~400 reachable without wptserve).
+
+
+---
+
+---
+
+# Build logs: the remote runner and the detection lane
+
+R13 and D14, the step-by-step orders with their "Built" annotations.
+`ROADMAP.md` keeps the design sections (R1 to R12b, D1 to D13); this is
+the record of the work landing.
+
+## R13. The order
+
+Each step is small enough to land alone and each has an exit that is a
+demonstration, not a diff.
+
+- **R13.1 Pair and probe.** New crate `crates/h5i-runner` beside `h5i-share`
+  (codec, typed messages, client, worker loop, and a `Transport` trait with
+  `SshTransport` and `ChildProcessTransport`), feature-gated like `share`;
+  `src/cli/runner.rs` on the `share.rs` template; `serve-stdio` in the same
+  binary. Exit: `pair` then `probe` against a real second machine returns a
+  capabilities report with a functional `verify_exec`, and the whole
+  handshake also runs in CI with no sshd via the child-process transport.
+  The exit is as much the failure modes as the happy path, tested where
+  the child-process transport makes them cheap: an oversized frame, a
+  truncated frame, an unknown frame type, a message out of order, an RPC
+  total-byte limit exceeded, a `HELLO` that never arrives, a version
+  mismatch, capability values that are hostile or absurd (clamped or
+  refused, never stored), and a disconnect mid-transfer that leaves
+  nothing behind. A codec born with its failure modes tested does not
+  acquire them later as bug reports.
+
+  **Built, 2026-08-16** (`crates/h5i-runner`, `src/cli/runner.rs`,
+  `tests/runner_protocol.rs`): 92 unit tests and 17 integration tests, the
+  latter against the real binary over a real process boundary. Pairing,
+  probing, listing and unpairing all run end to end over real SSH against
+  a real sshd, and the security properties were measured rather than
+  assumed. With the pair key: a shell request returns nothing, and a
+  forwarded port carries no bytes while the same forward on an
+  unrestricted key returns the sshd banner — `restrict` is doing what the
+  section claims. The `SHA256:` fingerprint h5i prints is byte-identical
+  to `ssh-keygen -lf` on the machine, which is the only check pairing's
+  trust-on-first-use ever gets, and it is a test rather than a hope.
+  Session-per-RPC is cheap as R4 assumed: five multiplexed sessions in
+  39 ms, about 8 ms each, against 343 ms each without a master.
+
+  Four things the build found that the design had not:
+
+  - **The watchdog kills a child, not a process group.** A reader
+    unblocks when the last holder of the pipe's write end closes it, so a
+    child that leaves a grandchild holding it keeps blocking past the
+    kill. Both real transports are single-process by construction, so the
+    kill is sufficient — but it is a property of *those transports*, not
+    of the watchdog, and it is now written where the next transport will
+    read it.
+  - **The receiver's budget is the one that governs, and it is not the
+    format's.** A control session refuses at 256 KiB, well under the
+    1 MiB frame ceiling. Both sides of that boundary are pinned, because
+    a cap is where an off-by-one lives.
+  - **`CARGO_PKG_VERSION` in a library is the library's version.** The
+    worker reported `0.1.0` to an operator running h5i 0.3.4, in the one
+    field whose whole job is answering "which h5i is over there". The
+    binary now supplies its own.
+  - **A control socket path can be too long to be a socket.** Unix socket
+    paths cap around a hundred bytes and a deep `$XDG_CONFIG_HOME`
+    exceeds it, so multiplexing is declined rather than guessed at when
+    it would not fit. Losing latency is better than an obscure OpenSSH
+    error on someone else's machine.
+- **R13.2 Create and destroy.** Bundle transfer, digest verification,
+  leases and `gc`, the `creating/` to `live/` state machine and idempotent
+  re-send (R7). Exit: `box create --runner`, `box ls` showing placement,
+  destroy and gc leave the runner clean, a kill -9 of the client mid-create
+  leaves only a `creating/` entry the next invocation reaps, and re-sending
+  the same create after a lost `CREATE_RESULT` returns the same box instead
+  of a second one.
+
+  **Worker side built, 2026-08-16** (`boxstore`, `source`, the create,
+  destroy, list and gc handlers, `h5i runner boxes|destroy|gc`): 139 unit
+  tests and 24 integration tests against the real binary, plus an opt-in
+  `H5I_TEST_RUNNER_SSH` test that runs the whole cycle over real SSH — a
+  repository bundled here, streamed across an SSH session, checked out on
+  the far side at the pinned commit, re-sent idempotently, destroyed. The
+  source is a `git bundle` and neither side pollutes a branch namespace to
+  build or read one; `git clone` cannot be used because it only sees
+  `refs/heads/*`, so building a bundle would mean creating a branch in the
+  repository we are supposed to be only reading. Bundles carry full history:
+  `git bundle create` has no `--depth` (checked against git 2.43), and this
+  is the first thing to revisit when the transfer becomes the slow part.
+
+  **Complete, 2026-08-17.** `h5i box create --runner <name>` places a box on
+  a paired runner: the base is pinned, the branch created and the policy
+  resolved and digested here, the source goes across as a bundle, and the
+  manifest records `runner_id` — the runner's host-key hash — beside a
+  display name that is never identity. `box ls` shows `on=<runner>`, and
+  `box rm` removes both sides. Verified against a real sshd end to end: the
+  box's source arrives at the identical commit, `h5i runner boxes` shows it
+  from the runner's own side, and removal clears both.
+
+  The seam is a trait, `h5i_core::placement::RemoteRunner`, implemented in
+  the binary over `h5i-runner`. `h5i-core` gets no dependency on the runner
+  protocol, which matters because a later milestone will want the *worker*
+  reaching for receipts and export — a dependency the other way would be a
+  cycle waiting to happen. It also makes the remote create path testable in
+  `h5i-core` against a fake that opens no connection.
+
+  Operations that need a local workspace refuse a runner box by name rather
+  than failing on a missing directory, because a message about a directory
+  sends someone looking for a bug that is not there.
+
+  Five things building it found:
+
+  - **The container tier has no warm form**, which R7 assumed it did. See
+    the correction there.
+  - **A budget has to be per RPC.** A handshake is bytes and a bundle is
+    megabytes, and one budget covering both has to be as loose as the looser
+    of the two. `FrameReader::begin_rpc` resets the limits and the counters
+    together; a reader whose bound silently changed with the traffic would
+    have no bound at all.
+  - **Reading a peer's stderr means waiting for the drain thread.** A child
+    can write its diagnosis and exit while the draining thread is still
+    between a `read` and the buffer, so reading the buffer without joining
+    returns an empty string exactly when the message matters most. It passed
+    locally for a whole milestone before more work made the race visible.
+  - **`rm` has to remove this side first.** The tidier-looking order — clear
+    the runner, then the local record — is wrong, because `rm` refuses a live
+    box: the runner's copy was destroyed and the user was then told the
+    removal had failed, leaving a local record pointing at nothing. Local
+    first means the only remaining failure is an orphan on the runner, which
+    is exactly what a lease is for. Found by running it, not by reading it.
+  - **The effective baseline is about a local invocation.** It describes the
+    Landlock grants and binds a kernel-tier run would apply on *this*
+    machine, against a work directory a runner box does not have here.
+    Computing one would be describing a confinement nobody is going to
+    enforce.
+- **R13.3 Exec.** Captured and interactive, the three clocks, the per-box
+  locks, receipts in the `runner-observed` lane with the worker's egress
+  summary. Exit: a real project's build and test suite runs on the runner
+  from `env run` under its egress allowlist, `box shell` is usable over a
+  deliberately laggy link, and the receipt log shows the lane and the
+  egress evidence. Deliberately **not** an agent: an agent profile needs
+  model credentials, R12 refuses to ship them, and an exit criterion that
+  contradicts R12 is how the credential channel would end up rushed. The
+  agent-on-a-runner demonstration belongs to the credential channel's own
+  milestone.
+
+  **Captured exec built, 2026-08-17.** `h5i box run <box> -- <cmd>` runs on
+  the runner and comes home with an exit code, timings and the runner's own
+  egress summary, filed under `runner-observed` — its own lane in `Signals`,
+  neither host-observed nor box-claimed, for the reason R10 gives. The
+  worker calls `sandbox::run_with_env` directly, which is the R3 cut paying
+  off: the confinement that runs there is the product's own, not a
+  reimplementation. Per-box locks are `flock` (create/destroy/export
+  exclusive, exec shared), so an export beside a running build is refused
+  rather than reading a torn tree — and the kernel releases the lock with
+  the process, which is what stops a worker killed mid-exec from wedging a
+  box forever. Verified over real SSH: output returns, exit codes
+  propagate, receipts land.
+
+  **Two pieces of this milestone are NOT built, and neither is disguised.**
+
+  - *Output is captured, not streamed.* `run_with_env` is the function the
+    local path calls and it captures; a long build says nothing until it
+    finishes. The frames are already the right shape — `EXEC_STARTED` goes
+    out before the run, and output arrives as `STDOUT`/`STDERR` chunks — so
+    a streaming runner inside `h5i-sandbox` would send the same frames
+    earlier. That is surgery on the local path's most load-bearing
+    function and was deliberately not bundled in here.
+  - *`box shell` on a runner does not work.* Interactive means a pty, and a
+    pty means bidirectional streaming, resize and signals — the
+    `PTY_IN`/`PTY_OUT`/`RESIZE`/`SIGNAL` frames are declared and refused.
+    The "usable over a laggy link" half of the exit criterion is therefore
+    **not met**, and stays open rather than being quietly reworded.
+- **R13.4 Export. Built, 2026-08-17.** Exit met: a change made through
+  `box run` on the runner round-trips to a host-authored mediated commit,
+  survives the violation scans, and applies through the unchanged gates —
+  demonstrated end to end against a real sshd, including a planted nested
+  repository that is refused fail-closed with the branch left untouched.
+
+  Two things turned out to be much smaller than the plan assumed, and one
+  larger:
+
+  - **`diff` and `apply` needed no changes at all.** `diff` already picks
+    an object-store branch when there is no worktree, and every gate in
+    `apply` is object-store work. Once the fetched tree lands on the env
+    branch, the whole downstream is the local path unchanged.
+  - **The `mediated_commit` refactor was not needed either.** The tree
+    arrives already committed by the worker, so what this side needs is not
+    a tree-source variant of a function that stages a worktree — it is the
+    scans, run against a tree, and a commit. Those live in
+    `h5i_core::quarantine`, and the local `mediated_commit` is untouched.
+    R13's scope valve therefore never had to be pulled.
+  - **The quarantine was the real work**, and it is the part R9 cares
+    about. The bundle is unpacked into a throwaway *bare* repository with
+    its own object database — a ref namespace withholds reachability, not
+    presence, so it is not a quarantine — and the structural checks run
+    there: object and entry counts, a blob ceiling, path length, traversal,
+    nested `.git`, and gitlinks the base did not have. Only then does the
+    surviving tree cross, carried by a commit that is discarded on arrival
+    so that **this side authors the commit**. Verified: the runner's own
+    carrier commit appears nowhere in the host repository's history.
+
+  The bundle home is **thin** (`base..tip`), which is why the quarantine is
+  seeded with the base from the repository we own before the untrusted
+  bundle is fetched. An export therefore costs what was *done* in the box
+  rather than what the history weighs — the asymmetry the outbound
+  direction cannot have, because the far side starts with nothing.
+
+  (Superseded exit text, kept for the record: a change made through `box
+  shell` or `env run` on the runner round-trips to a host-authored mediated
+  commit, survives the violation
+  scans (a planted nested-git and a private-path write are both filtered and
+  named), and applies through the unchanged gates.
+
+Decision points, named not resolved:
+
+1. **The lane name.** `runner-observed` as a third lane string, against
+   overloading `Grade` to express transport trust. The third string is
+   recommended: the two axes are orthogonal today and should stay so.
+2. **The runner in the digest.** Digesting `runner` binds a box permanently
+   to its runner name and forecloses migrating a box between runners without
+   export and re-create. Recommended anyway: identity over convenience, and
+   export/re-create *is* the migration story this product believes in.
+
+   **Answered, 2026-08-16, by dissolving the premise.** The digest never
+   holds the name; it holds `runner_id`, the hash of the pinned host key
+   (R6). That keeps the binding (to the machine, which is what the digest
+   was reaching for) and drops the false one (to a label anyone can
+   re-point at different hardware). The migration answer is unchanged:
+   export and re-create.
+3. **R13.4's scope valve.** The tree-source refactor is the only invasive
+   change; if it fights back, the MVP ships export-only (the detached-box
+   posture) and apply lands behind the refactor later. Nothing upstream of
+   R13.4 depends on which way this goes.
+
+   **Answered, 2026-08-17: never needed.** The refactor was predicated on
+   this side having to build a tree from a worktree it does not have. It
+   does not have to: the worker commits, and what arrives is a tree. So the
+   work was the quarantine and the scans, `mediated_commit` was left alone,
+   and apply landed with the rest. The valve was never pulled because there
+   was nothing to valve.
+
+---
+
+## D14. The order
+
+1. **D14.1 — The crate skeleton.** `crates/h5i-bpf`: probe, event model,
+   rules and evidence types, all pure Rust, compiling on every target in the
+   release matrix. No aya yet. *Exit: `cargo clippy --workspace --all-targets`
+   green on Linux and Darwin; the rules engine unit-tested against synthetic
+   event streams.*
+2. **D14.2 — The probe.** `bpf/h5i_detect.bpf.c` plus the build script that
+   compiles it when `clang` can target BPF, stubs it when it cannot, and hard
+   fails under `H5I_BPF_REQUIRE=1`. *Exit: the object builds on this host and
+   `bpftool`-less verification that its sections and maps are what the loader
+   expects.*
+3. **D14.3 — The loader.** aya session: load, verify tracepoint formats, program
+   the scope, attach, read the ring buffer, stop and account. Linux only, and
+   behind `h5i-bpf/load`, which is **off by default like every other switch in
+   this lane** — see D11 on why the crate default is the one that is easiest to
+   get wrong. The dedicated CI job is what asks for it, and therefore what lints
+   and tests it. *Exit: `detect probe` reports the host truthfully — including
+   "missing CAP_BPF" on an unprivileged one — and the live attach test passes as
+   root.*
+4. **D14.4 — The run seam.** Wire the session around `sandbox::run_with_env`
+   in `env run` and `env shell`, resolve the scope per tier, and put the block
+   in the receipt. *Exit: a run under a `detect`-enabled profile carries a
+   `runtime` block; a run on a host without the capability carries the block
+   with its reason; `require = true` refuses.*
+5. **D14.5 — The surfaces.** Policy parsing, `h5i box detect` verbs, the
+   console row, the export report, `box status`, `box capabilities`, MANUAL,
+   SECURITY, and the generated manuals regenerated. *Exit: the docs job is
+   green, which is the only way the CLI and the manual can agree.*
+
+### D14.6. What was demonstrated, and what was not
+
+All five steps are built, 2026-08-19. Stated precisely, because "built" and
+"demonstrated" are not the same word:
+
+**Demonstrated.**
+
+- The probe compiles with `clang -target bpf -O2 -g -Wall -Werror` and produces
+  the seventeen tracepoint programs, the five maps, the `license` section and
+  `.BTF`. `tests/detect_integration.rs` builds it under `H5I_BPF_REQUIRE=1`,
+  which is the setting that turns "no clang" into a build failure.
+- The wire contract is held from both ends: a compile-time size assertion on
+  the Rust struct, a magic-and-version check on every record, and a test that
+  parses the C header and compares every constant and every event-kind number
+  against the Rust enum. A third test parses the probe source and fails if it
+  declares a tracepoint program the loader's attach table does not name.
+- The rules engine is tested against synthetic event streams — every rule
+  fires, and a table-driven test fails if a rule is listed in the catalogue and
+  unreachable from `observe`. Both directions of each judgement call are
+  covered: a LAN address *is* egress, loopback is not, the proxy's own endpoint
+  is not, a granted `unix_sockets` profile is not reported for using them, a
+  box reading *its own* `/proc/<pid>/environ` is not reported.
+- The end-to-end wiring is tested on a host with **no** `CAP_BPF`, which is the
+  common case and the one most likely to be got wrong: a profile that did not
+  ask carries no block, a profile that asked carries a block with the reason,
+  `require = true` refuses the run and names the setting, a misspelled rule id
+  surfaces in the receipt, and enabling detection changes the pinned policy
+  digest.
+
+**Not demonstrated.** The attach itself. Loading a program and binding it to a
+tracepoint needs `CAP_BPF` and `CAP_PERFMON`, which this machine's h5i does not
+have and which `cargo test` should not acquire. That path lives in
+`crates/h5i-bpf/tests/live_attach.rs`, behind `H5I_BPF_LIVE=1`, and it skips
+*loudly* — printing the reason — rather than passing quietly. Until somebody
+runs it on a host with the capability, the honest claim is: the probe compiles,
+the loader is written against a pinned aya, the verifier has not seen it.
+
+Two specific things that first run is checking, both stated so a failure is
+diagnosable rather than surprising:
+
+1. **The verifier's opinion of the `openat` program**, which is the big one at
+   roughly ten thousand instructions after the prefix loop and the `/.env` scan
+   are unrolled. Well inside the one-million limit, and the largest unverified
+   thing here.
+2. **The tracepoint field offsets**, which the loader checks against
+   `/sys/kernel/tracing/events/.../format` when that file is readable. It
+   usually is not (tracefs is root-only), in which case the documented layout
+   is used and the check is skipped — never silently, the probe report says
+   `tracefs = no` and what that costs.
+
+---
+
+---
+
+# The remote runner: the adversarial review, 2026-08-17
+
+The round-by-round record. `ROADMAP.md` R12b keeps the four rules that
+came out of it and now govern the code.
+
+## R12b. What an adversarial review of the built code found
+
+Eighteen rounds against the branch, 2026-08-17, with the threat model the rest
+of this part states: **the runner may be compromised**, so the interesting
+direction is runner to host. Thirty-seven findings, all fixed. The two that
+mattered most were things the design had reasoned about correctly and the code
+had not implemented that way.
+
+**A box could execute on the runner host.** The export staged a box's work by
+running `git add` inside the box's own repository, and git executes
+`core.fsmonitor` and `filter.<name>.clean` out of repository config, which the
+box owns because its workspace is bind-mounted rw. `core.hooksPath=/dev/null`
+covers neither. Any box with a shell could run a command as the runner user. The
+fix is not another flag: it is not invoking the CLI in a tree whose
+configuration is hostile.
+
+**A refspec is not a limit on what a fetch writes.** git follows tags by
+default, so a crafted bundle put an attacker-named `refs/tags/*` and a
+runner-authored tag object into the host repository, on the success path, past
+every check the quarantine performs. R9's sentence about the host only ever
+containing commits it authored was false for tags. `--no-tags` and
+`--no-write-fetch-head` close it.
+
+Three more were gaps between what a section said and what the code did. The
+capability gate validated the tier a request *declared* while `run_with_env`
+dispatches on the tier its *policy* carries, so a box could be recorded as
+`container` and run every command unconfined. R12's refusal of
+credential-bearing profiles was written down and never implemented: values never
+crossed, but the runner resolves grant descriptors against its own environment,
+so a box could be handed the runner's credential. And the SSH argv's claim not
+to depend on `~/.ssh/config` was false, with no `-F` and `GlobalKnownHostsFile`
+unpinned, so a hostile config redirected every RPC to another machine with the
+pin apparently intact. That breaks the attestation, not merely the transport,
+because `runner_id` is what a manifest records.
+
+Several of the fixes were themselves wrong, which is the part worth
+generalising. Two were caught by the tests they broke. Three survived until a
+round was spent reviewing the *fixes* rather than the code, and one was the
+second-worst finding of the review:
+
+- **The move to libgit2 was half a fix.** It closed the half of the
+  hostile-config class that *executes* commands and left the half that
+  *redirects*. libgit2 honours `core.worktree`, so a box could point the
+  export's staging at any path the runner user can read and have another box's
+  workspace packed into its own bundle; and a `.git` file carrying a `gitdir:`
+  pointer makes the export commit into a different repository. "This library
+  does not run commands" answers a smaller question than "this library does not
+  act on hostile configuration".
+- **One fix's commit message described work its diff never did.** The
+  `authorized_keys` check was claimed to match whole lines and did not, and the
+  branch that claimed to refuse was unreachable. A false claim in a commit
+  message is worse than the bug, because it is what the next reader trusts.
+- **One fix reverted an older one.** Setting `service_digest` to `None` for a
+  runner box re-armed a legacy-env sentinel a previous security fix had closed,
+  under a comment still asserting the invariant held.
+
+That is the argument for the fuzz harnesses this round added over the codec and
+the worker's state machine, and for spending a round on the fixes rather than
+only on the code. Reviewing a patch is not the same activity as reviewing a
+system, and the second does not subsume the first.
+
+
+---
+
+# Related work, read in full
+
+The surveys behind `ROADMAP.md` R2 and D3. The decisions they produced live
+there; this is what was read.
+
+## The remote runner: E2B and bhatti
+
+From **E2B**, the exec stream's discipline: a mandatory first frame
+acknowledging the spawn, separate from output; input, resize and signals as
+separate calls addressed by process id; keepalive cadence declared by the client
+and echoed as frames; capability gating against named version constants, so the
+constants file doubles as the protocol changelog. Refused: the entire plane.
+Control-plane REST, envd-in-guest HTTP, tokens minted at create and
+Connect-over-HTTP framing all exist because E2B's client and sandbox meet across
+the public internet. Ours meet across an SSH session we already authenticated.
+
+From **bhatti**, the frame protocol nearly verbatim (R5); file transfer reusing
+the same stdio frames rather than a second mechanism; create errors carrying the
+tail of the far-side log; a server-side default and maximum on every exec
+timeout; and the shutdown posture that prefers an un-reaped live box to an
+unrecoverable dead one. Refused: the resident daemon, the bearer-token listener,
+the WebSocket TTY relay, the quota machinery, the thermal state machine.
+
+One bhatti finding is load-bearing: it moved its internal API off loopback TCP
+onto a unix socket after a sandbox reached the daemon's loopback listener. The
+forced command over SSH stdio is the end of that trajectory: **no listener
+anywhere, of any kind, ever.**
+
+## The detection lane: Tracee and Tetragon
+
+Both solve this at a scale h5i does not have.
+
+From **Tracee**: the split between a **collector** that knows only events and a
+**signature layer** that knows only semantics, so rules never touch a ring
+buffer and the collector never learns what a credential file is; the insistence
+that a dropped event is reported rather than smoothed over, which is why
+`events_lost` sits next to `events_seen`; and argument capture at `sys_enter`
+with an explicit bounded string budget. Refused: the event catalogue, since
+hundreds of instrumented events need CO-RE plus a full BTF toolchain and a
+detector that costs a second toolchain is a detector nobody builds; and the
+daemon, since h5i has none by design and the unit of observation here is a run,
+not a host.
+
+From **Tetragon**, one idea and one warning. The idea is
+**process-lineage-as-first-class**: the tree is maintained in the kernel rather
+than reconstructed by racing `/proc`, which is exactly D6's scope mechanism,
+because by the time userspace reads `/proc/<pid>` a short-lived `postinstall`
+is gone. The warning is enforcement: Tetragon can kill from a hook, and h5i does
+not take that (D12). A detector that sometimes blocks is a policy layer with
+unclear semantics, and h5i already has one with clear semantics.
+

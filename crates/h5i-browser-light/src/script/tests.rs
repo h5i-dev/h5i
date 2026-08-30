@@ -238,7 +238,7 @@ fn a_timer_landing_next_to_the_budget_does_not_abort_the_engine() {
 // WPT. The number moved without the engine moving.
 //
 // So the suite keeps the *behaviours*, hermetically, and `wpt/` stays a local
-// instrument for finding new ones. See ROADMAP.md §B12.9.
+// instrument for finding new ones. See roadmap-history.md §B12.9.
 
 #[test]
 fn the_document_lifecycle_fires() {
@@ -1432,7 +1432,7 @@ fn api_server() -> (u16, std::thread::JoinHandle<()>) {
 
 #[test]
 fn a_click_runs_script_that_fetches_and_the_agent_sees_the_result() {
-    // The vertical slice ROADMAP §12.4 is built around: an agent clicks, page
+    // The vertical slice roadmap-history.md §12.4 is built around: an agent clicks, page
     // script runs, its request goes through the broker and is receipted, the
     // DOM changes, and the change is in the outline the agent reads.
     let (port, server) = api_server();
@@ -1543,7 +1543,7 @@ fn an_external_script_is_fetched_through_the_broker_before_it_runs() {
 
 #[test]
 fn script_is_off_unless_it_is_asked_for() {
-    // The gate ROADMAP §12.5 asks for: a page whose script would change it is
+    // The gate roadmap-history.md §12.5 asks for: a page whose script would change it is
     // left alone, and the outline shows what the server actually sent.
     let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
     let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));

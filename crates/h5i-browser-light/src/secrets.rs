@@ -1,15 +1,5 @@
 //! Credentials the agent can use and cannot read.
 //!
-//! A session that has to log in has a problem: the password has to reach the
-//! page, and everything that reaches the page reaches the agent driving it. The
-//! engine's existing answer is LOGIN mode, which hands the page to a human and
-//! refuses the agent's reads — and which is honest about its limit, because it
-//! does not withhold *frames*, and the viewer socket is inside the box where
-//! there is no privilege boundary.
-//!
-//! This is the other answer, and it has no such hole, because there is no
-//! moment when the secret is on screen or in a reply.
-//!
 //! ```text
 //! $ H5I_SECRET_ACME_PASSWORD=hunter2 h5i browser open https://acme.test/
 //! $ h5i browser env
@@ -18,32 +8,21 @@
 //! {"ok":true,"ref":"@e2","used":["H5I_SECRET_ACME_PASSWORD"]}
 //! ```
 //!
-//! The model names a credential, the engine resolves it on the way to the
-//! field, and the reply echoes the **placeholder**. The value never enters the
-//! model's context, so it cannot be repeated back, summarised, logged, or
-//! carried into whatever the agent does next.
+//! The model names a credential, the engine resolves it on the way to the field,
+//! and the reply echoes the **placeholder**. The value never enters the model's
+//! context, so it cannot be repeated back, logged, or carried onward. LOGIN mode
+//! is the other answer and has a hole this does not: it withholds the agent's
+//! reads but not the *frames*, and the viewer socket is inside the box.
 //!
-//! ## The namespace, and why it is narrower than it could be
+//! Only `H5I_SECRET_*` is reachable. The whole `H5I_*` namespace would also
+//! carry engine configuration (`H5I_EGRESS_PROXY`, `H5I_BROWSER_RECEIPTS`), and
+//! a page-bound `type` putting the receipts path into a form is disclosure with
+//! no upside. A denylist would work until somebody added a variable; a prefix
+//! allowlist fails closed.
 //!
-//! Only `H5I_SECRET_*` is reachable. The obvious design is the whole `H5I_*`
-//! namespace, which is what the scheme this borrows from does with its own
-//! prefix — but h5i already uses `H5I_*` for engine configuration:
-//! `H5I_EGRESS_PROXY`, `H5I_BROWSER_RECEIPTS`, `H5I_ENV_ID`. Making those
-//! substitutable would let a page-bound `type` put the receipts path or the
-//! proxy address into a form, which is a disclosure with no upside.
-//!
-//! A denylist of the variables this binary happens to read today would work
-//! until somebody added one. A prefix allowlist fails closed instead: a new
-//! engine variable is invisible here by default, and a new credential has to be
-//! named deliberately.
-//!
-//! ## Reverse substitution
-//!
-//! Anything written back out — a recorded action, an error, a reply — goes
-//! through [`Secrets::redact`], which puts the placeholder back where a value
-//! appears. It iterates **longest value first**, because with two secrets where
-//! one is a substring of the other, replacing the shorter one first leaves the
-//! tail of the longer one in the clear.
+//! Anything written back out goes through [`Secrets::redact`], which iterates
+//! **longest value first**: with one secret a substring of another, replacing
+//! the shorter first leaves the longer one's tail in the clear.
 
 use std::collections::BTreeMap;
 

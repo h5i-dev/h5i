@@ -1,42 +1,29 @@
-//! Pixels, from the box to the console (ROADMAP M11a).
+//! Pixels, from the box to the console (roadmap-history.md M11a).
 //!
-//! The evidence panes answer *what did the agent do*; this answers *what did
-//! the page look like while it did it*. Both belong on one screen, which is the
-//! whole thesis of the browser terminal.
+//! The evidence panes answer *what did the agent do*; this answers *what did the
+//! page look like while it did it*.
 //!
-//! # Why this does not make the console a remote control
+//! **This does not make the console a remote control.** `h5i ui`'s guarantee is
+//! that every route is a `GET` ([`crate::server`]), and the relay does not spend
+//! it, being one-directional by construction: the console connects out into the
+//! box and reads, so nothing new listens and the box gains no reachability. The
+//! only upstream messages are `config` and `ack`, the pacing the stream server
+//! needs, and no code path runs from an HTTP request to a message on this
+//! socket. Typing still goes through [`crate::view`]'s forward with its own
+//! per-box token and the control lock. Takeover has one door, and it is not this
+//! one.
 //!
-//! `h5i ui`'s guarantee is structural rather than careful: **every route is a
-//! `GET`**, so there is no mutating handler to protect and no CSRF story to get
-//! right ([`crate::server`]). Carrying frames must not spend that, and it does
-//! not, because the relay is one-directional by construction:
+//! **A frame is box-claimed.** It is the box's rendering of its own page,
+//! arriving as pixels the box chose, so the console shows what the box reports
+//! and the reader decides what that is worth. Nothing derived from a frame
+//! reaches the trusted status row.
 //!
-//! * The console **connects out** into the box and reads. Nothing new listens,
-//!   and the box gains no reachability it did not have.
-//! * The only messages this ever sends upstream are `config` and `ack` — the
-//!   pacing the stream server needs before it will send anything at all. There
-//!   is no code path from an HTTP request to a message on this socket, so a
-//!   page cannot steer the box through the console even if it wanted to.
-//! * Typing into a page still goes through [`crate::view`]'s forward, which has
-//!   its own per-box token and enforces the control lock on the input
-//!   direction. Takeover has one door, and it is not this one.
-//!
-//! # What a frame is worth as evidence
-//!
-//! **Box-claimed.** A frame is the box's rendering of its own page, and it
-//! arrives as compressed pixels the box chose. That is worth saying next to it
-//! for the same reason the request rows say it: the console shows what the box
-//! reports, and the reader decides what that is worth. It is also why nothing
-//! derived from a frame reaches the trusted status row.
-//!
-//! # The engine caveat, which is not this module's to fix
-//!
-//! `h5i-browser-light` has no resident session: each `open` renders its own
-//! page and exits. So a live view served by that engine shows the page *it* was
-//! started on, which is not necessarily the one the agent is driving. Chromium
-//! is the opposite — agent-browser is one daemon owning one session, so its
-//! frames really are the agent's page. The console reports which case it is in
-//! rather than letting a picture imply the stronger one.
+//! One caveat this module cannot fix: `h5i-browser-light` has no resident
+//! session, so a live view served by it shows the page *it* was started on
+//! rather than the one the agent is driving. Chromium's agent-browser is one
+//! daemon owning one session, so its frames really are the agent's page. The
+//! console reports which case it is in rather than letting a picture imply the
+//! stronger one.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};

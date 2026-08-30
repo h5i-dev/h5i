@@ -11,20 +11,18 @@
 //!   receipts/     the raw payload of each ingress session, by record id
 //! ```
 //!
-//! `receipts/` exists because the bundle has to stand alone. `receipt.json`
-//! names a payload by `raw_oid`, a content address into the *box's* own store,
-//! which a reviewer holding only this directory cannot resolve — so the "full
-//! account of who connected" the share section promised them was a digest.
+//! `receipts/` exists because the bundle has to stand alone: `receipt.json`
+//! names a payload by `raw_oid`, a content address into the *box's* store, which
+//! a reviewer holding only this directory cannot resolve.
 //!
-//! The patch is produced by the same mediated commit that `propose` runs, so
-//! the `$WORK` allowlist invariants (no symlink escape, no nested `.git`, no
-//! agent-introduced gitlink) hold for anything that reaches this directory.
+//! The patch comes from the same mediated commit `propose` runs, so the `$WORK`
+//! allowlist invariants (no symlink escape, no nested `.git`, no agent-introduced
+//! gitlink) hold for anything reaching this directory.
 //!
-//! `report.md` carries a **What the browser saw** section built from the
-//! per-run browser evidence ([`crate::browser`]) rather than from the agent's
-//! account of its own testing — the case it exists for is a report that says
-//! "verified in the browser" over a page that threw an uncaught exception.
-//! Screenshots join the bundle with the viewer (roadmap M5).
+//! `report.md` builds its **What the browser saw** section from per-run browser
+//! evidence ([`crate::browser`]) rather than the agent's account of its own
+//! testing, for the case where a report says "verified in the browser" over a
+//! page that threw an uncaught exception.
 
 use git2::Repository;
 use serde::Serialize;

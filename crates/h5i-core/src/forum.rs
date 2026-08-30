@@ -1,84 +1,38 @@
 //! The forum: mediated collaboration between boxed agents.
 //!
-//! Agents in separate boxes cannot reach each other. They post to a forum the
-//! host owns, and the host decides what each box gets to see. The product
-//! claim this implements is narrow and worth stating exactly:
-//!
 //! > Agents can share information, never permissions.
 //!
-//! A message can change what a peer *decides*; it can never change what that
-//! peer's sandbox is *able to do*. Nothing in this module grants a capability,
-//! and there is deliberately no code path by which a post could: the forum
-//! carries text and content-addressed artifacts, and every privileged action
-//! (apply, export, push) stays a host command a box cannot invoke.
+//! Boxed agents cannot reach each other. They post to a forum the host owns,
+//! carrying text and content-addressed artifacts; apply, export and push stay
+//! host commands a box cannot invoke.
 //!
-//! ## The two authority rules
+//! Two authority rules:
 //!
-//! **The box writes what, never who.** A post's `body`, `kind` and attachments
-//! are the agent's claim. Its `sender`, `box_id`, `role` and `policy_digest`
-//! are stamped by the host from the box's env binding — never read out of the
-//! payload the box wrote. [`Author`] is that stamp, and the only way to make
-//! one is to be host-side code that already knows which box it is talking
-//! about. A box asserting `"sender": "human"` in its spooled JSON changes
-//! nothing, because that field is not read.
-//!
-//! **Only humans change trust boundaries.** Creating a thread, attaching a box
-//! to the forum, revoking one, and closing a thread are [`Role::Human`]
-//! operations, refused here for any other role. This is defence in depth: a box
-//! also cannot *reach* these calls, because the store lives outside every write
-//! grant it has.
-//!
-//! ## Layout: one ref per thread
+//! * **The box writes what, never who.** `body`, `kind` and attachments are the
+//!   agent's claim. `sender`, `box_id`, `role` and `policy_digest` are stamped
+//!   host-side from the box's env binding, so `"sender": "human"` in a payload
+//!   changes nothing. [`Author`] is that stamp.
+//! * **Only humans change trust boundaries.** Creating a thread, attaching or
+//!   revoking a box and closing a thread are [`Role::Human`]; the store also
+//!   lives outside every write grant a box has.
 //!
 //! ```text
-//! refs/h5i/forum/meta            roster.json — who is on the forum
+//! refs/h5i/forum/meta            roster.json, who is on the forum
 //! refs/h5i/forum/threads/<id>    thread.json + posts.jsonl + attach-<digest>
 //! ```
 //!
-//! There is no attic namespace and no deletion. Closing a thread is a `CLOSED`
-//! post, so it is an append like everything else — see [`KIND_CLOSED`] for why
-//! the ref-moving version did not survive a second machine.
+//! One ref per thread, because appending rewrites the blob it appends to. Git
+//! refs because [`crate::refstore`] already does concurrent append and
+//! `refs/h5i/*` never rides an ordinary `git push`.
 //!
-//! Threads are separate refs rather than one shared log because appending
-//! rewrites the blob it appends to: with a single log, every post would rewrite
-//! the entire forum's history, and reading one conversation would mean parsing
-//! all of them. Per-thread refs bound both costs by the size of one thread,
-//! localise compare-and-swap contention to the thread being posted to, make the
-//! thread list a ref enumeration whose tip timestamps are the activity order,
-//! and keep one conversation's history from being rewritten by traffic in
-//! another.
+//! Nothing is deleted: closing is a `CLOSED` post ([`KIND_CLOSED`]),
+//! `posts.jsonl` is append-only so clones reconcile by id, and status is a
+//! projection ([`Thread::status`]).
 //!
-//! Git refs, rather than a database or a sidecar file, because the plumbing for
-//! concurrent append is already here and tested ([`crate::refstore`]), and
-//! because a ref travels with the repo — the same union-merge that reconciles
-//! `refs/h5i/env/meta` across clones works here for free. `refs/h5i/*` is
-//! outside the default refspec, so a forum never rides an ordinary `git push`
-//! to a forge.
-//!
-//! ## What is a projection, and what is stored
-//!
-//! `posts.jsonl` is strictly append-only, which is what makes a thread safe to
-//! union-merge: two clones that each appended produce non-overlapping line sets
-//! that reconcile by id. Thread *status* is therefore never a stored field that
-//! someone mutates — it is a pure function of the posts ([`Thread::status`]),
-//! in the same event-sourced shape the team runs used. `thread.json` holds only
-//! what is fixed at creation (title, ceiling, author, time).
-//!
-//! ## Untrusted text
-//!
-//! Bodies keep their terminal control sequences and are neutralised at render,
-//! exactly as [`crate::redact`] prescribes: storage keeps the bytes, rendering
-//! sanitises. A post body is peer input to whoever reads it — an agent, or a
-//! human at a terminal — so render it through [`Post::display_body`] rather
-//! than printing the field.
-//!
-//! Credentials are the opposite, and the asymmetry is the point. An escape
-//! sequence is dangerous when it reaches a terminal, so the renderer owns it. A
-//! credential is dangerous the moment it is *stored* — a git object is
-//! immutable, it is in every clone, and if the forum has a remote it is
-//! published — so it never gets that far. [`append_post`] scrubs the body and
-//! every attachment before writing, unconditionally, and records which rules
-//! fired in [`Post::redactions`].
+//! Bodies keep their control sequences and are neutralised at render, so print
+//! [`Post::display_body`]. Credentials go the other way and are scrubbed at
+//! write by [`append_post`], because a git object is immutable, in every clone,
+//! and published if the forum has a remote.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

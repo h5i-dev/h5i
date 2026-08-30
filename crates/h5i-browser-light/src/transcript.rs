@@ -1,42 +1,26 @@
 //! What a page's media *says*, when the page has written it down.
 //!
-//! A `<video>` or an `<audio>` is a hole in every reading this engine
-//! produces. The outline names it, the markdown skips it, and the screenshot
-//! paints a box — so a page whose substance is a forty-minute talk reads as a
-//! title and a play button, and an agent that summarised it would be
-//! summarising the chrome around the content.
+//! A `<video>` is a hole in every reading this engine produces, so a page whose
+//! substance is a forty-minute talk reads as a title and a play button. Most of
+//! the time the content is already there in text: HTML has carried
+//! `<track kind="captions">` since 2010, and a caption file is prose with
+//! timestamps, which is the shape a model reads well. So this verb decodes
+//! nothing. It finds the tracks the page declared, fetches them through the
+//! broker like any other subresource, and parses the cues out.
 //!
-//! Most of the time the content is already there in text. HTML has carried
-//! `<track kind="captions">` since 2010, every player that wants to be
-//! accessible ships one, and a caption file is prose with timestamps: exactly
-//! the shape a model reads well and nothing like the shape audio is in. So
-//! this verb does not decode anything. It finds the tracks the page declared,
-//! fetches them through the broker like any other subresource, and parses the
-//! cues out.
+//! **This is not audio support.** [`crate::Capabilities::video`] stays `false`:
+//! no decoder, no media element that plays, no `MediaSource`, and ROADMAP's "no
+//! GStreamer, no PulseAudio" is not reopened. A text fetch over a URL the
+//! document named moves no capability, so this needs no `--script` and no grant.
 //!
-//! # Why this is not "audio support"
+//! What changes is that "this page has media" stops being the end of the answer.
+//! A media element with no track is reported as one, with its source URL,
+//! because that routes a caller somewhere else while silence reads as "no media"
+//! and is simply wrong.
 //!
-//! It is deliberately not, and the distinction is worth keeping sharp because
-//! the two get conflated. [`crate::Capabilities::video`] is `false` and stays
-//! false: there is no decoder here, no media element that plays, no
-//! `MediaSource`, and ROADMAP's "no GStreamer, no PulseAudio" is not being
-//! reopened. This is a text fetch over a URL the document named. The engine's
-//! capability surface does not move, which is why this needs no `--script` and
-//! no new grant.
-//!
-//! What it *does* change is that "this page has media" stops being the end of
-//! the answer. A media element with no track is reported as one, with its
-//! source URL, because "there is a video here and it ships no captions" is the
-//! fact that routes a caller somewhere else — and silence there reads as "no
-//! media", which is a different and wrong answer.
-//!
-//! # The fence applies, as everywhere
-//!
-//! A caption file is a stranger's bytes fetched over a URL a stranger's page
-//! chose, and it lands in front of a model deciding what to do next. It is
-//! [`collapse`]d per cue like every other page-derived value, so no cue can
-//! span a line and no cue can forge the closing fence. That the text arrived
-//! as a subtitle rather than as a heading buys it no more trust.
+//! The fence applies: a caption file is a stranger's bytes landing in front of a
+//! model, so it is [`collapse`]d per cue. Arriving as a subtitle rather than a
+//! heading buys it no more trust.
 
 use blitz_dom::{BaseDocument, Node};
 use serde::{Deserialize, Serialize};

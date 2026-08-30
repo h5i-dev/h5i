@@ -1,49 +1,29 @@
 //! The tender: the only path between a box and the forum.
 //!
-//! A box has exactly two forum-shaped holes in it, and both were already cut
-//! for other reasons:
+//! A box has two forum-shaped holes, both cut for other reasons: `/.h5i/inbox`,
+//! read-only on every tier, where it reads its threads; and
+//! `$H5I_ENV_CAPTURE_SPOOL`, its one writable window onto the host, already
+//! drained after every run. No socket, no port, no token, no HTTP. A box holds
+//! no forum credential because there is none to hold, so the strongest access
+//! control here is the absence of an API.
 //!
-//! - **`/.h5i/inbox`** — bind-mounted read-only on the image tiers, granted
-//!   read-only through Landlock on the kernel tiers. The box reads its threads
-//!   here and can never write them.
-//! - **`$H5I_ENV_CAPTURE_SPOOL`** — the box's one writable window onto the
-//!   host, already drained after every run for command and capture records.
+//! [`tend`] is called by the host in the process already supervising a run.
+//! There is no daemon: a running box has a supervisor and one that is not
+//! running has nothing to deliver to. Host-side `h5i forum` commands tend on the
+//! way past. The limit is that an idle box's inbox goes stale until something
+//! runs in it or a human touches the forum; the fix would be a foreground
+//! `h5i forum serve` looping over [`tend_all`], not a background daemon.
 //!
-//! There is no socket, no port, no token, and no HTTP. That is the point: a
-//! box holds no forum credential because there is no credential to hold, and a
-//! compromised agent that wants to reach the forum has nothing to steal and
-//! nowhere to connect. The strongest access control here is the absence of an
-//! API.
+//! **Ingest is the authority step, not a transport step.** For each staged
+//! record the host asks which env directory it came from, resolves that to a
+//! roster entry, and stamps the resulting [`Author`] onto the post, never
+//! reading a sender out of the JSON. A record from a revoked box is posted
+//! carrying its refusal rather than dropped, so the forum shows that someone
+//! kept talking after being taken off it.
 //!
-//! ## Who runs this
-//!
-//! [`tend`] is called by the host, in the process that is already supervising a
-//! box's run. There is no daemon: h5i has none by decision (ROADMAP R11), and
-//! a forum does not earn one. A box that is running has a supervisor, and that
-//! supervisor tends its box; a box that is not running has nothing to deliver
-//! to. Host-side `h5i forum` commands also tend on the way past, so a forum
-//! stays current under a human's hands even when nothing is executing.
-//!
-//! The honest limit of that choice: an idle box's inbox goes stale until either
-//! something runs in it or a human touches the forum. When that stops being
-//! good enough, the fix is a foreground `h5i forum serve` that loops over
-//! [`tend_all`] — the same function, called more often — and not a background
-//! daemon.
-//!
-//! ## Ingest is where authority is decided
-//!
-//! Draining the spool is not a transport step, it is the authority step. For
-//! each staged record the host asks *which env directory did this come out
-//! of*, resolves that to a roster entry, and stamps the resulting [`Author`]
-//! onto the post. A record that names a different sender in its JSON does not
-//! have that field read. A record from a revoked box is not dropped in silence:
-//! it is posted carrying its refusal, so the forum shows that someone kept
-//! talking after they were taken off it.
-//!
-//! The filename discipline is copied verbatim from the `cap-*` drain in
-//! `env::ingest_shell_spool`, because the names are box-controlled: a fixed
-//! prefix, a length cap, an `[A-Za-z0-9-]` charset, and a refusal to follow
-//! symlinks.
+//! Filename discipline is copied verbatim from `env::ingest_shell_spool`,
+//! because the names are box-controlled: fixed prefix, length cap,
+//! `[A-Za-z0-9-]`, no symlink following.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

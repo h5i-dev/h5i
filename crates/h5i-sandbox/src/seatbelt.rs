@@ -1,35 +1,18 @@
 //! macOS confinement: the **Seatbelt** backend for the `process` and
-//! `supervised` isolation tiers (the counterpart of the Linux
-//! Landlock/seccomp/namespace stack in [`crate::sandbox`]).
+//! `supervised` tiers, counterpart to the Linux stack in [`crate::sandbox`].
 //!
-//! # Why a separate mechanism, and what it does and does not claim
-//!
-//! macOS has none of the primitives the Linux tiers are built on: no Landlock,
-//! no seccomp (so no syscall deny-list and no user-notification supervisor), no
-//! user/PID/mount namespaces, no cgroups v2, no nftables. What it does have is
-//! **Seatbelt** (the TrustedBSD MAC policy behind the App Sandbox), driven by an
-//! SBPL profile. Seatbelt is *default-deny over every operation class at once* —
-//! filesystem, network, mach, sysctl, process — and, unlike Landlock, it can
-//! **subtract**: a `(deny …)` rule after an `(allow …)` genuinely removes access.
-//!
-//! Be precise about what that subtraction buys, because it is easy to overstate.
-//! It does **not** make `fs.deny` more powerful here: `validate_profile` already
-//! refuses, on every platform, any policy whose granted parent contains a denied
-//! child, so a surviving `fs.deny` entry sits outside every grant and
-//! `(deny default)` covers it regardless. The rules this module emits for it are
-//! defence in depth, not a new capability. Where subtraction genuinely earns its
-//! keep is the **agent-config lockdown**: `$WORK` is granted read-write and
-//! `$WORK/.claude` must still be unwritable. Landlock cannot express that at all,
-//! which is why the Linux path needs a bind plus a remount-ro inside a private
-//! mount namespace to get it; here it is one rule.
-//!
-//! So the mapping is not one-to-one, and this module never pretends it is:
+//! macOS has no Landlock, seccomp, namespaces, cgroups or nftables. It has
+//! Seatbelt, default-deny over every operation class at once and able to
+//! **subtract**, which Landlock cannot. Subtraction earns its keep in one place,
+//! the agent-config lockdown: `$WORK` read-write with `$WORK/.claude` unwritable
+//! is one rule here and a bind plus remount-ro in a private mount namespace on
+//! Linux.
 //!
 //! | property                  | Linux                          | macOS (here)                                   |
 //! |---------------------------|--------------------------------|------------------------------------------------|
 //! | filesystem allowlist      | Landlock                       | SBPL `(deny default)` + `file-read*`/`file-write*` |
-//! | subtracting from a grant  | impossible (bind + remount-ro) | one `(deny …)` rule — last match wins           |
-//! | syscall deny-list         | seccomp-bpf                    | **absent** (no equivalent)                      |
+//! | subtracting from a grant  | impossible (bind + remount-ro) | one `(deny …)` rule, last match wins            |
+//! | syscall deny-list         | seccomp-bpf                    | **absent**                                      |
 //! | egress allowlist          | netns + nftables + slirp4netns | loopback-only + host allowlist proxy            |
 //! | net deny                  | empty network namespace        | `(deny network*)`                               |
 //! | pid isolation             | PID namespace + private procfs | partial: `(deny process-info*)` for non-self    |
@@ -37,31 +20,17 @@
 //! | memory cap                | cgroup `memory.max` + rlimit   | **not enforceable** (see [`RESOURCE_NOTE`])     |
 //! | cpu / fsize / nproc caps  | rlimits                        | rlimits (same)                                  |
 //!
-//! Everything in that right-hand column is reported honestly by [`probe`] and
-//! surfaced through `h5i box probe` / `env capabilities`, so a caller adapts to
-//! what the host really enforces rather than to a tier name.
+//! [`probe`] reports that right-hand column honestly, so a caller adapts to what
+//! the host enforces rather than to a tier name.
 //!
-//! # Why `sandbox-exec` and not `sandbox_init(3)`
+//! `sandbox-exec`, not `sandbox_init(3)`: the latter parses the profile, which
+//! allocates, and allocating in a forked child of a tokio process is the classic
+//! malloc-lock deadlock. `sandbox-exec` also `execvp`s in the same process, so
+//! the pid, the exit status and the process-group SIGKILL all still work. The
+//! profile goes by file, never argv, which `ps` publishes.
 //!
-//! `sandbox_init` would let us apply the profile in `pre_exec`, mirroring how
-//! Landlock is applied on Linux. We deliberately don't: `sandbox_init` parses
-//! the profile, which allocates, and h5i runs a multi-threaded (tokio) process —
-//! allocating in a forked child is the classic malloc-lock deadlock. The Linux
-//! path avoids allocation in `pre_exec` for exactly this reason and we hold the
-//! same line here. `/usr/bin/sandbox-exec` applies the profile and then
-//! `execvp`s the target **in the same process**, so the pid is preserved, the
-//! exit status is the workload's, and the process-group SIGKILL used by the
-//! wall-clock still reaps the tree.
-//!
-//! The profile is passed by **file** (`sandbox-exec -f`), never by argv: argv is
-//! world-readable via `ps`, and the profile names every path the box may touch.
-//!
-//! # Portability of this module
-//!
-//! The module compiles on every Unix target, not just macOS, so the profile
-//! generator and the plan translation are typechecked and unit-tested on Linux
-//! CI as well. Only [`probe`] is platform-aware, and it fails closed off macOS,
-//! so nothing here can be reached by accident on another host.
+//! The module compiles on every Unix so the generator and plan translation are
+//! tested on Linux CI; only [`probe`] is platform-aware, and it fails closed.
 
 // Compiled on all Unix targets so the pure logic is covered by the Linux test
 // job; the exec paths are only *called* from the macOS dispatch arms.

@@ -1,38 +1,29 @@
 //! h5i-bpf — runtime detection: a kernel-observed evidence lane.
 //!
-//! Every evidence lane h5i had before this one sits either at the **boundary**
-//! of a box (h5i as the parent process, the CONNECT proxy, the runner's
-//! authenticated channel) or **inside** it (the tee shim, the browser). Each
-//! is therefore defeated by the same two things: work that happens below the
-//! outermost command, and a box that declines to cooperate. This lane is
-//! neither at the boundary nor inside: the kernel reports `execve`, `connect`
-//! and `openat` whether or not anything in the box wanted them reported.
+//! Every other lane sits at the **boundary** of a box (h5i as parent, the
+//! CONNECT proxy, the runner's channel) or **inside** it (the tee shim, the
+//! browser), so both are defeated by work below the outermost command and by a
+//! box that declines to cooperate. This lane is neither: the kernel reports
+//! `execve`, `connect` and `openat` whether or not the box wanted them reported.
 //!
-//! The design, the alternatives that were refused, and the limits are
-//! ROADMAP.md sections D1 to D14. Three of them are worth repeating at the top
-//! of the code they govern:
+//! ROADMAP D1 to D14 carry the design and the limits. Three belong here:
 //!
 //! * **It cannot deny anything.** No `bpf_send_signal`, no
-//!   `bpf_override_return`, no LSM programs. Denial in h5i belongs to the
-//!   mechanisms that fail closed by construction, and a second thing that
-//!   sometimes blocks would blur a boundary that is currently sharp.
+//!   `bpf_override_return`, no LSM programs. Denial belongs to the mechanisms
+//!   that fail closed by construction, and a second thing that sometimes blocks
+//!   would blur a sharp boundary.
 //! * **It reads no kernel structure.** Syscall tracepoint arguments and stable
-//!   helpers only, so there is no CO-RE, no `vmlinux.h`, no BTF requirement,
-//!   and one object that loads on every kernel from 5.8 up.
-//! * **It never renders an absence as a clean result.** A run it could not
-//!   watch carries [`RuntimeEvidence::unavailable`] with the reason; a run it
-//!   watched incompletely carries [`Coverage::Partial`]; a run that dropped
-//!   events carries the count.
+//!   helpers only, so no CO-RE, no BTF, and one object that loads on every
+//!   kernel from 5.8 up.
+//! * **It never renders an absence as a clean result.** A run it could not watch
+//!   carries [`RuntimeEvidence::unavailable`] with the reason; an incomplete one
+//!   carries [`Coverage::Partial`]; a lossy one carries the drop count.
 //!
-//! ## Layout
-//!
-//! [`probe`] asks the host what it can do. [`event`] is the wire format and
-//! its decoder. [`rules`] is the signature engine — pure, and the only part
-//! that knows what a credential is. [`evidence`] is what lands in a receipt.
-//! [`scope`] decides which of the host's events belong to a box. `session`
-//! (Linux, `load` feature) is the only module that touches a kernel.
-//!
-//! ## Using it
+//! [`probe`] asks what the host can do, [`event`] is the wire format, [`rules`]
+//! is the pure signature engine and the only part that knows what a credential
+//! is, [`evidence`] is what lands in a receipt, [`scope`] decides which events
+//! belong to a box, and `session` (Linux, `load` feature) is the only module
+//! that touches a kernel.
 //!
 //! ```no_run
 //! use h5i_bpf::{DetectConfig, Watch, scope::Tier, rules::RuleContext};

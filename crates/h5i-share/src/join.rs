@@ -54,48 +54,42 @@ pub struct Joined {
 
 /// Bind this join's own address on the loopback interface.
 ///
-/// **The address is the isolation.** Cookies are scoped by *host* and ignore
-/// the port, so a proxy on `127.0.0.1:8899` shares one jar with every other
-/// HTTP service on this machine, and that goes wrong in both directions at
-/// once:
+/// **The address is the isolation.** Cookies are scoped by *host* and ignore the
+/// port, so a proxy on `127.0.0.1:8899` shares one jar with every other HTTP
+/// service on this machine, which goes wrong in both directions:
 ///
-/// * **Outward.** The cookie this proxy sets — `h5i_share_<port>=<token>` —
-///   is sent by the browser to *every* `127.0.0.1` service the joiner visits
-///   while joined. `HttpOnly` is no help: this is the server-side `Cookie`
-///   header. Any such service learns the port from the cookie's own name and
-///   the token from its value, and can then reach the remote box. The token is
-///   minted here precisely because every local process is outside the gate,
-///   and it was being handed to all of them.
+/// * **Outward.** The cookie this proxy sets, `h5i_share_<port>=<token>`, is
+///   sent by the browser to *every* `127.0.0.1` service the joiner visits while
+///   joined. `HttpOnly` is no help, this being the server-side `Cookie` header.
+///   Any such service reads the port from the cookie's name and the token from
+///   its value, and can then reach the remote box. The token is minted here
+///   precisely because every local process is outside the gate.
 ///
-/// * **Inward, which is worse.** Every cookie any *other* loopback service has
-///   set on `127.0.0.1` is sent here too, and forwarded upstream — so a
-///   `session=<secret>` belonging to the joiner's own local app arrives at
-///   agent-written code inside somebody else's box on its first request. The
-///   joiner is the person who did not choose that risk.
+/// * **Inward, which is worse.** Every cookie any *other* loopback service set
+///   on `127.0.0.1` is sent here and forwarded upstream, so a `session=<secret>`
+///   belonging to the joiner's own local app arrives at agent-written code
+///   inside somebody else's box on its first request. The joiner is the person
+///   who did not choose that risk.
 ///
 /// A different loopback address is a different cookie host, with no DNS, no
-/// `/etc/hosts`, and no browser-specific `*.localhost` handling involved:
-/// `127.0.0.0/8` is all loopback, so `127.x.y.z` is reachable from this
-/// machine and from nowhere else, and the browser keeps a jar for it that only
-/// this share has ever written to.
+/// `/etc/hosts` and no browser-specific `*.localhost` handling: `127.0.0.0/8` is
+/// all loopback, so `127.x.y.z` is reachable from this machine and nowhere else,
+/// and the browser keeps a jar for it only this share has written to.
 ///
-/// Linux routes the whole `/8` by default and this simply works. macOS
-/// configures only `127.0.0.1` on `lo0`, so the bind fails there and this falls
-/// back. What happens then is split in two, because the two leaks are not
-/// equally answerable:
+/// Linux routes the whole `/8` by default. macOS configures only `127.0.0.1` on
+/// `lo0`, so the bind fails and this falls back, and the two leaks are not
+/// equally answerable there:
 ///
 /// * The **inward** one is closed on the fallback, portably, by
-///   [`crate::gate::AppCookies`]: only cookies the box itself set go upstream,
-///   and the rest of the jar — which is to say the joiner's own credentials —
-///   stops here. It costs the box any cookie the app set from JavaScript.
+///   [`crate::gate::AppCookies`]: only cookies the box itself set go upstream
+///   and the joiner's own credentials stop here. It costs the box any cookie the
+///   app set from JavaScript.
 ///
-/// * The **outward** one has no fix that does not need a cookie host of our
-///   own, and macOS will not give one without `ifconfig lo0 alias` as root. So
-///   it is not fixed, it is *chosen*: the fallback is refused unless the joiner
-///   asked for it. Adding an alias to `lo0` is the way to get a private jar on
-///   macOS, and it is the joiner's own machine to decide about — but a CLI
-///   should not be asking for root, and a warning printed after the URL is not
-///   a decision by the person whose machine it is.
+/// * The **outward** one has no fix without a cookie host of our own, and macOS
+///   will not give one without `ifconfig lo0 alias` as root. So it is not fixed,
+///   it is *chosen*: the fallback is refused unless the joiner asked for it. A
+///   CLI should not be asking for root, and a warning printed after the URL is
+///   not a decision by the person whose machine it is.
 async fn bind_loopback(port: u16) -> Result<(tokio::net::TcpListener, bool), H5iError> {
     // Random, so a local process cannot find this share's jar by guessing.
     // `x.0.0` and `x.255.255` are avoided only to stay clear of anything that

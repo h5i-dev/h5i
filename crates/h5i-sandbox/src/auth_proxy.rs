@@ -1,41 +1,33 @@
-//! Host-side **credential-injecting** egress proxy ("option 2", see
-//! `docs/credential-proxy-design.md`). The keystone that lets an agent box
-//! authenticate to its provider API **without the long-lived token ever entering
-//! the box**.
+//! Host-side **credential-injecting** egress proxy (see
+//! `docs/credential-proxy-design.md`): what lets an agent box authenticate to
+//! its provider API without the long-lived token ever entering the box.
 //!
-//! The [`crate::container`] egress proxy tunnels TLS (`CONNECT`) and so can never
-//! inject an `Authorization`/`x-api-key` header — the bytes are end-to-end
-//! encrypted. This proxy instead *terminates* the box→proxy hop in cleartext on
-//! host loopback and re-originates a fresh TLS request upstream, injecting the
-//! real credential host-side. The agent is pointed at it with a base-URL override
-//! (`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`) and a **dummy** token; the genuine
-//! token lives only in this process's memory.
+//! The [`crate::container`] egress proxy tunnels TLS and so can never inject an
+//! `Authorization` header. This one terminates the box-to-proxy hop in cleartext
+//! on host loopback and re-originates a fresh TLS request upstream. The agent
+//! gets a base-URL override and a **dummy** token; the genuine one lives only in
+//! this process's memory.
 //!
-//! Security properties (all fail-closed):
-//! - **Token never in the box.** The box sees only the base URL + a per-run dummy.
-//!   The real credential is resolved from *h5i's own* host environment and handed
-//!   straight to the upstream request — never an env var, mount, or argv in the box.
-//! - **No SSRF.** The upstream origin is pinned to the runtime's single API host
-//!   ([`RuntimeProxy::upstream_host`]) and the box's own `Host` header is
-//!   discarded. Ignoring the authority is necessary but *not* sufficient, and the
-//!   difference is the subtle part: the request target is appended to that
-//!   origin, and a target that does not begin with `/` extends the authority
-//!   rather than the path (`@evil.example/v1` makes the pinned name mere
-//!   userinfo). So the target must be origin-form ([`is_origin_form`]) and the
-//!   assembled URL is re-parsed and required to resolve to the pinned origin
-//!   before a single byte is sent.
-//! - **DNS-rebinding resistant.** The upstream host is resolved+pinned once at
-//!   spawn (mirrors the egress proxy's `pin_dns`).
-//! - **Loopback + shared-secret gated.** The listener binds `127.0.0.1` (reachable
-//!   from the box via slirp `allow_host_loopback` at `10.0.2.2`). Because loopback
-//!   is also reachable by *other* host processes, the proxy injects the real
-//!   credential only for a request that presents the per-run dummy token — an
-//!   unguessable secret other host users don't hold. (The box is *allowed* to use
-//!   the proxy; other host users are not.)
+//! All fail-closed:
+//!
+//! - **Token never in the box.** The real credential is resolved from h5i's own
+//!   host environment and handed to the upstream request, never an env var,
+//!   mount or argv in the box.
+//! - **No SSRF.** The origin is pinned to [`RuntimeProxy::upstream_host`] and the
+//!   box's `Host` is discarded. Ignoring the authority is not sufficient: the
+//!   target is appended to that origin, and one not beginning with `/` extends
+//!   the *authority* rather than the path, so `@evil.example/v1` makes the
+//!   pinned name mere userinfo. The target must be origin-form
+//!   ([`is_origin_form`]), and the assembled URL is re-parsed and required to
+//!   resolve to the pinned origin before a byte is sent.
+//! - **DNS-rebinding resistant.** The host is resolved and pinned once at spawn.
+//! - **Loopback plus shared secret.** Other host processes can reach loopback
+//!   too, so the credential is injected only for a request presenting the
+//!   per-run dummy token.
 //! - **Never logs the token or bodies.** [`Credential`]'s `Debug` is redacted.
 //!
-//! The live forwarder uses `reqwest` (blocking + rustls) so TLS, chunked decoding,
-//! and streaming (SSE) are handled by a vetted client rather than hand-rolled.
+//! The forwarder uses `reqwest` (blocking + rustls) so TLS, chunked decoding and
+//! SSE come from a vetted client rather than hand-rolled.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};

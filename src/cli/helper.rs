@@ -1,69 +1,27 @@
 //! The helper lane: an outside program, run deliberately, recorded as one.
 //!
-//! `h5i browser transcript` reads the captions a page declares (`<track>`), and
-//! that covers a documentation site, a conference recording, a news video and
-//! most of the accessible web. It does not cover the sites where the captions
-//! are not in the markup at all — YouTube being the one that matters most,
-//! whose transcript lives behind the player's own JSON API and is reachable
-//! only by a program that knows how that API works.
+//! `h5i browser transcript` reads the captions a page declares. YouTube keeps
+//! its transcript behind the player's JSON API instead, reachable only by a
+//! program that knows that API. yt-dlp is that program, and this module runs it.
 //!
-//! yt-dlp is that program, for about 1,700 sites. This module runs it.
-//!
-//! # Why this is a lane and not a feature
-//!
-//! The engine's request log carries one claim: *a request that is not in it did
-//! not happen*. That claim is worth something because the engine **is** the
-//! HTTP client — policy, receipt, wire, in that order, with no second path.
-//!
-//! A helper is a second path. It opens its own sockets from a process the
-//! engine never sees, so its fetches are not in `h5i browser requests` and
-//! cannot be. Two ways to handle that, and only one of them is honest:
-//!
-//! * Write the helper's fetches into the engine's log. This is the tempting
-//!   one, and it is a lie: the engine did not decide about those requests and
-//!   did not see them, so a log that listed them would be an *observation*
-//!   dressed as a decision record. The whole product is arranged against
-//!   exactly that.
-//! * Keep it out of that log, say so, and record it somewhere else. This.
-//!
-//! So the lane is opt-in at every layer — a cargo feature, then an explicit
-//! `--via yt-dlp` that never fires by default and never fires as a fallback —
-//! and every run appends a **host-observed** row to
+//! **Why a lane and not a feature.** The engine's log claims a request not in it
+//! did not happen, which holds because the engine *is* the HTTP client. A helper
+//! opens its own sockets, so its fetches cannot appear there, and writing them
+//! in anyway would dress an observation up as a decision record. They stay out
+//! and get recorded elsewhere: a **host-observed** row in
 //! [`bs::HELPERS_FILE`](h5i_core::browser_session::HELPERS_FILE) naming the
-//! program and the exact argv. h5i built that argv, so it is a fact rather than
-//! the helper's account of itself, and `h5i browser audit` renders it in the
-//! timeline beside the engine's own rows with the lane marked.
+//! program and the exact argv h5i built.
 //!
-//! # What contains it
+//! Opt-in at every layer: a cargo feature, then `--via yt-dlp`, never a default
+//! and never a fallback. Containment is the session's placement and nothing
+//! more, so [`evidence`] reports the network boundary from the session's lane
+//! rather than assuming a box bought one. A boxed session whose box lacks yt-dlp
+//! is refused rather than served from the host, which would move the network to
+//! a boundary the caller did not choose.
 //!
-//! The session's placement, and nothing else here. A boxed session runs the
-//! helper **inside its box**; a host session runs it on the host, where it is
-//! contained by whatever the shell that started h5i is contained by, which is
-//! to say by nothing this module can name.
-//!
-//! Whether being in a box buys a *network* boundary is a second question, and
-//! [`evidence`] answers it from the session's lane rather than assuming. A box
-//! confines files and environment at every tier and egress at only some, and on
-//! Linux today the tiers that enforce egress cannot hold a resident browser
-//! session at all — so a boxed session is on `workspace` or `process`, neither
-//! of which polices what leaves it. Reporting that as containment would be the
-//! generous-direction error [`h5i_core::browser_session::Session::lane_for`]
-//! exists to prevent.
-//!
-//! **There is no fallback between the two.** A boxed session whose box has no
-//! yt-dlp is refused rather than served from the host: running it outside would
-//! move the session's network to a boundary the caller did not choose, which is
-//! a security-policy change wearing the clothes of a convenience (ROADMAP's
-//! rule for the second engine, and the same reasoning).
-//!
-//! # What it is not given
-//!
-//! No credential. `--secret` grants are resolved by the broker on the way into
-//! a *page*, and this lane has no page and no broker; the environment the child
-//! gets is built here from a short list and does not include the
-//! `H5I_SECRET_*` namespace. `--ignore-config` is passed for the same class of
-//! reason: a `~/.config/yt-dlp/config` on the host could otherwise add flags
-//! h5i did not choose, which would make the recorded argv untrue.
+//! The child gets no credential: its environment is built here from a short list
+//! excluding `H5I_SECRET_*`, and `--ignore-config` keeps a host config from
+//! adding flags that would make the recorded argv untrue.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

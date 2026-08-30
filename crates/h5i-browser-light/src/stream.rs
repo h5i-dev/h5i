@@ -1,42 +1,26 @@
 //! The live view: the engine as something a human can watch.
 //!
-//! This speaks the wire format h5i's existing viewers already use, so
-//! `h5i box view` and `h5i box view --term` work against this engine with no
-//! change on their side: base64 JPEG frames in a JSON envelope, a `status`
+//! Speaks the wire format h5i's viewers already use, so `h5i box view` and
+//! `--term` work unchanged: base64 JPEG frames in a JSON envelope, a `status`
 //! message carrying the viewport so mouse coordinates mean something, and
 //! `config`/`ack` pacing from the client.
 //!
-//! # Zero frames per second at rest
+//! **Zero frames per second at rest.** The loop is driven by client messages
+//! rather than a timer, and tier 1 has no script, so a frame is produced when
+//! something *did* change and the process is otherwise idle rather than encoding
+//! identical JPEGs thirty times a second. `pacing: "ack"` is tracked per viewer:
+//! one that owes an ack is marked dirty and gets the newest frame when the ack
+//! arrives.
 //!
-//! The loop is driven by client messages, not by a timer. Tier 1 has no script,
-//! so nothing changes on its own: a frame is produced when something *did*
-//! change — a scroll that moved, a navigation that landed — and at rest the
-//! process is idle rather than encoding identical JPEGs thirty times a second.
-//! That falls out of the structure rather than being a special case, and it is
-//! most of why an engine like this is cheap to leave open.
-//!
-//! `pacing: "ack"` (what the terminal viewer asks for) is satisfied by tracking
-//! it per viewer: a viewer that owes an ack is marked dirty rather than sent a
-//! second frame, and gets the newest one when its ack arrives.
-//!
-//! # One thread owns the page
-//!
-//! Everything here is arranged around a constraint the type system enforces
-//! and no amount of design can wish away: **[`Page`] is not `Send`.** Blitz's
+//! **One thread owns the page**, because [`Page`] is not `Send`: Blitz's
 //! `BaseDocument` holds an `Arc<dyn HtmlParserProvider>` and a
-//! `Box<dyn FontMetricsProvider>`, and neither is thread-safe, so there is no
-//! `Arc<Mutex<Session>>` to be had — the obvious shape for "several viewers
-//! plus a CLI share one page" does not compile.
-//!
-//! So the page has exactly one owner: [`run_session`], a loop on a single
-//! thread. Viewers and control clients each get a thread that owns only its
-//! socket, and they reach the page by sending it a [`Command`]. Replies and
-//! frames travel back over channels, which carry only JSON and are `Send`.
-//!
-//! That constraint bought the right architecture. A session that several
-//! things drive needs one serialisation point whether or not the DOM is
-//! thread-safe, and this is it: there is no interleaving to reason about,
-//! because a command is handled to completion before the next one starts.
+//! `Box<dyn FontMetricsProvider>`, neither thread-safe, so the obvious
+//! `Arc<Mutex<Session>>` does not compile. [`run_session`] is that owner.
+//! Viewers and control clients each own only their socket and reach the page by
+//! sending a [`Command`]; replies and frames travel back over channels carrying
+//! JSON, which is `Send`. A session several things drive needs one serialisation
+//! point regardless, and this is it: a command is handled to completion before
+//! the next starts, so there is no interleaving to reason about.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -230,7 +214,7 @@ struct Session {
     /// human doing the typing has to see what they are typing, and that is the
     /// limit of the mode: the viewer socket is inside the box, where there is
     /// no privilege boundary, so an agent that goes looking can attach to it
-    /// and watch the same frames. ROADMAP §5.10 specified withholding frames
+    /// and watch the same frames. roadmap-history.md §5.10 specified withholding frames
     /// *and* snapshots; only the snapshot half is built, and the refusal text
     /// says so rather than implying the other half.
     login: bool,
@@ -1220,7 +1204,7 @@ fn control_verb_inner(
 
         // Hand the page to the human for as long as it takes to log in.
         //
-        // §B10 of ROADMAP.md listed this as overdue rather than pending: it
+        // §B10 of roadmap-history.md listed this as overdue rather than pending: it
         // was supposed to arrive with the cookie jar, because a jar is what
         // makes logging in worth doing and a readable page is what makes it
         // unsafe.
@@ -2961,7 +2945,7 @@ mod tests {
         );
     }
 
-    // --- screenshot and reload (ROADMAP §B19.7, items 2 and 3) -----------
+    // --- screenshot and reload (roadmap-history.md §B19.7, items 2 and 3) -----------
 
     #[test]
     fn a_screenshot_writes_a_png_where_the_caller_said() {

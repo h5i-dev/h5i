@@ -1582,7 +1582,8 @@ fn scroll_to_node(_this: &JsValue, args: &[JsValue], context: &mut Context) -> J
 /// Returns `true` when the operation was performed and `false` when it was not
 /// understood, which is what the prelude turns into an `unsupported()` entry.
 /// **That return value is the honesty rule of this whole feature**: a canvas
-/// call that quietly does nothing is the silent stub ROADMAP §B8.4 refuses, and
+/// call that quietly does nothing is the silent stub roadmap-history.md §B8.4
+/// refuses, and
 /// the only thing standing between this module and that failure is that an
 /// unknown operation says so instead of returning `undefined`.
 fn canvas_op(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

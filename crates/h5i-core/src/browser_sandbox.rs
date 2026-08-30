@@ -1,47 +1,29 @@
 //! The default confinement for a browser session.
 //!
-//! A session is not a box. It has no repository, no worktree, no manifest, and
-//! nothing to export; making one would put a git operation in front of "read
-//! this page". But the reason a box exists still applies to a browser more than
-//! to almost anything else h5i runs: the engine parses bytes a stranger wrote,
-//! and a parser bug in Blitz, Stylo, an image decoder or Boa would be running as
-//! whoever started the session.
-//!
-//! So the engine gets the *tier* without the box: the same Landlock filesystem
-//! scoping, seccomp filter and rlimits `isolation = process` applies, built here
-//! from a profile rather than resolved from a repository.
-//!
-//! # What this contains, and what it does not
+//! A session is not a box: no repository, no worktree, nothing to export. But
+//! the reason a box exists applies here more than almost anywhere, since the
+//! engine parses bytes a stranger wrote and a bug in Blitz, Stylo, an image
+//! decoder or Boa runs as whoever started the session. So the engine gets the
+//! *tier* without the box: the Landlock scoping, seccomp filter and rlimits of
+//! `isolation = process`, built from a profile rather than a repository.
 //!
 //! It contains the **consequences** of a compromised engine: the filesystem it
-//! can reach, the environment it can read, how much it can allocate, and the
-//! privilege-escalation and kernel surface seccomp denies.
+//! reaches, the environment it reads, what it can allocate, and the escalation
+//! surface seccomp denies. It does not stop the engine starting a program, which
+//! is survivable because Landlock's domain is inherited across `execve` and
+//! cannot be relaxed.
 //!
-//! It does not stop the engine from starting a program, and nothing here
-//! pretends to. What makes that survivable is that Landlock's domain is
-//! inherited across `execve` and cannot be relaxed: a shell a compromised
-//! engine starts reads and writes exactly what the engine could, which is its
-//! own directory and the system.
+//! It does not contain the **connection**. A browser needs the network, so a
+//! compromised engine keeps the host's reachability, and the policy deciding
+//! which origins is in-process and therefore past it. Containing that needs a
+//! boundary outside the engine: `--in` a box whose tier enforces egress, or the
+//! broker/renderer split. **Nothing here upgrades the request lane**; a
+//! process-tier session stays `engine-claimed`.
 //!
-//! It does not contain the **connection**. `NetMode` has two values, `Deny` and
-//! `Host`, and a browser needs the network — so a compromised engine keeps the
-//! host's network reachability, including loopback. The policy that decides
-//! *which* origins is the engine's own, in-process, and a compromised engine is
-//! past it. Containing that needs a boundary outside the engine: `--in` a box
-//! whose tier enforces egress, or the broker/renderer split, where the half that
-//! parses the page holds no socket at all.
-//!
-//! **Nothing here upgrades the request lane.** A process-tier session stays
-//! `engine-claimed`, because nothing outside the engine corroborated the log.
-//!
-//! # Falling back is a state, not a silence
-//!
-//! Landlock, seccomp and user namespaces are not everywhere: a hardened kernel,
-//! an AppArmor profile, a CI container, macOS, Windows. A default that refused
-//! there would be a product whose first command fails on someone's laptop. So
-//! the session runs unconfined instead — and **says so**, on the summary line
-//! and in the record, because a sandbox nobody can see is indistinguishable from
-//! one that was never applied.
+//! Where Landlock, seccomp or user namespaces are missing (hardened kernels,
+//! AppArmor, CI containers, macOS, Windows) the session runs unconfined and
+//! **says so**, on the summary line and in the record. A sandbox nobody can see
+//! is indistinguishable from one that was never applied.
 
 use std::path::{Path, PathBuf};
 

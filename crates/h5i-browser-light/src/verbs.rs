@@ -1,30 +1,27 @@
 //! The verb table, and the failures a verb can answer with.
 //!
-//! Before this, the verb set was written out three times — the clap enum in
-//! `main.rs`, the JSON payload that enum built, and a `match verb` over string
-//! literals in [`crate::stream`] — and nothing made the three agree. Adding a
-//! verb meant remembering all three; forgetting one produced a verb the CLI
-//! could send and the session did not know, which answers "unknown verb" to a
-//! command the help text advertises.
+//! The verb set used to be written out three times, in the clap enum, the JSON
+//! payload it built, and a `match verb` over string literals in
+//! [`crate::stream`], with nothing making the three agree. Forgetting one
+//! produced a verb the CLI could send and the session did not know, answering
+//! "unknown verb" to a command the help text advertises.
 //!
-//! One enum, and every per-verb property is an exhaustive `match` on it, so a
-//! new verb is a compile error until each question below has been answered for
-//! it deliberately.
+//! One enum now, with every per-verb property an exhaustive `match`, so a new
+//! verb is a compile error until each question has been answered for it.
 //!
-//! **One of those questions is a security question**, which is the reason this
-//! is a type rather than a tidier `match`. LOGIN mode refuses every verb that
-//! reads the page, and it used to do it with a string allowlist:
+//! **One of those questions is a security question**, which is why this is a
+//! type rather than a tidier `match`. LOGIN mode refuses every verb that reads
+//! the page, and used to do it with a string allowlist:
 //!
 //! ```ignore
 //! if session.login && !matches!(verb, "status" | "login") { ... }
 //! ```
 //!
-//! The default was refusal, so the failure direction was safe, and a *new* verb
-//! stayed refused until somebody thought about it. But the allowlist itself was
-//! two string literals: one typo widened it, and no test that did not already
-//! know about the typo would have caught it. [`Verb::readable_during_login`] is
-//! the same rule as a predicate, where a typo is a name that does not resolve
-//! and a new verb does not compile until it has answered.
+//! The default was refusal, so the failure direction was safe and a new verb
+//! stayed refused. But the allowlist was two string literals: one typo widened
+//! it, and no test that did not already know about the typo would have caught
+//! it. [`Verb::readable_during_login`] is the same rule as a predicate, where a
+//! typo does not resolve and a new verb does not compile until it has answered.
 
 use serde_json::{json, Value};
 

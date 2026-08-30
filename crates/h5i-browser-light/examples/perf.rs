@@ -1,6 +1,6 @@
 //! What this engine costs, measured rather than assumed.
 //!
-//! ROADMAP.md §B5 Tier 4. Nothing here had numbers after script landed: not
+//! roadmap-history.md §B5 Tier 4. Nothing here had numbers after script landed: not
 //! the time to read a page, not the memory a page holds, and not the price of
 //! the reporting proxy that now sits in front of every DOM property read.
 //!

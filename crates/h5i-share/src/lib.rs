@@ -1,17 +1,13 @@
 //! `h5i box share` — letting one other person try the web app in a box.
 //!
 //! Everything else h5i does is about what leaves a box. This is the one path
-//! that lets something in: a second person, on their own machine, opening the
-//! dev server an agent has been building, while it is still running inside the
-//! boundary.
-//!
-//! # The shape
+//! that lets something in.
 //!
 //! ```text
 //!   their browser
 //!        │  http://127.0.0.1:… (p2p)   or   https://….trycloudflare.com
 //!        ▼
-//!   [ the gate ]      token, expiry, revocation — checked per connection
+//!   [ the gate ]      token, expiry, revocation, checked per connection
 //!        │
 //!        ▼
 //!   [ the bridge ]    counts, receipt, and the only route into the box
@@ -21,47 +17,24 @@
 //!   dev server on 127.0.0.1:3000, inside the box
 //! ```
 //!
-//! The two platforms answer the same question — *is this port the box's?* — and
-//! only the argument differs. Linux makes it true by construction: the port is
-//! in a namespace and the dialer is the only way in. macOS has no namespace to
-//! use, so it is established by observation, per connection ([`owner`]).
+//! Both platforms answer *is this port the box's?*. Linux makes it true by
+//! construction; macOS establishes it by observation, per connection ([`owner`]).
 //!
-//! # What each module owns
+//! [`ticket`] is the capability a peer holds, possession being authorization.
+//! [`session`] is the grant table on disk, outside every path a box can write.
+//! [`dialer`] is the single fork into the box's namespaces, pinned to one port.
+//! [`owner`] answers the macOS question. [`gate`] and [`http_front`] read the
+//! credential off a request and keep it from travelling upstream. [`bridge`]
+//! does authorization, accounting and the ingress receipt, under the [`p2p`] and
+//! [`tunnel`] transports, with [`pump`] moving and counting bytes. [`run`]
+//! starts, describes and ends a share; [`join`] is the other machine.
 //!
-//! * [`ticket`] — the capability a peer holds. Possession is authorization.
-//! * [`session`] — the grant table on disk, outside every path a box can write.
-//!   Revocation lives here because the process that revokes is not the process
-//!   that serves.
-//! * [`dialer`] — the single fork into the box's namespaces, pinned to one port
-//!   for its whole life, so nothing on the wire can redirect it.
-//! * [`owner`] — whose port is this? The macOS half of the same guarantee,
-//!   where there is no namespace to make it true for free.
-//! * [`gate`] and [`http_front`] — reading a credential off a request and
-//!   making sure it never travels upstream.
-//! * [`bridge`] — authorization, accounting, and the ingress receipt.
-//! * [`p2p`] and [`tunnel`] — the two transports, over the same bridge.
-//! * [`pump`] — moving bytes, and counting them as they go.
-//! * [`run`] — starting, describing and ending a share, and the order those
-//!   have to happen in.
-//! * [`join`] — the other machine.
-//!
-//! # The properties worth holding onto
-//!
-//! * **The box's port is never published.** Not on the host, not by either
-//!   transport. The only route in is the dialer, and it goes one place.
-//!   On macOS the second sentence is the one that carries the weight: the port
-//!   is already on the host's loopback, where h5i did not put it and cannot
-//!   take it away, so what a share promises there is that *this* route reaches
-//!   the box's own server — not that nothing else on the machine can.
-//! * **Authorization is per connection, from disk.** A revoke written by
-//!   another process takes effect on the next connection, and a watchdog drops
-//!   the ones already open.
-//! * **The credential never reaches the box.** The shared app is agent-written
-//!   code we are deliberately showing someone; handing it the token that
-//!   admitted its visitor would be handing it the share.
-//! * **Being shared is recorded.** A box that was opened to someone and an
-//!   identical box that was not are different artifacts, and the export says
-//!   which one it came from.
+//! Four properties: the box's port is never published, and on macOS that
+//! promises this route reaches the box's own server rather than that nothing
+//! else on the machine can. Authorization is per connection from disk, so a
+//! revoke lands on the next one and a watchdog drops the rest. The credential
+//! never reaches the box, which is agent-written code we are showing someone.
+//! And being shared is recorded, so the export says which artifact this is.
 
 pub mod bridge;
 // Random heads for the two parsers. Tests only: it exists to be run, not

@@ -1,54 +1,26 @@
 //! The host-owned registry of browser sessions.
 //!
-//! A browser session is the unit an agent talks to: one page state, one cookie
-//! jar, one request log, one policy. Nothing else about it is agent-facing —
-//! not the process that renders the page, not the port it listens on, not
-//! whether it happens to be inside a box.
+//! A session is the unit an agent talks to: one page state, one cookie jar, one
+//! request log, one policy. Nothing else about it is agent-facing.
 //!
-//! # The id is internal
+//! The opaque id (`br_7k2xqa`) is in the record, `--json` and receipts, because
+//! a durable reference must survive a rename, and is never typed. [`resolve`]
+//! has three layers, most to least explicit: `--session <name>`,
+//! `$H5I_BROWSER_SESSION`, and the default session `open` set.
 //!
-//! Every session has an opaque id (`br_7k2xqa`) and it appears in the record,
-//! in `--json`, and in receipts, because a durable reference has to be
-//! something no rename can break. **It is not what an agent types.** A CLI that
-//! demands an opaque string on every verb is a CLI copying a remote-browser
-//! HTTP API, where the id exists because the client and the browser share
-//! nothing else; here they share a filesystem.
+//! **The registry is host-owned, always**, including for a session whose engine
+//! runs in a box. The engine's control file is enough to *reach* a session but
+//! not to *name* one, and letting the box own the record for boxed sessions
+//! splits every lookup in two.
 //!
-//! So resolution has three layers, from most to least explicit
-//! ([`resolve`]): a `--session <name>` a person chose, `$H5I_BROWSER_SESSION`,
-//! and the **default session** — the one `open` made when nobody said which.
-//! Names are for running several at once; the default is for the ordinary case
-//! of running one.
+//! **Not under a git repository.** Every other noun here is about a repository
+//! and a browser is not, so this lives in the user's state directory ([`root`]);
+//! `h5i browser open` in an empty directory has to work.
 //!
-//! # Why the registry is host-owned
-//!
-//! The engine already writes a control file next to its stream file, and a CLI
-//! that reads that file can drive the resident page (`h5i-browser-light`'s
-//! `stream::serve`). That is enough to *reach* a session and not enough to
-//! *name* one, and the difference matters as soon as a session can live
-//! somewhere other than this process's own filesystem view.
-//!
-//! So the id and the record live here, on the host, always — including for a
-//! session whose engine runs inside a box. One table, one resolution path,
-//! whatever the placement. The alternative, letting the box own the record for
-//! boxed sessions, buys nothing and splits every lookup in two.
-//!
-//! # Not under a git repository
-//!
-//! Every other noun in this product stores its state under the enclosing
-//! repository, because every other noun is *about* a repository. A browser is
-//! not. `h5i browser open https://example.com` in an empty directory is the
-//! ordinary case and must work, so the registry lives in the user's state
-//! directory instead ([`root`]).
-//!
-//! # Ids are never reused
-//!
-//! A session directory outlives the session: closing one writes its ending into
-//! the record rather than deleting it. That is what makes [`Session::state`]
-//! answerable after the fact, and it is also what makes reuse impossible —
-//! [`new_id`] rejects any candidate whose directory already exists. An agent
-//! that keeps a stale id gets a definite "this session ended, here is how",
-//! never a different session wearing the same name.
+//! **Ids are never reused.** Closing writes the ending into the record rather
+//! than deleting it, which keeps [`Session::state`] answerable and lets
+//! [`new_id`] reject any candidate whose directory exists. A stale id gets "this
+//! session ended, here is how", never a different session wearing its name.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -108,7 +80,7 @@ pub const HELPERS_FILE: &str = "helpers.jsonl";
 /// only one h5i copies from a session to its successor. It is written `0600`,
 /// no verb returns what is in it, and it exists so a login a human performed
 /// once does not have to be performed again on every session — which is what
-/// `--restore` promised before there was anything to restore (ROADMAP §B19.6).
+/// `--restore` promised before there was anything to restore (roadmap-history.md §B19.6).
 pub const COOKIES_FILE: &str = "cookies.json";
 
 /// The handover journal: one line per `take` or `release`.

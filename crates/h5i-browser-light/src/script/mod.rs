@@ -1,29 +1,24 @@
 //! The script realm: a JavaScript engine wired to the one real DOM.
 //!
-//! # Why Boa, and why this version
+//! # Why Boa
 //!
-//! Boa is pure Rust, which keeps the build hermetic: this crate already refuses
-//! C build dependencies (`system-fonts` is off to avoid libfontconfig), and the
+//! Boa is pure Rust, which keeps the build hermetic: this crate refuses C build
+//! dependencies (`system-fonts` is off to avoid libfontconfig), and the
 //! cross-check matrix compiles it for windows-msvc, darwin and musl from Linux,
 //! where `ring`'s C build is already a known blocker. QuickJS or V8 would add
-//! another dependency of exactly that kind. See ROADMAP §12.2.
+//! another dependency of that kind. See roadmap-history.md §12.2.
 //!
-//! The version is pinned to 0.19 for a reason that is not preference. Boa 0.20
-//! and later depend on `icu_normalizer ~2.0`, and `parley` — which Blitz pulls
-//! for text — requires `^2.1.1`. Those ranges are disjoint and semver-compatible,
-//! so Cargo must pick one and cannot. Boa 0.19 depends on the 1.x line, which is
-//! semver-*incompatible* with 2.x and therefore allowed to coexist. Upstream Boa
-//! has already moved `main` to `~2.2.0`, which would resolve, but that is
-//! unreleased (`1.0.0-dev`). So this pin is a dated workaround with a known exit:
-//! when Boa releases past that change, this moves forward and the duplicate ICU
-//! line in the lockfile goes away.
+//! `boa_engine` and `boa_gc` come from the `h5i-dev/boa` fork of 0.22.0, pinned
+//! by revision in the workspace `Cargo.toml`. The fork is one commit, adding
+//! `bind_to_realm` so [`compiled_prelude`] can be reused across realms. Patch
+//! both crates together or the two halves disagree about GC types.
 //!
 //! # The DOM is not here
 //!
 //! Every JS object that names a node is a wrapper over a `NodeId`, and the Blitz
 //! document remains the only tree. A second tree inside the engine would let the
-//! snapshot, the paint, the events and the script state drift apart, and nothing
-//! downstream could tell which one was right.
+//! snapshot, the paint, the events and the script state drift apart, with
+//! nothing downstream able to tell which one was right.
 
 pub(crate) mod dom_api;
 pub mod host;
@@ -830,7 +825,8 @@ impl Script {
 
     /// Run everything the page still owes, and say what happened.
     ///
-    /// "Run until settled" is a subsystem rather than a phrase (ROADMAP §12.4).
+    /// "Run until settled" is a subsystem rather than a phrase
+    /// (roadmap-history.md §12.4).
     /// The loop drains promise jobs, then any timer now due on the virtual
     /// clock, then repeats — because a timer can queue a promise and a promise
     /// can set a timer. It stops when a round does nothing, or when the budget

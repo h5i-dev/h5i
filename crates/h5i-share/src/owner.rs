@@ -1,80 +1,33 @@
-//! Whose port is this? — the macOS answer to the question Linux answers with a
-//! namespace.
+//! Whose port is this? The macOS answer to what Linux answers with a namespace.
 //!
-//! On Linux a share is safe by construction: the box's dev server listens
-//! inside a network namespace of its own, [`crate::dialer`] is the only route
-//! into it, and "the box's port 3000" is a different object from "this
-//! machine's port 3000". macOS has no such boundary. A Seatbelt box binds the
-//! **host's** loopback, deliberately — it is the only way a dev server in the
-//! box is reachable at all — so the two ports are the same port, and the
-//! command refused rather than guess which one it was about.
+//! On Linux the box's server listens in its own netns and [`crate::dialer`] is
+//! the only route in. A Seatbelt box binds the *host's* loopback, deliberately,
+//! so the two ports are one port and the command used to refuse rather than
+//! guess. It no longer has to: Darwin will say which process holds a listening
+//! socket, and h5i knows the box's process tree.
 //!
-//! That refusal was right, and this module is what replaces it. The premise of
-//! the refusal was "h5i cannot tell the box's port from anything else listening
-//! on it". It can: Darwin will say which process holds a listening socket, h5i
-//! knows the box's process tree, and the two together answer the question by
-//! observation rather than by assumption.
+//! The hazard is not theoretical. Port 3000 once held the box's
+//! `python3 -m http.server` on `*:3000` and a leftover `serve.py` on
+//! `127.0.0.1:3000`; a plain connect reached the stranger and would have
+//! published it under a hostname h5i minted. So the test is not "is the box
+//! listening" but **"is the box the unambiguous winner for this address"**, and
+//! anything else is refused.
 //!
-//! **This is not a theoretical hazard.** On the machine this module was written
-//! on, port 3000 had two listeners at once: the box's `python3 -m http.server`
-//! on `*:3000`, and an unrelated leftover `serve.py` on `127.0.0.1:3000`. A
-//! plain `TcpStream::connect(("127.0.0.1", 3000))` — which is exactly what an
-//! earlier macOS route did, before it was deleted for this reason — reached the
-//! stranger. A share built on it would have published a process the operator
-//! never chose, to the public internet, under a hostname h5i minted.
+//! Asked of the kernel: `proc_listallpids`, `PROC_PIDTBSDINFO` for the tree,
+//! `PROC_PIDLISTFDS` and `PROC_PIDFDSOCKETINFO`, all unprivileged for our own
+//! processes.
 //!
-//! So the rule here is not "is the box listening" but **"is the box the
-//! unambiguous winner for the address h5i is about to dial"**, and anything
-//! else is refused rather than resolved in the box's favour.
+//! Two limits, recorded rather than argued away. Only same-uid processes answer
+//! `PROC_PIDLISTFDS`, so another user's listener can never be attributed to the
+//! box but cannot be counted as a competitor either; that bites only when the
+//! box holds a *wildcard* and another user holds a *more specific* address on
+//! the same port. And the answer is a snapshot: a same-uid process can add a
+//! more specific bind before the connect (`SO_REUSEPORT` permits it) and Darwin
+//! offers no handle on "the socket I resolved". Nothing is cached, so the window
+//! is one connection wide rather than one share long.
 //!
-//! # What the kernel is asked
-//!
-//! `proc_listallpids` for the process table, `PROC_PIDTBSDINFO` for each
-//! process's parent (to walk the box's tree), `PROC_PIDLISTFDS` for a process's
-//! descriptors and `PROC_PIDFDSOCKETINFO` for the ones that are sockets. All of
-//! it is readable for our own processes without privilege, which is what `lsof`
-//! relies on for the same job.
-//!
-//! Only same-uid processes answer `PROC_PIDLISTFDS`, and that limit is worth
-//! stating precisely, because the obvious way to state it is wrong. A listener
-//! belonging to **another user** is visible in the process table but its
-//! sockets are not — `lsof` cannot see them either without privilege. It can
-//! therefore never be attributed to the box, which is the half that matters
-//! and is genuinely safe.
-//!
-//! What it is *not* is refused. An invisible listener cannot be counted as a
-//! competitor either, so a verdict of "the box wins this address
-//! unambiguously" rests, in part, on not having seen something this process is
-//! not allowed to see. The case where that gap has teeth is narrow and worth
-//! naming: the box holds only a **wildcard**, and a process of another user
-//! holds a *more specific* address on the same port — that listener would take
-//! the connection, and h5i would not know it was there. A box bound to an exact
-//! address is immune, since nothing can be more specific than an exact address,
-//! and that is the common shape.
-//!
-//! Whether Darwin even permits two users to hold overlapping binds on one port
-//! is a kernel question this module has not established, so nothing here
-//! assumes it either way; the limit is recorded as a limit rather than argued
-//! away.
-//!
-//! # What is left, and cannot be closed here
-//!
-//! The answer is a snapshot, and the connection comes after it. Between
-//! [`decide`] returning `Box` and the `connect` that follows, a same-uid
-//! process can add a *more specific* bind — `SO_REUSEPORT` permits it between
-//! processes of one user — and take the connection h5i just attributed. Nothing
-//! short of a kernel handle on "the socket I resolved" closes that, and Darwin
-//! offers none for TCP.
-//!
-//! What bounds it is that nothing is cached: the scan runs per dial ([`crate::
-//! dialer::Dialer::resolve`], ~1.4 ms), so the window is one connection wide
-//! rather than one share long, and a stranger that wins one connection does not
-//! thereby win the share. It is recorded as a residual rather than argued away.
-//!
-//! The policy below ([`decide`]) is pure and compiled everywhere, so the rule
-//! that decides what gets published is unit-tested on both CI platforms rather
-//! than only on the one that can run it. Everything that asks Darwin a question
-//! is gated to macOS, where the question exists.
+//! [`decide`] is pure and compiled everywhere, so the rule that decides what
+//! gets published is unit-tested on both CI platforms.
 
 // Only `process_tree` needs it, and that is a Darwin syscall walk — so on any
 // other target this import is unused, which `-D warnings` makes fatal.
@@ -645,20 +598,18 @@ fn fds_of(pid: u32) -> Vec<libc::proc_fdinfo> {
 
 /// `PROC_PIDFDSOCKETINFO`, read by offset.
 ///
-/// The flavour returns `struct socket_fdinfo`, which libc does not define. It
-/// is not hand-declared here either, and that is deliberate: the struct nests
-/// `vinfo_stat`, two `sockbuf_info`s and a seven-arm union, so a Rust
-/// transcription that is wrong in its *tail* is a struct the kernel overruns,
-/// and one that is wrong in its *middle* is a security decision made on
-/// misread memory.
+/// The flavour returns `struct socket_fdinfo`, which libc does not define and
+/// which is deliberately not hand-declared here: it nests `vinfo_stat`, two
+/// `sockbuf_info`s and a seven-arm union, so a transcription wrong in its *tail*
+/// is a struct the kernel overruns, and one wrong in its *middle* is a security
+/// decision made on misread memory.
 ///
-/// Instead the buffer is deliberately oversized and the four fields this needs
-/// are read at fixed offsets, bounds-checked, from the bytes the kernel wrote.
-/// The offsets are derived below and — more to the point — are *proved* by
+/// Instead the buffer is oversized and the four fields this needs are read at
+/// fixed offsets, bounds-checked, from the bytes the kernel wrote. The offsets
+/// are derived below and *proved* by
 /// [`tests::the_offsets_find_a_socket_we_bound_ourselves`], which binds real
-/// sockets on known addresses and asserts this function reports them back. A
-/// wrong offset does not produce a subtly wrong answer there; it produces no
-/// answer at all.
+/// sockets on known addresses and asserts this reports them back. A wrong offset
+/// produces no answer there rather than a subtly wrong one.
 ///
 /// ```text
 /// struct socket_fdinfo {                   offset
@@ -692,13 +643,11 @@ fn fds_of(pid: u32) -> Vec<libc::proc_fdinfo> {
 /// struct tcp_sockinfo { struct in_sockinfo tcpsi_ini; int tcpsi_state; … };
 /// ```
 ///
-/// The last two rows are easy to leave out and were: `insi_laddr` is the last
-/// field anything here reads, so a table that stops there looks complete. It
-/// puts `in_sockinfo` at 64 bytes and `tcpsi_state` at `PROTO + 64`, which is
-/// 16 short of where it is — so the one constant a reader would most want to
-/// check against this table is the one the table disagrees with. The code is
-/// right and the omission was in the derivation; both are stated now, and
-/// `the_offsets_find_a_socket_we_bound_ourselves` is what actually settles it.
+/// The last two rows are easy to omit, and were. `insi_laddr` is the last field
+/// anything here reads, so a table stopping there looks complete while putting
+/// `in_sockinfo` at 64 bytes and `tcpsi_state` 16 short of where it is. The code
+/// was right and the derivation was not;
+/// `the_offsets_find_a_socket_we_bound_ourselves` is what settles it.
 #[cfg(target_os = "macos")]
 fn listening_addr(pid: u32, fd: i32) -> Option<SocketAddr> {
     /// `PROC_PIDFDSOCKETINFO`. Not in libc, and its value is part of the

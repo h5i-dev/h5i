@@ -775,30 +775,6 @@ pub fn safe_location(target: &str) -> String {
     }
 }
 
-/// The head to send to the box: the share credential removed from both places
-/// it could be, `Connection: close` forced, everything else byte-for-byte.
-///
-/// The `Cookie` header is rewritten rather than dropped, because the shared app
-/// may well have set cookies of its own and a share that silently logs the
-/// visitor out of the app being demonstrated is a broken share. `app` is what
-/// narrows that to the box's own cookies on a jar this proxy does not have to
-/// itself — see [`AppCookies`].
-///
-/// **`Connection: close` is an authorization control, not a performance
-/// choice.** A connection is authorized once, when its first request arrives.
-/// That is only equivalent to authorizing every request if a connection carries
-/// exactly one — and by default it does not. `cloudflared` keeps a pool of
-/// connections to the origin and reuses them for whatever request comes next,
-/// *from whatever visitor*, so a request with no credential could ride in on a
-/// connection someone else's credential opened. Browsers pool per origin the
-/// same way, which puts the identical hole on the joiner's proxy. Forcing the
-/// connection closed after one response collapses the difference: one
-/// connection, one request, one check.
-///
-/// An upgrade is the exception and must be, because `Connection` is how an
-/// upgrade is negotiated. That is safe for the same reason it is necessary: an
-/// upgraded connection stops being an HTTP connection and is never returned to
-/// anybody's pool.
 /// Headers that say who the visitor is, dropped before the box sees them.
 ///
 /// Measured through a real quick tunnel, echoed back by a dev server inside a
@@ -811,16 +787,16 @@ pub fn safe_location(target: &str) -> String {
 /// Cf-Ray: a29916242859de98-EWR
 /// ```
 ///
-/// So the agent-written code being demonstrated was handed the visitor's
-/// public IP address and their country, by a feature whose roadmap entry says
-/// "nothing inside the box learns it is being shared". The person who clicked
-/// the link is a third party who agreed to look at a page, not to identify
-/// themselves to whatever is running in somebody else's sandbox.
+/// The agent-written code being demonstrated was handed the visitor's public IP
+/// address and their country, by a feature whose roadmap entry says nothing
+/// inside the box learns it is being shared. Whoever clicked the link agreed to
+/// look at a page, not to identify themselves to something running in somebody
+/// else's sandbox.
 ///
 /// `Host` and `X-Forwarded-Proto` are deliberately *not* here: a dev server
-/// builds absolute URLs out of them and a share that broke every link on the
+/// builds absolute URLs out of them, and a share that broke every link on the
 /// page would not be used. They tell the box it is behind a proxy, which the
-/// docs now say plainly instead of claiming otherwise.
+/// docs say plainly instead of claiming otherwise.
 const HIDE_FROM_BOX: &[&str] = &[
     "cf-connecting-ip",
     "cf-connecting-ipv6",
@@ -839,6 +815,28 @@ const HIDE_FROM_BOX: &[&str] = &[
     "forwarded",
 ];
 
+/// The head to send to the box: the share credential removed from both places
+/// it could be, `Connection: close` forced, everything else byte-for-byte.
+///
+/// The `Cookie` header is rewritten rather than dropped, because the shared app
+/// may have set cookies of its own and a share that silently logs the visitor
+/// out of the app being demonstrated is a broken share. `app` narrows that to
+/// the box's own cookies on a jar this proxy does not hold; see [`AppCookies`].
+///
+/// **`Connection: close` is an authorization control, not a performance
+/// choice.** A connection is authorized once, when its first request arrives,
+/// which is equivalent to authorizing every request only if a connection
+/// carries exactly one. By default it does not: `cloudflared` pools connections
+/// to the origin and reuses them for whatever request comes next, *from
+/// whatever visitor*, so a request with no credential could ride in on a
+/// connection someone else's credential opened. Browsers pool per origin the
+/// same way, putting the identical hole on the joiner's proxy. Closing after
+/// one response collapses it: one connection, one request, one check.
+///
+/// An upgrade is the exception and must be, since `Connection` is how an
+/// upgrade is negotiated. That is safe for the same reason it is necessary: an
+/// upgraded connection stops being an HTTP connection and is never returned to
+/// anybody's pool.
 pub fn rewrite_for_upstream(
     head: &str,
     req: &Request,
