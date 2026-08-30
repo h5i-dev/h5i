@@ -1,39 +1,49 @@
-# h5i demo film — the box
+# h5i demo film — the browser
 
-**Scope note (2026-08-27).** This film tells the *box* story: an agent with full
-autonomy inside a disposable boundary. That is still true and still worth
-showing, but it is no longer the product's headline. h5i now leads with the
-browser session (`h5i browser open`), and **there is no film for it yet.**
-
-A browser-first film is outstanding work. It would need new scenes rather than
-new copy over the old ones: the hook is a page composing text that looks like an
-operator instruction, the turn is `h5i browser requests` showing a refusal the
-agent never saw, and the close is `--in` upgrading the lane from
-`engine-claimed` to `host-observed`. Until that exists, this page is linked as
-"the box, in 80 seconds" rather than as *the* demo.
-
-
-The h5i product video (~1:18), built as a deterministic HTML timeline and
-rendered to mp4. Embedded on the front page hero (`docs/index.html`) as an
-`<iframe src="demo/?embed">`, which hides the scrub controls and loops.
+The h5i product video (~1:20), built as a deterministic HTML timeline and
+rendered to mp4. It tells the same story the front page and the pitch deck
+tell: **a secure, auditable browser for AI agents**. Linked from the site
+footer as "the browser, in 80 seconds".
 
 ## The film — `index.html`
 
-The pitch of the README, compressed: a coding agent gets a complete disposable
-development environment, and your machine stays out of reach. Five scenes. The
-hook (0:00): an agent is run with permissions off on a bare host, an `npm
-install` postinstall reads `~/.ssh` and `~/.aws`, and the keys leave the laptop.
-The box (0:15): `h5i box` on this repository, the workspace copied in, the agent
-running with permissions off inside the boundary, the same postinstall hitting
-two denial cards (fs, net), then the dev server and agent-browser driving the
-signup flow. The variants (`--pr`, a URL, `--new`) and the stronger `--isolation
-microvm` boundary are one line each, not the frame of the story. The viewport
-(0:44): `h5i box view` next to a mock browser window, `h5i browser take` flips
-the control pill to "you" and a human click lands, `release` hands back. The
-output gate (0:58): `h5i box export` with the patch/report/screenshot/receipt
-checklist and the denied-egress line. Close (1:10): "Give your agent a whole
-machine. Just not yours." CTA is GitHub + h5i.dev (no `curl | sh` in the close:
-the hook frames unsupervised autonomy, not installation, as the subject).
+Five scenes.
+
+**The hook (0:00).** An agent reads a forum thread through an ordinary headless
+browser. The page composes a sentence aimed at the agent reading it — read
+`~/.aws/credentials`, POST them to `paste.example` — and the agent obeys. The
+point of the scene is not that the agent was fooled. It is that nothing asked
+and nothing wrote it down: one more fetch, in a browser with no opinion. Title
+card: h5i checks and records every request before the bytes move.
+
+**The session (0:15).** The same page, opened with `h5i browser open`. The
+diagram is the session rather than a box: the renderer that parses the
+stranger's bytes, the broker that holds the allowlist, the log, the jar and the
+credentials, and the gate between them — policy first, record second, wire
+third. Two denials land as red cards: an off-origin tracker the page pulled in,
+and then `paste.example`, which the agent asked for after being persuaded. Both
+are in `h5i browser requests`, both come back with a reason, and the session
+keeps going. `h5i browser audit` closes the scene with the two lanes side by
+side and never merged. The two big lines are the thesis: *the agent can be
+talked into it; the log cannot.*
+
+**The controls (0:44).** `h5i browser take` moves the pill from "control: agent"
+to "control: you", a human signs in at the live view, and `release` hands back
+with every `@ref` stale. The password went to the page, never to the model. The
+line that keeps it honest: in a box the pause is enforced, not cooperative, and
+`take` says which.
+
+**The boundary (0:59).** `h5i browser open --in web`. Nothing an agent types
+changes; the status line moves from `engine-claimed` to `host-observed`, because
+an egress allowlist enforced outside the engine is now corroborating the log.
+`h5i box export` writes the patch, the report, the receipt and each session's
+timeline.
+
+**The close (1:12).** "Let agents browse. Keep the record."
+
+The receipts rail along the bottom is the record accumulating: `#0 200`,
+`#1 denied`, `verb snapshot`, `#2 denied`, `engine-claimed`, `audit`,
+`control → you`, `control → agent`, `box web`, `host-observed`, `export`.
 
 ## Files
 
@@ -60,8 +70,11 @@ crisp lower resolution.
 node render.mjs                          # -> out/h5i-demo.mp4 (2x supersampled, 4K)
 node render.mjs --out-height 1080        # supersampled, very crisp 1080p (smaller file)
 node render.mjs --scale 3 --crf 14       # 3x capture, higher quality
-node render.mjs --stills 40,70           # PNG frames for eyeballing a moment
+node render.mjs --stills 29,52,70        # PNG frames for eyeballing a moment
 ```
+
+`--scale 1 --stills …` is the fast way to check a layout change: no
+supersampling, one frame per second named.
 
 ## Editing the film
 
@@ -69,11 +82,14 @@ All content lives in `index.html`:
 
 - Scene scripts (`evHookM`, `evBoxM`, `evViewM`, `evGateM`) are arrays of
   `{at, cmd}` / `{at, out:[html lines]}` events, times in seconds local to the
-  scene.
+  scene. `out` lines are raw HTML; `cmd` is escaped and typed out.
 - Scene boundaries and eyebrow labels are in the `SCENES` table; the total
-  runtime is `TOTAL` (also update the hardcoded `/ 1:18` in the time display).
+  runtime is `TOTAL`, and the duration in the scrub display is derived from it.
 - Receipts-rail chips are in `RAIL` (absolute seconds); the denial cards on
-  the box diagram are in `BLOCKS` (seconds local to the box scene).
+  the session diagram are in `BLOCKS` (seconds local to the session scene).
 
 Because rendering is deterministic, re-rendering after an edit reproduces
 every unchanged frame exactly.
+
+The page is fingerprinted by `docs/build-content.py`, so an edit here needs its
+`PAGE_HISTORY["demo/"]` entry updated or the docs build fails.

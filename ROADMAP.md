@@ -100,8 +100,6 @@ not get a name in the CLI, and a thing that stands beside a session does.
   reachable on an ordinary Linux box.
 - **One session per box.** One resident engine, one service name. Enough for
   now; a second would need per-session service names and stream files.
-- **No browser-first demo film.** `docs/demo/` still tells the box story and is
-  labelled as such (`docs/demo/README.md`).
 
 ## How this document is laid out
 
