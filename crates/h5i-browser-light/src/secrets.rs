@@ -1,14 +1,14 @@
 //! Credentials the agent can use and cannot read.
 //!
-//! A session that has to log in has a problem: the password has to reach the
+//! A session that has to log in has a problem: the password must reach the
 //! page, and everything that reaches the page reaches the agent driving it. The
 //! engine's existing answer is LOGIN mode, which hands the page to a human and
-//! refuses the agent's reads — and which is honest about its limit, because it
-//! does not withhold *frames*, and the viewer socket is inside the box where
+//! refuses the agent's reads, and which is honest about its limit, since it
+//! does not withhold *frames* and the viewer socket is inside the box where
 //! there is no privilege boundary.
 //!
-//! This is the other answer, and it has no such hole, because there is no
-//! moment when the secret is on screen or in a reply.
+//! This is the other answer, with no such hole, because the secret is never on
+//! screen or in a reply.
 //!
 //! ```text
 //! $ H5I_SECRET_ACME_PASSWORD=hunter2 h5i browser open https://acme.test/
@@ -23,27 +23,26 @@
 //! model's context, so it cannot be repeated back, summarised, logged, or
 //! carried into whatever the agent does next.
 //!
-//! ## The namespace, and why it is narrower than it could be
+//! ## The namespace, and why it is narrow
 //!
-//! Only `H5I_SECRET_*` is reachable. The obvious design is the whole `H5I_*`
-//! namespace, which is what the scheme this borrows from does with its own
-//! prefix — but h5i already uses `H5I_*` for engine configuration:
+//! Only `H5I_SECRET_*` is reachable. The whole `H5I_*` namespace would be the
+//! obvious design, but h5i already uses it for engine configuration:
 //! `H5I_EGRESS_PROXY`, `H5I_BROWSER_RECEIPTS`, `H5I_ENV_ID`. Making those
 //! substitutable would let a page-bound `type` put the receipts path or the
-//! proxy address into a form, which is a disclosure with no upside.
+//! proxy address into a form, a disclosure with no upside.
 //!
-//! A denylist of the variables this binary happens to read today would work
-//! until somebody added one. A prefix allowlist fails closed instead: a new
-//! engine variable is invisible here by default, and a new credential has to be
-//! named deliberately.
+//! A denylist of the variables this binary reads today would work until
+//! somebody added one. A prefix allowlist fails closed: a new engine variable
+//! is invisible here by default, and a new credential must be named
+//! deliberately.
 //!
 //! ## Reverse substitution
 //!
-//! Anything written back out — a recorded action, an error, a reply — goes
+//! Anything written back out, a recorded action, an error, a reply, goes
 //! through [`Secrets::redact`], which puts the placeholder back where a value
-//! appears. It iterates **longest value first**, because with two secrets where
-//! one is a substring of the other, replacing the shorter one first leaves the
-//! tail of the longer one in the clear.
+//! appears. It iterates **longest value first**: with two secrets where one is
+//! a substring of the other, replacing the shorter first leaves the tail of the
+//! longer one in the clear.
 
 use std::collections::BTreeMap;
 

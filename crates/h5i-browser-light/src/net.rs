@@ -2018,7 +2018,7 @@ mod cookie_wire_tests {
         );
     }
 
-    /// The consequence of ROADMAP §B16's cookie work, and the reason this
+    /// The consequence of roadmap-history.md §B16's cookie work, and the reason this
     /// module was written before any further capability: with `Domain` cookies
     /// and no same-origin policy, a cross-origin read is an *authenticated*
     /// one. The default credentials mode is what stops it.

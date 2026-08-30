@@ -230,7 +230,7 @@ struct Session {
     /// human doing the typing has to see what they are typing, and that is the
     /// limit of the mode: the viewer socket is inside the box, where there is
     /// no privilege boundary, so an agent that goes looking can attach to it
-    /// and watch the same frames. ROADMAP §5.10 specified withholding frames
+    /// and watch the same frames. roadmap-history.md §5.10 specified withholding frames
     /// *and* snapshots; only the snapshot half is built, and the refusal text
     /// says so rather than implying the other half.
     login: bool,
@@ -1220,7 +1220,7 @@ fn control_verb_inner(
 
         // Hand the page to the human for as long as it takes to log in.
         //
-        // §B10 of ROADMAP.md listed this as overdue rather than pending: it
+        // §B10 of roadmap-history.md listed this as overdue rather than pending: it
         // was supposed to arrive with the cookie jar, because a jar is what
         // makes logging in worth doing and a readable page is what makes it
         // unsafe.
@@ -2961,7 +2961,7 @@ mod tests {
         );
     }
 
-    // --- screenshot and reload (ROADMAP §B19.7, items 2 and 3) -----------
+    // --- screenshot and reload (roadmap-history.md §B19.7, items 2 and 3) -----------
 
     #[test]
     fn a_screenshot_writes_a_png_where_the_caller_said() {

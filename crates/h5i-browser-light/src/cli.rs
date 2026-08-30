@@ -2578,7 +2578,7 @@ mod tests {
 
     #[test]
     fn script_is_opt_in_at_the_command_line() {
-        // The gate ROADMAP.md §B3.3 asks for: script is a decision someone
+        // The gate roadmap-history.md §B3.3 asks for: script is a decision someone
         // makes, never a default they inherit.
         for argv in [
             vec!["h5i-browser-light", "open", "https://x.example/", "--script"],

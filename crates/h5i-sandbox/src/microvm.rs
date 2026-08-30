@@ -1,59 +1,48 @@
 //! The `isolation=microvm` backend: run an environment's command inside a
-//! **hardware-isolated microVM** via the [microsandbox](https://microsandbox.dev)
-//! runtime (`msb`), and enforce the `net.egress` domain allowlist *in the VM's
-//! own network stack* rather than in a host-side HTTP proxy.
+//! **hardware-isolated microVM** via [microsandbox](https://microsandbox.dev)
+//! (`msb`), enforcing the `net.egress` allowlist in the VM's own network stack
+//! rather than a host-side HTTP proxy.
 //!
 //! ### Why this tier exists
 //!
-//! `container.rs` says it plainly: its `net.egress` enforcement is **L7**. It
-//! blocks the dominant exfiltration path (`curl`/`pip`/`npm` honouring
-//! `HTTP(S)_PROXY`) and nothing stops a process that ignores the proxy env and
-//! opens a raw socket to an arbitrary IP the rootless NAT permits. The same
-//! module names the fix: *"airtight L3/L4 egress filtering is the
-//! `hardened-container`/`microvm` tier"*. This module is that tier.
-//!
-//! Two things change relative to `container`:
+//! `container.rs` enforces `net.egress` at **L7**. That blocks the dominant
+//! exfiltration path (`curl`/`pip`/`npm` honouring `HTTP(S)_PROXY`) and nothing
+//! else: a process that ignores the proxy env and opens a raw socket to any IP
+//! the rootless NAT permits gets through. Two things change here:
 //!
 //! 1. **The boundary is a virtual machine.** The guest runs its own kernel on
-//!    KVM (Linux) or Hypervisor.framework (Apple Silicon). A kernel exploit in
-//!    the box is contained by the hypervisor rather than by the host kernel it
-//!    just subverted, which is the property neither the kernel tiers nor a
-//!    shared-kernel container can offer.
-//! 2. **Egress is filtered by address, not by proxy etiquette.** The allowlist
-//!    becomes `--net-default-egress deny` plus one `--net-rule` per allowed
-//!    destination, evaluated by the VM's virtual network stack. A raw socket to
-//!    an unlisted IP is dropped; there is no `HTTP_PROXY` to ignore. DNS-rebind
-//!    protection is on by default and we never disable it.
+//!    KVM or Hypervisor.framework, so a kernel exploit in the box is contained
+//!    by the hypervisor rather than by the host kernel it just subverted.
+//! 2. **Egress is filtered by address.** The allowlist becomes
+//!    `--net-default-egress deny` plus one `--net-rule` per destination,
+//!    evaluated by the VM's virtual network stack. A raw socket to an unlisted
+//!    IP is dropped and there is no `HTTP_PROXY` to ignore. DNS-rebind
+//!    protection stays on.
 //!
-//! ### What it costs, stated rather than hidden
+//! ### What it costs
 //!
-//! - **The host must support virtualization.** `/dev/kvm` on Linux, Apple
-//!   Silicon on macOS. No nested virtualization (a plain WSL2 kernel, most CI
-//!   runners) means no microvm tier, and [`resolve`] refuses rather than
-//!   downgrading.
+//! - **The host must support virtualization**: `/dev/kvm` on Linux, Apple
+//!   Silicon on macOS. Without it (plain WSL2, most CI runners) [`resolve`]
+//!   refuses rather than downgrading.
 //! - **No per-request egress tally.** The container tier's proxy sees every
-//!   CONNECT and reports allow/deny counts into the capture manifest. A VM
-//!   netstack filter drops packets without telling us which, so
-//!   [`ExecOutcome::egress`] is `None` here. Stronger enforcement, weaker
-//!   evidence — we report the tier's rules at session start instead of
-//!   pretending to a tally we do not have.
-//! - **No in-box tee shim.** The container tier self-mounts its own image at
-//!   `/.h5i/orig` so a shadowed `/bin/sh` still has a real shell to exec. A VM
-//!   has no image to self-mount, so that trick has no analogue. The *primary*
-//!   in-box observation path — the read-only managed-settings mount carrying the
-//!   unkillable `wrap-bash` hook — works here exactly as it does under
-//!   `container`, and the capture spool is mounted the same way.
+//!   CONNECT and reports allow/deny counts; a VM netstack drops packets without
+//!   saying which, so [`ExecOutcome::egress`] is `None`. Stronger enforcement,
+//!   weaker evidence, so we report the tier's rules at session start rather
+//!   than pretend to a tally we do not have.
+//! - **No in-box tee shim.** The container tier self-mounts its image at
+//!   `/.h5i/orig` so a shadowed `/bin/sh` still has a real shell to exec; a VM
+//!   has no image to self-mount. The primary observation path, the read-only
+//!   managed-settings mount carrying the unkillable `wrap-bash` hook, works
+//!   here as it does under `container`, and the capture spool mounts the same.
 //!
 //! ### Secrets never enter the host argv
 //!
-//! `msb` has no name-only env forwarding (`podman --env NAME` reads the value
-//! from its own environment; `msb --env` takes `KEY=VALUE`). Putting a brokered
-//! credential in `msb run`'s argv would publish it to every local user through
-//! `/proc/<pid>/cmdline`, which is exactly the leak `container.rs` goes out of
-//! its way to avoid. So this backend passes **no** environment on the command
-//! line at all: it writes a `0600` preload script host-side, registers it with
-//! `--script-path` (whose *contents* travel to the runtime over a config fd, not
-//! argv), and runs the command through it. See [`preload_script`].
+//! `msb` has no name-only env forwarding (`--env` takes `KEY=VALUE`), and a
+//! brokered credential in `msb run`'s argv would be published to every local
+//! user through `/proc/<pid>/cmdline`. So this backend passes no environment on
+//! the command line at all: it writes a `0600` preload script host-side,
+//! registers it with `--script-path` (whose contents travel over a config fd,
+//! not argv), and runs the command through it. See [`preload_script`].
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -1594,7 +1583,7 @@ pub fn run(
 
 /// May this run reuse a warm guest?
 ///
-/// Reuse is the default (ROADMAP 9., "a box is the trust domain, not a
+/// Reuse is the default (roadmap-history.md 9., "a box is the trust domain, not a
 /// command"), with two exclusions:
 ///
 /// - [`NO_REUSE_ENV`], the operator's escape hatch and the way to get a

@@ -19,7 +19,7 @@
 //! The claim this engine makes is "a request that is not in the log did not
 //! happen", and in one process that claim is only as strong as the parsers
 //! sharing the address space with the recorder. Splitting moves the recorder
-//! somewhere a compromised parser cannot reach it. See ROADMAP §B18.
+//! somewhere a compromised parser cannot reach it. See roadmap-history.md §B18.
 //!
 //! # The rule for adding to this trait
 //!

@@ -5,7 +5,7 @@ so. It costs **461 ms per command** on this host, of which essentially all is
 guest boot: the VM adds no measurable per-syscall tax once it is running. A
 warm guest answers the same command in **8.9 ms**, so the tier is carrying a
 **~50×** overhead that is structural rather than inherent, and two independent
-changes remove most of it. This is the number ROADMAP M13 asked for before any
+changes remove most of it. This is the number `docs/roadmap-history.md` M13 asked for before any
 optimisation was designed.
 
 One finding runs against the obvious ordering: on macOS the `microvm` tier is
@@ -340,7 +340,7 @@ was not measured: rootless Podman is not installed on this host.
 
 **The tier works.** Before this run the adapter had never booted a real guest
 anywhere — it was unit-tested against its argv and its rule translation, and
-ROADMAP §9 said so. A microvm box now creates, runs a command, enforces its
+`docs/roadmap-history.md` §9 said so. A microvm box now creates, runs a command, enforces its
 allowlist in the guest netstack, and exits 0.
 
 **Its cost is boot, not isolation.** The near-zero per-syscall and CPU deltas
@@ -403,4 +403,4 @@ msb rm --force warm
 - `docs/benchmarks/env-overhead.md` — the earlier `workspace`/`process`
   measurement on a Linux guest, which this does not supersede: different
   host, different date, different tiers.
-- ROADMAP M13 — the plan this measurement was taken to size.
+- `docs/roadmap-history.md` M13 — the plan this measurement was taken to size.

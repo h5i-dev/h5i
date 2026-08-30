@@ -2738,66 +2738,59 @@ fn verify_env_worktree(
 
 // ─── in-box git plumbing grants ──────────────────────────────────────────────
 
-/// The repo-`.git` plumbing surface that makes the env's worktree a
-/// *functional* git checkout from inside the box. Consumed per backend by
-/// [`grant_box_git`]: Landlock grants at process/supervised, identical-path
-/// bind mounts at container.
+/// The repo-`.git` plumbing that makes the env's worktree a *functional* git
+/// checkout from inside the box. Consumed per backend by [`grant_box_git`]:
+/// Landlock grants at process/supervised, identical-path bind mounts at
+/// container.
 ///
-/// `$WORK` alone is not enough: a native worktree's plumbing lives outside it.
-/// `$WORK/.git` is a pointer file into `<repo>/.git/worktrees/<wt>` (HEAD,
-/// index, `commondir`), which in turn points at the shared `<repo>/.git`
-/// (objects, refs, config). With no grant, every `git`/`h5i` invocation inside
-/// the box dies on EACCES — which libgit2 renders as a misleading
-/// `GIT_ELOCKED` ("failed open - '…/commondir' is locked").
+/// `$WORK` alone is not enough. `$WORK/.git` is a pointer file into
+/// `<repo>/.git/worktrees/<wt>`, which points at the shared `<repo>/.git` for
+/// objects, refs and config. With no grant every `git`/`h5i` call in the box
+/// dies on EACCES, which libgit2 renders as a misleading `GIT_ELOCKED`.
 ///
-/// The grants restore exactly the surface a boxed agent needs, nothing more:
+/// Granted, and nothing more:
 ///
-/// - **rw** `worktrees/<wt>` — this env's own admin dir (HEAD, index, reflog,
-///   the `h5i/HEAD` context pin).
-/// - **rw** `objects` — the content-addressed store. It is shared: a hostile
-///   box can add garbage or delete loose objects (an *availability* risk,
-///   recoverable from any clone), but it cannot move a ref it is not granted,
-///   so history integrity is preserved.
-/// - **rw** the parent dir of the env's own branch ref, plus its reflog dir —
-///   loose-ref updates create `<slug>.lock` siblings, so the grant must be the
-///   directory. Scope: the box can move *its own agent's* env branches under
+/// - **rw** `worktrees/<wt>`, this env's own admin dir.
+/// - **rw** `objects`. Shared, so a hostile box can add garbage or delete loose
+///   objects, an availability risk recoverable from any clone. It cannot move a
+///   ref it is not granted, so history integrity holds.
+/// - **rw** the parent dir of the env's own branch ref plus its reflog dir.
+///   Loose-ref updates create `<slug>.lock` siblings, so the grant has to be the
+///   directory. The box moves its own agent's branches under
 ///   `refs/heads/h5i/env/<agent>/` and nothing else in `refs/heads`.
-/// - **rw** `refs/h5i/context` — the reasoning store, so in-box
-///   `h5i context init/trace/commit` works (`init` records the goal on the
-///   `main` context branch). Context is a shared advisory record, already
-///   union-merged across clones — not a protected code ref.
-/// - **ro** `HEAD`, `config`, `packed-refs`, `refs`, `info` — the minimum
-///   reads `git status`/`commit` need. A repo-local `config` carrying
-///   credentials in remote URLs becomes readable in-box; it stays strictly
-///   read-only (a writable `core.fsmonitor`/`hooksPath` would execute code on
-///   the host the next time *anyone* runs git there).
-/// - **ro** `~/.gitconfig` + `~/.config/git` — git *dies* (not skips) when an
-///   existing global config can't be opened: Landlock lets the `access()`
-///   probe pass on DAC bits, then the open fails and git reports "unknown
-///   error occurred while reading the configuration files". The agent profile
-///   already grants these (commit identity); deny-home profiles get exactly
-///   these two paths and nothing else under `$HOME` (`~/.git-credentials`
-///   stays out — it is only consulted by credential helpers on network ops).
-/// - **ro** the main repo's `Cargo.toml` when it exists. Cargo walks upward
-///   from nested env worktrees looking for a workspace root; without read
-///   access, ordinary `cargo build`/`cargo test` fails before compiling.
+/// - **rw** `refs/h5i/context`, so in-box `h5i context init/trace/commit` works.
+///   Context is a shared advisory record, union-merged across clones, not a
+///   protected code ref.
+/// - **ro** `HEAD`, `config`, `packed-refs`, `refs`, `info`, the minimum
+///   `git status`/`commit` read. A repo-local `config` carrying credentials in
+///   remote URLs becomes readable in-box, so it stays strictly read-only: a
+///   writable `core.fsmonitor`/`hooksPath` would execute code on the host the
+///   next time *anyone* ran git there.
+/// - **ro** `~/.gitconfig` and `~/.config/git`. Git *dies* rather than skips
+///   when an existing global config cannot be opened: Landlock lets the
+///   `access()` probe pass on DAC bits, then the open fails and git reports
+///   "unknown error occurred while reading the configuration files".
+///   Deny-home profiles get these two paths and nothing else under `$HOME`;
+///   `~/.git-credentials` stays out, being consulted only by credential helpers
+///   on network operations.
+/// - **ro** the main repo's `Cargo.toml` where it exists, since cargo walks
+///   upward from nested env worktrees looking for a workspace root.
 ///
 /// Deliberately **not** granted: `.git` itself, `hooks`, `refs/h5i/env` (a box
-/// that could rewrite manifests/policies could widen its own sandbox on the
-/// next run), the env's manifest/policy dir beside `$WORK`, and the on-disk
-/// h5i stores (`.h5i/claims`, notes, msg) — captures, claims and messages stay
-/// host-mediated evidence channels by design.
+/// that could rewrite manifests or policies could widen its own sandbox on the
+/// next run), the env's manifest/policy dir beside `$WORK`, and the on-disk h5i
+/// stores (`.h5i/claims`, notes, msg), which stay host-mediated evidence
+/// channels by design.
 ///
 /// Two invariants:
 /// - Paths derive only from the identity-validated manifest and the host repo
-///   handle — never from box-writable state (the `$WORK/.git` pointer file is
-///   exactly the kind of thing a previous run could have rewritten to point
-///   anywhere).
-/// - Missing rw dirs are (re)created here. The Landlock builder skips
-///   non-existent grant paths — the right fail-closed default for *policy*
-///   paths, but for these structural grants a silent skip would brick in-box
-///   git again (e.g. after a host-side `git pack-refs` pruned the loose-ref
-///   directory).
+///   handle, never from box-writable state. The `$WORK/.git` pointer file is
+///   exactly the kind of thing a previous run could have rewritten.
+/// - Missing rw dirs are recreated here. The Landlock builder skips
+///   non-existent grant paths, which is the right fail-closed default for
+///   *policy* paths, but for these structural grants a silent skip would brick
+///   in-box git again, for instance after a host-side `git pack-refs` pruned
+///   the loose-ref directory.
 fn box_git_plumbing(repo: &Repository, m: &EnvManifest) -> Result<Vec<BoxGitPath>, H5iError> {
     let git_dir = repo.commondir().to_path_buf();
     // `refs/heads/h5i/env/<agent>` — `m.branch` is identity-validated against

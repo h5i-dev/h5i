@@ -37,7 +37,7 @@ pub struct PageOptions {
     ///
     /// Off by default and opt-in at every layer above, because turning it on is
     /// a change to what an untrusted page can do inside the box rather than a
-    /// rendering preference (ROADMAP §12.5).
+    /// rendering preference (roadmap-history.md §12.5).
     pub script: bool,
     /// How long one navigation may take, first byte to last.
     ///
@@ -216,7 +216,7 @@ pub struct Page {
     /// The script realm, when this page has one. `None` when script is off,
     /// which is still the default: `capabilities.javascript` is the gate, and
     /// flipping it is a threat-model decision rather than a feature flag
-    /// (ROADMAP §12.5).
+    /// (roadmap-history.md §12.5).
     script: Option<crate::script::Script>,
     /// What this page's load cost, against what it was allowed.
     ///
@@ -862,7 +862,8 @@ impl Page {
     /// Build a realm for this page and run its script.
     ///
     /// **A realm is built per navigation, deliberately, and is not reused.**
-    /// ROADMAP §B11.5.13 lists reuse as a performance item worth ~20ms a page
+    /// roadmap-history.md §B11.5.13 lists reuse as a performance item worth
+    /// ~20ms a page
     /// (§B8.9), and it should stay unbuilt. A realm carries everything the
     /// previous document's script put in it: globals, patched prototypes,
     /// retained closures. Carrying that into the next document means a page can

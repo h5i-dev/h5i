@@ -446,7 +446,7 @@ route to the network is to ask something else, which writes a receipt first.
 so it can still open a socket of its own. The split moved what a compromised
 parser can reach *in memory*. The request log becomes evidence against a
 compromised parser only when the renderer's own profile denies the network,
-which is ROADMAP §B18.7 step 3 and is not built.
+which is `docs/roadmap-history.md` §B18.7 step 3 and is not built.
 
 `H5I_BROWSER_NO_SPLIT=1` runs the engine as one process, the way it ran before.
 It is there for comparing the two shapes, and for a host where spawning is the

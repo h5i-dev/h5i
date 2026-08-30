@@ -2,48 +2,43 @@
 //!
 //! # Why this does not contradict the refusal beside it
 //!
-//! [`super::modules::resolve`] refuses a bare specifier and the reason it gives
-//! is good: `import "lodash"` names nothing a browser can fetch, and a loader
-//! that quietly rewrites it to `https://esm.sh/lodash` has turned one line of
-//! page script into an unrequested request to a third party **chosen by the
-//! engine**. Inside a sandbox whose whole claim is that every request is
-//! policy-checked and receipted, an engine that invents destinations is the
-//! wrong kind of helpful.
+//! [`super::modules::resolve`] refuses a bare specifier for a good reason:
+//! `import "lodash"` names nothing a browser can fetch, and a loader that
+//! quietly rewrites it to `https://esm.sh/lodash` has turned one line of page
+//! script into an unrequested request to a third party **the engine chose**.
 //!
-//! An import map does not have that property, and the difference is the whole
-//! argument for building this: **the page declares the mapping**. The engine
-//! chooses nothing. `esm.sh` appears in a receipt because the document said
-//! `"lodash": "https://esm.sh/lodash"` in markup the parser already read, not
-//! because this crate had an opinion about where packages live.
+//! An import map is different, and the difference is the whole argument for
+//! building this: **the page declares the mapping**. `esm.sh` appears in a
+//! receipt because the document said `"lodash": "https://esm.sh/lodash"` in
+//! markup the parser already read, not because this crate had an opinion about
+//! where packages live.
 //!
-//! So the refusal keeps its exact target. A bare specifier with no map is still
-//! an error naming what would have to exist; a bare specifier *with* a map is a
-//! URL the page wrote down, and it goes through the same broker, the same
-//! policy check and the same receipt as every other subresource. The allowlist
-//! is unchanged: a map pointing at an origin nobody granted is refused at fetch
-//! time exactly as a `<script src>` to that origin would be. What changes is
-//! that the refusal now names an origin instead of dying at resolution with
-//! nothing recorded — which is strictly more information than before.
+//! So the refusal keeps its target. A bare specifier with no map is still an
+//! error naming what would have to exist; with a map it is a URL the page wrote
+//! down, going through the same broker, policy check and receipt as any other
+//! subresource. The allowlist is unchanged: a map pointing at an ungranted
+//! origin is refused at fetch time exactly as a `<script src>` would be, and the
+//! refusal now names an origin instead of dying at resolution with nothing
+//! recorded.
 //!
-//! # What is implemented, and what is left out on purpose
+//! # What is implemented, and what is left out
 //!
 //! `imports` and `scopes`, which is the whole of what pages use. Both follow
-//! the specification's two-kind rule: a key ending in `/` is a **prefix** and
-//! maps whole subtrees, and any other key matches **exactly**. Longest key
+//! the specification's two-kind rule: a key ending in `/` is a **prefix**
+//! mapping whole subtrees, any other key matches **exactly**, and longest key
 //! wins, which is what makes `{"a/": …, "a/b/": …}` behave.
 //!
 //! Deliberately absent:
 //!
-//! * **`integrity`.** It is a map of URL to hash, and honouring it means
-//!   checking a digest this engine does not yet compute anywhere. Ignoring a
-//!   field named `integrity` while pretending otherwise would be the worst of
-//!   the three options, so it is named here as absent.
-//! * **Multiple maps.** The specification allows several only in the sense that
-//!   later ones are errors; the first one wins and the rest are ignored, which
-//!   is what [`ImportMap::from_document_scripts`] does.
-//! * **Resolution of a map that fails to parse.** A malformed map is dropped
-//!   whole, with a console line, rather than half-applied. Half a map is a page
-//!   that resolves some of its imports and mysteriously not others.
+//! * **`integrity`**, a map of URL to hash. Honouring it means checking a digest
+//!   this engine does not yet compute anywhere, so it is named here as absent
+//!   rather than ignored quietly.
+//! * **Multiple maps.** The specification makes later ones errors; the first
+//!   wins and the rest are ignored, which is what
+//!   [`ImportMap::from_document_scripts`] does.
+//! * **Partial application.** A malformed map is dropped whole with a console
+//!   line. Half a map is a page that resolves some imports and mysteriously not
+//!   others.
 
 use std::collections::BTreeMap;
 

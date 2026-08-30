@@ -1,13 +1,12 @@
 //! Mediating the browser daemon's control socket.
 //!
-//! The control lock (5.4) was designed and then only half-enforced: the viewer
-//! honours it, but nothing stood between the agent and `agent-browser`, so an
-//! agent that kept clicking during a human takeover was told off only if it
-//! asked. ROADMAP open item 1 listed three candidate interception points — a
-//! PATH shim, a skill-level convention, or accepting it as advisory — and
-//! missed the one that works: the daemon's own control socket. A PATH shim is
-//! bypassed by calling the binary by absolute path and a convention enforces
-//! nothing, but **every verb walks through the socket**.
+//! The control lock (5.4) was only half-enforced: the viewer honoured it, but
+//! nothing stood between the agent and `agent-browser`, so an agent that kept
+//! clicking during a human takeover was told off only if it asked. ROADMAP open
+//! item 1 listed a PATH shim, a skill-level convention, or accepting it as
+//! advisory, and missed the one that works: the daemon's own control socket. A
+//! PATH shim is bypassed by an absolute path and a convention enforces nothing,
+//! but **every verb walks through the socket**.
 //!
 //! The protocol is one line of JSON each way (`{"id","action",…}` in,
 //! `{"success","data","error"}` out, serialized under a single mutex upstream),
@@ -17,34 +16,31 @@
 //!
 //! It is **enforcement against an agent following the documented path**: the
 //! CLI reads `AGENT_BROWSER_SOCKET_DIR`, that directory is h5i's listener, and
-//! every verb it sends is decided here. That is the threat the control lock
-//! was written for — an agent that does not know a human took the wheel.
+//! every verb it sends is decided here. That is the threat the control lock was
+//! written for, an agent that does not know a human took the wheel.
 //!
-//! It is **not containment against a deliberately evasive agent**, and the
-//! reason is structural rather than a missing feature: the daemon runs inside
-//! the box, and inside a box there is no privilege boundary. Landlock grants
-//! are per-box, not per-process, so any socket the daemon can bind the agent
-//! can also connect to directly if it goes looking. Moving the daemon outside
-//! the box would fix that and break the thing boxes exist for — it could no
-//! longer reach the dev server on the box's own loopback. So the honest claim
-//! is the narrower one, and it belongs in the limits section rather than in a
-//! footnote.
+//! It is **not containment against a deliberately evasive agent**, for a
+//! structural reason: the daemon runs inside the box, and inside a box there is
+//! no privilege boundary. Landlock grants are per-box, not per-process, so any
+//! socket the daemon can bind the agent can connect to directly. Moving the
+//! daemon outside the box would fix that and break what boxes are for, since it
+//! could no longer reach the dev server on the box's own loopback.
 //!
 //! # Two things learned by driving the real daemon
 //!
-//! 1. **`__agent_browser_internal_shutdown` is an escape hatch, not an
-//!    action.** The CLI sends it when it decides the running daemon does not
-//!    match the options it wants, and then starts its own. Forwarded naively it
-//!    kills the daemon we mediate and the next daemon is the agent's, on a
-//!    socket we do not own — mediation gone, silently. So it is refused here,
-//!    always, whoever holds the lock.
+//! 1. **`__agent_browser_internal_shutdown` is an escape hatch, not an action.**
+//!    The CLI sends it when the running daemon does not match the options it
+//!    wants, then starts its own. Forwarded naively it kills the daemon we
+//!    mediate, and the next daemon is the agent's on a socket we do not own, so
+//!    mediation vanishes silently. It is refused here always, whoever holds the
+//!    lock.
 //! 2. **The daemon's config fingerprint covers its options, not its path.** Two
 //!    daemons started with the same `AGENT_BROWSER_*` environment agree on the
-//!    fingerprint even from different socket directories, which is what makes
-//!    it possible to run the real daemon on a path the box cannot reach and put
-//!    this in front of it: mirror `.version`/`.config` into the box-visible
-//!    directory and the CLI is satisfied. Get the environment wrong and the CLI
-//!    concludes the daemon is stale and tries (1).
+//!    fingerprint even from different socket directories, which is what lets the
+//!    real daemon run on a path the box cannot reach with this in front of it:
+//!    mirror `.version`/`.config` into the box-visible directory and the CLI is
+//!    satisfied. Get the environment wrong and the CLI decides the daemon is
+//!    stale and tries (1).
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, Write};
@@ -724,7 +720,7 @@ pub fn spawn(
 /// text*, and a reader that wanted them back as data would have to parse a
 /// display format. Reversing a display format is the quiet-wrong-answer shape
 /// this codebase keeps getting bitten by, so the data is written as data once,
-/// here, for the browser terminal (ROADMAP M11a) and anything after it.
+/// here, for the browser terminal (roadmap-history.md M11a) and anything after it.
 pub fn actions_log(env_dir: &Path) -> std::path::PathBuf {
     env_dir.join("browser-actions.jsonl")
 }

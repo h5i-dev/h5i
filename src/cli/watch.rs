@@ -1,6 +1,6 @@
 //! `h5i box watch` — the box's policy decisions, one line each, as they happen.
 //!
-//! The third reader of `browser_events` (ROADMAP M11c). M11a built the model
+//! The third reader of `browser_events` (roadmap-history.md M11c). M11a built the model
 //! and the console's evidence panes; M11b keeps a pane-based terminal viewer
 //! over the same stream. This is neither: no viewport, no panes, no cycling,
 //! no control lock. It is the `tail -f` of the receipt, and it is meant to be

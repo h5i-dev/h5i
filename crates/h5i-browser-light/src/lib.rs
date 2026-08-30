@@ -4,37 +4,36 @@
 //! h5i's egress proxy is a CONNECT gate: it sees `CONNECT docs.example.com:443`
 //! and nothing more, so a browser receipt can name hosts and little else. CDP's
 //! Fetch domain can pause a Chromium request and record it, but that coverage
-//! fails *open* — attach races, freshly created targets and workers, event
+//! fails *open*, since attach races, freshly created targets and workers, event
 //! buffer limits and disconnects all leave gaps. Here the engine *is* the HTTP
 //! client, so the receipt is not an observation of the network, it is the
 //! network. If the receipt cannot be written, the request does not happen.
 //!
-//! What that buys, concretely:
+//! Concretely:
 //!
 //! - **Fail-closed by construction.** [`net::LocalBroker`] appends the decision
-//!   before the wire and the outcome after it. A sink that refuses to record
-//!   is a sink that refuses to fetch (see [`receipt::Sink`]).
-//! - **The recorder is not in the parsers' process.** The engine runs as two:
-//!   a broker holding the policy, the wire, the receipts, the jar and the
-//!   secrets, and a renderer holding the DOM, the cascade, the decoders and the
-//!   script realm. [`broker::Broker`] is the seam between them and [`ipc`] is
-//!   the transport. A bug in Blitz, Stylo, an image decoder or Boa is a bug in
-//!   the half that holds none of the above.
+//!   before the wire and the outcome after it. A sink that refuses to record is
+//!   a sink that refuses to fetch (see [`receipt::Sink`]).
+//! - **The recorder is not in the parsers' process.** The engine runs as two: a
+//!   broker holding the policy, the wire, the receipts, the jar and the secrets,
+//!   and a renderer holding the DOM, the cascade, the decoders and the script
+//!   realm. [`broker::Broker`] is the seam and [`ipc`] the transport, so a bug
+//!   in Blitz, Stylo, an image decoder or Boa is a bug in the half that holds
+//!   none of the above.
 //! - **Every hop is a decision.** Redirects are followed manually and each hop
 //!   is policy-checked and receipted, so an allowed origin cannot bounce a
 //!   request to a denied one.
-//! - **No script.** This tier does not evaluate page script at all, so the
-//!   commonest delivery channel for injected instructions is absent rather
-//!   than filtered. When script arrives (ROADMAP M10 tier 3) it is off by
+//! - **No script in this tier.** Page script is not evaluated at all, so the
+//!   commonest delivery channel for injected instructions is absent rather than
+//!   filtered. When script arrives (roadmap-history.md M10 tier 3) it is off by
 //!   default and gated by policy before evaluation, never "absent by
-//!   construction" — that phrase is reserved for a build with no JS engine in
-//!   it.
+//!   construction", which is reserved for a build with no JS engine in it.
 //!
-//! The rendering half is assembled, not written: Blitz owns the DOM and drives
-//! Stylo for CSS, and vello_cpu rasterises on the CPU because a box has no GPU.
-//! Fidelity is explicitly *not* the goal — the two-engine split in ROADMAP 7.1
-//! keeps Chromium for the agent's own dev server, and docs-grade pages are this
-//! engine's compatibility bar.
+//! The rendering half is assembled rather than written: Blitz owns the DOM and
+//! drives Stylo for CSS, and vello_cpu rasterises on the CPU because a box has
+//! no GPU. Fidelity is explicitly not the goal. The two-engine split in
+//! roadmap-history.md 7.1 keeps Chromium for the agent's own dev server, and
+//! docs-grade pages are this engine's compatibility bar.
 
 pub mod broker;
 pub mod cli;
@@ -73,7 +72,7 @@ pub use receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
 ///
 /// h5i reads this instead of inferring capability from a version number: a
 /// caller that needs `<video>` should be told so by the engine, and routed to
-/// the Chromium path (ROADMAP 7.1), not left to discover a blank frame.
+/// the Chromium path (roadmap-history.md 7.1), not left to discover a blank frame.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct Capabilities {
     pub engine: String,

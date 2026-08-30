@@ -3,53 +3,45 @@
 //! # Why this is not the allowlist
 //!
 //! The allowlist ([`crate::policy`]) answers **"may this engine connect?"**.
-//! This answers **"may page script read what came back?"**. They are different
-//! questions and were being answered by the same check, which meant the second
-//! was not being answered at all.
+//! This answers **"may page script read what came back?"**. One check was
+//! answering both, which meant the second went unanswered.
 //!
-//! The failure that follows is concrete. Grant two origins — a documentation
-//! site and an internal one, say — and a script on either could `fetch` the
-//! other and read the body. The allowlist said yes, because the allowlist was
-//! asked whether the *engine* may talk to that host, and it may. Nobody asked
-//! whether *this document* may read the answer, which is what a browser's
-//! same-origin policy exists to decide.
+//! Grant two origins, a documentation site and an internal one, and a script on
+//! either could `fetch` the other and read the body: the allowlist said yes
+//! because it was asked whether the *engine* may talk to that host, and it may.
 //!
-//! **The cookie jar made this worse, and did so in this repository's own
-//! history.** While cookies were host-only a cross-origin read carried no
-//! credential worth having. ROADMAP §B16 added the `Domain` attribute over a
-//! public suffix list — a real improvement on its own terms — and in doing so
-//! turned an unauthenticated cross-origin read into an *authenticated* one: a
-//! script on one allowlisted origin could read another origin's pages as the
-//! logged-in user. Neither change was wrong alone. The pair was, and that is
-//! the argument for this module existing before any further capability.
+//! The cookie jar made this worse, in this repository's own history. While
+//! cookies were host-only, a cross-origin read carried no credential worth
+//! having. roadmap-history.md §B16 added `Domain` over a public suffix list, a real
+//! improvement on its own terms, and turned an unauthenticated cross-origin
+//! read into an authenticated one. Neither change was wrong alone; the pair
+//! was, which is the argument for this module preceding any further capability.
 //!
 //! # What is enforced
 //!
-//! * **Same-origin is unrestricted**, which is the whole point of an origin.
-//! * **Cross-origin `no-cors`** may be sent and its response is **opaque**:
-//!   no status, no headers, no body. That is what a browser gives a page for
-//!   an `<img>` or a fire-and-forget beacon, and it is what makes those safe.
-//! * **Cross-origin `cors`** sends an `Origin` header, preflights when the
-//!   request is not simple, and the response is exposed only if the server
-//!   named this origin back. Response headers are filtered to the safelist
-//!   plus whatever `Access-Control-Expose-Headers` adds.
-//! * **Credentials cross-origin require the server to opt in twice**:
+//! * **Same-origin is unrestricted**, which is the point of an origin.
+//! * **Cross-origin `no-cors`** may be sent and its response is **opaque**: no
+//!   status, no headers, no body. That is what a browser gives an `<img>` or a
+//!   beacon, and what makes those safe.
+//! * **Cross-origin `cors`** sends `Origin`, preflights when the request is not
+//!   simple, and exposes the response only if the server named this origin
+//!   back. Response headers are filtered to the safelist plus whatever
+//!   `Access-Control-Expose-Headers` adds.
+//! * **Credentials cross-origin need the server to opt in twice**:
 //!   `Access-Control-Allow-Credentials: true` *and* an explicit origin echo,
-//!   because `*` with credentials is exactly the misconfiguration the rule
-//!   exists to catch.
-//! * **A redirect re-evaluates all of it.** A CORS request that crosses to a
-//!   third origin gets an opaque `null` origin from there on, so a server
-//!   cannot launder a read by bouncing it.
+//!   since `*` with credentials is the misconfiguration this catches.
+//! * **A redirect re-evaluates all of it.** Crossing to a third origin yields an
+//!   opaque `null` origin from there on, so a server cannot launder a read by
+//!   bouncing it.
 //!
 //! # What is deliberately not modelled
 //!
-//! No `Access-Control-Max-Age` cache. A preflight per non-simple request is
-//! slower and is one fewer piece of state that can be wrong; when a corpus page
-//! makes this cost real it can be added, with the receipt showing both requests
-//! rather than one appearing from nowhere. Timing-attack mitigations
-//! (CORB/ORB) are out of scope: they defend a shared process against a
-//! side channel, and this engine gives every document its own realm and throws
-//! it away on navigation.
+//! No `Access-Control-Max-Age` cache: a preflight per non-simple request is
+//! slower and is one fewer piece of state that can be wrong. When a corpus page
+//! makes that cost real it can be added, with the receipt showing both
+//! requests. CORB/ORB are out of scope, since they defend a shared process
+//! against a side channel and this engine gives every document its own realm
+//! and discards it on navigation.
 
 use url::Url;
 

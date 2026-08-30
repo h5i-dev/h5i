@@ -1,50 +1,46 @@
 //! The authority ceiling: what a box must be *under* to join a thread.
 //!
-//! A thread declares a ceiling profile when it is created. A box may attach to
-//! that thread only if the confinement it actually runs under is a **subset**
-//! of the ceiling. The rule this enforces is the one the product is named for:
+//! A thread declares a ceiling profile at creation, and a box may attach only
+//! if the confinement it actually runs under is a **subset** of that ceiling:
 //!
 //! > Agents can share information, never permissions.
 //!
-//! Sharing information is what the forum does. Not sharing permissions is what
-//! this module does, and it does it by making the ceiling a property of the
-//! *room* rather than of the conversation in it.
+//! The forum shares the information. This module withholds the permissions, by
+//! making the ceiling a property of the *room* rather than of the conversation.
 //!
 //! ## Why a static check and not a dynamic intersection
 //!
-//! The tempting design is to compute each participant's authority live, as the
-//! intersection of everyone currently in the thread. It is safe and it is
-//! unusable: a read-only observer joining would strip write access from the
-//! agent doing the work, every join and leave would move every participant's
-//! authority, and a long task would not be reproducible from one hour to the
-//! next.
+//! Computing each participant's authority live, as the intersection of everyone
+//! currently in the thread, is safe and unusable: a read-only observer joining
+//! would strip write access from the agent doing the work, every join and leave
+//! would move everyone's authority, and a long task would not be reproducible
+//! from one hour to the next.
 //!
-//! So the ceiling is fixed by a human when the thread is created, and each box
-//! is checked against it once, at attach. Because a box's resolved policy
-//! cannot change while it exists, a box that passed at attach is still under
-//! the ceiling for the whole of its life. Participants joining and leaving move
-//! nobody's authority.
+//! So a human fixes the ceiling at thread creation and each box is checked once,
+//! at attach. A box's resolved policy cannot change while it exists, so one that
+//! passed at attach stays under the ceiling for its whole life, and joins and
+//! leaves move nobody's authority.
 //!
 //! ## Refused, never downgraded
 //!
-//! A box that exceeds the ceiling is refused, not quietly re-confined to fit.
-//! Silently weakening a box's grants would leave its operator believing it has
-//! authority it no longer has, and — worse — would make "attached successfully"
-//! stop meaning "runs the way you configured it". Refusal is the same choice
-//! `placement` makes for a capability a runner lacks.
+//! A box exceeding the ceiling is refused rather than quietly re-confined.
+//! Silently weakening its grants would leave the operator believing it has
+//! authority it lost, and would make "attached successfully" stop meaning "runs
+//! the way you configured it". Same choice `placement` makes for a capability a
+//! runner lacks.
 //!
 //! ## What is compared
 //!
-//! The box side is its **stored, digest-verified** `policy.resolved.toml`, not
-//! a profile resolved fresh from the worktree: what matters is the confinement
-//! that was actually pinned, and the worktree's `.h5i/env.toml` is a file an
-//! agent could have edited since. The ceiling side is a profile resolved from
-//! the repository at check time, which is the human's declaration.
+//! The box side is its stored, digest-verified `policy.resolved.toml`, not a
+//! profile resolved fresh from the worktree: what matters is the confinement
+//! actually pinned, and `.h5i/env.toml` is a file an agent could have edited
+//! since. The ceiling side is a profile resolved from the repository at check
+//! time, which is the human's declaration.
 //!
 //! Every dimension below can widen what a box can *reach*. Tool allowlists and
 //! resource caps are deliberately not compared: they bound what a box does with
-//! authority it already has, and folding them in would make ceilings fail for
-//! reasons that have nothing to do with reach.
+//! authority it already has, and folding them in would fail ceilings for
+//! reasons unrelated to reach.
 
 use h5i_sandbox::sandbox_policy::{NetMode, Profile};
 

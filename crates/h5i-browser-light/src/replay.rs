@@ -1,57 +1,45 @@
 //! A session, recorded as something that can be run again.
 //!
 //! The action log ([`crate::receipt::ActionLog`]) is an *audit* record: every
-//! verb written before it runs and again after, including the ones that failed,
-//! because "no record, no action" is a claim about what was attempted. This is
-//! a different artifact with a different rule. It holds the steps that
-//! *worked*, in a form that means the same thing on a later run, and nothing
-//! else.
+//! verb written before it runs and again after, failures included, because "no
+//! record, no action" is a claim about what was attempted. This artifact holds
+//! only the steps that *worked*, in a form that means the same thing later.
 //!
-//! # Why selectors, and why that decision reaches into the API
+//! # Why selectors, and why that reaches into the API
 //!
 //! A `@ref` is an ordinal: the fifth actionable thing in the reading that
-//! minted it. It is checked against that reading (`stream::resolve_ref`), which
-//! makes it safe; it does not make it durable. Replay it tomorrow, against a
-//! page with one more link near the top, and `@e5` is a different element.
+//! minted it. Checking it against that reading (`stream::resolve_ref`) makes it
+//! safe, not durable. Replay it tomorrow against a page with one more link near
+//! the top and `@e5` is a different element.
 //!
 //! So a recorded step carries the **verified selector** the snapshot minted
-//! beside the ref — the simplest CSS selector whose first match is that
-//! element, checked with the same matcher the action verbs use
-//! ([`crate::selector`]). That is why the action verbs learned to take a
-//! `selector` as well as a `ref`: without it there would be nothing for a
-//! recording to be made *of*.
+//! beside the ref: the simplest CSS selector whose first match is that element,
+//! checked with the matcher the action verbs use ([`crate::selector`]). That is
+//! why those verbs take a `selector` as well as a `ref`. **Refs are for
+//! reading, selectors are for acting.**
 //!
-//! Lightpanda reaches the same place from the other end and tells its model so
-//! in the protocol guidance: never pass a node id to an action, because a
-//! session that uses one is not replayable. Here the constraint is the same and
-//! the phrasing is ours: **refs are for reading, selectors are for acting.**
+//! # Why a replay is worth having here
 //!
-//! # Why a replay is worth having here and not elsewhere
-//!
-//! Both reference engines settle on a wall clock, so replaying one of their
-//! recordings is a re-run with different timing and, on any page that races, a
-//! different answer. This engine's settle runs on a virtual clock, so a replay
-//! visits the same states in the same order. A recording, plus the request log
-//! it produced, plus a replay that lands identically, is a browser session that
-//! can be **re-executed and diffed** — which is the browser-side form of what
-//! ROADMAP §B11.5.16 wants from receipts.
+//! Both reference engines settle on a wall clock, so replaying their recordings
+//! is a re-run with different timing and, on a racing page, a different answer.
+//! This engine settles on a virtual clock, so a replay visits the same states in
+//! the same order. A recording, its request log, and a replay that lands
+//! identically make a session that can be **re-executed and diffed**, which is
+//! the browser-side form of what roadmap-history.md §B11.5.16 wants from
+//! receipts.
 //!
 //! # What is deliberately not recorded
 //!
-//! * **Reads.** A snapshot changes nothing; replaying one would only cost time.
-//!   What a replay is for is reaching a state, and the reads are how a *person*
-//!   or a model decided what to do next, not part of the doing.
-//! * **Steps that failed.** A refusal is in the audit log, where it belongs. A
-//!   script that replays a failure is a script that does not reach the state it
-//!   was recorded from.
-//! * **Steps whose handle cannot survive.** If no selector could be verified
-//!   for an element, the step is dropped and the drop is *counted*, so a short
-//!   script is visibly short rather than quietly wrong. This is the same rule
-//!   the selector module already follows: no handle is better than a handle
-//!   that resolves elsewhere.
+//! * **Reads.** A snapshot changes nothing. Reads are how a person or a model
+//!   decided what to do next, not part of the doing.
+//! * **Steps that failed.** A refusal belongs in the audit log. A script that
+//!   replays a failure never reaches the state it was recorded from.
+//! * **Steps whose handle cannot survive.** With no verifiable selector the
+//!   step is dropped and the drop is *counted*, so a short script is visibly
+//!   short rather than quietly wrong.
 //! * **Credential values.** A `type` that used `$H5I_SECRET_*` records the
-//!   **placeholder**, never what it resolved to. A recording is a file, and a
-//!   file is exactly the kind of place a credential must not end up.
+//!   placeholder. A recording is a file, and a file is where a credential must
+//!   not end up.
 
 use serde::{Deserialize, Serialize};
 

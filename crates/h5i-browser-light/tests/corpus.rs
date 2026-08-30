@@ -15,7 +15,7 @@
 //!      that was refused or the script that threw.
 //!
 //! An empty ask list beside an unattributable error is the failure mode this
-//! whole apparatus exists to prevent (ROADMAP.md §B8.3).
+//! whole apparatus exists to prevent (roadmap-history.md §B8.3).
 
 use std::sync::Arc;
 

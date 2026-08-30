@@ -771,7 +771,7 @@ mod tests {
         );
     }
 
-    // --- the instrument mode (ROADMAP §B19.5, item 5) ---------------------
+    // --- the instrument mode (roadmap-history.md §B19.5, item 5) ---------------------
 
     #[test]
     fn any_remote_grants_the_open_web_and_nothing_else_changes() {

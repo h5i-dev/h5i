@@ -1,76 +1,55 @@
 //! The wire between the two halves.
 //!
-//! `h5i browser open` runs one process today and two after this: a **broker**
-//! that holds the policy, the receipts, the jar, the budget and the secrets,
-//! and a **renderer** that parses the page and holds none of them. The renderer
-//! reaches the broker through [`crate::broker::Broker`], and this module is
-//! that trait spoken over a socket.
+//! `h5i browser open` runs a **broker** holding the policy, receipts, jar,
+//! budget and secrets, and a **renderer** that parses the page and holds none
+//! of them. The renderer reaches the broker through [`crate::broker::Broker`];
+//! this module is that trait spoken over a socket.
 //!
-//! # Which process is which
+//! The broker is the parent. It spawns the renderer with the socket as its
+//! standard input, an ordinary inherited descriptor, so no library passes it
+//! and no port exists for anything else to connect to. Neither half is a
+//! subcommand and there is nothing new to type.
 //!
-//! The broker is the parent. `h5i browser` spawns it exactly as it always
-//! spawned the engine, and the broker spawns the renderer as a child with the
-//! socket as its **standard input** — an ordinary inherited file descriptor, so
-//! no library is needed to pass one, and no port exists for anything else on
-//! the machine to connect to. Neither half is a subcommand: `h5i browser open`
-//! is unchanged and there is nothing new to type, which is the same conclusion
-//! §"The id is not the interface" reached about session ids, applied to
-//! processes.
+//! # What a hostile renderer can do
 //!
-//! # What a hostile renderer can do here
+//! Everything this protocol allows, in any order, so the message set is the
+//! whole security argument. It **cannot** edit the policy, silence the receipt
+//! sink, read an `HttpOnly` cookie, reach the network without a decision record
+//! being written first, or touch a credential this session was not granted.
 //!
-//! Everything this protocol allows, in any order, with any arguments — so what
-//! it allows is the whole of the security argument, and it is worth writing
-//! down in both directions rather than only the flattering one.
-//!
-//! **What it cannot do**, because none of these is a message: edit the policy,
-//! silence the receipt sink, read an `HttpOnly` cookie, reach the network
-//! without a decision record being written first, or touch a credential this
-//! session was not granted.
-//!
-//! **What it can do**, and this is the part that is easy to oversell away:
+//! It **can**:
 //!
 //! * **Claim any origin as the asker.** `Fetch::document` is the renderer's to
-//!   fill in, and it is what the origin-sensitive half of the policy reasons
-//!   about — the loopback rule, the same-origin check. A renderer that says
-//!   "the agent named this URL" gets the answer the agent would have got. This
-//!   is not new: the same code chose the origin before the split, because it
-//!   was the same process. It is also not fixed by the split, and the tighter
-//!   version — the broker refusing to attribute a request to a document it
-//!   never served — is not built.
-//! * **Ask for any credential this session was granted.** `substitute` is an
-//!   operation, so a renderer can resolve every name `secret_names` returns
-//!   rather than only the one it was told to type. What the split narrows is
-//!   the *set*: the renderer's environment holds none of them, so it reaches
-//!   what this session was granted and not every `H5I_SECRET_*` on the machine
-//!   — which unconfined is all of them. Narrowing it to "the one being typed"
-//!   needs the control channel on this side of the boundary, which is §B18.2's
-//!   table and is not built.
+//!   fill in, and it drives the origin-sensitive policy (the loopback rule, the
+//!   same-origin check). This predates the split, and the split does not fix
+//!   it; the broker refusing to attribute a request to a document it never
+//!   served is not built.
+//! * **Ask for any credential this session holds.** `substitute` is an
+//!   operation, so the renderer can resolve every name `secret_names` returns.
+//!   The split narrows the *set*: its environment holds none, so it reaches
+//!   this session's grants rather than every `H5I_SECRET_*` on the machine.
+//!   Narrowing further to "the one being typed" needs the control channel on
+//!   this side of the boundary (§B18.2), which is not built.
 //! * **Lie about what it renders.** It holds the terminal and the frame. The
-//!   split moves the recorder out of its reach; it does not make the renderer
-//!   trustworthy, and no arrangement of processes could.
+//!   split moves the recorder out of reach; no arrangement of processes makes
+//!   the renderer trustworthy.
 //!
 //! # Framing
-//!
-//! Each message is a length-prefixed JSON header and an optional blob:
 //!
 //! ```text
 //! u32 header_len | u32 blob_len | header | blob
 //! ```
 //!
-//! The blob carries request and response bodies. They are the only large thing
-//! that crosses, and base64 inside the JSON would pay a third again in bytes
-//! and all of it in allocation, on exactly the path a page's images take.
+//! The blob carries request and response bodies, the only large thing that
+//! crosses. Base64 inside the JSON would cost a third again in bytes and all of
+//! it in allocation, on exactly the path a page's images take.
 //!
 //! # Where this runs
 //!
-//! The split is a Unix arrangement: the transport is a socket pair the child
-//! inherits as its standard input, and there is no second implementation. What
-//! is gated is only the part that touches one — spawning, adopting, serving.
-//! The protocol, the framing and the client stay *compiled* everywhere the
-//! engine builds, so the portable half cannot rot behind a `cfg` nobody
-//! exercises; on a platform that cannot spawn a renderer it is simply
-//! unreachable, and the engine runs as one process the way it always did.
+//! Spawning, adopting and serving are Unix-gated. The protocol, framing and
+//! client stay compiled everywhere the engine builds, so the portable half
+//! cannot rot behind a `cfg` nobody exercises; where a renderer cannot be
+//! spawned the engine runs as one process as before.
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 use std::collections::HashMap;

@@ -1,57 +1,46 @@
 //! The forum's one way in and out: an ordinary git remote.
 //!
-//! Every forum has a remote, including a forum with one participant on one
-//! machine. That is deliberate, and it is the opposite of an optimisation.
-//!
-//! The tempting design gives same-machine boxes a shortcut — write the refs
-//! directly, skip the sync — because two agents on one laptop obviously do not
-//! need a network. The cost of that shortcut is not performance, it is
-//! coverage: the shortcut becomes the only path anyone ever runs, and the sync
-//! path rots untested until the day a second machine joins and everything it
-//! was supposed to handle happens at once. A push to a local bare repository
-//! costs a few milliseconds against a tender that runs once a second, so the
-//! shortcut buys nothing and hides everything.
-//!
-//! So: solo and team differ by a URL and by nothing else.
+//! Every forum has a remote, including a one-person forum on one machine. The
+//! tempting shortcut lets same-machine boxes write the refs directly and skip
+//! the sync. Its cost is not performance but coverage: the shortcut becomes the
+//! only path anyone runs, and the sync path rots untested until a second
+//! machine joins and everything it was meant to handle happens at once. A push
+//! to a local bare repository costs a few milliseconds against a tender that
+//! runs once a second. Solo and team differ by a URL and nothing else.
 //!
 //! ## Why a git remote rather than a service
 //!
-//! Because nobody has to run it. A team already operates a git host, and that
-//! host already answers the two questions a forum would otherwise need its own
-//! answers for: **who may post** is push access, and **who may read** is read
-//! access. A public repository is an open topic; a private one is an internal
-//! one. There is no server to deploy, no uptime to own, and no roster to
-//! invent.
+//! Nobody has to run it. A team's git host already answers the two questions a
+//! forum would otherwise need its own answers for: **who may post** is push
+//! access, **who may read** is read access. No server to deploy, no uptime to
+//! own, no roster to invent.
 //!
-//! It also gives the compare-and-swap away for free, and this was measured
-//! against GitHub rather than assumed: a non-fast-forward push to a
-//! `refs/h5i/*` ref is rejected server-side, `--force-with-lease` succeeds
-//! against the tip you fetched and is rejected as stale against one you did
-//! not. Append-only threads make every honest update a fast-forward, so the
-//! ordinary rejection *is* the CAS, and a rejection simply means somebody
-//! posted while we were merging.
+//! It also gives compare-and-swap away free, measured against GitHub rather
+//! than assumed: a non-fast-forward push to a `refs/h5i/*` ref is rejected
+//! server-side, and `--force-with-lease` succeeds against the tip you fetched
+//! while a stale one is rejected. Append-only threads make every honest update
+//! a fast-forward, so the ordinary rejection *is* the CAS, and a rejection just
+//! means somebody posted while we were merging.
 //!
 //! ## What this does not do
 //!
-//! **Nothing here ever deletes, and nothing depends on a ref being absent.**
-//! A thread on the remote that this machine has not seen is fetched; one here
-//! that is not there is pushed. Closing a thread is a `CLOSED` post, not a
-//! removed ref, which is what makes a human's decision survive a peer that had
-//! not heard about it.
+//! **Nothing here deletes, and nothing depends on a ref being absent.** A
+//! remote thread this machine has not seen is fetched; a local one the remote
+//! lacks is pushed. Closing a thread is a `CLOSED` post rather than a removed
+//! ref, which is what makes a human's decision survive a peer that had not
+//! heard about it.
 //!
-//! That also declaws the obvious attack. Anyone with push access can run
-//! `git push --delete` against a thread ref, and it costs them nothing to try —
-//! but the next sync from any clone that still holds the thread puts it back,
-//! because the push is driven by what we have rather than by what the remote
-//! lacks. Measured: an honest clone restored a deleted thread on its first
-//! sync, and the deleting clone got it back too. Deletion buys a window, never
-//! a loss, as long as one honest participant still has the conversation.
+//! That declaws the obvious attack. Push access is enough to run
+//! `git push --delete` against a thread ref, but the next sync from any clone
+//! that still holds the thread puts it back, because the push is driven by what
+//! we have rather than by what the remote lacks. Measured: an honest clone
+//! restored a deleted thread on its first sync, and the deleting clone got it
+//! back too. Deletion buys a window, never a loss.
 //!
 //! **Agents never speak this.** A box has no git credential, no route to the
-//! remote, and no code path that reaches this module: it writes a record into
-//! its spool and the host does the rest. That is the same split the remote
-//! runner makes — the worker is h5i, the host holds the key — and it is why a
-//! compromised agent cannot push to the forum even though the forum is a repo.
+//! remote and no code path that reaches this module; it writes into its spool
+//! and the host does the rest. Same split as the remote runner: the worker is
+//! h5i, the host holds the key.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};

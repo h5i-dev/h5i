@@ -1,52 +1,48 @@
 //! Who is behind a forum origin: enrollment, principals, and the vote policy.
 //!
-//! The forum's identity story is layered, and each layer is only as strong as
-//! what actually backs it:
+//! Identity is layered, and each layer is only as strong as what backs it:
 //!
 //! - a **sender** is a display name a worktree picked. Free to mint, never an
 //!   authority.
-//! - an **origin** is the machine stamp from [`crate::forum::host_origin`].
-//!   One per host, unforgeable *locally* (a box cannot reach it), but plain
-//!   text on the wire: a hostile peer can write any origin it likes.
-//! - a **principal** is a forge account — `github.com/user/12345678` — bound
-//!   to an origin by the enrollment this module implements.
+//! - an **origin** is the machine stamp from [`crate::forum::host_origin`]. One
+//!   per host, unforgeable locally (a box cannot reach it), but plain text on
+//!   the wire, so a hostile peer can write any origin it likes.
+//! - a **principal** is a forge account, `github.com/user/12345678`, bound to an
+//!   origin by the enrollment this module implements.
 //!
 //! ## What an enrollment is
 //!
-//! A small signed record: "the account `principal` operates the machine
-//! `origin`, and here is the SSH public key that proves it". The key is the
-//! one the member already pushes with, which is the whole trick — the forge
-//! already publishes every user's SSH keys at `https://github.com/<login>.keys`,
-//! so the forge *is* the key server and nobody has to run one. Enrolling costs
-//! one command and zero key management, which keeps the promise the rest of
-//! the remote design makes: a team should not have to operate anything.
+//! A signed record saying "the account `principal` operates the machine
+//! `origin`, and here is the SSH public key that proves it". The key is the one
+//! the member already pushes with, which is the trick: the forge publishes
+//! every user's SSH keys at `https://github.com/<login>.keys`, so the forge *is*
+//! the key server. Enrolling costs one command and no key management, keeping
+//! the promise the rest of the remote design makes.
 //!
 //! ## What it proves, and what it does not
 //!
-//! The record is signed with the member's SSH key and the key is pinned in the
-//! record, so any peer can check, offline, that the record was not altered and
-//! was written by whoever holds that key. Checking that the key really belongs
-//! to the named account needs the forge (`verify` fetches the account's
-//! published keys), and is done once at enrollment and re-checkable on demand.
+//! The record is signed with the member's SSH key and pins that key, so any
+//! peer can check offline that it was not altered and came from whoever holds
+//! the key. Checking the key belongs to the named account needs the forge
+//! (`verify` fetches the account's published keys), done once at enrollment and
+//! re-checkable on demand.
 //!
-//! What enrollment does **not** yet buy is per-post authentication: ordinary
-//! posts are still stamped, not signed, so a hostile host can still write
-//! another host's origin on a post. Enrollment narrows the damage — an origin
-//! nobody enrolled counts for nothing under the principal vote rule — and it
-//! puts the key in place that per-post signing would need. That escalation is
-//! deliberate future work, not an oversight; see the module-level notes on
-//! [`crate::forum::Vouch`] for the honesty rules that govern the meantime.
+//! Enrollment does **not** yet buy per-post authentication: posts are stamped,
+//! not signed, so a hostile host can still write another host's origin on a
+//! post. It narrows the damage, since an unenrolled origin counts for nothing
+//! under the principal vote rule, and it puts the key in place that per-post
+//! signing needs. See [`crate::forum::Vouch`] for the honesty rules meanwhile.
 //!
 //! ## Merge rules
 //!
-//! Enrollments and the policy live on the forum's meta ref and travel with it,
-//! so two clones can hold diverged copies. Both merges are deterministic in
-//! either direction, because two clones that merge each other must converge:
+//! Enrollments and the policy live on the forum's meta ref, so two clones can
+//! diverge. Both merges are deterministic in either direction, because two
+//! clones merging each other must converge:
 //!
 //! - **enrollments**, per origin: the same principal re-enrolling takes the
-//!   newer record (key rotation); two *different* principals claiming one
-//!   origin keep the earlier record (first binding sticks — the safe direction,
-//!   an origin cannot be quietly re-bound by whoever merges last).
+//!   newer record (key rotation); two different principals claiming one origin
+//!   keep the earlier one, so an origin cannot be quietly re-bound by whoever
+//!   merges last.
 //! - **policy**: the newer `set_at` wins, and on a tie the stricter rule wins.
 
 use std::collections::BTreeMap;

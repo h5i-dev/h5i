@@ -1,40 +1,38 @@
 //! Canvas 2D, drawn for real.
 //!
-//! Both reference engines fake this. Lightpanda ships sixty-one no-op bridge
-//! functions, so `fillRect` is callable, returns `undefined`, and paints
-//! nothing; Obscura's `DOMSnapshot` invents geometry for the same reason.
+//! Both reference engines fake this: Lightpanda ships sixty-one no-op bridge
+//! functions, so `fillRect` is callable, returns `undefined` and paints
+//! nothing, and Obscura's `DOMSnapshot` invents geometry for the same reason.
 //! Neither has a rasteriser, so faking is the only move available to them.
 //!
 //! This engine has one. `blitz-paint` over `vello_cpu` already turns the page
-//! into pixels on the CPU, and `vello_cpu` is a general 2D rasteriser that a
-//! canvas can use directly. So a canvas here **draws**, the result composites
-//! into the page like any other image, and a screenshot shows it.
+//! into pixels on the CPU, and `vello_cpu` is a general 2D rasteriser a canvas
+//! can use directly. So a canvas here **draws**, composites into the page like
+//! any other image, and shows up in a screenshot.
 //!
 //! # The rule this module is built around
 //!
-//! ROADMAP §B8.4: *missing APIs are named, never stubbed silently.* A silent
-//! stub is the worst state for anything in this engine, because a page that
-//! draws its content on a canvas comes back blank and nothing says why — which
-//! is indistinguishable from a page that drew nothing.
+//! roadmap-history.md §B8.4: *missing APIs are named, never stubbed silently.*
+//! A page that draws its content on a canvas and comes back blank, with nothing
+//! saying why, is indistinguishable from a page that drew nothing. So the
+//! surface splits in two:
 //!
-//! So the surface here splits in two, and the split is the point:
-//!
-//! * What is implemented **actually rasterises**. Paths, rectangles, arcs,
-//!   fills, strokes, transforms, the state stack, `toDataURL`.
+//! * What is implemented **rasterises**: paths, rectangles, arcs, fills,
+//!   strokes, transforms, the state stack, `toDataURL`.
 //! * What is not is **reported by name** through the same `unsupported()`
-//!   channel every other missing Web API goes through, and appears in the
-//!   snapshot's note. Text, gradients, patterns, shadows, `drawImage`,
-//!   `clip`, and the `ImageData` operations are in that list today.
+//!   channel as every other missing Web API, and appears in the snapshot's
+//!   note. Text, gradients, patterns, shadows, `drawImage`, `clip` and the
+//!   `ImageData` operations are on that list today.
 //!
 //! An agent reading `note: this page used Web APIs this engine does not have
-//! (CanvasRenderingContext2D.fillText x12)` knows to route to Chromium. An
-//! agent reading a blank canvas knows nothing at all.
+//! (CanvasRenderingContext2D.fillText x12)` knows to route to Chromium. An agent
+//! reading a blank canvas knows nothing.
 //!
 //! # How it reaches the page
 //!
 //! A canvas keeps an RGBA buffer. On flush it is attached to the `<canvas>`
 //! element as raster image data, which `blitz-paint` draws for any element
-//! carrying it — not only `<img>`. There is no GPU path and no
+//! carrying it, not only `<img>`. There is no GPU path and no
 //! `custom_paint_source_id`: the buffer *is* the surface.
 
 use std::collections::HashMap;

@@ -274,57 +274,51 @@ fn pid_alive(pid: u32) -> bool {
 
 /// Connect to `port` on loopback **inside** the namespaces of `pid`.
 ///
-/// Gated on Linux **and** x86_64/aarch64, matching `h5i_sandbox::seccomp_notify`
-/// — this borrows that module's `SCM_RIGHTS` helper, so a narrower gate here
-/// than there is a build break waiting for the first Linux target outside those
-/// two arches. CI's matrix has none, which is exactly why it is worth pinning
-/// by construction rather than by coverage.
+/// Gated on Linux **and** x86_64/aarch64 to match `h5i_sandbox::seccomp_notify`,
+/// whose `SCM_RIGHTS` helper this borrows: a narrower gate here is a build break
+/// waiting for the first Linux target outside those two arches, and CI's matrix
+/// has none.
 ///
-/// Done in a forked child, and it has to be: joining a user namespace is
-/// refused for a multi-threaded process, and `setns` on a network namespace
-/// rebinds the calling thread rather than the process. The child enters both,
-/// connects, and passes the connected socket back over `SCM_RIGHTS` — the same
-/// fd-handoff the supervisor uses for the seccomp listener.
-///
-/// The user namespace comes first and is not optional: the box's netns was
-/// created by an unprivileged `unshare`, so it is owned by that userns and
-/// joining it requires being in it.
+/// Done in a forked child, necessarily: joining a user namespace is refused for
+/// a multi-threaded process, and `setns` on a network namespace rebinds the
+/// calling thread rather than the process. The child enters both, connects, and
+/// passes the socket back over `SCM_RIGHTS`. The user namespace comes first and
+/// is not optional, since the box's netns was created by an unprivileged
+/// `unshare` and joining it requires being in the userns that owns it.
 ///
 /// ### Why `want_ns` is a parameter and not read from `pid`
 ///
-/// `pid` is a *descendant* of the session pid — [`box_pid`] walks the process
+/// `pid` is a *descendant* of the session pid: [`box_pid`] walks the process
 /// tree for the first process whose netns differs from ours. The session pid is
-/// bound to its identity by `started_ticks` ([`session_pid_verified`]) exactly
-/// so that a reissued pid cannot be mistaken for a box, and **none of that
-/// binding reaches the descendant**, which is the number that gets entered. Nor
-/// is the descendant looked up again: [`Forward`] resolves it once and reuses it
-/// for every connection for as long as the viewer stays open, and
-/// `FrameRelay` does the same across reconnects. A box at the `process` tier
-/// shares the host uid, so it can end the session that holds the namespace and
-/// then fork until the kernel hands that pid to something of its own.
+/// bound to its identity by `started_ticks` ([`session_pid_verified`]) so a
+/// reissued pid cannot be mistaken for a box, and **none of that binding reaches
+/// the descendant**, which is the number actually entered. Nor is the descendant
+/// looked up again: [`Forward`] resolves it once and reuses it for every
+/// connection while the viewer is open, and `FrameRelay` does the same across
+/// reconnects. A box at the `process` tier shares the host uid, so it can end
+/// the session holding the namespace and fork until the kernel hands that pid to
+/// something of its own.
 ///
 /// So the namespace `box_pid` observed travels with the pid and is checked here
-/// against the one actually entered. Deriving it from `/proc/<pid>` at this
-/// point instead would re-read whatever holds the pid *now*, which is the thing
-/// in question.
+/// against the one entered. Deriving it from `/proc/<pid>` at this point would
+/// re-read whatever holds the pid *now*, which is the thing in question.
 ///
 /// Two things this is **not** claiming, both measured rather than assumed
 /// (`setns(2)` on 6.x, unprivileged, uid 501):
 ///
-/// * It is not what stops a stale pid from putting this connect on the host's
+/// * It is not what stops a stale pid putting this connect on the host's
 ///   loopback. Joining the initial netns needs `CAP_SYS_ADMIN` in the initial
-///   userns, and an unprivileged viewer does not have it — the `setns` returns
-///   `EPERM` and the child already reported `EXIT_SETNS`. That defense is the
-///   kernel's, and it is absent for a viewer run as root.
+///   userns, which an unprivileged viewer lacks, so `setns` returns `EPERM` and
+///   the child already reported `EXIT_SETNS`. That defence is the kernel's, and
+///   it is absent for a viewer run as root.
 /// * It is not proof of freshness. `setns` into a namespace one is *already* in
-///   succeeds (measured: rc 0, from inside a userns of one's own), so the return
-///   code says nothing about where the thread ended up; the readlink after it
-///   does.
+///   succeeds (measured: rc 0), so the return code says nothing about where the
+///   thread ended up. The readlink after it does.
 ///
-/// What the check does close is the pid being reissued between discovery and
-/// use to a process in any namespace this user can join — another box of
-/// theirs, or a bare `unshare -Urn` — which is a namespace `setns` enters
-/// happily and which is not the box the viewer named.
+/// What the check closes is the pid being reissued between discovery and use to
+/// a process in any namespace this user can join, another box of theirs or a
+/// bare `unshare -Urn`, which `setns` enters happily and which is not the box
+/// the viewer named.
 #[cfg(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")

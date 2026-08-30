@@ -100,46 +100,45 @@ fn jump(code: u16, k: u32, jt: u8, jf: u8) -> SockFilter {
 
 /// Build the filter that NOTIFYs on `socket`/`socketpair`, ALLOWs everything
 /// else, and KILLs on an unexpected architecture (fail-closed). Returns a
-/// fixed-size **stack** array (no heap) so [`install_listener`] is
-/// allocation-free and therefore async-signal-safe to call in a `fork`ed child —
-/// a `Vec` here would risk a malloc-lock deadlock when the parent is
-/// multithreaded (e.g. the cargo test harness). Pure; structurally unit-tested.
+/// fixed-size **stack** array so [`install_listener`] is allocation-free and
+/// therefore async-signal-safe in a `fork`ed child; a `Vec` would risk a
+/// malloc-lock deadlock when the parent is multithreaded. Pure, and structurally
+/// unit-tested.
 ///
 /// ### Why this set cannot simply grow
 ///
 /// An allow here is `SECCOMP_USER_NOTIF_FLAG_CONTINUE`, and `seccomp_unotify(2)`
-/// is blunt about that flag: it "should not be used for security purposes",
-/// because between the supervisor's verdict and the kernel re-running the
-/// syscall another thread in the tracee can rewrite whatever the syscall reads.
-/// That warning is about arguments living in the tracee's *memory*.
+/// says that flag "should not be used for security purposes", because between
+/// the supervisor's verdict and the kernel re-running the syscall another thread
+/// can rewrite whatever the syscall reads. That warning is about arguments
+/// living in the tracee's *memory*.
 ///
-/// It does not apply here, and the reason is the whole reason `CONTINUE` is
-/// sound in this tier: `socket(domain, type, protocol)` and the first three
-/// arguments of `socketpair` are **scalars the kernel already captured into the
-/// notification** when it trapped. They are register values. No other thread
-/// can change them, because there is nothing left to re-read — the decision and
-/// the syscall see the same bytes by construction.
+/// It does not apply here, which is why `CONTINUE` is sound in this tier:
+/// `socket(domain, type, protocol)` and the first three arguments of
+/// `socketpair` are **scalars the kernel already captured into the
+/// notification** when it trapped. They are register values, so no other thread
+/// can change them and the decision and the syscall see the same bytes.
 ///
-/// So adding a comparison for anything that takes a pointer — `connect`,
-/// `bind`, `sendto` — is not a local edit. Deciding on `*sockaddr` means
+/// Adding a comparison for anything taking a pointer, `connect`, `bind` or
+/// `sendto`, is therefore not a local edit. Deciding on `*sockaddr` means
 /// reading the tracee's memory, and with `CONTINUE` that is the textbook
 /// double-fetch: the check passes on `127.0.0.1` and the kernel connects to
 /// whatever the address holds a microsecond later. Such a syscall has to be
-/// answered with a `Decision::Deny` (never `CONTINUE`), or mediated by
-/// `SECCOMP_IOCTL_NOTIF_ADDFD` so the supervisor supplies the result itself.
+/// answered with `Decision::Deny`, never `CONTINUE`, or mediated by
+/// `SECCOMP_IOCTL_NOTIF_ADDFD` so the supervisor supplies the result.
 /// `only_syscalls_whose_arguments_are_registers_are_notified` pins the set so
 /// the choice has to be made deliberately.
 ///
-/// The other half of the argument lives in [`crate::sandbox::denied_syscalls`]:
-/// this filter's fall-through is ALLOW, and io_uring executes submitted
-/// operations without ever passing a syscall filter — `IORING_OP_SOCKET` builds
-/// the `AF_PACKET`/`SOCK_RAW` socket [`crate::supervisor::decide_socket`]
-/// exists to refuse, and no notification is generated. Measured on 7.1/aarch64:
-/// inside a private user+net namespace, where the box holds `CAP_NET_RAW`,
-/// `socket(AF_PACKET, SOCK_RAW)` returns `EPERM` and the io_uring form returns a
-/// live fd. The deny-list blocks the whole io_uring interface, and — also
-/// measured — its `ERRNO` still outranks this filter's `ALLOW` once the two are
-/// stacked, which is what makes that block hold for this tier.
+/// The other half of the argument is in [`crate::sandbox::denied_syscalls`].
+/// This filter's fall-through is ALLOW, and io_uring executes submitted
+/// operations without passing a syscall filter: `IORING_OP_SOCKET` builds the
+/// `AF_PACKET`/`SOCK_RAW` socket [`crate::supervisor::decide_socket`] exists to
+/// refuse, generating no notification. Measured on 7.1/aarch64, inside a private
+/// user+net namespace where the box holds `CAP_NET_RAW`,
+/// `socket(AF_PACKET, SOCK_RAW)` returns `EPERM` while the io_uring form returns
+/// a live fd. The deny-list blocks the whole io_uring interface, and its `ERRNO`
+/// still outranks this filter's `ALLOW` once the two are stacked, also measured,
+/// which is what makes that block hold for this tier.
 pub fn build_socket_notify_program() -> [SockFilter; 10] {
     [
         // 0: A = arch
