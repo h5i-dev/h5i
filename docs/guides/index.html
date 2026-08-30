@@ -1,60 +1,101 @@
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>h5i guides: from one browser session to a forum of agents</title><meta name="description" content="Six practical h5i guides: drive a browser session and audit what it reached, create a first box, run a forum for two sandboxed agents, review an untrusted pull request, write a policy, and hand browser control between agent and human.">
+<title>h5i guides: drive an agent browser you can audit</title><meta name="description" content="Six guides to the h5i agent browser: drive a session and audit what it reached, box it, run a forum of agents, review an untrusted PR, write a policy.">
 <meta name="author" content="h5i-dev"><meta name="theme-color" content="#D21C1C">
 <meta name="color-scheme" content="dark"><meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://h5i.dev/guides/"><link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="website"><meta property="og:site_name" content="h5i">
-<meta property="og:title" content="h5i guides: from one browser session to a forum of agents"><meta property="og:description" content="Six practical h5i guides: drive a browser session and audit what it reached, create a first box, run a forum for two sandboxed agents, review an untrusted pull request, write a policy, and hand browser control between agent and human.">
-<meta property="og:url" content="https://h5i.dev/guides/"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
-<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i guides: from one browser session to a forum of agents">
-<meta name="twitter:description" content="Six practical h5i guides: drive a browser session and audit what it reached, create a first box, run a forum for two sandboxed agents, review an untrusted pull request, write a policy, and hand browser control between agent and human."><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta property="og:title" content="h5i guides: drive an agent browser you can audit"><meta property="og:description" content="Six guides to the h5i agent browser: drive a session and audit what it reached, box it, run a forum of agents, review an untrusted PR, write a policy.">
+<meta property="og:url" content="https://h5i.dev/guides/"><meta property="og:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved"><meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="h5i guides: drive an agent browser you can audit">
+<meta name="twitter:description" content="Six guides to the h5i agent browser: drive a session and audit what it reached, box it, run a forum of agents, review an untrusted PR, write a policy."><meta name="twitter:image" content="https://h5i.dev/_static/sandboxed-browser-ui.png">
+<meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
-  "@type": "ItemList",
-  "name": "h5i guides: from one browser session to a forum of agents",
-  "itemListElement": [
+  "@graph": [
     {
-      "@type": "ListItem",
-      "position": 1,
-      "url": "https://h5i.dev/guides/drive-a-browser-session/",
-      "name": "Open a session and read what it reached"
+      "@type": "CollectionPage",
+      "@id": "https://h5i.dev/guides/#page",
+      "url": "https://h5i.dev/guides/",
+      "name": "h5i guides: drive an agent browser you can audit",
+      "description": "Six guides to the h5i agent browser: drive a session and audit what it reached, box it, run a forum of agents, review an untrusted PR, write a policy.",
+      "inLanguage": "en",
+      "dateModified": "2026-08-30",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "about": {
+        "@id": "https://h5i.dev/#app"
+      },
+      "primaryImageOfPage": "https://h5i.dev/_static/sandboxed-browser-ui.png"
     },
     {
-      "@type": "ListItem",
-      "position": 2,
-      "url": "https://h5i.dev/guides/first-box/",
-      "name": "Take one coding task from prompt to reviewed patch"
+      "@type": "BreadcrumbList",
+      "@id": "https://h5i.dev/guides/#breadcrumb",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://h5i.dev/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Guides",
+          "item": "https://h5i.dev/guides/"
+        }
+      ]
     },
     {
-      "@type": "ListItem",
-      "position": 3,
-      "url": "https://h5i.dev/guides/run-a-forum/",
-      "name": "Put two confined agents on one problem"
-    },
-    {
-      "@type": "ListItem",
-      "position": 4,
-      "url": "https://h5i.dev/guides/review-a-pull-request/",
-      "name": "Run the pull request before you trust the pull request"
-    },
-    {
-      "@type": "ListItem",
-      "position": 5,
-      "url": "https://h5i.dev/guides/write-a-box-policy/",
-      "name": "Write down what the agent may reach"
-    },
-    {
-      "@type": "ListItem",
-      "position": 6,
-      "url": "https://h5i.dev/guides/watch-the-browser/",
-      "name": "Watch the page, then take the controls"
+      "@type": "ItemList",
+      "@id": "https://h5i.dev/guides/#list",
+      "name": "h5i guides: drive an agent browser you can audit",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "url": "https://h5i.dev/guides/drive-a-browser-session/",
+          "name": "Open a session and read what it reached"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "url": "https://h5i.dev/guides/first-box/",
+          "name": "Take one coding task from prompt to reviewed patch"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "url": "https://h5i.dev/guides/run-a-forum/",
+          "name": "Put two confined agents on one problem"
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
+          "url": "https://h5i.dev/guides/review-a-pull-request/",
+          "name": "Run the pull request before you trust the pull request"
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "url": "https://h5i.dev/guides/write-a-box-policy/",
+          "name": "Write down what the agent may reach"
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
+          "url": "https://h5i.dev/guides/watch-the-browser/",
+          "name": "Watch the page, then take the controls"
+        }
+      ]
     }
   ]
 }</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/_static/blog.css?v=ccfaa76598"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
+<link rel="stylesheet" href="/_static/blog.css?v=16bf3ac0cf"><link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
 </head>
 <body><nav class="blog-nav">
   <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>h5i: A Secure, Auditable Browser for AI Agents</title>
-  <meta name="description" content="h5i gives an AI agent a browser it can drive and you can audit. Every request is policy-checked and written down before the bytes move, and the fetch is refused when the record cannot be written. Auditable by default, containable on demand with a sandbox.">
+  <meta name="description" content="h5i gives an AI agent a browser it can drive and you can audit: every request is policy-checked and written down before the bytes move, or the fetch is refused.">
   <meta name="keywords" content="browser for ai agents, agent browser, auditable browser, headless browser for agents, browser automation audit log, sandboxed browser, agentic browsing, web agent security, prompt injection page content, egress allowlist, browser session isolation, human takeover browser, landlock seccomp sandbox, microvm isolation, claude code, codex, h5i">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
@@ -37,138 +37,182 @@
 
   <!-- Structured data -->
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "Organization",
-        "@id": "https://h5i.dev/#org",
-        "name": "h5i",
-        "url": "https://h5i.dev/",
-        "logo": {"@type": "ImageObject", "url": "https://h5i.dev/_static/logo.png", "width": 1280, "height": 640},
-        "sameAs": ["https://github.com/h5i-dev/h5i"]
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://h5i.dev/#org",
+      "name": "h5i",
+      "url": "https://h5i.dev/",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://h5i.dev/_static/logo.png",
+        "width": 1280,
+        "height": 640
       },
-      {
-        "@type": "WebSite",
-        "@id": "https://h5i.dev/#website",
-        "name": "h5i",
-        "alternateName": "high-five",
-        "url": "https://h5i.dev/",
-        "description": "A secure, auditable browser for AI agents. The engine is the HTTP client, so every request is policy-checked and recorded before the bytes move and a fetch that cannot be recorded is refused. Sessions run on the host by default and can be placed inside a sandbox without changing a single verb.",
-        "publisher": {"@id": "https://h5i.dev/#org"},
-        "inLanguage": "en"
+      "sameAs": [
+        "https://github.com/h5i-dev/h5i"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://h5i.dev/#website",
+      "name": "h5i",
+      "alternateName": "high-five",
+      "url": "https://h5i.dev/",
+      "description": "A secure, auditable browser for AI agents. The engine is the HTTP client, so every request is policy-checked and recorded before the bytes move and a fetch that cannot be recorded is refused. Sessions run on the host by default and can be placed inside a sandbox without changing a single verb.",
+      "publisher": {
+        "@id": "https://h5i.dev/#org"
       },
-      {
-        "@type": "SoftwareApplication",
-        "@id": "https://h5i.dev/#app",
-        "name": "h5i",
-        "alternateName": "high-five",
-        "applicationCategory": "DeveloperApplication",
-        "applicationSubCategory": "Multi-agent collaboration and AI agent sandbox",
-        "operatingSystem": "Linux, macOS, Windows (WSL2)",
-        "description": "A secure, auditable browser for AI agents. h5i gives Claude Code, Codex and other agents a browser they drive by session id and you audit by reading its request log. Because the engine is the HTTP client, every request is checked against the session policy and written down before the bytes move, and the fetch is refused when the record cannot be written: a request that is not in the log did not happen. Page content arrives fenced as data, escape sequences never reach the terminal, and a human can take the browser away from the agent mid-task. Sessions run on the host by default; --in places the same session inside a Landlock, seccomp, container or microVM sandbox, which adds an egress allowlist enforced outside the browser.",
-        "featureList": [
-          "A Git-backed message forum where agents in separate sandboxes share threads, findings, reviews and votes",
-          "Host-stamped identity: the sender, role, box and enforced policy come from the host, not from the message",
-          "A per-thread policy ceiling that every attached sandbox must be confined under, or attachment is refused",
-          "Forum sync across machines through any Git remote, including branch refs a forge can protect",
-          "No forum API inside a sandbox: a read-only inbox in, a staged record out, no socket and no token",
-          "Lightweight sandboxes that start in under 200 ms for everyday agent tasks",
-          "MicroVM isolation with a separate kernel when stronger boundaries matter",
-          "Isolated browsers that agents can securely control from inside the sandbox",
-          "Securely share demo services from inside the sandbox over encrypted P2P connections or browser-ready links",
-          "Reviewable patches and execution logs showing what changed, what ran and what was denied",
-          "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
-          "A credential broker that keeps API keys, SSH keys and browser profiles on the host",
-          "A network egress allowlist enforced at L3/L4 or L7 depending on the tier"
-        ],
-        "keywords": "sandboxed collaboration, multi-agent teams, multi-agent coordination, agent message forum, AI agent sandbox, disposable development environment, microVM isolation, isolated browser for agents, egress allowlist, reviewable patch, execution logs, Claude Code, Codex",
-        "url": "https://h5i.dev/",
-        "downloadUrl": "https://github.com/h5i-dev/h5i",
-        "installUrl": "https://github.com/h5i-dev/h5i#install",
-        "softwareHelp": "https://h5i.dev/manual/",
-        "softwareRequirements": "Rootless Podman for the container tier; microsandbox (msb) and hardware virtualization for the microvm tier",
-        "programmingLanguage": "Rust",
-        "isAccessibleForFree": true,
-        "sameAs": ["https://github.com/h5i-dev/h5i"],
-        "license": "https://www.apache.org/licenses/LICENSE-2.0",
-        "author": {"@type": "Person", "name": "h5i-dev"},
-        "publisher": {"@id": "https://h5i.dev/#org"},
-        "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+      "inLanguage": "en"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://h5i.dev/#app",
+      "name": "h5i",
+      "alternateName": "high-five",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Web browser for AI agents",
+      "operatingSystem": "Linux, macOS, Windows (WSL2)",
+      "description": "A secure, auditable browser for AI agents. An agent drives a session by id and reads the page as a compact outline of @ref handles; the engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Sessions run on the host by default, with no containment claimed, and one flag places the same session inside a Landlock, seccomp, container or microVM sandbox, which adds an egress allowlist enforced outside the browser and makes a human takeover a boundary rather than a request.",
+      "featureList": [
+        "A browser an agent drives by session id: open, snapshot, click, type, take, audit, close",
+        "Pages returned as a compact outline with @ref handles instead of raw HTML or screenshots",
+        "Policy first, record second, wire third: a fetch that cannot be recorded is refused",
+        "A fail-closed request log, so a request that is not in the log did not happen",
+        "Denials recorded with their reason, so the log shows what was attempted and not only what succeeded",
+        "Page content fenced as untrusted data, with escape sequences never reaching the terminal",
+        "Human takeover of a live session, enforced as a boundary once the session is boxed",
+        "A credential broker that uses browser, model and SSH credentials without returning them to the agent",
+        "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
+        "A network egress allowlist enforced outside the browser at L3/L4, or through an L7 proxy",
+        "A disposable box holding the code, the toolchain, the dev server and the browser session",
+        "A Git-backed forum where boxed agents share threads and findings but never a credential",
+        "An output gate: h5i box export writes a reviewable patch, a report and an execution receipt"
+      ],
+      "keywords": "browser for AI agents, agent browser, auditable browser, headless browser for AI agents, browser automation audit log, agentic browsing, fail-closed request log, egress allowlist, browser session isolation, human takeover, prompt injection containment, AI agent sandbox, microVM isolation, Claude Code, Codex",
+      "url": "https://h5i.dev/",
+      "downloadUrl": "https://github.com/h5i-dev/h5i",
+      "installUrl": "https://github.com/h5i-dev/h5i#install",
+      "softwareHelp": "https://h5i.dev/manual/",
+      "softwareRequirements": "Rootless Podman for the container tier; microsandbox (msb) and hardware virtualization for the microvm tier",
+      "programmingLanguage": "Rust",
+      "isAccessibleForFree": true,
+      "sameAs": [
+        "https://github.com/h5i-dev/h5i"
+      ],
+      "license": "https://www.apache.org/licenses/LICENSE-2.0",
+      "author": {
+        "@type": "Person",
+        "name": "h5i-dev"
       },
-      {
-        "@type": "BreadcrumbList",
-        "@id": "https://h5i.dev/#breadcrumb",
-        "itemListElement": [
-          {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"},
-          {"@type": "ListItem", "position": 2, "name": "Guides", "item": "https://h5i.dev/guides/"},
-          {"@type": "ListItem", "position": 3, "name": "Blog", "item": "https://h5i.dev/blog/"}
-        ]
+      "publisher": {
+        "@id": "https://h5i.dev/#org"
       },
-      {
-        "@type": "FAQPage",
-        "@id": "https://h5i.dev/#faq",
-        "mainEntity": [
-          {
-            "@type": "Question",
-            "name": "What is h5i?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "h5i is a fast, lightweight browser for AI agents, with built-in auditing and configurable sandboxing. It runs locally and is open source."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Why use h5i instead of Playwright or Puppeteer?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Does h5i work on every website?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Is h5i sandboxed by default?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "The browser uses lightweight process isolation when available. For stronger isolation, place the browser, or the agent's entire workflow, inside a container or microVM."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Can h5i prevent prompt injection?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "No browser can guarantee that. h5i limits the damage by treating page content as untrusted and restricting what a misled agent can access through network rules and sandboxing."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Can the agent see my passwords or cookies?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "The agent can reference a named credential without reading its value, or a human can take control to log in. The authenticated session continues without returning the password or cookie to the model."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Does h5i keep my data local?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "h5i has no hosted service and stores its sessions locally. Browser traffic still goes to websites you allow, and model traffic goes to your configured model provider."
-            }
-          }
-        ]
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
       }
-    ]
-  }
+    },
+    {
+      "@type": "WebPage",
+      "@id": "https://h5i.dev/#webpage",
+      "url": "https://h5i.dev/",
+      "name": "h5i: A Secure, Auditable Browser for AI Agents",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "about": {
+        "@id": "https://h5i.dev/#app"
+      },
+      "primaryImageOfPage": "https://h5i.dev/_static/sandboxed-browser-ui.png",
+      "inLanguage": "en"
+    },
+    {
+      "@type": "SiteNavigationElement",
+      "@id": "https://h5i.dev/#nav",
+      "name": [
+        "Features",
+        "Guides",
+        "Manual",
+        "Blog"
+      ],
+      "url": [
+        "https://h5i.dev/features/",
+        "https://h5i.dev/guides/",
+        "https://h5i.dev/manual/",
+        "https://h5i.dev/blog/"
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://h5i.dev/#faq",
+      "mainEntityOfPage": {
+        "@id": "https://h5i.dev/#webpage"
+      },
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is h5i?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "h5i is a fast, lightweight browser for AI agents, with built-in auditing and configurable sandboxing. It runs locally and is open source."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why use h5i instead of Playwright or Puppeteer?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Use Playwright or Puppeteer when maximum website compatibility is your priority. Use h5i when you need lower resource use, network controls, a complete session record, or a sandbox for both the browser and agent."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does h5i work on every website?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. h5i works best for content-heavy websites and common browser interactions, but some browser APIs are not yet supported. For incompatible websites, you can run Chromium inside an h5i sandbox."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is h5i sandboxed by default?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The browser uses lightweight process isolation when available. For stronger isolation, place the browser, or the agent's entire workflow, inside a container or microVM."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can h5i prevent prompt injection?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No browser can guarantee that. h5i limits the damage by treating page content as untrusted and restricting what a misled agent can access through network rules and sandboxing."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can the agent see my passwords or cookies?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The agent can reference a named credential without reading its value, or a human can take control to log in. The authenticated session continues without returning the password or cookie to the model."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does h5i keep my data local?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "h5i has no hosted service and stores its sessions locally. Browser traffic still goes to websites you allow, and model traffic goes to your configured model provider."
+          }
+        }
+      ]
+    }
+  ]
+}
   </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -176,7 +220,7 @@
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
-  <link rel="stylesheet" href="/_static/blog.css?v=ccfaa76598">
+  <link rel="stylesheet" href="/_static/blog.css?v=16bf3ac0cf">
   <link rel="stylesheet" href="/_static/console-mock.css?v=f390229c34">
   <link rel="stylesheet" href="/_static/highlight.css?v=45984d5155">
   <style>
@@ -329,6 +373,7 @@
       <p class="section-sub">Agents browse with simple commands and receive compact, structured snapshots
         instead of raw HTML. You can review the complete session, take control when needed, and keep
         credentials out of the model's context.</p>
+      <p class="section-sub"><a href="/guides/drive-a-browser-session/" style="color:var(--red-text)">Open a session and read what it reached &#8594;</a></p>
     </div>
     <div class="terminal"><div class="terminal-bar"><span class="terminal-path">one session, start to close</span></div>
 <div class="terminal-body"><pre><span class="t-prompt">$</span> <span class="t-cmd">h5i browser open https://docs.rs/ --allow docs.rs</span>

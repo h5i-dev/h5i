@@ -108,10 +108,27 @@ If a section is unavailable, say why. Absence must not impersonate success.
 
 ## Page mechanics
 
-Every canonical article needs one H1; descriptive metadata; canonical, Open
-Graph, and Twitter tags; TechArticle and BreadcrumbList JSON-LD; visible FAQ
-text when FAQPage data is present; useful internal links; a current
-dateModified; and inclusion in sitemap.xml. Blog essays also enter feed.xml.
+Every canonical article needs one H1 and a contiguous heading outline;
+descriptive metadata; canonical, Open Graph, and Twitter tags, including an
+image alt; TechArticle and BreadcrumbList JSON-LD; visible FAQ text when
+FAQPage data is present; useful internal links; a current dateModified; and
+inclusion in sitemap.xml. Blog essays also enter feed.xml.
+
+A title should fit in about 60 characters and a meta description in about 160,
+because that is where a search result cuts them. When a page's card blurb is
+worth more room than that, give it a shorter `meta` line as well.
+
+Dates are not decorative. `PAGE_HISTORY` in this file records each page's last
+content change beside a fingerprint of what it contained, and the build refuses
+to finish when a fingerprint moves without its date, so `lastmod` and
+`dateModified` cannot quietly describe a version that no longer ships.
+
+One entity, one @id. The product is `https://h5i.dev/#app` and the site is
+`#website` on every page that names them; a page-scoped node (`#faq`,
+`#breadcrumb`, `#webpage`) is scoped to that page's URL. Two pages describing
+one @id differently, or one page carrying two BreadcrumbLists, leaves a crawler
+picking between them. A breadcrumb is the trail to the page it sits on, so the
+home page has none.
 
 Before publishing, remove repeated setup, claims without mechanisms, invented
 precision, and references to features the manual no longer documents. Then
