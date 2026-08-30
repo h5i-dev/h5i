@@ -178,6 +178,13 @@
     declare("HTMLFormControlsCollection", HTMLCollection, {});
     declare("HTMLOptionsCollection", HTMLCollection, {});
     declare("FileList", Array, { item });
+    // The two CSSOM lists. Both were real arrays and real objects already —
+    // `document.styleSheets[0]` and `sheet.cssRules[0]` have always worked —
+    // and both were *untyped*, so `sheet.cssRules instanceof CSSRuleList` was a
+    // ReferenceError over an object that was exactly that. Same shape as the
+    // node lists above, and the same fix.
+    declare("CSSRuleList", Array, { item });
+    declare("StyleSheetList", Array, { item });
   }
 
   function collection(nodes, label) {
@@ -6777,21 +6784,33 @@
   // branch it was told, so a wrong answer is a wrong page rather than a missing
   // feature. The features below have real answers here; anything else records
   // itself and reports no match, so the gap is visible instead of guessed at.
+  /// What `matchMedia` hands back.
+  ///
+  /// It was an object literal carrying the right answers under the wrong shape:
+  /// `media` and `matches` were data properties, the interface did not exist to
+  /// name, and `addEventListener` was a local stub rather than the one every
+  /// other event target here uses. A real class over `EventTarget` fixes all
+  /// three at once and costs nothing at runtime — the answers are the same.
+  ///
+  /// The viewport never changes size mid-session, so a `change` listener can
+  /// never fire. That is accepted silently rather than recorded: a page adding
+  /// one is not asking for anything this engine lacks, it is asking for an
+  /// event that will not happen.
+  class MediaQueryList extends EventTarget {
+    constructor(text) {
+      super();
+      this._media = String(text ?? "");
+      this._matches = evaluateQuery(this._media, api.viewport());
+      this.onchange = null;
+    }
+    get media() { return this._media; }
+    get matches() { return this._matches; }
+    addListener(fn) { this.addEventListener("change", fn); }
+    removeListener(fn) { this.removeEventListener("change", fn); }
+  }
+
   function matchMedia(query) {
-    const text = String(query || "");
-    const view = api.viewport();
-    const list = {
-      media: text,
-      matches: evaluateQuery(text, view),
-      onchange: null,
-      // The viewport never changes size mid-session, so a listener here can
-      // never fire. Accepted silently rather than recorded, because a page
-      // registering one is not asking for anything we lack.
-      addListener() {}, removeListener() {},
-      addEventListener() {}, removeEventListener() {},
-      dispatchEvent() { return false; },
-    };
-    return list;
+    return new MediaQueryList(String(query || ""));
   }
 
   function evaluateQuery(text, view) {
@@ -8838,9 +8857,20 @@
       const raw = this._element ? api.getAttr(this._element._id, "title") : null;
       return raw || null;
     }
+    /// A `MediaList`, not a string.
+    ///
+    /// It answered the raw attribute text, and CSSOM says this is an object
+    /// with `mediaText`, a length and an item list — so every `sheet.media`
+    /// check read a String where an interface belonged. Cached per sheet so a
+    /// page that keeps the list keeps something real, as it does for `cssRules`.
     get media() {
-      if (this._media !== undefined) return this._media;
-      return (this._element && api.getAttr(this._element._id, "media")) || "";
+      if (this._mediaList === undefined) {
+        const text = this._media !== undefined
+          ? this._media
+          : (this._element && api.getAttr(this._element._id, "media")) || "";
+        this._mediaList = new MediaList(text);
+      }
+      return this._mediaList;
     }
     /// Null for a `<style>` and for a constructed sheet, as in a browser: only
     /// a sheet that came from a URL has one.
@@ -8868,7 +8898,9 @@
       const css = this._css();
       if (this._rulesFor !== css) {
         this._rulesFor = css;
-        this._rules = splitRules(css).map((text) => makeRule(text, this));
+        this._rules = collection(
+          splitRules(css).map((text) => makeRule(text, this)), "CSSRuleList",
+        );
       }
       return this._rules;
     }
@@ -8900,6 +8932,16 @@
       this._replaceAll(rules.join("\n"));
       return at;
     }
+    /// The legacy pair, which is how a great deal of older code still edits a
+    /// sheet. Both are defined in CSSOM in terms of the modern two, so they are
+    /// written that way rather than reimplemented: `addRule` appends by default
+    /// and answers -1, which is the one part that is not just a forward.
+    addRule(selector, block, index) {
+      const at = index === undefined ? this.cssRules.length : Number(index);
+      this.insertRule(`${String(selector || "")} { ${String(block || "")} }`, at);
+      return -1;
+    }
+    removeRule(index) { this.deleteRule(index === undefined ? 0 : index); }
     deleteRule(index) {
       const rules = splitRules(this._css());
       const at = Number(index) || 0;
@@ -8938,6 +8980,34 @@
     }
   }
 
+  /// The media a sheet or an `@media` rule applies to.
+  ///
+  /// CSSOM makes this an object over a comma-separated list, and this engine
+  /// answered the raw string. Serialising is the whole of it: the list is the
+  /// text split on commas and trimmed, and `mediaText` is the list joined back
+  /// with ", " — which is why round-tripping normalises whitespace, as it does
+  /// in a browser.
+  const splitMedia = (text) =>
+    String(text ?? "").split(",").map((m) => m.trim()).filter(Boolean);
+
+  class MediaList {
+    constructor(text) { this._items = splitMedia(text); }
+    get mediaText() { return this._items.join(", "); }
+    set mediaText(value) { this._items = splitMedia(value); }
+    get length() { return this._items.length; }
+    item(index) { return this._items[Number(index) || 0] ?? null; }
+    appendMedium(medium) {
+      const one = String(medium).trim();
+      if (one && !this._items.includes(one)) this._items.push(one);
+    }
+    deleteMedium(medium) {
+      const at = this._items.indexOf(String(medium).trim());
+      if (at === -1) throw new DOMException(`no medium ${medium}`, "NotFoundError");
+      this._items.splice(at, 1);
+    }
+    toString() { return this.mediaText; }
+  }
+
   /// Every sheet the document owns, in document order.
   ///
   /// Indexed as well as iterable, because `document.styleSheets[0]` is how
@@ -8948,13 +9018,7 @@
       .map(wrap)
       .filter(Boolean)
       .map((element) => CSSStyleSheet.forElement(element));
-    const list = {
-      get length() { return sheets.length; },
-      item: (index) => sheets[index] ?? null,
-      [Symbol.iterator]: () => sheets[Symbol.iterator](),
-    };
-    sheets.forEach((sheet, index) => { list[index] = sheet; });
-    return list;
+    return collection(sheets, "StyleSheetList");
   }
 
   // ── text encoding, randomness, cloning, and the old request object ───────
@@ -9340,6 +9404,8 @@
       HTMLFormControlsCollection: COLLECTION_CLASSES.HTMLFormControlsCollection,
       HTMLOptionsCollection: COLLECTION_CLASSES.HTMLOptionsCollection,
       FileList: COLLECTION_CLASSES.FileList,
+      CSSRuleList: COLLECTION_CLASSES.CSSRuleList,
+      StyleSheetList: COLLECTION_CLASSES.StyleSheetList,
       NamedNodeMap: brand("NamedNodeMap", isCollection),
       Storage: brand("Storage", isStorage),
       // **Constructible, unlike its neighbours here.** `new Document()` is
@@ -9368,7 +9434,7 @@
       CustomElementRegistry: brand("CustomElementRegistry", (v) => v && typeof v.define === "function" && typeof v.get === "function"),
       DOMStringMap: brand("DOMStringMap", (v) => typeof v === "object"),
       StyleSheet: brand("StyleSheet", (v) => v && "cssRules" in v),
-      MediaList: brand("MediaList", (v) => v && typeof v.mediaText === "string"),
+      MediaList,
     };
   }
 
@@ -9406,6 +9472,25 @@
     item() { return null; }
     contains() { return false; }
   }
+  /// One bit of browser chrome, reporting whether it is on screen.
+  ///
+  /// A data shape rather than a capability: there is no chrome here, so every
+  /// bar answers `false`, and that is the true answer rather than a stub —
+  /// `window.toolbar.visible` is false in a headless browser because the
+  /// toolbar is genuinely not visible. The brand guard is what makes reading
+  /// `visible` off the prototype throw, which is what idlharness asks.
+  class BarProp {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get visible() {
+      if (!(this instanceof BarProp) || this === BarProp.prototype) {
+        throw new TypeError("Illegal invocation: visible needs a BarProp");
+      }
+      return false;
+    }
+  }
+  Object.defineProperty(BarProp.prototype, Symbol.toStringTag, {
+    value: "BarProp", configurable: true,
+  });
   class ImageData {
     constructor(dataOrWidth, widthOrHeight, height) {
       if (dataOrWidth instanceof Uint8ClampedArray) {
@@ -9475,7 +9560,8 @@
     constructor() { throw new TypeError("Illegal constructor"); }
   }
   Object.assign(globalThis, {
-    MediaError, TimeRanges, DOMStringList, ImageData, DataTransfer,
+    MediaError, TimeRanges, DOMStringList, ImageData, DataTransfer, BarProp,
+    MediaQueryList,
     DataTransferItem, DataTransferItemList, Plugin, PluginArray, MimeType,
     MimeTypeArray, RadioNodeList, HTMLAllCollection, TextMetrics,
   });
@@ -9639,6 +9725,65 @@
     cancelAnimationFrame: clearTimeout,
     Node, Element, Text, Event,
     alert: () => api.unsupported("alert"),
+
+    // ── The Window members a headless, single-context engine can answer
+    //    honestly ──────────────────────────────────────────────────────────
+    //
+    // Absent until now, and every one of them has a *true* answer here rather
+    // than a plausible one — which is the only reason they are being added.
+    // §B8.4's rule holds: a name that exists and answers wrongly is worse than
+    // one that is absent, so anything whose honest answer would be a guess
+    // (`visualViewport`, `screen` geometry a real display would set) stays out.
+    //
+    // There is no browser chrome, so every `BarProp` reports `visible: false`.
+    // That is not a stub standing in for a toolbar we failed to build — it is
+    // what "no UI" means, and it is what a headless browser reports.
+    ...Object.fromEntries(
+      ["locationbar", "menubar", "personalbar", "scrollbars", "statusbar", "toolbar"]
+        .map((bar) => [bar, Object.create(BarProp.prototype)]),
+    ),
+    // Legacy, and writable: pages set it and read it back. "" is what a browser
+    // that ignores the status bar reports, which is every browser now.
+    status: "",
+    // This window was never script-opened and cannot be closed, so `closed` is
+    // false for the life of the page and `close()` is the spec's no-op rather
+    // than a refusal — HTML only closes a window that script opened.
+    closed: false,
+    close: () => {},
+    // Focus follows no pointer and there is no window manager to raise, so
+    // these are no-ops in the same sense: the state they would change does not
+    // exist. `stop()` is the one with a real meaning, and it is named rather
+    // than pretended — halting a load in flight is broker work this does not do.
+    focus: () => {},
+    blur: () => {},
+    // There is no window to move, resize, print or halt; a page that asks is
+    // asking for chrome, and gets the named refusal every other chrome verb
+    // here gets. Built from the names so each costs a word rather than a line.
+    // The two-argument arity is what WebIDL gives `moveTo` and its neighbours;
+    // `stop` and `print` take none, and an operation's `length` is checked.
+    ...Object.fromEntries(["stop", "print"].map(
+      (verb) => [verb, () => api.unsupported(`window.${verb}`)],
+    )),
+    ...Object.fromEntries(["moveTo", "moveBy", "resizeTo", "resizeBy"].map(
+      (verb) => [verb, (a, b) => api.unsupported(`window.${verb}`)],
+    )),
+    // Real values, computed from the document's own URL rather than declared.
+    get origin() {
+      try {
+        const url = new URL(location.href);
+        return url.protocol === "file:" ? "null" : url.origin;
+      } catch { return "null"; }
+    },
+    get isSecureContext() {
+      try {
+        const url = new URL(location.href);
+        return /^(https|file|data|blob):$/.test(url.protocol)
+          || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname);
+      } catch { return false; }
+    },
+    // One realm, one context, and no cross-origin isolation to claim.
+    crossOriginIsolated: false,
+
     matchMedia,
     URL, URLSearchParams,
     queueMicrotask: (fn) => { Promise.resolve().then(fn); },
@@ -9884,6 +10029,16 @@
       configurable: true,
     });
   }
+
+  // The interface-prototype mirror lives in the `conformance` tier
+  // (`prelude/conformance.js`), for the reason that file exists: WebIDL puts a
+  // member on the interface prototype, this engine's singletons are object
+  // literals, and reconciling the two is a shape only a conformance harness
+  // inspects. Eagerly parsed it cost 2 KiB — about 90 us of run per page and
+  // 490 us of compile on the first — for a property no page reads. The tier is
+  // evaluated earlier than this point, so it leaves the work behind as a
+  // callback rather than doing it where the globals did not exist yet.
+  internals.mirrorSingletons?.();
 
   // `fetch`, over the host's broker. Every request is policy-checked and
   // receipted before it moves, which is the property this engine exists for.
