@@ -929,43 +929,7 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 5 — The sandbox (sealed workspace, walls, blocked calls)
-══════════════════════════════════════════════════════════════ -->
-<div class="slide" style="gap:16px;">
-  <div style="width:100%;max-width:1120px;">
-    <div class="section-tag">The sandbox</div>
-    <h2>One <span class="red">sealed box</span> per agent.</h2>
-    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, network egress is allowlisted, credentials never enter, and every denial is recorded. An everyday box is ready in under 200&nbsp;ms.</p>
-
-    <div class="sb-stage" role="img" aria-label="Diagram: a brick wall seals an agent running with permissions off. The fs wall blocks reading ~/.ssh/id_rsa, the net wall blocks connecting to internal-billing.corp, and the task still finishes inside the box.">
-      <div class="sb-box">
-        <div class="sb-label">🛡️ env/you/webapp · sealed</div>
-        <div class="terminal">
-          <div class="terminal-bar">
-            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-            <span class="terminal-path">agent in the box · permissions off</span>
-          </div>
-          <div class="terminal-body"><pre><span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">claude --dangerously-skip-permissions</span>
-<span style="color:#ff7a59;font-size:1.15em;">✻</span> <span class="t-bold">Claude Code</span> <span class="t-cmt">· permissions off</span>
-
-<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(cat ~/.ssh/id_rsa)</span>
-  <span class="t-red">⛔ blocked: outside fs.read</span>
-<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(curl https://internal-billing.corp/api)</span>
-  <span class="t-red">⛔ 403: not on the net.egress allowlist</span>
-<span class="t-ai">●</span> <span class="t-bold">Edit</span><span class="t-out">(sync/worker.py)</span> <span class="t-pass">✓</span>
-<span class="t-cmt">task finished inside $WORK · every command captured</span></pre></div>
-        </div>
-      </div>
-      <div class="sb-block fs"><span class="bl">✋ fs wall · blocked</span><span class="bt"><b>~/.ssh/id_rsa</b> · outside fs.read</span></div>
-      <div class="sb-block net"><span class="bl">✋ net wall · blocked</span><span class="bt"><b>internal-billing.corp</b> · not on net.egress</span></div>
-    </div>
-
-    <p class="sb-payoff">The agent <b>still finishes the task</b>. Only the <span class="green">reviewed diff</span> is merged.</p>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SLIDE 6 — The browser in the box (agent drives it, you take over)
+     SLIDE 5 — The browser in the box (agent drives it, you take over)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:18px;">
   <div style="width:100%;max-width:1080px;">
@@ -1003,6 +967,42 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
+     SLIDE 6 — The sandbox (sealed workspace, walls, blocked calls)
+══════════════════════════════════════════════════════════════ -->
+<div class="slide" style="gap:16px;">
+  <div style="width:100%;max-width:1120px;">
+    <div class="section-tag">The sandbox</div>
+    <h2>One <span class="red">sealed box</span> per agent.</h2>
+    <p class="lede" style="max-width:960px;">Turn agent permission prompts off: the box is the permission. Writes stay in <code>$WORK</code>, network egress is allowlisted, credentials never enter, and every denial is recorded. An everyday box is ready in under 200&nbsp;ms.</p>
+
+    <div class="sb-stage" role="img" aria-label="Diagram: a brick wall seals an agent running with permissions off. The fs wall blocks reading ~/.ssh/id_rsa, the net wall blocks connecting to internal-billing.corp, and the task still finishes inside the box.">
+      <div class="sb-box">
+        <div class="sb-label">🛡️ env/you/webapp · sealed</div>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+            <span class="terminal-path">agent in the box · permissions off</span>
+          </div>
+          <div class="terminal-body"><pre><span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">claude --dangerously-skip-permissions</span>
+<span style="color:#ff7a59;font-size:1.15em;">✻</span> <span class="t-bold">Claude Code</span> <span class="t-cmt">· permissions off</span>
+
+<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(cat ~/.ssh/id_rsa)</span>
+  <span class="t-red">⛔ blocked: outside fs.read</span>
+<span class="t-ai">●</span> <span class="t-bold">Bash</span><span class="t-out">(curl https://internal-billing.corp/api)</span>
+  <span class="t-red">⛔ 403: not on the net.egress allowlist</span>
+<span class="t-ai">●</span> <span class="t-bold">Edit</span><span class="t-out">(sync/worker.py)</span> <span class="t-pass">✓</span>
+<span class="t-cmt">task finished inside $WORK · every command captured</span></pre></div>
+        </div>
+      </div>
+      <div class="sb-block fs"><span class="bl">✋ fs wall · blocked</span><span class="bt"><b>~/.ssh/id_rsa</b> · outside fs.read</span></div>
+      <div class="sb-block net"><span class="bl">✋ net wall · blocked</span><span class="bt"><b>internal-billing.corp</b> · not on net.egress</span></div>
+    </div>
+
+    <p class="sb-payoff">The agent <b>still finishes the task</b>. Only the <span class="green">reviewed diff</span> is merged.</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
      SLIDE 7 — Traction
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:24px;">
@@ -1024,26 +1024,29 @@
      SLIDE 8 — Beachhead (who buys first)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1040px;">
+  <div style="width:100%;max-width:1120px;">
     <div class="section-tag">Beachhead</div>
-    <h2>Teams running agents faster<br>than they can <span class="red">safely supervise</span> them.</h2>
-    <p class="lede" style="max-width:900px;">We spoke with dozens of developers during PhD research in AI and systems security. The repeated bottleneck was not code generation. It was <span class="cyan">autonomy they could afford to grant</span>.</p>
+    <h2>Start with developers already giving<br>agents <span class="red">browser access</span>.</h2>
+    <p class="lede" style="max-width:940px;font-size:1.3rem;">Developers already use agents to browse and test web apps. Now they need a <span class="cyan">safer, lighter way to run more sessions</span>.</p>
 
-    <div style="margin-top:24px;display:flex;flex-direction:column;gap:16px;">
+    <div style="margin-top:20px;display:flex;flex-direction:column;gap:14px;">
       <div class="feat-card" style="border-color:rgba(98,201,140,0.4);background:rgba(98,201,140,0.05);display:flex;flex-direction:column;gap:6px;">
-        <span class="pill green" style="align-self:flex-start;">beachhead · buys first</span>
-        <span class="feat-cmd" style="display:block;font-size:1.9rem;line-height:1.15;color:var(--green);">Agent-heavy engineering</span>
-        <p class="feat-desc" style="font-size:1.15rem;">Already using Claude Code, Codex, Cursor, or internal agents, and either babysitting them or running them wide open.</p>
+        <span class="pill green" style="align-self:flex-start;">beachhead &#183; buys first</span>
+        <span class="feat-cmd" style="display:block;border:0;background:none;padding:0; font-size:1.6rem;line-height:1.15;color:var(--green);">Developers building browser-enabled agents</span>
+        <p class="feat-desc" style="font-size:1.05rem;">Need fast local browsing, structured page output, safe web app testing, and records they can review.</p>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:10px;">
-        <span class="mono" style="font-size:0.78rem;letter-spacing:0.16em;text-transform:uppercase;color:var(--cyan);">Expansion →</span>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:stretch;">
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Platform / DevEx</span><p class="feat-desc" style="margin-top:8px;">One standard box agents run in, on a laptop or on CI.</p></div>
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Security</span><p class="feat-desc" style="margin-top:8px;">Contained autonomy, with a record of every refused action.</p></div>
-          <div class="feat-card"><span class="feat-cmd" style="display:block;font-size:1.35rem;line-height:1.15;color:var(--cyan);">Untrusted code</span><p class="feat-desc" style="margin-top:8px;">Run an unreviewed PR or an unknown repository off your machine.</p></div>
+        <span class="mono" style="font-size:0.78rem;letter-spacing:0.16em;text-transform:uppercase;color:var(--cyan);">Expansion &rarr;</span>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;align-items:stretch;">
+          <div class="feat-card"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.25rem;line-height:1.2;color:var(--cyan);">Agent platforms</span><p class="feat-desc" style="margin-top:8px;font-size:1rem;">Run many concurrent browser sessions with lower memory use.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.25rem;line-height:1.2;color:var(--cyan);">Platform and DevEx teams</span><p class="feat-desc" style="margin-top:8px;font-size:1rem;">Provide one isolated browser and testing workflow across developer laptops.</p></div>
+          <div class="feat-card"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.25rem;line-height:1.2;color:var(--cyan);">Security teams</span><p class="feat-desc" style="margin-top:8px;font-size:1rem;">Restrict browser access, keep credentials outside the agent.</p></div>
         </div>
       </div>
+    </div>
+
+    <p class="mono" style="margin-top:18px;font-size:0.82rem;color:var(--text-dim);">Based on dozens of developer interviews during PhD research in AI and systems security.</p>
     </div>
   </div>
 </div>
@@ -1052,21 +1055,18 @@
      SLIDE 9 — Why h5i wins (the acceptance layer)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:22px;">
-  <div style="width:100%;max-width:1000px;">
+  <div style="width:100%;max-width:1080px;">
     <div class="section-tag">Why h5i wins</div>
-    <h2>h5i wins by becoming the <span class="red">default place</span> agent teams meet.</h2>
-    <p class="lede" style="max-width:900px;">Agents will run longer, less supervised, on more machines, and increasingly in groups. The layer where they coordinate becomes the control point, because it is the one place authority is handed over by accident.</p>
+    <h2>Other browsers solve speed <span class="red">or</span> security.<br>h5i solves <span class="red">both</span>.</h2>
 
-    <div class="ladder" style="margin-top:22px;">
-      <div class="rung"><span class="rk">Coding agents</span><span class="rv">generate patches.</span></div>
-      <div class="rung"><span class="rk">Process sandboxes</span><span class="rv">confine one command at a time.</span></div>
-      <div class="rung"><span class="rk">Devcontainers</span><span class="rv">give you an environment, not a boundary.</span></div>
-      <div class="rung"><span class="rk">VM sandboxes</span><span class="rv">isolate, at minutes, gigabytes, and someone else's servers.</span></div>
-      <div class="rung"><span class="rk">Agent frameworks</span><span class="rv">let agents talk, by giving each one a token and a route.</span></div>
-      <div class="rung h5i"><span class="rk">h5i</span><span class="rv"><strong style="color:var(--ink);">puts each agent in a local boundary that starts in milliseconds, and puts them all on one forum that carries information and no authority.</strong></span></div>
+    <div class="ladder" style="margin-top:26px;">
+      <div class="rung"><span class="rk" style="min-width:290px;">Conventional browser automation</span><span class="rv">Built for people, so it is slow, memory-heavy, difficult to audit, and exposes more access than agents need.</span></div>
+      <div class="rung"><span class="rk" style="min-width:290px;">Lightweight browsers</span><span class="rv">Reduce startup time and memory, but do not limit what a manipulated agent can access or send.</span></div>
+      <div class="rung"><span class="rk" style="min-width:290px;">Sandboxing an existing browser</span><span class="rv">Reduces risk, but keeps the cost and complexity of a browser built for people.</span></div>
+      <div class="rung h5i"><span class="rk" style="min-width:290px;">h5i</span><span class="rv"><strong style="color:var(--ink);">~5&times; faster reads and ~80% less peak memory on simple websites, with request records, network controls, and sandboxing built in.</strong></span></div>
     </div>
 
-    <p class="kicker" style="margin-top:18px;text-align:center;">The scarce resource is no longer code generation. It is <span class="red">autonomy you can afford to grant</span>, to more than one of them at once.</p>
+    <p class="kicker" style="margin-top:22px;text-align:center;font-size:1.15rem;">Fast enough to <span class="red">run more sessions</span>. Controlled enough to <span class="red">grant more autonomy</span>.</p>
   </div>
 </div>
 
@@ -1077,32 +1077,28 @@
   <div class="hero-glow"></div>
   <div style="width:100%;max-width:1060px;">
     <div class="section-tag">Why now · why us</div>
-    <h2>We will make h5i the <span class="red">default browser</span><br>an agent reaches for.</h2>
+    <h2>We are making h5i the <span class="red">default browser</span><br>for AI agents.</h2>
 
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:26px;text-align:left;align-items:stretch;">
       <div class="feat-card">
-        <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--cyan);">Why this exists</span>
+        <span class="feat-cmd" style="display:block;border:0;background:none;padding:0; font-size:1.25rem;color:var(--cyan);">Why now</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">▸</span>PhD research in AI + systems security.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">▸</span>Dozens of developer conversations on agent autonomy, sandboxing, and what people actually let an agent touch.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">&#9656;</span>Agents are increasingly browsing websites and testing web apps with less human supervision.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--cyan);">&#9656;</span>Existing browsers make teams choose between performance and control.</li>
         </ul>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--green);">Built already</span>
+        <span class="feat-cmd" style="display:block;border:0;background:none;padding:0; font-size:1.25rem;color:var(--green);">Why us</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>500+ GitHub stars, 20+ releases.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>Five isolation tiers on Linux and macOS, one Rust binary.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">&#9656;</span>Our own engine, with fail-closed request records and human takeover.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">▸</span>A Git-backed forum, verified across mixed isolation tiers.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">&#9656;</span>500+ GitHub stars, 20+ contributors, and third-party tools built by users.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--green);">&#9656;</span>Grounded in PhD research and dozens of developer interviews on agent security.</li>
         </ul>
       </div>
       <div class="feat-card">
-        <span class="feat-cmd" style="display:block;font-size:1.25rem;color:var(--yellow);">Next 12 weeks</span>
+        <span class="feat-cmd" style="display:block;border:0;background:none;padding:0; font-size:1.25rem;color:var(--yellow);">Next 12 weeks</span>
         <ul style="margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;">
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">&#9656;</span>Hold a resident session on every tier that enforces egress.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Boot the microVM tier on real virtualization hosts.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Convert 10 design partners.</li>
-          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">▸</span>Land first paid pilots.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">&#9656;</span>Expand website compatibility and ship the read-only dashboard.</li>
+          <li class="feat-desc" style="position:relative;padding-left:1.2em;"><span style="position:absolute;left:0;color:var(--yellow);">&#9656;</span>Convert 10 design partners and land the first paid pilots.</li>
         </ul>
       </div>
     </div>
