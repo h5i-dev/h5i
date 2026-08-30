@@ -17,9 +17,9 @@ toml = { version = "0.8", features = ["parse", "display"] }
 # drives is `crates/h5i-core`.
 [package]
 name = "h5i"
-version = "0.3.8"
+version = "0.3.9"
 edition = "2024"
-description = "h5i — disposable, confined development environments for AI coding agents (CLI)."
+description = "h5i — secure, auditable browser for AI agents (CLI)."
 
 [lib]
 name = "h5i"
