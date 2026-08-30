@@ -888,7 +888,7 @@ a.cap:hover .arw { color: var(--spot); margin-left: 8px; }
 .ws-def-text, .ws-stack {
   padding: 22px 24px; border: 1px solid var(--line2); background: none;
 }
-.ws-def-text h3 {
+.ws-def-text h2 {
   font-family: var(--disp); font-weight: 800; font-size: 19px;
   letter-spacing: -0.03em; margin-bottom: 12px; color: var(--ink);
 }

@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
 <title>The h5i Blog</title><link>https://h5i.dev/blog/</link>
-<description>Design essays on boundaries, evidence, and how sandboxed agents work together.</description>
-<language>en-us</language><lastBuildDate>Fri, 21 Aug 2026 12:00:00 GMT</lastBuildDate>
+<description>Design essays on giving an AI agent a browser you can audit: boundaries, evidence, and what a request log has to prove.</description>
+<language>en-us</language><lastBuildDate>Sun, 30 Aug 2026 12:00:00 GMT</lastBuildDate>
+<atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml"/>
     <item><title>Browse, contain, work, export, apply</title><link>https://h5i.dev/blog/the-h5i-loop/</link>
       <guid isPermaLink="true">https://h5i.dev/blog/the-h5i-loop/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
       <description>The whole h5i loop in one essay: open a browser session whose request log is written before the bytes move, place it in a disposable box, let an agent work inside the same boundary, put several boxes on one Git-backed forum, then read a patch, a report and a receipt before anything crosses back.</description></item>
