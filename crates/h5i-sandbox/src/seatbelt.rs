@@ -1,24 +1,12 @@
 //! macOS confinement: the **Seatbelt** backend for the `process` and
-//! `supervised` tiers, counterpart to the Linux Landlock/seccomp/namespace
-//! stack in [`crate::sandbox`].
+//! `supervised` tiers, counterpart to the Linux stack in [`crate::sandbox`].
 //!
-//! macOS has none of the primitives the Linux tiers are built on: no Landlock,
-//! no seccomp, no namespaces, no cgroups v2, no nftables. It has **Seatbelt**
-//! (the TrustedBSD MAC policy behind the App Sandbox), driven by an SBPL
-//! profile, which is default-deny over every operation class at once and,
-//! unlike Landlock, can **subtract**: a `(deny …)` after an `(allow …)` really
-//! removes access.
-//!
-//! Subtraction buys less than it looks. It does not make `fs.deny` stronger,
-//! because `validate_profile` already refuses on every platform any policy
-//! whose granted parent contains a denied child, so a surviving `fs.deny` entry
-//! sits outside every grant and `(deny default)` covers it. Those rules are
-//! defence in depth. Where it earns its keep is the **agent-config lockdown**:
-//! `$WORK` granted read-write with `$WORK/.claude` still unwritable. Landlock
-//! cannot express that, which is why Linux needs a bind plus a remount-ro in a
-//! private mount namespace; here it is one rule.
-//!
-//! The mapping is not one-to-one:
+//! macOS has no Landlock, seccomp, namespaces, cgroups or nftables. It has
+//! Seatbelt, default-deny over every operation class at once and able to
+//! **subtract**, which Landlock cannot. Subtraction earns its keep in one place,
+//! the agent-config lockdown: `$WORK` read-write with `$WORK/.claude` unwritable
+//! is one rule here and a bind plus remount-ro in a private mount namespace on
+//! Linux.
 //!
 //! | property                  | Linux                          | macOS (here)                                   |
 //! |---------------------------|--------------------------------|------------------------------------------------|
@@ -32,27 +20,17 @@
 //! | memory cap                | cgroup `memory.max` + rlimit   | **not enforceable** (see [`RESOURCE_NOTE`])     |
 //! | cpu / fsize / nproc caps  | rlimits                        | rlimits (same)                                  |
 //!
-//! [`probe`] reports that right-hand column honestly through `h5i box probe`
-//! and `env capabilities`, so a caller adapts to what the host enforces rather
-//! than to a tier name.
+//! [`probe`] reports that right-hand column honestly, so a caller adapts to what
+//! the host enforces rather than to a tier name.
 //!
-//! # Why `sandbox-exec` and not `sandbox_init(3)`
+//! `sandbox-exec`, not `sandbox_init(3)`: the latter parses the profile, which
+//! allocates, and allocating in a forked child of a tokio process is the classic
+//! malloc-lock deadlock. `sandbox-exec` also `execvp`s in the same process, so
+//! the pid, the exit status and the process-group SIGKILL all still work. The
+//! profile goes by file, never argv, which `ps` publishes.
 //!
-//! `sandbox_init` would apply the profile in `pre_exec`, mirroring Landlock,
-//! but it parses the profile, which allocates, and allocating in a forked child
-//! of a multi-threaded (tokio) process is the classic malloc-lock deadlock.
-//! `/usr/bin/sandbox-exec` applies the profile and `execvp`s the target in the
-//! same process, so the pid is preserved, the exit status is the workload's,
-//! and the process-group SIGKILL used by the wall-clock still reaps the tree.
-//!
-//! The profile is passed by file (`sandbox-exec -f`), never by argv: argv is
-//! world-readable via `ps` and the profile names every path the box may touch.
-//!
-//! # Portability
-//!
-//! The module compiles on every Unix target, so the profile generator and the
-//! plan translation are typechecked and unit-tested on Linux CI too. Only
-//! [`probe`] is platform-aware, and it fails closed off macOS.
+//! The module compiles on every Unix so the generator and plan translation are
+//! tested on Linux CI; only [`probe`] is platform-aware, and it fails closed.
 
 // Compiled on all Unix targets so the pure logic is covered by the Linux test
 // job; the exec paths are only *called* from the macOS dispatch arms.

@@ -1,46 +1,28 @@
 //! The forum's one way in and out: an ordinary git remote.
 //!
-//! Every forum has a remote, including a one-person forum on one machine. The
-//! tempting shortcut lets same-machine boxes write the refs directly and skip
-//! the sync. Its cost is not performance but coverage: the shortcut becomes the
-//! only path anyone runs, and the sync path rots untested until a second
-//! machine joins and everything it was meant to handle happens at once. A push
-//! to a local bare repository costs a few milliseconds against a tender that
-//! runs once a second. Solo and team differ by a URL and nothing else.
+//! Every forum has one, including a one-person forum on one machine. Letting
+//! same-machine boxes write the refs directly would cost coverage rather than
+//! performance: the shortcut becomes the only path anyone runs, and the sync
+//! path rots until a second machine joins. Solo and team differ by a URL.
 //!
-//! ## Why a git remote rather than a service
+//! A remote rather than a service because nobody has to run it. A team's git
+//! host already answers **who may post** (push access) and **who may read**
+//! (read access), and it gives compare-and-swap away free: a non-fast-forward
+//! push to `refs/h5i/*` is rejected server-side, and append-only threads make
+//! every honest update a fast-forward, so the ordinary rejection *is* the CAS.
+//! Measured against GitHub rather than assumed.
 //!
-//! Nobody has to run it. A team's git host already answers the two questions a
-//! forum would otherwise need its own answers for: **who may post** is push
-//! access, **who may read** is read access. No server to deploy, no uptime to
-//! own, no roster to invent.
-//!
-//! It also gives compare-and-swap away free, measured against GitHub rather
-//! than assumed: a non-fast-forward push to a `refs/h5i/*` ref is rejected
-//! server-side, and `--force-with-lease` succeeds against the tip you fetched
-//! while a stale one is rejected. Append-only threads make every honest update
-//! a fast-forward, so the ordinary rejection *is* the CAS, and a rejection just
-//! means somebody posted while we were merging.
-//!
-//! ## What this does not do
-//!
-//! **Nothing here deletes, and nothing depends on a ref being absent.** A
-//! remote thread this machine has not seen is fetched; a local one the remote
-//! lacks is pushed. Closing a thread is a `CLOSED` post rather than a removed
-//! ref, which is what makes a human's decision survive a peer that had not
-//! heard about it.
-//!
-//! That declaws the obvious attack. Push access is enough to run
-//! `git push --delete` against a thread ref, but the next sync from any clone
-//! that still holds the thread puts it back, because the push is driven by what
-//! we have rather than by what the remote lacks. Measured: an honest clone
-//! restored a deleted thread on its first sync, and the deleting clone got it
-//! back too. Deletion buys a window, never a loss.
+//! **Nothing here deletes, and nothing depends on a ref being absent.** Closing
+//! a thread is a `CLOSED` post, which is what makes a human's decision survive a
+//! peer that had not heard about it, and it declaws the obvious attack: push
+//! access is enough to `git push --delete` a thread ref, but the next sync from
+//! any clone that still holds it puts it back, because the push is driven by
+//! what we have rather than by what the remote lacks. Deletion buys a window.
 //!
 //! **Agents never speak this.** A box has no git credential, no route to the
-//! remote and no code path that reaches this module; it writes into its spool
-//! and the host does the rest. Same split as the remote runner: the worker is
-//! h5i, the host holds the key.
+//! remote and no code path here; it writes into its spool and the host does the
+//! rest. Same split as the remote runner: the worker is h5i, the host holds the
+//! key.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};

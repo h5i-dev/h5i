@@ -1,49 +1,26 @@
 //! The host-owned registry of browser sessions.
 //!
-//! A browser session is the unit an agent talks to: one page state, one cookie
-//! jar, one request log, one policy. Nothing else about it is agent-facing, not
-//! the rendering process, not its port, not whether it sits inside a box.
+//! A session is the unit an agent talks to: one page state, one cookie jar, one
+//! request log, one policy. Nothing else about it is agent-facing.
 //!
-//! # The id is internal
+//! The opaque id (`br_7k2xqa`) is in the record, `--json` and receipts, because
+//! a durable reference must survive a rename, and is never typed. [`resolve`]
+//! has three layers, most to least explicit: `--session <name>`,
+//! `$H5I_BROWSER_SESSION`, and the default session `open` set.
 //!
-//! Every session has an opaque id (`br_7k2xqa`), carried in the record, in
-//! `--json` and in receipts, because a durable reference must survive a rename.
-//! **It is not what an agent types.** Demanding one per verb copies a
-//! remote-browser HTTP API, where the id exists because client and browser
-//! share nothing else; here they share a filesystem.
+//! **The registry is host-owned, always**, including for a session whose engine
+//! runs in a box. The engine's control file is enough to *reach* a session but
+//! not to *name* one, and letting the box own the record for boxed sessions
+//! splits every lookup in two.
 //!
-//! [`resolve`] therefore has three layers, most to least explicit: a
-//! `--session <name>` a person chose, `$H5I_BROWSER_SESSION`, and the **default
-//! session** that `open` made when nobody said which. Names are for running
-//! several at once; the default is for running one.
+//! **Not under a git repository.** Every other noun here is about a repository
+//! and a browser is not, so this lives in the user's state directory ([`root`]);
+//! `h5i browser open` in an empty directory has to work.
 //!
-//! # Why the registry is host-owned
-//!
-//! The engine writes a control file beside its stream file, and a CLI reading
-//! it can drive the resident page (`h5i-browser-light`'s `stream::serve`). That
-//! is enough to *reach* a session, not to *name* one, and the difference bites
-//! as soon as a session can live outside this process's filesystem view.
-//!
-//! So the id and the record live on the host always, including for a session
-//! whose engine runs in a box. One table, one resolution path, whatever the
-//! placement. Letting the box own the record for boxed sessions buys nothing
-//! and splits every lookup in two.
-//!
-//! # Not under a git repository
-//!
-//! Every other noun here stores state under the enclosing repository because it
-//! is *about* a repository. A browser is not, and
-//! `h5i browser open https://example.com` in an empty directory must work, so
-//! the registry lives in the user's state directory ([`root`]).
-//!
-//! # Ids are never reused
-//!
-//! A session directory outlives the session: closing one writes its ending into
-//! the record rather than deleting it. That is what keeps [`Session::state`]
-//! answerable after the fact, and what makes reuse impossible, since [`new_id`]
-//! rejects any candidate whose directory exists. A stale id gets a definite
-//! "this session ended, here is how", never a different session wearing the
-//! same name.
+//! **Ids are never reused.** Closing writes the ending into the record rather
+//! than deleting it, which keeps [`Session::state`] answerable and lets
+//! [`new_id`] reject any candidate whose directory exists. A stale id gets "this
+//! session ended, here is how", never a different session wearing its name.
 
 use std::fs;
 use std::path::{Path, PathBuf};

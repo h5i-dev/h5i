@@ -7,25 +7,23 @@
 //!  ^ counts the bytes after itself: the type byte plus the payload
 //! ```
 //!
-//! So a frame is never shorter than one body byte, the length a peer declares
-//! is checked before a single byte of body is read, and a reader that has
-//! consumed the length knows exactly how much more to expect. JSON rides in the
-//! payload for control messages and raw bytes ride there for stdio; this module
-//! knows about neither, and does not know what any type code means. That is
-//! [`crate::proto`]'s business, which is why an unknown type code is not an
-//! error here: framing stays correct even when meaning does not, and a peer
-//! that sends a frame we cannot interpret is a peer we can still stay in sync
-//! with long enough to refuse it politely.
+//! A frame is never shorter than one body byte, the declared length is checked
+//! before any body byte is read, and a reader that has consumed the length knows
+//! exactly how much more to expect. JSON rides in the payload for control
+//! messages and raw bytes for stdio; this module knows about neither and does
+//! not know what any type code means. That is [`crate::proto`]'s business, which
+//! is why an unknown type code is not an error here: framing stays correct even
+//! when meaning does not, so a peer sending a frame we cannot interpret is one
+//! we can still refuse politely.
 //!
-//! It carries no transport, like `h5i-share`'s `wire` module and for the same
-//! reason: the format is testable over an in-memory pipe, in a build with no
-//! SSH and no child process anywhere near it.
+//! It carries no transport, like `h5i-share`'s `wire` and for the same reason:
+//! the format is testable over an in-memory pipe, with no SSH and no child
+//! process anywhere near the build.
 //!
-//! **Limits are per RPC, not just per frame** (ROADMAP.md R5). A 1 MiB cap on
-//! one frame bounds one message and nothing else — a peer can send frames
-//! forever. [`FrameReader`] therefore carries running totals and fails the RPC
-//! the moment either is exceeded, so every caller inherits a bound instead of
-//! having to remember one.
+//! **Limits are per RPC, not just per frame** (ROADMAP.md R5). A 1 MiB frame cap
+//! bounds one message and nothing else, since a peer can send frames forever.
+//! [`FrameReader`] carries running totals and fails the RPC the moment either is
+//! exceeded, so every caller inherits a bound rather than having to remember one.
 
 use std::io::{Read, Write};
 

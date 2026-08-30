@@ -1,25 +1,20 @@
 //! h5i remote runner — a box on a machine that is not this one.
 //!
-//! The design is ROADMAP.md R1 to R13. The short version:
+//! ROADMAP R1 to R13 carry the design. Four decisions govern the code:
 //!
-//! - **Placement is an axis, not a tier** (R1). A box declares how it is
-//!   confined; this adds *where*. A runner requires Linux and this protocol, and
-//!   everything past that (isolation tiers, a container runtime, memory,
-//!   storage, persistence, its own internet route) is an advertised
+//! - **Placement is an axis, not a tier** (R1). A runner requires Linux and this
+//!   protocol; isolation tiers, a container runtime, memory, storage,
+//!   persistence and its own internet route are advertised
 //!   [`proto::Capabilities`]. A capability the runner lacks is a refusal, never
 //!   a silent weakening.
-//! - **The worker is h5i** (R3). Not a thin shim driving podman: the same
-//!   binary running the same `h5i-sandbox`, so the policy-to-argv logic and the
-//!   egress proxy stay where the container runtime is.
-//! - **Nothing listens** (R4). The worker is an SSH forced command speaking
-//!   frames on stdio, one process per RPC. No daemon, no port, no token, no
-//!   TLS. Mutual authentication is the pair key outbound and the pinned host key
-//!   inbound.
+//! - **The worker is h5i** (R3), not a shim driving podman, so the
+//!   policy-to-argv logic and the egress proxy stay where the runtime is.
+//! - **Nothing listens** (R4). An SSH forced command speaking frames on stdio,
+//!   one process per RPC. No daemon, port, token or TLS; authentication is the
+//!   pair key outbound and the pinned host key inbound.
 //! - **Identity is cryptographic** (R6). A runner is the SHA-256 of its host key
-//!   ([`identity`]), not its name. Names are labels, and labels can be
-//!   re-pointed at other hardware.
-//!
-//! The layering runs bottom-up, each layer testable without the one above:
+//!   ([`identity`]), not its name, because names can be re-pointed at other
+//!   hardware.
 //!
 //! ```text
 //! wire       framing, no transport and no meaning
@@ -34,10 +29,9 @@
 //! ```
 //!
 //! Built here is R13.1: pairing, probing, and the codec with its failure modes.
-//! Create, exec and export are declared on the wire ([`proto::FrameKind`]) and
-//! refused with [`proto::ErrorCode::Unimplemented`] until their milestones land,
-//! so a client meeting an older or newer runner gets a sentence rather than a
-//! closed pipe.
+//! Create, exec and export are declared on the wire and refused with
+//! [`proto::ErrorCode::Unimplemented`], so a client meeting an older or newer
+//! runner gets a sentence rather than a closed pipe.
 
 pub mod boxstore;
 pub mod client;

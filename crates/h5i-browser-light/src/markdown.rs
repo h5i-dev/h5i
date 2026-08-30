@@ -1,31 +1,24 @@
 //! The page as markdown.
 //!
-//! A denser read than the accessibility outline, and the right shape for this
-//! engine's stated purpose: reading the untrusted web. The outline exists to be
-//! *acted on* — it carries `@ref` handles and drops anything that cannot be
-//! clicked or typed into. Markdown exists to be *read*, so it keeps the prose,
-//! the emphasis, the lists and the tables, and carries no handles at all.
+//! A denser read than the accessibility outline, and the right shape for reading
+//! the untrusted web. The outline exists to be *acted on*, carrying `@ref`
+//! handles and dropping anything unclickable; markdown exists to be *read*, so
+//! it keeps prose, emphasis, lists and tables and carries no handles.
 //!
-//! Three things the reference implementation of this got wrong, all of them
-//! cheap to get right and all of them checked by tests below:
+//! Three things the reference implementation got wrong, all cheap to fix and all
+//! covered by tests below: tables need a `|---|---|` separator row or no
+//! renderer treats them as tables; ordered lists need their numbers, since every
+//! item as `1.` reads as a list of ones to anything but a markdown renderer, and
+//! a model reading raw text is exactly that; and nested lists need their indent,
+//! since threading a depth through the walk and never applying it flattens the
+//! structure that made the list worth keeping.
 //!
-//! 1. **Tables need a header separator row.** Without the `|---|---|` line the
-//!    output is not GFM and no renderer will treat it as a table.
-//! 2. **Ordered lists need their numbers.** Emitting every item as `1.` reads
-//!    as a list of ones to anything that is not a markdown renderer, and a
-//!    model reading the raw text is exactly that.
-//! 3. **Nested lists need their indent.** Threading a depth through the walk
-//!    and never applying it flattens the structure that made the list worth
-//!    keeping.
-//!
-//! **The fence applies here too.** This is page content reaching a model that
-//! is deciding what to do next, so it is wrapped exactly like a snapshot. The
-//! snapshot's unforgeability rests on no page-derived value spanning a line,
-//! which markdown cannot promise — a paragraph is allowed to be long and a
-//! `<pre>` is allowed to contain anything. So the marker is defanged over the
-//! finished document instead: a page that writes the closing marker into its
-//! own text gets `[fence marker removed]` back, the same substitution the
-//! outline makes, and the words around it survive.
+//! **The fence applies.** The snapshot's unforgeability rests on no page-derived
+//! value spanning a line, which markdown cannot promise: a paragraph may be long
+//! and a `<pre>` may contain anything. So the marker is defanged over the
+//! finished document instead. A page that writes the closing marker into its own
+//! text gets `[fence marker removed]` back, the same substitution the outline
+//! makes, and the words around it survive.
 
 use blitz_dom::{BaseDocument, Node};
 

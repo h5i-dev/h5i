@@ -1,30 +1,23 @@
 //! The viewer forward: the whole trusted surface between a human and a box.
 //!
-//! agent-browser's stream server assumes a friendly localhost — connect to the
-//! WebSocket and you can both watch the viewport and type into it. Inside the
-//! box that assumption holds, because nothing else is in there. On a developer
-//! machine with a browser on it, it does not: any page the human happens to have
-//! open could reach a port bound on loopback.
+//! agent-browser's stream server assumes a friendly localhost, so connecting to
+//! the WebSocket lets you both watch the viewport and type into it. Inside the
+//! box that holds, nothing else being in there. On a developer machine with a
+//! browser on it, any page the human has open could reach a loopback port.
 //!
-//! So the port is never published. It stays inside the box's private network
-//! namespace, and `h5i box view` runs a forward the **host** owns, with four
-//! properties (roadmap 5.9):
+//! So the port is never published. It stays in the box's private network
+//! namespace and `h5i box view` runs a forward the **host** owns, with four
+//! properties: loopback only, on a port h5i chose; a per-box token on every
+//! connection, minted at box creation and never written anywhere the box can
+//! read, so a compromised agent cannot mint itself a viewer; cross-origin
+//! handshakes refused, so another tab cannot open a WebSocket to a running box;
+//! and the control lock on the input direction, so frames flow *out* always and
+//! *in* only while the human holds the lock ([`crate::control`]).
 //!
-//! * **Loopback only, on a port h5i chose.** Nothing binds an external address.
-//! * **A per-box token on every connection.** Minted at box creation and never
-//!   written anywhere the box can read, so a compromised agent cannot mint
-//!   itself a viewer.
-//! * **Cross-origin handshakes refused.** A page the human has open in another
-//!   tab cannot open a WebSocket to a running box.
-//! * **The control lock on the input direction.** Frames flow *out* always —
-//!   watching never collides. Frames flow *in* only while the human holds the
-//!   lock ([`crate::control`]).
-//!
-//! Crossing into the namespace is the one genuinely awkward part, and it is
-//! deliberately done the way the supervisor already does it: h5i is the parent,
-//! so it can enter the box's user and network namespaces by pid, connect from
-//! inside, and hand the socket back out over `SCM_RIGHTS`. Nothing is punched
-//! through the namespace, and the box gains no reachability it did not have.
+//! Crossing into the namespace is the awkward part, done the way the supervisor
+//! already does it: h5i is the parent, so it enters the box's user and network
+//! namespaces by pid, connects from inside, and hands the socket back out over
+//! `SCM_RIGHTS`. Nothing is punched through, and the box gains no reachability.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

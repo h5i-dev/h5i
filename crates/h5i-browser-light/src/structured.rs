@@ -1,32 +1,23 @@
 //! What a page says about itself, in the formats it already publishes.
 //!
-//! An agent asked "what is this page about" has three ways to answer. It can
-//! read the outline, which is the page's *content* and costs a few hundred
-//! lines. It can read the markdown, which is denser and still prose. Or it can
-//! read the metadata the page publishes for exactly this purpose — JSON-LD,
-//! OpenGraph, Twitter cards, `<meta>` — which is a few hundred *bytes* and is
-//! already structured.
+//! "What is this page about" has three answers: the outline, which is the page's
+//! content and costs a few hundred lines; the markdown, denser but still prose;
+//! or the metadata the page publishes for exactly this purpose (JSON-LD,
+//! OpenGraph, Twitter cards, `<meta>`), which is a few hundred *bytes* and is
+//! already structured. The third is nearly free over a DOM we have, and the only
+//! one where the page wrote the answer down rather than leaving it to be
+//! inferred. A model extracting a headline from prose will occasionally invent
+//! one; handed `"headline": "…"` it will not.
 //!
-//! The third is nearly free over a DOM we already have, and it is the only one
-//! of the three where the page has written the answer down rather than left it
-//! to be inferred. A model asked to extract a headline from prose will
-//! occasionally invent one; a model handed `"headline": "…"` will not.
+//! The fence applies: every value is page-derived and reaches a model deciding
+//! what to do next, so it is collapsed like any other, and a page cannot write
+//! the closing marker into its own `og:title`.
 //!
-//! # The fence still applies
-//!
-//! Every value here is page-derived and reaches a model that is deciding what
-//! to do next, so it is fenced like the outline and collapsed like every other
-//! page-derived value: no value may span a line, and a page cannot write the
-//! closing marker into its own `og:title`.
-//!
-//! # What this does not do
-//!
-//! It does not *validate*. A page claiming `"@type": "Product"` with no price
-//! is reported as it stands, because this is a reading of what the page said
-//! and not a judgement about whether the page is right. Nor does it merge the
-//! formats into one shape: `json_ld`, `open_graph` and `meta` stay apart,
+//! This does not *validate*. A page claiming `"@type": "Product"` with no price
+//! is reported as it stands, because this is a reading of what the page said.
+//! Nor does it merge the formats: `json_ld`, `open_graph` and `meta` stay apart,
 //! because a page that disagrees with itself between two of them is telling an
-//! agent something, and folding them together would hide it.
+//! agent something.
 
 use blitz_dom::BaseDocument;
 use serde::{Deserialize, Serialize};

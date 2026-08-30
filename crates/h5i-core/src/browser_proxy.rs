@@ -1,46 +1,32 @@
 //! Mediating the browser daemon's control socket.
 //!
-//! The control lock (5.4) was only half-enforced: the viewer honoured it, but
-//! nothing stood between the agent and `agent-browser`, so an agent that kept
-//! clicking during a human takeover was told off only if it asked. ROADMAP open
-//! item 1 listed a PATH shim, a skill-level convention, or accepting it as
-//! advisory, and missed the one that works: the daemon's own control socket. A
-//! PATH shim is bypassed by an absolute path and a convention enforces nothing,
-//! but **every verb walks through the socket**.
-//!
-//! The protocol is one line of JSON each way (`{"id","action",…}` in,
-//! `{"success","data","error"}` out, serialized under a single mutex upstream),
+//! The control lock was half-enforced: the viewer honoured it, but nothing stood
+//! between the agent and `agent-browser`. A PATH shim is bypassed by an absolute
+//! path and a convention enforces nothing, but **every verb walks through the
+//! socket**, and the protocol is one line of JSON each way under a single mutex,
 //! which is why a few hundred lines can sit in front of it.
 //!
-//! # What this is, and is not
-//!
-//! It is **enforcement against an agent following the documented path**: the
+//! This is **enforcement against an agent following the documented path**: the
 //! CLI reads `AGENT_BROWSER_SOCKET_DIR`, that directory is h5i's listener, and
-//! every verb it sends is decided here. That is the threat the control lock was
-//! written for, an agent that does not know a human took the wheel.
+//! every verb is decided here. That is the threat the lock was written for.
 //!
-//! It is **not containment against a deliberately evasive agent**, for a
-//! structural reason: the daemon runs inside the box, and inside a box there is
-//! no privilege boundary. Landlock grants are per-box, not per-process, so any
-//! socket the daemon can bind the agent can connect to directly. Moving the
-//! daemon outside the box would fix that and break what boxes are for, since it
-//! could no longer reach the dev server on the box's own loopback.
+//! It is **not containment against a deliberately evasive agent**, structurally:
+//! the daemon runs inside the box and Landlock grants are per-box, so any socket
+//! the daemon can bind the agent can connect to. Moving the daemon out would
+//! break what boxes are for, since it could no longer reach the dev server on
+//! the box's own loopback.
 //!
-//! # Two things learned by driving the real daemon
+//! Two things learned by driving the real daemon:
 //!
-//! 1. **`__agent_browser_internal_shutdown` is an escape hatch, not an action.**
-//!    The CLI sends it when the running daemon does not match the options it
-//!    wants, then starts its own. Forwarded naively it kills the daemon we
-//!    mediate, and the next daemon is the agent's on a socket we do not own, so
-//!    mediation vanishes silently. It is refused here always, whoever holds the
-//!    lock.
-//! 2. **The daemon's config fingerprint covers its options, not its path.** Two
-//!    daemons started with the same `AGENT_BROWSER_*` environment agree on the
-//!    fingerprint even from different socket directories, which is what lets the
-//!    real daemon run on a path the box cannot reach with this in front of it:
-//!    mirror `.version`/`.config` into the box-visible directory and the CLI is
-//!    satisfied. Get the environment wrong and the CLI decides the daemon is
-//!    stale and tries (1).
+//! 1. `__agent_browser_internal_shutdown` is an escape hatch, not an action. The
+//!    CLI sends it when the daemon does not match the options it wants, then
+//!    starts its own; forwarded, it kills the daemon we mediate and the next one
+//!    is the agent's on a socket we do not own. Refused here always.
+//! 2. The daemon's config fingerprint covers its options, not its path, which is
+//!    what lets the real daemon run somewhere the box cannot reach: mirror
+//!    `.version`/`.config` into the box-visible directory and the CLI is
+//!    satisfied. Get the environment wrong and it decides the daemon is stale
+//!    and tries (1).
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, Write};

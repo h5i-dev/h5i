@@ -1,47 +1,30 @@
 //! The Same-Origin Policy, and the cross-origin exception to it.
 //!
-//! # Why this is not the allowlist
+//! [`crate::policy`] answers "may this engine connect?". This answers "may page
+//! script read what came back?". One check was doing both, so the second went
+//! unanswered: grant two origins and a script on either could `fetch` the other
+//! and read the body. The cookie jar made it worse in this repository's own
+//! history, since §B16's `Domain` support turned an unauthenticated cross-origin
+//! read into an authenticated one. Neither change was wrong alone.
 //!
-//! The allowlist ([`crate::policy`]) answers **"may this engine connect?"**.
-//! This answers **"may page script read what came back?"**. One check was
-//! answering both, which meant the second went unanswered.
+//! Enforced:
 //!
-//! Grant two origins, a documentation site and an internal one, and a script on
-//! either could `fetch` the other and read the body: the allowlist said yes
-//! because it was asked whether the *engine* may talk to that host, and it may.
+//! * **Same-origin** is unrestricted, which is the point of an origin.
+//! * **Cross-origin `no-cors`** may be sent and its response is opaque: no
+//!   status, no headers, no body. That is what makes an `<img>` safe.
+//! * **Cross-origin `cors`** sends `Origin`, preflights when not simple, and
+//!   exposes the response only if the server named this origin back. Headers are
+//!   filtered to the safelist plus `Access-Control-Expose-Headers`.
+//! * **Credentials** need the server to opt in twice, `Allow-Credentials: true`
+//!   *and* an explicit origin echo, since `*` with credentials is the
+//!   misconfiguration this catches.
+//! * **A redirect re-evaluates all of it**, so a third origin yields an opaque
+//!   `null` origin and a server cannot launder a read by bouncing it.
 //!
-//! The cookie jar made this worse, in this repository's own history. While
-//! cookies were host-only, a cross-origin read carried no credential worth
-//! having. roadmap-history.md §B16 added `Domain` over a public suffix list, a real
-//! improvement on its own terms, and turned an unauthenticated cross-origin
-//! read into an authenticated one. Neither change was wrong alone; the pair
-//! was, which is the argument for this module preceding any further capability.
-//!
-//! # What is enforced
-//!
-//! * **Same-origin is unrestricted**, which is the point of an origin.
-//! * **Cross-origin `no-cors`** may be sent and its response is **opaque**: no
-//!   status, no headers, no body. That is what a browser gives an `<img>` or a
-//!   beacon, and what makes those safe.
-//! * **Cross-origin `cors`** sends `Origin`, preflights when the request is not
-//!   simple, and exposes the response only if the server named this origin
-//!   back. Response headers are filtered to the safelist plus whatever
-//!   `Access-Control-Expose-Headers` adds.
-//! * **Credentials cross-origin need the server to opt in twice**:
-//!   `Access-Control-Allow-Credentials: true` *and* an explicit origin echo,
-//!   since `*` with credentials is the misconfiguration this catches.
-//! * **A redirect re-evaluates all of it.** Crossing to a third origin yields an
-//!   opaque `null` origin from there on, so a server cannot launder a read by
-//!   bouncing it.
-//!
-//! # What is deliberately not modelled
-//!
-//! No `Access-Control-Max-Age` cache: a preflight per non-simple request is
-//! slower and is one fewer piece of state that can be wrong. When a corpus page
-//! makes that cost real it can be added, with the receipt showing both
-//! requests. CORB/ORB are out of scope, since they defend a shared process
-//! against a side channel and this engine gives every document its own realm
-//! and discards it on navigation.
+//! No `Access-Control-Max-Age` cache: a preflight per request is one fewer piece
+//! of state that can be wrong. CORB/ORB are out of scope, defending a shared
+//! process against a side channel this engine does not have, since every
+//! document gets its own realm and loses it on navigation.
 
 use url::Url;
 

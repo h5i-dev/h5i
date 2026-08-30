@@ -1,12 +1,10 @@
 //! Pull structured data out of a page by selector.
 //!
-//! Token economics, mostly. An agent that wants five titles off a listing page
-//! should not have to read three hundred lines of outline to find them, and a
-//! model asked to transcribe them out of prose will occasionally invent one.
-//! A schema says what is wanted and the engine answers it exactly.
-//!
-//! The schema shape is Lightpanda's, which is the better of the two designs
-//! read for this: keys are output field names and values are selector specs.
+//! Token economics. An agent wanting five titles off a listing page should not
+//! read three hundred lines of outline to find them, and a model asked to
+//! transcribe them out of prose will occasionally invent one. The schema shape
+//! is Lightpanda's, the better of the two designs read for this: keys are output
+//! field names, values are selector specs.
 //!
 //! ```text
 //! "<sel>"                                first match's text, or null
@@ -18,15 +16,15 @@
 //!
 //! One rule is worth copying exactly, and it is about failure. **An empty array
 //! is a valid result; a schema where every top-level key came back null is a
-//! mistake the caller should hear about.** The first is "there were no rows";
-//! the second is "your selectors do not match this page", and answering the
-//! second with a tidy object full of nulls is a wrong answer that looks like a
-//! right one. It comes back as an error the model can act on, naming the two
-//! verbs that would show it what the page actually contains.
+//! mistake the caller should hear about.** The first says there were no rows,
+//! the second says your selectors do not match this page, and answering the
+//! second with a tidy object full of nulls is a wrong answer that looks right.
+//! It comes back as an error naming the two verbs that would show the model what
+//! the page actually contains.
 //!
-//! Values are page-derived, so everything here goes through the same
-//! [`crate::snapshot::collapse`] the fence relies on: no extracted value spans
-//! a line, and none can carry a forged fence marker.
+//! Values are page-derived, so they go through
+//! [`crate::snapshot::collapse`]: none spans a line, none carries a forged fence
+//! marker.
 
 use std::collections::BTreeMap;
 

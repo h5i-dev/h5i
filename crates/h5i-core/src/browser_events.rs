@@ -1,42 +1,26 @@
 //! The browser terminal's event stream (roadmap-history.md M11a).
 //!
-//! One stream, read by three consumers: the console's browser terminal, the
-//! terminal viewer (M11b), and the exported receipt. Two viewers that each
-//! collect their own data are two viewers that disagree, and a disagreement
-//! between them is unfalsifiable for whoever is watching.
+//! One stream, three consumers: the console's browser terminal, the terminal
+//! viewer, and the exported receipt. Two viewers collecting their own data are
+//! two viewers that disagree, and that disagreement is unfalsifiable for
+//! whoever is watching.
 //!
-//! # Two axes, deliberately not collapsed
-//!
-//! Every event carries **who observed it** and **how complete that observation
-//! is**:
-//!
-//! * [`Lane`] — host-observed (h5i saw it from outside the box) or box-claimed
-//!   (the box said so). The same split [`crate::server`]'s `HOST_OBSERVED_LANES`
-//!   applies to receipts.
-//! * [`Grade`] — fail-closed (if it could not be recorded it did not happen) or
-//!   best-effort (observed, with known gaps).
-//!
-//! The interesting case proves they are orthogonal: `h5i-browser-light` writes
-//! its request log inside the box, so it is box-claimed, and that log is
-//! fail-closed by construction because the engine refuses the fetch when the
-//! record cannot be written (`net::Broker`). Chromium's Fetch lane is
+//! Every event carries two things that are not the same question. [`Lane`] is
+//! who observed it, host-observed or box-claimed. [`Grade`] is how complete the
+//! observation is, fail-closed or best-effort. The interesting case proves they
+//! are orthogonal: `h5i-browser-light` writes its request log inside the box, so
+//! box-claimed, and that log is fail-closed by construction because the engine
+//! refuses the fetch when the record cannot be written. Chromium's Fetch lane is
 //! box-claimed *and* best-effort, since attach races and buffer limits leave
-//! gaps. A viewer rendering those the same way would report coverage it does
-//! not have, so the grade travels with the row and the pane renders it.
+//! gaps. A viewer rendering those alike would report coverage it does not have.
 //!
-//! # Correlation is carried, never guessed
+//! **Correlation is carried, never guessed.** [`ViewerEvent::caused_by`] is set
+//! only where the source carries the link. Nothing infers causation from
+//! timestamps; a UI drawing an arrow on that basis is inventing evidence.
 //!
-//! [`ViewerEvent::caused_by`] is set only where the *source* carries the link: a
-//! response row is caused by the request row with its sequence number, a policy
-//! refusal by the action that provoked it. Nothing infers causation from
-//! timestamps; a UI that draws an arrow on that basis is inventing evidence.
-//!
-//! # Time
-//!
-//! [`ViewerEvent::observed_at`] is when h5i **read** the record, not when the
-//! box produced it: the request log carries a sequence number and no clock, so
-//! an event time would have to be fabricated. Ordering comes from [`EventLog`]'s
-//! monotonic `id`, which follows each source's own sequence.
+//! **Time is when h5i read the record**, not when the box produced it: the
+//! request log carries a sequence number and no clock, so an event time would be
+//! fabricated. Ordering comes from [`EventLog`]'s monotonic `id`.
 
 use serde::{Deserialize, Serialize};
 

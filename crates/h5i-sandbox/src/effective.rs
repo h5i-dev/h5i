@@ -1,41 +1,30 @@
-//! The effective configuration — what the kernel tiers actually apply
+//! The effective configuration: what the kernel tiers actually apply
 //! (ROADMAP.md §P1).
 //!
 //! `policy.resolved.toml` is the digested *intent*. `ResolvedPolicy` also
-//! carries runtime-only, never-serialized fields (the bind lists, readonly
-//! mode, egress extras) that are enforced all the same, so a model that reads
-//! only the toml verifies less than what a box gets. This module serializes
-//! the enforced state: [`compute_effective`] produces it, and
-//! [`crate::sandbox::build_confined_command`] consumes the *same* result to
-//! build its Landlock path sets and bind lists — one computation, two readers,
-//! so the dump and the sandbox cannot drift apart. That is the apply-seam rule:
-//! the dump is never a parallel pretty-printer.
+//! carries runtime-only, never-serialized fields that are enforced all the same,
+//! so a model reading only the toml verifies less than what a box gets. This
+//! module serializes the enforced state, and
+//! [`crate::sandbox::build_confined_command`] consumes the *same*
+//! [`compute_effective`] result to build its Landlock path sets and bind lists.
+//! One computation, two readers, so the dump is never a parallel pretty-printer.
 //!
-//! Paths are serialized as UTF-8 strings (lossy). Grants and bind sources come
-//! from TOML and h5i-created directories, which are UTF-8 in practice; a
-//! non-UTF-8 host path would mangle here, and the enforcement that now reads
-//! these strings would then miss the grant or fail the bind — both the
-//! fail-closed direction.
+//! Paths serialize as lossy UTF-8. Grants and bind sources come from TOML and
+//! h5i-created directories, so a non-UTF-8 host path would mangle here and the
+//! enforcement reading these strings would then miss the grant or fail the bind,
+//! both the fail-closed direction.
 //!
-//! Linux kernel tiers (`process`, `supervised`) only, per §P1's v1 scope. The
-//! Seatbelt, container and microvm backends enforce through mechanisms this
-//! schema does not describe; they are excluded rather than half-described.
+//! Linux kernel tiers only, per §P1's v1 scope. Seatbelt, container and microvm
+//! enforce through mechanisms this schema does not describe, so they are
+//! excluded rather than half-described.
 //!
-//! Every runtime-only (`serde(skip)`) field of [`ResolvedPolicy`] is either in
-//! this dump or excluded here by name, with the reason (§P1's exit criterion):
-//!
-//! - `private_binds`, `home_binds`, `ro_binds`, `cache_write`,
-//!   `work_readonly`, `user_egress_allow`, `loopback_ports`: **in the dump**
-//!   (`binds`, `work_readonly`, `net`).
-//! - `box_git`: container-backend mounts. On the kernel tiers
-//!   `grant_box_git` pushes the same paths into `fs_read`/`fs_write`, so what
-//!   they enforce here already appears under `landlock`.
-//! - `env_capture_spool`, `env_inbox`: container-mount plumbing; the kernel
-//!   tiers reach them through fs grants and the env allowlist, both recorded.
-//! - `hosts_services`: a microvm-only idle-stop hint, no kernel-tier effect.
-//! - `egress_proxy_port`: container-tier proxy wiring.
-//! - `effective_out`: where this very dump is written — self-reference, not
-//!   enforcement.
+//! Every `serde(skip)` field of [`ResolvedPolicy`] is either in the dump or
+//! excluded here by name (§P1's exit criterion): the bind lists, readonly mode
+//! and egress extras are **in** it; `box_git` is container mounts whose kernel
+//! -tier paths already appear under `landlock`; `env_capture_spool` and
+//! `env_inbox` are container plumbing the kernel tiers reach through recorded fs
+//! grants; `hosts_services` is a microvm idle-stop hint; `egress_proxy_port` is
+//! container proxy wiring; and `effective_out` is where this dump is written.
 
 use std::path::Path;
 

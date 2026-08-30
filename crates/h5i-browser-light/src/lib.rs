@@ -1,39 +1,33 @@
 //! h5i browser light: a lightweight visual browser engine for coding agents.
 //!
-//! The engine exists for one property Chromium cannot give us from outside.
-//! h5i's egress proxy is a CONNECT gate: it sees `CONNECT docs.example.com:443`
-//! and nothing more, so a browser receipt can name hosts and little else. CDP's
-//! Fetch domain can pause a Chromium request and record it, but that coverage
-//! fails *open*, since attach races, freshly created targets and workers, event
-//! buffer limits and disconnects all leave gaps. Here the engine *is* the HTTP
-//! client, so the receipt is not an observation of the network, it is the
-//! network. If the receipt cannot be written, the request does not happen.
-//!
-//! Concretely:
+//! The engine exists for one property Chromium cannot give from outside. h5i's
+//! egress proxy is a CONNECT gate that sees a hostname and nothing more, and
+//! CDP's Fetch domain can record a Chromium request but fails *open*: attach
+//! races, new targets and workers, buffer limits and disconnects all leave gaps.
+//! Here the engine *is* the HTTP client, so the receipt is not an observation of
+//! the network, it is the network. No receipt, no request.
 //!
 //! - **Fail-closed by construction.** [`net::LocalBroker`] appends the decision
-//!   before the wire and the outcome after it. A sink that refuses to record is
-//!   a sink that refuses to fetch (see [`receipt::Sink`]).
-//! - **The recorder is not in the parsers' process.** The engine runs as two: a
-//!   broker holding the policy, the wire, the receipts, the jar and the secrets,
-//!   and a renderer holding the DOM, the cascade, the decoders and the script
-//!   realm. [`broker::Broker`] is the seam and [`ipc`] the transport, so a bug
-//!   in Blitz, Stylo, an image decoder or Boa is a bug in the half that holds
-//!   none of the above.
+//!   before the wire and the outcome after. A sink that refuses to record is a
+//!   sink that refuses to fetch (see [`receipt::Sink`]).
+//! - **The recorder is not in the parsers' process.** A broker holds the policy,
+//!   wire, receipts, jar and secrets; a renderer holds the DOM, cascade,
+//!   decoders and script realm. [`broker::Broker`] is the seam, [`ipc`] the
+//!   transport, so a bug in Blitz, Stylo, an image decoder or Boa is a bug in the
+//!   half holding none of it.
 //! - **Every hop is a decision.** Redirects are followed manually and each hop
-//!   is policy-checked and receipted, so an allowed origin cannot bounce a
-//!   request to a denied one.
-//! - **No script in this tier.** Page script is not evaluated at all, so the
-//!   commonest delivery channel for injected instructions is absent rather than
-//!   filtered. When script arrives (roadmap-history.md M10 tier 3) it is off by
-//!   default and gated by policy before evaluation, never "absent by
-//!   construction", which is reserved for a build with no JS engine in it.
+//!   is checked and receipted, so an allowed origin cannot bounce a request to a
+//!   denied one.
+//! - **No script in this tier.** Page script is never evaluated, so the
+//!   commonest channel for injected instructions is absent rather than filtered.
+//!   When script arrives it is off by default and gated by policy before
+//!   evaluation, never "absent by construction", which is reserved for a build
+//!   with no JS engine in it.
 //!
 //! The rendering half is assembled rather than written: Blitz owns the DOM and
-//! drives Stylo for CSS, and vello_cpu rasterises on the CPU because a box has
-//! no GPU. Fidelity is explicitly not the goal. The two-engine split in
-//! roadmap-history.md 7.1 keeps Chromium for the agent's own dev server, and
-//! docs-grade pages are this engine's compatibility bar.
+//! drives Stylo, and vello_cpu rasterises on the CPU because a box has no GPU.
+//! Fidelity is not the goal; docs-grade pages are the compatibility bar, and
+//! roadmap-history.md 7.1 keeps Chromium for the agent's own dev server.
 
 pub mod broker;
 pub mod cli;

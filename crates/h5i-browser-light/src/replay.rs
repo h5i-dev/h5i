@@ -1,45 +1,27 @@
 //! A session, recorded as something that can be run again.
 //!
 //! The action log ([`crate::receipt::ActionLog`]) is an *audit* record: every
-//! verb written before it runs and again after, failures included, because "no
-//! record, no action" is a claim about what was attempted. This artifact holds
-//! only the steps that *worked*, in a form that means the same thing later.
+//! verb before and after it runs, failures included. This holds only the steps
+//! that **worked**, in a form that means the same thing later.
 //!
-//! # Why selectors, and why that reaches into the API
-//!
-//! A `@ref` is an ordinal: the fifth actionable thing in the reading that
-//! minted it. Checking it against that reading (`stream::resolve_ref`) makes it
-//! safe, not durable. Replay it tomorrow against a page with one more link near
-//! the top and `@e5` is a different element.
-//!
-//! So a recorded step carries the **verified selector** the snapshot minted
-//! beside the ref: the simplest CSS selector whose first match is that element,
-//! checked with the matcher the action verbs use ([`crate::selector`]). That is
-//! why those verbs take a `selector` as well as a `ref`. **Refs are for
-//! reading, selectors are for acting.**
-//!
-//! # Why a replay is worth having here
+//! A `@ref` is an ordinal into the reading that minted it, which makes it safe
+//! but not durable: replay it against a page with one more link near the top and
+//! `@e5` is a different element. So a recorded step carries the **verified
+//! selector** the snapshot minted beside the ref, which is why the action verbs
+//! take a `selector` as well as a `ref`. **Refs are for reading, selectors are
+//! for acting.**
 //!
 //! Both reference engines settle on a wall clock, so replaying their recordings
-//! is a re-run with different timing and, on a racing page, a different answer.
-//! This engine settles on a virtual clock, so a replay visits the same states in
-//! the same order. A recording, its request log, and a replay that lands
-//! identically make a session that can be **re-executed and diffed**, which is
-//! the browser-side form of what roadmap-history.md §B11.5.16 wants from
-//! receipts.
+//! is a re-run with different timing. This engine settles on a virtual clock, so
+//! a replay visits the same states in the same order, and a recording plus its
+//! request log plus an identical replay is a session that can be re-executed and
+//! diffed.
 //!
-//! # What is deliberately not recorded
-//!
-//! * **Reads.** A snapshot changes nothing. Reads are how a person or a model
-//!   decided what to do next, not part of the doing.
-//! * **Steps that failed.** A refusal belongs in the audit log. A script that
-//!   replays a failure never reaches the state it was recorded from.
-//! * **Steps whose handle cannot survive.** With no verifiable selector the
-//!   step is dropped and the drop is *counted*, so a short script is visibly
-//!   short rather than quietly wrong.
-//! * **Credential values.** A `type` that used `$H5I_SECRET_*` records the
-//!   placeholder. A recording is a file, and a file is where a credential must
-//!   not end up.
+//! Not recorded: reads, which change nothing; steps that failed, which belong in
+//! the audit log; steps whose handle cannot survive, dropped and **counted** so
+//! a short script is visibly short rather than quietly wrong; and credential
+//! values, since a `type` that used `$H5I_SECRET_*` records the placeholder and
+//! a recording is a file.
 
 use serde::{Deserialize, Serialize};
 

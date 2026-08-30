@@ -1,11 +1,10 @@
 //! The terminal viewer: watch a box's browser, and take over, without leaving
 //! the terminal.
 //!
-//! The web viewer ([`crate::view`]) binds a loopback port, gates it with a
-//! per-box token, and serves a page the human opens in *their own browser*,
-//! which makes the watching program the most credential-laden one on the host.
-//! This viewer is instead a client of the same stream, in the same process as
-//! the CLI the human already ran:
+//! The web viewer ([`crate::view`]) binds a loopback port, gates it with a token
+//! and serves a page the human opens in *their own browser*, which makes the
+//! watching program the most credential-laden one on the host. This viewer is a
+//! client of the same stream, in the process the human already ran:
 //!
 //! ```text
 //!   h5i box view --term
@@ -14,27 +13,17 @@
 //!                                 ◄── input ────── control lock ◄── terminal
 //! ```
 //!
-//! Three consequences make this worth building rather than a nicer front end
-//! for the existing forward:
+//! **Nothing is bound.** The socket comes back over `SCM_RIGHTS` from a fork
+//! that entered the box's namespaces, so it is a descriptor this process holds:
+//! nothing to connect to, nothing to authenticate. **The trusted path runs both
+//! ways**: the box supplies compressed pixels and nothing else, and every escape
+//! sequence is generated here (see [`kitty`]), so a box cannot reach the host's
+//! PTY even in principle. **The status row cannot be painted over**, the page
+//! being an image below row two while row one is [`status`], so a page cannot
+//! lie about which origin it is.
 //!
-//! * **Nothing is bound.** A loopback listener is reachable by every process on
-//!   the host, which is why the forward needs a token. Here the socket comes
-//!   back over `SCM_RIGHTS` from a fork that entered the box's namespaces, so
-//!   it is a descriptor this process holds. Nothing to connect to, nothing to
-//!   authenticate.
-//! * **The trusted path runs the other way too.** The box supplies compressed
-//!   pixels inside a WebSocket message and nothing else. Every escape sequence
-//!   the terminal receives is generated here (see [`kitty`]), so a box cannot
-//!   reach the host's PTY even in principle: no OSC 52 clipboard write, no
-//!   window-title rewrite, no graphics-protocol file read.
-//! * **The status row cannot be painted over.** The page is an image below row
-//!   two; row one is [`status`]. A page cannot lie about which origin it is, a
-//!   claim browser chrome has never quite been able to make.
-//!
-//! It is not a boundary of its own. It watches a box at whatever tier that box
-//! runs, and shrinking the watcher does not make a shared kernel unshared. The
-//! claim is a smaller trusted computing base for *watching*, plus a status line
-//! and a mode model only a terminal makes possible.
+//! It is not a boundary of its own: it watches a box at whatever tier that box
+//! runs, and shrinking the watcher does not make a shared kernel unshared.
 
 // Portable: these parse, encode and decode, and none of them touch a terminal.
 pub mod image;

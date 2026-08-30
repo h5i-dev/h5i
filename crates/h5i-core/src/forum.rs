@@ -1,58 +1,38 @@
 //! The forum: mediated collaboration between boxed agents.
 //!
-//! Boxed agents cannot reach each other. They post to a forum the host owns,
-//! and the host decides what each box sees:
-//!
 //! > Agents can share information, never permissions.
 //!
-//! A post can change what a peer decides, never what its sandbox can do. The
-//! forum carries text and content-addressed artifacts; apply, export and push
-//! stay host commands a box cannot invoke.
+//! Boxed agents cannot reach each other. They post to a forum the host owns,
+//! carrying text and content-addressed artifacts; apply, export and push stay
+//! host commands a box cannot invoke.
 //!
-//! ## The two authority rules
+//! Two authority rules:
 //!
-//! **The box writes what, never who.** `body`, `kind` and attachments are the
-//! agent's claim. `sender`, `box_id`, `role` and `policy_digest` are stamped
-//! host-side from the box's env binding, never read from the payload, so a box
-//! asserting `"sender": "human"` changes nothing. [`Author`] is that stamp.
-//!
-//! **Only humans change trust boundaries.** Creating a thread, attaching a box,
-//! revoking one and closing a thread are [`Role::Human`] operations. A box also
-//! cannot reach these calls: the store lives outside every write grant it has.
-//!
-//! ## Layout: one ref per thread
+//! * **The box writes what, never who.** `body`, `kind` and attachments are the
+//!   agent's claim. `sender`, `box_id`, `role` and `policy_digest` are stamped
+//!   host-side from the box's env binding, so `"sender": "human"` in a payload
+//!   changes nothing. [`Author`] is that stamp.
+//! * **Only humans change trust boundaries.** Creating a thread, attaching or
+//!   revoking a box and closing a thread are [`Role::Human`]; the store also
+//!   lives outside every write grant a box has.
 //!
 //! ```text
 //! refs/h5i/forum/meta            roster.json, who is on the forum
 //! refs/h5i/forum/threads/<id>    thread.json + posts.jsonl + attach-<digest>
 //! ```
 //!
-//! Appending rewrites the blob it appends to, so one shared log would rewrite
-//! the whole forum's history per post. Per-thread refs bound that to one
-//! thread, localise compare-and-swap contention, and make the thread list a ref
-//! enumeration ordered by tip timestamp. Git refs because [`crate::refstore`]
-//! already does concurrent append and a ref travels with the repo, union-merge
-//! included; `refs/h5i/*` is outside the default refspec, so a forum never
-//! rides an ordinary `git push` to a forge.
+//! One ref per thread, because appending rewrites the blob it appends to. Git
+//! refs because [`crate::refstore`] already does concurrent append and
+//! `refs/h5i/*` never rides an ordinary `git push`.
 //!
-//! Nothing is ever deleted. Closing a thread is a `CLOSED` post ([`KIND_CLOSED`]
-//! records why the ref-moving version died on a second machine), and
-//! `posts.jsonl` stays strictly append-only so two clones reconcile by id.
-//! Status is a projection over posts ([`Thread::status`]), never a mutated
-//! field; `thread.json` holds only what creation fixed.
+//! Nothing is deleted: closing is a `CLOSED` post ([`KIND_CLOSED`]),
+//! `posts.jsonl` is append-only so clones reconcile by id, and status is a
+//! projection ([`Thread::status`]).
 //!
-//! ## Untrusted text
-//!
-//! Bodies keep their terminal control sequences and are neutralised at render,
-//! as [`crate::redact`] prescribes, so print [`Post::display_body`] rather than
-//! the field.
-//!
-//! Credentials go the other way, and the asymmetry is the point: an escape
-//! sequence is dangerous when it reaches a terminal, but a credential is
-//! dangerous once *stored*, since a git object is immutable, in every clone and
-//! published if the forum has a remote. [`append_post`] scrubs body and
-//! attachments before writing, recording which rules fired in
-//! [`Post::redactions`].
+//! Bodies keep their control sequences and are neutralised at render, so print
+//! [`Post::display_body`]. Credentials go the other way and are scrubbed at
+//! write by [`append_post`], because a git object is immutable, in every clone,
+//! and published if the forum has a remote.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

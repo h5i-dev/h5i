@@ -1,45 +1,29 @@
 //! The box console: `h5i ui`.
 //!
-//! One screen for the question the CLI answers a box at a time: *what is the
-//! fleet doing, and what has pressed on a boundary?* Built on what the
-//! contained-environment product keeps, namely manifests, the resolved policy,
-//! the env event log, and [`crate::receipt`].
+//! One screen for what the CLI answers a box at a time: what is the fleet doing,
+//! and what has pressed on a boundary? Built over manifests, the resolved
+//! policy, the env event log and [`crate::receipt`].
 //!
-//! # Read-only, and structurally so
-//!
-//! Every route is a `GET`. There is no mutating handler to guard, so the
-//! console needs no CSRF story and cannot become a remote control for someone's
-//! boxes: `shell`, `run`, `export`, `apply` and `rm` stay in the CLI. A
-//! monitoring surface that cannot act is a much smaller thing to get wrong.
-//!
-//! # What guards it
+//! **Read-only, structurally.** Every route is a `GET`, so there is no mutating
+//! handler to guard, no CSRF story, and no way to turn this into a remote
+//! control for someone's boxes. A monitoring surface that cannot act is a much
+//! smaller thing to get wrong.
 //!
 //! The old `h5i serve` bound loopback and trusted everyone who could reach it,
 //! which on a developer machine is every process and every page. This follows
-//! [`crate::view`]'s discipline:
+//! [`crate::view`]'s discipline: loopback only, a per-session token minted at
+//! `bind` and held in memory rather than on disk, traded by the page for a
+//! `SameSite=Strict` cookie, and foreign origins refused by `Origin` *and*
+//! `Sec-Fetch-Site`. The second is not belt-and-braces: `Origin` is absent on a
+//! markup-driven GET, and two loopback ports are different origins on the same
+//! site, so without it any other local port could `<img src>` this console with
+//! its cookie attached.
 //!
-//! * **Loopback only**, on a port h5i chose.
-//! * **A per-session token**, minted at `bind` and printed once in the URL. It
-//!   lives in this process's memory, so nothing on disk and nothing a box can
-//!   read. The page trades it for a `SameSite=Strict` cookie, which a
-//!   cross-site request never carries.
-//! * **Foreign origins refused**, by `Origin` *and* by `Sec-Fetch-Site`. The
-//!   second is not belt-and-braces: `Origin` is absent on a markup-driven GET,
-//!   and `SameSite=Strict` constrains cross-*site* requests only, while two
-//!   loopback ports are different origins on the same site. Without it a page on
-//!   any other local port could `<img src>` this console with its cookie
-//!   attached.
-//!
-//! # Honesty
-//!
-//! The dashboard this replaces had a risk classifier behind its badges. That
-//! module was cut and nothing here invents a score to replace it. [`Signals`] is
-//! arithmetic over receipts: red means **enforcement fired** (the egress proxy
-//! refused a destination), amber means a run failed or timed out or the page
-//! reported errors, grey means the evidence is weak, either nothing was
-//! confined (`workspace` tier) or every record came from inside the box. None
-//! is an accusation, and the UI never renders a number the receipts do not
-//! hold.
+//! **Honesty.** The dashboard this replaces had a risk classifier; nothing here
+//! invents a score to replace it. [`Signals`] is arithmetic over receipts: red
+//! means enforcement fired, amber means a run failed or the page reported
+//! errors, grey means the evidence is weak. None is an accusation, and the UI
+//! never renders a number the receipts do not hold.
 
 use std::path::PathBuf;
 use std::sync::Arc;

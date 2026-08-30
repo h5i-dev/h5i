@@ -1,31 +1,24 @@
 //! Transport two: a Cloudflare quick tunnel, for a visitor who has no h5i.
 //!
 //! The peer-to-peer transport needs h5i on both ends, because a browser cannot
-//! speak QUIC to an endpoint id. That rules out the person you most often want
-//! clicking a prototype — a designer, a product manager, a customer — and no
-//! amount of work on the P2P path reaches them. So this one trades the
-//! property P2P has for the one it does not: anybody with the link can open it
-//! in any browser.
+//! speak QUIC to an endpoint id, which rules out the person you most often want
+//! clicking a prototype. This transport trades the property P2P has for the one
+//! it does not: anybody with the link can open it in any browser.
 //!
-//! **What it costs, stated here and in the receipt rather than only in the
-//! docs:**
+//! What it costs, stated in the receipt rather than only in the docs. **TLS
+//! terminates at Cloudflare**, so this path is not end to end and Cloudflare can
+//! read the traffic; usually an acceptable trade for an agent-built prototype
+//! and never ours to assume, so [`crate::bridge::render_receipt`] writes it into
+//! the export. **`cloudflared` is somebody else's binary**, neither shipped nor
+//! pinned, and its absence is a failure that names the alternative. **Quick
+//! tunnels are explicitly not a production service**: Cloudflare caps
+//! concurrency and does not support server-sent events on them.
 //!
-//! * **TLS terminates at Cloudflare.** This path is not end to end. Cloudflare
-//!   can read the traffic between the visitor and this machine. For an
-//!   agent-built prototype that is usually an acceptable trade and it is never
-//!   ours to assume — [`crate::bridge::render_receipt`] writes it into the
-//!   export so the decision is visible later.
-//! * **`cloudflared` is somebody else's binary.** We neither ship it nor pin
-//!   it. If it is not installed, the failure says so and names the alternative.
-//! * **Quick tunnels are explicitly not a production service.** Cloudflare caps
-//!   concurrency and does not support server-sent events on them. This is the
-//!   no-install mode, not the default mode.
-//!
-//! What does **not** change is the bridge underneath. The URL carries a token,
-//! the token is checked against the same grant table on every connection, live
-//! connections are dropped when a grant is revoked, and the credential is
-//! stripped before anything reaches the box. The capability degrades from "hold
-//! the secret" to "hold the link"; it does not degrade to nothing.
+//! What does not change is the bridge underneath. The URL carries a token
+//! checked against the same grant table on every connection, live connections
+//! drop when a grant is revoked, and the credential is stripped before anything
+//! reaches the box. The capability degrades from "hold the secret" to "hold the
+//! link", not to nothing.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

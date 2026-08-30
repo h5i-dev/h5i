@@ -1,38 +1,27 @@
 //! The cookie jar, and the narrowings that keep it safe.
 //!
-//! # `Domain`
-//!
 //! A cookie is host-only unless it says otherwise, and a `Domain` must pass all
-//! four rules:
+//! four rules: it is not a public suffix, or `evil.co.uk` sets a cookie for
+//! `bank.co.uk`; the request host is inside it on a label boundary, so
+//! `attackerexample.com` cannot claim `Domain=example.com`; an IP-address host
+//! gets no `Domain`, there being no tree above an address; and `__Host-` forbids
+//! it outright. The suffix list is compiled in (the `psl` crate), never fetched,
+//! and going stale is safe because the list only grows.
 //!
-//! 1. Not a public suffix, or `evil.co.uk` sets a cookie for `bank.co.uk`.
-//! 2. The request host is inside it on a label boundary, so
-//!    `attackerexample.com` cannot claim `Domain=example.com`.
-//! 3. An IP-address host gets no `Domain`; there is no tree above an address.
-//! 4. `__Host-` forbids `Domain` outright.
+//! SameSite and Secure are enforced at store time: `SameSite=None` without
+//! `Secure` is refused, an https cookie never travels over http, and cross-site
+//! is decided on registrable domains so `a.example.com` and `b.example.com` are
+//! one site.
 //!
-//! The suffix list is compiled in (the `psl` crate), never fetched, so no
-//! network decides where a credential may go. Going stale is safe: the list
-//! only grows, so an old copy refuses suffixes it has not heard of.
+//! **Persistence is opt-in.** The jar dies with the process unless h5i passed
+//! `--cookie-jar`, the only caller of [`Jar::persist_to`]. The file is `0600`,
+//! written temp-then-rename, and rewritten on change rather than at exit,
+//! because `close` and `service_stop` SIGKILL the session. [`Jar::retain_origin`]
+//! keeps it to one origin, not a browsing history.
 //!
-//! # SameSite and Secure
-//!
-//! Enforced at store time. `SameSite=None` without `Secure` is refused, and an
-//! https cookie never travels over http. Cross-site is decided on registrable
-//! domains, so `a.example.com` and `b.example.com` are one site.
-//!
-//! # Persistence is opt-in
-//!
-//! The jar dies with the process unless h5i passed `--cookie-jar`, the only
-//! caller of [`Jar::persist_to`]; `open` and `read` never pass one. The file is
-//! `0600`, written temp-then-rename, and rewritten on change rather than at
-//! exit, because `close` and `service_stop` SIGKILL the session.
-//! [`Jar::retain_origin`] keeps it to one origin, not a browsing history.
-//!
-//! # Never readable by the agent
-//!
-//! No verb returns a cookie value; the request log counts cookies rather than
-//! naming them. The persisted file is for the next engine via `--restore`.
+//! **Never readable by the agent.** No verb returns a cookie value; the request
+//! log counts cookies rather than naming them. The persisted file is for the
+//! next engine via `--restore`.
 
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};

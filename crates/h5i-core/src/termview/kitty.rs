@@ -1,42 +1,29 @@
 //! The Kitty graphics protocol, generated **by the viewer and only by the
 //! viewer**.
 //!
-//! This module is where the boundary's central claim about the terminal is
-//! actually cashed in. Terminal output is not text: an escape sequence can
-//! rewrite the system clipboard (OSC 52), retitle the window, emit a hyperlink,
-//! or ask this very protocol to read a file off disk. So no byte the box
-//! produces is ever written to the terminal. The box supplies compressed pixels
-//! inside a WebSocket message; the viewer decodes them, and *the viewer* writes
-//! the escape sequences. There is no path from the box's output to the host's
-//! PTY, which is the property a terminal viewer has to earn.
-//!
-//! Four choices in here follow from that, and each would be wrong in an
-//! ordinary image viewer:
+//! Terminal output is not text: an escape sequence can rewrite the clipboard
+//! (OSC 52), retitle the window, or ask this protocol to read a file off disk.
+//! So no byte the box produces reaches the terminal. The box supplies compressed
+//! pixels inside a WebSocket message, the viewer decodes them, and the viewer
+//! writes the escapes. Four choices follow, each wrong in an ordinary image
+//! viewer:
 //!
 //! * **`q=2` on every render command.** The terminal answers graphics commands
-//!   with APC sequences *on stdin*. Those replies would land in the middle of
-//!   the keystrokes we are translating into page input — at best noise, at
-//!   worst a terminal's reply forwarded into the page as typing. `q=2`
-//!   suppresses both the OK and the error responses, so the input stream stays
-//!   exactly what the human typed. The cost is that render errors are silent,
-//!   which is the right trade for the one direction that must stay clean.
-//! * **Direct transmission (`t=d`) only.** The protocol can also read a file
-//!   path, a temporary file, or a POSIX shared-memory object. Those are faster,
-//!   and they are the fast path this module deliberately does not take yet:
-//!   they only work when the terminal is on this machine, and working over SSH
-//!   is half the point of a terminal viewer. Bytes are kept down by scaling the
-//!   image to the cells it will occupy (see [`super::image`]) and by deflating
-//!   what is left ([`Encoding`]).
-//! * **Compression is probed, not assumed.** `o=z` is part of the protocol and
-//!   every implementation is expected to have it, but `q=2` means a terminal
-//!   that does not would fail *silently* — a blank pane and no diagnosis, which
-//!   is the one failure shape this viewer must not have. So the probe asks
-//!   twice, once raw and once deflated, and frames are compressed only when the
-//!   terminal said `OK` to the second question ([`accepts_zlib`]).
-//! * **Explicit deletion of the previous frame.** Every frame is a new image,
-//!   and a terminal asked to hold thousands of them will hold them. The
-//!   previous id is deleted *after* the new one is placed, so the viewport
-//!   never blinks through an empty cell box.
+//!   with APC sequences *on stdin*, which would land among the keystrokes being
+//!   translated into page input: noise at best, a terminal's reply forwarded
+//!   into the page as typing at worst. The cost is silent render errors, which
+//!   is the right trade for the direction that must stay clean.
+//! * **Direct transmission (`t=d`) only.** File paths, temporary files and
+//!   shared memory are faster and work only when the terminal is on this
+//!   machine, and working over SSH is half the point. Bytes come down by scaling
+//!   to the cells the image occupies ([`super::image`]) and deflating the rest.
+//! * **Compression is probed, not assumed.** Every implementation is expected to
+//!   have `o=z`, but `q=2` means one that does not would fail *silently*: a
+//!   blank pane and no diagnosis. So the probe asks twice, raw and deflated, and
+//!   frames compress only if the terminal said `OK` ([`accepts_zlib`]).
+//! * **Explicit deletion of the previous frame**, after the new one is placed,
+//!   or a terminal asked to hold thousands of images will hold them and the
+//!   viewport blinks through an empty cell box.
 
 /// Chunk size for the base64 payload. Fixed by the protocol: a single escape
 /// sequence's payload may not exceed 4096 bytes.

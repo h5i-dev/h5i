@@ -1,55 +1,32 @@
 //! The wire between the two halves.
 //!
-//! `h5i browser open` runs a **broker** holding the policy, receipts, jar,
-//! budget and secrets, and a **renderer** that parses the page and holds none
-//! of them. The renderer reaches the broker through [`crate::broker::Broker`];
-//! this module is that trait spoken over a socket.
-//!
-//! The broker is the parent. It spawns the renderer with the socket as its
-//! standard input, an ordinary inherited descriptor, so no library passes it
-//! and no port exists for anything else to connect to. Neither half is a
-//! subcommand and there is nothing new to type.
-//!
-//! # What a hostile renderer can do
-//!
-//! Everything this protocol allows, in any order, so the message set is the
-//! whole security argument. It **cannot** edit the policy, silence the receipt
-//! sink, read an `HttpOnly` cookie, reach the network without a decision record
-//! being written first, or touch a credential this session was not granted.
-//!
-//! It **can**:
-//!
-//! * **Claim any origin as the asker.** `Fetch::document` is the renderer's to
-//!   fill in, and it drives the origin-sensitive policy (the loopback rule, the
-//!   same-origin check). This predates the split, and the split does not fix
-//!   it; the broker refusing to attribute a request to a document it never
-//!   served is not built.
-//! * **Ask for any credential this session holds.** `substitute` is an
-//!   operation, so the renderer can resolve every name `secret_names` returns.
-//!   The split narrows the *set*: its environment holds none, so it reaches
-//!   this session's grants rather than every `H5I_SECRET_*` on the machine.
-//!   Narrowing further to "the one being typed" needs the control channel on
-//!   this side of the boundary (§B18.2), which is not built.
-//! * **Lie about what it renders.** It holds the terminal and the frame. The
-//!   split moves the recorder out of reach; no arrangement of processes makes
-//!   the renderer trustworthy.
-//!
-//! # Framing
+//! A **broker** holds the policy, receipts, jar, budget and secrets; a
+//! **renderer** parses the page and holds none of them. The renderer reaches the
+//! broker through [`crate::broker::Broker`], and this is that trait over a
+//! socket. The broker is the parent and spawns the renderer with the socket as
+//! its standard input, so no library passes it and no port exists.
 //!
 //! ```text
 //! u32 header_len | u32 blob_len | header | blob
 //! ```
 //!
-//! The blob carries request and response bodies, the only large thing that
-//! crosses. Base64 inside the JSON would cost a third again in bytes and all of
-//! it in allocation, on exactly the path a page's images take.
+//! The blob carries request and response bodies, the only large thing crossing;
+//! base64 in the JSON would cost a third again in bytes on the path a page's
+//! images take.
 //!
-//! # Where this runs
+//! **What a hostile renderer can do is the whole security argument.** It cannot
+//! edit the policy, silence the receipt sink, read an `HttpOnly` cookie, reach
+//! the network without a decision record, or touch an ungranted credential. It
+//! can claim any origin as the asker (`Fetch::document` drives the loopback and
+//! same-origin rules; the broker refusing to attribute a request to a document
+//! it never served is not built), resolve any credential this session holds
+//! (`substitute` is an operation, and narrowing to "the one being typed" needs
+//! §B18.2's control channel), and lie about what it renders. The split moves the
+//! recorder out of reach; no arrangement of processes makes a renderer honest.
 //!
 //! Spawning, adopting and serving are Unix-gated. The protocol, framing and
-//! client stay compiled everywhere the engine builds, so the portable half
-//! cannot rot behind a `cfg` nobody exercises; where a renderer cannot be
-//! spawned the engine runs as one process as before.
+//! client compile everywhere, so the portable half cannot rot behind a `cfg`
+//! nobody exercises.
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 use std::collections::HashMap;

@@ -1,53 +1,33 @@
 //! Whose port is this? The macOS answer to what Linux answers with a namespace.
 //!
-//! On Linux the box's dev server listens in its own network namespace,
-//! [`crate::dialer`] is the only route in, and the box's port 3000 is a
-//! different object from the machine's. A Seatbelt box binds the *host's*
-//! loopback, deliberately, since otherwise nothing in the box is reachable, so
-//! the two ports are one port and the command used to refuse rather than guess.
+//! On Linux the box's server listens in its own netns and [`crate::dialer`] is
+//! the only route in. A Seatbelt box binds the *host's* loopback, deliberately,
+//! so the two ports are one port and the command used to refuse rather than
+//! guess. It no longer has to: Darwin will say which process holds a listening
+//! socket, and h5i knows the box's process tree.
 //!
-//! It no longer has to guess. Darwin will say which process holds a listening
-//! socket, h5i knows the box's process tree, and together they answer by
-//! observation.
+//! The hazard is not theoretical. Port 3000 once held the box's
+//! `python3 -m http.server` on `*:3000` and a leftover `serve.py` on
+//! `127.0.0.1:3000`; a plain connect reached the stranger and would have
+//! published it under a hostname h5i minted. So the test is not "is the box
+//! listening" but **"is the box the unambiguous winner for this address"**, and
+//! anything else is refused.
 //!
-//! The hazard is not theoretical. On the machine this was written on, port 3000
-//! had two listeners: the box's `python3 -m http.server` on `*:3000` and a
-//! leftover `serve.py` on `127.0.0.1:3000`. A plain
-//! `TcpStream::connect(("127.0.0.1", 3000))`, which an earlier macOS route did
-//! before it was deleted for this reason, reached the stranger and would have
-//! published it to the internet under a hostname h5i minted. So the test is not
-//! "is the box listening" but "is the box the unambiguous winner for this
-//! address", and anything else is refused rather than resolved in its favour.
+//! Asked of the kernel: `proc_listallpids`, `PROC_PIDTBSDINFO` for the tree,
+//! `PROC_PIDLISTFDS` and `PROC_PIDFDSOCKETINFO`, all unprivileged for our own
+//! processes.
 //!
-//! # What the kernel is asked
-//!
-//! `proc_listallpids` for the process table, `PROC_PIDTBSDINFO` for each
-//! parent (to walk the box's tree), `PROC_PIDLISTFDS` for descriptors and
-//! `PROC_PIDFDSOCKETINFO` for the ones that are sockets. All unprivileged for
-//! our own processes, which is what `lsof` relies on for the same job.
-//!
-//! Only same-uid processes answer `PROC_PIDLISTFDS`. The safe half is that
-//! another user's listener can never be attributed to the box, since its
-//! sockets are invisible. The gap is that it cannot be counted as a competitor
-//! either, so "the box wins unambiguously" rests partly on not having seen what
-//! we may not see. That has teeth in one shape: the box holds a *wildcard* and
-//! another user's process holds a *more specific* address on the same port,
-//! which would take the connection unseen. An exact-address bind is immune, and
-//! is the common shape. Whether Darwin even permits such overlapping binds
-//! across users is unestablished here, so nothing assumes it either way.
-//!
-//! # The residual
-//!
-//! The answer is a snapshot and the connect comes after it. A same-uid process
-//! can add a more specific bind in between (`SO_REUSEPORT` permits it) and take
-//! the connection. Darwin offers no kernel handle on "the socket I resolved",
-//! so nothing here closes it. What bounds it is that nothing is cached: the
-//! scan runs per dial ([`crate::dialer::Dialer::resolve`], ~1.4 ms), so the
-//! window is one connection wide rather than one share long.
+//! Two limits, recorded rather than argued away. Only same-uid processes answer
+//! `PROC_PIDLISTFDS`, so another user's listener can never be attributed to the
+//! box but cannot be counted as a competitor either; that bites only when the
+//! box holds a *wildcard* and another user holds a *more specific* address on
+//! the same port. And the answer is a snapshot: a same-uid process can add a
+//! more specific bind before the connect (`SO_REUSEPORT` permits it) and Darwin
+//! offers no handle on "the socket I resolved". Nothing is cached, so the window
+//! is one connection wide rather than one share long.
 //!
 //! [`decide`] is pure and compiled everywhere, so the rule that decides what
-//! gets published is unit-tested on both CI platforms. Only the code that asks
-//! Darwin a question is gated to macOS.
+//! gets published is unit-tested on both CI platforms.
 
 // Only `process_tree` needs it, and that is a Darwin syscall walk — so on any
 // other target this import is unused, which `-D warnings` makes fatal.

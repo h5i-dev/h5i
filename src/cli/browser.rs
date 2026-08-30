@@ -1,55 +1,30 @@
 //! `h5i browser` — the front door.
 //!
-//! One noun an agent has to learn: a **session**. `h5i browser open` makes one
-//! and every other verb acts on it. Not the process that renders the page, not
-//! the port it listens on, not whether it runs inside a box, and in the
-//! ordinary case not the session either.
-//!
-//! # The ordinary case types no id
+//! One noun an agent learns: a **session**. `open` makes one, points the
+//! default at it, and every later verb follows that pointer.
 //!
 //! ```text
 //! h5i browser open https://example.com
 //! h5i browser snapshot
 //! h5i browser click @e3
-//! h5i browser close
 //! ```
 //!
-//! `open` points the **default** at the new session and every later verb
-//! follows that pointer. The opaque id (`br_7k2xqa`) is what `--json` and the
-//! receipts carry, because a durable reference must survive a rename; it is
-//! just not what anyone types. Demanding one per verb is the shape of a
-//! remote-browser HTTP API, where the id exists because client and browser
-//! share nothing else. Here they share a filesystem.
+//! The opaque id (`br_7k2xqa`) is what `--json` and the receipts carry, since a
+//! durable reference must survive a rename, and is not what anyone types.
+//! `--session <name>` runs several at once; a name is reusable once its session
+//! ends, which is why the id is what gets written down.
 //!
-//! `--session <name>` runs several at once. A name is comfortable to type
-//! precisely because it is not an identity: it can be reused once the session
-//! it named has ended, which is why the id is what gets written down.
+//! **Containment is a placement, not a product.** With no flags the session runs
+//! in this user's process space like any other headless browser, and what it
+//! does that others do not is *record*. `--in <box>` moves the same session into
+//! a box, changing only who saw the network: the lane goes from engine-claimed
+//! to host-observed ([`h5i_core::browser_session::Lane`]).
 //!
-//! # Containment is a placement, not a product
-//!
-//! With no flags a session runs in this user's ordinary process space, like any
-//! other headless browser. What it does that others do not is **record**: the
-//! engine checks every request against the session's policy and writes the
-//! decision before the bytes move, refusing the fetch when it cannot write the
-//! record (the engine's `net::Broker`). That is auditability, not containment,
-//! and the honest claim, because the engine is describing itself.
-//!
-//! `--in <box>` places the same session inside a box. Every verb keeps its name
-//! and its answer; what changes is who saw the network. The box's egress
-//! enforcement sits outside the thing being described, so the session's lane
-//! goes from engine-claimed to host-observed
-//! ([`h5i_core::browser_session::Lane`]).
-//!
-//! # Why verbs are carried rather than dialled
-//!
-//! The engine's control listener is loopback TCP, and a supervised box has its
-//! own network namespace, so that port is not the host's to connect to. Rather
-//! than punch a hole, the verb goes to `h5i box run`, the same path a person
-//! typing the command takes. Two things fall out, both wanted: every verb into
-//! a box gets a receipt like any other run, and the control lock is checked
-//! **here**, on the host, outside the box, which is the one arrangement in
-//! which it is a boundary rather than a request (contrast
-//! `h5i_core::browser_proxy`'s limits).
+//! Verbs are carried in over `h5i box run` rather than dialled, because a
+//! supervised box's netns puts the engine's loopback control port out of the
+//! host's reach. Two things fall out, both wanted: every verb gets a receipt,
+//! and the control lock is checked on the host, outside the box, which is the
+//! one arrangement in which it is a boundary rather than a request.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

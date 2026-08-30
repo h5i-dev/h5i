@@ -1,48 +1,30 @@
-//! The `isolation=microvm` backend: run an environment's command inside a
+//! The `isolation=microvm` backend: an environment's command inside a
 //! **hardware-isolated microVM** via [microsandbox](https://microsandbox.dev)
-//! (`msb`), enforcing the `net.egress` allowlist in the VM's own network stack
-//! rather than a host-side HTTP proxy.
+//! (`msb`), with `net.egress` enforced in the VM's own network stack.
 //!
-//! ### Why this tier exists
+//! `container.rs` enforces egress at **L7**, which blocks `curl`/`pip`/`npm`
+//! honouring `HTTP(S)_PROXY` and nothing else. Two things change here: the
+//! boundary is a virtual machine with its own kernel, so a kernel exploit is
+//! contained by the hypervisor rather than by the kernel it just subverted; and
+//! egress is filtered by address (`--net-default-egress deny` plus one
+//! `--net-rule` per destination), so a raw socket to an unlisted IP is dropped
+//! and there is no `HTTP_PROXY` to ignore.
 //!
-//! `container.rs` enforces `net.egress` at **L7**. That blocks the dominant
-//! exfiltration path (`curl`/`pip`/`npm` honouring `HTTP(S)_PROXY`) and nothing
-//! else: a process that ignores the proxy env and opens a raw socket to any IP
-//! the rootless NAT permits gets through. Two things change here:
+//! Costs, stated rather than hidden. The host must support virtualization
+//! (`/dev/kvm`, or Apple Silicon), and without it [`resolve`] refuses rather
+//! than downgrading. There is no per-request egress tally, because a VM netstack
+//! drops packets without saying which, so [`ExecOutcome::egress`] is `None` and
+//! we report the tier's rules at session start rather than pretend to a tally:
+//! stronger enforcement, weaker evidence. And there is no in-box tee shim, since
+//! a VM has no image to self-mount, though the primary observation path (the
+//! read-only managed-settings mount carrying the `wrap-bash` hook) works as it
+//! does under `container`.
 //!
-//! 1. **The boundary is a virtual machine.** The guest runs its own kernel on
-//!    KVM or Hypervisor.framework, so a kernel exploit in the box is contained
-//!    by the hypervisor rather than by the host kernel it just subverted.
-//! 2. **Egress is filtered by address.** The allowlist becomes
-//!    `--net-default-egress deny` plus one `--net-rule` per destination,
-//!    evaluated by the VM's virtual network stack. A raw socket to an unlisted
-//!    IP is dropped and there is no `HTTP_PROXY` to ignore. DNS-rebind
-//!    protection stays on.
-//!
-//! ### What it costs
-//!
-//! - **The host must support virtualization**: `/dev/kvm` on Linux, Apple
-//!   Silicon on macOS. Without it (plain WSL2, most CI runners) [`resolve`]
-//!   refuses rather than downgrading.
-//! - **No per-request egress tally.** The container tier's proxy sees every
-//!   CONNECT and reports allow/deny counts; a VM netstack drops packets without
-//!   saying which, so [`ExecOutcome::egress`] is `None`. Stronger enforcement,
-//!   weaker evidence, so we report the tier's rules at session start rather
-//!   than pretend to a tally we do not have.
-//! - **No in-box tee shim.** The container tier self-mounts its image at
-//!   `/.h5i/orig` so a shadowed `/bin/sh` still has a real shell to exec; a VM
-//!   has no image to self-mount. The primary observation path, the read-only
-//!   managed-settings mount carrying the unkillable `wrap-bash` hook, works
-//!   here as it does under `container`, and the capture spool mounts the same.
-//!
-//! ### Secrets never enter the host argv
-//!
-//! `msb` has no name-only env forwarding (`--env` takes `KEY=VALUE`), and a
-//! brokered credential in `msb run`'s argv would be published to every local
-//! user through `/proc/<pid>/cmdline`. So this backend passes no environment on
-//! the command line at all: it writes a `0600` preload script host-side,
-//! registers it with `--script-path` (whose contents travel over a config fd,
-//! not argv), and runs the command through it. See [`preload_script`].
+//! **Secrets never enter the host argv.** `msb --env` takes `KEY=VALUE`, and a
+//! credential in `msb run`'s argv is published to every local user through
+//! `/proc/<pid>/cmdline`. So no environment goes on the command line at all:
+//! [`preload_script`] writes a `0600` script host-side and registers it with
+//! `--script-path`, whose contents travel over a config fd.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

@@ -1,42 +1,30 @@
 //! A WebSocket client, for the one case this engine is uniquely good at.
 //!
-//! This engine's stated advantage is reach (roadmap-history.md §B11.3): a cloud browser
-//! cannot open `localhost:3000`, a staging host, or anything behind a VPN,
-//! which is most of what a coding agent needs to look at. A dev server's
+//! This engine's advantage is reach (roadmap-history.md §B11.3): a cloud browser
+//! cannot open `localhost:3000`, a staging host, or anything behind a VPN, which
+//! is most of what a coding agent needs to look at. A dev server's
 //! hot-module-reload channel is a WebSocket, so the place this engine alone can
 //! reach was also the place it rendered a half-built page.
 //!
-//! ## What is built, and what is refused by name
-//!
 //! **`ws://` and `wss://`.** The old refusal said `wss://` needed a raw TLS
-//! stream the HTTP client does not expose. That was true of `reqwest` and had
-//! been generalised into a property of the engine, which it never was: a socket
-//! that owns its transport needs nothing from the HTTP client. Here the socket
-//! carries `rustls` directly, and both crates were already in the tree through
-//! `reqwest`'s own TLS. The policy path is untouched: check, receipt, then
-//! dial, every frame receipted after. TLS changes what the bytes travel
-//! through, not who decided they could.
+//! stream the HTTP client does not expose, which was true of `reqwest` and had
+//! been generalised into a property of the engine. A socket that owns its
+//! transport needs nothing from the HTTP client, and this one carries `rustls`
+//! directly. The policy path is untouched: check, receipt, then dial.
 //!
-//! **Loopback only whenever an egress proxy is configured.** A WebSocket is a
-//! raw socket, so it does not go through the proxy `reqwest` was configured
-//! with, and inside a box that proxy is how the sandbox's allowlist stays in
-//! the path. Rather than open a hole, a non-loopback socket is refused whenever
-//! `$H5I_EGRESS_PROXY` is set. Loopback is exempt because the proxy already
-//! excludes it (`NoProxy::from_string("localhost,127.0.0.1,::1")` in
-//! [`crate::net::LocalBroker`]), so nothing in the path is bypassed.
+//! **Loopback only whenever an egress proxy is configured.** A raw socket does
+//! not go through the proxy `reqwest` was given, and inside a box that proxy is
+//! how the sandbox's allowlist stays in the path, so a non-loopback socket is
+//! refused whenever `$H5I_EGRESS_PROXY` is set. Loopback is exempt because the
+//! proxy already excludes it, so nothing in the path is bypassed.
 //!
-//! ## Every frame is receipted
-//!
-//! The receipt is not an observation of the network, it *is* the network. A
-//! socket open ten minutes carrying four hundred messages could be receipted at
-//! the handshake only, which is the CONNECT-gate blindness this engine exists
-//! to remove, or frame by frame.
-//!
-//! Frame by frame. Each is written as an ordinary request/response pair with
-//! `WS-SEND` or `WS-RECV` as its method, so the console, `h5i box watch` and the
-//! export bundle show socket traffic unchanged, with no new phase for an old
-//! reader to skip. It costs a sink write per frame, which is the price of the
-//! guarantee.
+//! **Every frame is receipted.** The receipt is not an observation of the
+//! network, it *is* the network, so a socket open ten minutes carrying four
+//! hundred messages cannot be receipted at the handshake alone: that is the
+//! CONNECT-gate blindness this engine exists to remove. Each frame is written as
+//! an ordinary request/response pair with `WS-SEND` or `WS-RECV` as its method,
+//! so the console, `h5i box watch` and the export bundle need no changes and no
+//! old reader has a new phase to skip.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
