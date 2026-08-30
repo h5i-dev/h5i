@@ -542,6 +542,25 @@
   .oarrow .achar { font-size: 1.6rem; line-height: 1; }
   .oarrow .albl  { font-size: 0.74rem; letter-spacing: 0.06em; }
 
+  /* ── Browser round trip (the browser slide) ──────────────── */
+  .bflow { display: flex; align-items: stretch; justify-content: center; gap: 12px; width: 100%; }
+  .bnode {
+    flex: 1 1 0; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--bg-term); padding: 18px 14px;
+    display: flex; flex-direction: column; gap: 7px;
+    align-items: center; justify-content: center; text-align: center;
+  }
+  .bnode .bt { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.11em; text-transform: uppercase; color: var(--text-faint); }
+  .bnode .bn { font-size: 1.1rem; color: var(--text); line-height: 1.3; }
+  .bnode.core { flex: 1.6 1 0; border-color: rgba(98,201,140,0.45); background: rgba(98,201,140,0.05); }
+  .bnode.core .bn { font-family: var(--mono); font-size: 1.85rem; font-weight: 700; color: var(--green); }
+  .barr { flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center; gap: 12px; min-width: 116px; }
+  .barr .leg { display: flex; flex-direction: column; align-items: center; gap: 1px; font-family: var(--mono); }
+  .barr .ac { font-size: 1.05rem; line-height: 1; }
+  .barr .al { font-size: 0.66rem; letter-spacing: 0.03em; color: var(--text-faint); text-align: center; }
+  .barr .fwd .ac { color: var(--red-text); }
+  .barr .bak .ac { color: var(--green); }
+
   /* ── PR cockpit (share pr slide) ─────────────────────────── */
   .pr {
     width: 100%; border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -759,6 +778,8 @@
     /* Fixed label-column widths force horizontal overflow on a phone */
     .ref-layer .ref-name, .ref-git .ref-name,
     .rec-k, .verdict .vk, .rung .rk, .ps-lbl { min-width: 0; width: auto; }
+    .bflow { flex-direction: column; }
+    .barr { min-width: 0; flex-direction: row; justify-content: center; gap: 22px; }
     .pr-sec { flex-direction: column; gap: 4px; }
     .pr-sec .pr-h { min-width: 0; }
 
@@ -929,40 +950,49 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     SLIDE 5 — The browser in the box (agent drives it, you take over)
+     SLIDE 5 — The browser (the round trip, and what comes back)
 ══════════════════════════════════════════════════════════════ -->
 <div class="slide" style="gap:18px;">
   <div style="width:100%;max-width:1080px;">
     <div class="section-tag">The browser</div>
-    <h2>The agent can <span class="red">see the app</span> it just changed.</h2>
-    <p class="lede" style="max-width:940px;">Chrome and a fresh profile live inside the box, next to the dev server, so <code>localhost</code> means the same thing to both. The agent reads an accessibility tree rather than HTML and clicks by handle. You can watch the same viewport and take control.</p>
+    <h2>Run more browser sessions<br><span class="red">without losing control</span>.</h2>
 
-    <div class="rc-cols">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
-          <span class="terminal-path">inside the box · the agent drives</span>
-        </div>
-        <div class="terminal-body"><pre><span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser open http://localhost:3000</span>
-<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser snapshot -i</span>
-  <span class="t-ai">@e1</span> <span class="t-out">heading "Sign up"</span> · <span class="t-ai">@e2</span> <span class="t-out">input email</span> · <span class="t-ai">@e3</span> <span class="t-out">button</span>
-<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser fill @e2 test@example.com</span> <span class="t-pass">✓</span>
-<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser click @e3</span> <span class="t-pass">✓</span>
-<span class="t-prompt">h5i:webapp$</span> <span class="t-cmd">agent-browser screenshot signup.png</span> <span class="t-pass">✓</span>
-  <span class="t-out">console</span> <span class="t-pass">0 errors</span> <span class="t-out">· 0 failed requests</span>
-<span class="t-cmt">the page's own answer, not the agent's summary</span></pre></div>
+    <div class="bflow" style="margin-top:24px;">
+      <div class="bnode">
+        <span class="bt">the agent</span>
+        <span class="bn">Claude Code, Codex,<br>your own</span>
       </div>
-      <div class="rc-list">
-        <div class="rc-ck"><span class="box">✓</span>Accessibility tree, not HTML</div>
-        <div class="rc-ck"><span class="box">✓</span>Screenshots on disk</div>
-        <div class="rc-ck"><span class="box">✓</span>Console errors in the receipt</div>
-        <div class="rc-ck"><span class="box">✓</span>Watch the same viewport</div>
-        <div class="rc-ck"><span class="box">✓</span>Take control, agent waits</div>
-        <div class="rc-ck"><span class="box">✓</span>No published port</div>
+      <div class="barr">
+        <div class="leg fwd"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">open &#183; click &#183; type</span></div>
+        <div class="leg bak"><span class="ac">&#9666;&#9666;&#9666;</span><span class="al">structured page</span></div>
+      </div>
+      <div class="bnode core">
+        <span class="bt">one local binary</span>
+        <span class="bn">h5i browser</span>
+      </div>
+      <div class="barr">
+        <div class="leg fwd"><span class="ac">&#9656;&#9656;&#9656;</span><span class="al">policy-checked request</span></div>
+        <div class="leg bak"><span class="ac">&#9666;&#9666;&#9666;</span><span class="al">page bytes</span></div>
+      </div>
+      <div class="bnode">
+        <span class="bt">the web</span>
+        <span class="bn">docs, data,<br>your web app</span>
       </div>
     </div>
 
-    <p class="rc-sub">Your host browser never connects to the app. <b>The box's Chrome does.</b></p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px;text-align:left;align-items:stretch;">
+      <div class="feat-card" style="padding:1.1rem 1.15rem;"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.15rem;line-height:1.2;color:var(--green);">~5&times; faster reads</span><p class="feat-desc" style="margin-top:6px;font-size:0.98rem;">~80% less peak memory.</p></div>
+      <div class="feat-card" style="padding:1.1rem 1.15rem;"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.15rem;line-height:1.2;color:var(--green);">Pages agents can use</span><p class="feat-desc" style="margin-top:6px;font-size:0.98rem;">Compact snapshots with <span class="mono">@ref</span> handles.</p></div>
+      <div class="feat-card" style="padding:1.1rem 1.15rem;"><span class="feat-cmd" style="display:block;border:0;background:none;padding:0;font-size:1.15rem;line-height:1.2;color:var(--green);">Every session is reviewable</span><p class="feat-desc" style="margin-top:6px;font-size:0.98rem;">Actions, requests, denials, and endings.</p></div>
+    </div>
+
+    <div class="terminal" style="margin-top:16px;text-align:left;">
+      <div class="terminal-bar">
+        <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+        <span class="terminal-path">what the agent receives</span>
+      </div>
+      <div class="terminal-body"><pre><span class="t-ai">@e1</span> <span class="t-out">heading "Documentation"</span>   <span class="t-ai">@e2</span> <span class="t-out">link "Getting started"</span>   <span class="t-ai">@e3</span> <span class="t-out">searchbox "Search"</span></pre></div>
+    </div>
   </div>
 </div>
 
