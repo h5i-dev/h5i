@@ -3486,28 +3486,28 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // Raising it is a normal thing to do, not a failure. The question the number
     // asks is only whether it could be a tier instead: see `TIERS` in `mod.rs`,
     // and `lazyGlobals` in the prelude.
-    // Raised 275 -> 276 on 2026-08-30, and here is what the page gets for the
-    // extra KiB — about 45 us of run per page, and 245 us of compile on the
-    // first page a renderer serves.
+    // Held at 275, and the story of the two days it moved is worth keeping.
     //
-    // Four CSSOM shapes that were real objects wearing no interface, all of
-    // them read by ordinary pages rather than only by a harness:
+    // It went to 276 to pay for CSSOM shapes that were real objects wearing no
+    // interface — `matchMedia()` returning a `MediaQueryList` over
+    // `EventTarget`, `sheet.media` being a `MediaList` rather than a **String**,
+    // `styleSheets` and `cssRules` as typed lists. Page-facing work, so it
+    // belonged in the core and the KiB was paid deliberately.
     //
-    //   * `matchMedia()` returns a real `MediaQueryList` over `EventTarget`,
-    //     not an object literal with a stub `addEventListener`. Responsive
-    //     pages call this on every load.
-    //   * `sheet.media` is a `MediaList`, which is what CSSOM says it is. It
-    //     was a **String**, so every `sheet.media.mediaText` read was undefined.
-    //   * `document.styleSheets` is a `StyleSheetList` and `sheet.cssRules` a
-    //     `CSSRuleList`, so `instanceof` stops being a ReferenceError over an
-    //     object that was exactly that.
-    //   * `addRule`/`removeRule`, which is how older code still edits a sheet.
+    // It came back on its own. The reflection table wrote every attribute name
+    // twice — 139 entries of the form `["foo", "foo"]` — and letting a bare
+    // string mean "the IDL name is its own content name" returned 1.5 KiB, more
+    // than the CSSOM work and the embedded-content reflections together cost.
+    // The budget did not just catch a regression, it bought a better table:
+    // nothing here would have looked for that redundancy without a number that
+    // refused to move.
     //
-    // The conformance-only half of the same work — mirroring singleton members
-    // onto their interface prototypes — went into the `conformance` tier
-    // instead and costs a page nothing. That is the split this budget exists to
-    // force, and it worked: 2 KiB of it never reached the core.
-    const BUDGET_KIB: usize = 276;
+    // Which is the argument for keeping it tight. The question it asks first is
+    // still "could this be a tier" — the interface-prototype mirror answered
+    // yes and went to `conformance`, costing pages nothing — and the question
+    // it asks second turns out to be "is the core paying for something it
+    // writes twice".
+    const BUDGET_KIB: usize = 275;
 
     assert!(
         !super::PRELUDE.contains("/*"),

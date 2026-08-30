@@ -2642,6 +2642,21 @@
   /// a plain string on `<img>`, `<script>`, `<video>` and `<audio>`, so those
   /// four reported the raw attribute where a browser reports `"anonymous"`,
   /// and `null` where a browser reports `null` only by accident.
+  /// `preload` and `loading`, shared because more than one element has them
+  /// and the table already keeps `CROSS_ORIGIN` and `REFERRER_POLICY` this way.
+  ///
+  /// `preload`'s missing and invalid values are implementation-defined; the
+  /// spec's only requirement is that the answer be one of the keywords, so
+  /// "auto" is a choice rather than a transcription, and `""` maps to it
+  /// because that is the state an empty attribute names.
+  const PRELOAD = ["preload", "preload", "enumerated", {
+    keywords: ["none", "metadata", "auto"], missing: "auto", invalid: "auto",
+    aliases: { "": "auto" },
+  }];
+  const LOADING = ["loading", "loading", "enumerated", {
+    keywords: ["lazy", "eager"], missing: "eager", invalid: "eager",
+  }];
+
   const CROSS_ORIGIN = ["crossOrigin", "crossorigin", "enumerated", {
     keywords: ["anonymous", "use-credentials"],
     missing: null,
@@ -2724,6 +2739,13 @@
           const [lo, hi] = options.clamp;
           return Math.min(Math.max(value, lo), hi);
         }
+        // Above the unsigned long range the attribute is *out of range*, and an
+        // out-of-range reflection answers its default: `canvas.width` set to
+        // "2147483648" reads 300, not the number. Checked after `clamp`
+        // deliberately — a clamped attribute keeps the out-of-range value's
+        // direction and pins it to the ceiling, which is why `colgroup.span`
+        // reads the 32-bit maximum as 1000 rather than falling back to 1.
+        if (value > 2147483647) return options.default ?? 0;
         return value;
       },
       // A reflected `double`, for `<meter>` and `<progress>`. Not an integer
@@ -3078,15 +3100,15 @@
   // carry behaviour beyond reflection, and `defaultChecked`, `defaultSelected`
   // and `defaultValue` are the spec's names for the reflecting half.
   const REFLECTIONS = {
-    html: ["HTMLHtmlElement", [["version", "version"]]],
+    html: ["HTMLHtmlElement", ["version"]],
     head: ["HTMLHeadElement", []],
     title: ["HTMLTitleElement", []],
-    base: ["HTMLBaseElement", [["target", "target"]]],
+    base: ["HTMLBaseElement", ["target"]],
     link: ["HTMLLinkElement", [
-      ["rel", "rel"], ["media", "media"], ["hreflang", "hreflang"],
-      ["integrity", "integrity"], ["imageSrcset", "imagesrcset"],
-      ["imageSizes", "imagesizes"], ["charset", "charset"], ["rev", "rev"],
-      ["target", "target"],
+      "rel", "media", "hreflang",
+      "integrity", ["imageSrcset", "imagesrcset"],
+      ["imageSizes", "imagesizes"], "charset", "rev",
+      "target",
       ["as", "as", "enumerated", { keywords: [
         "fetch", "audio", "audioworklet", "document", "embed", "font", "frame",
         "iframe", "image", "json", "manifest", "object", "paintworklet",
@@ -3096,54 +3118,59 @@
       ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     meta: ["HTMLMetaElement", [
-      ["httpEquiv", "http-equiv"], ["media", "media"], ["scheme", "scheme"],
+      ["httpEquiv", "http-equiv"], "media", "scheme",
     ]],
-    style: ["HTMLStyleElement", [["media", "media"]]],
+    style: ["HTMLStyleElement", ["media"]],
     body: ["HTMLBodyElement", [
       ["link", "link", "string", NULL_IS_EMPTY],
       ["vLink", "vlink", "string", NULL_IS_EMPTY],
       ["aLink", "alink", "string", NULL_IS_EMPTY],
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
-      ["background", "background"],
+      "background",
       ["text", "text", "string", NULL_IS_EMPTY],
     ]],
     a: ["HTMLAnchorElement", [
-      ["target", "target"], ["download", "download"], ["ping", "ping"],
-      ["rel", "rel"], ["hreflang", "hreflang"], ["charset", "charset"],
-      ["rev", "rev"], ["shape", "shape"], ["coords", "coords"],
+      "target", "download", "ping",
+      "rel", "hreflang", "charset",
+      "rev", "shape", "coords",
       ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     area: ["HTMLAreaElement", [
-      ["coords", "coords"], ["download", "download"], ["ping", "ping"],
-      ["rel", "rel"], ["shape", "shape"], ["target", "target"],
+      "coords", "download", "ping",
+      "rel", "shape", "target",
       ["noHref", "nohref", "bool"], ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
+      "alt", "hreflang", "type",
     ]],
     img: ["HTMLImageElement", [
-      ["srcset", "srcset"], ["sizes", "sizes"], ["useMap", "usemap"],
-      ["isMap", "ismap", "bool"], ["align", "align"], ["border", "border"],
+      "srcset", "sizes", ["useMap", "usemap"],
+      ["isMap", "ismap", "bool"], "align", "border",
       ["lowsrc", "lowsrc", "url"], ["longDesc", "longdesc", "url"],
       ["width", "width", "ulong"], ["height", "height", "ulong"],
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
       ["decoding", "decoding", "enumerated",
         { keywords: ["sync", "async", "auto"], missing: "auto", invalid: "auto" }],
-      ["loading", "loading", "enumerated",
-        { keywords: ["lazy", "eager"], missing: "eager", invalid: "eager" }],
+      LOADING,
       CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     embed: ["HTMLEmbedElement", [
-      ["width", "width"], ["height", "height"], ["align", "align"],
+      "width", "height", "align",
+      "type", "name",
     ]],
     object: ["HTMLObjectElement", [
-      ["data", "data", "url"], ["useMap", "usemap"], ["align", "align"],
-      ["archive", "archive"], ["code", "code"], ["declare", "declare", "bool"],
-      ["standby", "standby"], ["codeBase", "codebase", "url"],
-      ["codeType", "codetype"], ["border", "border"],
-      ["width", "width"], ["height", "height"],
+      ["data", "data", "url"], ["useMap", "usemap"], "align",
+      "type", "name",
+      "archive", "code", ["declare", "declare", "bool"],
+      "standby", ["codeBase", "codebase", "url"],
+      ["codeType", "codetype"], "border",
+      "width", "height",
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
     ]],
-    param: ["HTMLParamElement", [["valueType", "valuetype"]]],
+    param: ["HTMLParamElement", [
+      ["valueType", "valuetype"], "name", "value", "type",
+    ]],
     video: ["HTMLVideoElement", [
-      ["poster", "poster", "url"], ["preload", "preload"],
+      ["poster", "poster", "url"], PRELOAD,
+      LOADING,
       ["autoplay", "autoplay", "bool"], ["loop", "loop", "bool"],
       ["controls", "controls", "bool"], ["defaultMuted", "muted", "bool"],
       CROSS_ORIGIN,
@@ -3151,16 +3178,19 @@
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     audio: ["HTMLAudioElement", [
-      ["preload", "preload"], ["autoplay", "autoplay", "bool"],
+      PRELOAD,
+      LOADING,
+      ["autoplay", "autoplay", "bool"],
       ["loop", "loop", "bool"], ["controls", "controls", "bool"],
       ["defaultMuted", "muted", "bool"], CROSS_ORIGIN,
     ]],
     source: ["HTMLSourceElement", [
-      ["srcset", "srcset"], ["sizes", "sizes"], ["media", "media"],
+      "type",
+      "srcset", "sizes", "media",
       ["width", "width", "ulong"], ["height", "height", "ulong"],
     ]],
     track: ["HTMLTrackElement", [
-      ["srclang", "srclang"], ["label", "label"], ["default", "default", "bool"],
+      "srclang", "label", ["default", "default", "bool"],
       ["kind", "kind", "enumerated", {
         keywords: ["subtitles", "captions", "descriptions", "chapters", "metadata"],
         missing: "subtitles", invalid: "metadata" }],
@@ -3169,23 +3199,23 @@
     form: ["HTMLFormElement", [
       ["acceptCharset", "accept-charset"],
       ["action", "action", "url", DOCUMENT_URL_WHEN_EMPTY],
-      ["autocomplete", "autocomplete"],
+      "autocomplete",
       ["enctype", "enctype", "enumerated", ENCTYPE],
       ["encoding", "enctype", "enumerated", ENCTYPE],
-      ["noValidate", "novalidate", "bool"], ["target", "target"], ["rel", "rel"],
+      ["noValidate", "novalidate", "bool"], "target", "rel",
     ]],
     label: ["HTMLLabelElement", [["htmlFor", "for"]]],
     input: ["HTMLInputElement", [
-      ["accept", "accept"], ["autocomplete", "autocomplete"],
+      "accept", "autocomplete",
       ["defaultChecked", "checked", "bool"], ["dirName", "dirname"],
       ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
       ["formEnctype", "formenctype", "enumerated", FORM_ENCTYPE],
       ["formMethod", "formmethod", "enumerated", FORM_METHOD],
       ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
-      ["max", "max"], ["min", "min"], ["pattern", "pattern"],
-      ["placeholder", "placeholder"], ["step", "step"], ["useMap", "usemap"],
-      ["align", "align"], ["defaultValue", "value"],
+      "max", "min", "pattern",
+      "placeholder", "step", ["useMap", "usemap"],
+      "align", ["defaultValue", "value"],
       ["multiple", "multiple", "bool"], ["required", "required", "bool"],
       ["readOnly", "readonly", "bool"],
       ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
@@ -3201,16 +3231,16 @@
       ["formNoValidate", "formnovalidate", "bool"],
     ]],
     select: ["HTMLSelectElement", [
-      ["autocomplete", "autocomplete"], ["multiple", "multiple", "bool"],
+      "autocomplete", ["multiple", "multiple", "bool"],
       ["required", "required", "bool"], ["size", "size", "ulong"],
     ]],
-    optgroup: ["HTMLOptGroupElement", [["label", "label"]]],
+    optgroup: ["HTMLOptGroupElement", ["label"]],
     option: ["HTMLOptionElement", [
-      ["label", "label"], ["defaultSelected", "selected", "bool"],
+      "label", ["defaultSelected", "selected", "bool"],
     ]],
     textarea: ["HTMLTextAreaElement", [
-      ["autocomplete", "autocomplete"], ["dirName", "dirname"],
-      ["placeholder", "placeholder"], ["wrap", "wrap"],
+      "autocomplete", ["dirName", "dirname"],
+      "placeholder", "wrap",
       ["required", "required", "bool"], ["readOnly", "readonly", "bool"],
       ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
       ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
@@ -3219,30 +3249,30 @@
     ]],
     output: ["HTMLOutputElement", [["htmlFor", "for"]]],
     fieldset: ["HTMLFieldSetElement", []],
-    legend: ["HTMLLegendElement", [["align", "align"]]],
+    legend: ["HTMLLegendElement", ["align"]],
     table: ["HTMLTableElement", [
-      ["align", "align"], ["border", "border"], ["frame", "frame"],
-      ["rules", "rules"], ["summary", "summary"], ["width", "width"],
+      "align", "border", "frame",
+      "rules", "summary", "width",
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
       ["cellPadding", "cellpadding", "string", NULL_IS_EMPTY],
       ["cellSpacing", "cellspacing", "string", NULL_IS_EMPTY],
     ]],
-    caption: ["HTMLTableCaptionElement", [["align", "align"]]],
+    caption: ["HTMLTableCaptionElement", ["align"]],
     col: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], ["align", "align"],
+      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], "align",
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
-      ["width", "width"],
+      "width",
     ]],
     tr: ["HTMLTableRowElement", [
-      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      "align", ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     td: ["HTMLTableCellElement", [
       ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
       ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
-      ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
-      ["align", "align"], ["axis", "axis"], ["height", "height"],
-      ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
+      "headers", "abbr", "scope",
+      "align", "axis", "height",
+      "width", ["ch", "char"], ["chOff", "charoff"],
       ["noWrap", "nowrap", "bool"], ["vAlign", "valign"],
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
@@ -3257,13 +3287,13 @@
     ins: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
     script: ["HTMLScriptElement", [
       ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
-      ["defer", "defer", "bool"], ["integrity", "integrity"],
-      ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
+      ["defer", "defer", "bool"], "integrity",
+      "charset", "event", ["htmlFor", "for"],
       CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     marquee: ["HTMLMarqueeElement", [
-      ["behavior", "behavior"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
-      ["direction", "direction"], ["height", "height"], ["width", "width"],
+      "behavior", ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
+      "direction", "height", "width",
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
       ["trueSpeed", "truespeed", "bool"],
       ["scrollAmount", "scrollamount", "ulong", { default: 6 }],
@@ -3271,24 +3301,24 @@
       ["loop", "loop", "long", { default: -1 }],
     ]],
     applet: ["HTMLAppletElement", [
-      ["align", "align"], ["archive", "archive"], ["code", "code"],
-      ["codeBase", "codebase", "url"], ["height", "height"],
-      ["object", "object"], ["width", "width"],
+      "align", "archive", "code",
+      ["codeBase", "codebase", "url"], "height",
+      "object", "width",
       ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
     ]],
     frame: ["HTMLFrameElement", [
-      ["scrolling", "scrolling"], ["frameBorder", "frameborder"],
+      "scrolling", ["frameBorder", "frameborder"],
       ["longDesc", "longdesc", "url"], ["noResize", "noresize", "bool"],
       ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
     ]],
-    frameset: ["HTMLFrameSetElement", [["cols", "cols"], ["rows", "rows"]]],
+    frameset: ["HTMLFrameSetElement", ["cols", "rows"]],
     font: ["HTMLFontElement", [
-      ["color", "color"], ["face", "face"], ["size", "size"],
+      "color", "face", "size",
     ]],
     dir: ["HTMLDirectoryElement", [["compact", "compact", "bool"]]],
     hr: ["HTMLHRElement", [
-      ["align", "align"], ["color", "color"], ["size", "size"],
-      ["width", "width"], ["noShade", "noshade", "bool"],
+      "align", "color", "size",
+      "width", ["noShade", "noshade", "bool"],
     ]],
     pre: ["HTMLPreElement", [["width", "width", "long"]]],
     details: ["HTMLDetailsElement", [["open", "open", "bool"]]],
@@ -3300,8 +3330,8 @@
     ]],
     time: ["HTMLTimeElement", [["dateTime", "datetime"]]],
     data: ["HTMLDataElement", []],
-    div: ["HTMLDivElement", [["align", "align"]]],
-    h1: ["HTMLHeadingElement", [["align", "align"]]],
+    div: ["HTMLDivElement", ["align"]],
+    h1: ["HTMLHeadingElement", ["align"]],
     // Interfaces the table simply did not have. Each is reflected in full by
     // `html/dom/reflection-*.html`, so a missing entry is not one attribute
     // missing — it is every attribute of that element failing at once.
@@ -3319,14 +3349,13 @@
     // reflects is testable and useful whether or not a document ever arrives
     // in the frame.
     iframe: ["HTMLIFrameElement", [
-      ["src", "src", "url"], ["srcdoc", "srcdoc"], ["name", "name"],
-      ["allow", "allow"], ["width", "width"], ["height", "height"],
-      ["align", "align"], ["scrolling", "scrolling"],
+      ["src", "src", "url"], "srcdoc", "name",
+      "allow", "width", "height",
+      "align", "scrolling",
       ["frameBorder", "frameborder"], ["longDesc", "longdesc", "url"],
       ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
       ["allowFullscreen", "allowfullscreen", "bool"],
-      ["loading", "loading", "enumerated",
-        { keywords: ["lazy", "eager"], missing: "eager", invalid: "eager" }],
+      LOADING,
       ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     del: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
@@ -3334,32 +3363,32 @@
     th: ["HTMLTableCellElement", [
       ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
       ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
-      ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
-      ["align", "align"], ["axis", "axis"], ["height", "height"],
-      ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
+      "headers", "abbr", "scope",
+      "align", "axis", "height",
+      "width", ["ch", "char"], ["chOff", "charoff"],
       ["noWrap", "nowrap", "bool"], ["vAlign", "valign"],
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     thead: ["HTMLTableSectionElement", [
-      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      "align", ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"],
     ]],
     tfoot: ["HTMLTableSectionElement", [
-      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      "align", ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"],
     ]],
     colgroup: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], ["align", "align"],
+      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], "align",
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
-      ["width", "width"],
+      "width",
     ]],
     tbody: ["HTMLTableSectionElement", [
-      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      "align", ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"],
     ]],
-    p: ["HTMLParagraphElement", [["align", "align"]]],
+    p: ["HTMLParagraphElement", ["align"]],
     span: ["HTMLSpanElement", []],
-    br: ["HTMLBRElement", [["clear", "clear"]]],
+    br: ["HTMLBRElement", ["clear"]],
     menu: ["HTMLMenuElement", [["compact", "compact", "bool"]]],
   };
 
@@ -3388,7 +3417,14 @@
       // single interface holds.
       const Interface =
         interfaces[name] ?? { [name]: class extends Element {} }[name];
-      for (const [idl, content, type, options] of attributes) {
+      for (const entry of attributes) {
+        // A bare string is the common case and now says so: an IDL name that is
+        // already its own content attribute name. 139 of this table's entries
+        // were `["foo", "foo"]`, which is 1.3 KiB of the eagerly parsed prelude
+        // spent writing each name twice — and the budget that guards that
+        // parse is the reason it is worth spelling once.
+        const [idl, content, type, options] =
+          typeof entry === "string" ? [entry, entry] : entry;
         reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
       }
       // `Object.prototype.toString` on a `<p>` says `[object
