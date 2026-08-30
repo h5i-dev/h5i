@@ -8277,7 +8277,7 @@ them are decisions rather than work:
 | `gethtml.html` + declarative shadow DOM | ~7,100 | needs a real shadow tree. §B6 chose flattening, and §B20.5 is where that choice becomes a number. |
 | `html/dom/idlharness` | 4,496 | correct IDL shapes — prototypes, descriptors, inheritance — on every interface. Grind, not design. |
 | `html/semantics/forms` | 4,147 | validity API, text-field selection, submission. **The one large block that is just work.** |
-| `fetch` | 4,539 | 260 of 467 files time out on abort semantics, which a synchronous fetch cannot provide. |
+| `fetch` | 4,539 | 260 of 467 files time out on abort semantics, which a synchronous fetch cannot provide. **Wrong — see §B23.3.** Script `fetch` is already concurrent, and 1,392 of those subtests need a wptserve `.py` handler rather than abort. |
 
 So the path to 80% runs through two product decisions — whether a shadow root
 is a real tree, and whether `fetch` stays synchronous underneath — plus the
@@ -8709,6 +8709,151 @@ html/semantics' script/img/media/dialog clusters (~6,400), dom's XML-document
 family (`createDocument` and the case rules, ~600), cssom/cssom-view
 serialization and scroll geometry, and the fetch/api JS surface
 (Headers/Request/Response conformance, ~400 reachable without wptserve).
+
+## B23. The instrument was measuring a coin toss, 2026-08-30
+
+Core **74.8% -> 76.4%** (91,480 -> ~93,500 of 122,299) in eleven commits. The
+coverage is the smaller half of what this branch produced; three of the things
+it found are corrections to what this document says.
+
+### B23.1 A file worth 5% of the denominator, decided by 1.2 seconds
+
+`html/dom/idlharness.https.html` took **28.8s** under `sweep.sh`'s 30s deadline
+on one run and timed out on the next. That file is **6,408 subtests — 5.2% of
+the core denominator** — and it passes about 60%, so *losing* it moved the
+headline from 74.8% **up** to 75.6% while the engine had strictly improved.
+
+The direction is the dangerous part: dropping the worst-scoring large file looks
+like progress. Two consecutive sweeps of the same tree differed by 6,387 in the
+denominator and nothing had changed.
+
+It is not one file. **7,325 subtests — 6.3% of the denominator — sit in files
+that finish within ten seconds of the old deadline**, the two CSSOM `idlharness`
+files at 20.5s and 20.2s next in line. `sweep.sh` and `gate.sh` now default to
+90s, which costs about three minutes on a twenty-five minute sweep because only
+**14 files** in an entire sweep reach `engine_timeout` — the 271 `fetch` files
+that time out are `harness_timeout` and report well inside the deadline.
+
+§B12.5 says a pass count is only a floor if the corpus is fixed. This is its
+sibling and belongs beside it: **it is only a floor if the deadline is generous
+enough that the largest file's outcome is not a coin toss.**
+
+`run.py` also kept only **five** failing subtests per file, which is the right
+default for reading counts and the wrong one for a file with 2,539 failures —
+§B12.2's lesson about reading failure text is exactly the one that cap defeats
+on the largest files. Now `WPT_MAX_FAILURES`, default unchanged.
+
+### B23.2 "Unpassed in files that mention X" is an upper bound, not an estimate
+
+Four times on one branch a count promised far more than it paid:
+
+| what promised | what paid |
+| --- | --- |
+| `action_sequence`: 383 subtests rejecting on it | 126 (33%) |
+| demand list ranked by calls: 7,938 on the top entry | one test file's helper |
+| demand list ranked by files: 429 and 259 for two APIs | 32 |
+| `fetch/` + `xhr/` + `cors/`: "3,171 blocked on async fetch" | see §B23.3 |
+
+The rule, stated so the next queue is built differently: **only a failure
+*message* directly attributable to X predicts the gain.** `serialize-values`,
+where 164 failures literally said the serialised value was wrong, delivered 158.
+`:heading`, where 277 said "is not a valid selector", delivered 205. Every count
+of the form "unpassed in files that touch X" carried a large and unpredictable
+discount, because unblocking a gate reveals the next problem rather than solving
+it.
+
+The demand list has a second trap worth naming: it is unweighted, so one test
+file's helper reading a property off an element put `Element.endsWith` at the
+top with 7,938 calls. Ranking it by *files* instead fixes that and does not fix
+the discount — `Element.disabled` led that ranking with 153 files, and
+`button.disabled` works.
+
+### B23.3 §B20.14's fetch row is wrong, and the correction matters more than the row
+
+§B20.14 records:
+
+> | `fetch` | 4,539 | 260 of 467 files time out on abort semantics, which a
+> synchronous fetch cannot provide. |
+
+**Script `fetch()` is already concurrent.** `FetchSlot::InFlight(Receiver)` —
+six requests on their own threads, drained on the settle loop. What is still
+synchronous is `BrokerNet::fetch`, Blitz's *subresource* loading, which §B20.15
+names correctly ("serial subresource fetching"); the generalisation to script
+fetch is this document's, not the code's.
+
+And the timeouts are not about abort. Of 3,044 unpassed subtests in
+`harness_timeout` files, **1,392 (113 files) need a wptserve `.py` handler** and
+the remaining 1,652 are a thin per-file tail of one to eighteen. There is no
+abort cluster.
+
+So **fixing abort would not deliver ~3,000 subtests**, and the estimate built on
+that row — "grind + fetch reaches 91%" — is withdrawn. The reason to build
+concurrent subresource fetching is the one §B20.15 gave in the first place: real
+page latency, judged by `corpus/compare.py`, not by WPT arithmetic. This entry
+exists because the row would otherwise send the next reader to build abort for
+subtests that are not there, which is exactly the §B13.3 failure — a number
+travelling further than the caveat attached to it.
+
+### B23.4 The prelude budget is not a performance guard, measured
+
+`examples/perf` puts `prelude run` at **15.9 ms of a 16.2 ms later realm**, so it
+is the right phase to care about. A deliberately padded 50 KiB build puts the
+slope at **40-52 us/KiB**, consistent with the 45 the budget test already quotes.
+
+But the run-to-run spread on this machine is **+/-4 ms on a 16 ms measurement**,
+so **even an 18% size delta is not statistically resolvable** (t ~ 1.2). A few
+KiB is far below the noise floor, and the constant in the test was left alone: a
+point estimate that could not be confirmed should not overwrite a documented one.
+
+What the budget actually does is force the question, and it did so twice here:
+it pushed the interface-prototype mirror into the `conformance` tier where pages
+pay nothing, and it found **3.9 KiB of the reflection table writing every
+attribute name twice** — 139 entries of `["foo", "foo"]`, 72 more with a type
+after them, and fifteen copies of three ARIA option objects. Keep it tight for
+that reason, not because a KiB is measurably slow.
+
+### B23.5 What the work was, and where the grind now stands
+
+The gains, and what each was actually caused by — in every case something
+smaller and more structural than the count suggested:
+
+    custom-elements   2,423 -> 2,987   `cloneNode` built the element before
+                                       copying attributes, so `is` arrived too
+                                       late; that ordering held all 333 of
+                                       builtin-coverage, now 444/444
+    html/dom         62,183 -> 62,563  five reflection attributes, not 388 bugs
+    dom               3,390 ->  3,682  `classList` wrote through `api.setAttr`,
+                                       so no MutationObserver ever saw it
+    css/cssom         2,133 ->  2,334  the inline declaration returned the text
+                                       the author typed, not its serialisation
+    url                 184 ->    377  `username`/`password` were constants; the
+                                       parser had carried both all along
+    css/selectors     2,648 ->  2,839  `:heading` is h1-h6 and needed no matcher
+    html/semantics    9,604 ->  9,768
+    css/cssom-view      568 ->    599
+
+Two engine finds deserve their own line. `new MyElement()` threw for **every**
+custom element, autonomous ones included — a page constructing a component
+rather than calling `createElement` got `Illegal constructor`. And `Node.contains`
+and `Node.compareDocumentPosition` were each defined **twice** in the same class,
+so the earlier pair had never run; the dead `compareDocumentPosition` was an
+approximation and the survivor is the spec's full bit field, which is why
+nothing had noticed.
+
+One speed result: `el.style` builds a fresh `StyleDeclaration` per access, so
+`_read()` re-split the whole attribute per property read. Memoising on the
+declaration text takes `el.style.color` from **33 us to 13 us** and
+`getPropertyValue` from **21 us to 5 us** against `main`.
+
+**Where the grind stands.** ~15,000 reachable subtests remain with no decision in
+the way, and the shape has changed: **half of them sit in 2,842 files at one to
+five subtests each**, against 7,900 in 153 files. The concentrated end that this
+branch and §B22 lived on is essentially spent. 80% needs +4,600 from the tail,
+which is a different activity at a different rate — and 88.5% remains the ceiling
+with every §B6 and §B20.15 boundary standing, minus whatever §B23.3 takes off it.
+
+Nothing was excluded to move a number; `tiers.list` is untouched.
+
 
 
 ---
