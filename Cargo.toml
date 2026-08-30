@@ -152,3 +152,32 @@ debug = false
 # will maintain, whatever the WPT arithmetic says. `:has()` is a named gap
 # again (`selector :has()` in the unsupported channel) until a Blitz release
 # depends on stylo >= 0.20, which is where to check `parse_has` next.
+
+# Boa, patched — and the distinction from the ruling above is the point.
+#
+# That ruling was against an in-tree *copy* of an engine crate: a vendored
+# directory this project would have had to maintain, diverging silently from
+# the crate it was forked from. This is the other shape. The fork lives outside
+# the tree, is pinned to one commit, and carries one commit of difference:
+# `Script::bind_to_realm`, which compiles a script once and runs it in many
+# fresh realms. Nothing in it is specific to this engine or this project, it is
+# written as an upstream pull request, and the exit is the same as every pin
+# here — when it lands upstream this goes back to plain crates.io.
+#
+# What it buys is in §B15.12a: parse and compile were 67 ms of the 83 ms a
+# realm cost, on every page, for a source that never changes. That section
+# refused a fork and asked for an upstream issue instead; the owner has since
+# ruled a minimal fork acceptable. Of its other two conclusions, one stands and
+# one did not survive being checked. Realm *reuse* stays refused, permanently,
+# and `bind_to_realm` is careful not to be it. The claim that inline caches
+# would carry one page's object shapes into the next was wrong — entries are
+# weak and matched by shape identity, so a second realm can never hit them —
+# but the remedy it named, clearing them, is still right for a different
+# reason: the megamorphic flag is permanent and would otherwise accumulate.
+#
+# `boa_gc` is patched with it because this crate depends on it directly: left
+# on crates.io it would resolve to a second copy, and the cancellation token
+# would then be two incompatible types with the same name.
+[patch.crates-io]
+boa_engine = { git = "https://github.com/h5i-dev/boa", rev = "05a10e4ecf7ae72324138d80be2e9c47e99e7b3d" }
+boa_gc = { git = "https://github.com/h5i-dev/boa", rev = "05a10e4ecf7ae72324138d80be2e9c47e99e7b3d" }

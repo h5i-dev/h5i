@@ -76,7 +76,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
 use h5i_error::H5iError;
@@ -398,6 +398,21 @@ impl BrokerClient {
     /// refusal its own signature can express, because "the broker is gone" is
     /// not a state any of them can render around.
     fn ask(&self, ask: Ask, blob: &[u8]) -> Option<(Said, Vec<u8>)> {
+        self.begin(ask, blob)?.recv().ok()
+    }
+
+    /// Ask, and hand back the receiver rather than waiting on it.
+    ///
+    /// Split out of [`Self::ask`] so a caller with something useful to do can
+    /// do it while the broker works — the renderer compiling its prelude during
+    /// a navigation, which is the only reason this exists. See
+    /// `Broker::send_while`.
+    ///
+    /// The caller owns the waiting from here. Dropping the receiver without
+    /// reading it leaves an entry in `waiting` that the reply thread will find
+    /// and send into a dead channel, which it already tolerates: the send
+    /// fails, and nothing else depends on it.
+    fn begin(&self, ask: Ask, blob: &[u8]) -> Option<Receiver<(Said, Vec<u8>)>> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = sync_channel(1);
         {
@@ -424,7 +439,7 @@ impl BrokerClient {
             self.waiting.lock().ok()?.remove(&id);
             return None;
         }
-        rx.recv().ok()
+        Some(rx)
     }
 
     /// The answers whose shape is a single value, unwrapped.
@@ -473,15 +488,37 @@ impl Drop for RemoteChannel {
 
 impl Broker for BrokerClient {
     fn send(&self, fetch: &Fetch) -> FetchOutcome {
-        match self.ask(Ask::Send(fetch.clone()), &fetch.body) {
+        self.send_while(fetch, &mut || {})
+    }
+
+    /// The renderer's side of the overlap: the request goes out, the caller's
+    /// work happens, and only then does this thread block on the answer.
+    ///
+    /// This is the implementation the default in `Broker` cannot be. The broker
+    /// is another process, so everything between the write and the `recv` is
+    /// time this thread would otherwise spend idle.
+    fn send_while(&self, fetch: &Fetch, while_waiting: &mut dyn FnMut()) -> FetchOutcome {
+        let gone = || {
+            FetchOutcome::refused(
+                fetch.url.clone(),
+                "the broker is no longer running, so nothing was fetched".to_string(),
+            )
+        };
+        let Some(pending) = self.begin(Ask::Send(fetch.clone()), &fetch.body) else {
+            return gone();
+        };
+
+        // After the write and before the wait. A panic here would leave the
+        // request outstanding and the entry in `waiting`, which the reply
+        // thread already handles, so this needs no guard of its own.
+        while_waiting();
+
+        match pending.recv().ok() {
             Some((Said::Outcome(mut outcome), body)) => {
                 outcome.body = body;
                 outcome
             }
-            _ => FetchOutcome::refused(
-                fetch.url.clone(),
-                "the broker is no longer running, so nothing was fetched".to_string(),
-            ),
+            _ => gone(),
         }
     }
 
@@ -1269,6 +1306,80 @@ mod tests {
         assert!(methods.iter().any(|m| m == "WS-OPEN"), "{methods:?}");
         assert!(methods.iter().any(|m| m == "WS-RECV"), "{methods:?}");
         assert!(methods.iter().any(|m| m == "WS-SEND"), "{methods:?}");
+    }
+
+    #[test]
+    fn work_given_to_send_while_runs_with_the_request_already_in_flight() {
+        // The value of the overlap is entirely in *when* the work happens: a
+        // closure run before the request went out would pass any ordering check
+        // made on this side and buy nothing at all. So the claim is checked from
+        // the server's end — the closure is not allowed to finish until the
+        // server has actually read the request off the socket.
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let (arrived, seen) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+                if line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            let _ = arrived.send(());
+            // Held open so the answer cannot win the race by accident.
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let mut stream = stream;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi"
+            );
+        });
+
+        let (client, _broker, _served) = paired();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).expect("url");
+
+        let mut in_flight = false;
+        let outcome = client.send_while(&Fetch::get(&url, Initiator::Navigation), &mut || {
+            in_flight = seen
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .is_ok();
+        });
+
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(
+            in_flight,
+            "send_while ran its work before the request reached the server, so it \
+             overlapped nothing"
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_broker_that_cannot_overlap_declines_the_work_rather_than_serialising_it() {
+        // `LocalBroker` does the fetch on the calling thread, so there is no
+        // window to hide anything in. Running the closure anyway would add its
+        // cost to the path this exists to shorten, which is why the default
+        // implementation drops it. Safe only because the work is speculative:
+        // the prelude still compiles when the realm asks for it.
+        let broker = LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+            .expect("broker builds");
+        let url = Url::parse("https://denied.test/").expect("url");
+
+        let mut ran = false;
+        let outcome = broker.send_while(&Fetch::get(&url, Initiator::Navigation), &mut || {
+            ran = true;
+        });
+
+        assert!(!ran, "a broker with no idle window ran the speculative work");
+        assert!(outcome.error.is_some(), "the allowlist is empty, so this is refused");
     }
 
     /// One request, answered with the body it was sent. Enough HTTP to carry a

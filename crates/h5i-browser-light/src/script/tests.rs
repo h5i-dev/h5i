@@ -3452,22 +3452,25 @@ fn code_bytes(source: &str) -> usize {
 
 #[test]
 fn the_eagerly_parsed_prelude_stays_within_its_budget() {
-    // **Parse and compile are two thirds of what a script realm costs** — 42 ms
-    // of 59 — and both are a straight function of the code handed to Boa. There
-    // is no lazy compilation to hide behind: every page pays for every line,
-    // whether or not it ever runs one.
+    // **The exchange rate fell, and the budget is still the floor under
+    // noticing.** Parse and compile were 67 ms of the 83 a realm cost and were
+    // paid per page; sharing the compiled prelude across realms moved them to
+    // once per thread, and a later realm now spends under a microsecond there.
+    // What every page still pays for a KiB is the *running* of it — 12.4 ms for
+    // the whole 273 KiB — so about **45 µs of per-page realm cost per KiB**,
+    // against the ~150 µs it was. The first page a renderer serves still pays
+    // the compile, at roughly 245 µs per KiB, and that is the page a person is
+    // waiting on.
     //
-    // This number is a floor under noticing. The prelude grew by 4,692 lines in
+    // The reason for a budget is unchanged. The prelude grew by 4,692 lines in
     // two commits during a coverage push, the realm went from 15.9 ms to 82.8 ms
     // per page, and nothing said so — the tests all passed, because a slower
     // engine is not a wrong one. A budget that has to be raised on purpose puts
     // the price in the diff that pays it.
     //
-    // Raising it is a normal thing to do, not a failure. The exchange rate is
-    // roughly **150 µs of per-page realm cost per KiB of code**, so a KiB spent
-    // here is a KiB every page pays for whether or not it uses the feature. The
-    // question the number asks is only whether it could be a tier instead: see
-    // `TIERS` in `mod.rs`, and `lazyGlobals` in the prelude.
+    // Raising it is a normal thing to do, not a failure. The question the number
+    // asks is only whether it could be a tier instead: see `TIERS` in `mod.rs`,
+    // and `lazyGlobals` in the prelude.
     const BUDGET_KIB: usize = 275;
 
     assert!(
@@ -3480,10 +3483,175 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     assert!(
         code <= BUDGET_KIB,
         "the eagerly parsed prelude is {code} KiB of code, over its {BUDGET_KIB} KiB \
-         budget. Every page pays about 150 µs per KiB of this, at realm build, \
-         used or not. Either move the new surface into a tier (`TIERS` in \
+         budget. Every page pays about 45 µs per KiB of this to run it, used or \
+         not, and the first page a renderer serves pays about 245 µs per KiB more \
+         to compile it. Either move the new surface into a tier (`TIERS` in \
          `mod.rs`) or raise BUDGET_KIB deliberately and say what the page is \
          getting for it."
+    );
+}
+
+/// Two realms in a row, and the second must not be able to tell that the first
+/// existed.
+///
+/// This is the guard on sharing the prelude's compiled code between realms
+/// (`bind_to_realm` in our Boa fork). The saving is real — parse and compile
+/// were 42 ms of the 63 a realm cost — but the thing being shared is one step
+/// away from the thing §B15.12a refuses outright: reusing the *realm*, which
+/// would let a page set attacker-controlled state, navigate, and have the next
+/// document see it. Sharing instructions is safe and sharing state is not, so
+/// the difference is asserted here rather than left to the argument for it.
+#[test]
+fn a_realm_shares_the_preludes_code_and_none_of_its_state() {
+    let broker = crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+        .expect("broker");
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+    let base = url::Url::parse("https://app.example/").unwrap();
+    let page = factory.from_html("<html><body><p id='p'>one</p></body></html>", &base);
+
+    let mut first = Script::new(page.dom(), broker.clone(), &base).expect("first realm");
+    // Everything a hostile page has to reach the next document with: a global,
+    // a patched prototype, and a shadowed built-in.
+    first
+        .eval(
+            "globalThis.__carried = 'from the first realm';
+             Element.prototype.__carried = 'on the prototype';
+             document.querySelector('#p').textContent;",
+        )
+        .expect("the first realm runs");
+
+    let mut second = Script::new(page.dom(), broker.clone(), &base).expect("second realm");
+    assert_eq!(
+        second.eval_value("typeof globalThis.__carried").unwrap(),
+        "undefined",
+        "a global the previous realm set is visible in this one"
+    );
+    assert_eq!(
+        second
+            .eval_value("typeof Element.prototype.__carried")
+            .unwrap(),
+        "undefined",
+        "a prototype the previous realm patched is patched in this one"
+    );
+    // And the shared code still works: an engine that isolated the realms by
+    // failing to install the prelude would pass both assertions above.
+    assert_eq!(
+        second
+            .eval_value("document.querySelector('#p').textContent")
+            .unwrap(),
+        "one"
+    );
+}
+
+/// The compile is paid once for a thread; the run is paid by every realm.
+///
+/// On a thread of its own because that is what the template is scoped to, and
+/// a suite running single-threaded would otherwise have some other test's realm
+/// pay the compile before this one looked.
+#[test]
+fn the_prelude_is_compiled_once_for_a_thread_and_run_for_every_realm() {
+    let (first, later) = std::thread::spawn(|| {
+        let (_page, first) = page_and_script("<html><body></body></html>");
+        let (_page, later) = page_and_script("<html><body></body></html>");
+        (first.cost(), later.cost())
+    })
+    .join()
+    .expect("realms built");
+
+    assert!(
+        later.prelude_compile * 10 < first.prelude_compile,
+        "the second realm on a thread paid {:?} to compile the prelude against \
+         the first realm's {:?}; the template is not being shared",
+        later.prelude_compile,
+        first.prelude_compile
+    );
+    assert!(
+        later.prelude_run > Duration::ZERO,
+        "the prelude did not run in the second realm"
+    );
+    assert!(
+        later.total() < first.total(),
+        "sharing the compiled prelude made the later realm no cheaper: {:?} \
+         against {:?}",
+        later.total(),
+        first.total()
+    );
+}
+
+/// A thread that warmed before it had a realm must be able to end.
+///
+/// This is a regression test for a crash, not for a wrong answer, and it has an
+/// unusual shape because of it: everything the thread does succeeds, and the
+/// process then aborts as the thread exits, with
+/// `tcache_thread_shutdown(): unaligned tcache chunk detected`. So the failure
+/// is the test binary dying rather than an assertion, and the thread has to be
+/// spawned and joined for the teardown to happen at all.
+///
+/// The order is the entire content of the test. Building a realm first touches
+/// Boa's garbage-collected heap before it touches [`PRELUDE_TEMPLATE`], and the
+/// thread-local destructors then run in an order that happens to be safe.
+/// Warming first inverts it, and the template drops `Gc` handles into a heap
+/// that has already been torn down. Warming before a realm exists is precisely
+/// what the overlap does, so this is the shape the product runs in.
+///
+/// See [`PreludeTemplate`] for why the fix is that the template is never
+/// dropped at all.
+#[test]
+fn the_compile_survives_a_thread_that_warmed_before_it_had_a_realm() {
+    std::thread::spawn(|| {
+        warm_prelude();
+        let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+        // Something after the warm that actually uses the realm, so this cannot
+        // pass by never getting there.
+        assert_eq!(
+            script.eval_value("document.querySelector('p').textContent").unwrap(),
+            "x"
+        );
+    })
+    .join()
+    .expect("the thread that warmed before building its realm");
+}
+
+/// Warming leaves the realm with no compiling left to do.
+///
+/// The link between "the compile happens during the fetch" and "the page is
+/// faster", asserted where a stopwatch cannot argue with it. `ipc.rs` proves the
+/// work runs while the request is in flight and `engine.rs` proves it is only
+/// attempted where there is a wait to hide it in; this is the third side, that
+/// the work is the thing the realm would otherwise have had to do.
+///
+/// Two threads, because the template is per-thread: one realm pays the compile
+/// the way an unwarmed page does, and the other must find it already paid.
+#[test]
+fn warming_takes_the_compile_out_of_the_realm_build() {
+    let cold = std::thread::spawn(|| {
+        let (_page, script) = page_and_script("<html><body></body></html>");
+        script.cost()
+    })
+    .join()
+    .expect("cold realm");
+
+    let warmed = std::thread::spawn(|| {
+        warm_prelude();
+        let (_page, script) = page_and_script("<html><body></body></html>");
+        script.cost()
+    })
+    .join()
+    .expect("warmed realm");
+
+    assert!(
+        cold.prelude_compile > Duration::from_millis(5),
+        "an unwarmed realm compiled the prelude in {:?}, so this test is no \
+         longer measuring the cost it exists to move",
+        cold.prelude_compile
+    );
+    assert!(
+        warmed.prelude_compile * 50 < cold.prelude_compile,
+        "a warmed realm still spent {:?} compiling against an unwarmed realm's \
+         {:?}; the warm did not take",
+        warmed.prelude_compile,
+        cold.prelude_compile
     );
 }
 

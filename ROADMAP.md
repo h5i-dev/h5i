@@ -4344,12 +4344,19 @@ affected: `finish_page` is the sole caller in the product.
 
 ```
 reading a page                no script     script     outline
-10 sections  (~90 nodes)          2.0ms      72ms       60 lines
-100 sections (~900 nodes)        13.0ms      86ms      500 lines
-500 sections (~4500 nodes)       66.0ms     185ms      500 lines
+10 sections  (~90 nodes)           2.8ms    25.6ms       60 lines
+100 sections (~900 nodes)         14.7ms    45.2ms      500 lines
+500 sections (~4500 nodes)        81.5ms   160.5ms      500 lines
 
-starting the script realm          63ms per page
-the floor under a scripted page    66ms      (one section: almost all fixed cost)
+starting the script realm          21ms per page
+the floor under a scripted page    22ms      (one section: almost all fixed cost)
+
+the realm, by phase             first realm   later realms
+  context                            368 µs        3.0 ms
+  primitives                          53 µs         35 µs
+  prelude compile                   67.0 ms        0.9 µs
+  prelude run                       15.5 ms       12.4 ms
+  total                             83.0 ms       15.4 ms
 
 a DOM property read
   plain object                      68 ns
@@ -4368,17 +4375,44 @@ queries, 200 calls each
   iterating a 400-node result      213 µs
 ```
 
-**The realm is still most of a small page**, at 93% of the ten-section row when
-this pass began and about 87% now. Inside it, parse and compile are two thirds:
-33 ms and 9 ms of the 63, against 272 KiB of *code*. Boa parses eagerly, so
-every page pays for every line whether or not it runs one.
+**The realm went from 63 ms to 21 ms a page**, and it is no longer most of a
+small page: 87% of the ten-section row before, about 60% now. What moved is the
+prelude's parse and compile, paid by every page for a source that never changes
+and now paid once per thread. §B15.12a records why that was refused for as long
+as it was and what changed.
 
-Code, not bytes: blanking all 164 KiB of comments in a 448 KiB prelude changed
+Read the phase table as a within-run comparison and nothing more. The two
+columns come from one run on one thread, which is what makes them comparable;
+across three runs the first-realm total was 83.0, 101.3 and 79.8 ms and the
+later-realm total 15.4, 20.1 and 16.1 ms. The ratio holds at about five to one
+and the saving at 60–80 ms, but no single digit in that table is worth quoting
+on its own, and the older 63 ms figure was measured on a quieter day than the
+83 ms one beside it.
+
+Two things in the phase table are worth reading rather than skipping. **The
+compile does not shrink, it relocates**: the first realm on a thread still pays
+all 67 ms, so a one-shot `h5i browser read` is helped only by what overlaps it,
+while a session serving many navigations pays it once. And **a later realm's
+context costs ~3 ms against the first realm's ~400 µs**, reproducibly across all
+three runs — it builds its intrinsics against a GC heap that already holds the
+template and a previous realm. How much of that the template is responsible for
+is not known: a second realm in a process was probably always dearer than the
+first, and there was no phase column to show it before. It is 3 ms against 67
+either way, which is why it was recorded rather than chased.
+
+The per-read and per-call rows were re-measured and left alone. They moved
+between runs by as much as 25% on this box in either direction, which is wider
+than the 10% this section claims and wide enough that nothing below the page
+level should be read as having changed.
+
+Code, not bytes: blanking all 164 KiB of comments in a 443 KiB prelude changed
 parse time by **nothing measurable**. The documentation is free; only what the
 parser tokenises is not. `the_eagerly_parsed_prelude_stays_within_its_budget`
 holds the line at 275 KiB, because the file grew 4,692 lines in two commits
 during a coverage push and took the realm from 15.9 ms to 82.8 ms with nothing
-saying so — every test passed, since a slower engine is not a wrong one.
+saying so — every test passed, since a slower engine is not a wrong one. What a
+KiB costs has fallen with the compile: about 45 µs per page to *run*, plus
+245 µs on the first page of a thread to compile, against ~150 µs per page before.
 
 #### What came out, and what each was worth
 
@@ -6113,17 +6147,19 @@ restart, while `docs/Persist-cookies-and-storage.md` promises a file. §B6 alrea
 commits us to in-memory storage; the lesson is that the *documentation* has to
 say so.
 
-### B15.12a The performance items, measured: all three answers are no
+### B15.12a The performance items, measured: two noes and one that was refused twice before it was built
 
 §B11.5.13 and §B11.5.14 list two performance items — reuse the realm across
-navigations, and cache the prelude's bytecode. Both were attempted. Neither
-should be built, and a third optimisation that looked obvious was measured and
-reverted. Recorded together because the pattern is the point.
+navigations, and cache the prelude's bytecode. Both were attempted. The first
+must never be built; the second was built in August 2026 and is the largest
+single saving this engine has taken. A third optimisation that looked obvious
+was measured and reverted. Recorded together because the pattern is the point,
+and the pattern turned out to cut both ways.
 
-The prices have moved since this was written and the answers have not. The realm
-was ~20 ms a page then and is ~63 ms now; the prelude was three thousand lines
-and is ten thousand. §B8.9 carries the current numbers, and a better reason for
-the second refusal than the one below.
+The prices moved while this section was being wrong about them. The realm was
+~20 ms a page when this was written, ~63 ms by the time it was re-examined, and
+is ~15 ms now. The prelude was three thousand lines and is ten thousand. §B8.9
+carries the current numbers.
 
 **Realm reuse: refused, on grounds §B11.5 did not weigh.** A realm carries
 everything the previous document's script put in it — globals, patched
@@ -6135,23 +6171,124 @@ space, drops and recreates its entire JS runtime on every navigation for exactly
 this reason, and says so in the code. The note now lives on `Page::run_scripts`
 so the item is refused in review rather than re-attempted.
 
-**Prelude bytecode caching: not buildable with this Boa**, for a checkable
-reason rather than a hard one. `boa_engine::Script::parse` interns identifiers
-into *the context's own* interner (`context.interner_mut()`) and binds the
-result to that context's realm; every page builds a fresh `Context`. A parsed
-script is not a portable artifact, so there is nothing to cache across pages.
+**Prelude bytecode caching: built, 2026-08-29, and this section had two reasons
+for refusing it that were both wrong.** Kept in full, because being wrong twice
+in the same place about the same thing is the useful part.
 
-Re-examined on Boa 0.22, where the decisive reason turns out to be a different
-and sharper one: a `CodeBlock` owns its `InlineCache` entries, and those hold
-live shape-to-slot mappings filled in as the code runs. Reusing one across
-realms would carry the last page's object shapes into the next page's property
-lookups, which is the same cross-page contamination the realm refusal above
-exists to prevent, arriving through the cache instead of through the globals.
-The upstream change that would unblock it is small and namable: reset the caches
-on reuse, or hang them off the realm rather than the code block. Worth 42 ms of
-the 63, and worth an upstream issue rather than a fork.
-Revisit if Boa grows a shared interner or a serialisable code block. The note
-lives at the prelude's eval site.
+The first reason was that `boa_engine::Script::parse` interns identifiers into
+the context's own interner and binds the result to that context's realm, so a
+parsed script is not a portable artifact. True of the *parse*, and irrelevant to
+the artifact: by the time compilation is done a `CodeBlock` holds no `Sym` at
+all. Its constants are `JsString`, `Gc<CodeBlock>`, `JsBigInt` and `Scope`, and
+nothing in it can reach an interner. The claim was made about the input and
+believed about the output.
+
+The second reason, added when this was re-examined on Boa 0.22, was that a
+`CodeBlock` owns its `InlineCache` entries and reusing one across realms would
+carry the last page's object shapes into the next page's property lookups.
+Also wrong, and checkably so: a `CacheEntry` holds a **`WeakShape`**, and a
+lookup compares it by address after upgrading it. An object in the next realm
+has that realm's shapes, so it can never match an entry left by the last one;
+a dead entry is dropped on the next lookup rather than hit. There was no
+contamination to prevent. What does accumulate is the `megamorphic` flag, which
+is permanent, so code reused across many realms would eventually stop caching
+altogether — a performance decay, not a leak, and fixed by the same one-line
+reset that was proposed for the wrong reason.
+
+What made it buildable was the owner's ruling that a minimal Boa fork is
+acceptable where a vendored in-tree engine crate (§B22, stylo) is not. The
+fork carries one commit: `Script::bind_to_realm`, which returns a script sharing
+this one's compiled code but running in another realm, with the inline caches
+cleared and fresh `[[LoadedModules]]`. It refuses a script whose top level
+declares `let`, `const` or `class` — those become bindings the compiler
+addresses by *position* in the scope of the realm it compiled against, so a
+second realm's scope would not have them. Top-level `var` and `function` are
+instantiated by name on the global object and are portable. The prelude is one
+IIFE and declares nothing at the top level at all, which is why it qualifies.
+
+**The isolation this does not touch.** The realm refusal above stands unchanged,
+and the distinction is the whole safety argument: instructions are shared,
+state is not. Every page still gets its own realm, its own global object, its
+own prototypes and its own module map. `a_realm_shares_the_preludes_code_and_
+none_of_its_state` asserts it from the page's side and the fork's own
+`what_one_realm_does_to_the_shared_code_is_not_visible_to_the_next` from Boa's.
+
+Worth 67 ms of the 83 a realm cost, taking it to ~15 ms, and taking a
+ten-section scripted page from 72 ms to 26 ms. §B8.9 carries the phase table and
+the two costs that did not go away: the first realm on a thread still pays the
+whole compile, and building a context on a warmer GC heap costs ~3 ms more than
+it did.
+
+**Who this helps, stated plainly, because it is not everyone.** The saving is
+per *thread*, and a renderer serves a session's navigations on one. So a session
+pays the compile on its first page and never again, and every number above is
+that second-page-onward case. A one-shot `h5i browser read <url>` builds one
+realm in a fresh process and is not helped at all — it pays exactly what it paid
+before. Making the first page cheaper is a different problem, and it is the one
+below.
+
+### B15.12b The compile moved into the navigation's own wait, 2026-08-29
+
+The first realm on a thread still paid the whole 67 ms, and a one-shot
+`h5i browser open` never has a second. That compile is now paid while the
+navigation's own request is in flight: `Broker::send_while` hands the renderer's
+idle window to a caller with something to do, and `BrokerClient` writes the
+request, runs the work, then blocks on the answer. The broker is a separate
+process, so that window is real. It is a reordering rather than parallelism —
+Boa's heap is thread-local and `Gc` is not `Send`, so the compile can never go
+to a worker thread.
+
+**It is speculative, which is the whole difficulty.** The decision comes before
+the document exists, so it cannot ask whether the page has script, and a page
+with none builds no realm and would have paid nothing. `worth_warming` asks the
+two things it can know: scripting must be on, and there must be a wait to hide
+the compile in.
+
+**Measured before building.** Over the corpus, 64 pages: 92% run script, and the
+scriptless ones fetch *slower* than the scripted ones — 117 ms at the fastest
+against a ~67 ms compile. Not one page lost, and the compile would have to
+nearly double before one did. Six pages were dropped as bot-challenge responses,
+which are not the page, arrive fast, and carry their own script, so they land as
+false wins in exactly the region that decides this. Every page measured was
+remote, so loopback and the non-network schemes are excluded in code rather than
+assumed to behave like the rest.
+
+**Measured after, and the first answer was wrong.** An end-to-end A/B of two
+binaries said 171 ms saved. That is more than the compile being hidden, so it
+could not be the change, and it was not: `before` and `after` ran back to back on
+the same URL, handing the second warm DNS, a resumable TLS session and a warm
+CDN. With the order alternating, the eight-page median fell to **−6 ms** — the
+effect is 67 ms against pages that take 0.9 to 39 seconds and swing by hundreds
+of milliseconds, so it simply is not resolvable there.
+
+It is resolvable on pages fast enough to show it. Three pages under 1.5 s, 20
+repetitions, order alternating, **59 paired runs**:
+
+    after faster in 44/59            sign test p = 0.0001
+    median delta                     +106 ms
+    95% bootstrap CI                 [+53, +139] ms
+    predicted (the compile hidden)   +63 to +82 ms
+
+The interval excludes zero and contains the prediction. The point estimate sits
+above the ceiling, which is what a wide interval on a noisy box looks like
+rather than a saving larger than the thing being saved.
+
+**The bug this shipped with, because it is the more useful half.** Warming
+before a realm exists inverted the order in which two thread-locals are first
+touched — the template's and Boa's GC heap — and the template then dropped `Gc`
+handles into a heap already torn down. The symptom is not a wrong answer:
+everything succeeds, and the process aborts as the thread ends with
+`tcache_thread_shutdown(): unaligned tcache chunk detected`. Every test passed
+on the commit before, because building a realm touches Boa's heap first and the
+order happened to be safe. The fix is `ManuallyDrop`, so the thread-local has no
+destructor and the order cannot matter.
+
+Three things about it are worth keeping. Rust does not specify thread-local
+destructor order, so anything holding a `Gc` in one **must not be dropped** —
+this is a rule, not an incident. A latent crash can hide behind a green suite
+when the failure is in teardown rather than in the work. And it was found only
+because a test was written for the *link* the wall clock could not measure;
+the measurement that could not see the win did not see the crash either.
 
 **And the one that looked free was measured and was not there.** The settle loop
 made *five* separate `context.eval` calls per round, three of them on the hot
@@ -6166,12 +6303,35 @@ No gain, inside noise, possibly worse. Parsing a twenty-character string is not
 what a page load costs, and the change added a packed-integer protocol between
 Rust and JS for nothing. Reverted.
 
-The lesson is §B8's own, arriving from the other direction: **the rule against
-building what no page asked for applies to performance too.** All three of these
-were reasoned from the shape of the code rather than from a measurement, and all
-three were wrong — two dangerous, one merely useless. The ceiling on this whole
-area is small anyway: the corpus runs 35 pages in 9.7s, so a realm at 20ms is
-about 7% of the total even if it were free.
+The lesson was §B8's own, arriving from the other direction: **the rule against
+building what no page asked for applies to performance too.** All three were
+reasoned from the shape of the code rather than from a measurement, and all
+three were wrong — two dangerous, one merely useless.
+
+**The lesson now has a second half, and it is the more expensive one.** The
+refusals were reasoned from the shape of the code too, and one of them was
+wrong for six months. Both of its stated reasons named a specific structure —
+the interner, the inline caches — and neither was checked against that
+structure; `CodeBlock` has no interner reference and `CacheEntry` holds a weak
+shape, and thirty minutes of reading either file would have said so. A refusal
+recorded with a plausible mechanism reads exactly like a refusal recorded with a
+verified one, and it stops the next person looking. So: **when this file refuses
+something for a reason in the code, the reason has to cite the code**, the way
+§B8.9's rejections cite their measurements.
+
+The closing claim here was wrong in the same way, and correcting it corrects
+the shape of the win too. "The ceiling on this whole area is small anyway: the
+corpus runs 35 pages in 9.7s, so a realm at 20ms is about 7% of the total even
+if it were free" — the realm was 63 ms by then, not 20, so it was about a third
+of that run rather than 7%.
+
+But the corpus cannot show the saving at all, and it is worth being exact about
+why. `corpus/run.py` calls `subprocess.run` **once per URL**: every page gets a
+process, every process builds exactly one realm, and the first realm on a thread
+is the one that pays the whole compile. The corpus should be unchanged, and if
+it ever *improves*, something is sharing a process between pages that should not
+be. The yardstick for this change is a session — `h5i browser open` and then
+navigate — where the compile is paid on the first page and by no other.
 
 ### B15.13 The queue: built, 2026-08-19
 

@@ -163,6 +163,26 @@ pub trait Broker: Send + Sync {
     /// convenience over this one.
     fn send(&self, fetch: &Fetch) -> FetchOutcome;
 
+    /// The same send, with `while_waiting` run while the answer is in flight.
+    ///
+    /// For work that would otherwise sit on the critical path behind a request
+    /// this process is only waiting on. The renderer's broker is a *separate
+    /// process*, so [`Self::send`] is one round trip and the renderer thread is
+    /// idle for all of it — which is long enough to hide the browser prelude's
+    /// compile in (§B15.12a). Boa's heap is thread-local, so that compile
+    /// cannot go to a worker thread; this is the only way it overlaps anything.
+    ///
+    /// **`while_waiting` must be speculative work**, in the sense that skipping
+    /// it entirely has to be correct. The default implementation does exactly
+    /// that: a broker doing the fetch on this thread has no idle window, and
+    /// running the closure *before* the fetch would not be an overlap but a
+    /// serial addition to the very path this exists to shorten. It must also
+    /// not touch this broker, which is mid-request.
+    fn send_while(&self, fetch: &Fetch, while_waiting: &mut dyn FnMut()) -> FetchOutcome {
+        let _ = while_waiting;
+        self.send(fetch)
+    }
+
     /// The requests this broker has decided about, in the order it recorded
     /// them.
     ///
@@ -299,6 +319,17 @@ pub trait Broker: Send + Sync {
     /// Fetch a URL the agent named.
     fn fetch(&self, url: &Url, initiator: Initiator) -> FetchOutcome {
         self.send(&Fetch::get(url, initiator))
+    }
+
+    /// The same fetch, with speculative work run while it is in flight. See
+    /// [`Self::send_while`] for what may go in the closure.
+    fn fetch_while(
+        &self,
+        url: &Url,
+        initiator: Initiator,
+        while_waiting: &mut dyn FnMut(),
+    ) -> FetchOutcome {
+        self.send_while(&Fetch::get(url, initiator), while_waiting)
     }
 
     /// Fetch something a *document* asked for.

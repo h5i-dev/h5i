@@ -23,7 +23,18 @@ ua='User-Agent: h5i-boa-release-check'
 # Once the pin is gone, its job is done: boa arriving from crates.io is the
 # state this script was pushing toward, not something to fail about.
 if ! grep -q 'boa-dev/boa' "$here/crates/h5i-browser-light/Cargo.toml"; then
-  echo "boa is a plain crates.io dependency; the workaround this check guarded is gone."
+  echo "the icu clash this check guarded is gone: boa is a plain version requirement."
+  # There is a second, unrelated reason boa is not stock, and saying only the
+  # sentence above would leave a reader thinking it is. The workspace patches
+  # boa to a fork carrying `Script::bind_to_realm` (§B15.12a), which is a
+  # feature upstream does not have rather than a version that cannot resolve.
+  # No release can clear it and crates.io cannot answer the question, so this
+  # script has nothing to test: the exit condition is the pull request landing
+  # upstream, and it is named here so the pin is not mistaken for this one.
+  if grep -q 'h5i-dev/boa' "$here/Cargo.toml"; then
+    echo "note: the workspace still patches boa to the bind_to_realm fork; that pin"
+    echo "      goes away when the API lands upstream, not when a release ships."
+  fi
   exit 0
 fi
 
