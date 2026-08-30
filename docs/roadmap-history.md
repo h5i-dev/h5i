@@ -1513,7 +1513,12 @@ same host, self-contained local pages, peak summed RSS across the process tree:
 | chromium (full) | 644 ms / 799 MB | — |
 
 That is ~5x faster and ~15x lighter one-shot, ~10x lighter at rest, so the
-memory exit criterion is met in both the states it named. Three caveats travel
+memory exit criterion is met in both the states it named. **Superseded — see
+§B23.6.** Re-measured 2026-08-30 at ~3x faster and ~7-9x lighter, and *slower*
+than `headless_shell` on a script-driven page: this table predates the engine
+having a JavaScript engine at all, and h5i's own memory has roughly doubled
+since. The measurement was right when it was taken, which is the argument for
+dating one. Three caveats travel
 with it and belong in any repetition of it: cold start is included and
 dominates Chromium's time (fair for a one-shot agent invocation, not a
 steady-state throughput claim); the pages carry no JavaScript, so Chromium is
@@ -8853,6 +8858,70 @@ which is a different activity at a different rate — and 88.5% remains the ceil
 with every §B6 and §B20.15 boundary standing, minus whatever §B23.3 takes off it.
 
 Nothing was excluded to move a number; `tiers.list` is untouched.
+
+### B23.6 The Chromium comparison, re-measured — and two public claims corrected
+
+The benchmark table in §B13 predates this engine having a JavaScript engine, so
+it was re-run: same machine, medians of seven **interleaved** runs after a
+discarded warm-up, peak summed RSS across the process tree at 5 ms, and a third
+page **built by script** — the case the old table excluded on purpose and can no
+longer exclude. Both engines were checked to produce identical output on that
+page before anything was timed.
+
+| | small (1 KB) | docs (22 KB) | app (script-built) |
+| --- | --- | --- | --- |
+| h5i | **46 ms / 51.7 MB** | **59 ms / 65.6 MB** | 248 ms / **87.4 MB** |
+| `headless_shell` | 172 / 456.8 | 176 / 461.5 | **176 ms** / 464.4 |
+| chromium | 672 / 1150.7 | 758 / 1153.8 | 824 / 1150.6 |
+
+Three corrections, and the third is the one that mattered:
+
+* **"~5x faster" was too high.** 3.0-3.7x on pages without script. The site and
+  README now say ~3x.
+* **"~80% less peak memory" was too low.** 85.8-88.7%. Now ~86%, and it is the
+  figure to trust most: it is a property of the architecture — one process, no
+  renderer, no GPU process — rather than of a workload, and it holds on all
+  three pages.
+* **"No JavaScript. Pages that render only via script will come back empty" was
+  false**, and had been since Boa and the DOM prelude landed. It *understated*
+  the product. What replaces it is the honest shape: JavaScript runs, and it is
+  the slow half — on the script page this engine is **slower** than
+  `headless_shell`, because Boa interprets where V8 compiles. Isolated:
+  `--script` costs nothing on a page with no script (46 ms against 45), and
+  44 ms -> 248 ms on the app page.
+
+The claims lived in ten places across `README.md`, `docs/index.html`,
+`docs/features/index.html` and `docs/pitch/index.html`, which is its own lesson:
+a number repeated in ten hand-written pages goes stale in ten places at once.
+
+**One number left alone and flagged rather than edited.** The pitch deck says
+"300k+ web standards tests passed". That is §B13.2's 333,690, and §B13.3 and
+§B19.2 exist because roughly 70% of it is one behaviour — encoding a character
+into a URL — repeated once per codepoint. `tiers.list` was built so a claim
+would not be made that way. Core alone is ~93,500. Changing what the deck
+advertises is a product decision, not a measurement one, so it is named here and
+left to the owner.
+
+### B23.7 What the profiling found on the way
+
+Two hot paths, both measured against `main` rather than against intuition:
+
+* **`classList.add` cost 100 us** against 2 us for the `setAttribute` under it —
+  35 ms of an 88 ms component page, the largest single JS cost in the profile.
+  `_all()` tokenised with a regex into a `Set` and back out through a spread
+  (43 us for a two-word string), and the indexed proxy sat in front of every
+  internal `this._node` read inside every method. Hand-rolled tokenising plus
+  binding methods to the target: **25 us and 10 us**, page 91 ms -> 69 ms.
+* **`el.style.color` cost 33 us** against 1 us for `getAttribute`, because
+  `el.style` builds a fresh declaration per access and `_read()` re-split the
+  whole attribute per property read. Memoised on the declaration text:
+  **13 us**, and `getPropertyValue` 21 us -> 5 us.
+
+The second one is worth keeping for how it was nearly got wrong: the first fix
+cached on the `StyleDeclaration`, which is thrown away immediately, so it never
+hit — and the regression it was "fixing" did not exist, because the comparison
+was against `getAttribute` rather than against `main`. **Three times on this
+branch a single run said something that seven runs did not.**
 
 
 
