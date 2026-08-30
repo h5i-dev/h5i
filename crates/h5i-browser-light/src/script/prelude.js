@@ -101,6 +101,23 @@
 
   // ── nodes ────────────────────────────────────────────────────────────────
 
+  /// The three interfaces this file builds but WebIDL gives no constructor:
+  /// `Attr`, `MediaList`, `MediaQueryList`. They used to reach the global
+  /// through `brand()`, which threw `Illegal constructor` for a page; now that
+  /// they are real classes — so their prototypes carry their members, which is
+  /// the whole point — the throw has to come from the constructor instead.
+  /// `internal()` is the one door in.
+  let constructingInternally = false;
+  function internal(build) {
+    constructingInternally = true;
+    try { return build(); } finally { constructingInternally = false; }
+  }
+  function refuseExternal(name) {
+    if (!constructingInternally) {
+      throw new TypeError(`Illegal constructor: ${name} is not constructible`);
+    }
+  }
+
   const wrappers = new Map(); // id -> Node, so identity holds across lookups
 
   /// A live-enough `NodeList`/`HTMLCollection`.
@@ -178,6 +195,13 @@
     declare("HTMLFormControlsCollection", HTMLCollection, {});
     declare("HTMLOptionsCollection", HTMLCollection, {});
     declare("FileList", Array, { item });
+    // The two CSSOM lists. Both were real arrays and real objects already —
+    // `document.styleSheets[0]` and `sheet.cssRules[0]` have always worked —
+    // and both were *untyped*, so `sheet.cssRules instanceof CSSRuleList` was a
+    // ReferenceError over an object that was exactly that. Same shape as the
+    // node lists above, and the same fix.
+    declare("CSSRuleList", Array, { item });
+    declare("StyleSheetList", Array, { item });
   }
 
   function collection(nodes, label) {
@@ -279,10 +303,34 @@
   const connected = new Set();
   const comments = new Set();
   let upgrading = null;
+  let customizedCount = 0;
+
+  /// The definition governing an element, which the tag name alone cannot find.
+  ///
+  /// A **customized built-in** is an ordinary tag whose `is` attribute names
+  /// the definition — `<a is="fancy-link">` is an `HTMLAnchorElement` and a
+  /// `FancyLink` at once — so `is` is consulted first, and only when its
+  /// definition really extends this tag. An autonomous definition is matched by
+  /// tag, and one that extends something is *not*, or `<fancy-link>` written as
+  /// a bare tag would upgrade against a definition that never claimed it.
+  function definitionFor(id) {
+    const tag = api.tagName(id).toLowerCase();
+    // `customizedCount` guards a **host call on the element-construction hot
+    // path**. Reading `is` off every element built would be a real per-element
+    // cost paid by every page, and almost no page defines a customized
+    // built-in — so the read happens only once one exists.
+    if (customizedCount) {
+      const is = api.getAttr(id, "is");
+      const customized = is && definitions.get(String(is).toLowerCase());
+      if (customized && customized.extendsTag === tag) return customized;
+    }
+    const autonomous = definitions.get(tag);
+    return autonomous && !autonomous.extendsTag ? autonomous : undefined;
+  }
 
   function constructElement(id) {
     const tag = api.tagName(id).toLowerCase();
-    const definition = definitions.get(tag);
+    const definition = definitionFor(id);
     if (!definition) return new (TAG_CLASSES.get(tag) ?? Element)(id);
 
     const previousUpgrade = upgrading;
@@ -301,7 +349,7 @@
   }
 
   function isCustom(node) {
-    return node && node.nodeType === 1 && definitions.has(api.tagName(node._id).toLowerCase());
+    return !!node && node.nodeType === 1 && definitionFor(node._id) !== undefined;
   }
 
   /// Every custom element at or under `node`, in document order.
@@ -549,15 +597,31 @@
       if (definitions.has(key)) {
         throw new Error(`custom element \`${key}\` is already defined`);
       }
-      if (options && options.extends) {
-        api.unsupported("customElements.define({ extends })");
+      /// `{ extends: "a" }` — a **customized built-in**, which is a real
+      /// definition here rather than a refusal.
+      ///
+      /// The one case the spec singles out is extending a name that is itself a
+      /// valid custom element name: two definitions would then race for one
+      /// tag, and neither `is` nor the tag could say which won.
+      let extendsTag = null;
+      if (options && options.extends != null) {
+        extendsTag = String(options.extends).toLowerCase();
+        if (isValidCustomElementName(extendsTag)) {
+          throw new DOMException(
+            `\`${extendsTag}\` is a custom element name and cannot be extended`,
+            "NotSupportedError",
+          );
+        }
       }
-      definitions.set(key, { name: key, ctor });
+      definitions.set(key, { name: key, ctor, extendsTag });
+      if (extendsTag) customizedCount++;
 
       // Upgrade what is already on the page. Without this, a page that ships
       // its markup server-side and defines its components afterwards — which is
       // most of them — would define and then do nothing.
-      for (const id of api.queryAll(key, 0)) {
+      // A customized built-in is not found by its own name: it is on the page
+      // as the tag it extends, wearing `is`.
+      for (const id of api.queryAll(extendsTag ? `${extendsTag}[is="${key}"]` : key, 0)) {
         wrappers.delete(id);
         const node = wrap(id);
         // The observed attributes have their initial values delivered, as they
@@ -795,17 +859,93 @@
   // `class` is the famous one, but `rel` is a token list too, and so are
   // `sandbox` and `headers`. Parameterising the attribute is the difference
   // between one implementation and four.
+  /// Tokenised class strings, keyed on the attribute text they came from.
+  /// See `DOMTokenList._all`.
+  const tokenSets = new Map();
+
+  /// `/[ \t\n\f\r]/.test(name)` without the regex, for the same reason.
+  function hasAsciiWhitespace(text) {
+    for (let at = 0; at < text.length; at++) {
+      const code = text.charCodeAt(at);
+      if (code === 32 || code === 9 || code === 10 || code === 12 || code === 13) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   class DOMTokenList {
     constructor(node, attribute) { this._node = node; this._attr = attribute; }
+    /// The ordered token *set*: `class="a a b"` is two tokens, not three, and
+    /// `length`, iteration and indexing all see the deduplicated view. Only
+    /// `value` reports the raw attribute.
+    ///
+    /// **Hand-rolled and memoised, because this is the hot path of the whole
+    /// class API.** It was `raw.split(/\s+/).filter(Boolean)` into a `Set` and
+    /// back out through a spread: four intermediates and a regex, measured at
+    /// **43 us** against 2 us for the `getAttribute` underneath it — Boa is
+    /// slow at regex and at `Set`, and every `add`, `remove`, `contains`,
+    /// `toggle`, `length` and index read pays it. One pass over the string with
+    /// `charCodeAt` allocates one array and touches neither.
+    ///
+    /// Memoised on the attribute text, the way the style declaration is: the
+    /// same class string is tokenised once for the realm however many elements
+    /// carry it, which on a component page is most of them. **The array is
+    /// shared, so no caller may mutate it** — `add` copies, `remove` filters,
+    /// and everything else reads.
     _all() {
-      const raw = api.getAttr(this._node._id, this._attr) || "";
-      // An ordered *set*: `class="a a b"` is two tokens, not three, and
-      // `length`, iteration and indexing all see the deduplicated view. Only
-      // `value` reports the raw attribute.
-      return [...new Set(raw.split(/\s+/).filter(Boolean))];
+      const raw = api.getAttr(this._node._id, this._attr);
+      if (!raw) return [];
+      const known = tokenSets.get(raw);
+      if (known !== undefined) return known;
+      const out = [];
+      let start = -1;
+      for (let at = 0; at <= raw.length; at++) {
+        const code = at < raw.length ? raw.charCodeAt(at) : 32;
+        const space = code === 32 || code === 9 || code === 10
+          || code === 12 || code === 13;
+        if (!space) {
+          if (start < 0) start = at;
+          continue;
+        }
+        if (start >= 0) {
+          const token = raw.slice(start, at);
+          if (!out.includes(token)) out.push(token);
+          start = -1;
+        }
+      }
+      if (tokenSets.size > 512) tokenSets.clear();
+      tokenSets.set(raw, out);
+      return out;
     }
+    /// Through `setAttribute`, **not** `api.setAttr`.
+    ///
+    /// The raw host call skips everything `Element.setAttribute` does on the
+    /// way past: the mutation record and the custom element's
+    /// `attributeChangedCallback`. So `classList.add(...)` changed the class
+    /// and no MutationObserver saw it — which is a live defect for any
+    /// framework watching attributes, and it is what `Element-classlist`
+    /// detects by asking for "a mutation exactly when replace() returns true".
     _write(list) {
-      api.setAttr(this._node._id, this._attr, list.join(" "));
+      this._node.setAttribute(this._attr, list.join(" "));
+    }
+    /// The spec's "update steps", and **which callers run them is the whole
+    /// contract** — a first attempt made the write conditional on the set
+    /// having changed, which is wrong for three of the four mutators.
+    ///
+    /// `add` and `remove` run these *unconditionally*, so `class="a a a  b"`
+    /// with `add("a")` really does rewrite the attribute as the normalised
+    /// `"a b"` even though the set is unchanged. `replace` runs them on its
+    /// true path, which is what `Element-classlist` checks with a
+    /// MutationObserver — "a mutation exactly when replace() returns true" —
+    /// and the conditional version failed all 90 of those. Only `toggle`
+    /// declines, when `force` asks for the state the list is already in.
+    ///
+    /// The one thing the steps themselves skip: an element with no attribute
+    /// and an empty set keeps having none rather than gaining an empty one.
+    _update(list) {
+      if (list.length === 0 && api.getAttr(this._node._id, this._attr) === null) return;
+      this._write(list);
     }
     /// Every mutating method validates first, and all of them the same way.
     ///
@@ -815,29 +955,33 @@
     /// token that then read back as *two* — so a page that added one class
     /// could not remove it again.
     _check(names) {
-      for (const raw of names) {
-        const name = String(raw);
-        if (name === "") {
-          throw new DOMException("the token must not be empty", "SyntaxError");
-        }
-        if (/[ \t\n\f\r]/.test(name)) {
-          throw new DOMException(
-            `the token \`${name}\` must not contain whitespace`,
-            "InvalidCharacterError",
-          );
-        }
+      // **Both passes, in this order.** The spec throws SyntaxError if *any*
+      // token is empty before it looks at whitespace in any of them, so
+      // `replace(" ", "")` is a SyntaxError for the empty second argument, not
+      // an InvalidCharacterError for the first.
+      const tokens = names.map(String);
+      if (tokens.includes("")) {
+        throw new DOMException("the token must not be empty", "SyntaxError");
       }
-      return names.map(String);
+      const spaced = tokens.find(hasAsciiWhitespace);
+      if (spaced !== undefined) {
+        throw new DOMException(
+          `the token \`${spaced}\` must not contain whitespace`,
+          "InvalidCharacterError",
+        );
+      }
+      return tokens;
     }
     add(...names) {
       const wanted = this._check(names);
       const list = this._all();
-      for (const n of wanted) if (!list.includes(n)) list.push(n);
-      this._write(list);
+      const next = [...list];
+      for (const n of wanted) if (!next.includes(n)) next.push(n);
+      this._update(next);
     }
     remove(...names) {
       const unwanted = this._check(names);
-      this._write(this._all().filter((n) => !unwanted.includes(n)));
+      this._update(this._all().filter((n) => !unwanted.includes(n)));
     }
     /// Swap one token for another, keeping its position.
     ///
@@ -847,15 +991,19 @@
     replace(oldToken, newToken) {
       const [from, to] = this._check([oldToken, newToken]);
       const list = this._all();
-      const at = list.indexOf(from);
-      if (at === -1) return false;
-      // A no-op when the replacement is already there, rather than a duplicate.
-      if (list.includes(to)) list.splice(at, 1);
-      else list[at] = to;
-      this._write(list);
+      if (!list.includes(from)) return false;
+      // Swap in place, then drop duplicates — which is the spec's own order and
+      // handles the two cases a special case got wrong: replacing a token with
+      // *itself* left the list alone (it used to splice the token out), and
+      // replacing it with one already present keeps the earlier position.
+      this._update([...new Set(list.map((token) => (token === from ? to : token)))]);
       return true;
     }
-    contains(name) { return this._all().includes(name); }
+    // `String(name)`, because `classList.contains(null)` asks about the token
+    // "null" — DOMString conversion happens before the lookup, and comparing
+    // the raw value against a list of strings answered false for every
+    // non-string a page passed.
+    contains(name) { return this._all().includes(String(name)); }
     item(index) { return this._all()[index] ?? null; }
     // False, and deliberately. `supports` asks whether *this engine* acts on a
     // token — `rel="preload"`, `sandbox="allow-scripts"` — and this one acts on
@@ -873,7 +1021,7 @@
     }
     get length() { return this._all().length; }
     get value() { return api.getAttr(this._node._id, this._attr) || ""; }
-    set value(v) { api.setAttr(this._node._id, this._attr, String(v)); }
+    set value(v) { this._node.setAttribute(this._attr, String(v)); }
     forEach(fn, thisArg) { this._all().forEach(fn, thisArg); }
     keys() { return this._all().keys(); }
     values() { return this._all().values(); }
@@ -887,12 +1035,26 @@
     /// reporting picked it up as `DOMTokenList.0` and `DOMTokenList.-1`, an
     /// engine gap recorded under two names because nothing implemented either.
     static _indexed(target) {
+      // Methods and getters run against the **target**, never the proxy.
+      //
+      // `this` inside `add` reads `_node` and `_attr`, and when `this` is the
+      // proxy every one of those internal reads pays a trap — the same cost
+      // the note above `collection()` records for wrapping a NodeList, and the
+      // reason `contains` measured 17 us after its tokenising had already been
+      // made free. Binding once and caching keeps method identity stable, which
+      // pages compare.
+      const bound = new Map();
       return new Proxy(target, {
         get(list, key, receiver) {
+          void receiver;
           if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
             return list._all()[Number(key)];
           }
-          return Reflect.get(list, key, receiver);
+          const value = Reflect.get(list, key, list);
+          if (typeof value !== "function") return value;
+          let fn = bound.get(key);
+          if (fn === undefined) { fn = value.bind(list); bound.set(key, fn); }
+          return fn;
         },
         has(list, key) {
           if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
@@ -902,15 +1064,33 @@
         },
       });
     }
+    // The stringifier is `value` — the attribute's *raw* text, not the
+    // deduplicated join. A second `toString` further down returned the join and
+    // won by being later; it is gone, and this is the spec's answer.
     toString() { return this.value; }
+    get [Symbol.toStringTag]() { return "DOMTokenList"; }
+    /// The one mutator that can decline to update: `toggle(token, true)` on a
+    /// list that already has the token, and `toggle(token, false)` on one that
+    /// does not, both answer without touching the attribute.
     toggle(name, force) {
-      const has = this.contains(name);
-      const want = force === undefined ? !has : !!force;
-      if (want) this.add(name); else this.remove(name);
-      return want;
+      // `_check` first, and on **every** path: the spec validates the token
+      // before it looks at `force`, so `toggle("", false)` is a SyntaxError
+      // rather than a quiet `false`. The declining paths below never reach
+      // `add`/`remove`, which is where validation used to happen.
+      const [token] = this._check([name]);
+      // `force` is an *optional boolean*, so WebIDL converts it — any truthy
+      // value means true. Comparing `=== true` made `toggle(cls, list.length)`
+      // remove the class it was asked to keep.
+      const forced = force === undefined ? undefined : !!force;
+      if (this.contains(token)) {
+        if (forced === true) return true;
+        this.remove(token);
+        return false;
+      }
+      if (forced === false) return false;
+      this.add(token);
+      return true;
     }
-    get length() { return this._all().length; }
-    toString() { return this._all().join(" "); }
   }
 
   /// The base every event-dispatching thing extends, including code that has
@@ -967,6 +1147,20 @@
       // `Text` and `Comment` *are* constructible, and reach this with a real id
       // because their own constructors make a node first.
       if (typeof id !== "number" && upgrading === null) {
+        // `new MyElement()` on a **defined** element is legal and creates one:
+        // HTML says the constructor makes an element with the definition's own
+        // local name — the extended tag plus `is` for a customized built-in.
+        // Only an interface with no definition behind it is "not
+        // constructible", which is what the message below now means.
+        const named = new.target && customElements.getName(new.target);
+        const def = named ? definitions.get(named) : undefined;
+        if (def) {
+          const made = api.createElement(def.extendsTag ?? def.name);
+          if (def.extendsTag) api.setAttr(made, "is", def.name);
+          this._id = made;
+          wrappers.set(made, this);
+          return;
+        }
         throw new TypeError(
           "Illegal constructor: this interface is not constructible",
         );
@@ -984,23 +1178,11 @@
       while (top.parentNode) top = top.parentNode;
       return top;
     }
-    contains(other) {
-      for (let n = other; n; n = n.parentNode) {
-        if (n._id === this._id) return true;
-      }
-      return false;
-    }
-    compareDocumentPosition(other) {
-      if (!other || other._id === undefined) return 1; // DISCONNECTED
-      if (other._id === this._id) return 0;
-      if (this.contains(other)) return 20;  // CONTAINED_BY | FOLLOWING
-      if (other.contains(this)) return 10;  // CONTAINS | PRECEDING
-      const order = documentOrder();
-      const mine = order.indexOf(this._id);
-      const theirs = order.indexOf(other._id);
-      if (mine < 0 || theirs < 0) return 1; // DISCONNECTED
-      return theirs > mine ? 4 : 2;         // FOLLOWING : PRECEDING
-    }
+    // `contains` and `compareDocumentPosition` were each defined **twice** in
+    // this class, and the later definition won — so the pair that used to stand
+    // here was dead code the whole time. The surviving
+    // `compareDocumentPosition` is the spec's full bit field rather than this
+    // one's approximation, which is why nothing noticed.
 
     // Cached at wrap time. A node's kind is fixed when it is created, and this
     // is read constantly — every `nodeType === 1` filter, every tree walk, and
@@ -1254,9 +1436,14 @@
         }
         return fragment;
       }
+      // `is` is handed to `createElement` rather than copied with the other
+      // attributes below, and the order is the whole of it: the wrapper is
+      // built *during* creation and a customized built-in is chosen by `is` at
+      // that moment, so a clone that learned its `is` a few lines later was
+      // already a plain element and stayed one.
       const copy = this.nodeType === 3
         ? document.createTextNode(this.textContent)
-        : document.createElement(this.tagName);
+        : document.createElement(this.tagName, { is: api.getAttr(this._id, "is") });
       if (this.nodeType === 1) {
         // **Every attribute, not two of them.** This copied `class` and
         // `style` and nothing else, so a cloned element lost its `id`, its
@@ -1577,22 +1764,83 @@
   /// `createDocumentType` then reading name/publicId/systemId back — and the
   /// insertion path says no honestly rather than pretending.
   class DocumentTypeNode {
-    constructor(name, publicId, systemId) {
+    /// `owner` is the document `createDocumentType` was called on — null for
+    /// the page's own, which cannot be named here because `document` is built
+    /// further down this file.
+    constructor(name, publicId, systemId, owner) {
       this.name = name;
       this.publicId = publicId;
       this.systemId = systemId;
+      this._owner = owner ?? null;
     }
     get nodeType() { return 10; }
     get nodeName() { return this.name; }
-    get ownerDocument() { return document; }
+    get ownerDocument() { return this._owner ?? document; }
     get parentNode() { return null; }
     get childNodes() { return []; }
     get textContent() { return null; }
+    // `null`, not `undefined`, and the difference was 76 of this file's 79
+    // failures: DOM gives every node a `nodeValue`, and a doctype's is null.
+    // Absent, it read as `undefined`, which is the one value an equality check
+    // against null does not forgive.
+    get nodeValue() { return null; }
     // The namespace trio answers null for a doctype in every branch, which is
     // the spec's own table.
     lookupNamespaceURI() { return null; }
     lookupPrefix() { return null; }
     isDefaultNamespace(ns) { return ns === null || ns === ""; }
+  }
+
+  /// An attribute as a node, which is what `attributes` and `createAttribute`
+  /// hand back.
+  ///
+  /// `attributes` used to return plain `{name, value}` literals, so everything
+  /// the interface adds was missing: `localName`, `prefix`, `namespaceURI`,
+  /// `ownerElement`, and the `nodeType` of 2 that tells code it is holding a
+  /// node at all. `dom/nodes/case.html` reads `attributes[0].prefix` on its
+  /// first line and could get no further.
+  ///
+  /// Writing `value` writes through to the element, as a live attribute node
+  /// does — a detached one (from `createAttribute`) keeps its own.
+  class Attr {
+    constructor(name, value, owner, namespace, prefix) {
+      refuseExternal("Attr");
+      this._name = String(name);
+      this._value = value === undefined || value === null ? "" : String(value);
+      this._owner = owner ?? null;
+      this._ns = namespace ?? null;
+      this._prefix = prefix ?? null;
+    }
+    get nodeType() { return 2; }
+    get name() { return this._name; }
+    get nodeName() { return this._name; }
+    /// **A null prefix means the whole name is the local name**, colon or not:
+    /// `createAttribute("a:b")` takes a *local* name, so its `localName` is
+    /// `"a:b"`. Splitting on the colon regardless reported `"b"` with a null
+    /// prefix, which is a pair that cannot both be true.
+    get localName() {
+      if (this._prefix === null) return this._name;
+      return this._name.slice(this._name.indexOf(":") + 1);
+    }
+    get prefix() { return this._prefix; }
+    get namespaceURI() { return this._ns; }
+    get ownerElement() { return this._owner; }
+    get ownerDocument() { return document; }
+    // Legacy, and always true in a modern DOM: an attribute that exists was
+    // specified.
+    get specified() { return true; }
+    get value() {
+      if (this._owner) return api.getAttr(this._owner._id, this._name) ?? this._value;
+      return this._value;
+    }
+    set value(v) {
+      this._value = String(v);
+      if (this._owner) this._owner.setAttribute(this._name, this._value);
+    }
+    get nodeValue() { return this.value; }
+    set nodeValue(v) { this.value = v; }
+    get textContent() { return this.value; }
+    set textContent(v) { this.value = v; }
   }
 
   /// A processing instruction, which this engine's parser never produces —
@@ -1885,10 +2133,9 @@
     // things code does with it: iterate it, and look a name up.
     get attributes() {
       const node = this;
-      const list = api.attrNames(this._id).map((name) => ({
-        name,
-        value: api.getAttr(node._id, name),
-      }));
+      const list = api.attrNames(this._id).map((name) => internal(
+        () => new Attr(name, api.getAttr(node._id, name), node),
+      ));
       list.getNamedItem = (name) =>
         list.find((a) => a.name === String(name).toLowerCase()) || null;
       return list;
@@ -1900,6 +2147,33 @@
     // never an animation in progress to report. An empty list is what a browser
     // returns in that state, and it is the truth rather than a stub.
     getAnimations() { return []; }
+
+    /// CSSOM-View's "would a person see this", which is the question a page
+    /// asks before deciding an element is worth interacting with — and the one
+    /// an agent asks for the same reason.
+    ///
+    /// No boxes means not rendered, which covers `display: none` here or on any
+    /// ancestor without walking for it. `visibility` and `opacity` are opt-in
+    /// and *do* need the walk, because both inherit their effect down the tree:
+    /// a visible child of a `visibility: hidden` parent is still not shown.
+    checkVisibility(options) {
+      const wanted = options || {};
+      if (!this.isConnected) return false;
+      // No box means not rendered — except for `display: contents`, which the
+      // algorithm carves out by name: the element generates no box of its own
+      // and its children are still shown through it.
+      if (this.getClientRects().length === 0
+        && getComputedStyle(this).display !== "contents") return false;
+      const checkVisibility = wanted.visibilityProperty ?? wanted.checkVisibilityCSS;
+      const checkOpacity = wanted.opacityProperty ?? wanted.checkOpacity;
+      if (!checkVisibility && !checkOpacity) return true;
+      for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
+        const style = getComputedStyle(node);
+        if (checkVisibility && style.visibility !== "visible") return false;
+        if (checkOpacity && Number(style.opacity) === 0) return false;
+      }
+      return true;
+    }
 
     // An iframe's document, which this engine does not load — see the note the
     // snapshot carries when a page has frames. Null is what a browser returns
@@ -2626,6 +2900,21 @@
   /// a plain string on `<img>`, `<script>`, `<video>` and `<audio>`, so those
   /// four reported the raw attribute where a browser reports `"anonymous"`,
   /// and `null` where a browser reports `null` only by accident.
+  /// `preload` and `loading`, shared because more than one element has them
+  /// and the table already keeps `CROSS_ORIGIN` and `REFERRER_POLICY` this way.
+  ///
+  /// `preload`'s missing and invalid values are implementation-defined; the
+  /// spec's only requirement is that the answer be one of the keywords, so
+  /// "auto" is a choice rather than a transcription, and `""` maps to it
+  /// because that is the state an empty attribute names.
+  const PRELOAD = ["preload", "preload", "enumerated", {
+    keywords: ["none", "metadata", "auto"], missing: "auto", invalid: "auto",
+    aliases: { "": "auto" },
+  }];
+  const LOADING = ["loading", "loading", "enumerated", {
+    keywords: ["lazy", "eager"], missing: "eager", invalid: "eager",
+  }];
+
   const CROSS_ORIGIN = ["crossOrigin", "crossorigin", "enumerated", {
     keywords: ["anonymous", "use-credentials"],
     missing: null,
@@ -2708,6 +2997,13 @@
           const [lo, hi] = options.clamp;
           return Math.min(Math.max(value, lo), hi);
         }
+        // No range check here: `parseInteger` already answers `null` for
+        // anything outside the 32-bit range, so a guard at this point is
+        // unreachable. One stood here claiming that a *clamped* attribute
+        // pinned to its ceiling instead — it did not, and does not: because the
+        // rejection happens in the parse, `colgroup.span = "2147483648"` reads
+        // 1 rather than 1000. That is a real bug, older than this comment, and
+        // it lives in `parseInteger` rather than here.
         return value;
       },
       // A reflected `double`, for `<meter>` and `<progress>`. Not an integer
@@ -3001,45 +3297,52 @@
   // rather than inferred from the missing value.
   const EMPTY_IS_FALSE = { "": "false" };
   const EMPTY_IS_NULL = { "": null };
+
+  /// The three option objects the ARIA table repeats. Named once, because
+  /// fifteen copies of the same literal is fifteen copies in the parse budget
+  /// and one place to get the table wrong instead of fifteen.
+  const ARIA_FALSE = { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE };
+  const ARIA_NULL = { missing: null, invalid: null, aliases: EMPTY_IS_NULL };
+  const ARIA_FALSE_TRUE = { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE };
   for (const [name, keywords, options] of [
     ["ariaAtomic", ["true", "false"],
       { missing: null, invalid: "false", aliases: EMPTY_IS_FALSE }],
     ["ariaAutoComplete", ["inline", "list", "both", "none"],
       { missing: "none", invalid: "none" }],
     ["ariaBusy", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaChecked", ["true", "false", "mixed"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaCurrent", ["page", "step", "location", "date", "time", "true", "false"],
-      { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE_TRUE],
     ["ariaDisabled", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaExpanded", ["true", "false"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaHasPopup", ["true", "false", "menu", "dialog", "listbox", "tree", "grid"],
       { missing: null, invalid: "false" }],
     ["ariaHidden", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaInvalid", ["true", "false", "spelling", "grammar"],
-      { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE_TRUE],
     ["ariaLive", ["polite", "assertive", "off"],
       { missing: "off", invalid: "off" }],
     ["ariaModal", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaMultiLine", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaMultiSelectable", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaOrientation", ["horizontal", "vertical"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaPressed", ["true", "false", "mixed"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaReadOnly", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaRequired", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaSelected", ["true", "false"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaSort", ["ascending", "descending", "other", "none"],
       { missing: "none", invalid: "none" }],
   ]) {
@@ -3061,17 +3364,29 @@
   // type, disabled, value, checked, selected — are deliberately absent: those
   // carry behaviour beyond reflection, and `defaultChecked`, `defaultSelected`
   // and `defaultValue` are the spec's names for the reflecting half.
+  /// Every name `reflect`'s type switch answers to.
+  ///
+  /// **Completeness is load-bearing**, not tidiness: a type missing from this
+  /// set is read as a *content attribute name* by the shorthand below, so
+  /// `["link", "string", NULL_IS_EMPTY]` silently reflected an attribute called
+  /// "string" and handed the options object in as the type. `string` was left
+  /// out of the first version and took 76 subtests of `reflection-sections`
+  /// with it. Add a type here in the same commit that adds it there.
+  const REFLECT_TYPES = new Set([
+    "string", "bool", "ulong", "long", "double", "url", "enumerated", "tokenlist",
+  ]);
+
   const REFLECTIONS = {
-    html: ["HTMLHtmlElement", [["version", "version"]]],
+    html: ["HTMLHtmlElement", ["version"]],
     head: ["HTMLHeadElement", []],
     title: ["HTMLTitleElement", []],
-    base: ["HTMLBaseElement", [["target", "target"]]],
+    base: ["HTMLBaseElement", ["target"]],
     link: ["HTMLLinkElement", [
-      ["rel", "rel"], ["media", "media"], ["hreflang", "hreflang"],
-      ["integrity", "integrity"], ["imageSrcset", "imagesrcset"],
-      ["imageSizes", "imagesizes"], ["charset", "charset"], ["rev", "rev"],
-      ["target", "target"],
-      ["as", "as", "enumerated", { keywords: [
+      "rel", "media", "hreflang",
+      "integrity", ["imageSrcset", "imagesrcset"],
+      ["imageSizes", "imagesizes"], "charset", "rev",
+      "target",
+      ["as", "enumerated", { keywords: [
         "fetch", "audio", "audioworklet", "document", "embed", "font", "frame",
         "iframe", "image", "json", "manifest", "object", "paintworklet",
         "report", "script", "serviceworker", "sharedworker", "style", "track",
@@ -3080,102 +3395,110 @@
       ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     meta: ["HTMLMetaElement", [
-      ["httpEquiv", "http-equiv"], ["media", "media"], ["scheme", "scheme"],
+      ["httpEquiv", "http-equiv"], "media", "scheme",
     ]],
-    style: ["HTMLStyleElement", [["media", "media"]]],
+    style: ["HTMLStyleElement", ["media"]],
     body: ["HTMLBodyElement", [
-      ["link", "link", "string", NULL_IS_EMPTY],
+      ["link", "string", NULL_IS_EMPTY],
       ["vLink", "vlink", "string", NULL_IS_EMPTY],
       ["aLink", "alink", "string", NULL_IS_EMPTY],
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
-      ["background", "background"],
-      ["text", "text", "string", NULL_IS_EMPTY],
+      "background",
+      ["text", "string", NULL_IS_EMPTY],
     ]],
     a: ["HTMLAnchorElement", [
-      ["target", "target"], ["download", "download"], ["ping", "ping"],
-      ["rel", "rel"], ["hreflang", "hreflang"], ["charset", "charset"],
-      ["rev", "rev"], ["shape", "shape"], ["coords", "coords"],
+      "target", "download", "ping",
+      "rel", "hreflang", "charset",
+      "rev", "shape", "coords",
       ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     area: ["HTMLAreaElement", [
-      ["coords", "coords"], ["download", "download"], ["ping", "ping"],
-      ["rel", "rel"], ["shape", "shape"], ["target", "target"],
+      "coords", "download", "ping",
+      "rel", "shape", "target",
       ["noHref", "nohref", "bool"], ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
+      "alt", "hreflang", "type",
     ]],
     img: ["HTMLImageElement", [
-      ["srcset", "srcset"], ["sizes", "sizes"], ["useMap", "usemap"],
-      ["isMap", "ismap", "bool"], ["align", "align"], ["border", "border"],
-      ["lowsrc", "lowsrc", "url"], ["longDesc", "longdesc", "url"],
-      ["width", "width", "ulong"], ["height", "height", "ulong"],
-      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      "srcset", "sizes", ["useMap", "usemap"],
+      ["isMap", "ismap", "bool"], "align", "border",
+      ["lowsrc", "url"], ["longDesc", "longdesc", "url"],
+      ["width", "ulong"], ["height", "ulong"],
+      ["hspace", "ulong"], ["vspace", "ulong"],
       ["decoding", "decoding", "enumerated",
         { keywords: ["sync", "async", "auto"], missing: "auto", invalid: "auto" }],
-      ["loading", "loading", "enumerated",
-        { keywords: ["lazy", "eager"], missing: "eager", invalid: "eager" }],
+      LOADING,
       CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     embed: ["HTMLEmbedElement", [
-      ["width", "width"], ["height", "height"], ["align", "align"],
+      "width", "height", "align",
+      "type", "name",
     ]],
     object: ["HTMLObjectElement", [
-      ["data", "data", "url"], ["useMap", "usemap"], ["align", "align"],
-      ["archive", "archive"], ["code", "code"], ["declare", "declare", "bool"],
-      ["standby", "standby"], ["codeBase", "codebase", "url"],
-      ["codeType", "codetype"], ["border", "border"],
-      ["width", "width"], ["height", "height"],
-      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["data", "url"], ["useMap", "usemap"], "align",
+      "type", "name",
+      "archive", "code", ["declare", "bool"],
+      "standby", ["codeBase", "codebase", "url"],
+      ["codeType", "codetype"], "border",
+      "width", "height",
+      ["hspace", "ulong"], ["vspace", "ulong"],
     ]],
-    param: ["HTMLParamElement", [["valueType", "valuetype"]]],
+    param: ["HTMLParamElement", [
+      ["valueType", "valuetype"], "name", "value", "type",
+    ]],
     video: ["HTMLVideoElement", [
-      ["poster", "poster", "url"], ["preload", "preload"],
-      ["autoplay", "autoplay", "bool"], ["loop", "loop", "bool"],
-      ["controls", "controls", "bool"], ["defaultMuted", "muted", "bool"],
+      ["poster", "url"], PRELOAD,
+      LOADING,
+      ["autoplay", "bool"], ["loop", "bool"],
+      ["controls", "bool"], ["defaultMuted", "muted", "bool"],
       CROSS_ORIGIN,
       ["playsInline", "playsinline", "bool"],
-      ["width", "width", "ulong"], ["height", "height", "ulong"],
+      ["width", "ulong"], ["height", "ulong"],
     ]],
     audio: ["HTMLAudioElement", [
-      ["preload", "preload"], ["autoplay", "autoplay", "bool"],
-      ["loop", "loop", "bool"], ["controls", "controls", "bool"],
+      PRELOAD,
+      LOADING,
+      ["autoplay", "bool"],
+      ["loop", "bool"], ["controls", "bool"],
       ["defaultMuted", "muted", "bool"], CROSS_ORIGIN,
     ]],
     source: ["HTMLSourceElement", [
-      ["srcset", "srcset"], ["sizes", "sizes"], ["media", "media"],
-      ["width", "width", "ulong"], ["height", "height", "ulong"],
+      "type",
+      "srcset", "sizes", "media",
+      ["width", "ulong"], ["height", "ulong"],
     ]],
     track: ["HTMLTrackElement", [
-      ["srclang", "srclang"], ["label", "label"], ["default", "default", "bool"],
-      ["kind", "kind", "enumerated", {
+      "srclang", "label", ["default", "bool"],
+      ["kind", "enumerated", {
         keywords: ["subtitles", "captions", "descriptions", "chapters", "metadata"],
         missing: "subtitles", invalid: "metadata" }],
     ]],
     map: ["HTMLMapElement", []],
     form: ["HTMLFormElement", [
       ["acceptCharset", "accept-charset"],
-      ["action", "action", "url", DOCUMENT_URL_WHEN_EMPTY],
-      ["autocomplete", "autocomplete"],
-      ["enctype", "enctype", "enumerated", ENCTYPE],
+      ["action", "url", DOCUMENT_URL_WHEN_EMPTY],
+      "autocomplete",
+      ["enctype", "enumerated", ENCTYPE],
       ["encoding", "enctype", "enumerated", ENCTYPE],
-      ["noValidate", "novalidate", "bool"], ["target", "target"], ["rel", "rel"],
+      ["noValidate", "novalidate", "bool"], "target", "rel",
     ]],
     label: ["HTMLLabelElement", [["htmlFor", "for"]]],
     input: ["HTMLInputElement", [
-      ["accept", "accept"], ["autocomplete", "autocomplete"],
+      "accept", "autocomplete",
       ["defaultChecked", "checked", "bool"], ["dirName", "dirname"],
       ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
       ["formEnctype", "formenctype", "enumerated", FORM_ENCTYPE],
       ["formMethod", "formmethod", "enumerated", FORM_METHOD],
       ["formTarget", "formtarget"],
       ["formNoValidate", "formnovalidate", "bool"],
-      ["max", "max"], ["min", "min"], ["pattern", "pattern"],
-      ["placeholder", "placeholder"], ["step", "step"], ["useMap", "usemap"],
-      ["align", "align"], ["defaultValue", "value"],
-      ["multiple", "multiple", "bool"], ["required", "required", "bool"],
+      "max", "min", "pattern",
+      "placeholder", "step", ["useMap", "usemap"],
+      "align", ["defaultValue", "value"],
+      ["multiple", "bool"], ["required", "bool"],
       ["readOnly", "readonly", "bool"],
       ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
       ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
-      ["size", "size", "ulong", { default: 20, positive: true }],
-      ["width", "width", "ulong"], ["height", "height", "ulong"],
+      ["size", "ulong", { default: 20, positive: true }],
+      ["width", "ulong"], ["height", "ulong"],
     ]],
     button: ["HTMLButtonElement", [
       ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
@@ -3185,166 +3508,165 @@
       ["formNoValidate", "formnovalidate", "bool"],
     ]],
     select: ["HTMLSelectElement", [
-      ["autocomplete", "autocomplete"], ["multiple", "multiple", "bool"],
-      ["required", "required", "bool"], ["size", "size", "ulong"],
+      "autocomplete", ["multiple", "bool"],
+      ["required", "bool"], ["size", "ulong"],
     ]],
-    optgroup: ["HTMLOptGroupElement", [["label", "label"]]],
+    optgroup: ["HTMLOptGroupElement", ["label"]],
     option: ["HTMLOptionElement", [
-      ["label", "label"], ["defaultSelected", "selected", "bool"],
+      "label", ["defaultSelected", "selected", "bool"],
     ]],
     textarea: ["HTMLTextAreaElement", [
-      ["autocomplete", "autocomplete"], ["dirName", "dirname"],
-      ["placeholder", "placeholder"], ["wrap", "wrap"],
-      ["required", "required", "bool"], ["readOnly", "readonly", "bool"],
+      "autocomplete", ["dirName", "dirname"],
+      "placeholder", "wrap",
+      ["required", "bool"], ["readOnly", "readonly", "bool"],
       ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
       ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
-      ["cols", "cols", "ulong", { default: 20 }],
-      ["rows", "rows", "ulong", { default: 2 }],
+      ["cols", "ulong", { default: 20 }],
+      ["rows", "ulong", { default: 2 }],
     ]],
     output: ["HTMLOutputElement", [["htmlFor", "for"]]],
     fieldset: ["HTMLFieldSetElement", []],
-    legend: ["HTMLLegendElement", [["align", "align"]]],
+    legend: ["HTMLLegendElement", ["align"]],
     table: ["HTMLTableElement", [
-      ["align", "align"], ["border", "border"], ["frame", "frame"],
-      ["rules", "rules"], ["summary", "summary"], ["width", "width"],
+      "align", "border", "frame",
+      "rules", "summary", "width",
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
       ["cellPadding", "cellpadding", "string", NULL_IS_EMPTY],
       ["cellSpacing", "cellspacing", "string", NULL_IS_EMPTY],
     ]],
-    caption: ["HTMLTableCaptionElement", [["align", "align"]]],
+    caption: ["HTMLTableCaptionElement", ["align"]],
     col: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], ["align", "align"],
+      ["span", "ulong", { default: 1, clamp: [1, 1000] }], "align",
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
-      ["width", "width"],
+      "width",
     ]],
     tr: ["HTMLTableRowElement", [
-      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      "align", ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     td: ["HTMLTableCellElement", [
       ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
       ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
-      ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
-      ["align", "align"], ["axis", "axis"], ["height", "height"],
-      ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
+      "headers", "abbr", "scope",
+      "align", "axis", "height",
+      "width", ["ch", "char"], ["chOff", "charoff"],
       ["noWrap", "nowrap", "bool"], ["vAlign", "valign"],
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     ol: ["HTMLOListElement", [
-      ["reversed", "reversed", "bool"], ["compact", "compact", "bool"],
-      ["start", "start", "long", { default: 1 }],
+      ["reversed", "bool"], ["compact", "bool"],
+      ["start", "long", { default: 1 }],
     ]],
-    ul: ["HTMLUListElement", [["compact", "compact", "bool"]]],
-    li: ["HTMLLIElement", [["value", "value", "long"]]],
-    dl: ["HTMLDListElement", [["compact", "compact", "bool"]]],
-    blockquote: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
-    ins: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
+    ul: ["HTMLUListElement", [["compact", "bool"]]],
+    li: ["HTMLLIElement", [["value", "long"]]],
+    dl: ["HTMLDListElement", [["compact", "bool"]]],
+    blockquote: ["HTMLQuoteElement", [["cite", "url"]]],
+    ins: ["HTMLModElement", [["cite", "url"], ["dateTime", "datetime"]]],
     script: ["HTMLScriptElement", [
-      ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
-      ["defer", "defer", "bool"], ["integrity", "integrity"],
-      ["charset", "charset"], ["event", "event"], ["htmlFor", "for"],
+      ["noModule", "nomodule", "bool"], ["async", "bool"],
+      ["defer", "bool"], "integrity",
+      "charset", "event", ["htmlFor", "for"],
       CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     marquee: ["HTMLMarqueeElement", [
-      ["behavior", "behavior"], ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
-      ["direction", "direction"], ["height", "height"], ["width", "width"],
-      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      "behavior", ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
+      "direction", "height", "width",
+      ["hspace", "ulong"], ["vspace", "ulong"],
       ["trueSpeed", "truespeed", "bool"],
       ["scrollAmount", "scrollamount", "ulong", { default: 6 }],
       ["scrollDelay", "scrolldelay", "ulong", { default: 85 }],
-      ["loop", "loop", "long", { default: -1 }],
+      ["loop", "long", { default: -1 }],
     ]],
     applet: ["HTMLAppletElement", [
-      ["align", "align"], ["archive", "archive"], ["code", "code"],
-      ["codeBase", "codebase", "url"], ["height", "height"],
-      ["object", "object"], ["width", "width"],
-      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      "align", "archive", "code",
+      ["codeBase", "codebase", "url"], "height",
+      "object", "width",
+      ["hspace", "ulong"], ["vspace", "ulong"],
     ]],
     frame: ["HTMLFrameElement", [
-      ["scrolling", "scrolling"], ["frameBorder", "frameborder"],
+      "scrolling", ["frameBorder", "frameborder"],
       ["longDesc", "longdesc", "url"], ["noResize", "noresize", "bool"],
       ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
     ]],
-    frameset: ["HTMLFrameSetElement", [["cols", "cols"], ["rows", "rows"]]],
+    frameset: ["HTMLFrameSetElement", ["cols", "rows"]],
     font: ["HTMLFontElement", [
-      ["color", "color"], ["face", "face"], ["size", "size"],
+      "color", "face", "size",
     ]],
-    dir: ["HTMLDirectoryElement", [["compact", "compact", "bool"]]],
+    dir: ["HTMLDirectoryElement", [["compact", "bool"]]],
     hr: ["HTMLHRElement", [
-      ["align", "align"], ["color", "color"], ["size", "size"],
-      ["width", "width"], ["noShade", "noshade", "bool"],
+      "align", "color", "size",
+      "width", ["noShade", "noshade", "bool"],
     ]],
-    pre: ["HTMLPreElement", [["width", "width", "long"]]],
-    details: ["HTMLDetailsElement", [["open", "open", "bool"]]],
-    dialog: ["HTMLDialogElement", [["open", "open", "bool"]]],
+    pre: ["HTMLPreElement", [["width", "long"]]],
+    details: ["HTMLDetailsElement", [["open", "bool"]]],
+    dialog: ["HTMLDialogElement", [["open", "bool"]]],
     slot: ["HTMLSlotElement", []],
     canvas: ["HTMLCanvasElement", [
-      ["width", "width", "ulong", { default: 300 }],
-      ["height", "height", "ulong", { default: 150 }],
+      ["width", "ulong", { default: 300 }],
+      ["height", "ulong", { default: 150 }],
     ]],
     time: ["HTMLTimeElement", [["dateTime", "datetime"]]],
     data: ["HTMLDataElement", []],
-    div: ["HTMLDivElement", [["align", "align"]]],
-    h1: ["HTMLHeadingElement", [["align", "align"]]],
+    div: ["HTMLDivElement", ["align"]],
+    h1: ["HTMLHeadingElement", ["align"]],
     // Interfaces the table simply did not have. Each is reflected in full by
     // `html/dom/reflection-*.html`, so a missing entry is not one attribute
     // missing — it is every attribute of that element failing at once.
     meter: ["HTMLMeterElement", [
-      ["value", "value", "double"], ["min", "min", "double"],
-      ["max", "max", "double", { default: 1 }],
-      ["low", "low", "double"], ["high", "high", "double"],
-      ["optimum", "optimum", "double"],
+      ["value", "double"], ["min", "double"],
+      ["max", "double", { default: 1 }],
+      ["low", "double"], ["high", "double"],
+      ["optimum", "double"],
     ]],
     progress: ["HTMLProgressElement", [
-      ["max", "max", "double", { default: 1 }],
+      ["max", "double", { default: 1 }],
     ]],
     // `<iframe>` is not *loaded* here (§B6 refuses a second browsing context),
     // and its IDL reflection is a different question: an attribute that
     // reflects is testable and useful whether or not a document ever arrives
     // in the frame.
     iframe: ["HTMLIFrameElement", [
-      ["src", "src", "url"], ["srcdoc", "srcdoc"], ["name", "name"],
-      ["allow", "allow"], ["width", "width"], ["height", "height"],
-      ["align", "align"], ["scrolling", "scrolling"],
+      ["src", "url"], "srcdoc", "name",
+      "allow", "width", "height",
+      "align", "scrolling",
       ["frameBorder", "frameborder"], ["longDesc", "longdesc", "url"],
       ["marginHeight", "marginheight"], ["marginWidth", "marginwidth"],
       ["allowFullscreen", "allowfullscreen", "bool"],
-      ["loading", "loading", "enumerated",
-        { keywords: ["lazy", "eager"], missing: "eager", invalid: "eager" }],
+      LOADING,
       ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
-    del: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
-    q: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
+    del: ["HTMLModElement", [["cite", "url"], ["dateTime", "datetime"]]],
+    q: ["HTMLQuoteElement", [["cite", "url"]]],
     th: ["HTMLTableCellElement", [
       ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
       ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
-      ["headers", "headers"], ["abbr", "abbr"], ["scope", "scope"],
-      ["align", "align"], ["axis", "axis"], ["height", "height"],
-      ["width", "width"], ["ch", "char"], ["chOff", "charoff"],
+      "headers", "abbr", "scope",
+      "align", "axis", "height",
+      "width", ["ch", "char"], ["chOff", "charoff"],
       ["noWrap", "nowrap", "bool"], ["vAlign", "valign"],
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     thead: ["HTMLTableSectionElement", [
-      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      "align", ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"],
     ]],
     tfoot: ["HTMLTableSectionElement", [
-      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      "align", ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"],
     ]],
     colgroup: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], ["align", "align"],
+      ["span", "ulong", { default: 1, clamp: [1, 1000] }], "align",
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
-      ["width", "width"],
+      "width",
     ]],
     tbody: ["HTMLTableSectionElement", [
-      ["align", "align"], ["ch", "char"], ["chOff", "charoff"],
+      "align", ["ch", "char"], ["chOff", "charoff"],
       ["vAlign", "valign"],
     ]],
-    p: ["HTMLParagraphElement", [["align", "align"]]],
+    p: ["HTMLParagraphElement", ["align"]],
     span: ["HTMLSpanElement", []],
-    br: ["HTMLBRElement", [["clear", "clear"]]],
-    menu: ["HTMLMenuElement", [["compact", "compact", "bool"]]],
+    br: ["HTMLBRElement", ["clear"]],
+    menu: ["HTMLMenuElement", [["compact", "bool"]]],
   };
 
   // Tags that share one interface with another tag, rather than repeating it.
@@ -3372,7 +3694,21 @@
       // single interface holds.
       const Interface =
         interfaces[name] ?? { [name]: class extends Element {} }[name];
-      for (const [idl, content, type, options] of attributes) {
+      for (const entry of attributes) {
+        // A bare string is the common case and now says so: an IDL name that is
+        // already its own content attribute name. 139 of this table's entries
+        // were `["foo", "foo"]`, which is 1.3 KiB of the eagerly parsed prelude
+        // spent writing each name twice — and the budget that guards that
+        // parse is the reason it is worth spelling once.
+        let [idl, content, type, options] =
+          typeof entry === "string" ? [entry, entry] : entry;
+        // `["foo", "bool"]` — a *type* in the content slot means the same
+        // thing: the IDL name is its own content attribute name. No HTML
+        // attribute is named after a reflection type, so the two slots cannot
+        // be confused, and 55 more entries stop writing their name twice.
+        if (REFLECT_TYPES.has(content)) {
+          options = type; type = content; content = idl;
+        }
         reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
       }
       // `Object.prototype.toString` on a `<p>` says `[object
@@ -5725,8 +6061,43 @@
   /// Same arrangement for `:modal`: `showModal` stamps it, `close` lifts it.
   const MODAL_OPEN_CLASS = "__h5i_modal_open__";
 
+  /// `:heading` and `:heading(n)`, rewritten to the tags they mean.
+  ///
+  /// Selectors 4 adds them and Stylo 0.19 rejects both, so every use was a
+  /// SyntaxError — 277 subtests across `css/selectors/heading` and the
+  /// `headingoffset` files, every one of which reported the selector as
+  /// invalid rather than as not matching. The same textual-rewrite road
+  /// `:popover-open` and `:modal` already take, and cheaper than either
+  /// because there is no state to stamp: `:heading` *is* h1 through h6.
+  ///
+  /// A level outside 1-6 selects nothing — `:heading(7)` and `:heading(0)`
+  /// are well-formed and match no element — so they become `:not(*)` rather
+  /// than an error. `hgroup` and `role="heading"` are deliberately not
+  /// included; the suite asserts both do **not** match.
+  const HEADING_TAGS = ":is(h1,h2,h3,h4,h5,h6)";
+
+  /// `null` when the argument is not a plain list of integers.
+  ///
+  /// Selectors 4 allows `<An+B>#`, so `:heading(2n+1)` is well-formed and this
+  /// does not implement it. Rewriting it to `:not(*)` would answer "matches
+  /// nothing", which is a **plausible wrong answer** — the caller cannot tell
+  /// it from a selector that genuinely matched nothing. Returning null leaves
+  /// the selector untouched, so the parser rejects it and the page gets the
+  /// SyntaxError that says this engine does not know the form.
+  function headingLevels(argument) {
+    const parts = String(argument).split(",").map((one) => one.trim());
+    if (!parts.every((one) => /^[+-]?\d+$/.test(one))) return null;
+    const levels = parts.map(Number)
+      .filter((level) => level >= 1 && level <= 6);
+    // An in-range-free but well-formed list — `:heading(7)` — matches nothing,
+    // and that *is* the right answer for it.
+    return levels.length ? `:is(${levels.map((n) => `h${n}`).join(",")})` : ":not(*)";
+  }
+
   function checkSelector(selector) {
     const text = String(selector)
+      .replace(/:heading\(([^)]*)\)/gi, (whole, argument) => headingLevels(argument) ?? whole)
+      .replace(/:heading\b/gi, HEADING_TAGS)
       .replace(/:popover-open\b/g, "." + POPOVER_OPEN_CLASS)
       .replace(/:modal\b/g, "." + MODAL_OPEN_CLASS);
     if (!api.validSelector(text)) {
@@ -5780,6 +6151,43 @@
     return name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
   }
 
+  /// One declaration's **serialised** value, memoised on what it was given.
+  ///
+  /// CSSOM defines `el.style.backgroundPosition` as the serialisation of the
+  /// specified value, not the text the author typed: `.5%` serialises as
+  /// `0.5%`, `-0` as `0`, and a shorthand comes back re-composed from its
+  /// longhands.
+  ///
+  /// **Memoised because `el.style` builds a new declaration on every access.**
+  /// The first version cached the parsed map on the `StyleDeclaration`, which
+  /// is thrown away immediately — so the cache never hit, and a single
+  /// `el.style.color` read cost one Stylo parse *per declared property*.
+  /// Measured at **33 us against 1 us** for the raw attribute, on an element
+  /// with five declarations: fifty times an ordinary DOM property read, on a
+  /// path that animation and drag code sits in.
+  ///
+  /// Keyed on property and raw text together, so the same declaration is
+  /// parsed once for the life of the realm however many wrappers ask. Bounded,
+  /// because a page that generates unique values every frame would otherwise
+  /// grow this without end.
+  const serializedValues = new Map();
+  /// Parsed declaration maps, keyed on the `style` text they came from.
+  const declarationMaps = new Map();
+
+  function serializedValue(property, raw) {
+    if (raw === undefined) return "";
+    // A custom property is whatever the page put there; there is nothing to
+    // normalise and the parser would decline it anyway.
+    if (property.startsWith("--")) return raw;
+    const key = `${property}\u0000${raw}`;
+    const known = serializedValues.get(key);
+    if (known !== undefined) return known;
+    const value = api.serializeCssValue(property, raw) || raw;
+    if (serializedValues.size > 4096) serializedValues.clear();
+    serializedValues.set(key, value);
+    return value;
+  }
+
   // Inline style, backed by the element's own `style` attribute rather than by
   // a parallel object, so what script sets is what the cascade sees and what a
   // later `getAttribute("style")` returns. One source of truth, same rule the
@@ -5793,16 +6201,31 @@
     /// this one about what `color:red;;` means.
     constructor(source) { this._source = source; }
 
+    /// The declarations, as the author wrote them. Serialising happens in
+    /// `getPropertyValue`, one property at a time — see `serializedValue`.
+    ///
+    /// **Memoised on the declaration text**, and the reason is that `el.style`
+    /// builds a fresh `StyleDeclaration` on every access, so a per-instance
+    /// cache can never hit: `el.style.color` re-split the whole `style`
+    /// attribute into a new Map every time. Measured at 21 us against 1 us for
+    /// `getAttribute` on the same element — the split is the cost, not the
+    /// reading, and animation and drag code sits in this path.
+    ///
+    /// The map handed back is shared, so nothing may mutate it; every caller
+    /// here reads. Bounded for the same reason `serializedValues` is.
     _read() {
       const raw = this._source.get();
+      const known = declarationMaps.get(raw);
+      if (known !== undefined) return known;
       const out = new Map();
       for (const part of raw.split(";")) {
         const at = part.indexOf(":");
         if (at < 0) continue;
         const name = part.slice(0, at).trim().toLowerCase();
-        const value = part.slice(at + 1).trim();
-        if (name) out.set(name, value);
+        if (name) out.set(name, part.slice(at + 1).trim());
       }
+      if (declarationMaps.size > 512) declarationMaps.clear();
+      declarationMaps.set(raw, out);
       return out;
     }
     _write(map) {
@@ -5814,9 +6237,14 @@
     get length() { return this._read().size; }
     item(index) { return [...this._read().keys()][index] ?? ""; }
 
-    getPropertyValue(name) { return this._read().get(String(name).toLowerCase()) || ""; }
+    getPropertyValue(name) {
+      const property = String(name).toLowerCase();
+      return serializedValue(property, this._read().get(property));
+    }
     setProperty(name, value) {
-      const map = this._read();
+      // A **copy**: `_read()` hands back the shared memo, and mutating it would
+      // corrupt the entry every other element with the same `style` text reads.
+      const map = new Map(this._read());
       if (value === "" || value === null || value === undefined) {
         map.delete(String(name).toLowerCase());
       } else {
@@ -5825,9 +6253,13 @@
       this._write(map);
     }
     removeProperty(name) {
-      const map = this._read();
-      const had = map.get(String(name).toLowerCase()) || "";
-      map.delete(String(name).toLowerCase());
+      const property = String(name).toLowerCase();
+      const map = new Map(this._read());
+      // The **serialised** value, the same one `getPropertyValue` would have
+      // answered a moment earlier. Returning the raw text made the two
+      // disagree: `.5` from one and `0.5` from the other for one declaration.
+      const had = serializedValue(property, map.get(property));
+      map.delete(property);
       this._write(map);
       return had;
     }
@@ -6375,7 +6807,16 @@
         // An opaque path (`data:`, `mailto:`) has no authority to edit.
         return `${protocol}${pathname}${search}${hash}`;
       }
-      return `${protocol}//${host}${pathname}${search}${hash}`;
+      // Userinfo is carried through. It used to be dropped here, which was
+      // invisible only because `username` and `password` were hard-coded to "";
+      // with them readable, `url.host = "x"` on `https://u:p@a/` would have
+      // quietly deleted the credentials.
+      const user = p.username ?? "";
+      const secret = p.password ?? "";
+      const userinfo = user || secret
+        ? `${user}${secret ? `:${secret}` : ""}@`
+        : "";
+      return `${protocol}//${userinfo}${host}${pathname}${search}${hash}`;
     }
     _tryAdopt(candidate) {
       const p = api.parseUrl(String(candidate), "");
@@ -6438,12 +6879,25 @@
       this._tryAdopt(this._serializeWith({ hash }));
     }
     get origin() { return this._parts.origin; }
-    // The userinfo half this engine's parser does not surface: read as the
-    // empty string, writes are dropped rather than mangled into the host.
-    get username() { return ""; }
-    set username(value) { void value; }
-    get password() { return ""; }
-    set password(value) { void value; }
+    /// The userinfo half.
+    ///
+    /// Both were hard-coded to "" with a note saying the parser did not surface
+    /// them. It always had: `url::Url` carries a username and a password, and
+    /// reading them was one line each. The setters go back through the parser
+    /// rather than rebuilding the href here, because the URL Standard
+    /// percent-encodes userinfo with its own set and a raw control character in
+    /// an authority is a parse failure — `url.username = "\0test"` has to
+    /// store `%00test`, which a re-parse of a hand-built string cannot do.
+    get username() { return this._parts.username ?? ""; }
+    set username(value) {
+      const href = api.urlWithUserinfo(this._parts.href, "username", String(value));
+      if (href !== null) this._tryAdopt(href);
+    }
+    get password() { return this._parts.password ?? ""; }
+    set password(value) {
+      const href = api.urlWithUserinfo(this._parts.href, "password", String(value));
+      if (href !== null) this._tryAdopt(href);
+    }
     toString() { return this.href; }
     toJSON() { return this.href; }
     /// The two statics, which are the non-throwing way to ask. A page testing
@@ -6777,21 +7231,34 @@
   // branch it was told, so a wrong answer is a wrong page rather than a missing
   // feature. The features below have real answers here; anything else records
   // itself and reports no match, so the gap is visible instead of guessed at.
+  /// What `matchMedia` hands back.
+  ///
+  /// It was an object literal carrying the right answers under the wrong shape:
+  /// `media` and `matches` were data properties, the interface did not exist to
+  /// name, and `addEventListener` was a local stub rather than the one every
+  /// other event target here uses. A real class over `EventTarget` fixes all
+  /// three at once and costs nothing at runtime — the answers are the same.
+  ///
+  /// The viewport never changes size mid-session, so a `change` listener can
+  /// never fire. That is accepted silently rather than recorded: a page adding
+  /// one is not asking for anything this engine lacks, it is asking for an
+  /// event that will not happen.
+  class MediaQueryList extends EventTarget {
+    constructor(text) {
+      super();
+      refuseExternal("MediaQueryList");
+      this._media = String(text ?? "");
+      this._matches = evaluateQuery(this._media, api.viewport());
+      this.onchange = null;
+    }
+    get media() { return this._media; }
+    get matches() { return this._matches; }
+    addListener(fn) { this.addEventListener("change", fn); }
+    removeListener(fn) { this.removeEventListener("change", fn); }
+  }
+
   function matchMedia(query) {
-    const text = String(query || "");
-    const view = api.viewport();
-    const list = {
-      media: text,
-      matches: evaluateQuery(text, view),
-      onchange: null,
-      // The viewport never changes size mid-session, so a listener here can
-      // never fire. Accepted silently rather than recorded, because a page
-      // registering one is not asking for anything we lack.
-      addListener() {}, removeListener() {},
-      addEventListener() {}, removeEventListener() {},
-      dispatchEvent() { return false; },
-    };
-    return list;
+    return internal(() => new MediaQueryList(String(query || "")));
   }
 
   function evaluateQuery(text, view) {
@@ -7579,6 +8046,58 @@
     return wrapSelectionWith(sel, document.createElement(tag));
   }
 
+  /// `document.implementation`, for whichever document asked.
+  ///
+  /// It used to be an object literal inside the page document's getter, so a
+  /// document produced by `createHTMLDocument` — which is a real thing pages
+  /// build and then call `createDocumentType` on — had no `implementation` at
+  /// all, and the whole of `DOMImplementation-createDocumentType` died on
+  /// `aDocument.implementation` being undefined.
+  ///
+  /// `owner` is null for the page's own document, because `document` is built
+  /// further down this file and cannot be named here.
+  function domImplementation(owner) {
+    return observed({
+      hasFeature: () => true,
+      /// A doctype is three strings and a nodeType; refusing it was never a
+      /// capability question. Validated like any qualified name — the test file
+      /// is mostly a sweep of names that must be rejected.
+      /// A doctype is three strings and a nodeType; refusing it was never a
+      /// capability question.
+      ///
+      /// It validated against XML's `Name` production, and **that is no longer
+      /// the rule.** DOM dropped the Name check from `createDocumentType`: of
+      /// the 81 cases the suite tests, 79 must *succeed* — `""`, `"1foo"`,
+      /// `"@foo"` and `"a.b:c"` among them — and the only two that throw are
+      /// `"edi:>"` and `"edi:a "`. What is left is the pair of characters that
+      /// would break the serialisation `<!DOCTYPE name>`: a `>` ends the
+      /// declaration early and whitespace splits the name, turning the rest
+      /// into markup. That is the same reasoning `createProcessingInstruction`
+      /// already applies to `?>` a few lines above, and it is the reason the
+      /// check survives at all rather than an inherited habit.
+      createDocumentType: (name, publicId, systemId) => {
+        const text = String(name);
+        if (/[>\s]/.test(text)) {
+          throw new DOMException(
+            `\`${text}\` would not survive serialising as \`<!DOCTYPE ${text}>\``,
+            "InvalidCharacterError",
+          );
+        }
+        return new DocumentTypeNode(text, String(publicId), String(systemId), owner);
+      },
+      // The same shape `DOMParser` produces, which is what this is for: a
+      // detached document to build markup in. It shares this engine's one tree,
+      // so it is a subtree presented as a document rather than a second one —
+      // enough for building and querying, which is all it is used for.
+      createHTMLDocument: (title) =>
+        new DOMParser().parseFromString(
+          `<title>${String(title ?? "")}</title>`, "text/html",
+        ),
+      // A second *live* document is genuinely out of reach — there is one tree,
+      // and it is the page.
+    }, "document.implementation");
+  }
+
   /// `new DOMParser().parseFromString(html, "text/html")`.
   ///
   /// How a library turns a string of markup into something it can query —
@@ -7610,6 +8129,7 @@
         head,
         nodeType: 9,
         contentType: kind,
+        get implementation() { return domImplementation(this); },
         get title() {
           const found = body.querySelector("title");
           return found ? found.textContent : "";
@@ -7648,7 +8168,14 @@
     },
     get body() { return wrap(api.body()); },
     get head() { return wrap(api.query("head", 0)); },
-    createElement(tag) { return wrap(api.createElement(String(tag))); },
+    /// `createElement("a", { is: "fancy-link" })` builds a customized built-in.
+    /// The attribute is stamped *before* the wrapper is made, because the
+    /// upgrade reads `is` to find its definition.
+    createElement(tag, options) {
+      const id = api.createElement(String(tag));
+      if (options && options.is != null) api.setAttr(id, "is", String(options.is));
+      return wrap(id);
+    },
     // SVG and MathML arrive through this, and every framework that draws an
     // icon calls it. The namespace is dropped because this engine models one:
     // the element is created under its local name, which is what the renderer
@@ -7845,6 +8372,22 @@
       return collection(out);
     },
     createTextNode(text) { return wrap(api.createText(String(text))); },
+    /// A detached attribute node. **`setAttributeNode` does not exist here**,
+    /// so what comes back is inspectable and not yet installable; saying so is
+    /// better than a comment promising a method the prelude has never had.
+    createAttribute(name) {
+      const lowered = String(name).toLowerCase();
+      validateQualifiedName(lowered);
+      return internal(() => new Attr(lowered, "", null));
+    },
+    createAttributeNS(namespace, qualifiedName) {
+      const ns = namespace === null || namespace === undefined ? null : String(namespace);
+      const qname = String(qualifiedName);
+      validateQualifiedName(qname);
+      const at = qname.indexOf(":");
+      return internal(() => new Attr(qname, "", null, ns,
+        at === -1 ? null : qname.slice(0, at)));
+    },
     createDocumentFragment() { return new DocumentFragment(); },
     /// Validated twice, because the two rules guard different attacks: the
     /// target must be a Name (`InvalidCharacterError`), and the data must not
@@ -7984,30 +8527,14 @@
     // something this engine is missing.
     namespaceURI: undefined,
     ownerDocument: null,
-    get implementation() {
-      return observed({
-        hasFeature: () => true,
-        /// A doctype is three strings and a nodeType; refusing it was never a
-        /// capability question. Validated like any qualified name — the test
-        /// file is mostly a sweep of names that must be rejected.
-        createDocumentType: (name, publicId, systemId) => {
-          validateQualifiedName(String(name));
-          return new DocumentTypeNode(String(name), String(publicId), String(systemId));
-        },
-        // The same shape `DOMParser` produces, which is what this is for: a
-        // detached document to build markup in. It shares this engine's one
-        // tree, so it is a subtree presented as a document rather than a second
-        // one — enough for building and querying, which is all it is used for.
-        createHTMLDocument: (title) =>
-          new DOMParser().parseFromString(
-            `<title>${String(title ?? "")}</title>`,
-            "text/html",
-          ),
-        // A second document is genuinely out of reach here — there is one tree,
-        // and it is the page. A page using this to parse HTML off to the side
-        // gets a named refusal instead of a silently broken document.
-      }, "document.implementation");
-    },
+    get implementation() { return domImplementation(null); },
+
+    /// **"CSS1Compat", and that is a fact about this engine rather than a
+    /// guess.** Quirks mode is a parse-time decision, and this engine parses in
+    /// no-quirks mode unconditionally — `QuirksMode::NoQuirks` is hard-coded at
+    /// every place style is parsed. So the standards-mode answer is what it
+    /// actually does, not what it hopes the page had.
+    get compatMode() { return "CSS1Compat"; },
 
     // The famous one. Legacy code uses `document.all` to detect old IE, and the
     // detection works because it is the only object in JavaScript that is
@@ -8838,9 +9365,35 @@
       const raw = this._element ? api.getAttr(this._element._id, "title") : null;
       return raw || null;
     }
+    /// A `MediaList`, not a string.
+    ///
+    /// It answered the raw attribute text, and CSSOM says this is an object
+    /// with `mediaText`, a length and an item list — so every `sheet.media`
+    /// check read a String where an interface belonged. Cached per sheet so a
+    /// page that keeps the list keeps something real, as it does for `cssRules`.
+    /// Rebuilt from the attribute when the attribute has changed, and writing
+    /// `mediaText` writes back. The first version cached one `MediaList` for
+    /// the life of the sheet and never wrote through, so
+    /// `styleEl.setAttribute("media", "print")` left `sheet.media.mediaText`
+    /// reporting the old text — a snapshot pretending to be a live object.
     get media() {
-      if (this._media !== undefined) return this._media;
-      return (this._element && api.getAttr(this._element._id, "media")) || "";
+      const text = this._media !== undefined
+        ? this._media
+        : (this._element && api.getAttr(this._element._id, "media")) || "";
+      if (this._mediaList === undefined || this._mediaFor !== text) {
+        // `sheet` rather than `this`: the write-back closure sits two arrows
+        // deep inside a class getter, and Boa does not carry the getter's
+        // `this` that far — it arrived `undefined` and every `appendMedium`
+        // threw. Naming the receiver is right regardless of whose bug that is.
+        const sheet = this;
+        this._mediaFor = text;
+        this._mediaList = internal(() => new MediaList(text, (written) => {
+          sheet._mediaFor = written;
+          if (sheet._media !== undefined) sheet._media = written;
+          else if (sheet._element) sheet._element.setAttribute("media", written);
+        }));
+      }
+      return this._mediaList;
     }
     /// Null for a `<style>` and for a constructed sheet, as in a browser: only
     /// a sheet that came from a URL has one.
@@ -8868,7 +9421,9 @@
       const css = this._css();
       if (this._rulesFor !== css) {
         this._rulesFor = css;
-        this._rules = splitRules(css).map((text) => makeRule(text, this));
+        this._rules = collection(
+          splitRules(css).map((text) => makeRule(text, this)), "CSSRuleList",
+        );
       }
       return this._rules;
     }
@@ -8900,6 +9455,16 @@
       this._replaceAll(rules.join("\n"));
       return at;
     }
+    /// The legacy pair, which is how a great deal of older code still edits a
+    /// sheet. Both are defined in CSSOM in terms of the modern two, so they are
+    /// written that way rather than reimplemented: `addRule` appends by default
+    /// and answers -1, which is the one part that is not just a forward.
+    addRule(selector, block, index) {
+      const at = index === undefined ? this.cssRules.length : Number(index);
+      this.insertRule(`${String(selector || "")} { ${String(block || "")} }`, at);
+      return -1;
+    }
+    removeRule(index) { this.deleteRule(index === undefined ? 0 : index); }
     deleteRule(index) {
       const rules = splitRules(this._css());
       const at = Number(index) || 0;
@@ -8938,6 +9503,40 @@
     }
   }
 
+  /// The media a sheet or an `@media` rule applies to.
+  ///
+  /// CSSOM makes this an object over a comma-separated list, and this engine
+  /// answered the raw string. Serialising is the whole of it: the list is the
+  /// text split on commas and trimmed, and `mediaText` is the list joined back
+  /// with ", " — which is why round-tripping normalises whitespace, as it does
+  /// in a browser.
+  const splitMedia = (text) =>
+    String(text ?? "").split(",").map((m) => m.trim()).filter(Boolean);
+
+  class MediaList {
+    constructor(text, onWrite) {
+      refuseExternal("MediaList");
+      this._items = splitMedia(text);
+      this._onWrite = onWrite ?? null;
+    }
+    _changed() { if (this._onWrite) this._onWrite(this.mediaText); }
+    get mediaText() { return this._items.join(", "); }
+    set mediaText(value) { this._items = splitMedia(value); this._changed(); }
+    get length() { return this._items.length; }
+    item(index) { return this._items[Number(index) || 0] ?? null; }
+    appendMedium(medium) {
+      const one = String(medium).trim();
+      if (one && !this._items.includes(one)) { this._items.push(one); this._changed(); }
+    }
+    deleteMedium(medium) {
+      const at = this._items.indexOf(String(medium).trim());
+      if (at === -1) throw new DOMException(`no medium ${medium}`, "NotFoundError");
+      this._items.splice(at, 1);
+      this._changed();
+    }
+    toString() { return this.mediaText; }
+  }
+
   /// Every sheet the document owns, in document order.
   ///
   /// Indexed as well as iterable, because `document.styleSheets[0]` is how
@@ -8948,13 +9547,7 @@
       .map(wrap)
       .filter(Boolean)
       .map((element) => CSSStyleSheet.forElement(element));
-    const list = {
-      get length() { return sheets.length; },
-      item: (index) => sheets[index] ?? null,
-      [Symbol.iterator]: () => sheets[Symbol.iterator](),
-    };
-    sheets.forEach((sheet, index) => { list[index] = sheet; });
-    return list;
+    return collection(sheets, "StyleSheetList");
   }
 
   // ── text encoding, randomness, cloning, and the old request object ───────
@@ -9340,6 +9933,8 @@
       HTMLFormControlsCollection: COLLECTION_CLASSES.HTMLFormControlsCollection,
       HTMLOptionsCollection: COLLECTION_CLASSES.HTMLOptionsCollection,
       FileList: COLLECTION_CLASSES.FileList,
+      CSSRuleList: COLLECTION_CLASSES.CSSRuleList,
+      StyleSheetList: COLLECTION_CLASSES.StyleSheetList,
       NamedNodeMap: brand("NamedNodeMap", isCollection),
       Storage: brand("Storage", isStorage),
       // **Constructible, unlike its neighbours here.** `new Document()` is
@@ -9358,7 +9953,7 @@
       HTMLDocument: documentConstructor("HTMLDocument"),
       DocumentType: brand("DocumentType", (v) => v && v.nodeType === 10),
       ProcessingInstruction: brand("ProcessingInstruction", (v) => v && v.nodeType === 7),
-      Attr: brand("Attr", (v) => v && typeof v.name === "string" && "value" in v && !v.nodeType),
+      Attr,
       Window: brand("Window", (v) => v === globalThis),
       Navigator: brand("Navigator", (v) => v && typeof v.userAgent === "string"),
       Location: brand("Location", (v) => v && typeof v.href === "string" && typeof v.assign === "function"),
@@ -9368,7 +9963,7 @@
       CustomElementRegistry: brand("CustomElementRegistry", (v) => v && typeof v.define === "function" && typeof v.get === "function"),
       DOMStringMap: brand("DOMStringMap", (v) => typeof v === "object"),
       StyleSheet: brand("StyleSheet", (v) => v && "cssRules" in v),
-      MediaList: brand("MediaList", (v) => v && typeof v.mediaText === "string"),
+      MediaList,
     };
   }
 
@@ -9406,6 +10001,25 @@
     item() { return null; }
     contains() { return false; }
   }
+  /// One bit of browser chrome, reporting whether it is on screen.
+  ///
+  /// A data shape rather than a capability: there is no chrome here, so every
+  /// bar answers `false`, and that is the true answer rather than a stub —
+  /// `window.toolbar.visible` is false in a headless browser because the
+  /// toolbar is genuinely not visible. The brand guard is what makes reading
+  /// `visible` off the prototype throw, which is what idlharness asks.
+  class BarProp {
+    constructor() { throw new TypeError("Illegal constructor"); }
+    get visible() {
+      if (!(this instanceof BarProp) || this === BarProp.prototype) {
+        throw new TypeError("Illegal invocation: visible needs a BarProp");
+      }
+      return false;
+    }
+  }
+  Object.defineProperty(BarProp.prototype, Symbol.toStringTag, {
+    value: "BarProp", configurable: true,
+  });
   class ImageData {
     constructor(dataOrWidth, widthOrHeight, height) {
       if (dataOrWidth instanceof Uint8ClampedArray) {
@@ -9475,7 +10089,8 @@
     constructor() { throw new TypeError("Illegal constructor"); }
   }
   Object.assign(globalThis, {
-    MediaError, TimeRanges, DOMStringList, ImageData, DataTransfer,
+    MediaError, TimeRanges, DOMStringList, ImageData, DataTransfer, BarProp,
+    MediaQueryList,
     DataTransferItem, DataTransferItemList, Plugin, PluginArray, MimeType,
     MimeTypeArray, RadioNodeList, HTMLAllCollection, TextMetrics,
   });
@@ -9639,6 +10254,65 @@
     cancelAnimationFrame: clearTimeout,
     Node, Element, Text, Event,
     alert: () => api.unsupported("alert"),
+
+    // ── The Window members a headless, single-context engine can answer
+    //    honestly ──────────────────────────────────────────────────────────
+    //
+    // Absent until now, and every one of them has a *true* answer here rather
+    // than a plausible one — which is the only reason they are being added.
+    // §B8.4's rule holds: a name that exists and answers wrongly is worse than
+    // one that is absent, so anything whose honest answer would be a guess
+    // (`visualViewport`, `screen` geometry a real display would set) stays out.
+    //
+    // There is no browser chrome, so every `BarProp` reports `visible: false`.
+    // That is not a stub standing in for a toolbar we failed to build — it is
+    // what "no UI" means, and it is what a headless browser reports.
+    ...Object.fromEntries(
+      ["locationbar", "menubar", "personalbar", "scrollbars", "statusbar", "toolbar"]
+        .map((bar) => [bar, Object.create(BarProp.prototype)]),
+    ),
+    // Legacy, and writable: pages set it and read it back. "" is what a browser
+    // that ignores the status bar reports, which is every browser now.
+    status: "",
+    // This window was never script-opened and cannot be closed, so `closed` is
+    // false for the life of the page and `close()` is the spec's no-op rather
+    // than a refusal — HTML only closes a window that script opened.
+    closed: false,
+    close: () => {},
+    // Focus follows no pointer and there is no window manager to raise, so
+    // these are no-ops in the same sense: the state they would change does not
+    // exist. `stop()` is the one with a real meaning, and it is named rather
+    // than pretended — halting a load in flight is broker work this does not do.
+    focus: () => {},
+    blur: () => {},
+    // There is no window to move, resize, print or halt; a page that asks is
+    // asking for chrome, and gets the named refusal every other chrome verb
+    // here gets. Built from the names so each costs a word rather than a line.
+    // The two-argument arity is what WebIDL gives `moveTo` and its neighbours;
+    // `stop` and `print` take none, and an operation's `length` is checked.
+    ...Object.fromEntries(["stop", "print"].map(
+      (verb) => [verb, () => api.unsupported(`window.${verb}`)],
+    )),
+    ...Object.fromEntries(["moveTo", "moveBy", "resizeTo", "resizeBy"].map(
+      (verb) => [verb, (a, b) => api.unsupported(`window.${verb}`)],
+    )),
+    // Real values, computed from the document's own URL rather than declared.
+    get origin() {
+      try {
+        const url = new URL(location.href);
+        return url.protocol === "file:" ? "null" : url.origin;
+      } catch { return "null"; }
+    },
+    get isSecureContext() {
+      try {
+        const url = new URL(location.href);
+        return /^(https|file|data|blob):$/.test(url.protocol)
+          || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname);
+      } catch { return false; }
+    },
+    // One realm, one context, and no cross-origin isolation to claim.
+    crossOriginIsolated: false,
+
     matchMedia,
     URL, URLSearchParams,
     queueMicrotask: (fn) => { Promise.resolve().then(fn); },
@@ -9884,6 +10558,16 @@
       configurable: true,
     });
   }
+
+  // The interface-prototype mirror lives in the `conformance` tier
+  // (`prelude/conformance.js`), for the reason that file exists: WebIDL puts a
+  // member on the interface prototype, this engine's singletons are object
+  // literals, and reconciling the two is a shape only a conformance harness
+  // inspects. Eagerly parsed it cost 2 KiB — about 90 us of run per page and
+  // 490 us of compile on the first — for a property no page reads. The tier is
+  // evaluated earlier than this point, so it leaves the work behind as a
+  // callback rather than doing it where the globals did not exist yet.
+  internals.mirrorSingletons?.();
 
   // `fetch`, over the host's broker. Every request is policy-checked and
   // receipted before it moves, which is the property this engine exists for.

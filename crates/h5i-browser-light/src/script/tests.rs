@@ -2616,7 +2616,19 @@ fn a_doctype_and_a_processing_instruction_can_be_made_and_read() {
              const out = [];
              const dt = document.implementation.createDocumentType("svg", "pub", "sys");
              out.push(dt.nodeType, dt.name, dt.publicId, dt.systemId, dt instanceof DocumentType);
+             // An empty name is **legal**, and this test used to assert the
+             // opposite. DOM dropped the `Name`-production check from
+             // `createDocumentType`, and the suite is unambiguous about it: of
+             // the 81 cases in `DOMImplementation-createDocumentType`, 79 must
+             // succeed — "", "1foo", "@foo", "a.b:c" — and only "edi:>" and
+             // "edi:a " throw. What survives is the pair of characters that
+             // would break serialising `<!DOCTYPE name>`, which is the same
+             // rule the processing instruction below applies to `?>`.
              try { document.implementation.createDocumentType("", "", ""); out.push("empty-ok"); }
+             catch (e) { out.push(e.name); }
+             try { document.implementation.createDocumentType("edi:>", "", ""); out.push("gt-ok"); }
+             catch (e) { out.push(e.name); }
+             try { document.implementation.createDocumentType("edi:a ", "", ""); out.push("space-ok"); }
              catch (e) { out.push(e.name); }
              const pi = document.createProcessingInstruction("xml-stylesheet", "href='a.css'");
              out.push(pi.nodeType, pi.target, pi.data);
@@ -2626,7 +2638,10 @@ fn a_doctype_and_a_processing_instruction_can_be_made_and_read() {
            </script>"#,
     );
     assert!(
-        text.contains("10|svg|pub|sys|true|InvalidCharacterError|7|xml-stylesheet|href='a.css'|InvalidCharacterError"),
+        text.contains(
+            "10|svg|pub|sys|true|empty-ok|InvalidCharacterError|InvalidCharacterError|\
+7|xml-stylesheet|href='a.css'|InvalidCharacterError"
+        ),
         "doctype/PI construction is wrong:\n{text}\nconsole: {console:?}"
     );
 }
@@ -3471,7 +3486,60 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // Raising it is a normal thing to do, not a failure. The question the number
     // asks is only whether it could be a tier instead: see `TIERS` in `mod.rs`,
     // and `lazyGlobals` in the prelude.
-    const BUDGET_KIB: usize = 275;
+    // 278, raised 2026-08-30, and the honest reason is **not** the coverage
+    // number — that batch was a bad trade and the note should say so.
+    //
+    // 2.4 KiB bought 32 subtests, a ratio of 0.013 against the 0.4 this branch
+    // averages. What it bought that is worth having:
+    //
+    //   * `Attr` as a real node class. `attributes` returned plain
+    //     `{name, value}` literals, so `localName`, `prefix`, `namespaceURI`,
+    //     `ownerElement` and a `nodeType` of 2 were all missing from something
+    //     real code reads.
+    //   * `checkVisibility`, which is CSSOM-View's "would a person see this".
+    //     That is the question **this product exists to answer** — the
+    //     snapshot and the verbs ask it constantly — so it earns core space on
+    //     its own terms rather than on WPT's.
+    //   * `compatMode`, which is a fact about this engine (it parses
+    //     `QuirksMode::NoQuirks` unconditionally) rather than a guess.
+    //
+    // The earlier history is worth keeping too. It went 275 -> 276 for CSSOM
+    // shapes that were real objects wearing no interface — `matchMedia()`
+    // returning a `MediaQueryList`, `sheet.media` being a `MediaList` and not a
+    // **String** — and came straight back down when the reflection table turned
+    // out to write every attribute name twice: 139 entries of `["foo", "foo"]`
+    // plus 72 more with a type after them, and fifteen copies of three ARIA
+    // option objects. That returned 3.9 KiB, more than the features cost.
+    //
+    // **And the budget is not a performance guard, which was measured rather
+    // than assumed.** `examples/perf` puts `prelude run` at 15.9 ms of a 16.2 ms
+    // later realm, and a deliberately padded 50 KiB build measured the slope at
+    // 40-52 us/KiB — consistent with the 45 quoted above. But the run-to-run
+    // spread on this box is +/-4 ms, so **even an 18% size delta is not
+    // statistically resolvable** (t ~ 1.2). A few KiB is far below the noise
+    // floor. What the budget actually does is force the question, and it has
+    // twice: it put the interface-prototype mirror in the `conformance` tier
+    // where pages pay nothing for it, and it found the table redundancy above.
+    // Keep it tight for that reason, not because a KiB is measurably slow.
+    // 280, raised after an adversarial review of this branch. The extra 2 KiB
+    // is almost entirely **bug fixes to what the branch already added**, not
+    // new surface — `classList.toggle` doing WebIDL boolean conversion and
+    // validating on the declining path, `Attr`/`MediaList`/`MediaQueryList`
+    // refusing `new` the way `brand()` used to, `Attr.localName` not splitting
+    // a colon it has no prefix for, `removeProperty` returning the serialised
+    // value `getPropertyValue` would, and `sheet.media` being live rather than
+    // a snapshot. Those found 67 subtests between them, so the surface was
+    // wrong in ways the coverage numbers had been quietly paying for.
+    // 281, and this KiB is a **speed** purchase rather than a surface one,
+    // which is a first for this budget. `classList.add` measured 100 us against
+    // 2 us for the `setAttribute` underneath it, and it is the largest single
+    // JS cost on a component-shaped page — 35 ms of an 88 ms load. Two causes,
+    // both in code this file guards: `_all()` tokenised with a regex into a
+    // `Set` and back out through a spread (43 us, four intermediates), and the
+    // indexed proxy sat in front of every internal `this._node` read inside
+    // every method. Hand-rolled tokenising plus binding methods to the target
+    // takes `add` to 25 us and `contains` to 10 us — 4x each.
+    const BUDGET_KIB: usize = 281;
 
     assert!(
         !super::PRELUDE.contains("/*"),

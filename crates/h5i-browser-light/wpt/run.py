@@ -79,6 +79,19 @@ SKIP_FILE = re.compile(r"(-ref|-notref|-manual|\.tentative\.tentative)\.x?html?$
 
 MARKER = serve.MARKER
 
+# How many failing subtests a result file keeps, per test file.
+#
+# Five is the right default: a result file is read for its counts, and the
+# handful of messages is enough to name the shape behind them. It is the wrong
+# number when the question is "what are the 2,539 failures in *this* file", and
+# §B12.2's lesson — an hour reading failure text beats a week implementing what
+# a count seemed to ask for — is exactly the one a cap of five defeats on the
+# largest files. Raised per-run rather than in the default, because a sweep that
+# keeps every message writes hundreds of megabytes nobody asked for.
+#
+#   WPT_MAX_FAILURES=100000 python3 wpt/run.py --dirs html/dom ...
+MAX_FAILURES = int(os.environ.get("WPT_MAX_FAILURES", "5"))
+
 # testharness.js status codes.
 SUBTEST_STATUS = {0: "PASS", 1: "FAIL", 2: "TIMEOUT", 3: "NOTRUN", 4: "PRECONDITION_FAILED"}
 HARNESS_STATUS = {0: "OK", 1: "ERROR", 2: "TIMEOUT", 3: "PRECONDITION_FAILED"}
@@ -310,7 +323,7 @@ def _score(rel, payload, elapsed):
     for sub in report.get("tests", []):
         label = SUBTEST_STATUS.get(sub.get("status"), "UNKNOWN")
         counts[label] = counts.get(label, 0) + 1
-        if label not in ("PASS",) and len(failures) < 5:
+        if label not in ("PASS",) and len(failures) < MAX_FAILURES:
             failures.append({"name": sub.get("name", "")[:200],
                              "status": label,
                              "message": (sub.get("message") or "")[:300]})

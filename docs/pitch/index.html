@@ -901,7 +901,7 @@
     <div class="hero-badge">Run more browser tasks · Control where agents can go · Review what they accessed</div>
     <h1 style="font-size:clamp(2.6rem,5.4vw,4.4rem);">A Secure, Auditable Browser<br><span class="shine-text">for AI Agents</span></h1>
     <ul class="lede" style="list-style:none;max-width:1040px;margin:28px 0 0;padding:0;font-size:clamp(1.35rem,2.5vw,1.95rem);line-height:1.4;display:flex;flex-direction:column;gap:18px;">
-      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Run more browser tasks in parallel.</span> ~5&times; faster reads with ~80% less peak memory.</li>
+      <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Run more browser tasks in parallel.</span> ~3&times; faster reads with ~86% less peak memory.</li>
       <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Start sandboxed by default.</span> Isolate the browser or the agent&#39;s entire workflow inside a container or microVM.</li>
       <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--red-text);">&#9656;</span><span class="cyan">Review exactly what happened.</span> Every browser action and network request is recorded.</li>
     </ul>
@@ -930,7 +930,7 @@
         <span class="pill green">with h5i</span>
         <h3 style="margin-top:14px;font-size:clamp(1.5rem,2.6vw,2.1rem);">A browser built for agents</h3>
         <ul class="feat-desc" style="list-style:none;margin:14px 0 0;padding:0;font-size:clamp(1.05rem,1.8vw,1.3rem);line-height:1.45;display:flex;flex-direction:column;gap:10px;">
-          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>~5&times; faster reads with ~80% less peak memory on simple websites</li>
+          <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>~3&times; faster reads with ~86% less peak memory on simple websites</li>
           <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Sandboxing and network rules limit what a manipulated agent can access</li>
           <li style="position:relative;padding-left:1.5em;"><span style="position:absolute;left:0;color:var(--green);">&#10003;</span>Every browser action and network request is recorded in one reviewable timeline</li>
         </ul>
@@ -994,7 +994,7 @@
       <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
         <span class="pill green">the engine</span>
         <span class="mv" style="font-size:1.35rem;line-height:1.15;color:var(--green);">A lightweight engine for agent tasks</span>
-        <span class="ml" style="font-size:1.02rem;">~5&times; faster reads with ~80% less peak memory on simple websites.</span>
+        <span class="ml" style="font-size:1.02rem;">~3&times; faster reads with ~86% less peak memory on simple websites.</span>
       </div>
       <div class="metric" style="flex:1 1 320px;max-width:370px;align-items:flex-start;text-align:left;gap:12px;border-color:rgba(98,201,140,0.3);background:rgba(98,201,140,0.035);">
         <span class="pill green">the output</span>
@@ -1098,8 +1098,8 @@
     </div>
 
     <div class="g4" style="margin-top:16px;">
-      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">~5&times;</span><span class="ml" style="font-size:0.88rem;">faster reads</span></div>
-      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">~80%</span><span class="ml" style="font-size:0.88rem;">less peak memory</span></div>
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">~3&times;</span><span class="ml" style="font-size:0.88rem;">faster reads</span></div>
+      <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">~86%</span><span class="ml" style="font-size:0.88rem;">less peak memory</span></div>
       <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:2.1rem;">300k+</span><span class="ml" style="font-size:0.88rem;">web standards tests passed</span></div>
       <div class="metric" style="padding:16px 14px;gap:4px;"><span class="mv" style="font-size:1.75rem;">Auditable</span><span class="ml" style="font-size:0.88rem;">every action is recorded</span></div>
     </div>
@@ -1217,7 +1217,7 @@
       <div class="rung"><span class="rk" style="min-width:290px;">Conventional browser automation</span><span class="rv">Built for people, so it is slow, memory-heavy, difficult to audit, and exposes more access than agents need.</span></div>
       <div class="rung"><span class="rk" style="min-width:290px;">Lightweight browsers</span><span class="rv">Reduce startup time and memory, but do not limit what a manipulated agent can access or send.</span></div>
       <div class="rung"><span class="rk" style="min-width:290px;">Sandboxing an existing browser</span><span class="rv">Reduces risk, but keeps the cost and complexity of a browser built for people.</span></div>
-      <div class="rung h5i"><span class="rk" style="min-width:290px;">h5i</span><span class="rv"><strong style="color:var(--ink);">~5&times; faster reads and ~80% less peak memory on simple websites, with request records, network controls, and sandboxing built in.</strong></span></div>
+      <div class="rung h5i"><span class="rk" style="min-width:290px;">h5i</span><span class="rv"><strong style="color:var(--ink);">~3&times; faster reads and ~86% less peak memory on simple websites, with request records, network controls, and sandboxing built in.</strong></span></div>
     </div>
 
     <p class="kicker" style="margin-top:22px;text-align:center;font-size:1.15rem;">Fast enough to <span class="red">run more sessions</span>. Controlled enough to <span class="red">grant more autonomy</span>.</p>

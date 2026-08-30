@@ -36,37 +36,48 @@ leave gaps. Here the engine *is* the HTTP client, so:
 
 ## Measurements
 
-Same machine (aarch64, WSL2), median of 5 runs after a warm-up, load a
-self-contained local page and write an image. Memory is the peak **summed** RSS
-across the whole process tree, sampled every 10ms. `/usr/bin/time -v` reports
-only the largest single process and badly undercounts a multi-process browser.
+Same machine (aarch64, WSL2), **median of 7 interleaved runs** after a discarded
+warm-up, loading a local `file://` page. Memory is the peak **summed** RSS across
+the whole process tree, sampled every 5 ms: `/usr/bin/time -v` reports only the
+largest single process and badly undercounts a multi-process browser.
 
-| | small page (2 KB) | docs page (39 KB) |
-| --- | --- | --- |
-| h5i-browser-light | **42 ms / 31 MB** | **72 ms / 33 MB** |
-| chromium `headless_shell` | 339 ms / 472 MB | 356 ms / 479 MB |
-| chromium (full) | 655 ms / 797 MB | 644 ms / 799 MB |
+Interleaved rather than run in blocks, because `perf/ab.py` records what happens
+otherwise — the second engine inherits a warm page cache and the comparison
+reads a number the mechanism cannot produce.
 
-Holding a page open with a viewer attached and nothing happening:
+| | small (1 KB, no script) | docs (22 KB, no script) | app (script-built, 400 elements) |
+| --- | --- | --- | --- |
+| h5i-browser-light | **46 ms / 51.7 MB** | **59 ms / 65.6 MB** | 248 ms / **87.4 MB** |
+| chromium `headless_shell` | 172 ms / 456.8 MB | 176 ms / 461.5 MB | **176 ms** / 464.4 MB |
+| chromium (full) | 672 ms / 1150.7 MB | 758 ms / 1153.8 MB | 824 ms / 1150.6 MB |
 
-| | idle RSS |
-| --- | --- |
-| h5i-browser-light (viewer attached) | **37.5 MB** |
-| chromium `headless_shell` (page loaded) | 383.8 MB |
+So against `headless_shell`: **about 3x faster and 7-9x lighter on pages without
+script**, and on a script-driven page **slower on time and still 5x lighter**.
+Both engines were checked to produce identical output on the script page before
+anything was timed.
 
-So roughly **5x faster and 15x lighter** than `headless_shell` for a one-shot
-read, and **10x lighter** sitting idle. Three caveats, because the numbers are
-flattering and should not be quoted without them:
+Five caveats, because the numbers are flattering in one direction and unflattering
+in the other, and neither should be quoted alone:
 
-1. **Cold start is included**, and Chromium's process startup dominates its
-   time figure. That is the honest shape of a one-shot agent invocation, but it
-   is *not* a steady-state rendering throughput comparison, and this engine
-   would not win one by that margin.
-2. **The pages have no JavaScript.** Chromium is carrying a JS engine it is not
-   using. On a script-driven page the comparison is meaningless in the other
-   direction: this engine renders nothing at all.
-3. Rendering here is software, not JIT-accelerated. Complex CSS will narrow
-   the time gap.
+1. **Cold start is included**, and Chromium's process startup dominates its time
+   figure. That is the honest shape of a one-shot agent invocation, but it is
+   *not* a steady-state rendering throughput comparison, and this engine would
+   not win one by that margin.
+2. **On script-driven pages this engine is slower**, and the third column is
+   there so that cannot be read past. Boa interprets where V8 compiles. Isolated:
+   `--script` costs nothing on a page with no script (46 ms against 45 ms), and
+   44 ms -> 248 ms on the app page — the difference is JavaScript execution, all
+   of it.
+3. Rendering here is software, not JIT-accelerated. Complex CSS narrows the time
+   gap.
+4. The memory figure is the one to trust most: it is a property of the
+   architecture (one process, no renderer, no GPU process) rather than of a
+   workload, and it holds across all three pages.
+5. **These numbers replace an earlier table that claimed 5x faster and 15x
+   lighter.** That measurement predates this engine having a JavaScript engine at
+   all; h5i's own memory has roughly doubled since (31 MB -> 52-66 MB), which is
+   what Boa and a 281 KiB prelude cost. The claim was not wrong when it was made
+   and is wrong now, which is the reason to date a measurement.
 
 ## What it is not
 
@@ -75,8 +86,15 @@ Honest limits, because the claims above are security claims:
 - **Not a Chromium replacement.** Docs-grade pages are the compatibility bar.
   React/Vite apps, video, WebGL and authenticated sessions belong on the
   Chromium path.
-- **No JavaScript.** Pages that render only via script will come back empty.
-  That is a routing signal, not a bug: ask `capabilities` rather than guessing.
+- **JavaScript runs, and it is the slow half.** This line used to read "No
+  JavaScript. Pages that render only via script will come back empty", and that
+  has not been true since the engine grew a Boa realm and a DOM prelude: the
+  script-built page in the table above renders correctly. What is true is that
+  Boa interprets where V8 compiles, so a script-driven page is the one case
+  `headless_shell` is *faster* on. Route by what a page costs, not by whether it
+  has a `<script>` tag — and ask `capabilities` rather than guessing, because
+  the §B6 refusals are still real: no workers, no second browsing context, no
+  media pipeline.
 - **Containment claims belong to the box.** Run bare on a host there is no
   egress proxy and no receipt store, and this is just a light browser with a
   request log. The guarantees are properties of running it inside an h5i box.
