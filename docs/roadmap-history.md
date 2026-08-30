@@ -9034,3 +9034,126 @@ diagnosable rather than surprising:
    `tracefs = no` and what that costs.
 
 ---
+
+---
+
+# The remote runner: the adversarial review, 2026-08-17
+
+The round-by-round record. `ROADMAP.md` R12b keeps the four rules that
+came out of it and now govern the code.
+
+## R12b. What an adversarial review of the built code found
+
+Eighteen rounds against the branch, 2026-08-17, with the threat model the rest
+of this part states: **the runner may be compromised**, so the interesting
+direction is runner to host. Thirty-seven findings, all fixed. The two that
+mattered most were things the design had reasoned about correctly and the code
+had not implemented that way.
+
+**A box could execute on the runner host.** The export staged a box's work by
+running `git add` inside the box's own repository, and git executes
+`core.fsmonitor` and `filter.<name>.clean` out of repository config, which the
+box owns because its workspace is bind-mounted rw. `core.hooksPath=/dev/null`
+covers neither. Any box with a shell could run a command as the runner user. The
+fix is not another flag: it is not invoking the CLI in a tree whose
+configuration is hostile.
+
+**A refspec is not a limit on what a fetch writes.** git follows tags by
+default, so a crafted bundle put an attacker-named `refs/tags/*` and a
+runner-authored tag object into the host repository, on the success path, past
+every check the quarantine performs. R9's sentence about the host only ever
+containing commits it authored was false for tags. `--no-tags` and
+`--no-write-fetch-head` close it.
+
+Three more were gaps between what a section said and what the code did. The
+capability gate validated the tier a request *declared* while `run_with_env`
+dispatches on the tier its *policy* carries, so a box could be recorded as
+`container` and run every command unconfined. R12's refusal of
+credential-bearing profiles was written down and never implemented: values never
+crossed, but the runner resolves grant descriptors against its own environment,
+so a box could be handed the runner's credential. And the SSH argv's claim not
+to depend on `~/.ssh/config` was false, with no `-F` and `GlobalKnownHostsFile`
+unpinned, so a hostile config redirected every RPC to another machine with the
+pin apparently intact. That breaks the attestation, not merely the transport,
+because `runner_id` is what a manifest records.
+
+Several of the fixes were themselves wrong, which is the part worth
+generalising. Two were caught by the tests they broke. Three survived until a
+round was spent reviewing the *fixes* rather than the code, and one was the
+second-worst finding of the review:
+
+- **The move to libgit2 was half a fix.** It closed the half of the
+  hostile-config class that *executes* commands and left the half that
+  *redirects*. libgit2 honours `core.worktree`, so a box could point the
+  export's staging at any path the runner user can read and have another box's
+  workspace packed into its own bundle; and a `.git` file carrying a `gitdir:`
+  pointer makes the export commit into a different repository. "This library
+  does not run commands" answers a smaller question than "this library does not
+  act on hostile configuration".
+- **One fix's commit message described work its diff never did.** The
+  `authorized_keys` check was claimed to match whole lines and did not, and the
+  branch that claimed to refuse was unreachable. A false claim in a commit
+  message is worse than the bug, because it is what the next reader trusts.
+- **One fix reverted an older one.** Setting `service_digest` to `None` for a
+  runner box re-armed a legacy-env sentinel a previous security fix had closed,
+  under a comment still asserting the invariant held.
+
+That is the argument for the fuzz harnesses this round added over the codec and
+the worker's state machine, and for spending a round on the fixes rather than
+only on the code. Reviewing a patch is not the same activity as reviewing a
+system, and the second does not subsume the first.
+
+
+---
+
+# Related work, read in full
+
+The surveys behind `ROADMAP.md` R2 and D3. The decisions they produced live
+there; this is what was read.
+
+## The remote runner: E2B and bhatti
+
+From **E2B**, the exec stream's discipline: a mandatory first frame
+acknowledging the spawn, separate from output; input, resize and signals as
+separate calls addressed by process id; keepalive cadence declared by the client
+and echoed as frames; capability gating against named version constants, so the
+constants file doubles as the protocol changelog. Refused: the entire plane.
+Control-plane REST, envd-in-guest HTTP, tokens minted at create and
+Connect-over-HTTP framing all exist because E2B's client and sandbox meet across
+the public internet. Ours meet across an SSH session we already authenticated.
+
+From **bhatti**, the frame protocol nearly verbatim (R5); file transfer reusing
+the same stdio frames rather than a second mechanism; create errors carrying the
+tail of the far-side log; a server-side default and maximum on every exec
+timeout; and the shutdown posture that prefers an un-reaped live box to an
+unrecoverable dead one. Refused: the resident daemon, the bearer-token listener,
+the WebSocket TTY relay, the quota machinery, the thermal state machine.
+
+One bhatti finding is load-bearing: it moved its internal API off loopback TCP
+onto a unix socket after a sandbox reached the daemon's loopback listener. The
+forced command over SSH stdio is the end of that trajectory: **no listener
+anywhere, of any kind, ever.**
+
+## The detection lane: Tracee and Tetragon
+
+Both solve this at a scale h5i does not have.
+
+From **Tracee**: the split between a **collector** that knows only events and a
+**signature layer** that knows only semantics, so rules never touch a ring
+buffer and the collector never learns what a credential file is; the insistence
+that a dropped event is reported rather than smoothed over, which is why
+`events_lost` sits next to `events_seen`; and argument capture at `sys_enter`
+with an explicit bounded string budget. Refused: the event catalogue, since
+hundreds of instrumented events need CO-RE plus a full BTF toolchain and a
+detector that costs a second toolchain is a detector nobody builds; and the
+daemon, since h5i has none by design and the unit of observation here is a run,
+not a host.
+
+From **Tetragon**, one idea and one warning. The idea is
+**process-lineage-as-first-class**: the tree is maintained in the kernel rather
+than reconstructed by racing `/proc`, which is exactly D6's scope mechanism,
+because by the time userspace reads `/proc/<pid>` a short-lived `postinstall`
+is gone. The warning is enforcement: Tetragon can kill from a hook, and h5i does
+not take that (D12). A detector that sometimes blocks is a policy layer with
+unclear semantics, and h5i already has one with clear semantics.
+
