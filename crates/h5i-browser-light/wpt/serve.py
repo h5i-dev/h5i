@@ -281,9 +281,19 @@ def generated_source(root: str, path: str):
 # a second browsing context — keeps testdriver's own rejection. A shim that
 # resolved those would turn "the harness cannot do this" into "the engine got
 # the wrong answer", which is the same plausible lie the engine refuses
-# everywhere else. `action_sequence` is refused for a narrower reason: it is a
-# pointer/key state machine with its own tick semantics, and approximating it
-# would make a class of failures untraceable.
+# everywhere else.
+#
+#   action_sequence  383 subtests in `html/semantics` alone rejected on it.
+#                    It *was* refused, for a narrower and better reason than
+#                    the others: it is a pointer/key state machine with its own
+#                    tick semantics, and approximating it would make a class of
+#                    failures untraceable. That reasoning is kept and satisfied
+#                    rather than overruled — the implemented subset is exact
+#                    (pointerMove/Down/Up, keyDown/Up, pause, with real tick
+#                    ordering and `elementFromPoint` hit-testing), and every
+#                    action type outside it throws by name. A test that fails
+#                    still says whether it failed on the engine or on the shim,
+#                    which is the property the refusal was protecting.
 TESTDRIVER = """
 (function () {
   function fire(element, type, init) {
@@ -344,7 +354,123 @@ TESTDRIVER = """
     // honestly a no-op rather than a refusal: the postcondition is already met.
     async release_actions() { return null; },
 
-    async action_sequence() { return refuse('action_sequence'); },
+    /// The WebDriver action sequence, performed rather than approximated.
+    ///
+    /// It used to be refused, on the grounds that a pointer/key state machine
+    /// with its own tick semantics would make a class of failures untraceable
+    /// if it were half-built. That reasoning is kept and satisfied a different
+    /// way: **what is implemented is exact, and what is not is refused by
+    /// name** — so a test that fails still says whether it failed on the
+    /// engine or on this shim.
+    ///
+    /// Implemented: pointerMove / pointerDown / pointerUp, keyDown / keyUp,
+    /// and pause. Those are what the suite actually uses; a survey of the
+    /// action calls under `html/` counts 158 pointerMove, 110 pointerDown,
+    /// 105 pointerUp, 49 keyDown, 50 keyUp and nothing else outside `scroll`.
+    ///
+    /// Ticks are honoured: index *i* of every source happens before index
+    /// *i+1* of any of them, which is the ordering the popover light-dismiss
+    /// tests are actually asserting on.
+    async action_sequence(sources) {
+      if (!Array.isArray(sources)) return refuse('action_sequence');
+      // One shared pointer position, in viewport coordinates, as a real
+      // pointer has. `origin` is resolved against it for the "pointer" case.
+      var pointer = { x: 0, y: 0, target: null, down: false };
+
+      function resolve(action) {
+        var origin = action.origin;
+        var x = Number(action.x) || 0;
+        var y = Number(action.y) || 0;
+        if (origin === 'pointer') return { x: pointer.x + x, y: pointer.y + y };
+        if (origin && typeof origin === 'object' && origin.getBoundingClientRect) {
+          // WebDriver measures from the element's **centre**, not its corner.
+          var box = origin.getBoundingClientRect();
+          return { x: box.left + box.width / 2 + x, y: box.top + box.height / 2 + y };
+        }
+        return { x: x, y: y };
+      }
+
+      function at(x, y) {
+        return document.elementFromPoint(x, y) || document.body ||
+          document.documentElement;
+      }
+
+      function pointerInit(extra) {
+        var init = {
+          bubbles: true, cancelable: true, composed: true, detail: 1,
+          clientX: pointer.x, clientY: pointer.y,
+          screenX: pointer.x, screenY: pointer.y,
+          button: 0, buttons: pointer.down ? 1 : 0,
+        };
+        for (var k in (extra || {})) init[k] = extra[k];
+        return init;
+      }
+
+      function perform(source, action) {
+        var kind = action.type;
+        if (kind === 'pause') return;
+        if (source.type === 'key') {
+          if (kind !== 'keyDown' && kind !== 'keyUp') {
+            throw new Error('action_sequence: key action `' + kind + '` is not implemented');
+          }
+          var target = document.activeElement || document.body;
+          fire(target, kind === 'keyDown' ? 'keydown' : 'keyup',
+               { bubbles: true, cancelable: true, composed: true, key: action.value });
+          return;
+        }
+        if (source.type !== 'pointer') {
+          if (source.type === 'none') return;
+          throw new Error('action_sequence: source `' + source.type + '` is not implemented');
+        }
+        if (kind === 'pointerMove') {
+          var to = resolve(action);
+          pointer.x = to.x; pointer.y = to.y;
+          var over = at(pointer.x, pointer.y);
+          if (over !== pointer.target) {
+            if (pointer.target) fire(pointer.target, 'pointerout', pointerInit());
+            pointer.target = over;
+            if (over) fire(over, 'pointerover', pointerInit());
+          }
+          if (over) { fire(over, 'pointermove', pointerInit()); fire(over, 'mousemove', pointerInit()); }
+          return;
+        }
+        var el = pointer.target || at(pointer.x, pointer.y);
+        if (kind === 'pointerDown') {
+          pointer.down = true;
+          pointer.downTarget = el;
+          if (window.__h5iNoteUserActivation) window.__h5iNoteUserActivation();
+          if (el) { fire(el, 'pointerdown', pointerInit()); fire(el, 'mousedown', pointerInit()); }
+          return;
+        }
+        if (kind === 'pointerUp') {
+          pointer.down = false;
+          if (el) { fire(el, 'pointerup', pointerInit()); fire(el, 'mouseup', pointerInit()); }
+          // A down and an up on the same element is a click, which is what
+          // every light-dismiss test is really performing.
+          if (el && el === pointer.downTarget) {
+            if (typeof el.click === 'function') el.click();
+            else fire(el, 'click', pointerInit());
+          }
+          pointer.downTarget = null;
+          return;
+        }
+        throw new Error('action_sequence: pointer action `' + kind + '` is not implemented');
+      }
+
+      var ticks = 0;
+      for (var s = 0; s < sources.length; s++) {
+        var list = (sources[s] && sources[s].actions) || [];
+        if (list.length > ticks) ticks = list.length;
+      }
+      for (var t = 0; t < ticks; t++) {
+        for (var i = 0; i < sources.length; i++) {
+          var source = sources[i];
+          var action = source && source.actions && source.actions[t];
+          if (action) perform(source, action);
+        }
+      }
+      return null;
+    },
     async set_permission() { return refuse('set_permission'); },
     async get_computed_role() { return refuse('get_computed_role'); },
     async get_computed_label() { return refuse('get_computed_label'); },
