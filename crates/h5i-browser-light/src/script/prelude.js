@@ -851,8 +851,34 @@
       // `value` reports the raw attribute.
       return [...new Set(raw.split(/\s+/).filter(Boolean))];
     }
+    /// Through `setAttribute`, **not** `api.setAttr`.
+    ///
+    /// The raw host call skips everything `Element.setAttribute` does on the
+    /// way past: the mutation record and the custom element's
+    /// `attributeChangedCallback`. So `classList.add(...)` changed the class
+    /// and no MutationObserver saw it — which is a live defect for any
+    /// framework watching attributes, and it is what `Element-classlist`
+    /// detects by asking for "a mutation exactly when replace() returns true".
     _write(list) {
-      api.setAttr(this._node._id, this._attr, list.join(" "));
+      this._node.setAttribute(this._attr, list.join(" "));
+    }
+    /// The spec's "update steps", and **which callers run them is the whole
+    /// contract** — a first attempt made the write conditional on the set
+    /// having changed, which is wrong for three of the four mutators.
+    ///
+    /// `add` and `remove` run these *unconditionally*, so `class="a a a  b"`
+    /// with `add("a")` really does rewrite the attribute as the normalised
+    /// `"a b"` even though the set is unchanged. `replace` runs them on its
+    /// true path, which is what `Element-classlist` checks with a
+    /// MutationObserver — "a mutation exactly when replace() returns true" —
+    /// and the conditional version failed all 90 of those. Only `toggle`
+    /// declines, when `force` asks for the state the list is already in.
+    ///
+    /// The one thing the steps themselves skip: an element with no attribute
+    /// and an empty set keeps having none rather than gaining an empty one.
+    _update(list) {
+      if (list.length === 0 && api.getAttr(this._node._id, this._attr) === null) return;
+      this._write(list);
     }
     /// Every mutating method validates first, and all of them the same way.
     ///
@@ -862,29 +888,33 @@
     /// token that then read back as *two* — so a page that added one class
     /// could not remove it again.
     _check(names) {
-      for (const raw of names) {
-        const name = String(raw);
-        if (name === "") {
-          throw new DOMException("the token must not be empty", "SyntaxError");
-        }
-        if (/[ \t\n\f\r]/.test(name)) {
-          throw new DOMException(
-            `the token \`${name}\` must not contain whitespace`,
-            "InvalidCharacterError",
-          );
-        }
+      // **Both passes, in this order.** The spec throws SyntaxError if *any*
+      // token is empty before it looks at whitespace in any of them, so
+      // `replace(" ", "")` is a SyntaxError for the empty second argument, not
+      // an InvalidCharacterError for the first.
+      const tokens = names.map(String);
+      if (tokens.includes("")) {
+        throw new DOMException("the token must not be empty", "SyntaxError");
       }
-      return names.map(String);
+      const spaced = tokens.find((token) => /[ \t\n\f\r]/.test(token));
+      if (spaced !== undefined) {
+        throw new DOMException(
+          `the token \`${spaced}\` must not contain whitespace`,
+          "InvalidCharacterError",
+        );
+      }
+      return tokens;
     }
     add(...names) {
       const wanted = this._check(names);
       const list = this._all();
-      for (const n of wanted) if (!list.includes(n)) list.push(n);
-      this._write(list);
+      const next = [...list];
+      for (const n of wanted) if (!next.includes(n)) next.push(n);
+      this._update(next);
     }
     remove(...names) {
       const unwanted = this._check(names);
-      this._write(this._all().filter((n) => !unwanted.includes(n)));
+      this._update(this._all().filter((n) => !unwanted.includes(n)));
     }
     /// Swap one token for another, keeping its position.
     ///
@@ -894,15 +924,19 @@
     replace(oldToken, newToken) {
       const [from, to] = this._check([oldToken, newToken]);
       const list = this._all();
-      const at = list.indexOf(from);
-      if (at === -1) return false;
-      // A no-op when the replacement is already there, rather than a duplicate.
-      if (list.includes(to)) list.splice(at, 1);
-      else list[at] = to;
-      this._write(list);
+      if (!list.includes(from)) return false;
+      // Swap in place, then drop duplicates — which is the spec's own order and
+      // handles the two cases a special case got wrong: replacing a token with
+      // *itself* left the list alone (it used to splice the token out), and
+      // replacing it with one already present keeps the earlier position.
+      this._update([...new Set(list.map((token) => (token === from ? to : token)))]);
       return true;
     }
-    contains(name) { return this._all().includes(name); }
+    // `String(name)`, because `classList.contains(null)` asks about the token
+    // "null" — DOMString conversion happens before the lookup, and comparing
+    // the raw value against a list of strings answered false for every
+    // non-string a page passed.
+    contains(name) { return this._all().includes(String(name)); }
     item(index) { return this._all()[index] ?? null; }
     // False, and deliberately. `supports` asks whether *this engine* acts on a
     // token — `rel="preload"`, `sandbox="allow-scripts"` — and this one acts on
@@ -920,7 +954,7 @@
     }
     get length() { return this._all().length; }
     get value() { return api.getAttr(this._node._id, this._attr) || ""; }
-    set value(v) { api.setAttr(this._node._id, this._attr, String(v)); }
+    set value(v) { this._node.setAttribute(this._attr, String(v)); }
     forEach(fn, thisArg) { this._all().forEach(fn, thisArg); }
     keys() { return this._all().keys(); }
     values() { return this._all().values(); }
@@ -949,15 +983,25 @@
         },
       });
     }
+    // The stringifier is `value` — the attribute's *raw* text, not the
+    // deduplicated join. A second `toString` further down returned the join and
+    // won by being later; it is gone, and this is the spec's answer.
     toString() { return this.value; }
+    get [Symbol.toStringTag]() { return "DOMTokenList"; }
+    /// The one mutator that can decline to update: `toggle(token, true)` on a
+    /// list that already has the token, and `toggle(token, false)` on one that
+    /// does not, both answer without touching the attribute.
     toggle(name, force) {
-      const has = this.contains(name);
-      const want = force === undefined ? !has : !!force;
-      if (want) this.add(name); else this.remove(name);
-      return want;
+      const token = String(name);
+      if (this.contains(token)) {
+        if (force === true) return true;
+        this.remove(token);
+        return false;
+      }
+      if (force === false) return false;
+      this.add(token);
+      return true;
     }
-    get length() { return this._all().length; }
-    toString() { return this._all().join(" "); }
   }
 
   /// The base every event-dispatching thing extends, including code that has
@@ -1045,23 +1089,11 @@
       while (top.parentNode) top = top.parentNode;
       return top;
     }
-    contains(other) {
-      for (let n = other; n; n = n.parentNode) {
-        if (n._id === this._id) return true;
-      }
-      return false;
-    }
-    compareDocumentPosition(other) {
-      if (!other || other._id === undefined) return 1; // DISCONNECTED
-      if (other._id === this._id) return 0;
-      if (this.contains(other)) return 20;  // CONTAINED_BY | FOLLOWING
-      if (other.contains(this)) return 10;  // CONTAINS | PRECEDING
-      const order = documentOrder();
-      const mine = order.indexOf(this._id);
-      const theirs = order.indexOf(other._id);
-      if (mine < 0 || theirs < 0) return 1; // DISCONNECTED
-      return theirs > mine ? 4 : 2;         // FOLLOWING : PRECEDING
-    }
+    // `contains` and `compareDocumentPosition` were each defined **twice** in
+    // this class, and the later definition won — so the pair that used to stand
+    // here was dead code the whole time. The surviving
+    // `compareDocumentPosition` is the spec's full bit field rather than this
+    // one's approximation, which is why nothing noticed.
 
     // Cached at wrap time. A node's kind is fixed when it is created, and this
     // is read constantly — every `nodeType === 1` filter, every tree walk, and
