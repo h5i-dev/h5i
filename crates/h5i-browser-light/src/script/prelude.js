@@ -286,10 +286,34 @@
   const connected = new Set();
   const comments = new Set();
   let upgrading = null;
+  let customizedCount = 0;
+
+  /// The definition governing an element, which the tag name alone cannot find.
+  ///
+  /// A **customized built-in** is an ordinary tag whose `is` attribute names
+  /// the definition — `<a is="fancy-link">` is an `HTMLAnchorElement` and a
+  /// `FancyLink` at once — so `is` is consulted first, and only when its
+  /// definition really extends this tag. An autonomous definition is matched by
+  /// tag, and one that extends something is *not*, or `<fancy-link>` written as
+  /// a bare tag would upgrade against a definition that never claimed it.
+  function definitionFor(id) {
+    const tag = api.tagName(id).toLowerCase();
+    // `customizedCount` guards a **host call on the element-construction hot
+    // path**. Reading `is` off every element built would be a real per-element
+    // cost paid by every page, and almost no page defines a customized
+    // built-in — so the read happens only once one exists.
+    if (customizedCount) {
+      const is = api.getAttr(id, "is");
+      const customized = is && definitions.get(String(is).toLowerCase());
+      if (customized && customized.extendsTag === tag) return customized;
+    }
+    const autonomous = definitions.get(tag);
+    return autonomous && !autonomous.extendsTag ? autonomous : undefined;
+  }
 
   function constructElement(id) {
     const tag = api.tagName(id).toLowerCase();
-    const definition = definitions.get(tag);
+    const definition = definitionFor(id);
     if (!definition) return new (TAG_CLASSES.get(tag) ?? Element)(id);
 
     const previousUpgrade = upgrading;
@@ -308,7 +332,7 @@
   }
 
   function isCustom(node) {
-    return node && node.nodeType === 1 && definitions.has(api.tagName(node._id).toLowerCase());
+    return !!node && node.nodeType === 1 && definitionFor(node._id) !== undefined;
   }
 
   /// Every custom element at or under `node`, in document order.
@@ -556,15 +580,31 @@
       if (definitions.has(key)) {
         throw new Error(`custom element \`${key}\` is already defined`);
       }
-      if (options && options.extends) {
-        api.unsupported("customElements.define({ extends })");
+      /// `{ extends: "a" }` — a **customized built-in**, which is a real
+      /// definition here rather than a refusal.
+      ///
+      /// The one case the spec singles out is extending a name that is itself a
+      /// valid custom element name: two definitions would then race for one
+      /// tag, and neither `is` nor the tag could say which won.
+      let extendsTag = null;
+      if (options && options.extends != null) {
+        extendsTag = String(options.extends).toLowerCase();
+        if (isValidCustomElementName(extendsTag)) {
+          throw new DOMException(
+            `\`${extendsTag}\` is a custom element name and cannot be extended`,
+            "NotSupportedError",
+          );
+        }
       }
-      definitions.set(key, { name: key, ctor });
+      definitions.set(key, { name: key, ctor, extendsTag });
+      if (extendsTag) customizedCount++;
 
       // Upgrade what is already on the page. Without this, a page that ships
       // its markup server-side and defines its components afterwards — which is
       // most of them — would define and then do nothing.
-      for (const id of api.queryAll(key, 0)) {
+      // A customized built-in is not found by its own name: it is on the page
+      // as the tag it extends, wearing `is`.
+      for (const id of api.queryAll(extendsTag ? `${extendsTag}[is="${key}"]` : key, 0)) {
         wrappers.delete(id);
         const node = wrap(id);
         // The observed attributes have their initial values delivered, as they
@@ -974,6 +1014,20 @@
       // `Text` and `Comment` *are* constructible, and reach this with a real id
       // because their own constructors make a node first.
       if (typeof id !== "number" && upgrading === null) {
+        // `new MyElement()` on a **defined** element is legal and creates one:
+        // HTML says the constructor makes an element with the definition's own
+        // local name — the extended tag plus `is` for a customized built-in.
+        // Only an interface with no definition behind it is "not
+        // constructible", which is what the message below now means.
+        const named = new.target && customElements.getName(new.target);
+        const def = named ? definitions.get(named) : undefined;
+        if (def) {
+          const made = api.createElement(def.extendsTag ?? def.name);
+          if (def.extendsTag) api.setAttr(made, "is", def.name);
+          this._id = made;
+          wrappers.set(made, this);
+          return;
+        }
         throw new TypeError(
           "Illegal constructor: this interface is not constructible",
         );
@@ -1261,9 +1315,14 @@
         }
         return fragment;
       }
+      // `is` is handed to `createElement` rather than copied with the other
+      // attributes below, and the order is the whole of it: the wrapper is
+      // built *during* creation and a customized built-in is chosen by `is` at
+      // that moment, so a clone that learned its `is` a few lines later was
+      // already a plain element and stayed one.
       const copy = this.nodeType === 3
         ? document.createTextNode(this.textContent)
-        : document.createElement(this.tagName);
+        : document.createElement(this.tagName, { is: api.getAttr(this._id, "is") });
       if (this.nodeType === 1) {
         // **Every attribute, not two of them.** This copied `class` and
         // `style` and nothing else, so a cloned element lost its `id`, its
@@ -3039,45 +3098,52 @@
   // rather than inferred from the missing value.
   const EMPTY_IS_FALSE = { "": "false" };
   const EMPTY_IS_NULL = { "": null };
+
+  /// The three option objects the ARIA table repeats. Named once, because
+  /// fifteen copies of the same literal is fifteen copies in the parse budget
+  /// and one place to get the table wrong instead of fifteen.
+  const ARIA_FALSE = { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE };
+  const ARIA_NULL = { missing: null, invalid: null, aliases: EMPTY_IS_NULL };
+  const ARIA_FALSE_TRUE = { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE };
   for (const [name, keywords, options] of [
     ["ariaAtomic", ["true", "false"],
       { missing: null, invalid: "false", aliases: EMPTY_IS_FALSE }],
     ["ariaAutoComplete", ["inline", "list", "both", "none"],
       { missing: "none", invalid: "none" }],
     ["ariaBusy", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaChecked", ["true", "false", "mixed"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaCurrent", ["page", "step", "location", "date", "time", "true", "false"],
-      { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE_TRUE],
     ["ariaDisabled", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaExpanded", ["true", "false"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaHasPopup", ["true", "false", "menu", "dialog", "listbox", "tree", "grid"],
       { missing: null, invalid: "false" }],
     ["ariaHidden", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaInvalid", ["true", "false", "spelling", "grammar"],
-      { missing: "false", invalid: "true", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE_TRUE],
     ["ariaLive", ["polite", "assertive", "off"],
       { missing: "off", invalid: "off" }],
     ["ariaModal", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaMultiLine", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaMultiSelectable", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaOrientation", ["horizontal", "vertical"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaPressed", ["true", "false", "mixed"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaReadOnly", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaRequired", ["true", "false"],
-      { missing: "false", invalid: "false", aliases: EMPTY_IS_FALSE }],
+      ARIA_FALSE],
     ["ariaSelected", ["true", "false"],
-      { missing: null, invalid: null, aliases: EMPTY_IS_NULL }],
+      ARIA_NULL],
     ["ariaSort", ["ascending", "descending", "other", "none"],
       { missing: "none", invalid: "none" }],
   ]) {
@@ -3099,6 +3165,18 @@
   // type, disabled, value, checked, selected — are deliberately absent: those
   // carry behaviour beyond reflection, and `defaultChecked`, `defaultSelected`
   // and `defaultValue` are the spec's names for the reflecting half.
+  /// Every name `reflect`'s type switch answers to.
+  ///
+  /// **Completeness is load-bearing**, not tidiness: a type missing from this
+  /// set is read as a *content attribute name* by the shorthand below, so
+  /// `["link", "string", NULL_IS_EMPTY]` silently reflected an attribute called
+  /// "string" and handed the options object in as the type. `string` was left
+  /// out of the first version and took 76 subtests of `reflection-sections`
+  /// with it. Add a type here in the same commit that adds it there.
+  const REFLECT_TYPES = new Set([
+    "string", "bool", "ulong", "long", "double", "url", "enumerated", "tokenlist",
+  ]);
+
   const REFLECTIONS = {
     html: ["HTMLHtmlElement", ["version"]],
     head: ["HTMLHeadElement", []],
@@ -3109,7 +3187,7 @@
       "integrity", ["imageSrcset", "imagesrcset"],
       ["imageSizes", "imagesizes"], "charset", "rev",
       "target",
-      ["as", "as", "enumerated", { keywords: [
+      ["as", "enumerated", { keywords: [
         "fetch", "audio", "audioworklet", "document", "embed", "font", "frame",
         "iframe", "image", "json", "manifest", "object", "paintworklet",
         "report", "script", "serviceworker", "sharedworker", "style", "track",
@@ -3122,12 +3200,12 @@
     ]],
     style: ["HTMLStyleElement", ["media"]],
     body: ["HTMLBodyElement", [
-      ["link", "link", "string", NULL_IS_EMPTY],
+      ["link", "string", NULL_IS_EMPTY],
       ["vLink", "vlink", "string", NULL_IS_EMPTY],
       ["aLink", "alink", "string", NULL_IS_EMPTY],
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
       "background",
-      ["text", "text", "string", NULL_IS_EMPTY],
+      ["text", "string", NULL_IS_EMPTY],
     ]],
     a: ["HTMLAnchorElement", [
       "target", "download", "ping",
@@ -3144,9 +3222,9 @@
     img: ["HTMLImageElement", [
       "srcset", "sizes", ["useMap", "usemap"],
       ["isMap", "ismap", "bool"], "align", "border",
-      ["lowsrc", "lowsrc", "url"], ["longDesc", "longdesc", "url"],
-      ["width", "width", "ulong"], ["height", "height", "ulong"],
-      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["lowsrc", "url"], ["longDesc", "longdesc", "url"],
+      ["width", "ulong"], ["height", "ulong"],
+      ["hspace", "ulong"], ["vspace", "ulong"],
       ["decoding", "decoding", "enumerated",
         { keywords: ["sync", "async", "auto"], missing: "auto", invalid: "auto" }],
       LOADING,
@@ -3157,50 +3235,50 @@
       "type", "name",
     ]],
     object: ["HTMLObjectElement", [
-      ["data", "data", "url"], ["useMap", "usemap"], "align",
+      ["data", "url"], ["useMap", "usemap"], "align",
       "type", "name",
-      "archive", "code", ["declare", "declare", "bool"],
+      "archive", "code", ["declare", "bool"],
       "standby", ["codeBase", "codebase", "url"],
       ["codeType", "codetype"], "border",
       "width", "height",
-      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["hspace", "ulong"], ["vspace", "ulong"],
     ]],
     param: ["HTMLParamElement", [
       ["valueType", "valuetype"], "name", "value", "type",
     ]],
     video: ["HTMLVideoElement", [
-      ["poster", "poster", "url"], PRELOAD,
+      ["poster", "url"], PRELOAD,
       LOADING,
-      ["autoplay", "autoplay", "bool"], ["loop", "loop", "bool"],
-      ["controls", "controls", "bool"], ["defaultMuted", "muted", "bool"],
+      ["autoplay", "bool"], ["loop", "bool"],
+      ["controls", "bool"], ["defaultMuted", "muted", "bool"],
       CROSS_ORIGIN,
       ["playsInline", "playsinline", "bool"],
-      ["width", "width", "ulong"], ["height", "height", "ulong"],
+      ["width", "ulong"], ["height", "ulong"],
     ]],
     audio: ["HTMLAudioElement", [
       PRELOAD,
       LOADING,
-      ["autoplay", "autoplay", "bool"],
-      ["loop", "loop", "bool"], ["controls", "controls", "bool"],
+      ["autoplay", "bool"],
+      ["loop", "bool"], ["controls", "bool"],
       ["defaultMuted", "muted", "bool"], CROSS_ORIGIN,
     ]],
     source: ["HTMLSourceElement", [
       "type",
       "srcset", "sizes", "media",
-      ["width", "width", "ulong"], ["height", "height", "ulong"],
+      ["width", "ulong"], ["height", "ulong"],
     ]],
     track: ["HTMLTrackElement", [
-      "srclang", "label", ["default", "default", "bool"],
-      ["kind", "kind", "enumerated", {
+      "srclang", "label", ["default", "bool"],
+      ["kind", "enumerated", {
         keywords: ["subtitles", "captions", "descriptions", "chapters", "metadata"],
         missing: "subtitles", invalid: "metadata" }],
     ]],
     map: ["HTMLMapElement", []],
     form: ["HTMLFormElement", [
       ["acceptCharset", "accept-charset"],
-      ["action", "action", "url", DOCUMENT_URL_WHEN_EMPTY],
+      ["action", "url", DOCUMENT_URL_WHEN_EMPTY],
       "autocomplete",
-      ["enctype", "enctype", "enumerated", ENCTYPE],
+      ["enctype", "enumerated", ENCTYPE],
       ["encoding", "enctype", "enumerated", ENCTYPE],
       ["noValidate", "novalidate", "bool"], "target", "rel",
     ]],
@@ -3216,12 +3294,12 @@
       "max", "min", "pattern",
       "placeholder", "step", ["useMap", "usemap"],
       "align", ["defaultValue", "value"],
-      ["multiple", "multiple", "bool"], ["required", "required", "bool"],
+      ["multiple", "bool"], ["required", "bool"],
       ["readOnly", "readonly", "bool"],
       ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
       ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
-      ["size", "size", "ulong", { default: 20, positive: true }],
-      ["width", "width", "ulong"], ["height", "height", "ulong"],
+      ["size", "ulong", { default: 20, positive: true }],
+      ["width", "ulong"], ["height", "ulong"],
     ]],
     button: ["HTMLButtonElement", [
       ["formAction", "formaction", "url", DOCUMENT_URL_WHEN_EMPTY],
@@ -3231,8 +3309,8 @@
       ["formNoValidate", "formnovalidate", "bool"],
     ]],
     select: ["HTMLSelectElement", [
-      "autocomplete", ["multiple", "multiple", "bool"],
-      ["required", "required", "bool"], ["size", "size", "ulong"],
+      "autocomplete", ["multiple", "bool"],
+      ["required", "bool"], ["size", "ulong"],
     ]],
     optgroup: ["HTMLOptGroupElement", ["label"]],
     option: ["HTMLOptionElement", [
@@ -3241,11 +3319,11 @@
     textarea: ["HTMLTextAreaElement", [
       "autocomplete", ["dirName", "dirname"],
       "placeholder", "wrap",
-      ["required", "required", "bool"], ["readOnly", "readonly", "bool"],
+      ["required", "bool"], ["readOnly", "readonly", "bool"],
       ["maxLength", "maxlength", "long", { default: -1, nonNegative: true }],
       ["minLength", "minlength", "long", { default: -1, nonNegative: true }],
-      ["cols", "cols", "ulong", { default: 20 }],
-      ["rows", "rows", "ulong", { default: 2 }],
+      ["cols", "ulong", { default: 20 }],
+      ["rows", "ulong", { default: 2 }],
     ]],
     output: ["HTMLOutputElement", [["htmlFor", "for"]]],
     fieldset: ["HTMLFieldSetElement", []],
@@ -3259,7 +3337,7 @@
     ]],
     caption: ["HTMLTableCaptionElement", ["align"]],
     col: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], "align",
+      ["span", "ulong", { default: 1, clamp: [1, 1000] }], "align",
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
       "width",
     ]],
@@ -3277,34 +3355,34 @@
       ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
     ]],
     ol: ["HTMLOListElement", [
-      ["reversed", "reversed", "bool"], ["compact", "compact", "bool"],
-      ["start", "start", "long", { default: 1 }],
+      ["reversed", "bool"], ["compact", "bool"],
+      ["start", "long", { default: 1 }],
     ]],
-    ul: ["HTMLUListElement", [["compact", "compact", "bool"]]],
-    li: ["HTMLLIElement", [["value", "value", "long"]]],
-    dl: ["HTMLDListElement", [["compact", "compact", "bool"]]],
-    blockquote: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
-    ins: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
+    ul: ["HTMLUListElement", [["compact", "bool"]]],
+    li: ["HTMLLIElement", [["value", "long"]]],
+    dl: ["HTMLDListElement", [["compact", "bool"]]],
+    blockquote: ["HTMLQuoteElement", [["cite", "url"]]],
+    ins: ["HTMLModElement", [["cite", "url"], ["dateTime", "datetime"]]],
     script: ["HTMLScriptElement", [
-      ["noModule", "nomodule", "bool"], ["async", "async", "bool"],
-      ["defer", "defer", "bool"], "integrity",
+      ["noModule", "nomodule", "bool"], ["async", "bool"],
+      ["defer", "bool"], "integrity",
       "charset", "event", ["htmlFor", "for"],
       CROSS_ORIGIN, ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
     marquee: ["HTMLMarqueeElement", [
       "behavior", ["bgColor", "bgcolor", "string", NULL_IS_EMPTY],
       "direction", "height", "width",
-      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["hspace", "ulong"], ["vspace", "ulong"],
       ["trueSpeed", "truespeed", "bool"],
       ["scrollAmount", "scrollamount", "ulong", { default: 6 }],
       ["scrollDelay", "scrolldelay", "ulong", { default: 85 }],
-      ["loop", "loop", "long", { default: -1 }],
+      ["loop", "long", { default: -1 }],
     ]],
     applet: ["HTMLAppletElement", [
       "align", "archive", "code",
       ["codeBase", "codebase", "url"], "height",
       "object", "width",
-      ["hspace", "hspace", "ulong"], ["vspace", "vspace", "ulong"],
+      ["hspace", "ulong"], ["vspace", "ulong"],
     ]],
     frame: ["HTMLFrameElement", [
       "scrolling", ["frameBorder", "frameborder"],
@@ -3315,18 +3393,18 @@
     font: ["HTMLFontElement", [
       "color", "face", "size",
     ]],
-    dir: ["HTMLDirectoryElement", [["compact", "compact", "bool"]]],
+    dir: ["HTMLDirectoryElement", [["compact", "bool"]]],
     hr: ["HTMLHRElement", [
       "align", "color", "size",
       "width", ["noShade", "noshade", "bool"],
     ]],
-    pre: ["HTMLPreElement", [["width", "width", "long"]]],
-    details: ["HTMLDetailsElement", [["open", "open", "bool"]]],
-    dialog: ["HTMLDialogElement", [["open", "open", "bool"]]],
+    pre: ["HTMLPreElement", [["width", "long"]]],
+    details: ["HTMLDetailsElement", [["open", "bool"]]],
+    dialog: ["HTMLDialogElement", [["open", "bool"]]],
     slot: ["HTMLSlotElement", []],
     canvas: ["HTMLCanvasElement", [
-      ["width", "width", "ulong", { default: 300 }],
-      ["height", "height", "ulong", { default: 150 }],
+      ["width", "ulong", { default: 300 }],
+      ["height", "ulong", { default: 150 }],
     ]],
     time: ["HTMLTimeElement", [["dateTime", "datetime"]]],
     data: ["HTMLDataElement", []],
@@ -3336,20 +3414,20 @@
     // `html/dom/reflection-*.html`, so a missing entry is not one attribute
     // missing — it is every attribute of that element failing at once.
     meter: ["HTMLMeterElement", [
-      ["value", "value", "double"], ["min", "min", "double"],
-      ["max", "max", "double", { default: 1 }],
-      ["low", "low", "double"], ["high", "high", "double"],
-      ["optimum", "optimum", "double"],
+      ["value", "double"], ["min", "double"],
+      ["max", "double", { default: 1 }],
+      ["low", "double"], ["high", "double"],
+      ["optimum", "double"],
     ]],
     progress: ["HTMLProgressElement", [
-      ["max", "max", "double", { default: 1 }],
+      ["max", "double", { default: 1 }],
     ]],
     // `<iframe>` is not *loaded* here (§B6 refuses a second browsing context),
     // and its IDL reflection is a different question: an attribute that
     // reflects is testable and useful whether or not a document ever arrives
     // in the frame.
     iframe: ["HTMLIFrameElement", [
-      ["src", "src", "url"], "srcdoc", "name",
+      ["src", "url"], "srcdoc", "name",
       "allow", "width", "height",
       "align", "scrolling",
       ["frameBorder", "frameborder"], ["longDesc", "longdesc", "url"],
@@ -3358,8 +3436,8 @@
       LOADING,
       ["referrerPolicy", "referrerpolicy", "enumerated", REFERRER_POLICY],
     ]],
-    del: ["HTMLModElement", [["cite", "cite", "url"], ["dateTime", "datetime"]]],
-    q: ["HTMLQuoteElement", [["cite", "cite", "url"]]],
+    del: ["HTMLModElement", [["cite", "url"], ["dateTime", "datetime"]]],
+    q: ["HTMLQuoteElement", [["cite", "url"]]],
     th: ["HTMLTableCellElement", [
       ["colSpan", "colspan", "ulong", { default: 1, clamp: [1, 1000] }],
       ["rowSpan", "rowspan", "ulong", { default: 1, clamp: [0, 65534] }],
@@ -3378,7 +3456,7 @@
       ["vAlign", "valign"],
     ]],
     colgroup: ["HTMLTableColElement", [
-      ["span", "span", "ulong", { default: 1, clamp: [1, 1000] }], "align",
+      ["span", "ulong", { default: 1, clamp: [1, 1000] }], "align",
       ["ch", "char"], ["chOff", "charoff"], ["vAlign", "valign"],
       "width",
     ]],
@@ -3389,7 +3467,7 @@
     p: ["HTMLParagraphElement", ["align"]],
     span: ["HTMLSpanElement", []],
     br: ["HTMLBRElement", ["clear"]],
-    menu: ["HTMLMenuElement", [["compact", "compact", "bool"]]],
+    menu: ["HTMLMenuElement", [["compact", "bool"]]],
   };
 
   // Tags that share one interface with another tag, rather than repeating it.
@@ -3423,8 +3501,15 @@
         // were `["foo", "foo"]`, which is 1.3 KiB of the eagerly parsed prelude
         // spent writing each name twice — and the budget that guards that
         // parse is the reason it is worth spelling once.
-        const [idl, content, type, options] =
+        let [idl, content, type, options] =
           typeof entry === "string" ? [entry, entry] : entry;
+        // `["foo", "bool"]` — a *type* in the content slot means the same
+        // thing: the IDL name is its own content attribute name. No HTML
+        // attribute is named after a reflection type, so the two slots cannot
+        // be confused, and 55 more entries stop writing their name twice.
+        if (REFLECT_TYPES.has(content)) {
+          options = type; type = content; content = idl;
+        }
         reflect(Interface.prototype, idl, content, type ?? "string", options ?? {});
       }
       // `Object.prototype.toString` on a `<p>` says `[object
@@ -7787,7 +7872,14 @@
     },
     get body() { return wrap(api.body()); },
     get head() { return wrap(api.query("head", 0)); },
-    createElement(tag) { return wrap(api.createElement(String(tag))); },
+    /// `createElement("a", { is: "fancy-link" })` builds a customized built-in.
+    /// The attribute is stamped *before* the wrapper is made, because the
+    /// upgrade reads `is` to find its definition.
+    createElement(tag, options) {
+      const id = api.createElement(String(tag));
+      if (options && options.is != null) api.setAttr(id, "is", String(options.is));
+      return wrap(id);
+    },
     // SVG and MathML arrive through this, and every framework that draws an
     // icon calls it. The namespace is dropped because this engine models one:
     // the element is created under its local name, which is what the renderer
