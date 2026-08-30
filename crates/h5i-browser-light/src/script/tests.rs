@@ -3486,28 +3486,42 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // Raising it is a normal thing to do, not a failure. The question the number
     // asks is only whether it could be a tier instead: see `TIERS` in `mod.rs`,
     // and `lazyGlobals` in the prelude.
-    // Held at 275, and the story of the two days it moved is worth keeping.
+    // 278, raised 2026-08-30, and the honest reason is **not** the coverage
+    // number — that batch was a bad trade and the note should say so.
     //
-    // It went to 276 to pay for CSSOM shapes that were real objects wearing no
-    // interface — `matchMedia()` returning a `MediaQueryList` over
-    // `EventTarget`, `sheet.media` being a `MediaList` rather than a **String**,
-    // `styleSheets` and `cssRules` as typed lists. Page-facing work, so it
-    // belonged in the core and the KiB was paid deliberately.
+    // 2.4 KiB bought 32 subtests, a ratio of 0.013 against the 0.4 this branch
+    // averages. What it bought that is worth having:
     //
-    // It came back on its own. The reflection table wrote every attribute name
-    // twice — 139 entries of the form `["foo", "foo"]` — and letting a bare
-    // string mean "the IDL name is its own content name" returned 1.5 KiB, more
-    // than the CSSOM work and the embedded-content reflections together cost.
-    // The budget did not just catch a regression, it bought a better table:
-    // nothing here would have looked for that redundancy without a number that
-    // refused to move.
+    //   * `Attr` as a real node class. `attributes` returned plain
+    //     `{name, value}` literals, so `localName`, `prefix`, `namespaceURI`,
+    //     `ownerElement` and a `nodeType` of 2 were all missing from something
+    //     real code reads.
+    //   * `checkVisibility`, which is CSSOM-View's "would a person see this".
+    //     That is the question **this product exists to answer** — the
+    //     snapshot and the verbs ask it constantly — so it earns core space on
+    //     its own terms rather than on WPT's.
+    //   * `compatMode`, which is a fact about this engine (it parses
+    //     `QuirksMode::NoQuirks` unconditionally) rather than a guess.
     //
-    // Which is the argument for keeping it tight. The question it asks first is
-    // still "could this be a tier" — the interface-prototype mirror answered
-    // yes and went to `conformance`, costing pages nothing — and the question
-    // it asks second turns out to be "is the core paying for something it
-    // writes twice".
-    const BUDGET_KIB: usize = 275;
+    // The earlier history is worth keeping too. It went 275 -> 276 for CSSOM
+    // shapes that were real objects wearing no interface — `matchMedia()`
+    // returning a `MediaQueryList`, `sheet.media` being a `MediaList` and not a
+    // **String** — and came straight back down when the reflection table turned
+    // out to write every attribute name twice: 139 entries of `["foo", "foo"]`
+    // plus 72 more with a type after them, and fifteen copies of three ARIA
+    // option objects. That returned 3.9 KiB, more than the features cost.
+    //
+    // **And the budget is not a performance guard, which was measured rather
+    // than assumed.** `examples/perf` puts `prelude run` at 15.9 ms of a 16.2 ms
+    // later realm, and a deliberately padded 50 KiB build measured the slope at
+    // 40-52 us/KiB — consistent with the 45 quoted above. But the run-to-run
+    // spread on this box is +/-4 ms, so **even an 18% size delta is not
+    // statistically resolvable** (t ~ 1.2). A few KiB is far below the noise
+    // floor. What the budget actually does is force the question, and it has
+    // twice: it put the interface-prototype mirror in the `conformance` tier
+    // where pages pay nothing for it, and it found the table redundancy above.
+    // Keep it tight for that reason, not because a KiB is measurably slow.
+    const BUDGET_KIB: usize = 278;
 
     assert!(
         !super::PRELUDE.contains("/*"),

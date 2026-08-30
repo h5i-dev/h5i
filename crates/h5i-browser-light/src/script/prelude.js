@@ -1702,6 +1702,53 @@
     isDefaultNamespace(ns) { return ns === null || ns === ""; }
   }
 
+  /// An attribute as a node, which is what `attributes` and `createAttribute`
+  /// hand back.
+  ///
+  /// `attributes` used to return plain `{name, value}` literals, so everything
+  /// the interface adds was missing: `localName`, `prefix`, `namespaceURI`,
+  /// `ownerElement`, and the `nodeType` of 2 that tells code it is holding a
+  /// node at all. `dom/nodes/case.html` reads `attributes[0].prefix` on its
+  /// first line and could get no further.
+  ///
+  /// Writing `value` writes through to the element, as a live attribute node
+  /// does — a detached one (from `createAttribute`) keeps its own.
+  class Attr {
+    constructor(name, value, owner, namespace, prefix) {
+      this._name = String(name);
+      this._value = value === undefined || value === null ? "" : String(value);
+      this._owner = owner ?? null;
+      this._ns = namespace ?? null;
+      this._prefix = prefix ?? null;
+    }
+    get nodeType() { return 2; }
+    get name() { return this._name; }
+    get nodeName() { return this._name; }
+    get localName() {
+      const at = this._name.indexOf(":");
+      return this._prefix === null && at === -1 ? this._name : this._name.slice(at + 1);
+    }
+    get prefix() { return this._prefix; }
+    get namespaceURI() { return this._ns; }
+    get ownerElement() { return this._owner; }
+    get ownerDocument() { return document; }
+    // Legacy, and always true in a modern DOM: an attribute that exists was
+    // specified.
+    get specified() { return true; }
+    get value() {
+      if (this._owner) return api.getAttr(this._owner._id, this._name) ?? this._value;
+      return this._value;
+    }
+    set value(v) {
+      this._value = String(v);
+      if (this._owner) this._owner.setAttribute(this._name, this._value);
+    }
+    get nodeValue() { return this.value; }
+    set nodeValue(v) { this.value = v; }
+    get textContent() { return this.value; }
+    set textContent(v) { this.value = v; }
+  }
+
   /// A processing instruction, which this engine's parser never produces —
   /// blitz reads `<?pi?>` as a comment — but pages construct to inspect, and
   /// the demand list counted 195 asks for exactly that.
@@ -1992,10 +2039,9 @@
     // things code does with it: iterate it, and look a name up.
     get attributes() {
       const node = this;
-      const list = api.attrNames(this._id).map((name) => ({
-        name,
-        value: api.getAttr(node._id, name),
-      }));
+      const list = api.attrNames(this._id).map((name) => new Attr(
+        name, api.getAttr(node._id, name), node,
+      ));
       list.getNamedItem = (name) =>
         list.find((a) => a.name === String(name).toLowerCase()) || null;
       return list;
@@ -2007,6 +2053,28 @@
     // never an animation in progress to report. An empty list is what a browser
     // returns in that state, and it is the truth rather than a stub.
     getAnimations() { return []; }
+
+    /// CSSOM-View's "would a person see this", which is the question a page
+    /// asks before deciding an element is worth interacting with — and the one
+    /// an agent asks for the same reason.
+    ///
+    /// No boxes means not rendered, which covers `display: none` here or on any
+    /// ancestor without walking for it. `visibility` and `opacity` are opt-in
+    /// and *do* need the walk, because both inherit their effect down the tree:
+    /// a visible child of a `visibility: hidden` parent is still not shown.
+    checkVisibility(options) {
+      const wanted = options || {};
+      if (!this.isConnected || this.getClientRects().length === 0) return false;
+      const checkVisibility = wanted.visibilityProperty ?? wanted.checkVisibilityCSS;
+      const checkOpacity = wanted.opacityProperty ?? wanted.checkOpacity;
+      if (!checkVisibility && !checkOpacity) return true;
+      for (let node = this; node && node.nodeType === 1; node = node.parentNode) {
+        const style = getComputedStyle(node);
+        if (checkVisibility && style.visibility !== "visible") return false;
+        if (checkOpacity && Number(style.opacity) === 0) return false;
+      }
+      return true;
+    }
 
     // An iframe's document, which this engine does not load — see the note the
     // snapshot carries when a page has frames. Null is what a browser returns
@@ -8128,6 +8196,19 @@
       return collection(out);
     },
     createTextNode(text) { return wrap(api.createText(String(text))); },
+    /// A detached attribute node, which `setAttributeNode` then installs.
+    createAttribute(name) {
+      const lowered = String(name).toLowerCase();
+      validateQualifiedName(lowered);
+      return new Attr(lowered, "", null);
+    },
+    createAttributeNS(namespace, qualifiedName) {
+      const ns = namespace === null || namespace === undefined ? null : String(namespace);
+      const qname = String(qualifiedName);
+      validateQualifiedName(qname);
+      const at = qname.indexOf(":");
+      return new Attr(qname, "", null, ns, at === -1 ? null : qname.slice(0, at));
+    },
     createDocumentFragment() { return new DocumentFragment(); },
     /// Validated twice, because the two rules guard different attacks: the
     /// target must be a Name (`InvalidCharacterError`), and the data must not
@@ -8268,6 +8349,13 @@
     namespaceURI: undefined,
     ownerDocument: null,
     get implementation() { return domImplementation(null); },
+
+    /// **"CSS1Compat", and that is a fact about this engine rather than a
+    /// guess.** Quirks mode is a parse-time decision, and this engine parses in
+    /// no-quirks mode unconditionally — `QuirksMode::NoQuirks` is hard-coded at
+    /// every place style is parsed. So the standards-mode answer is what it
+    /// actually does, not what it hopes the page had.
+    get compatMode() { return "CSS1Compat"; },
 
     // The famous one. Legacy code uses `document.all` to detect old IE, and the
     // detection works because it is the only object in JavaScript that is
@@ -9665,7 +9753,7 @@
       HTMLDocument: documentConstructor("HTMLDocument"),
       DocumentType: brand("DocumentType", (v) => v && v.nodeType === 10),
       ProcessingInstruction: brand("ProcessingInstruction", (v) => v && v.nodeType === 7),
-      Attr: brand("Attr", (v) => v && typeof v.name === "string" && "value" in v && !v.nodeType),
+      Attr,
       Window: brand("Window", (v) => v === globalThis),
       Navigator: brand("Navigator", (v) => v && typeof v.userAgent === "string"),
       Location: brand("Location", (v) => v && typeof v.href === "string" && typeof v.assign === "function"),
