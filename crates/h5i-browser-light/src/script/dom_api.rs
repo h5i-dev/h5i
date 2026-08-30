@@ -197,6 +197,7 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("encodingFor", 1, encoding_for),
         ("decodeBytes", 3, decode_bytes),
         ("parseUrl", 2, parse_url),
+        ("serializeCssValue", 2, serialize_css_value),
         ("urlWithUserinfo", 3, url_with_userinfo),
         ("viewport", 0, viewport),
         ("readCookies", 0, read_cookies),
@@ -2396,6 +2397,86 @@ fn supports_css(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     )
     .is_ok();
     Ok(JsValue::from(supported))
+}
+
+/// One declaration, parsed and serialised back — the CSSOM "specified value".
+///
+/// `el.style.backgroundPosition` is defined as the *serialisation* of what the
+/// author wrote, not the text itself, and the two differ more often than they
+/// look: `.5%` serialises as `0.5%`, `-0` as `0`, and a shorthand comes back
+/// re-composed from its longhands. The inline declaration used to hand back the
+/// raw substring between `:` and `;`, so `css/cssom/serialize-values` failed
+/// 164 subtests on numbers alone.
+///
+/// Done here rather than in the prelude because the engine already holds a
+/// correct CSS parser, and a serialiser written in JavaScript would disagree
+/// with it about exactly the cases this is for. It is the same parser
+/// `CSS.supports` uses, one function above.
+///
+/// An empty answer means "this did not parse", and the caller keeps the raw
+/// text rather than dropping the declaration — a value this cannot serialise is
+/// far more likely to be a gap here than a page writing nonsense.
+fn serialize_css_value(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let property = arg_string(args, 0, context)?;
+    let value = arg_string(args, 1, context)?;
+
+    use style::properties::{
+        Importance, PropertyDeclaration, PropertyDeclarationBlock, PropertyId,
+        SourcePropertyDeclaration,
+    };
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+
+    // Property first: it is the cheap rejection, and it saves building a parser
+    // context for a name no rule could use.
+    let Ok(property_id) = PropertyId::parse_enabled_for_all_content(&property) else {
+        return Ok(js_string!("").into());
+    };
+
+    // The base URL is parsed **once per thread**, not once per call. Unlike
+    // `CSS.supports` above — which a page asks a handful of times — this runs
+    // on every inline-style property read, so re-parsing `about:blank` and
+    // rebuilding it each time would put a URL parse on a path frameworks touch
+    // constantly.
+    thread_local! {
+        static BASE: Option<UrlExtraData> = ::url::Url::parse("about:blank")
+            .ok()
+            .map(|base| UrlExtraData(style::servo_arc::Arc::new(base)));
+    }
+    let Some(url_data) = BASE.with(|base| base.clone()) else {
+        return Ok(js_string!("").into());
+    };
+    let parser_context = style::parser::ParserContext::new(
+        Origin::Author,
+        &url_data,
+        Some(CssRuleType::Style),
+        style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks,
+        Default::default(),
+        None,
+        None,
+        Default::default(),
+    );
+    let mut source = SourcePropertyDeclaration::default();
+    let mut input = cssparser::ParserInput::new(&value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    if PropertyDeclaration::parse_into(&mut source, property_id.clone(), &parser_context, &mut parser)
+        .is_err()
+    {
+        return Ok(js_string!("").into());
+    }
+
+    // Through a block rather than serialising the declarations one by one: a
+    // shorthand parses into its longhands, and only the block knows how to put
+    // them back together as the shorthand the page asked for.
+    let mut block = PropertyDeclarationBlock::new();
+    for declaration in source.declarations.drain(..) {
+        block.push(declaration, Importance::Normal);
+    }
+    let mut out = String::new();
+    if block.property_value_to_css(&property_id, &mut out).is_err() {
+        return Ok(js_string!("").into());
+    }
+    Ok(js_string!(out).into())
 }
 
 /// Parse a URL against an optional base, using the same parser the broker uses.

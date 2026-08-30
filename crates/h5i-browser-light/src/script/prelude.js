@@ -5962,16 +5962,36 @@
     /// this one about what `color:red;;` means.
     constructor(source) { this._source = source; }
 
+    /// The declarations, **serialised** rather than as the author wrote them.
+    ///
+    /// CSSOM defines `el.style.backgroundPosition` as the serialisation of the
+    /// specified value, and the two differ more often than they look: `.5%`
+    /// serialises as `0.5%`, `-0` as `0`, and a shorthand comes back
+    /// re-composed. Handing back the raw substring between `:` and `;` failed
+    /// 164 subtests of `serialize-values` on number formatting alone.
+    ///
+    /// Cached against the text it parsed, for the same reason `cssRules` is:
+    /// this runs on every `length`, `item` and property read, and a host call
+    /// per property per read would put a CSS parse on a hot path. A custom
+    /// property or anything the parser declines keeps its raw text — a value
+    /// this cannot serialise is likelier to be a gap here than a page writing
+    /// nonsense, and dropping it would lose what the page set.
     _read() {
       const raw = this._source.get();
+      if (this._parsedFor === raw) return this._parsed;
       const out = new Map();
       for (const part of raw.split(";")) {
         const at = part.indexOf(":");
         if (at < 0) continue;
         const name = part.slice(0, at).trim().toLowerCase();
         const value = part.slice(at + 1).trim();
-        if (name) out.set(name, value);
+        if (!name) continue;
+        out.set(name, name.startsWith("--")
+          ? value
+          : (api.serializeCssValue(name, value) || value));
       }
+      this._parsedFor = raw;
+      this._parsed = out;
       return out;
     }
     _write(map) {
