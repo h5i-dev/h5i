@@ -5,14 +5,115 @@ Rewrites every page it owns, which drops the `?v=` cache-busting stamps on
 leaves a consistent tree.
 """
 
+from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
 
 ROOT = Path(__file__).parent
-TODAY = "2026-08-21"
+
+# When the documentation rewrite published this set of pages. A real
+# publication date, so it is genuinely a constant.
+PUBLISHED = "2026-08-21"
+
+# The last date each published page's content changed, beside a fingerprint of
+# what it contained on that date.
+#
+# `lastmod` and `dateModified` are worth publishing only if they move when the
+# page moves, and a single hand-maintained date does not: this file pinned
+# every date on the site to the publication date and stayed there through
+# thirteen commits, telling every crawler nothing had ever changed. It cannot
+# be derived from git either, because CI regenerates this tree from a shallow
+# checkout and byte-compares the result, so a date read from history would
+# differ from the committed one and fail the build.
+#
+# So the date is written down, and `verify_dates()` re-derives every
+# fingerprint at the end of the build and refuses to finish if one moved
+# without its date. Changing a page's content and forgetting the date is a
+# build error, not a silent regression.
+PAGE_HISTORY = {
+    "": ("2026-08-30", "24e93f00330e7551"),
+    "features/": ("2026-08-30", "100d40146599c9c8"),
+    "manual/": ("2026-08-30", "2ca50cadaec9ca6b"),
+    "pitch/": ("2026-08-30", "80aea0bb0ca84a85"),
+    "demo/": ("2026-08-30", "44a05038318650f0"),
+    "guides/": ("2026-08-30", "c644fbeca404844d"),
+    "blog/": ("2026-08-30", "397a557a63ce7431"),
+    "guides/drive-a-browser-session/": ("2026-08-30", "4b863362881d7f0d"),
+    "guides/first-box/": ("2026-08-30", "c52289c78be574db"),
+    "guides/run-a-forum/": ("2026-08-30", "8fc2051d30552a78"),
+    "guides/review-a-pull-request/": ("2026-08-30", "0bbf47c079810ec7"),
+    "guides/write-a-box-policy/": ("2026-08-30", "91494d0a9407cb42"),
+    "guides/watch-the-browser/": ("2026-08-30", "8c42bd57753d46ac"),
+    "blog/the-h5i-loop/": ("2026-08-30", "83f11029a1bd2fa6"),
+    "blog/agents-share-information-never-permissions/": ("2026-08-30", "c2b7ef8361abc4d5"),
+    "blog/the-environment-is-the-sandbox/": ("2026-08-30", "c01dc2a3400b213d"),
+    "blog/choosing-agent-isolation/": ("2026-08-30", "df7a164c63457c5e"),
+    "blog/evidence-for-agent-work/": ("2026-08-30", "9f0011911123d79c"),
+    "blog/prompt-injection-is-a-boundary-problem/": ("2026-08-30", "58437230c5fba9d4"),
+}
+
+# The pages this script does not write. They are fingerprinted off disk.
+HAND_WRITTEN = ("", "features/", "manual/", "pitch/", "demo/")
+
+_VOLATILE = (
+    re.compile(r"\?v=[0-9a-f]+"),                                  # asset stamps
+    re.compile(r"\d{4}-\d{2}-\d{2}"),                              # any ISO date
+    re.compile(r"\w{3}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} GMT"),  # any RSS date
+)
+
+
+def fingerprint(html):
+    """A page's content hash, blind to the things that are not its content.
+
+    Asset stamps move whenever a stylesheet does and dates move whenever this
+    guard fires, so hashing either would make the check either too loud or
+    self-triggering.
+    """
+    for pattern in _VOLATILE:
+        html = pattern.sub("", html)
+    return hashlib.sha256(html.encode()).hexdigest()[:16]
+
+
+def modified(path):
+    """The recorded last-changed date for a published page."""
+    return PAGE_HISTORY[path][0]
+
+
+def verify_dates(generated):
+    """Refuse to finish a build that changed a page without dating the change."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    seen = dict(generated)
+    for path in HAND_WRITTEN:
+        seen[path] = (ROOT / path / "index.html").read_text()
+
+    stale = []
+    for path, html in sorted(seen.items()):
+        recorded_date, recorded_hash = PAGE_HISTORY[path]
+        actual = fingerprint(html)
+        if actual != recorded_hash:
+            stale.append((path, recorded_date, actual))
+    if not stale:
+        return
+
+    print("docs: page content changed without a date to go with it.\n", file=sys.stderr)
+    print("Update PAGE_HISTORY in docs/build-content.py, then rebuild:\n", file=sys.stderr)
+    for path, recorded_date, actual in stale:
+        was = "" if recorded_date == today else f"   # was {recorded_date}"
+        print(f'    "{path}": ("{today}", "{actual}"),{was}', file=sys.stderr)
+    print(f"\nThese dates become <lastmod> in sitemap.xml and dateModified in the", file=sys.stderr)
+    print("page schema, so they have to describe the content actually shipping.", file=sys.stderr)
+    sys.exit(1)
+
+
+def rfc822(day):
+    """A YYYY-MM-DD date as the RFC-822 stamp RSS requires."""
+    stamp = datetime.strptime(day, "%Y-%m-%d").replace(hour=12, tzinfo=timezone.utc)
+    return stamp.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 NAV = """<nav class="blog-nav">
   <a class="nav-logo" href="/"><img src="/_static/logo.png" alt="h5i"><span>h5i</span></a>
@@ -31,6 +132,14 @@ FOOTER = """<footer class="blog-footer"><div class="blog-footer-inner">
 <script src="/_static/blog.js" defer></script><script src="/_static/highlight.js" defer></script>"""
 
 
+# One social card for the whole generated tree, and the one sentence that
+# describes it. An og:image without an og:image:alt is an unlabelled image
+# everywhere the card is rendered.
+SOCIAL_IMAGE = "https://h5i.dev/_static/sandboxed-browser-ui.png"
+SOCIAL_ALT = ("An h5i browser session: the page an AI agent is reading, beside the "
+              "request log the engine wrote before any bytes moved")
+
+
 def head(title, description, canonical, schema, kind="article", rss=False):
     data = json.dumps(schema, indent=2, ensure_ascii=False).replace("</", "<\\/")
     feed = '<link rel="alternate" type="application/rss+xml" title="The h5i Blog" href="/feed.xml">' if rss else ""
@@ -42,9 +151,11 @@ def head(title, description, canonical, schema, kind="article", rss=False):
 <link rel="canonical" href="{canonical}">{feed}<link rel="icon" type="image/png" href="/_static/logo.png">
 <meta property="og:type" content="{kind}"><meta property="og:site_name" content="h5i">
 <meta property="og:title" content="{title}"><meta property="og:description" content="{description}">
-<meta property="og:url" content="{canonical}"><meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta property="og:url" content="{canonical}"><meta property="og:image" content="{SOCIAL_IMAGE}">
+<meta property="og:image:alt" content="{SOCIAL_ALT}"><meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="{title}">
-<meta name="twitter:description" content="{description}"><meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+<meta name="twitter:description" content="{description}"><meta name="twitter:image" content="{SOCIAL_IMAGE}">
+<meta name="twitter:image:alt" content="{SOCIAL_ALT}">
 <script type="application/ld+json">{data}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&amp;family=Space+Grotesk:wght@300;400;500;700&amp;family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
@@ -65,10 +176,13 @@ def terminal(label, text):
 def schema_for(item):
     url = f"https://h5i.dev/{item['section']}/{item['slug']}/"
     graph = [
-        {"@type": "TechArticle", "headline": item["h1"], "description": item["description"],
+        {"@type": "TechArticle", "headline": item["h1"], "description": meta_description(item),
          "author": {"@type": "Organization", "name": "h5i-dev"},
          "publisher": {"@type": "Organization", "name": "h5i"},
-         "datePublished": TODAY, "dateModified": TODAY, "mainEntityOfPage": url},
+         "datePublished": item.get("published", PUBLISHED),
+         "dateModified": modified(f"{item['section']}/{item['slug']}/"),
+         "image": SOCIAL_IMAGE, "inLanguage": "en", "isPartOf": {"@id": "https://h5i.dev/#website"},
+         "mainEntityOfPage": url},
         {"@type": "BreadcrumbList", "itemListElement": [
             {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"},
             {"@type": "ListItem", "position": 2, "name": item["section"].title(), "item": f"https://h5i.dev/{item['section']}/"},
@@ -82,6 +196,16 @@ def schema_for(item):
     return {"@context": "https://schema.org", "@graph": graph}
 
 
+def meta_description(item):
+    """The search-snippet line for a page.
+
+    `description` doubles as the visible card blurb and the RSS summary, where
+    a long sentence is worth having. A snippet is cut around 160 characters, so
+    a page whose blurb runs past that carries a `meta` line written to fit.
+    """
+    return item.get("meta", item["description"])
+
+
 def article_page(item):
     url = f"https://h5i.dev/{item['section']}/{item['slug']}/"
     faq = "".join(
@@ -89,9 +213,9 @@ def article_page(item):
         for q, a in item["faq"]
     )
     nxt = item["next"]
-    return f"""{head(item['title'], item['description'], url, schema_for(item))}
+    return f"""{head(item['title'], meta_description(item), url, schema_for(item))}
 <body>{NAV}<main class="article-wrap"><article class="post">
-<header><div class="post-eyebrow">{item['eyebrow']} &middot; {TODAY}</div>
+<header><div class="post-eyebrow">{item['eyebrow']} &middot; {item.get('published', PUBLISHED)}</div>
 <h1>{item['h1']}</h1><p class="post-deck">{item['deck']}</p>
 <div class="post-meta"><span>{item['time']} read</span><span>{item['tags']}</span></div></header>
 {item['body']}
@@ -792,6 +916,7 @@ RUN_FORUM = {
     "title": "Run a forum for two sandboxed agents | h5i",
     "h1": "Put two confined agents on one problem",
     "description": "Create a forum thread with a policy ceiling, attach two sandboxed agents under different roles, and let them exchange findings without either one holding a credential.",
+    "meta": "Open a forum thread with a policy ceiling, attach two sandboxed agents under different roles, and let them trade findings with neither one holding a credential.",
     "deck": "One agent in a box is a solved problem. The moment a second agent needs to see what the first found, the usual answer is a shared credential. This guide takes the other path: move the information, leave the authority where it was.",
     "body": f"""
 <div class="callout"><strong>Outcome.</strong> In about fifteen minutes you will have two boxes on one thread, a worker and a reviewer exchanging real findings, and a demonstration that neither box can reach the forum's storage or forge the identity on its own posts.</div>
@@ -890,6 +1015,7 @@ ZERO_TRUST = {
     "title": "Agents share information, never permissions | h5i",
     "h1": "Agents share information, never permissions",
     "description": "Multi-agent coordination usually leaks authority: every agent gets a token and a route. Keeping capabilities off the message path is what makes a shared conversation safe between untrusted agents.",
+    "meta": "Multi-agent coordination usually leaks authority. Keeping every capability off the message path is what makes one conversation safe between distrusting agents.",
     "deck": "The hard part of putting two coding agents on one problem is not the messaging. It is that almost every way of building the channel also hands each agent the authority to use it, and that authority is what a persuaded agent spends.",
     "body": f"""
 <div class="callout"><strong>The claim.</strong> A coordination channel between sandboxed agents is safe to the exact degree that nothing on it carries a capability. Get that right and a hostile message is merely an unconvincing argument. Get it wrong and it is a remote-execution primitive with good manners.</div>
@@ -969,6 +1095,7 @@ LOOP = {
     "title": "Browse, contain, work, export, apply | h5i",
     "h1": "Browse, contain, work, export, apply",
     "description": "The whole h5i loop in one essay: open a browser session whose request log is written before the bytes move, place it in a disposable box, let an agent work inside the same boundary, put several boxes on one Git-backed forum, then read a patch, a report and a receipt before anything crosses back.",
+    "meta": "The whole h5i loop: open a browser session whose request log is written before the bytes move, box it, work inside that boundary, read a patch before it lands.",
     "deck": "The loop is not five commands that happen to compose. It is one property expressed five times: at every step the record is written by something other than the thing being reviewed, and there is exactly one door out, operated by a person.",
     "body": f"""
 <div class="callout"><strong>The claim.</strong> An agent session should be reviewable without trusting anything the agent wrote. That single requirement decides the whole shape: a request that is not in the log did not happen, and nothing comes out that a person has not read.</div>
@@ -1073,13 +1200,29 @@ ARTICLES = [SESSION, FIRST_BOX, RUN_FORUM, REVIEW_PR, POLICY, BROWSER,
 
 def index_page(section, items):
     guides = section == "guides"
-    title = "h5i guides: from one browser session to a forum of agents" if guides else "The h5i blog: boundaries, evidence, and agent work"
-    description = ("Six practical h5i guides: drive a browser session and audit what it reached, create a first box, run a forum for two sandboxed agents, review an untrusted pull request, write a policy, and hand browser control between agent and human." if guides else "Six durable essays on sandboxed coding agents: the whole browse, contain, work, export, apply loop, why a shared channel must carry no capability, the environment boundary, isolation tiers, audit evidence, and prompt-injection containment.")
+    # Both hubs lead with the browser, because that is what h5i is; the box is
+    # where a session is placed, not the headline.
+    title = "h5i guides: drive an agent browser you can audit" if guides else "h5i essays: auditable browsing for AI agents"
+    description = ("Six guides to the h5i agent browser: drive a session and audit what it reached, box it, run a forum of agents, review an untrusted PR, write a policy."
+                   if guides else "Six essays on giving an AI agent a browser you can audit: the browse, contain, work, export, apply loop, the environment as the boundary, and what is evidence.")
     h1 = "One path from a browser session to a forum of agents" if guides else "Fewer posts. Sharper arguments."
     deck = ("Start at the top and follow the sequence. Each guide has one outcome, commands you can run, a verification step, and the point where human judgment belongs." if guides else "The blog is not a changelog and not a keyword warehouse. These essays explain the design decisions that stay true when commands and releases change.")
     url = f"https://h5i.dev/{section}/"
-    schema = {"@context": "https://schema.org", "@type": "ItemList", "name": title,
-              "itemListElement": [{"@type": "ListItem", "position": i + 1, "url": f"https://h5i.dev/{section}/{x['slug']}/", "name": x["h1"]} for i, x in enumerate(items)]}
+    # A hub is a page in its own right. Without CollectionPage and a breadcrumb
+    # it is the one level of the site with no trail, while every article under
+    # it has one.
+    schema = {"@context": "https://schema.org", "@graph": [
+        {"@type": "CollectionPage", "@id": f"{url}#page", "url": url, "name": title,
+         "description": description, "inLanguage": "en", "dateModified": modified(f"{section}/"),
+         "isPartOf": {"@id": "https://h5i.dev/#website"},
+         "about": {"@id": "https://h5i.dev/#app"}, "primaryImageOfPage": SOCIAL_IMAGE},
+        {"@type": "BreadcrumbList", "@id": f"{url}#breadcrumb", "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://h5i.dev/"},
+            {"@type": "ListItem", "position": 2, "name": section.title(), "item": url},
+        ]},
+        {"@type": "ItemList", "@id": f"{url}#list", "name": title,
+         "itemListElement": [{"@type": "ListItem", "position": i + 1, "url": f"https://h5i.dev/{section}/{x['slug']}/", "name": x["h1"]} for i, x in enumerate(items)]},
+    ]}
     rows = ""
     for i, item in enumerate(items, 1):
         label = f"Step {i:02d}" if guides else f"Essay {i:02d}"
@@ -1125,24 +1268,33 @@ TOP_REDIRECTS = {"workflows": "/blog/the-h5i-loop/"}
 
 
 def redirect_page(target):
+    # No `noindex` here, deliberately. There is no server-side 301 on a static
+    # host, so an instant meta refresh plus a canonical is the only way to tell
+    # a crawler this URL became that one. `noindex` would drop the old URL
+    # instead of folding it into the new one, throwing away whatever the
+    # retired page had earned. These stubs are kept out of the sitemap, the
+    # feed, llms.txt and every index, so nothing invites a crawler to them.
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
-<meta name="robots" content="noindex"><link rel="canonical" href="https://h5i.dev{target}">
+<meta name="robots" content="noarchive"><link rel="canonical" href="https://h5i.dev{target}">
 <meta http-equiv="refresh" content="0; url={target}"><title>Article moved | h5i</title></head>
 <body><p>This page moved during the documentation rewrite. <a href="{target}">Read the page that replaced it.</a></p></body></html>"""
 
 
 def build():
+    generated = {}
     for section in ("blog", "guides"):
         base = ROOT / section
         for child in base.iterdir():
             if child.is_dir():
                 shutil.rmtree(child)
         selected = [item for item in ARTICLES if item["section"] == section]
-        (base / "index.html").write_text(index_page(section, selected))
+        generated[f"{section}/"] = index_page(section, selected)
+        (base / "index.html").write_text(generated[f"{section}/"])
         for item in selected:
             out = base / item["slug"]
             out.mkdir()
-            (out / "index.html").write_text(article_page(item))
+            generated[f"{section}/{item['slug']}/"] = article_page(item)
+            (out / "index.html").write_text(generated[f"{section}/{item['slug']}/"])
         for old, new in REDIRECTS[section].items():
             out = base / old
             out.mkdir(exist_ok=True)
@@ -1153,20 +1305,27 @@ def build():
         out.mkdir(exist_ok=True)
         (out / "index.html").write_text(redirect_page(target))
 
+    # Every page is written by now, so the recorded dates can be checked
+    # against what actually shipped before they are published as `lastmod`.
+    verify_dates(generated)
+
     core = [("", "1.0"), ("features/", "0.9"), ("manual/", "0.9"),
             ("guides/", "0.8"), ("blog/", "0.8"), ("pitch/", "0.6"), ("demo/", "0.6")]
-    urls = core + [(f"{item['section']}/{item['slug']}/", "0.7") for item in ARTICLES]
-    rows = "\n".join(f"  <url><loc>https://h5i.dev/{path}</loc><lastmod>{TODAY}</lastmod><priority>{priority}</priority></url>" for path, priority in urls)
+    urls = [(path, priority, modified(path)) for path, priority in core]
+    urls += [(f"{item['section']}/{item['slug']}/", "0.7", modified(f"{item['section']}/{item['slug']}/"))
+             for item in ARTICLES]
+    rows = "\n".join(f"  <url><loc>https://h5i.dev/{path}</loc><lastmod>{lastmod}</lastmod><priority>{priority}</priority></url>" for path, priority, lastmod in urls)
     (ROOT / "sitemap.xml").write_text(f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n{rows}\n</urlset>\n')
 
     posts = [item for item in ARTICLES if item["section"] == "blog"]
     items = "\n".join(f"""    <item><title>{item['h1']}</title><link>https://h5i.dev/blog/{item['slug']}/</link>
-      <guid isPermaLink="true">https://h5i.dev/blog/{item['slug']}/</guid><pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
+      <guid isPermaLink="true">https://h5i.dev/blog/{item['slug']}/</guid><pubDate>{rfc822(item.get('published', PUBLISHED))}</pubDate>
       <description>{item['description']}</description></item>""" for item in posts)
     (ROOT / "feed.xml").write_text(f"""<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>
 <title>The h5i Blog</title><link>https://h5i.dev/blog/</link>
-<description>Design essays on boundaries, evidence, and how sandboxed agents work together.</description>
-<language>en-us</language><lastBuildDate>Fri, 21 Aug 2026 12:00:00 GMT</lastBuildDate>
+<description>Design essays on giving an AI agent a browser you can audit: boundaries, evidence, and what a request log has to prove.</description>
+<language>en-us</language><lastBuildDate>{rfc822(max(modified(f"blog/{item['slug']}/") for item in posts))}</lastBuildDate>
+<atom:link xmlns:atom="http://www.w3.org/2005/Atom" href="https://h5i.dev/feed.xml" rel="self" type="application/rss+xml"/>
 {items}</channel></rss>""")
 
     (ROOT / "llms.txt").write_text("""# h5i
@@ -1354,10 +1513,27 @@ If a section is unavailable, say why. Absence must not impersonate success.
 
 ## Page mechanics
 
-Every canonical article needs one H1; descriptive metadata; canonical, Open
-Graph, and Twitter tags; TechArticle and BreadcrumbList JSON-LD; visible FAQ
-text when FAQPage data is present; useful internal links; a current
-dateModified; and inclusion in sitemap.xml. Blog essays also enter feed.xml.
+Every canonical article needs one H1 and a contiguous heading outline;
+descriptive metadata; canonical, Open Graph, and Twitter tags, including an
+image alt; TechArticle and BreadcrumbList JSON-LD; visible FAQ text when
+FAQPage data is present; useful internal links; a current dateModified; and
+inclusion in sitemap.xml. Blog essays also enter feed.xml.
+
+A title should fit in about 60 characters and a meta description in about 160,
+because that is where a search result cuts them. When a page's card blurb is
+worth more room than that, give it a shorter `meta` line as well.
+
+Dates are not decorative. `PAGE_HISTORY` in this file records each page's last
+content change beside a fingerprint of what it contained, and the build refuses
+to finish when a fingerprint moves without its date, so `lastmod` and
+`dateModified` cannot quietly describe a version that no longer ships.
+
+One entity, one @id. The product is `https://h5i.dev/#app` and the site is
+`#website` on every page that names them; a page-scoped node (`#faq`,
+`#breadcrumb`, `#webpage`) is scoped to that page's URL. Two pages describing
+one @id differently, or one page carrying two BreadcrumbLists, leaves a crawler
+picking between them. A breadcrumb is the trail to the page it sits on, so the
+home page has none.
 
 Before publishing, remove repeated setup, claims without mechanisms, invented
 precision, and references to features the manual no longer documents. Then

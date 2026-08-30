@@ -79,9 +79,9 @@ HEAD = '''<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i Manual: CLI Reference for the AI Coding Agent Sandbox</title>
-  <meta name="description" content="The complete h5i CLI reference: h5i box for creating and running disposable sandboxes, the five isolation tiers from workspace to microvm, the .h5i/env.toml policy model, the credential broker, the in-box browser, execution receipts, and the honest limits.">
-  <meta name="keywords" content="h5i manual, h5i cli reference, h5i box, h5i box create, h5i box export, h5i box probe, h5i ui, h5i browser, isolation tiers, microvm sandbox, env.toml policy, egress allowlist, credential broker, execution receipt, claude code, codex">
+  <title>h5i manual: CLI reference for the AI agent browser</title>
+  <meta name="description" content="Every h5i command: browser sessions and their audit, the five isolation tiers, the .h5i/env.toml policy, the credential broker, receipts, and the honest limits.">
+  <meta name="keywords" content="h5i manual, h5i cli reference, h5i browser, h5i browser open, h5i browser snapshot, h5i browser audit, agent browser cli, h5i box, isolation tiers, env.toml policy, egress allowlist, credential broker, execution receipt, claude code, codex">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
   <meta name="color-scheme" content="dark">
@@ -92,28 +92,31 @@ HEAD = '''<!DOCTYPE html>
   <link rel="apple-touch-icon" href="/_static/logo.png">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Manual: CLI Reference for the AI Coding Agent Sandbox">
-  <meta property="og:description" content="Every h5i command, the five isolation tiers, the checked-in policy model, the credential broker, the browser in the box, execution receipts, and the limits h5i declines to claim.">
+  <meta property="og:title" content="h5i manual: CLI reference for the AI agent browser">
+  <meta property="og:description" content="Every h5i command: the browser session verbs, the five isolation tiers, the checked-in policy model, the credential broker, execution receipts, and the limits h5i declines to claim.">
   <meta property="og:url" content="https://h5i.dev/manual/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+  <meta property="og:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
+  <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i Manual: CLI Reference for the AI Coding Agent Sandbox">
-  <meta name="twitter:description" content="The complete CLI reference for h5i, the integrated sandbox for AI coding agents.">
+  <meta name="twitter:title" content="h5i manual: CLI reference for the AI agent browser">
+  <meta name="twitter:description" content="The complete CLI reference for h5i: the auditable browser for AI agents, and the sandbox a session can be placed in.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
+  <meta name="twitter:image:alt" content="An h5i browser session: the page an AI agent is reading, beside the request log the engine wrote before any bytes moved">
 
   <script type="application/ld+json">
   {"@context":"https://schema.org","@graph":[
     {"@type":"TechArticle","@id":"https://h5i.dev/manual/#article",
-     "headline":"h5i Manual: CLI Reference for the AI Coding Agent Sandbox",
-     "description":"The complete h5i command reference: h5i box, the five isolation tiers, the .h5i/env.toml policy model, the credential broker, the browser in the box, execution receipts, and the honest limits.",
+     "headline":"h5i manual: CLI reference for the AI agent browser",
+     "description":"Every h5i command: the browser session verbs and their audit, h5i box, the five isolation tiers, the .h5i/env.toml policy model, the credential broker, execution receipts, and the honest limits.",
      "url":"https://h5i.dev/manual/",
      "inLanguage":"en",
      "isPartOf":{"@type":"WebSite","name":"h5i","url":"https://h5i.dev/"},
-     "about":{"@type":"SoftwareApplication","name":"h5i","alternateName":"high-five","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS, Windows (WSL2)","url":"https://h5i.dev/"},
+     "about":{"@id":"https://h5i.dev/#app"},
      "author":{"@type":"Organization","name":"h5i-dev"},
      "publisher":{"@type":"Organization","name":"h5i","logo":{"@type":"ImageObject","url":"https://h5i.dev/_static/logo.png"}},
      "proficiencyLevel":"Beginner",
-     "keywords":"h5i box, isolation tiers, microvm, env.toml policy, egress allowlist, credential broker, execution receipt, agent sandbox CLI"},
+     "keywords":"h5i browser, agent browser CLI, browser audit log, h5i box, isolation tiers, microvm, env.toml policy, egress allowlist, credential broker, execution receipt"},
     {"@type":"BreadcrumbList","@id":"https://h5i.dev/manual/#breadcrumb","itemListElement":[
       {"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},
       {"@type":"ListItem","position":2,"name":"Manual","item":"https://h5i.dev/manual/"}]}

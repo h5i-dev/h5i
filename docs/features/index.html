@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>h5i Features: a fast browser for agents, the sandbox around it, and one dashboard over both</title>
-  <meta name="description" content="h5i lets agents browse the web, run code and test apps without unrestricted access to your machine. A fast, lightweight browser they drive from the command line, five isolation tiers to place it in, and one read-only dashboard showing active sessions, blocked requests and proposed changes. One Rust binary, local-first, Apache 2.0, no hosted service.">
+  <title>h5i features: the agent browser, its sandbox, one dashboard</title>
+  <meta name="description" content="The h5i agent browser: pages as @ref outlines, a fail-closed request log, five isolation tiers to place a session in, and one read-only dashboard over it all.">
   <meta name="keywords" content="agent browser, headless browser for ai agents, browser automation for llm agents, ai agent sandbox, web app testing agent, coding agent containment, claude code sandbox, codex sandbox, isolation tiers, egress allowlist, execution receipt, disposable dev environment, prompt injection containment, h5i box">
   <meta name="author" content="h5i-dev">
   <meta name="theme-color" content="#D21C1C">
@@ -20,7 +20,7 @@
   <!-- Open Graph -->
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="h5i">
-  <meta property="og:title" content="h5i Features: a fast browser for agents, the sandbox around it, and one dashboard over both">
+  <meta property="og:title" content="h5i features: the agent browser, its sandbox, one dashboard">
   <meta property="og:description" content="A fast, lightweight browser agents control from the command line, with pages returned as structured snapshots and every action and request recorded. Place the session in a sandbox when a task needs a tighter boundary, then review it all from one screen.">
   <meta property="og:url" content="https://h5i.dev/features/">
   <meta property="og:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
@@ -30,7 +30,7 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="h5i Features: a fast browser for agents, the sandbox around it, and one dashboard over both">
+  <meta name="twitter:title" content="h5i features: the agent browser, its sandbox, one dashboard">
   <meta name="twitter:description" content="Read pages ~3x faster with ~86% less peak memory, control where the browser can connect, take over the sensitive steps, and review every session from one read-only dashboard.">
   <meta name="twitter:image" content="https://h5i.dev/_static/sandbox-ui-demo.png">
   <meta name="twitter:image:alt" content="The h5i box console: every box with its tier, status and one signal on the left, and on the right the refused-egress finding, a flight recorder of one row per receipt across five lanes, and the policy that was actually enforced">
@@ -73,12 +73,32 @@
       "name": "h5i",
       "alternateName": "high-five",
       "applicationCategory": "DeveloperApplication",
-      "operatingSystem": "Linux, macOS",
-      "description": "A secure, auditable browser for AI agents. An agent drives a session by id and reads an outline with @ref handles; the engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move and a fetch that cannot be recorded is refused. Sessions run on the host by default and can be placed inside a Landlock, seccomp, container or microVM sandbox, which adds an egress allowlist enforced outside the browser and makes a human takeover a boundary rather than a request.",
+      "applicationSubCategory": "Web browser for AI agents",
+      "operatingSystem": "Linux, macOS, Windows (WSL2)",
+      "description": "A secure, auditable browser for AI agents. An agent drives a session by id and reads the page as a compact outline of @ref handles; the engine is the HTTP client, so every request is checked against the session policy and written down before the bytes move, and a fetch that cannot be recorded is refused. A request that is not in the log did not happen. Sessions run on the host by default, with no containment claimed, and one flag places the same session inside a Landlock, seccomp, container or microVM sandbox, which adds an egress allowlist enforced outside the browser and makes a human takeover a boundary rather than a request.",
+      "featureList": [
+        "A browser an agent drives by session id: open, snapshot, click, type, take, audit, close",
+        "Pages returned as a compact outline with @ref handles instead of raw HTML or screenshots",
+        "Policy first, record second, wire third: a fetch that cannot be recorded is refused",
+        "A fail-closed request log, so a request that is not in the log did not happen",
+        "Denials recorded with their reason, so the log shows what was attempted and not only what succeeded",
+        "Page content fenced as untrusted data, with escape sequences never reaching the terminal",
+        "Human takeover of a live session, enforced as a boundary once the session is boxed",
+        "A credential broker that uses browser, model and SSH credentials without returning them to the agent",
+        "Five isolation tiers (workspace, process, supervised, container, microvm) that fail closed",
+        "A network egress allowlist enforced outside the browser at L3/L4, or through an L7 proxy",
+        "A disposable box holding the code, the toolchain, the dev server and the browser session",
+        "A Git-backed forum where boxed agents share threads and findings but never a credential",
+        "An output gate: h5i box export writes a reviewable patch, a report and an execution receipt"
+      ],
+      "keywords": "browser for AI agents, agent browser, auditable browser, headless browser for AI agents, browser automation audit log, agentic browsing, fail-closed request log, egress allowlist, browser session isolation, human takeover, prompt injection containment, AI agent sandbox, microVM isolation, Claude Code, Codex",
       "url": "https://h5i.dev/",
       "downloadUrl": "https://github.com/h5i-dev/h5i",
-      "softwareHelp": "/manual/",
+      "installUrl": "https://github.com/h5i-dev/h5i#install",
+      "softwareHelp": "https://h5i.dev/manual/",
+      "softwareRequirements": "Rootless Podman for the container tier; microsandbox (msb) and hardware virtualization for the microvm tier",
       "programmingLanguage": "Rust",
+      "isAccessibleForFree": true,
       "sameAs": [
         "https://github.com/h5i-dev/h5i"
       ],
@@ -97,32 +117,8 @@
       }
     },
     {
-      "@type": "BreadcrumbList",
-      "@id": "https://h5i.dev/#breadcrumb",
-      "itemListElement": [
-        {
-          "@type": "ListItem",
-          "position": 1,
-          "name": "Home",
-          "item": "https://h5i.dev/"
-        },
-        {
-          "@type": "ListItem",
-          "position": 2,
-          "name": "Guides",
-          "item": "https://h5i.dev/guides/"
-        },
-        {
-          "@type": "ListItem",
-          "position": 3,
-          "name": "Blog",
-          "item": "https://h5i.dev/blog/"
-        }
-      ]
-    },
-    {
       "@type": "FAQPage",
-      "@id": "https://h5i.dev/#faq",
+      "@id": "https://h5i.dev/features/#faq",
       "mainEntity": [
         {
           "@type": "Question",
@@ -173,6 +169,19 @@
           }
         }
       ]
+    },
+    {
+      "@type": "WebPage",
+      "@id": "https://h5i.dev/features/#webpage",
+      "url": "https://h5i.dev/features/",
+      "isPartOf": {
+        "@id": "https://h5i.dev/#website"
+      },
+      "about": {
+        "@id": "https://h5i.dev/#app"
+      },
+      "primaryImageOfPage": "https://h5i.dev/_static/sandbox-ui-demo.png",
+      "inLanguage": "en"
     }
   ]
 }
@@ -183,13 +192,13 @@
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap">
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
-  <link rel="stylesheet" href="/_static/blog.css?v=ccfaa76598">
+  <link rel="stylesheet" href="/_static/blog.css?v=16bf3ac0cf">
   <link rel="stylesheet" href="/_static/console-mock.css?v=f390229c34">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://h5i.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://h5i.dev/features/"}]}
   </script>
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"ItemList","name":"h5i features: a fast browser for AI agents, the sandbox around it, and one dashboard over both","itemListElement":[
+  {"@context":"https://schema.org","@type":"ItemList","name":"h5i features: the agent browser, the sandbox around it, and one dashboard over both","itemListElement":[
     {"@type":"ListItem","position":1,"name":"A fast, lightweight browser (h5i browser open): ~3x faster page reads with ~86% less peak memory in benchmarks on simple websites"},
     {"@type":"ListItem","position":2,"name":"Pages as structured snapshots (h5i browser snapshot): a compact outline with @ref handles instead of raw HTML or screenshots"},
     {"@type":"ListItem","position":3,"name":"A fail-closed session record (h5i browser audit): actions, requests, blocked connections, human takeovers and how the session ended, in one timeline"},
@@ -239,7 +248,7 @@
     <!-- The three parts, beside the commands that reach them -->
     <div class="ws-def reveal">
       <div class="ws-def-text">
-        <h3>Three parts, and the first one stands alone</h3>
+        <h2>Three parts, and the first one stands alone</h2>
         <p><strong style="color:var(--ink)">Browser.</strong> A fast, lightweight browser agents can control from the command line. Pages come back as structured snapshots, while actions and network requests are recorded for review.</p>
         <p><strong style="color:var(--ink)">Sandbox.</strong> Every session starts with lightweight isolation. For stronger protection, place the browser, the agent, and the dependencies together inside a container or a microVM.</p>
         <p><strong style="color:var(--ink)">Dashboard.</strong> See active agents, browser sessions, blocked requests, resource usage and proposed changes from one read-only screen.</p>
@@ -277,7 +286,7 @@
       <div class="feat-card reveal">
         <span class="feat-cmd">h5i browser snapshot &#183; click &#183; type</span>
         <div class="feat-name">Pages in a format agents can use</div>
-        <div class="feat-desc">h5i returns a compact page outline with <code>@ref</code> handles instead of noisy HTML or screenshots. Agents can read, click, type and extract structured data directly.</div>
+        <div class="feat-desc">h5i returns a compact page outline with <code>@ref</code> handles instead of noisy HTML or screenshots. Agents can read, click, type and extract structured data directly. <a href="/guides/drive-a-browser-session/" style="color:var(--red-text)">Drive a session &#8594;</a></div>
         <div class="feat-proves">a handle names an element; a screenshot only names a pixel.</div>
       </div>
       <div class="feat-card reveal">
