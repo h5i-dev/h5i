@@ -3,7 +3,7 @@
 The h5i product video (0:58), built as a deterministic HTML timeline and
 rendered to mp4. It tells the same story the front page and the pitch deck
 tell: **a fast, auditable browser for AI agents**. Linked from the site footer
-as "the browser, in under a minute".
+as "Demo video".
 
 ## The claim the film makes
 
