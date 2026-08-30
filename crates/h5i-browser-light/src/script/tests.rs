@@ -3521,7 +3521,16 @@ fn the_eagerly_parsed_prelude_stays_within_its_budget() {
     // twice: it put the interface-prototype mirror in the `conformance` tier
     // where pages pay nothing for it, and it found the table redundancy above.
     // Keep it tight for that reason, not because a KiB is measurably slow.
-    const BUDGET_KIB: usize = 278;
+    // 280, raised after an adversarial review of this branch. The extra 2 KiB
+    // is almost entirely **bug fixes to what the branch already added**, not
+    // new surface — `classList.toggle` doing WebIDL boolean conversion and
+    // validating on the declining path, `Attr`/`MediaList`/`MediaQueryList`
+    // refusing `new` the way `brand()` used to, `Attr.localName` not splitting
+    // a colon it has no prefix for, `removeProperty` returning the serialised
+    // value `getPropertyValue` would, and `sheet.media` being live rather than
+    // a snapshot. Those found 67 subtests between them, so the surface was
+    // wrong in ways the coverage numbers had been quietly paying for.
+    const BUDGET_KIB: usize = 280;
 
     assert!(
         !super::PRELUDE.contains("/*"),

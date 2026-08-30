@@ -373,9 +373,14 @@ TESTDRIVER = """
     /// tests are actually asserting on.
     async action_sequence(sources) {
       if (!Array.isArray(sources)) return refuse('action_sequence');
-      // One shared pointer position, in viewport coordinates, as a real
-      // pointer has. `origin` is resolved against it for the "pointer" case.
-      var pointer = { x: 0, y: 0, target: null, down: false };
+      // **Pointer state outlives the call**, because a real pointer does.
+      // A test that moves and presses in one `send()` and releases in the
+      // next used to lose its press target between them — no synthesized
+      // click — and reset to (0,0), so a following `{origin: "pointer"}`
+      // move landed in the corner. It also makes `release_actions()`
+      // honest: the no-op is only correct if there is state to have none of.
+      var pointer = window.__h5iPointerState ||
+        (window.__h5iPointerState = { x: 0, y: 0, target: null, down: false, downTarget: null });
 
       function resolve(action) {
         var origin = action.origin;
@@ -396,11 +401,16 @@ TESTDRIVER = """
       }
 
       function pointerInit(extra) {
+        // `button` is the one the action named. Hardcoding 0 delivered a
+        // right-button press as a left one, and then synthesized a `click`
+        // from it — a context-menu test would have reported an engine failure
+        // for something this shim did.
+        var button = pointer.button || 0;
         var init = {
           bubbles: true, cancelable: true, composed: true, detail: 1,
           clientX: pointer.x, clientY: pointer.y,
           screenX: pointer.x, screenY: pointer.y,
-          button: 0, buttons: pointer.down ? 1 : 0,
+          button: button, buttons: pointer.down ? (1 << button) : 0,
         };
         for (var k in (extra || {})) init[k] = extra[k];
         return init;
@@ -437,6 +447,7 @@ TESTDRIVER = """
         var el = pointer.target || at(pointer.x, pointer.y);
         if (kind === 'pointerDown') {
           pointer.down = true;
+          pointer.button = Number(action.button) || 0;
           pointer.downTarget = el;
           if (window.__h5iNoteUserActivation) window.__h5iNoteUserActivation();
           if (el) { fire(el, 'pointerdown', pointerInit()); fire(el, 'mousedown', pointerInit()); }
@@ -447,11 +458,14 @@ TESTDRIVER = """
           if (el) { fire(el, 'pointerup', pointerInit()); fire(el, 'mouseup', pointerInit()); }
           // A down and an up on the same element is a click, which is what
           // every light-dismiss test is really performing.
-          if (el && el === pointer.downTarget) {
+          // Only the primary button makes a `click`; a right-button release
+          // is a `contextmenu` gesture and must not be turned into one.
+          if (el && el === pointer.downTarget && (pointer.button || 0) === 0) {
             if (typeof el.click === 'function') el.click();
             else fire(el, 'click', pointerInit());
           }
           pointer.downTarget = null;
+          pointer.button = 0;
           return;
         }
         throw new Error('action_sequence: pointer action `' + kind + '` is not implemented');

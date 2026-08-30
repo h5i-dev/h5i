@@ -101,6 +101,23 @@
 
   // ── nodes ────────────────────────────────────────────────────────────────
 
+  /// The three interfaces this file builds but WebIDL gives no constructor:
+  /// `Attr`, `MediaList`, `MediaQueryList`. They used to reach the global
+  /// through `brand()`, which threw `Illegal constructor` for a page; now that
+  /// they are real classes — so their prototypes carry their members, which is
+  /// the whole point — the throw has to come from the constructor instead.
+  /// `internal()` is the one door in.
+  let constructingInternally = false;
+  function internal(build) {
+    constructingInternally = true;
+    try { return build(); } finally { constructingInternally = false; }
+  }
+  function refuseExternal(name) {
+    if (!constructingInternally) {
+      throw new TypeError(`Illegal constructor: ${name} is not constructible`);
+    }
+  }
+
   const wrappers = new Map(); // id -> Node, so identity holds across lookups
 
   /// A live-enough `NodeList`/`HTMLCollection`.
@@ -992,13 +1009,21 @@
     /// list that already has the token, and `toggle(token, false)` on one that
     /// does not, both answer without touching the attribute.
     toggle(name, force) {
-      const token = String(name);
+      // `_check` first, and on **every** path: the spec validates the token
+      // before it looks at `force`, so `toggle("", false)` is a SyntaxError
+      // rather than a quiet `false`. The declining paths below never reach
+      // `add`/`remove`, which is where validation used to happen.
+      const [token] = this._check([name]);
+      // `force` is an *optional boolean*, so WebIDL converts it — any truthy
+      // value means true. Comparing `=== true` made `toggle(cls, list.length)`
+      // remove the class it was asked to keep.
+      const forced = force === undefined ? undefined : !!force;
       if (this.contains(token)) {
-        if (force === true) return true;
+        if (forced === true) return true;
         this.remove(token);
         return false;
       }
-      if (force === false) return false;
+      if (forced === false) return false;
       this.add(token);
       return true;
     }
@@ -1715,6 +1740,7 @@
   /// does — a detached one (from `createAttribute`) keeps its own.
   class Attr {
     constructor(name, value, owner, namespace, prefix) {
+      refuseExternal("Attr");
       this._name = String(name);
       this._value = value === undefined || value === null ? "" : String(value);
       this._owner = owner ?? null;
@@ -1724,9 +1750,13 @@
     get nodeType() { return 2; }
     get name() { return this._name; }
     get nodeName() { return this._name; }
+    /// **A null prefix means the whole name is the local name**, colon or not:
+    /// `createAttribute("a:b")` takes a *local* name, so its `localName` is
+    /// `"a:b"`. Splitting on the colon regardless reported `"b"` with a null
+    /// prefix, which is a pair that cannot both be true.
     get localName() {
-      const at = this._name.indexOf(":");
-      return this._prefix === null && at === -1 ? this._name : this._name.slice(at + 1);
+      if (this._prefix === null) return this._name;
+      return this._name.slice(this._name.indexOf(":") + 1);
     }
     get prefix() { return this._prefix; }
     get namespaceURI() { return this._ns; }
@@ -2039,8 +2069,8 @@
     // things code does with it: iterate it, and look a name up.
     get attributes() {
       const node = this;
-      const list = api.attrNames(this._id).map((name) => new Attr(
-        name, api.getAttr(node._id, name), node,
+      const list = api.attrNames(this._id).map((name) => internal(
+        () => new Attr(name, api.getAttr(node._id, name), node),
       ));
       list.getNamedItem = (name) =>
         list.find((a) => a.name === String(name).toLowerCase()) || null;
@@ -2064,7 +2094,12 @@
     /// a visible child of a `visibility: hidden` parent is still not shown.
     checkVisibility(options) {
       const wanted = options || {};
-      if (!this.isConnected || this.getClientRects().length === 0) return false;
+      if (!this.isConnected) return false;
+      // No box means not rendered — except for `display: contents`, which the
+      // algorithm carves out by name: the element generates no box of its own
+      // and its children are still shown through it.
+      if (this.getClientRects().length === 0
+        && getComputedStyle(this).display !== "contents") return false;
       const checkVisibility = wanted.visibilityProperty ?? wanted.checkVisibilityCSS;
       const checkOpacity = wanted.opacityProperty ?? wanted.checkOpacity;
       if (!checkVisibility && !checkOpacity) return true;
@@ -2898,13 +2933,13 @@
           const [lo, hi] = options.clamp;
           return Math.min(Math.max(value, lo), hi);
         }
-        // Above the unsigned long range the attribute is *out of range*, and an
-        // out-of-range reflection answers its default: `canvas.width` set to
-        // "2147483648" reads 300, not the number. Checked after `clamp`
-        // deliberately — a clamped attribute keeps the out-of-range value's
-        // direction and pins it to the ceiling, which is why `colgroup.span`
-        // reads the 32-bit maximum as 1000 rather than falling back to 1.
-        if (value > 2147483647) return options.default ?? 0;
+        // No range check here: `parseInteger` already answers `null` for
+        // anything outside the 32-bit range, so a guard at this point is
+        // unreachable. One stood here claiming that a *clamped* attribute
+        // pinned to its ceiling instead — it did not, and does not: because the
+        // rejection happens in the parse, `colgroup.span = "2147483648"` reads
+        // 1 rather than 1000. That is a real bug, older than this comment, and
+        // it lives in `parseInteger` rather than here.
         return value;
       },
       // A reflected `double`, for `<meter>` and `<progress>`. Not an integer
@@ -5977,16 +6012,27 @@
   /// included; the suite asserts both do **not** match.
   const HEADING_TAGS = ":is(h1,h2,h3,h4,h5,h6)";
 
+  /// `null` when the argument is not a plain list of integers.
+  ///
+  /// Selectors 4 allows `<An+B>#`, so `:heading(2n+1)` is well-formed and this
+  /// does not implement it. Rewriting it to `:not(*)` would answer "matches
+  /// nothing", which is a **plausible wrong answer** — the caller cannot tell
+  /// it from a selector that genuinely matched nothing. Returning null leaves
+  /// the selector untouched, so the parser rejects it and the page gets the
+  /// SyntaxError that says this engine does not know the form.
   function headingLevels(argument) {
-    const levels = String(argument).split(",")
-      .map((one) => Number(one.trim()))
-      .filter((level) => Number.isInteger(level) && level >= 1 && level <= 6);
+    const parts = String(argument).split(",").map((one) => one.trim());
+    if (!parts.every((one) => /^[+-]?\d+$/.test(one))) return null;
+    const levels = parts.map(Number)
+      .filter((level) => level >= 1 && level <= 6);
+    // An in-range-free but well-formed list — `:heading(7)` — matches nothing,
+    // and that *is* the right answer for it.
     return levels.length ? `:is(${levels.map((n) => `h${n}`).join(",")})` : ":not(*)";
   }
 
   function checkSelector(selector) {
     const text = String(selector)
-      .replace(/:heading\(([^)]*)\)/gi, (_, argument) => headingLevels(argument))
+      .replace(/:heading\(([^)]*)\)/gi, (whole, argument) => headingLevels(argument) ?? whole)
       .replace(/:heading\b/gi, HEADING_TAGS)
       .replace(/:popover-open\b/g, "." + POPOVER_OPEN_CLASS)
       .replace(/:modal\b/g, "." + MODAL_OPEN_CLASS);
@@ -6041,6 +6087,43 @@
     return name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
   }
 
+  /// One declaration's **serialised** value, memoised on what it was given.
+  ///
+  /// CSSOM defines `el.style.backgroundPosition` as the serialisation of the
+  /// specified value, not the text the author typed: `.5%` serialises as
+  /// `0.5%`, `-0` as `0`, and a shorthand comes back re-composed from its
+  /// longhands.
+  ///
+  /// **Memoised because `el.style` builds a new declaration on every access.**
+  /// The first version cached the parsed map on the `StyleDeclaration`, which
+  /// is thrown away immediately — so the cache never hit, and a single
+  /// `el.style.color` read cost one Stylo parse *per declared property*.
+  /// Measured at **33 us against 1 us** for the raw attribute, on an element
+  /// with five declarations: fifty times an ordinary DOM property read, on a
+  /// path that animation and drag code sits in.
+  ///
+  /// Keyed on property and raw text together, so the same declaration is
+  /// parsed once for the life of the realm however many wrappers ask. Bounded,
+  /// because a page that generates unique values every frame would otherwise
+  /// grow this without end.
+  const serializedValues = new Map();
+  /// Parsed declaration maps, keyed on the `style` text they came from.
+  const declarationMaps = new Map();
+
+  function serializedValue(property, raw) {
+    if (raw === undefined) return "";
+    // A custom property is whatever the page put there; there is nothing to
+    // normalise and the parser would decline it anyway.
+    if (property.startsWith("--")) return raw;
+    const key = `${property}\u0000${raw}`;
+    const known = serializedValues.get(key);
+    if (known !== undefined) return known;
+    const value = api.serializeCssValue(property, raw) || raw;
+    if (serializedValues.size > 4096) serializedValues.clear();
+    serializedValues.set(key, value);
+    return value;
+  }
+
   // Inline style, backed by the element's own `style` attribute rather than by
   // a parallel object, so what script sets is what the cascade sees and what a
   // later `getAttribute("style")` returns. One source of truth, same rule the
@@ -6054,36 +6137,31 @@
     /// this one about what `color:red;;` means.
     constructor(source) { this._source = source; }
 
-    /// The declarations, **serialised** rather than as the author wrote them.
+    /// The declarations, as the author wrote them. Serialising happens in
+    /// `getPropertyValue`, one property at a time — see `serializedValue`.
     ///
-    /// CSSOM defines `el.style.backgroundPosition` as the serialisation of the
-    /// specified value, and the two differ more often than they look: `.5%`
-    /// serialises as `0.5%`, `-0` as `0`, and a shorthand comes back
-    /// re-composed. Handing back the raw substring between `:` and `;` failed
-    /// 164 subtests of `serialize-values` on number formatting alone.
+    /// **Memoised on the declaration text**, and the reason is that `el.style`
+    /// builds a fresh `StyleDeclaration` on every access, so a per-instance
+    /// cache can never hit: `el.style.color` re-split the whole `style`
+    /// attribute into a new Map every time. Measured at 21 us against 1 us for
+    /// `getAttribute` on the same element — the split is the cost, not the
+    /// reading, and animation and drag code sits in this path.
     ///
-    /// Cached against the text it parsed, for the same reason `cssRules` is:
-    /// this runs on every `length`, `item` and property read, and a host call
-    /// per property per read would put a CSS parse on a hot path. A custom
-    /// property or anything the parser declines keeps its raw text — a value
-    /// this cannot serialise is likelier to be a gap here than a page writing
-    /// nonsense, and dropping it would lose what the page set.
+    /// The map handed back is shared, so nothing may mutate it; every caller
+    /// here reads. Bounded for the same reason `serializedValues` is.
     _read() {
       const raw = this._source.get();
-      if (this._parsedFor === raw) return this._parsed;
+      const known = declarationMaps.get(raw);
+      if (known !== undefined) return known;
       const out = new Map();
       for (const part of raw.split(";")) {
         const at = part.indexOf(":");
         if (at < 0) continue;
         const name = part.slice(0, at).trim().toLowerCase();
-        const value = part.slice(at + 1).trim();
-        if (!name) continue;
-        out.set(name, name.startsWith("--")
-          ? value
-          : (api.serializeCssValue(name, value) || value));
+        if (name) out.set(name, part.slice(at + 1).trim());
       }
-      this._parsedFor = raw;
-      this._parsed = out;
+      if (declarationMaps.size > 512) declarationMaps.clear();
+      declarationMaps.set(raw, out);
       return out;
     }
     _write(map) {
@@ -6095,9 +6173,14 @@
     get length() { return this._read().size; }
     item(index) { return [...this._read().keys()][index] ?? ""; }
 
-    getPropertyValue(name) { return this._read().get(String(name).toLowerCase()) || ""; }
+    getPropertyValue(name) {
+      const property = String(name).toLowerCase();
+      return serializedValue(property, this._read().get(property));
+    }
     setProperty(name, value) {
-      const map = this._read();
+      // A **copy**: `_read()` hands back the shared memo, and mutating it would
+      // corrupt the entry every other element with the same `style` text reads.
+      const map = new Map(this._read());
       if (value === "" || value === null || value === undefined) {
         map.delete(String(name).toLowerCase());
       } else {
@@ -6106,9 +6189,13 @@
       this._write(map);
     }
     removeProperty(name) {
-      const map = this._read();
-      const had = map.get(String(name).toLowerCase()) || "";
-      map.delete(String(name).toLowerCase());
+      const property = String(name).toLowerCase();
+      const map = new Map(this._read());
+      // The **serialised** value, the same one `getPropertyValue` would have
+      // answered a moment earlier. Returning the raw text made the two
+      // disagree: `.5` from one and `0.5` from the other for one declaration.
+      const had = serializedValue(property, map.get(property));
+      map.delete(property);
       this._write(map);
       return had;
     }
@@ -7095,6 +7182,7 @@
   class MediaQueryList extends EventTarget {
     constructor(text) {
       super();
+      refuseExternal("MediaQueryList");
       this._media = String(text ?? "");
       this._matches = evaluateQuery(this._media, api.viewport());
       this.onchange = null;
@@ -7106,7 +7194,7 @@
   }
 
   function matchMedia(query) {
-    return new MediaQueryList(String(query || ""));
+    return internal(() => new MediaQueryList(String(query || "")));
   }
 
   function evaluateQuery(text, view) {
@@ -8220,18 +8308,21 @@
       return collection(out);
     },
     createTextNode(text) { return wrap(api.createText(String(text))); },
-    /// A detached attribute node, which `setAttributeNode` then installs.
+    /// A detached attribute node. **`setAttributeNode` does not exist here**,
+    /// so what comes back is inspectable and not yet installable; saying so is
+    /// better than a comment promising a method the prelude has never had.
     createAttribute(name) {
       const lowered = String(name).toLowerCase();
       validateQualifiedName(lowered);
-      return new Attr(lowered, "", null);
+      return internal(() => new Attr(lowered, "", null));
     },
     createAttributeNS(namespace, qualifiedName) {
       const ns = namespace === null || namespace === undefined ? null : String(namespace);
       const qname = String(qualifiedName);
       validateQualifiedName(qname);
       const at = qname.indexOf(":");
-      return new Attr(qname, "", null, ns, at === -1 ? null : qname.slice(0, at));
+      return internal(() => new Attr(qname, "", null, ns,
+        at === -1 ? null : qname.slice(0, at)));
     },
     createDocumentFragment() { return new DocumentFragment(); },
     /// Validated twice, because the two rules guard different attacks: the
@@ -9216,12 +9307,27 @@
     /// with `mediaText`, a length and an item list — so every `sheet.media`
     /// check read a String where an interface belonged. Cached per sheet so a
     /// page that keeps the list keeps something real, as it does for `cssRules`.
+    /// Rebuilt from the attribute when the attribute has changed, and writing
+    /// `mediaText` writes back. The first version cached one `MediaList` for
+    /// the life of the sheet and never wrote through, so
+    /// `styleEl.setAttribute("media", "print")` left `sheet.media.mediaText`
+    /// reporting the old text — a snapshot pretending to be a live object.
     get media() {
-      if (this._mediaList === undefined) {
-        const text = this._media !== undefined
-          ? this._media
-          : (this._element && api.getAttr(this._element._id, "media")) || "";
-        this._mediaList = new MediaList(text);
+      const text = this._media !== undefined
+        ? this._media
+        : (this._element && api.getAttr(this._element._id, "media")) || "";
+      if (this._mediaList === undefined || this._mediaFor !== text) {
+        // `sheet` rather than `this`: the write-back closure sits two arrows
+        // deep inside a class getter, and Boa does not carry the getter's
+        // `this` that far — it arrived `undefined` and every `appendMedium`
+        // threw. Naming the receiver is right regardless of whose bug that is.
+        const sheet = this;
+        this._mediaFor = text;
+        this._mediaList = internal(() => new MediaList(text, (written) => {
+          sheet._mediaFor = written;
+          if (sheet._media !== undefined) sheet._media = written;
+          else if (sheet._element) sheet._element.setAttribute("media", written);
+        }));
       }
       return this._mediaList;
     }
@@ -9344,19 +9450,25 @@
     String(text ?? "").split(",").map((m) => m.trim()).filter(Boolean);
 
   class MediaList {
-    constructor(text) { this._items = splitMedia(text); }
+    constructor(text, onWrite) {
+      refuseExternal("MediaList");
+      this._items = splitMedia(text);
+      this._onWrite = onWrite ?? null;
+    }
+    _changed() { if (this._onWrite) this._onWrite(this.mediaText); }
     get mediaText() { return this._items.join(", "); }
-    set mediaText(value) { this._items = splitMedia(value); }
+    set mediaText(value) { this._items = splitMedia(value); this._changed(); }
     get length() { return this._items.length; }
     item(index) { return this._items[Number(index) || 0] ?? null; }
     appendMedium(medium) {
       const one = String(medium).trim();
-      if (one && !this._items.includes(one)) this._items.push(one);
+      if (one && !this._items.includes(one)) { this._items.push(one); this._changed(); }
     }
     deleteMedium(medium) {
       const at = this._items.indexOf(String(medium).trim());
       if (at === -1) throw new DOMException(`no medium ${medium}`, "NotFoundError");
       this._items.splice(at, 1);
+      this._changed();
     }
     toString() { return this.mediaText; }
   }
