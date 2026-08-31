@@ -1852,11 +1852,31 @@ fn canvas_size(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 
     let host = host(context)?;
     let mut canvases = host.canvases.borrow_mut();
-    let canvas = canvases.get_or_create(id, width, height);
-    if reset {
-        canvas.resize(width, height);
-    }
-    let size = (canvas.width(), canvas.height());
+    // A refusal is an error the page can see, like `getRandomValues` over its
+    // own cap. See `Canvases::afford`: the ceiling is on every canvas in the
+    // document together, because bounding one at 8192 a side and not bounding
+    // how many there are bounds nothing.
+    let refuse = |why: String| -> JsResult<JsValue> {
+        Err(boa_engine::JsNativeError::error().with_message(why).into())
+    };
+    let size = {
+        let canvas = match canvases.get_or_create(id, width, height) {
+            Ok(canvas) => canvas,
+            Err(why) => return refuse(why),
+        };
+        (canvas.width(), canvas.height())
+    };
+    let size = if reset {
+        if let Err(why) = canvases.resize(id, width, height) {
+            return refuse(why);
+        }
+        match canvases.get(id) {
+            Some(canvas) => (canvas.width(), canvas.height()),
+            None => size,
+        }
+    } else {
+        size
+    };
 
     let array = boa_engine::object::builtins::JsArray::new(context)?;
     array.push(JsValue::from(size.0 as f64), context)?;
