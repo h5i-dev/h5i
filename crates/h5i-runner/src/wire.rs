@@ -13,8 +13,7 @@
 //! messages and raw bytes for stdio; this module knows about neither and does
 //! not know what any type code means. That is [`crate::proto`]'s business, which
 //! is why an unknown type code is not an error here: framing stays correct even
-//! when meaning does not, so a peer sending a frame we cannot interpret is one
-//! we can still refuse politely.
+//! when meaning does not.
 //!
 //! It carries no transport, like `h5i-share`'s `wire` and for the same reason:
 //! the format is testable over an in-memory pipe, with no SSH and no child
@@ -23,7 +22,7 @@
 //! Limits are per RPC, not just per frame (ROADMAP.md R5). A 1 MiB frame cap
 //! bounds one message and nothing else, since a peer can send frames forever.
 //! [`FrameReader`] carries running totals and fails the RPC the moment either is
-//! exceeded, so every caller inherits a bound rather than having to remember one.
+//! exceeded.
 
 use std::io::{Read, Write};
 
@@ -133,11 +132,9 @@ impl Limits {
     /// Note what is *not* narrowed here: the frame cap. One frame is already
     /// bounded by the format at [`MAX_FRAME`], and that bound is what stops a
     /// hostile length from costing anything. Narrowing it per exchange as well
-    /// looked like defence in depth and was a bug: it made the *session's*
-    /// first budget silently govern every later RPC on the same channel, so a
-    /// command with a real amount of output, or a repository of a real size,
-    /// was refused by its own client. Totals vary per RPC; the frame cap does
-    /// not.
+    /// looked like defence in depth and was a bug: it made the *session's* first
+    /// budget silently govern every later RPC on the same channel, so a command
+    /// with a real amount of output was refused by its own client.
     pub const fn control() -> Self {
         Self {
             max_frame: MAX_FRAME,
@@ -298,12 +295,11 @@ impl<R: Read> FrameReader<R> {
     /// Budgets are *per RPC*, not per connection: a handshake and a source
     /// transfer have nothing in common except the socket they share, and one
     /// budget covering both would have to be as loose as the looser of the two.
-    /// So the counters reset with the limits. A create that moves a hundred
+    /// So the counters reset with the limits, and a create that moves a hundred
     /// megabytes does not leave a session too spent to answer a `PROBE`.
     ///
-    /// This is deliberately explicit rather than implicit per frame kind: a
-    /// reader whose bound silently changes with the traffic is a reader with no
-    /// bound at all.
+    /// Deliberately explicit rather than implicit per frame kind: a reader whose
+    /// bound silently changes with the traffic is a reader with no bound at all.
     pub fn begin_rpc(&mut self, limits: Limits) {
         self.limits = limits;
         self.bytes = 0;

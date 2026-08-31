@@ -2,10 +2,9 @@
 //!
 //! Both reference engines fake this: Lightpanda ships sixty-one no-op bridge
 //! functions and Obscura's `DOMSnapshot` invents geometry, because neither has a
-//! rasteriser. This engine does. `blitz-paint` over `vello_cpu` already turns
-//! the page into pixels on the CPU, and `vello_cpu` is a general 2D rasteriser a
-//! canvas can use directly, so a canvas here *draws* and shows up in a
-//! screenshot.
+//! rasteriser. This engine does. `blitz-paint` over `vello_cpu` already turns the
+//! page into pixels on the CPU, and `vello_cpu` is a general 2D rasteriser a
+//! canvas can use directly.
 //!
 //! The rule this is built around is roadmap-history.md §B8.4: *missing APIs are
 //! named, never stubbed silently.* A page that draws its content on a canvas and
@@ -13,9 +12,8 @@
 //! that drew nothing. So what is implemented *rasterises* (paths, rectangles,
 //! arcs, fills, strokes, transforms, the state stack, `toDataURL`) and what is
 //! not is reported by name through the same `unsupported()` channel as every
-//! other missing Web API, appearing in the snapshot's note. Text, gradients,
-//! patterns, shadows, `drawImage`, `clip` and the `ImageData` operations are on
-//! that list today.
+//! other missing Web API. Text, gradients, patterns, shadows, `drawImage`, `clip`
+//! and the `ImageData` operations are on that list today.
 //!
 //! An agent reading `note: this page used Web APIs this engine does not have
 //! (CanvasRenderingContext2D.fillText x12)` knows to route to Chromium. One
@@ -42,19 +40,15 @@ const MAX_SIDE: u32 = 8192;
 
 /// How many bytes of pixels one document's canvases may hold between them.
 ///
-/// [`MAX_SIDE`] bounds *one* canvas at 8192x8192x4 = 256 MiB, which was the
-/// whole of the bound and left the interesting number unbounded: a page can
-/// make as many `<canvas>` elements as it likes, so fifty of them at the
-/// maximum side is twelve gigabytes and the session is killed by the kernel
-/// rather than by any decision this engine made. The same class of defect as
-/// the `Max-Age` overflow. A number off the page deciding whether the agent
-/// driving the engine keeps running.
+/// [`MAX_SIDE`] bounds *one* canvas at 8192x8192x4 = 256 MiB, which left the
+/// interesting number unbounded: a page can make as many `<canvas>` elements as
+/// it likes, so fifty at the maximum side is twelve gigabytes and the session is
+/// killed by the kernel rather than by any decision this engine made. The same
+/// class of defect as the `Max-Age` overflow.
 ///
 /// 256 MiB, which is exactly one canvas at the maximum side: the largest thing
-/// [`MAX_SIDE`] already says a page may have still fits, and the *second* one
-/// is where the page is told no rather than handed the machine's memory. Sixty
-/// viewport-sized canvases fit inside it, which is well past what a page an
-/// agent is reading legitimately draws on.
+/// [`MAX_SIDE`] already says a page may have still fits, and the *second* one is
+/// where the page is told no. Sixty viewport-sized canvases fit inside it.
 const MAX_TOTAL_BYTES: usize = 256 << 20;
 
 /// What a canvas is when nobody said otherwise. The HTML default.
@@ -714,14 +708,13 @@ impl Canvases {
         self.by_node.values().map(|c| c.pixels.len()).sum()
     }
 
-    /// The canvas for a node, at the size the element asks for, or the reason
-    /// it may not have one.
+    /// The canvas for a node, at the size the element asks for, or the reason it
+    /// may not have one.
     ///
-    /// The refusal is a value rather than a clamp. A canvas silently smaller
-    /// than the page asked for draws the wrong picture and says nothing, which
-    /// is the worse of the two failures; an error reaches the page's own
-    /// `console` and the snapshot's note, so an agent reading a half-drawn page
-    /// can find out why.
+    /// The refusal is a value rather than a clamp. A canvas silently smaller than
+    /// the page asked for draws the wrong picture and says nothing, which is the
+    /// worse of the two failures; an error reaches the page's own `console` and
+    /// the snapshot's note.
     pub fn get_or_create(
         &mut self,
         node_id: usize,

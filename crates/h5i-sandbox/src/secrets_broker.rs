@@ -1,15 +1,15 @@
 //! Host-side secrets broker (`docs/secrets-broker-design.md`).
 //!
-//! Resolves a profile's [`SecretGrant`]s from host-side sources at *run time*
-//! (never at policy load) and materializes them for injection into the env's
-//! child process. Capability-scoped, audited, redacted, and *fail-closed*:
-//! a declared grant that cannot be resolved or delivered aborts the run rather
+//! Resolves a profile's [`SecretGrant`]s from host-side sources at *run time*,
+//! never at policy load, and materializes them for injection into the env's
+//! child process. Capability-scoped, audited, redacted, and *fail-closed*: a
+//! declared grant that cannot be resolved or delivered aborts the run rather
 //! than running with the credential silently absent.
 //!
 //! The broker never writes a value to the policy, the manifest, or any git ref.
 //! It records only the grant id, source, injection method, ttl, and a value
-//! *fingerprint* (sha256 prefix). File-injected secrets are written `0600`
-//! outside `$WORK` and unlinked when the [`Brokered`] guard drops.
+//! *fingerprint*. File-injected secrets are written `0600` outside `$WORK` and
+//! unlinked when the [`Brokered`] guard drops.
 
 use std::path::{Path, PathBuf};
 
@@ -80,16 +80,15 @@ impl Drop for TempFiles {
 }
 
 /// `fp:<12 hex>` of a value under a per-repository key. Lets a reviewer confirm
-/// "same token across runs" without ever seeing it. Public so `env secrets` can
-/// fingerprint a dry-run resolution.
+/// "same token across runs" without ever seeing it.
 ///
 /// Keyed, not a bare digest. This lands in `GrantRecord::detail`, the env event
 /// log, and `h5i box secrets` output, all of which are durable and reviewable
 /// and may be mirrored through `refs/h5i/*`. An unsalted `sha256(value)` prefix
 /// is 48 bits of an offline oracle: against a deploy password or a PIN-shaped
-/// token, anyone holding the log can just enumerate candidates. HMAC under a
-/// key that never leaves the repository gives the same "same token?" answer
-/// with nothing to grind against.
+/// token, anyone holding the log can enumerate candidates. HMAC under a key that
+/// never leaves the repository gives the same answer with nothing to grind
+/// against.
 pub fn fingerprint(key: &[u8], value: &str) -> String {
     let mac = hmac_sha256(key, value.as_bytes());
     let hex: String = mac.iter().take(6).map(|b| format!("{b:02x}")).collect();
@@ -307,14 +306,14 @@ fn read_file_capped(path: &str, name: &str, cap: usize) -> Result<String, H5iErr
     })
 }
 
-/// Resolve a grant's value from its host-side source. Pure w.r.t. the filesystem
-/// and process env (both injectable in tests). Fail-closed on missing/empty.
+/// Resolve a grant's value from its host-side source. Pure with respect to the
+/// filesystem and process env, both injectable in tests. Fail-closed on missing
+/// or empty.
 ///
 /// `allow_command` gates the `command:` extractor, which executes arbitrary code
-/// on the host, outside the sandbox (Codex). It is off unless the env's
-/// pinned, tamper-evident policy opts in (`allow_command_extractors = true`), so
-/// a credential source can never be turned into a host-code-exec channel without
-/// an explicit, digested grant.
+/// on the host, outside the sandbox. It is off unless the env's pinned,
+/// tamper-evident policy opts in, so a credential source can never be turned
+/// into a host-code-exec channel without an explicit, digested grant.
 pub fn resolve_value(grant: &SecretGrant, allow_command: bool) -> Result<String, H5iError> {
     let source = grant.source_or_default();
     let value = if let Some(var) = source.strip_prefix("env:") {
@@ -425,8 +424,7 @@ pub fn broker(
 /// same-uid process, can create `<env>/secrets/<name>` before the run. Without
 /// `O_NOFOLLOW|O_EXCL` the open would follow a symlink and write the plaintext
 /// credential to its target, and `mode()` is ignored for a file that already
-/// exists, so a pre-created 0644 file would keep those permissions. `TempFiles`
-/// would then unlink only the link, leaving the secret behind.
+/// exists, so a pre-created 0644 file would keep those permissions.
 fn write_secret_file(secret_dir: &Path, name: &str, value: &str) -> Result<PathBuf, H5iError> {
     std::fs::create_dir_all(secret_dir).map_err(|e| H5iError::with_path(e, secret_dir))?;
     #[cfg(unix)]

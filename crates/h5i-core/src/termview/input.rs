@@ -1,26 +1,22 @@
 //! Terminal input, turned into events a browser understands.
 //!
-//! A terminal and a browser disagree about input in three ways, and each one is
-//! a decision this module has to make rather than a translation it can perform:
+//! A terminal and a browser disagree about input in three ways, and each is a
+//! decision this module has to make rather than a translation it can perform:
 //!
-//! * A terminal reports presses, not releases. There is no key-up in the
-//!   legacy encoding. The viewer therefore synthesizes the pair, emitting
-//!   `keyDown` immediately followed by `keyUp`. The consequence is honest and
-//!   worth knowing: a page cannot observe a *held* key, so press-and-hold
-//!   interactions (a game's movement keys, a canvas tool) do not work. Typing,
-//!   which is what a form needs, works exactly.
-//! * A terminal reports cells, not pixels. A click has to be mapped through
-//!   the image's placement back into viewport coordinates. This is the one
-//!   piece of arithmetic in the viewer that can be *plausibly wrong* (an
-//!   off-by-one lands the click on the wrong element, and nothing reports an
-//!   error) so it is derived from the placement rather than assumed, and
-//!   tested at the edges. Pixel-resolution mouse reporting (`?1016`) exists and
-//!   would be better, but a terminal that does not support it silently keeps
-//!   reporting cells with no way to tell the difference, which is precisely the
-//!   quiet-wrong-answer shape this codebase keeps getting bitten by. Cells are
-//!   the honest unit until the mode can be confirmed.
-//! * A terminal has no spare keys. Raw mode hands us `Ctrl-C` and every
-//!   other combination, which is required (a page under test may bind them) and
+//! * A terminal reports presses, not releases. There is no key-up in the legacy
+//!   encoding, so the viewer synthesizes the pair, emitting `keyDown` followed
+//!   immediately by `keyUp`. The consequence is honest and worth knowing: a page
+//!   cannot observe a *held* key, so press-and-hold interactions do not work.
+//!   Typing, which is what a form needs, works exactly.
+//! * A terminal reports cells, not pixels. A click has to be mapped through the
+//!   image's placement back into viewport coordinates. This is the one piece of
+//!   arithmetic in the viewer that can be *plausibly wrong*, so it is derived
+//!   from the placement rather than assumed, and tested at the edges.
+//!   Pixel-resolution mouse reporting (`?1016`) would be better, but a terminal
+//!   that does not support it silently keeps reporting cells with no way to tell
+//!   the difference.
+//! * A terminal has no spare keys. Raw mode hands us `Ctrl-C` and every other
+//!   combination, which is required since a page under test may bind them, and
 //!   means the viewer must reserve exactly one key to escape with. That key is
 //!   `Ctrl-]`, the telnet convention, and it is never forwarded.
 
@@ -538,12 +534,12 @@ impl Mapping {
     ///
     /// `None` for a cell outside the image, which is not an error: the status
     /// line is up there, and a click on it is a click on the viewer, not on the
-    /// page. Forwarding it would land somewhere arbitrary in the page instead.
+    /// page.
     ///
-    /// The cell's *centre* is used rather than its corner. A cell is eight
-    /// pixels wide; its top-left corner systematically biases every click up
-    /// and to the left, which on a dense form is the difference between the
-    /// field and the label above it.
+    /// The cell's *centre* is used rather than its corner. A cell is eight pixels
+    /// wide; its top-left corner systematically biases every click up and to the
+    /// left, which on a dense form is the difference between the field and the
+    /// label above it.
     pub fn to_viewport(&self, col: u16, row: u16) -> Option<(i32, i32)> {
         if col < self.col || row < self.row {
             return None;

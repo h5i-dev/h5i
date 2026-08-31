@@ -9,26 +9,25 @@
 //!
 //! The rlimit the process tier falls back to for `mem` (`RLIMIT_DATA`) caps the
 //! writable data segment, not resident memory, and is per-process, not per-tree.
-//! (It is deliberately *not* `RLIMIT_AS`: capping virtual address space breaks
+//! It is deliberately *not* `RLIMIT_AS`: capping virtual address space breaks
 //! runtimes that reserve huge PROT_NONE regions (V8/Node, Go, the JVM,
-//! sanitizers) see the note in sandbox.rs's resource-caps block.) cgroup v2
-//! `memory.max` / `pids.max` are the production-grade controls: a hierarchical,
-//! whole-subtree limit plus accurate `memory.peak` / `cpu.stat` accounting.
+//! sanitizers). cgroup v2 `memory.max` and `pids.max` are the production-grade
+//! controls: a hierarchical, whole-subtree limit plus accurate `memory.peak` and
+//! `cpu.stat` accounting.
 //!
 //! ## Rootless reality (honest)
 //!
 //! Creating a cgroup as a non-root user requires the kernel to have *delegated*
 //! a writable subtree to the session (a systemd user manager with
 //! `Delegate=yes`). Many hosts, notably WSL2 and most CI, run h5i in a
-//! root-owned cgroup (`/init.scope`) with no delegation, so cgroup management is
-//! simply *unavailable* there. [`probe`] detects this by actually attempting a
-//! create + controller-enable + remove; when it fails we fall back to the
-//! existing rlimit path and say so. We never silently pretend a limit is
-//! enforced.
+//! root-owned cgroup with no delegation, so cgroup management is simply
+//! *unavailable* there. [`probe`] detects this by actually attempting a create,
+//! controller-enable and remove; when it fails we fall back to the rlimit path
+//! and say so. We never silently pretend a limit is enforced.
 //!
 //! ## The "no internal processes" rule
 //!
-//! cgroup v2 forbids a (non-root) cgroup from both holding processes *and*
+//! cgroup v2 forbids a non-root cgroup from both holding processes *and*
 //! enabling controllers for its children. So we never manage limits on h5i's own
 //! cgroup; instead we create a fresh *parent* under the delegated root, enable
 //! `+memory +pids` in *its* `subtree_control`, and put each run in a leaf child
@@ -54,14 +53,12 @@ pub struct CgroupCaps {
     pub usable: bool,
     /// Whether `pids.max` is genuinely writable in a run cgroup.
     ///
-    /// Separate from [`Self::usable`] because delegation is *per controller*:
-    /// a systemd unit with `Delegate=memory` hands out one and not the other,
-    /// and `cgroup.subtree_control` accepts `+memory +pids` partially. The
-    /// probe used to prove `memory.max` alone and every caller then treated one
-    /// boolean as the answer for both caps, so on such a host a profile's
-    /// `procs` limit was silently not applied while `box status` printed it
-    /// unmarked. SECURITY.md: "Resource caps that a platform cannot hold must
-    /// be reported as unenforced rather than listed as applied."
+    /// Separate from [`Self::usable`] because delegation is *per controller*: a
+    /// systemd unit with `Delegate=memory` hands out one and not the other, and
+    /// `cgroup.subtree_control` accepts `+memory +pids` partially. The probe used
+    /// to prove `memory.max` alone and every caller then treated one boolean as
+    /// the answer for both caps, so on such a host a profile's `procs` limit was
+    /// silently not applied while `box status` printed it unmarked.
     pub procs_enforceable: bool,
     /// The delegated parent under which run cgroups are created (when usable).
     #[cfg(target_os = "linux")]

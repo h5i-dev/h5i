@@ -3,10 +3,10 @@
 //! The library decides policy and moves bytes; every word the user reads lives
 //! here, next to the rest of the CLI's voice. Same split as `share.rs`.
 //!
-//! What R13.1 built is pairing and probing. The design is ROADMAP.md R1 to
-//! R13, and the sentence the rest of it hangs on: a runner requires Linux and
-//! the h5i protocol, and everything past that is an advertised capability that
-//! is refused when absent, never silently weakened.
+//! What R13.1 built is pairing and probing. The design is ROADMAP.md R1 to R13,
+//! and the sentence the rest of it hangs on: a runner requires Linux and the h5i
+//! protocol, and everything past that is an advertised capability that is
+//! refused when absent, never silently weakened.
 
 use std::path::Path;
 use std::process::Command;
@@ -26,16 +26,15 @@ use h5i_runner::{Client, Worker};
 pub enum RunnerCommands {
     /// Pair with a Linux machine so boxes can run on it.
     ///
-    /// Pairing generates a keypair used for this runner and nothing else,
-    /// pins the machine's SSH host key, and installs a forced command that
-    /// lets the key do exactly one thing: speak h5i's protocol on stdin and
-    /// stdout. No port is opened on the runner and no daemon is left behind.
+    /// Pairing generates a keypair used for this runner and nothing else, pins
+    /// the machine's SSH host key, and installs a forced command that lets the
+    /// key do exactly one thing: speak h5i's protocol on stdin and stdout. No
+    /// port is opened on the runner and no daemon is left behind.
     ///
     /// The runner needs `h5i` installed and an account you can already reach
     /// over SSH. It does NOT need a container runtime: what it can do is
-    /// reported by `h5i runner probe`, and a box asking for something the
-    /// runner does not have is refused rather than quietly given something
-    /// weaker.
+    /// reported by `h5i runner probe`, and a box asking for something the runner
+    /// does not have is refused rather than quietly given something weaker.
     Pair {
         /// A short name for this machine, used in commands and output. It is a
         /// label: the runner's identity is its host key, so renaming or
@@ -428,14 +427,14 @@ fn setup_ssh(record: &RunnerRecord, remote_command: &str) -> anyhow::Result<Comm
     Ok(cmd)
 }
 
-/// A worker path this side is willing to put in an `authorized_keys` line and
-/// in an `ssh` argv.
+/// A worker path this side is willing to put in an `authorized_keys` line and in
+/// an `ssh` argv.
 ///
 /// Absolute, single line, no quote or backslash. Each of those is a real sink:
 /// ssh keeps parsing options after the destination, so a leading `-` is an
-/// option rather than a command and `-oProxyCommand=…` is an option that runs
-/// one *here*; and a `"` or a newline inside `command="…"` injects
-/// `authorized_keys` options or a whole second, unrestricted key line.
+/// option rather than a command and `-oProxyCommand=…` runs one *here*; and a
+/// `"` or a newline inside `command="…"` injects `authorized_keys` options or a
+/// whole second, unrestricted key line.
 fn validated_worker_path(path: &str) -> anyhow::Result<String> {
     let ok = path.starts_with('/')
         && !path.contains(['\n', '\r', '"', '\\', '\0'])
