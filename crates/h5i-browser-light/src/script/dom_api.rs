@@ -1531,52 +1531,80 @@ const VOID_ELEMENTS: [&str; 14] = [
 /// carries no payload, so blitz discards the content at parse time and only the
 /// comments this engine created have text to give back. The empty separator —
 /// the case that matters — round-trips exactly.
+/// One step of the serialisation, so the walk below can be a loop.
+enum Step<'a> {
+    /// Serialise this node and push its children.
+    Node(usize),
+    /// The closing tag an element owes, after its children.
+    Close(&'a str),
+}
+
+/// Serialise a subtree.
+///
+/// **Iterative, with its own stack.** The recursive version was the third door
+/// into the deep-tree problem that ends the process rather than the page:
+/// `el.innerHTML = "<div>".repeat(20000)` is four characters of JavaScript, and
+/// script can read the result back in the same turn it built it — before any
+/// layout, and so before the bound `crate::engine::prune_deep_nesting` applies
+/// there. A stack overflow is a `SIGSEGV` with no panic to catch, so the walk
+/// is written not to have one.
 fn serialise(
     doc: &blitz_dom::BaseDocument,
     comments: &std::collections::HashMap<usize, String>,
     id: usize,
     out: &mut String,
 ) {
-    let Some(node) = doc.get_node(id) else { return };
+    let mut stack: Vec<Step<'_>> = vec![Step::Node(id)];
+    while let Some(step) = stack.pop() {
+        let id = match step {
+            Step::Close(name) => {
+                out.push_str("</");
+                out.push_str(name);
+                out.push('>');
+                continue;
+            }
+            Step::Node(id) => id,
+        };
+        let Some(node) = doc.get_node(id) else { continue };
 
-    match &node.data {
-        blitz_dom::NodeData::Comment => {
-            out.push_str("<!--");
-            out.push_str(comments.get(&id).map(String::as_str).unwrap_or(""));
-            out.push_str("-->");
-        }
-        blitz_dom::NodeData::Text(text) => {
-            escape_text(&text.content, out);
-        }
-        blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
-            let name = el.name.local.as_ref();
-            out.push('<');
-            out.push_str(name);
-            if let Some(attrs) = node.attrs() {
-                for attr in attrs {
-                    out.push(' ');
-                    out.push_str(attr.name.local.as_ref());
-                    out.push_str("=\"");
-                    escape_attribute(&attr.value, out);
-                    out.push('"');
+        // Children are pushed in reverse so they come off in document order.
+        let push_children = |stack: &mut Vec<Step<'_>>| {
+            for child in node.children.iter().rev() {
+                stack.push(Step::Node(*child));
+            }
+        };
+
+        match &node.data {
+            blitz_dom::NodeData::Comment => {
+                out.push_str("<!--");
+                out.push_str(comments.get(&id).map(String::as_str).unwrap_or(""));
+                out.push_str("-->");
+            }
+            blitz_dom::NodeData::Text(text) => {
+                escape_text(&text.content, out);
+            }
+            blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
+                let name = el.name.local.as_ref();
+                out.push('<');
+                out.push_str(name);
+                if let Some(attrs) = node.attrs() {
+                    for attr in attrs {
+                        out.push(' ');
+                        out.push_str(attr.name.local.as_ref());
+                        out.push_str("=\"");
+                        escape_attribute(&attr.value, out);
+                        out.push('"');
+                    }
                 }
-            }
-            out.push('>');
+                out.push('>');
 
-            if VOID_ELEMENTS.contains(&name) {
-                return;
+                if VOID_ELEMENTS.contains(&name) {
+                    continue;
+                }
+                stack.push(Step::Close(name));
+                push_children(&mut stack);
             }
-            for child in &node.children {
-                serialise(doc, comments, *child, out);
-            }
-            out.push_str("</");
-            out.push_str(name);
-            out.push('>');
-        }
-        _ => {
-            for child in &node.children {
-                serialise(doc, comments, *child, out);
-            }
+            _ => push_children(&mut stack),
         }
     }
 }

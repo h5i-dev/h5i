@@ -1350,7 +1350,7 @@ impl Page {
 
         let settled = script.settle();
         if script.take_dirty() {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
         // Drained and discarded: these are the page *loading* — its module
         // graph and any fetch its startup made. Leaving them queued would
@@ -1372,7 +1372,7 @@ impl Page {
         // realm has to be installed on `self` first, because the surfaces live
         // on its host — so this cannot move above the line before it.
         if self.composite_canvases() {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
         Ok(())
     }
@@ -1396,7 +1396,7 @@ impl Page {
         self.settled = Some(settled);
         let painted = self.composite_canvases();
         if dirty || painted {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
         Some(requests)
     }
@@ -1484,7 +1484,7 @@ impl Page {
         // layout pass then has to see.
         let painted = self.composite_canvases();
         if dirty || painted {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
         dirty || painted
     }
@@ -1576,7 +1576,7 @@ impl Page {
         self.settled = Some(settled);
         let painted = self.composite_canvases();
         if dirty || painted {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
     }
 
@@ -1652,7 +1652,7 @@ impl Page {
     /// Called once after a settle rather than after each mutation: a script that
     /// appends fifty rows should lay out once, not fifty times.
     pub fn refresh(&mut self) {
-        self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        self.note_layout_failure(lay_out(&self.doc));
     }
 
     /// The outline an agent reads.
@@ -1890,7 +1890,7 @@ impl Page {
                 .and_then(|node| node.data.downcast_element_mut())?;
             element.special_data = SpecialElementData::CheckboxInput(checked);
             // `:checked` is a real selector and the cascade has to see it.
-            let _ = guard_layout(|| doc.resolve(0.0));
+            let _ = lay_out_doc(&mut doc);
         }
 
         // The pair a *user* edit fires, in the order a page expects. A page
@@ -1979,7 +1979,7 @@ impl Page {
                     }
                 }
             }
-            let _ = guard_layout(|| doc.resolve(0.0));
+            let _ = lay_out_doc(&mut doc);
         }
 
         self.dispatch_event(node_id, "input");
@@ -2031,7 +2031,7 @@ impl Page {
         });
         // Typing changes layout — a longer value can reflow the form — and
         // nothing else in this file re-resolves on the agent's behalf.
-        let _ = guard_layout(|| doc.resolve(0.0));
+        let _ = lay_out_doc(&mut doc);
         drop(doc);
 
         // A *user* edit fires input then change, in that order. Script setting
@@ -2044,7 +2044,7 @@ impl Page {
             let dirty = script.take_dirty();
             self.settled = Some(settled);
             if dirty {
-                self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+                self.note_layout_failure(lay_out(&self.doc));
             }
         }
         true
@@ -2443,6 +2443,27 @@ impl PageFactory {
 /// `AssertUnwindSafe` because the document is behind a `RefCell` that a panic
 /// may leave mid-update. That is exactly the risk being accepted: a possibly
 /// incomplete tree, read and reported, in place of no process.
+/// One layout pass, over a tree bounded first.
+///
+/// **The parse-time prune is not the only door into a deep tree.** Script
+/// builds one after it — `el.innerHTML = "<div>".repeat(20000)` is four
+/// characters of JavaScript — and every layout after that walks whatever is
+/// there. Layout recurses, so the bound has to be re-applied wherever layout is
+/// asked for rather than once at the start.
+///
+/// The walk is one iterative pass over the node tree, against a `resolve` that
+/// does style resolution and layout over the same nodes: a constant factor on
+/// something already linear in the document.
+fn lay_out(doc: &Rc<RefCell<BaseDocument>>) -> Result<(), String> {
+    lay_out_doc(&mut doc.borrow_mut())
+}
+
+/// The same, for a caller already holding the borrow.
+fn lay_out_doc(doc: &mut BaseDocument) -> Result<(), String> {
+    prune_deep_nesting(doc);
+    guard_layout(|| doc.resolve(0.0))
+}
+
 fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
 
@@ -3340,6 +3361,81 @@ mod frame_tests {
             .expect("a thread")
             .join()
             .expect("the engine survives a page it cannot lay out in full");
+    }
+
+    /// The parse-time bound is not the only door into a deep tree: script can
+    /// build one after it, and the next layout walks whatever is there.
+    #[test]
+    fn a_script_built_deep_tree_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let broker = crate::net::LocalBroker::new(
+                    Policy::new(),
+                    Arc::new(MemorySink::new()),
+                    None,
+                )
+                .expect("broker");
+                let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+                let factory = PageFactory::new(
+                    broker,
+                    fonts.sources.clone(),
+                    PageOptions {
+                        script: true,
+                        ..PageOptions::default()
+                    },
+                );
+                let page = factory.from_html(
+                    "<html><body><div id='host'></div><script>\
+                     document.getElementById('host').innerHTML = '<div>'.repeat(20000);\
+                     </script></body></html>",
+                    &Url::parse("https://host.example/").unwrap(),
+                );
+                let rendered = page.snapshot().render();
+                assert!(!rendered.is_empty());
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives a tree its own script built");
+    }
+
+    /// And the serialiser is a third door: `innerHTML` walks the tree by
+    /// recursion too, and script can read it back in the same turn it built the
+    /// tree in — before any layout, and so before the layout-time bound.
+    #[test]
+    fn reading_back_a_deep_tree_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let broker = crate::net::LocalBroker::new(
+                    Policy::new(),
+                    Arc::new(MemorySink::new()),
+                    None,
+                )
+                .expect("broker");
+                let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+                let factory = PageFactory::new(
+                    broker,
+                    fonts.sources.clone(),
+                    PageOptions {
+                        script: true,
+                        ..PageOptions::default()
+                    },
+                );
+                let page = factory.from_html(
+                    "<html><body><div id='host'></div><p id='out'>none</p><script>\
+                     const h = document.getElementById('host');\
+                     h.innerHTML = '<div>'.repeat(20000);\
+                     document.getElementById('out').textContent = 'len=' + h.innerHTML.length;\
+                     </script></body></html>",
+                    &Url::parse("https://host.example/").unwrap(),
+                );
+                let rendered = page.snapshot().render();
+                assert!(rendered.contains("len="), "the script finished:\n{rendered}");
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives reading back a tree its own script built");
     }
 
     /// An ordinary page is nowhere near the bound, so it is untouched and says
