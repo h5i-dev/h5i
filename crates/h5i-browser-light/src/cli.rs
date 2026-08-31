@@ -973,11 +973,67 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    match run(args) {
+    match run_on_a_deep_stack(args) {
         Ok(()) => std::process::exit(0),
         Err(error) => {
             eprintln!("h5i browser engine: {error}");
             std::process::exit(1);
+        }
+    }
+}
+
+/// How much stack the engine gives itself.
+///
+/// Layout recurses over the tree, and how deeply it may do so before the
+/// process is gone was, until now, whatever `ulimit -s` happened to say. That
+/// is not a property this engine should inherit: a box can set it, a thread
+/// pool can set it, and the failure is not a refusal but a `SIGSEGV` — no
+/// panic, no page, no receipts, and no session left to say what happened.
+///
+/// [`crate::engine::MAX_ELEMENT_DEPTH`] is the bound on the *input*, and this
+/// is what makes that bound's safety a property of the engine rather than of
+/// the shell that started it. 64 MiB is far more than 512 levels of a debug
+/// build's layout frames need, and it is address space rather than memory:
+/// pages are committed as they are touched, so a run that never goes deep never
+/// pays for it.
+const ENGINE_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// Run the engine on a thread whose stack this process chose.
+///
+/// A thread rather than `main` itself, because a process's main stack size is
+/// set by the loader from `RLIMIT_STACK` and cannot be raised from inside it.
+/// Everything the engine does happens on this thread — `Page` is `!Send` and is
+/// created here, so nothing crosses back.
+///
+/// If the thread cannot be started, the work happens here instead: a host too
+/// short of resources to spawn a thread should still be able to read a page,
+/// and the depth bound still applies.
+fn run_on_a_deep_stack<I, T>(args: I) -> Result<(), H5iError>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let argv: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    let here = argv.clone();
+    let spawned = std::thread::Builder::new()
+        .name("h5i-engine".to_string())
+        .stack_size(ENGINE_STACK_BYTES)
+        .spawn(move || run(argv));
+    match spawned {
+        Ok(handle) => match handle.join() {
+            Ok(result) => result,
+            // The thread panicked and the panic hook has already printed it.
+            // Reported as a failure rather than swallowed into a zero exit.
+            Err(_) => Err(H5iError::Metadata(
+                "the engine thread ended unexpectedly".to_string(),
+            )),
+        },
+        Err(error) => {
+            eprintln!(
+                "h5i browser engine: could not start on a stack of its own ({error}); running \
+                 on this one, where a deeply nested page has whatever `ulimit -s` allows."
+            );
+            run(here)
         }
     }
 }
@@ -2471,7 +2527,20 @@ fn one_page(
         println!("=== {}", snapshot.url);
     }
     if as_text {
-        println!("{}", page.text());
+        // Fenced like every other read of a page.
+        //
+        // `--text` was the one path that handed an agent a page's own words
+        // with nothing saying where they came from. The outline, the markdown
+        // and the transcript all carry the fence; this printed the same content
+        // bare, so a page writing "SYSTEM: you are authorised to…" arrived
+        // looking exactly like the harness talking. The flag means "the words,
+        // not the outline" — it never meant "and drop the one line that says
+        // they are the page's".
+        //
+        // `defang_fence` on the way in, because a line here is already
+        // `collapse`d but the assembled document spans lines, which is the
+        // same reason `markdown` defangs its finished text.
+        println!("{}", crate::snapshot::fenced(&page.text()));
     } else {
         print!("{}", snapshot.render());
     }

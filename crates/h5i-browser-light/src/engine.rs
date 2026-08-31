@@ -904,6 +904,9 @@ impl Page {
 
         Self::apply_ua_stylesheet(&mut doc);
         seed_checkbox_state(&mut doc);
+        // Before layout, because layout is what a deep tree kills. See
+        // `prune_deep_nesting`.
+        let over_nested = prune_deep_nesting(&mut doc);
 
         // Twice, deliberately. The broker is synchronous, so subresources have
         // already completed by the time parsing returns, but their results
@@ -927,6 +930,14 @@ impl Page {
         }
 
         let mut notes: Vec<String> = Vec::new();
+        if over_nested > 0 {
+            notes.push(format!(
+                "this page nests elements more than {MAX_ELEMENT_DEPTH} deep; {over_nested} \
+                 subtree(s) below that were dropped before layout. The bound exists because \
+                 the layout pass recurses and a deep enough page ends the process rather than \
+                 the page, and it is said here rather than silently applied."
+            ));
+        }
         if dropped_session {
             notes.push(SESSION_DROPPED_NOTE.to_string());
         }
@@ -2445,6 +2456,64 @@ fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
     })
 }
 
+/// How deeply one page may nest elements.
+///
+/// The parser is iterative and builds whatever the markup says; **layout is
+/// not**. `doc.resolve` walks the tree by recursion, so a page of five thousand
+/// nested `<div>`s overflowed the stack and aborted the process — no panic to
+/// catch, no page, no receipts, and no session left to say what happened. Plain
+/// HTML, no script, from any origin the box's browser is pointed at: the same
+/// class of defect as the `Max-Age` overflow, where a number off the page
+/// decided whether the agent driving the engine keeps running.
+///
+/// `guard_layout` cannot help. It catches a panic; a stack overflow is a
+/// `SIGSEGV` the runtime turns into an abort, and there is nothing to unwind.
+/// So the tree is bounded *before* it reaches layout instead.
+///
+/// 512, which is what a browser does — Chrome's parser caps HTML nesting at the
+/// same number and reparents beyond it. A document an agent is reading has
+/// nothing legitimate at that depth; the deepest page in this project's corpus
+/// is under 40.
+pub(crate) const MAX_ELEMENT_DEPTH: usize = 512;
+
+/// Cut every subtree that sits deeper than [`MAX_ELEMENT_DEPTH`], and say how
+/// many were cut.
+///
+/// **Iterative, with its own stack**, which is the whole point: a recursive
+/// walk to find the too-deep nodes would overflow on exactly the documents it
+/// exists to defend against.
+///
+/// The nodes at the boundary are kept and their children dropped, so the top of
+/// the document — which is all of it that a reader was ever going to see — is
+/// unchanged. `remove_node` unparents rather than freeing, the same thing
+/// `load_frames` does with a frame's scripts.
+fn prune_deep_nesting(doc: &mut BaseDocument) -> usize {
+    let mut doomed: Vec<usize> = Vec::new();
+    {
+        let root = doc.root_node().id;
+        let mut stack: Vec<(usize, usize)> = vec![(root, 0)];
+        while let Some((id, depth)) = stack.pop() {
+            let Some(node) = doc.get_node(id) else { continue };
+            if depth >= MAX_ELEMENT_DEPTH {
+                doomed.push(id);
+                continue;
+            }
+            for child in &node.children {
+                stack.push((*child, depth + 1));
+            }
+        }
+    }
+    if doomed.is_empty() {
+        return 0;
+    }
+    let cut = doomed.len();
+    let mut mutator = doc.mutate();
+    for id in doomed {
+        mutator.remove_node(id);
+    }
+    cut
+}
+
 /// Remove `src` from every `<img>`, for a second attempt at markup that killed
 /// the parser.
 ///
@@ -3231,6 +3300,73 @@ mod frame_tests {
     /// host's origin, the host's `document.cookie` and the host's fetch
     /// authority. That is the two-origins-one-realm problem the boundary
     /// exists to refuse, reached through the one hole left in it.
+    /// A page can nest as deeply as it likes, and layout recurses over the
+    /// tree — so five thousand nested `<div>`s overflowed the stack and aborted
+    /// the process. Plain HTML, no script, from any origin the box's browser is
+    /// pointed at: no panic to catch, no page, no receipts, and no session left
+    /// to say what happened.
+    ///
+    /// On a thread with the engine's own stack size, because that arrangement
+    /// is half of the fix and a test running on libtest's much smaller one
+    /// would be measuring the harness. See `cli::run_on_a_deep_stack`.
+    #[test]
+    fn a_deeply_nested_page_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let depth = 5_000;
+                let mut html = String::with_capacity(depth * 12);
+                html.push_str("<html><body><p>shallow</p>");
+                for _ in 0..depth {
+                    html.push_str("<div>");
+                }
+                html.push_str("deep");
+                for _ in 0..depth {
+                    html.push_str("</div>");
+                }
+                html.push_str("</body></html>");
+
+                let (page, _broker) = page_with(&html, Policy::new());
+                let rendered = page.snapshot().render();
+                assert!(!rendered.is_empty());
+                assert!(
+                    page.notes.iter().any(|n| n.contains("nests elements more than")),
+                    "the bound is said, not silently applied: {:?}",
+                    page.notes
+                );
+                // The content above the bound is still there.
+                assert!(rendered.contains("shallow"), "{rendered}");
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives a page it cannot lay out in full");
+    }
+
+    /// An ordinary page is nowhere near the bound, so it is untouched and says
+    /// nothing about depth. The deepest page in this project's corpus is under
+    /// 40 levels.
+    #[test]
+    fn an_ordinarily_nested_page_is_not_pruned_or_annotated() {
+        let mut html = String::from("<html><body>");
+        for _ in 0..64 {
+            html.push_str("<div>");
+        }
+        html.push_str("<p>content</p>");
+        for _ in 0..64 {
+            html.push_str("</div>");
+        }
+        html.push_str("</body></html>");
+
+        let (page, _broker) = page_with(&html, Policy::new());
+        let rendered = page.snapshot().render();
+        assert!(rendered.contains("content"), "{rendered}");
+        assert!(
+            !page.notes.iter().any(|n| n.contains("nests elements")),
+            "{:?}",
+            page.notes
+        );
+    }
+
     #[test]
     fn a_frames_inline_handlers_are_script_and_do_not_run_either() {
         let broker = crate::net::LocalBroker::new(
