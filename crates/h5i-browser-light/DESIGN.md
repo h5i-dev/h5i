@@ -1,10 +1,5 @@
 # h5i-browser-light: design notes
 
-The argument behind the engine, kept out of the [README](README.md) so that file
-can stay a README. Nothing here is required to *use* the browser; it is here
-because the claims it makes are security claims, and a claim worth making is
-worth being able to check.
-
 ROADMAP.md in the repository root is the authority on scope and order (§12 and
 §B1 to §B15). This file is the narrower one: why the engine is shaped the way it
 is, and what each shape cost.
@@ -13,15 +8,11 @@ is, and what each shape cost.
 
 ## Why this exists
 
-h5i already drives Chromium through agent-browser, and will keep doing so for
-the case Chromium is best at: rendering the agent's own dev server with full
-fidelity. This engine is for the other half of the loop, reading the untrusted
-web, where the priorities invert and containment matters more than pixel
-fidelity.
+h5i browser is a browser engine designed for AI agents that need to read thousands of pages 
+concurrently, or that may encounter untrusted web pages containing prompt injections and 
+other security risks.
 
-The property that motivates a separate engine is not speed. It is that an
-external observer cannot make Chromium's network activity *fail closed*. h5i's
-egress proxy sees `CONNECT docs.example.com:443` and nothing more. CDP's Fetch
+h5i's　egress proxy sees `CONNECT docs.example.com:443` and nothing more. CDP's Fetch
 domain can pause and record a request, but its coverage fails open: attach
 races, freshly created targets and workers, buffer limits and disconnects all
 leave gaps. Here the engine *is* the HTTP client, so:
@@ -30,9 +21,7 @@ leave gaps. Here the engine *is* the HTTP client, so:
   move. A sink that refuses to record is a sink that refuses to fetch.
 - **Every redirect hop is a decision.** Redirects are followed by hand and each
   hop is policy-checked, so an allowed origin cannot bounce to a denied one.
-- **No script in this tier.** Page script is not evaluated at all, so the
-  commonest delivery channel for injected instructions is absent rather than
-  filtered.
+- **No JIT.** JIT engine is too complex and hard to eliminate all exploitable bugs.
 
 ## Measurements
 
