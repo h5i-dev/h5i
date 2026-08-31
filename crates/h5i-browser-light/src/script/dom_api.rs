@@ -2151,14 +2151,25 @@ fn inner_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     Ok(js_string!(assemble_inner_text(segments)).into())
 }
 
+/// **Iterative, with its own stack**, like [`serialise`] above.
+///
+/// The depth a tree may reach is bounded before layout
+/// (`crate::engine::prune_deep_nesting`), and every caller of this lays out
+/// first — so it was safe by an invariant that lives in another file and is not
+/// this function's to rely on. A walker whose failure mode is a `SIGSEGV` with
+/// no panic to catch should not depend on somebody else having gone first.
+///
+/// The node named by `id` contributes nothing itself, only its descendants,
+/// which is what the recursive version did and what `textContent` means.
 fn collect_text_content(doc: &blitz_dom::BaseDocument, id: usize, out: &mut String) {
-    let Some(node) = doc.get_node(id) else { return };
-    for child in node.children.iter() {
-        let Some(kid) = doc.get_node(*child) else { continue };
-        if let blitz_dom::NodeData::Text(text) = &kid.data {
-            out.push_str(&text.content);
-        } else {
-            collect_text_content(doc, *child, out);
+    let Some(root) = doc.get_node(id) else { return };
+    // Reversed on the way in so they come off in document order.
+    let mut stack: Vec<usize> = root.children.iter().rev().copied().collect();
+    while let Some(next) = stack.pop() {
+        let Some(node) = doc.get_node(next) else { continue };
+        match &node.data {
+            blitz_dom::NodeData::Text(text) => out.push_str(&text.content),
+            _ => stack.extend(node.children.iter().rev().copied()),
         }
     }
 }
