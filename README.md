@@ -216,10 +216,6 @@ downgrades: an unsatisfiable request fails closed.
 | `container` | rootless Podman, dropped capabilities, a portable image, and an HTTP/HTTPS proxy allowlist |
 | `microvm` | a hardware-isolated guest with **its own kernel**, booted by [microsandbox](https://microsandbox.dev) (`msb`) from the same OCI images, with the egress allowlist evaluated **by the VM's network stack** |
 
-microvm is the strongest tier and the only one that does not share the host
-kernel. It requires msb, hardware virtualization (`/dev/kvm` or Apple Silicon),
-and an image; otherwise it is refused, never downgraded.
-
 Host credentials do not enter a box. A runtime-scoped proxy authenticates model
 API requests outside the boundary, preventing cross-runtime access. Each box
 receives a private, one-time copy of approved HOME state.
