@@ -9,15 +9,15 @@
 //! namespace and `h5i box view` runs a forward the *host* owns, with four
 //! properties: loopback only, on a port h5i chose; a per-box token on every
 //! connection, minted at box creation and never written anywhere the box can
-//! read, so a compromised agent cannot mint itself a viewer; cross-origin
-//! handshakes refused, so another tab cannot open a WebSocket to a running box;
-//! and the control lock on the input direction, so frames flow *out* always and
-//! *in* only while the human holds the lock ([`crate::control`]).
+//! read; cross-origin handshakes refused, so another tab cannot open a WebSocket
+//! to a running box; and the control lock on the input direction, so frames flow
+//! *out* always and *in* only while the human holds the lock
+//! ([`crate::control`]).
 //!
-//! Crossing into the namespace is the awkward part, done the way the supervisor
-//! already does it: h5i is the parent, so it enters the box's user and network
-//! namespaces by pid, connects from inside, and hands the socket back out over
-//! `SCM_RIGHTS`. Nothing is punched through, and the box gains no reachability.
+//! Crossing into the namespace is done the way the supervisor already does it:
+//! h5i is the parent, so it enters the box's user and network namespaces by pid,
+//! connects from inside, and hands the socket back out over `SCM_RIGHTS`.
+//! Nothing is punched through, and the box gains no reachability.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -120,10 +120,10 @@ pub fn stream_port(env_dir: &Path) -> Option<u16> {
 /// host-side `h5i` process that owns the session, and that process is in the
 /// *host's* network namespace. Its descendants are the box. So this walks the
 /// session's process tree and returns the first descendant whose network
-/// namespace differs from ours, which is by definition inside the box.
+/// namespace differs from ours.
 ///
-/// Getting this wrong is quiet rather than loud (entering the host's own netns
-/// succeeds, and the forward then finds nothing listening) so it is worth
+/// Getting this wrong is quiet rather than loud, since entering the host's own
+/// netns succeeds and the forward then finds nothing listening, so it is worth
 /// doing by observation rather than by assuming which pid means what.
 pub fn box_pid(env_dir: &Path) -> Option<u32> {
     box_pid_ns(env_dir).map(|(pid, _)| pid)
@@ -209,20 +209,18 @@ pub fn session_pid(env_dir: &Path) -> Option<u32> {
 /// `verified` is for `h5i box share`, and only for it. Every other reader
 /// tolerates the pid-identity staleness the registry has always had: a crashed
 /// session leaves its record, the kernel reissues its pid, `kill(pid, 0)` says
-/// yes, and the next scan heals it. Cosmetic, for a listing.
+/// yes, and the next scan heals it.
 ///
 /// Sharing cannot tolerate it. `box_pid` walks this pid's descendants looking
-/// for a network namespace and the share dials `127.0.0.1:<port>` from
-/// whichever one it finds, so an unrelated same-user process that inherited a
-/// crashed session's pid, with a namespace of its own or a child that has one,
-/// makes `h5i box share` publish a port out of a box nobody offered. That is
-/// exactly the wrong-port exposure the namespace requirement exists to refuse,
-/// arriving through the check rather than around it.
+/// for a network namespace and the share dials `127.0.0.1:<port>` from whichever
+/// one it finds, so an unrelated same-user process that inherited a crashed
+/// session's pid makes `h5i box share` publish a port out of a box nobody
+/// offered.
 ///
 /// With `verified`, a record must carry `started_ticks` *and* match. A record
 /// written by an older h5i therefore stops being usable for sharing until the
-/// session is restarted, which is the safe direction: the alternative is a
-/// check that passes because there was nothing to check.
+/// session is restarted, which is the safe direction: the alternative is a check
+/// that passes because there was nothing to check.
 pub fn session_pid_verified(env_dir: &Path, verified: bool) -> Option<u32> {
     let mut best: Option<(String, u32)> = None;
     for e in std::fs::read_dir(env_dir.join("live")).ok()?.flatten() {
@@ -269,8 +267,7 @@ fn pid_alive(pid: u32) -> bool {
 ///
 /// Gated on Linux *and* x86_64/aarch64 to match `h5i_sandbox::seccomp_notify`,
 /// whose `SCM_RIGHTS` helper this borrows: a narrower gate here is a build break
-/// waiting for the first Linux target outside those two arches, and CI's matrix
-/// has none.
+/// waiting for the first Linux target outside those two arches.
 ///
 /// Done in a forked child, necessarily: joining a user namespace is refused for
 /// a multi-threaded process, and `setns` on a network namespace rebinds the
@@ -287,8 +284,7 @@ fn pid_alive(pid: u32) -> bool {
 /// reissued pid cannot be mistaken for a box, and none of that binding reaches
 /// the descendant, which is the number actually entered. Nor is the descendant
 /// looked up again: [`Forward`] resolves it once and reuses it for every
-/// connection while the viewer is open, and `FrameRelay` does the same across
-/// reconnects. A box at the `process` tier shares the host uid, so it can end
+/// connection. A box at the `process` tier shares the host uid, so it can end
 /// the session holding the namespace and fork until the kernel hands that pid to
 /// something of its own.
 ///
@@ -301,17 +297,14 @@ fn pid_alive(pid: u32) -> bool {
 ///
 /// * It is not what stops a stale pid putting this connect on the host's
 ///   loopback. Joining the initial netns needs `CAP_SYS_ADMIN` in the initial
-///   userns, which an unprivileged viewer lacks, so `setns` returns `EPERM` and
-///   the child already reported `EXIT_SETNS`. That defence is the kernel's, and
-///   it is absent for a viewer run as root.
+///   userns, which an unprivileged viewer lacks, so `setns` returns `EPERM`.
+///   That defence is the kernel's, and it is absent for a viewer run as root.
 /// * It is not proof of freshness. `setns` into a namespace one is *already* in
-///   succeeds (measured: rc 0), so the return code says nothing about where the
-///   thread ended up. The readlink after it does.
+///   succeeds, so the return code says nothing about where the thread ended up.
+///   The readlink after it does.
 ///
 /// What the check closes is the pid being reissued between discovery and use to
-/// a process in any namespace this user can join, another box of theirs or a
-/// bare `unshare -Urn`, which `setns` enters happily and which is not the box
-/// the viewer named.
+/// a process in any namespace this user can join.
 #[cfg(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
@@ -495,10 +488,10 @@ fn enter_and_connect(pid: u32, port: u16, sock: i32, want_ns: &[u8]) -> i32 {
 }
 
 /// macOS: there is no namespace to enter. Seatbelt confines the box's filesystem
-/// and its *outbound* network, but a box still binds the *host's* loopback.
-/// Deliberately, because that is the only way a dev server in the box is
-/// reachable at all without a netns. So crossing into the box is a plain
-/// loopback connect, and `pid` is not needed.
+/// and its *outbound* network, but a box still binds the *host's* loopback,
+/// deliberately, because that is the only way a dev server in the box is
+/// reachable without a netns. So crossing into the box is a plain loopback
+/// connect, and `pid` is not needed.
 ///
 /// The difference worth stating rather than hiding: on Linux the box's listener
 /// lives in its own network namespace and this proxy is the only route to it. On
@@ -696,13 +689,12 @@ pub fn classify_opcode(opcode: u8) -> FrameVerdict {
 /// Classify a frame, looking at the payload only far enough to spot the two
 /// messages that must not be gated.
 ///
-/// Gating those two is not a conservative default, it is a broken viewer, and
-/// it was: the page asks for a frame-rate cap the moment it connects, that ask
-/// is a text frame, every text frame was `Input`, and a box is agent-held by
-/// default, so the cap was dropped on essentially every session and the box
-/// streamed uncapped. Silent, because a dropped `config` looks exactly like a
-/// `config` that was honoured. It is also what blocks ack pacing on this path
-/// entirely: acks would be dropped too, and frames would simply stop.
+/// Gating those two is not a conservative default, it is a broken viewer, and it
+/// was: the page asks for a frame-rate cap the moment it connects, that ask is a
+/// text frame, every text frame was `Input`, and a box is agent-held by default,
+/// so the cap was dropped on essentially every session and the box streamed
+/// uncapped. Silent, because a dropped `config` looks exactly like a `config`
+/// that was honoured.
 pub fn classify(opcode: u8, fin: bool, payload: &[u8]) -> FrameVerdict {
     if classify_opcode(opcode) == FrameVerdict::Control {
         return FrameVerdict::Control;
@@ -812,24 +804,21 @@ const MAX_FRAME: u64 = 1 << 20;
 ///
 /// Control frames and the two pacing messages pass whoever holds the lock: one
 /// keeps the socket alive, the other keeps frames arriving at a rate the viewer
-/// can draw. Neither touches the page. See [`classify`].
+/// can draw. See [`classify`].
 ///
-/// Returns how many *input* frames actually reached the page. That count is
-/// the honest answer to "did a human drive this box?", and it is worth
-/// returning rather than inferring: comparing who held the lock at open and at
-/// close misses the ordinary case of someone taking control, doing the thing,
-/// and handing it straight back.
+/// Returns how many *input* frames actually reached the page. That count is the
+/// honest answer to "did a human drive this box?", and comparing who held the
+/// lock at open and at close misses the ordinary case of someone taking control,
+/// doing the thing, and handing it straight back.
 pub fn pump_input(mut from_client: impl Read, mut to_box: impl Write, env_dir: &Path) -> Pump {
     let mut pump = Pump::default();
     // Whether a fragmented message is currently being forwarded.
     //
     // The forward/drop decision is per *message*, not per frame. Deciding per
     // frame meant that if the control lock changed hands mid-message, the first
-    // fragment went upstream and its continuations did not (or the reverse).
-    // Leaving agent-browser's parser mid-message, so the next frame it saw was
-    // a protocol violation that could kill the stream out from under the
-    // watching human. Browsers rarely fragment small frames, but the forward
-    // accepts any token-holding client.
+    // fragment went upstream and its continuations did not, leaving
+    // agent-browser's parser mid-message, so the next frame it saw was a protocol
+    // violation that could kill the stream out from under the watching human.
     let mut forwarding_fragmented: Option<bool> = None;
     loop {
         match read_frame(&mut from_client) {
@@ -1015,15 +1004,13 @@ impl Forward {
         let opened = chrono::Utc::now();
         let holder_at_open = crate::control::read(&env_dir).holder;
 
-        // Out: frames to the human, unconditionally. Watching never collides,
-        // so this direction has no policy at all.
+        // Out: frames to the human, unconditionally. Watching never collides, so
+        // this direction has no policy at all.
         //
-        // When the BOX's stream ends first (its browser exits, or `stream
-        // disable` runs), this copy returns and the client must be shut down
-        // too. The page has no way to learn the stream is gone, so it holds
-        // the socket open and `pump_input` below blocks on a peer that will
-        // never close. `serve()` takes one connection at a time, so that
-        // stopped the forward serving anything until the human closed the tab.
+        // When the BOX's stream ends first, this copy returns and the client must be
+        // shut down too. The page has no way to learn the stream is gone, so it holds
+        // the socket open and `pump_input` below blocks on a peer that will never
+        // close, and `serve()` takes one connection at a time.
         let client_shutdown = client.try_clone()?;
         let out = std::thread::spawn(move || {
             let n = std::io::copy(&mut upstream, &mut client_out).unwrap_or(0);
@@ -1087,17 +1074,15 @@ pub struct Session {
 /// Record a viewer session in the box's receipt log, so it reaches the export
 /// like any other observation.
 ///
-/// This lane is *host observed* in the strongest sense available: h5i owns
-/// both viewers, so the box supplies none of it and cannot suppress it. What it
-/// answers is the question an export otherwise cannot: was a human watching,
-/// did they take the controls, and for how long. A patch produced with a human
-/// driving is a different artifact from one an agent produced alone, and the
-/// receipt should not be silent about which it is.
+/// This lane is *host observed* in the strongest sense available: h5i owns both
+/// viewers, so the box supplies none of it and cannot suppress it. What it
+/// answers is the question an export otherwise cannot: was a human watching, did
+/// they take the controls, and for how long. A patch produced with a human
+/// driving is a different artifact from one an agent produced alone.
 ///
 /// Shared by the web forward and the terminal viewer deliberately. Two viewers
 /// writing two nearly-identical formats is how an export ends up reporting the
-/// same session two different ways depending on which one a person happened to
-/// open.
+/// same session two different ways.
 pub fn record_session(
     session: &Session,
     opened: chrono::DateTime<chrono::Utc>,
@@ -1175,15 +1160,14 @@ pub fn record_session(
     }
 }
 
-/// Read up to the end of the HTTP headers.
-/// How long one `read()` may block, and how long the whole head may take.
+/// Read up to the end of the HTTP headers: how long one `read()` may block, and
+/// how long the whole head may take.
 ///
 /// Two numbers because they answer two questions, and having only the first was
 /// the bug: `SO_RCVTIMEO` bounds a single syscall, so a peer sending one byte
 /// every nine seconds never triggered it and never finished either. `serve()`
 /// handles one connection at a time and this runs *before* the token is checked,
-/// so that peer, any local process, held the human's viewer shut for as long
-/// as it cared to, with nothing in the log to say why.
+/// so that peer held the human's viewer shut for as long as it cared to.
 const HEAD_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
 
@@ -1291,8 +1275,7 @@ fn respond_html(s: &mut TcpStream, body: &str) -> std::io::Result<()> {
 /// later. The stream is a straight relay of the box's own messages, so there is
 /// no channel on which h5i could send the page an update, and a control display
 /// that never changes is worse than none: someone who takes the lock and still
-/// reads "agent" concludes that taking it failed. Stamping it makes the page
-/// honest about what it knows. The state at load, and a reload to refresh it.
+/// reads "agent" concludes that taking it failed.
 fn viewer_page(holder: crate::control::Holder) -> String {
     // The substituted value is one of two fixed strings from h5i's own enum, so
     // this cannot become an injection point regardless of what the box does.
@@ -1824,9 +1807,8 @@ mod tests {
     /// `TcpStream::connect(("127.0.0.1", port))` in *this* namespace, with the
     /// port read out of `<env>/tmp`, one of the two paths the box can write.
     ///
-    /// Unprivileged, the kernel refuses the `setns` that would get there
-    /// anyway; run as root it does not, and either way this says no before the
-    /// fork rather than relying on which.
+    /// Unprivileged, the kernel refuses the `setns` that would get there anyway;
+    /// run as root it does not, and either way this says no before the fork.
     #[cfg(all(
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")

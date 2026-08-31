@@ -8,19 +8,18 @@
 // as dead code on non-Linux targets. Allow it module-wide.
 #![allow(dead_code)]
 //!
-//! This is the security keystone: the first tier that may claim untrusted-code
+//! The security keystone: the first tier that may claim untrusted-code
 //! containment. Its defining property, implemented and tested here in phase A,
 //! is *fail-closed admission*: the claim is satisfiable only when *every*
-//! component probes green, and is otherwise *refused*, never downgraded to a
-//! weaker tier. A half-present stack is a refusal, not a "best-effort pass".
+//! component probes green, and is otherwise *refused*, never downgraded. A
+//! half-present stack is a refusal, not a "best-effort pass".
 //!
 //! This module: the honest [`probe`], the pure syscall-decision model, and a
 //! fully-enforcing [`run`]. The shared process-tier confinement plus an
 //! always-on network namespace and the live seccomp-notify socket gate
 //! ([`serve_with_pidfd`]), with an optional netns+nftables+slirp4netns egress
-//! allowlist. Because the full stack does not probe green on every host
-//! (WSL2/CI lack cgroup delegation and rootless nftables), the tier fail-closed
-//! refuses there rather than downgrading.
+//! allowlist. The full stack does not probe green on every host (WSL2 and CI
+//! lack cgroup delegation and rootless nftables), and the tier refuses there.
 
 use crate::error::H5iError;
 
@@ -122,17 +121,15 @@ fn probe_uncached() -> SupervisorCaps {
 /// allowlist*, and macOS reaches both a different way:
 ///
 /// - containment: Seatbelt's `(deny default)` covers filesystem, network, mach
-///   and sysctl in one policy, and (unlike Landlock) it can subtract, so
+///   and sysctl in one policy, and, unlike Landlock, it can subtract, so
 ///   `fs.deny` and the agent-config lock are enforced rather than linted;
-/// - egress allowlist: the box is left with *no* outbound route except h5i's
-///   own DNS-pinned allowlist proxy on loopback, which is the same proxy the
-///   container tier uses and is enforced by the kernel, not by proxy env vars.
+/// - egress allowlist: the box is left with *no* outbound route except h5i's own
+///   DNS-pinned allowlist proxy on loopback, the same proxy the container tier
+///   uses, enforced by the kernel rather than by proxy env vars.
 ///
 /// What is genuinely absent is the syscall filter: there is no macOS equivalent
-/// of a seccomp deny-list, so native code in the box can attempt any syscall.
-/// It just cannot reach a path or a socket the profile does not name. That is
-/// reported here rather than glossed, and it is why the component below is
-/// spelled out instead of being asserted `ok`.
+/// of a seccomp deny-list, so native code in the box can attempt any syscall. It
+/// just cannot reach a path or a socket the profile does not name.
 #[cfg(target_os = "macos")]
 pub fn probe() -> SupervisorCaps {
     static SUPERVISOR_CAPS: std::sync::OnceLock<SupervisorCaps> = std::sync::OnceLock::new();
@@ -291,18 +288,15 @@ pub enum Decision {
     Deny(i32),
 }
 
-/// Coarse *default-deny* gate on `socket(domain, type, protocol)` (Codex's
-/// review): only a "boring" inet TCP/UDP socket, or an explicitly granted
-/// `AF_UNIX`, is allowed to `Continue` (after which nftables is the L3/L4
-/// enforcement for *where* its packets may go). Everything else is denied with
-/// `EPERM`: raw/packet sockets and `IPPROTO_RAW` (bypass L3/L4), `AF_NETLINK`
-/// / `AF_VSOCK` / `AF_BLUETOOTH` / `AF_CAN` and any other non-inet family, and,
-/// critically, any *unknown* family/type/protocol. We never "observe and
-/// allow" an unrecognized socket shape.
+/// Coarse *default-deny* gate on `socket(domain, type, protocol)`: only a
+/// "boring" inet TCP/UDP socket, or an explicitly granted `AF_UNIX`, is allowed
+/// to `Continue`, after which nftables is the L3/L4 enforcement for *where* its
+/// packets may go. Everything else is denied with `EPERM`: raw and packet
+/// sockets and `IPPROTO_RAW`, `AF_NETLINK`/`AF_VSOCK`/`AF_BLUETOOTH`/`AF_CAN`
+/// and any other non-inet family, and, critically, any *unknown*
+/// family/type/protocol. We never "observe and allow" an unrecognized shape.
 ///
-/// `unix_granted` reflects whether the policy explicitly permits `AF_UNIX`
-/// (SCM_RIGHTS fd-passing is an authority-smuggling vector, so it is off by
-/// default).
+/// `unix_granted` reflects whether the policy explicitly permits `AF_UNIX`.
 pub fn decide_socket(domain: i32, sock_type: i32, protocol: i32, unix_granted: bool) -> Decision {
     const AF_UNIX: i32 = 1;
     const AF_INET: i32 = 2;
@@ -332,14 +326,12 @@ pub fn decide_socket(domain: i32, sock_type: i32, protocol: i32, unix_granted: b
 }
 
 /// Gate on `socketpair(domain, type, protocol)`. An `AF_UNIX` socketpair is an
-/// anonymous connected pair. It has no address, cannot `connect` anywhere,
-/// and both ends are born inside the sandbox, so it grants no authority the
-/// process didn't already have (it could only leave over an already-granted
-/// channel). It is also load-bearing: tokio's signal handling, Node's
-/// child-process IPC, and most modern runtimes create one at startup, so
-/// denying it bricks coding agents in the box. Every other shape (socketpair
-/// is AF_UNIX-only in practice; anything else is suspicious) falls through to
-/// the default-deny [`decide_socket`] gate.
+/// anonymous connected pair: it has no address, cannot `connect` anywhere, and
+/// both ends are born inside the sandbox, so it grants no authority the process
+/// did not already have. It is also essential: tokio's signal handling, Node's
+/// child-process IPC, and most modern runtimes create one at startup, so denying
+/// it bricks coding agents in the box. Every other shape falls through to the
+/// default-deny [`decide_socket`] gate.
 pub fn decide_socketpair(domain: i32, sock_type: i32, protocol: i32, unix_granted: bool) -> Decision {
     const AF_UNIX: i32 = 1;
     if domain == AF_UNIX {
@@ -384,39 +376,31 @@ pub struct ResolvedEgress {
 
 /// May a `net.egress` entry pin to this address?
 ///
-/// The policy an operator reads is a *hostname*, and the thing nftables
-/// enforces is whatever that name resolved to, so the readable policy and the
-/// enforced destination are only as close as DNS chooses to make them. A repo
-/// that ships `.h5i/env.toml` picks the names, and it can equally pick what
-/// they answer. `net.egress = ["assets.example-cdn.com"]` reads like a CDN and
-/// pins to whatever that zone returns.
+/// The policy an operator reads is a *hostname*, and the thing nftables enforces
+/// is whatever that name resolved to, so the readable policy and the enforced
+/// destination are only as close as DNS chooses to make them. A repo that ships
+/// `.h5i/env.toml` picks the names, and it can equally pick what they answer.
 ///
 /// What that buys, on the tier whose whole claim is airtight L3/L4 filtering:
 ///
 /// * *`169.254.169.254`*: the cloud instance metadata service, and the
-///   highest-value target on any cloud host. slirp4netns NATs through the
-///   host's routing, and `--disable-host-loopback` does not cover it: it hides
-///   the host's *loopback*, not its link-local. A name resolving here hands the
-///   box the instance's role credentials.
-/// * *`fe80::/10`*, the same thing over IPv6, and `::ffff:169.254.169.254`,
-///   the same thing spelled as a mapped address so a v4-only test misses it.
-/// * multicast, broadcast, unspecified, no reachable service a repo could
-///   mean, and each of them means something else here. The unspecified address
-///   is unpinnable for the same reason as the rest but says something different
-///   about *why*, which is what [`is_sinkhole`] separates.
+///   highest-value target on any cloud host. slirp4netns NATs through the host's
+///   routing, and `--disable-host-loopback` does not cover it: it hides the
+///   host's *loopback*, not its link-local. A name resolving here hands the box
+///   the instance's role credentials.
+/// * *`fe80::/10`*, the same thing over IPv6, and `::ffff:169.254.169.254`, the
+///   same thing spelled as a mapped address so a v4-only test misses it.
+/// * multicast, broadcast, unspecified: no reachable service a repo could mean.
 ///
 /// Loopback is deliberately *not* refused. Inside the netns `127.0.0.1` is the
 /// box's own, `oif "lo" accept` already permits it, and the host's loopback is
-/// reached (when it is reached at all) through the slirp gateway rather than
-/// through this address, so a name answering `127.0.0.1` is redundant, not
-/// dangerous, and refusing it would break naming a service the box itself runs.
+/// reached through the slirp gateway rather than through this address, so a name
+/// answering `127.0.0.1` is redundant rather than dangerous.
 ///
-/// RFC1918 and IPv6 unique-local are deliberately *not* refused: an internal
-/// registry or a company mirror is a real thing to name, and refusing it would
-/// break boxes that work. They are reachable through the host's routing and
-/// that is worth knowing, which is what `refused` reporting and the receipt's
-/// pinned addresses are for. This function only closes the cases where no
-/// legitimate entry exists at all.
+/// RFC1918 and IPv6 unique-local are deliberately *not* refused either: an
+/// internal registry or a company mirror is a real thing to name. They are
+/// reachable through the host's routing and that is worth knowing, which is what
+/// `refused` reporting and the receipt's pinned addresses are for.
 fn is_pinnable(ip: &IpAddr) -> bool {
     // A v4 address written as `::ffff:a.b.c.d` is the same address. Unwrap it
     // and judge it once, or every check below is one spelling short.
@@ -440,20 +424,15 @@ fn is_pinnable(ip: &IpAddr) -> bool {
 ///
 /// `0.0.0.0` and `::` are what a filtering resolver returns for a name on a
 /// blocklist: pi-hole, a corporate DNS policy, several consumer ISPs. That is a
-/// statement about the *operator's network*, not about the repo's policy, and
-/// it is the one unpinnable answer an ordinary well-meaning `net.egress` entry
-/// runs into. Treating it like a link-local answer refuses the whole box over a
-/// name the resolver had already made unreachable anyway, and the box would
-/// have been fine, because an entry that cannot be pinned is an entry the box
-/// cannot dial. So it is separated here: still never pinned, still reported,
-/// but it costs that one name instead of the run. See [`setup_egress`].
+/// statement about the *operator's network*, not about the repo's policy, and it
+/// is the one unpinnable answer an ordinary well-meaning `net.egress` entry runs
+/// into. Treating it like a link-local answer refuses the whole box over a name
+/// the resolver had already made unreachable anyway.
 ///
 /// It is also the safe half of the split. `0.0.0.0` is not a destination this
-/// tier could be tricked into allowing: nothing about it reaches the host's
-/// link-local (the address the rest of [`is_pinnable`] exists for), it gets no
-/// nftables rule and no `/etc/hosts` pin, and inside the netns a connect to it
-/// lands on the box's own loopback, which `oif "lo" accept` already permits
-/// and [`is_pinnable`] deliberately allows by name.
+/// tier could be tricked into allowing: it gets no nftables rule and no
+/// `/etc/hosts` pin, and inside the netns a connect to it lands on the box's own
+/// loopback, which `oif "lo" accept` already permits.
 fn is_sinkhole(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(*ip),
@@ -556,14 +535,13 @@ pub fn build_nft_ruleset(allow: &[EgressDest], resolver: Option<IpAddr>) -> Stri
 
 /// Run `argv` under the supervised tier. Re-verifies the full mediation stack is
 /// green (fail-closed), then executes the command with the shared process-tier
-/// confinement (Landlock + seccomp deny-list + userns/mountns/ipc/uts + cgroup +
-/// no-new-privs + cap-drop) *plus* an always-on network namespace and the
-/// live seccomp-notify socket gate ([`serve_with_pidfd`]), which denies
-/// raw/packet/netlink/ungranted-unix sockets and records every verdict.
+/// confinement plus an always-on network namespace and the live seccomp-notify
+/// socket gate ([`serve_with_pidfd`]), which denies raw, packet, netlink and
+/// ungranted-unix sockets and records every verdict.
 ///
-/// Scope: `net.mode = deny` (an empty netns (airtight, no egress), or a
-/// non-empty `net.egress` allowlist enforced via netns + nftables + slirp4netns
-/// (which requires `slirp4netns` on PATH, else the run is refused) fail-closed).
+/// Scope: `net.mode = deny` (an empty netns, airtight, no egress) or a non-empty
+/// `net.egress` allowlist enforced via netns + nftables + slirp4netns, which
+/// requires `slirp4netns` on PATH or the run is refused.
 pub fn run(
     policy: &crate::sandbox::ResolvedPolicy,
     work: &std::path::Path,
@@ -990,8 +968,8 @@ fn run_supervised(
     // loop broke on the first notification and the box's first socket() blocked
     // unanswered: a hang where a refusal was documented.
     //
-    // Here rather than at `install_listener`, which runs in the forked child
-    // and must not allocate an error.
+    // Here rather than at `install_listener`, which runs in the forked child and
+    // must not allocate an error.
     crate::seccomp_notify::validate_notif_sizes()?;
 
     // A CLOEXEC socketpair for the SCM_RIGHTS listener handoff: the child sends
@@ -1068,18 +1046,15 @@ fn run_supervised(
         Some(sv_child),
         egress_jail,
         // A PID namespace, exactly as the process tier gets. Without it the box
-        // shares the host's PID namespace, which is not a cosmetic difference:
-        // it can enumerate host processes, read their `/proc/<pid>/cmdline`, and,
-        // because the userns maps back to the operator's real uid, send
-        // signals to any of their processes, h5i itself included. A tier that
-        // claims untrusted-code containment cannot leave `kill -9` pointed at
-        // the host. `/proc/<pid>/environ` was already denied (the userns fails
-        // `ptrace_may_access`), so this closes the reachable half.
+        // shares the host's PID namespace, which is not a cosmetic difference: it
+        // can enumerate host processes, read their `/proc/<pid>/cmdline`, and,
+        // because the userns maps back to the operator's real uid, send signals to
+        // any of their processes, h5i itself included. A tier that claims
+        // untrusted-code containment cannot leave `kill -9` pointed at the host.
         //
         // Ordering note: the netns/egress handshake in `pre_exec` runs BEFORE the
-        // pidns fork and reports `getpid()`, which CLONE_NEWPID leaves in the
-        // host namespace, so `slirp4netns` still targets a pid it can see, and
-        // the workload shares that netns by inheritance.
+        // pidns fork and reports `getpid()`, which CLONE_NEWPID leaves in the host
+        // namespace, so `slirp4netns` still targets a pid it can see.
         true,
         procs.as_deref(),
         interactive,
@@ -1211,23 +1186,23 @@ fn run_supervised(
 }
 
 /// The macOS supervised tier: Seatbelt confinement plus a host-side allowlist
-/// proxy that the box has no way to route around.
+/// proxy the box has no way to route around.
 ///
 /// The security argument is the mirror image of the Linux one, and it is worth
 /// stating because "point the box at a proxy" is normally *not* an enforcement
-/// mechanism. A program that ignores `HTTPS_PROXY` and opens its own socket
-/// escapes it. That is not the case here: the Seatbelt profile denies
+/// mechanism: a program that ignores `HTTPS_PROXY` and opens its own socket
+/// escapes it. That is not the case here, because the Seatbelt profile denies
 /// `network-outbound` to everything except the proxy's loopback port, so
-/// ignoring the env var gets the box a connection refused at the kernel, not a
-/// direct route. The proxy env vars are a *convenience* for well-behaved
-/// clients; the kernel rule is the boundary.
+/// ignoring the env var gets the box a connection refused at the kernel. The
+/// proxy env vars are a convenience for well-behaved clients; the kernel rule is
+/// the boundary.
 ///
 /// Two shapes, matching the Linux path exactly:
 ///
-/// - credential proxy engaged (an agent box with a resolvable host token):
-///   the only reachable port is the credential-injecting auth proxy, the real
-///   token never enters the box, and it is scrubbed from the box's per-env HOME
-///   copy so it is absent rather than merely inert. No general egress at all.
+/// - credential proxy engaged (an agent box with a resolvable host token): the
+///   only reachable port is the credential-injecting auth proxy, the real token
+///   never enters the box, and it is scrubbed from the box's per-env HOME copy.
+///   No general egress at all.
 /// - *otherwise*: the DNS-pinned `net.egress` allowlist proxy is the only
 ///   reachable port, and its allow/deny tally becomes the run's egress evidence.
 #[cfg(target_os = "macos")]
