@@ -1258,7 +1258,10 @@ fn a_page_can_read_an_event_stream_end_to_end() {
         fonts.sources.clone(),
         crate::engine::PageOptions::default(),
     );
-    let base = url::Url::parse("http://127.0.0.1/").unwrap();
+    // Same origin as the stream, deliberately: an `EventSource` is a `cors`
+    // request, so a page on a *different* port reading this one would need the
+    // server's permission. That case has its own test below.
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let page = factory.from_html("<html><body><p id='out'>none</p></body></html>", &base);
     let mut script = Script::new(page.dom(), broker, &base).expect("realm");
 
@@ -1283,6 +1286,124 @@ fn a_page_can_read_an_event_stream_end_to_end() {
 
     let methods: Vec<String> = sink.records().iter().map(|r| r.method.clone()).collect();
     assert!(methods.iter().any(|m| m == "SSE-OPEN"), "{methods:?}");
+
+    let _ = server.join();
+}
+
+/// One server for the cross-origin `EventSource` tests: answers with whatever
+/// headers the case wants, then holds the connection briefly so the reader
+/// thread has something to read.
+fn event_stream_server(extra_headers: &'static str, content_type: &'static str) -> (u16, std::thread::JoinHandle<()>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            use std::io::{Read as _, Write as _};
+            let mut discard = [0u8; 2048];
+            let _ = stream.read(&mut discard);
+            let body = "data: tick one\n\n";
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\n{extra_headers}\
+                     Content-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+            let _ = stream.flush();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    });
+    (port, server)
+}
+
+fn realm_on(base: &url::Url) -> (crate::engine::Page, Script) {
+    let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
+    let broker =
+        crate::net::LocalBroker::new(crate::policy::Policy::new(), sink, None).expect("broker");
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = crate::engine::PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        crate::engine::PageOptions::default(),
+    );
+    let page = factory.from_html("<html><body><p id='out'>none</p></body></html>", base);
+    let script = Script::new(page.dom(), broker, base).expect("realm");
+    (page, script)
+}
+
+/// The hole this closes: `EventSource` had no same-origin policy at all. Two
+/// allowed origins and a script on either could open the other's stream and
+/// read it — the exact case `crate::cors` exists to refuse, on a second path
+/// that never asked.
+#[test]
+fn a_cross_origin_event_stream_is_refused_when_the_server_does_not_allow_it() {
+    let (port, server) = event_stream_server("", "text/event-stream");
+    // A different port is a different origin.
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+    let (_page, mut script) = realm_on(&base);
+
+    // Refused the way every other refusal in this engine reaches a page: as an
+    // error the caller sees, rather than a stream that opens and goes quiet.
+    let error = script
+        .eval(&format!(
+            "globalThis.es = new EventSource('http://127.0.0.1:{port}/events');"
+        ))
+        .expect_err("a stream the server did not allow must not open");
+    let error = format!("{error}");
+    assert!(
+        error.contains("same-origin policy") && error.contains("Access-Control-Allow-Origin"),
+        "{error}"
+    );
+
+    let _ = server.join();
+}
+
+/// And is allowed when the server does say so, which is what makes the refusal
+/// above a policy rather than a breakage.
+#[test]
+fn a_cross_origin_event_stream_is_read_when_the_server_allows_the_origin() {
+    let (port, server) = event_stream_server(
+        "Access-Control-Allow-Origin: http://127.0.0.1:1\r\n",
+        "text/event-stream",
+    );
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+    let (_page, mut script) = realm_on(&base);
+
+    script
+        .eval(&format!(
+            "globalThis.got = null;\
+             globalThis.es = new EventSource('http://127.0.0.1:{port}/events');\
+             es.onmessage = (e) => {{ globalThis.got = e.data; }};"
+        ))
+        .expect("the stream opened");
+
+    let waited = script.settle_until_expr("globalThis.got !== null");
+    assert!(waited.met, "no event arrived: {}", waited.render());
+    assert_eq!(script.eval_value("globalThis.got").unwrap(), "tick one");
+
+    let _ = server.join();
+}
+
+/// A body that is not an event stream is not read as one. Without this the
+/// line parser is a reader for any document, and every line beginning `data:`
+/// in someone else's page becomes a message.
+#[test]
+fn an_answer_that_is_not_an_event_stream_is_not_read_as_one() {
+    let (port, server) = event_stream_server(
+        "Access-Control-Allow-Origin: *\r\n",
+        "text/html",
+    );
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+    let (_page, mut script) = realm_on(&base);
+
+    let error = script
+        .eval(&format!(
+            "globalThis.es = new EventSource('http://127.0.0.1:{port}/events');"
+        ))
+        .expect_err("a body that is not an event stream must not be read as one");
+    let error = format!("{error}");
+    assert!(error.contains("not `text/event-stream`"), "{error}");
 
     let _ = server.join();
 }

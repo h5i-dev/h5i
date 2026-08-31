@@ -258,11 +258,29 @@ impl Socket {
         // Policy first, and receipted before anything is dialled.
         let seq = broker.authorise_socket(url, document)?;
 
+        // What the page will name itself as. A document with no origin of its
+        // own — a `file:` page — sends the literal `null`, which is what the
+        // spec says and what a server has to allow deliberately rather than by
+        // accident.
+        let origin = document.map(|doc| match crate::cors::Origin::of(doc) {
+            Some(origin) => origin.header(),
+            None => "null".to_string(),
+        });
+
         let host = url.host_str().ok_or_else(|| format!("{url} has no host"))?;
         let port = url.port().unwrap_or(if secure { 443 } else { 80 });
-        let sock = TcpStream::connect((host, port)).map_err(|e| {
-            format!("could not reach {host}:{port}: {e}")
-        })?;
+        // The addresses `authorise_socket` already checked, not a second
+        // lookup. `Policy::check_address` decided about *these*; resolving the
+        // name again here would reopen exactly the window the pinning resolver
+        // closes for the HTTP client, and this is the one client that does its
+        // own connecting. `None` only when nothing is pinned at all — an egress
+        // proxy in the path — and a proxied session reaches loopback only.
+        let sock = match broker.approved_addresses(host) {
+            Some(addrs) => connect_to_any(&addrs)
+                .map_err(|e| format!("could not reach {host}:{port}: {e}"))?,
+            None => TcpStream::connect((host, port))
+                .map_err(|e| format!("could not reach {host}:{port}: {e}"))?,
+        };
         sock.set_read_timeout(Some(HANDSHAKE_TIMEOUT))
             .map_err(|e| e.to_string())?;
 
@@ -286,7 +304,7 @@ impl Socket {
         // that frame away. A server that greets on connect (which is what a
         // hot-reload channel does) looked like a server that never spoke.
         let reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
-        let reader = handshake(reader, &stream, url, host, port)?;
+        let reader = handshake(reader, &stream, url, host, port, origin.as_deref())?;
 
         // Reads have no deadline once the handshake is done: a socket that is
         // quiet is not a socket that is broken, and a dev server's HMR channel
@@ -465,6 +483,29 @@ fn read_loop(
     }
 }
 
+/// Connect to the first of the approved addresses that answers.
+///
+/// A name can resolve to several addresses and only some of them be reachable
+/// — an IPv6 record on a host with no IPv6 route is the ordinary case — so
+/// trying one and giving up would make a working site look down. Every address
+/// here has already been through [`crate::policy::Policy::check_address`];
+/// which of them answers is a reachability question, not a policy one.
+fn connect_to_any(addrs: &[std::net::SocketAddr]) -> std::io::Result<TcpStream> {
+    let mut last = None;
+    for addr in addrs {
+        match TcpStream::connect_timeout(addr, HANDSHAKE_TIMEOUT) {
+            Ok(sock) => return Ok(sock),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AddrNotAvailable,
+            "the host resolved to no addresses",
+        )
+    }))
+}
+
 /// The opening handshake.
 ///
 /// Takes the reader and gives it back, because whatever it buffered past the
@@ -475,6 +516,7 @@ fn handshake(
     url: &Url,
     host: &str,
     port: u16,
+    origin: Option<&str>,
 ) -> Result<BufReader<Wire>, String> {
     let mut key_bytes = [0u8; 16];
     getrandom::getrandom(&mut key_bytes)
@@ -485,11 +527,23 @@ fn handshake(
         Some(query) => format!("{}?{}", url.path(), query),
         None => url.path().to_string(),
     };
+    // The `Origin` a browser would send, and the reason it matters here: CORS
+    // does not apply to a WebSocket, so `Origin` is the *only* thing a server
+    // has to tell a page's socket from a program's. Omitting it made every
+    // socket this engine opened on a page's behalf look like a non-browser
+    // client, which is precisely the shape a cross-site WebSocket hijack takes
+    // — the server's one defence, silently unarmed. Absent for a socket the
+    // agent named itself, because there is no document behind that one.
+    let origin_line = match origin {
+        Some(origin) => format!("Origin: {origin}\r\n"),
+        None => String::new(),
+    };
     let request = format!(
         "GET {path} HTTP/1.1\r\n\
          Host: {host}:{port}\r\n\
          Upgrade: websocket\r\n\
          Connection: Upgrade\r\n\
+         {origin_line}\
          Sec-WebSocket-Key: {key}\r\n\
          Sec-WebSocket-Version: 13\r\n\
          \r\n"
@@ -687,6 +741,113 @@ mod tests {
             Ok(_) => panic!("a remote socket behind a proxy should be refused"),
         };
         assert!(error.contains("egress proxy"), "{error}");
+    }
+
+    /// The address behind the name is checked on this path too.
+    ///
+    /// `pin_addresses` used to return early for `ws`/`wss`, so
+    /// `Policy::check_address` — the rebinding and private-space guard — never
+    /// ran on the one client that does its own `TcpStream::connect`. The
+    /// instrument mode makes the gap visible without a DNS server: it grants
+    /// every remote *name* and deliberately grants no private address, so a
+    /// socket to one must still be refused.
+    #[test]
+    fn a_socket_into_private_space_is_refused_even_when_every_name_is_granted() {
+        let broker = crate::net::LocalBroker::new(
+            crate::policy::Policy::new().set_any_remote(true),
+            Arc::new(crate::receipt::MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        let url = Url::parse("ws://10.0.0.1:8080/socket").unwrap();
+        let error = match Socket::open(broker, &url, None) {
+            Err(error) => error,
+            Ok(_) => panic!("a socket into RFC 1918 space should have been refused"),
+        };
+        assert!(
+            error.contains("internal address") || error.contains("not in the allowlist"),
+            "the address check should have refused this: {error}"
+        );
+    }
+
+    /// A page's socket names the page. CORS does not reach a WebSocket, so
+    /// `Origin` is the only thing a server has to tell a page's socket from a
+    /// program's — and this engine used to send none, which unarmed the one
+    /// defence a WebSocket server has against a cross-site hijack.
+    #[test]
+    fn a_socket_opened_by_a_page_carries_the_page_origin() {
+        use std::io::{Read as _, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(String::new()));
+        let recorder = seen.clone();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let read = stream.read(&mut buf).unwrap_or(0);
+                if let Ok(mut slot) = recorder.lock() {
+                    *slot = String::from_utf8_lossy(&buf[..read]).to_string();
+                }
+                // Not a real upgrade: the handshake is expected to fail, and
+                // what is under test is what went *out*.
+                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n");
+                let _ = stream.flush();
+            }
+        });
+
+        let broker = crate::net::LocalBroker::new(
+            crate::policy::Policy::new(),
+            Arc::new(crate::receipt::MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        let url = Url::parse(&format!("ws://127.0.0.1:{port}/hmr")).unwrap();
+        let document = Url::parse("http://127.0.0.1:5173/index.html").unwrap();
+        let _ = Socket::open(broker, &url, Some(&document));
+        let _ = server.join();
+
+        let request = seen.lock().map(|s| s.clone()).unwrap_or_default();
+        assert!(
+            request.contains("Origin: http://127.0.0.1:5173\r\n"),
+            "the handshake should name the document that asked:\n{request}"
+        );
+    }
+
+    /// And a socket the *agent* named carries none, because there is no
+    /// document behind it to name.
+    #[test]
+    fn a_socket_the_agent_named_has_no_document_to_declare() {
+        use std::io::{Read as _, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(String::new()));
+        let recorder = seen.clone();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let read = stream.read(&mut buf).unwrap_or(0);
+                if let Ok(mut slot) = recorder.lock() {
+                    *slot = String::from_utf8_lossy(&buf[..read]).to_string();
+                }
+                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n");
+                let _ = stream.flush();
+            }
+        });
+
+        let broker = crate::net::LocalBroker::new(
+            crate::policy::Policy::new(),
+            Arc::new(crate::receipt::MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        let url = Url::parse(&format!("ws://127.0.0.1:{port}/hmr")).unwrap();
+        let _ = Socket::open(broker, &url, None);
+        let _ = server.join();
+
+        let request = seen.lock().map(|s| s.clone()).unwrap_or_default();
+        assert!(!request.contains("Origin:"), "{request}");
     }
 
     #[test]

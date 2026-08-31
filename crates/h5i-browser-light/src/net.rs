@@ -673,7 +673,13 @@ impl LocalBroker {
             // here to check, and none to pin.
             return Ok(());
         };
-        if !matches!(url.scheme(), "http" | "https") {
+        // `ws`/`wss` too, and that omission was the hole: the socket client
+        // reached `TcpStream::connect((host, port))` with a name nothing had
+        // resolved, so `Policy::check_address` — the rebinding and
+        // private-space guard — never ran on the one path that does its own
+        // connecting. A name on the allowlist that answers `10.0.0.1` was a
+        // WebSocket into private space with a receipt that said otherwise.
+        if !matches!(url.scheme(), "http" | "https" | "ws" | "wss") {
             return Ok(());
         }
         let Some(host) = url.host_str() else {
@@ -682,7 +688,7 @@ impl LocalBroker {
 
         let port = url
             .port_or_known_default()
-            .unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
+            .unwrap_or(if matches!(url.scheme(), "https" | "wss") { 443 } else { 80 });
         // IPv6 arrives from `host_str` with its brackets, which the resolver
         // does not want.
         let bare = host
@@ -705,6 +711,22 @@ impl LocalBroker {
         }
         pinned.set(host, resolved);
         Ok(())
+    }
+
+    /// The addresses a host was approved for, for a caller that does its own
+    /// connecting.
+    ///
+    /// `reqwest` is handed [`Pinned`] as its resolver and so cannot reach an
+    /// address the policy did not see. The socket client has no resolver to
+    /// hand anything to — it calls `TcpStream::connect` itself — so it asks
+    /// here instead, and connects to *these* addresses rather than resolving
+    /// the name a second time. Same rule, same window closed.
+    ///
+    /// `None` when nothing is pinned at all (an egress proxy in the path, which
+    /// resolves at the far end), which is the one case a caller may fall back
+    /// to its own lookup.
+    pub fn approved_addresses(&self, host: &str) -> Option<Vec<std::net::SocketAddr>> {
+        self.pinned.as_ref()?.get(host)
     }
 
     /// The session's jar, for the broker's own use.
@@ -1365,6 +1387,15 @@ impl LocalBroker {
     /// The front half is identical — policy, then the decision record, *then*
     /// the wire — because that is the half the fail-closed rule lives in, and
     /// two copies of it would be two rules.
+    ///
+    /// **And the same-origin policy, which this path was missing.**
+    /// [`crate::cors`] exists because granting two origins let a script on
+    /// either `fetch` the other and read the body; `EventSource` was a second
+    /// door into the same room, and it was standing open — no `Origin` header,
+    /// no `Access-Control-Allow-Origin` check on the answer, and the session's
+    /// cookies attached unconditionally. A page could name any allowed origin
+    /// and read its stream as the logged-in user. An `EventSource` is a `cors`
+    /// request with same-origin credentials, so it is planned like one.
     pub fn begin_event_stream(
         &self,
         url: &Url,
@@ -1394,6 +1425,48 @@ impl LocalBroker {
             return Err(format!("denied by policy: {reason}"));
         }
 
+        // Who is asking, and so whether the answer may be read. `None` is the
+        // agent naming a URL and is unrestricted; a document is subject to the
+        // origin boundary like any other request it makes.
+        let plan = match document {
+            None => None,
+            Some(doc) => {
+                let origin = crate::cors::Origin::of(doc);
+                let requester = match origin.as_ref() {
+                    Some(origin) => crate::cors::Requester::Document(origin),
+                    None => crate::cors::Requester::Opaque,
+                };
+                Some(crate::cors::plan(
+                    requester,
+                    url,
+                    "GET",
+                    &[],
+                    crate::cors::Mode::Cors,
+                    // `withCredentials` is not exposed, so this is the
+                    // default: cookies same-origin, never across.
+                    crate::cors::Credentials::SameOrigin,
+                ))
+            }
+        };
+        if let Some(crate::cors::Plan::Blocked(why)) = &plan {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
+                    .denied(why);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(format!("blocked by the same-origin policy: {why}"));
+        }
+        let (origin_header, send_cookies, check_response) = match &plan {
+            Some(crate::cors::Plan::Send {
+                origin_header,
+                send_cookies,
+                check_response,
+                ..
+            }) => (origin_header.clone(), *send_cookies, *check_response),
+            _ => (None, true, false),
+        };
+
         let record = RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str());
         if let Err(e) = self.append(&record) {
             return Err(format!(
@@ -1416,8 +1489,13 @@ impl LocalBroker {
         // `header_for` reports the value and how many cookies went with it;
         // only the value goes on the wire, and the count is what a receipt is
         // allowed to carry.
-        if let Some((cookies, _count)) = self.jar.header_for(url) {
+        if send_cookies
+            && let Some((cookies, _count)) = self.jar.header_for(url)
+        {
             request = request.header(reqwest::header::COOKIE, cookies);
+        }
+        if let Some(origin) = &origin_header {
+            request = request.header("origin", origin.clone());
         }
 
         match request.send() {
@@ -1430,6 +1508,63 @@ impl LocalBroker {
                 // what flows after it is receipted per event.
                 let mut outcome = record.response();
                 outcome.status = Some(response.status().as_u16());
+
+                // The answer to the question the `Origin` header asked. A
+                // stream is a body like any other, and a cross-origin one may
+                // not be read unless the server named this origin back.
+                if check_response {
+                    let header = |name: &str| -> Option<String> {
+                        response
+                            .headers()
+                            .get(name)
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_string)
+                    };
+                    let asked = origin_header.clone().unwrap_or_else(|| "null".to_string());
+                    if let Err(why) = crate::cors::check_response(
+                        header("access-control-allow-origin").as_deref(),
+                        header("access-control-allow-credentials").as_deref(),
+                        &asked,
+                        send_cookies,
+                    ) {
+                        outcome.error =
+                            Some(format!("blocked by the same-origin policy: {why}"));
+                        let _ = self.append(&outcome);
+                        return Err(format!("blocked by the same-origin policy: {why}"));
+                    }
+                }
+
+                // And that it really is a stream. A browser fails an
+                // `EventSource` whose answer is not `text/event-stream`, and
+                // the rule earns its place beyond conformance: without it the
+                // line parser is a reader for *any* body, and every line
+                // beginning `data:` in someone else's document becomes a
+                // message the page receives.
+                let content_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                if content_type != "text/event-stream" {
+                    let named = if content_type.is_empty() {
+                        "(no content type)"
+                    } else {
+                        content_type.as_str()
+                    };
+                    let why = format!(
+                        "the answer is `{named}`, not `text/event-stream`, so it is not an \
+                         event stream and was not read."
+                    );
+                    outcome.error = Some(why.clone());
+                    let _ = self.append(&outcome);
+                    return Err(why);
+                }
+
                 if let Err(e) = self.append(&outcome) {
                     return Err(format!(
                         "refusing to stream: the receipt could not be written: {e}"
