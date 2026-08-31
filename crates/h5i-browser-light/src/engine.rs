@@ -41,36 +41,32 @@ pub struct PageOptions {
     pub script: bool,
     /// How long one navigation may take, first byte to last.
     ///
-    /// The bound the per-phase budgets could not give. A request timeout bounds
-    /// a request, the script-phase budget bounds the script, and a page that
-    /// spends thirty seconds on the network *and* twenty in its script is
-    /// inside every one of them while taking the better part of a minute.
+    /// The bound the per-phase budgets could not give: a request timeout bounds a
+    /// request, the script-phase budget bounds the script, and a page that spends
+    /// thirty seconds on the network *and* twenty in its script is inside every one
+    /// of them while taking the better part of a minute.
     ///
-    /// This is the cheap half of "make JavaScript stoppable": it does not kill
-    /// a single runaway job (Boa's cancellation is checked between jobs, and
-    /// only a separate process could interrupt one) but it bounds everything
-    /// that *is* interruptible under one number, and it does so without
-    /// splitting the engine in half. `Page` holds an `Rc<RefCell<BaseDocument>>`
-    /// and is pinned to its thread; moving script into a killable worker means
-    /// moving the document with it.
+    /// The cheap half of "make JavaScript stoppable". It does not kill a single
+    /// runaway job (Boa's cancellation is checked between jobs, and only a separate
+    /// process could interrupt one) but it bounds everything that *is*
+    /// interruptible under one number, without splitting the engine in half: `Page`
+    /// holds an `Rc<RefCell<BaseDocument>>` and is pinned to its thread.
     pub navigation_budget: std::time::Duration,
 
     /// How long the script realm's job queue may run before it is cancelled.
     ///
-    /// `None` keeps `SCRIPT_PHASE_BUDGET`, the wall-clock ceiling on how long a
-    /// page's script may run. It is a guard against a *runaway*, and a
-    /// conformance harness is exactly where a runaway and a slow page are hard
-    /// to tell apart from outside: `html/dom/idlharness` legitimately spends
-    /// about twenty seconds parsing IDL and building 6,408 tests, lands right
-    /// on the twenty-second ceiling, and is then recorded as having reported
-    /// nothing at all, so 1,896 passing subtests appear or vanish depending on
-    /// how loaded the machine was.
+    /// `None` keeps `SCRIPT_PHASE_BUDGET`, the wall-clock ceiling on a page's
+    /// script. It guards against a *runaway*, and a conformance harness is exactly
+    /// where a runaway and a slow page are hard to tell apart from outside:
+    /// `html/dom/idlharness` legitimately spends about twenty seconds parsing IDL
+    /// and building 6,408 tests, lands on the twenty-second ceiling, and is then
+    /// recorded as having reported nothing, so 1,896 passing subtests appear or
+    /// vanish depending on how loaded the machine was.
     ///
     /// A run whose score depends on the other processes on the box is not a
-    /// measurement, so an instrument can raise this. For the same reason
-    /// `--allow-any-remote` exists, and with the same limit: it says what it is
-    /// doing, and it changes nothing for anyone who does not pass it. The
-    /// navigation deadline still bounds the whole load either way.
+    /// measurement, so an instrument can raise this, with the same limit
+    /// `--allow-any-remote` has: it says what it is doing and changes nothing for
+    /// anyone who does not pass it. The navigation deadline still bounds the load.
     pub script_budget: Option<std::time::Duration>,
 
     /// Install the WebIDL member decoration in the script realm.
@@ -191,9 +187,9 @@ impl blitz_traits::navigation::NavigationProvider for CapturedNavigation {
 ///
 /// `Rc<RefCell<_>>` rather than ownership because JavaScript reaches the same
 /// tree: a native binding invoked from a callback needs the document long after
-/// the call that registered it returned. `Rc` and not `Arc` because none of this
-/// crosses a thread: `Page` is not `Send` (see `stream`'s module docs), which
-/// is the constraint the whole session architecture already bends around.
+/// the call that registered it returned. `Rc` and not `Arc` because none of
+/// this crosses a thread: `Page` is not `Send`, the constraint the whole
+/// session architecture bends around.
 ///
 /// The borrow discipline that keeps this from panicking: a binding takes the
 /// borrow, mutates, and drops it before returning to JS. Blitz's mutations
@@ -283,32 +279,29 @@ const MAX_FRAMES: usize = 8;
 
 /// Load each frame's document and graft it under the frame element (§B21).
 ///
-/// # What this is, and the boundary it does not cross
-///
-/// §B6 refused a second browsing context and §B20.15 kept the refusal. Two
+/// §B6 refused a second browsing context and §B20.15 kept the refusal: two
 /// origins in one realm is the hazard the cookie jar's retain-on-navigation
 /// rule exists to bound. Task evidence then showed agents genuinely need what
 /// is *inside* frames (payment forms, embedded login pages), so this is the
-/// narrow reopening: a frame's document is fetched and its *content* is
-/// flattened into the page, exactly as a shadow root is flattened. Readable
-/// in the snapshot, actionable by the verbs.
+/// narrow reopening: a frame's document is fetched and its *content* flattened
+/// into the page, exactly as a shadow root is. Readable in the snapshot,
+/// actionable by the verbs.
 ///
 /// What deliberately does not happen:
 ///
-/// * Its scripts never run. They are stripped after the graft. Running a
-///   second document's script in this realm is the two-origins-one-realm
-///   problem, and stage 1 does not have a realm to give each frame.
-/// * Its styles do not apply. Also stripped: the host's cascade would
-///   otherwise apply a foreign document's rules to the whole page, which is a
-///   worse lie than unstyled frame content.
-/// * `contentDocument` still answers null. A flattened frame is content,
-///   not a browsing context; handing script a document facade would claim a
-///   boundary this engine has not built.
+/// * Its scripts never run; they are stripped after the graft. Running a second
+///   document's script in this realm is the two-origins-one-realm problem, and
+///   stage 1 has no realm to give each frame.
+/// * Its styles do not apply. Also stripped: the host's cascade would otherwise
+///   apply a foreign document's rules to the whole page.
+/// * `contentDocument` still answers null. A flattened frame is content, not a
+///   browsing context; handing script a document facade would claim a boundary
+///   this engine has not built.
 ///
-/// Every fetch goes through the broker with `Initiator::Frame`, so the
-/// receipt says "this page pulled in another document" in so many words, the
-/// allowlist applies unchanged, and a web page embedding the box's dev server
-/// is refused by the same loopback rule as any other cross-origin reach.
+/// Every fetch goes through the broker with `Initiator::Frame`, so the receipt
+/// says "this page pulled in another document", the allowlist applies
+/// unchanged, and a web page embedding the box's dev server is refused by the
+/// same loopback rule as any other cross-origin reach.
 fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
     // Worklist rather than one pass, because a grafted document may itself
     // hold frames. The cap bounds the whole tree, and being over it is noted
@@ -412,15 +405,14 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
             crate::encoding::decode(&outcome.body, encoding)
         };
 
-        // Graft, then strip. Stripping *after* the graft rather than editing
-        // the string, because removing markup with a regex is how a
-        // `<script>` inside a comment ends up half-removed.
+        // Graft, then strip. Stripping *after* the graft rather than editing the
+        // string, because removing markup with a regex is how a `<script>` inside a
+        // comment ends up half-removed.
         //
-        // The graft goes into a `<div>` appended under the frame, not into the
-        // frame element itself, and the difference is the HTML parser's, not
-        // style: fragment parsing in an `<iframe>` context treats the input as
-        // *raw text*, so setting the frame's own innerHTML produced one text
-        // node holding escaped markup. A div is a neutral parsing context.
+        // The graft goes into a `<div>` appended under the frame, not into the frame
+        // element itself, and the difference is the HTML parser's: fragment parsing
+        // in an `<iframe>` context treats the input as *raw text*, so setting the
+        // frame's own innerHTML produced one text node holding escaped markup.
         {
             let mut doc = page.doc.borrow_mut();
             let mut mutator = doc.mutate();
@@ -530,16 +522,14 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
 /// Removing `<script>`, `<style>` and `<link>` was only half of §B21's
 /// boundary. An event-handler content attribute *is* script (the prelude
 /// compiles `on*` attributes into functions over the whole document, and does
-/// not know one subtree came from somewhere else) so a frame's `onclick`
-/// became a function running in the *host page's* realm, with the host's
-/// origin, the host's `document.cookie` and the host's fetch authority. That is
-/// exactly the two-origins-one-realm problem the frame boundary exists to
-/// refuse, and it was reachable by the agent doing the thing frames were
-/// reopened for: clicking something inside an embedded form.
+/// not know one subtree came from somewhere else) so a frame's `onclick` became
+/// a function running in the *host page's* realm, with the host's origin,
+/// cookies and fetch authority. That is the two-origins-one-realm problem the
+/// frame boundary exists to refuse, reachable by the agent doing the thing
+/// frames were reopened for: clicking something inside an embedded form.
 ///
-/// `javascript:` in a URL attribute is the same script by another road, and is
-/// refused here for the same reason `load_frames` refuses a `javascript:` frame
-/// source by name.
+/// `javascript:` in a URL attribute is the same script by another road, refused
+/// here for the same reason `load_frames` refuses a `javascript:` frame source.
 ///
 /// The `on*` rule is a prefix rather than the enumerated list the prelude
 /// compiles from, deliberately: this is the boundary and that list is a
@@ -579,32 +569,25 @@ fn is_javascript_url(value: &str) -> bool {
 ///
 /// The compile is ~67 ms and was the last fixed cost on the critical path of a
 /// page that runs script (§B15.12a). It can be hidden inside the navigation's
-/// own network wait, but only speculatively: the decision has to be made before
-/// the document exists, so it cannot ask the one question that would settle it,
-/// which is whether the page has any script.
+/// own network wait, but only speculatively: the decision is made before the
+/// document exists, so it cannot ask whether the page has any script.
 ///
-/// So it asks the two things it *can* know, and both are about whether the bet
-/// can lose rather than whether it will win.
+/// So it asks the two things it *can* know, both about whether the bet can lose
+/// rather than whether it will win. Scripting has to be on, since with `script`
+/// off no realm is built for any page. And there has to be a wait to hide it
+/// in: loopback and the non-network schemes answer in about a millisecond, so a
+/// local page with no script would pay the whole compile as added latency.
 ///
-/// Scripting has to be on. With `script` off no realm is ever built for any
-/// page, so this would be waste on all of them rather than on some.
+/// Measured over the project's corpus (64 pages, 2026-08-29) the bet never
+/// lost: 92% of pages run script, and the scriptless ones are *slower* to fetch
+/// than the scripted ones, the fastest at 117 ms against a ~67 ms compile. But
+/// every page in that corpus was remote, so local ones are excluded here rather
+/// than assumed to behave like the rest.
 ///
-/// There has to be a wait to hide it in. Loopback and the non-network
-/// schemes answer in about a millisecond, so a local page that turns out to
-/// have no script would pay the whole compile as added latency. Measured over
-/// the project's corpus (64 pages, 2026-08-29) the bet never once lost: 92% of
-/// pages run script, and the scriptless ones are *slower* to fetch than the
-/// scripted ones, the fastest at 117 ms against a ~67 ms compile. The compile
-/// would have to nearly double before one corpus page regressed. But every page
-/// in that corpus was remote. Local ones are not in the evidence, which is why
-/// they are excluded here instead of assumed to behave like the rest.
-/// Being wrong in the cautious direction costs an optimisation; being wrong the
-/// other way costs 67 ms of somebody's page load. So the trailing dot of a
-/// fully-qualified `localhost.` is stripped before asking, which
-/// [`crate::policy::is_loopback`] does not do. That function is *not* changed to
-/// match: it decides what the allowlist lets through by default, and widening
-/// what counts as the local machine is a policy decision that should be taken
-/// on its own terms rather than as a side effect of making pages faster.
+/// The trailing dot of a fully-qualified `localhost.` is stripped before
+/// asking, which [`crate::policy::is_loopback`] does not do. That function is
+/// *not* changed to match: it decides what the allowlist lets through by
+/// default, and widening what counts as the local machine is a policy decision.
 fn worth_warming(url: &Url, options: &PageOptions) -> bool {
     if !options.script {
         return false;
@@ -740,16 +723,14 @@ impl Page {
     }
 
     /// Load HTML that is already in hand (a local file, or a test fixture).
+    /// Subresources still go through the broker, so a local file cannot pull a
+    /// remote tracker without a policy decision and a receipt line.
     ///
-    /// Subresources still go through the broker, so a local file cannot pull
-    /// a remote tracker without a policy decision and a receipt line.
     /// Build a page from the bytes a server sent, rather than from a string
-    /// somebody already decoded.
-    ///
-    /// The distinction matters because *how* those bytes become a string is a
-    /// property of the document: a `euc-jp` page decoded as UTF-8 is mojibake,
-    /// and every downstream answer (the outline, the snapshot, a link's query)
-    /// is then wrong in a way nothing reports.
+    /// somebody already decoded. *How* those bytes become a string is a property of
+    /// the document: a `euc-jp` page decoded as UTF-8 is mojibake, and every
+    /// downstream answer (the outline, the snapshot, a link's query) is then wrong
+    /// in a way nothing reports.
     pub fn from_bytes(
         bytes: &[u8],
         content_type: Option<&str>,
@@ -766,19 +747,17 @@ impl Page {
     }
 
     /// Parse markup into a document. Separated so it can be attempted twice.
-    /// One rule this engine adds to the user-agent stylesheet.
     ///
-    /// A `<canvas>` is a replaced element: browsers lay it out at its own
-    /// width and height even though its `display` is `inline`. Blitz's default
-    /// sheet gives it no such treatment, so an inline canvas measured zero by
-    /// zero, and a surface composited onto a zero-sized box paints nothing.
-    /// The drawing worked, the pixels existed, and the page was blank.
+    /// One rule this engine adds to the user-agent stylesheet. A `<canvas>` is a
+    /// replaced element: browsers lay it out at its own width and height even
+    /// though its `display` is `inline`. Blitz's default sheet gives it no such
+    /// treatment, so an inline canvas measured zero by zero, and a surface
+    /// composited onto a zero-sized box paints nothing: the drawing worked, the
+    /// pixels existed, and the page was blank.
     ///
-    /// `inline-block` is the closest shape Blitz will size correctly, and it
-    /// keeps a canvas flowing inline with the text around it, which is where
-    /// pages put them. Added as a *user-agent* rule so a page's own stylesheet
-    /// still overrides it, which is what makes this a default rather than a
-    /// decision taken away from the document.
+    /// `inline-block` is the closest shape Blitz will size correctly, and it keeps
+    /// a canvas flowing inline with the text around it. Added as a *user-agent*
+    /// rule so a page's own stylesheet still overrides it.
     const CANVAS_UA_CSS: &'static str = "canvas { display: inline-block; }";
 
     fn parse(
@@ -817,20 +796,18 @@ impl Page {
 
     /// The one rule that lets an *open* popover be seen.
     ///
-    /// Blitz's own UA sheet already carries the standard's hiding rule,
-    /// `[popover]:not(:popover-open):not(dialog[open]) { display: none; }`,
-    /// but Blitz hard-codes the `:popover-open` pseudo-class to never match,
-    /// so that rule applies to every popover *forever*: `showPopover()` could
-    /// change all the state it liked and the element stayed `display: none`.
-    /// The prelude marks the open element with a class instead (the same
-    /// marker its `:popover-open` selector rewrite matches on), and this rule
-    /// turns the marker into visibility.
+    /// Blitz's UA sheet already carries the standard's hiding rule,
+    /// `[popover]:not(:popover-open):not(dialog[open]) { display: none; }`, but
+    /// Blitz hard-codes `:popover-open` to never match, so that rule applies to
+    /// every popover forever: `showPopover()` could change all the state it liked
+    /// and the element stayed `display: none`. The prelude marks the open element
+    /// with a class instead, and this rule turns the marker into visibility.
     ///
-    /// The stuttered `[popover]` compounds are load-bearing: Blitz's hiding
-    /// rule weighs (0,3,1), the two `:not()`s count, and a same-origin rule
-    /// only beats it by outweighing it, so this one is stacked to (0,5,0).
-    /// Dialogs need no counterpart: `dialog:not([open])`/`dialog[open]` are
-    /// both in Blitz's sheet and the `open` attribute is real.
+    /// The stuttered `[popover]` compounds carry the weight: Blitz's hiding rule
+    /// weighs (0,3,1), the two `:not()`s count, and a same-origin rule only beats
+    /// it by outweighing it, so this one is stacked to (0,5,0). Dialogs need no
+    /// counterpart: `dialog:not([open])`/`dialog[open]` are both in Blitz's sheet
+    /// and the `open` attribute is real.
     const POPOVER_UA_CSS: &'static str = "
         [popover][popover][popover][popover].__h5i_popover_open__ { display: block; }
     ";
@@ -852,26 +829,23 @@ impl Page {
         fonts: FontSetup,
         options: PageOptions,
     ) -> Self {
-        // Before the document exists, and therefore before its subresources
-        // and its frames are fetched.
+        // Before the document exists, and therefore before its subresources and
+        // frames are fetched.
         //
         // The drop used to live in `PageFactory::finish`, at the *end* of the
-        // navigation, and a page's frames and subresources are fetched before
-        // that. So arriving at `evil.example` with `bank.example`'s session
-        // still in the jar, and being told to fetch `bank.example` in a frame,
-        // carried the credential; §B21 then flattened the authenticated answer
-        // into the outline the agent reads. Two allowed origins and a
-        // cross-origin credentialed read, which is the pair of properties
-        // `crate::cors` and `Jar::retain_origin` exist between them to refuse.
+        // navigation, and a page's frames and subresources are fetched before that.
+        // So arriving at `evil.example` with `bank.example`'s session still in the
+        // jar, and being told to fetch `bank.example` in a frame, carried the
+        // credential; §B21 then flattened the authenticated answer into the outline
+        // the agent reads. Two allowed origins and a cross-origin credentialed read,
+        // which is the pair `crate::cors` and `Jar::retain_origin` refuse between
+        // them.
         //
         // Here rather than in `Page::open`, because the constructors that take
-        // markup already in hand fetch subresources too, and `Page::open`
-        // arrives here with the URL that was actually *served*, so a redirect
-        // is judged by where it landed rather than by where it was aimed, which
-        // is the reason the drop moved out of `open` in the first place.
-        //
-        // `finish` keeps its own call: script can navigate after this point,
-        // and the note belongs where the page is finished.
+        // markup already in hand fetch subresources too, and `Page::open` arrives
+        // here with the URL that was actually *served*, so a redirect is judged by
+        // where it landed. `finish` keeps its own call: script can navigate after
+        // this point.
         let dropped_session = broker.keep_only_origin(base_url);
 
         let viewport = Viewport::new(
@@ -889,17 +863,15 @@ impl Page {
 
         // Parsing can abort the process, so it is guarded and retried.
         //
-        // blitz resolves an `<img src>` while flushing the parser's eager
-        // operations and `expect`s it to succeed, so a page carrying a URL it
-        // cannot resolve took the whole engine down *before there was a
-        // document at all*, no page, no snapshot, no receipts, and a crash
-        // where a browser would show the text beside a broken image.
+        // blitz resolves an `<img src>` while flushing the parser's eager operations
+        // and `expect`s it to succeed, so a page carrying a URL it cannot resolve
+        // took the whole engine down *before there was a document at all*: no page,
+        // no snapshot, no receipts, and a crash where a browser would show text
+        // beside a broken image.
         //
-        // `set_attribute` was hardened against the same `expect` earlier; this
-        // is the other path to it, and the first fix should have covered both.
-        // The retry strips image sources rather than giving up, because an
-        // agent came here for the words: a page with unloadable images is still
-        // a page, and losing the pictures beats losing everything.
+        // `set_attribute` was hardened against the same `expect` earlier; this is
+        // the other path to it. The retry strips image sources rather than giving
+        // up, because an agent came here for the words.
         let attempt = |markup: &str| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 Self::parse(
@@ -990,35 +962,27 @@ impl Page {
         &self.url
     }
 
-    /// Run the page's own scripts, then settle.
-    ///
-    /// Separate from loading because it is a policy decision, not a parsing
-    /// step: a caller that has not opted into script gets a page whose
-    /// `<script>` elements are inert, which is exactly what tiers 1 and 2 were.
-    /// Build a realm for this page and run its script.
+    /// Run the page's own scripts, then settle. Separate from loading because it
+    /// is a policy decision, not a parsing step: a caller that has not opted into
+    /// script gets a page whose `<script>` elements are inert.
     ///
     /// A realm is built per navigation, deliberately, and is not reused.
-    /// roadmap-history.md §B11.5.13 lists reuse as a performance item worth
-    /// ~20ms a page
-    /// (§B8.9), and it should stay unbuilt. A realm carries everything the
-    /// previous document's script put in it: globals, patched prototypes,
-    /// retained closures. Carrying that into the next document means a page can
-    /// set attacker-controlled state, cause a navigation, and have that state
-    /// visible to the page it navigated to, which is a same-origin-ish
-    /// boundary this engine would be removing to save twenty milliseconds.
+    /// roadmap-history.md §B11.5.13 lists reuse as a ~20ms performance item and it
+    /// should stay unbuilt. A realm carries everything the previous document's
+    /// script put in it: globals, patched prototypes, retained closures. Carrying
+    /// that into the next document means a page can set attacker-controlled state,
+    /// cause a navigation, and have that state visible to the page it navigated
+    /// to, a same-origin-ish boundary removed to save twenty milliseconds. Obscura,
+    /// a much larger engine in the same space, drops and recreates its whole JS
+    /// runtime on every navigation for the same reason.
     ///
-    /// Obscura, a much larger engine in the same space, drops and recreates its
-    /// whole JS runtime on every navigation for exactly this reason. The cost
-    /// is real and it is the right one to pay.
-    ///
-    /// Sharing the prelude's compiled code is a different thing and is
-    /// built. The distinction is the whole safety argument, so it is worth
-    /// being exact: what is shared between realms is instructions, and what is
-    /// never shared is state. A second realm gets its own global object, its own
-    /// prototypes, its own module map and cleared inline caches. Nothing a page
-    /// wrote is reachable from the next one, which is what the paragraph above
-    /// protects. It saved 67 ms of the 83 a realm cost; see §B15.12a, and
-    /// `a_realm_shares_the_preludes_code_and_none_of_its_state` for the guard.
+    /// Sharing the prelude's compiled *code* is a different thing and is built. The
+    /// distinction is the whole safety argument: what is shared between realms is
+    /// instructions, and what is never shared is state. A second realm gets its own
+    /// global object, prototypes, module map and cleared inline caches, so nothing
+    /// a page wrote is reachable from the next one. It saved 67 ms of the 83 a
+    /// realm cost; see §B15.12a and
+    /// `a_realm_shares_the_preludes_code_and_none_of_its_state`.
     pub fn run_scripts(&mut self, broker: Arc<dyn Broker>) -> Result<(), H5iError> {
         // In document order, inline and external together, because execution
         // order is semantics: a bundle that defines a global in one script and
@@ -1055,15 +1019,13 @@ impl Page {
                                         .map(|a| a.value.to_string())
                                 })
                             };
-                            // What the `type` attribute means, which is not
-                            // "run it anyway". A page embeds data in script
-                            // elements (`application/json` for state,
-                            // `text/template` for markup) and those are data
-                            // blocks the spec says never execute. Running them
-                            // parses JSON as JavaScript and fills the console
-                            // with syntax errors that blame the page for
-                            // something it never asked us to do. Found by
-                            // pointing this at github.com.
+                            // What the `type` attribute means, which is not "run it
+                            // anyway". A page embeds data in script elements
+                            // (`application/json` for state, `text/template` for markup)
+                            // and those are data blocks the spec says never execute.
+                            // Running them parses JSON as JavaScript and fills the console
+                            // with syntax errors that blame the page. Found by pointing
+                            // this at github.com.
                             let kind = attr("type").unwrap_or_default();
                             let kind = kind.trim().to_ascii_lowercase();
                             // Not script, and not data either: it is a
@@ -1114,18 +1076,17 @@ impl Page {
         };
 
         // A handler attribute is script, and the shortcut below could not see it.
-        //
         // `<body onload="init()">` is a document whose only code lives in an
         // attribute. Skipping the realm for it did not skip 15ms of waste, it
-        // skipped the page: the realm being skipped is the thing that compiles
-        // the handler, so the page loaded, sat there, and reported itself
-        // settled with `timers_run: 0`, which reads as "nothing to do" rather
-        // than "nothing was run".
+        // skipped the page: the realm being skipped is what compiles the handler,
+        // so the page loaded, sat there, and reported itself settled with
+        // `timers_run: 0`, which reads as "nothing to do" rather than "nothing was
+        // run".
+        //
         // Asked only when the answer can change the outcome. Every page with a
         // script element already builds the realm, and running a
-        // thirty-five-selector query over its whole tree to reach a value that
-        // is then discarded is the shortcut paying for the case it exists to
-        // avoid.
+        // thirty-five-selector query over its whole tree for a value then
+        // discarded is the shortcut paying for the case it exists to avoid.
         let has_inline_handler = || {
             let doc = self.doc.borrow();
             doc.query_selector_all(INLINE_HANDLER_SELECTOR)
@@ -1133,15 +1094,14 @@ impl Page {
                 .unwrap_or(false)
         };
 
-        // Nothing to run means nothing to build. Starting the realm costs about
-        // 15 ms (273 KiB of JavaScript evaluated from scratch, the prelude's
-        // compile no longer being part of it (§B8.9)) and a page with no
-        // script elements was paying all of it for a realm that would never be
-        // asked a question.
-        // A page whose only `<script>` is an import map has no code to run: the
-        // map is a declaration for imports that never happen. Filtered here
-        // rather than in the walk, so the walk stays one pass and this stays
-        // one question.
+        // Nothing to run means nothing to build. Starting the realm costs about 15
+        // ms (273 KiB of JavaScript evaluated from scratch, the prelude's compile
+        // no longer part of it, §B8.9) and a page with no script elements was
+        // paying all of it for a realm never asked a question.
+        //
+        // A page whose only `<script>` is an import map has no code to run: the map
+        // is a declaration for imports that never happen. Filtered here rather than
+        // in the walk, so the walk stays one pass.
         let has_code = sources
             .iter()
             .any(|(_, source)| !matches!(source, Source::ImportMap(_)));
@@ -1327,16 +1287,15 @@ impl Page {
                         script.note_error(&format!("module src `{src}` is not a URL"));
                         continue;
                     };
-                    // Document-scoped for the same reason the classic `src`
-                    // above is: the URL is the page's choice and the body is
-                    // executed. And CORS-checked, which the classic one is
-                    // not. That difference is the spec's and it is the whole
-                    // of why JSONP exists: a classic script may be loaded
-                    // cross-origin without asking, a module script may not. This
-                    // fetched one with no CORS context, so a cross-origin module
-                    // was parsed and evaluated in this page's realm without the
-                    // server ever being asked. See `crate::script::modules`,
-                    // which had the same hole on the dynamic-import path.
+                    // Document-scoped for the same reason the classic `src` above
+                    // is: the URL is the page's choice and the body is executed.
+                    // And CORS-checked, which the classic one is not. That
+                    // difference is the spec's and is the whole of why JSONP
+                    // exists: a classic script may be loaded cross-origin without
+                    // asking, a module script may not. This fetched one with no
+                    // CORS context, so a cross-origin module was parsed and
+                    // evaluated in this page's realm without the server ever being
+                    // asked. See `crate::script::modules`.
                     let outcome = broker.send_script(
                         &url,
                         "GET",
@@ -1369,17 +1328,16 @@ impl Page {
             }
         }
 
-        // The document is now as loaded as it is going to get, so say so.
-        // Before settling, because these callbacks start timers and fetches of
-        // their own and those are part of loading the page rather than of
-        // whatever the agent does next.
+        // The document is now as loaded as it is going to get, so say so. Before
+        // settling, because these callbacks start timers and fetches of their own
+        // and those are part of loading the page rather than of whatever the agent
+        // does next.
         //
-        // This is one call and it unblocked an entire test suite: testharness.js
-        // gates every result it will ever report on a single `load` listener
-        // (`on_event(window, 'load', ...)`), with no `readyState` fallback, so
-        // an engine that never fires it scores nothing while looking merely
-        // slow. Real pages hid this because `readyState` answered "complete"
-        // and their fallback path ran.
+        // One call, and it unblocked an entire test suite: testharness.js gates
+        // every result it will ever report on a single `load` listener, with no
+        // `readyState` fallback, so an engine that never fires it scores nothing
+        // while looking merely slow. Real pages hid this because `readyState`
+        // answered "complete" and their fallback path ran.
         if let Err(error) = script.eval("__h5iFireLifecycle()") {
             script.note_error(&format!("the load lifecycle could not be fired: {error}"));
         }
@@ -1529,14 +1487,13 @@ impl Page {
     ///
     /// `blitz-paint` draws `raster_image_data()` for *any* element, not only
     /// `<img>`, which is what lets a canvas composite into the page with no
-    /// changes to the paint path and no GPU surface. Blitz's own
-    /// `CanvasData` is the other route and is not usable here: it carries a
+    /// changes to the paint path and no GPU surface. Blitz's own `CanvasData` is
+    /// the other route and is not usable here: it carries a
     /// `custom_paint_source_id` for an external renderer, and this engine's
     /// canvas *is* a CPU buffer.
     ///
-    /// Returns whether anything changed, so a page with no canvas pays nothing
-    /// and a page whose canvas has not been drawn on since the last pass pays
-    /// nothing either.
+    /// Returns whether anything changed, so a page with no canvas, or one whose
+    /// canvas has not been drawn on since the last pass, pays nothing.
     fn composite_canvases(&mut self) -> bool {
         let Some(script) = self.script.as_ref() else {
             return false;
@@ -1619,12 +1576,11 @@ impl Page {
     /// How many sockets this page holds open.
     ///
     /// Surfaced because it is the one thing in this engine that makes a session
-    /// non-deterministic. Everything else runs on a virtual clock, so two reads
-    /// of one page agree; a live socket delivers on wall-clock time, so the
-    /// page can differ between two reads without the agent having done
-    /// anything. That is a real capability and a real caveat, and the caveat
-    /// should not be silent. The determinism claim is one this engine makes
-    /// loudly elsewhere.
+    /// non-deterministic. Everything else runs on a virtual clock, so two reads of
+    /// one page agree; a live socket delivers on wall-clock time, so the page can
+    /// differ between two reads without the agent having done anything. That is a
+    /// real capability and a real caveat, and the determinism claim is one this
+    /// engine makes loudly elsewhere.
     pub fn open_sockets(&mut self) -> usize {
         self.script
             .as_mut()
@@ -1837,26 +1793,22 @@ impl Page {
         encode_jpeg(&rgba, width, height, quality)
     }
 
-    /// Put `text` into a text field, replacing whatever was there.
-    ///
-    /// Replace rather than append, because the verb an agent reaches for is
-    /// "this field should say X" and a verb that appended would make retrying
-    /// after a failed submit produce `alicealice`.
+    /// Put `text` into a text field, replacing whatever was there. Replace rather
+    /// than append, because the verb an agent reaches for is "this field should
+    /// say X" and appending would make retrying after a failed submit produce
+    /// `alicealice`.
     ///
     /// Returns `false` when the node is not something that takes text, so the
     /// caller can say which of "no such ref" and "that is a link, not a field"
     /// happened.
-    /// Set a checkbox or radio to a state, rather than toggling it.
     ///
-    /// The reason this exists beside `click` is replay. A click on a
-    /// checkbox is a *toggle*: run it twice and you are back where you started,
-    /// so a recorded session that clicks one reaches a different state
-    /// depending on what the page happened to be serving. Setting a state is
-    /// idempotent, which is what a script replayed tomorrow needs.
+    /// Set a checkbox or radio to a state, rather than toggling it. This exists
+    /// beside `click` for replay: a click on a checkbox is a *toggle*, so a
+    /// recorded session that clicks one reaches a different state depending on
+    /// what the page happened to be serving. Setting a state is idempotent.
     ///
     /// Returns `None` when the node is not something this can act on, so the
-    /// caller can say *which* wrong kind of thing it was rather than reporting
-    /// a generic failure.
+    /// caller can say *which* wrong kind of thing it was.
     pub fn set_checked(&mut self, node_id: usize, checked: bool) -> Option<bool> {
         let was = {
             let doc = self.doc.borrow();
@@ -1939,17 +1891,17 @@ impl Page {
 
     /// Choose an option in a `<select>`, by its value or its visible text.
     ///
-    /// Both, because an agent reading a snapshot sees the *text* and a
-    /// recorded script should carry the *value*: the first is what a model has
-    /// in hand and the second is what survives a re-render. Value is tried
-    /// first, so a page whose option text happens to match another option's
-    /// value behaves predictably.
+    /// Both, because an agent reading a snapshot sees the *text* and a recorded
+    /// script should carry the *value*: the first is what a model has in hand and
+    /// the second is what survives a re-render. Value is tried first, so a page
+    /// whose option text happens to match another option's value behaves
+    /// predictably.
     ///
     /// The three outcomes are kept apart because they are three different
-    /// mistakes: it worked, it is a `<select>` and nothing in it matched
-    /// (the caller's to fix from a fresh reading), or it was never a `<select>`
-    /// (the caller aimed at the wrong element). One message for all three would
-    /// send two of them looking in the wrong place.
+    /// mistakes: it worked, it is a `<select>` and nothing in it matched (the
+    /// caller's to fix from a fresh reading), or it was never a `<select>` (the
+    /// caller aimed at the wrong element). One message would send two of them
+    /// looking in the wrong place.
     pub fn select_option(&mut self, node_id: usize, wanted: &str) -> SelectOutcome {
         let options: Vec<(usize, String, String)> = {
             let doc = self.doc.borrow();
@@ -2101,16 +2053,16 @@ impl Page {
 
     /// Submit the form that owns `node_id`, and return the request it produced.
     ///
-    /// Blitz owns the hard part. The HTML form submission algorithm, which
-    /// decides what is in the entry list, how it is encoded, and whether the
-    /// method turns it into a query or a body. It dispatches the result to a
-    /// [`blitz_traits::navigation::NavigationProvider`], so what this does is
-    /// hand it a provider that captures the request instead of performing it,
-    /// then return that request for the broker to police like any other.
+    /// Blitz owns the hard part, the HTML form submission algorithm, which decides
+    /// what is in the entry list, how it is encoded, and whether the method turns
+    /// it into a query or a body. It dispatches the result to a
+    /// [`blitz_traits::navigation::NavigationProvider`], so what this does is hand
+    /// it a provider that captures the request instead of performing it, then
+    /// return that request for the broker to police like any other.
     ///
-    /// The alternative was reimplementing form encoding here, which is a spec
-    /// with more corners than it looks and no security benefit: the boundary
-    /// that matters is the wire, and the wire is still ours.
+    /// The alternative was reimplementing form encoding here, a spec with more
+    /// corners than it looks and no security benefit: the boundary that matters is
+    /// the wire, and the wire is still ours.
     pub fn submit_form(&mut self, node_id: usize) -> Result<Submission, H5iError> {
         // Blitz keeps a control-to-form map but does not expose it, so the
         // owner is found by walking up. That misses the `form=` attribute's
@@ -2161,14 +2113,12 @@ impl Page {
 
     /// The height of the document including whatever overflows the root box.
     ///
-    /// Not `size.height`, and the difference is the whole page on a real site.
-    /// A stylesheet that says `html, body { height: 100% }` (which is most of
-    /// the web, Wikipedia included) sizes the root box to the viewport and
-    /// lets the article overflow it. Reading `size.height` there reports a
-    /// 40-screen article as exactly one screen tall, so `scroll_by` clamped
-    /// every scroll to zero and the engine could only scroll unstyled pages.
-    /// That is what the local test pages were, which is why nothing caught it
-    /// until this ran against Wikipedia.
+    /// Not `size.height`, and the difference is the whole page on a real site. A
+    /// stylesheet that says `html, body { height: 100% }`, which is most of the web
+    /// including Wikipedia, sizes the root box to the viewport and lets the article
+    /// overflow it. Reading `size.height` there reports a 40-screen article as one
+    /// screen tall, so `scroll_by` clamped every scroll to zero and the engine
+    /// could only scroll unstyled pages, which is what the local test pages were.
     pub fn content_height(&self) -> f64 {
         let doc = self.doc.borrow();
         let layout = &doc.root_element().final_layout;
@@ -2177,13 +2127,11 @@ impl Page {
 
     /// How far this document can scroll: everything below the fold.
     ///
-    /// Deliberately not taffy's `Layout::scroll_height`, which was tried and is
-    /// the wrong question. That measures overflow *within* an element's own
-    /// box, so it reads zero for an unstyled page whose root box simply grew to
-    /// 4000px. There is no overflow inside the root, the overflow is past the
-    /// viewport. The scrollable range of a document is its height minus the
-    /// window, and the only thing that was ever wrong here is what "its height"
-    /// meant.
+    /// Deliberately not taffy's `Layout::scroll_height`, which was tried and is the
+    /// wrong question. That measures overflow *within* an element's own box, so it
+    /// reads zero for an unstyled page whose root box simply grew to 4000px: there
+    /// is no overflow inside the root, the overflow is past the viewport. The
+    /// scrollable range of a document is its height minus the window.
     fn max_scroll_y(&self) -> f64 {
         (self.content_height() - self.options.height as f64).max(0.0)
     }
@@ -2339,29 +2287,26 @@ impl PageFactory {
         ))
     }
 
-    /// Load a page and, when the options ask for it, run its scripts.
+    /// Load a page and, when the options ask for it, run its scripts. One place
+    /// rather than at each call site, so no path can load a page with script
+    /// configured on and quietly not run it.
     ///
-    /// One place rather than at each call site, so no path can load a page with
-    /// script configured on and quietly not run it.
+    /// The cookie-origin drop lives here too, for the same reason. It used to sit
+    /// in `open`, against the URL that was *asked for*, which left two ways to
+    /// arrive at an origin with somebody else's session still in the jar:
     ///
-    /// The cookie-origin drop lives here too, and for the same reason. It used
-    /// to sit in `open`, against the URL that was *asked for*, which left two
-    /// ways to arrive at an origin with somebody else's session still in the
-    /// jar:
+    /// * A form submission. `open_submission` reached neither this function nor
+    ///   the drop, so posting to another origin navigated there with the previous
+    ///   origin's cookies intact. The jar is host-scoped, so the arriving page's
+    ///   script could then `fetch` the previous origin *with its credentials*: the
+    ///   cross-origin credentialed read `Jar::retain_origin`'s doc says cannot
+    ///   happen.
+    /// * A redirect. `open` dropped against the requested URL and the fetch then
+    ///   followed hops, so a page served from B ran with A's cookies.
     ///
-    /// * A form submission. `open_submission` reached neither this function
-    ///   nor the drop, so posting to another origin navigated there with the
-    ///   previous origin's cookies intact. The jar is host-scoped, so the
-    ///   arriving page's script could then `fetch` the previous origin *with its
-    ///   credentials*. The cross-origin credentialed read that
-    ///   `Jar::retain_origin`'s doc says cannot happen, since it "cannot be
-    ///   fixed without a process split, so it is bounded instead".
-    /// * A redirect. `open` dropped against the requested URL and the fetch
-    ///   then followed hops, so a page served from B ran with A's cookies.
-    ///
-    /// Against `page.url()`, the origin actually loaded, both close. And it
-    /// must precede `run_scripts`, or the drop happens after the script that
-    /// was the reason for it.
+    /// Against `page.url()`, the origin actually loaded, both close. And it must
+    /// precede `run_scripts`, or the drop happens after the script that was the
+    /// reason for it.
     fn finish(&self, mut page: Page) -> Result<Page, H5iError> {
         self.finish_page(&mut page)?;
         Ok(page)
@@ -2407,9 +2352,9 @@ impl PageFactory {
     /// A navigation is starting.
     ///
     /// The page's network allowance resets here, at the top of every path that
-    /// builds one. A fresh page is a fresh decision by the agent, and the
-    /// budget exists to bound untrusted page code rather than the principal
-    /// driving the engine (see [`crate::budget`]).
+    /// builds one. A fresh page is a fresh decision by the agent, and the budget
+    /// exists to bound untrusted page code rather than the principal driving the
+    /// engine (see [`crate::budget`]).
     ///
     /// Before the navigation's own request, deliberately: resetting afterwards
     /// would give the page that just spent its allowance a clean slate for the
@@ -2473,23 +2418,16 @@ impl PageFactory {
 ///
 /// So the panic is caught and becomes a fact about the reading. The document is
 /// left in whatever state layout reached, which is why the caller records a
-/// note: a page that half-laid-out is a page whose outline may be short, and
-/// the agent should be told why rather than left to wonder.
+/// note. `AssertUnwindSafe` because the document is behind a `RefCell` a panic
+/// may leave mid-update: that is exactly the risk being accepted, a possibly
+/// incomplete tree read and reported in place of no process.
 ///
-/// `AssertUnwindSafe` because the document is behind a `RefCell` that a panic
-/// may leave mid-update. That is exactly the risk being accepted: a possibly
-/// incomplete tree, read and reported, in place of no process.
-/// One layout pass, over a tree bounded first.
-///
-/// The parse-time prune is not the only door into a deep tree. Script
-/// builds one after it, `el.innerHTML = "<div>".repeat(20000)` is four
-/// characters of JavaScript, and every layout after that walks whatever is
-/// there. Layout recurses, so the bound has to be re-applied wherever layout is
-/// asked for rather than once at the start.
-///
-/// The walk is one iterative pass over the node tree, against a `resolve` that
-/// does style resolution and layout over the same nodes: a constant factor on
-/// something already linear in the document.
+/// One layout pass, over a tree bounded first. The parse-time prune is not the
+/// only door into a deep tree: script builds one after it,
+/// `el.innerHTML = "<div>".repeat(20000)` is four characters of JavaScript, and
+/// layout recurses, so the bound has to be re-applied wherever layout is asked
+/// for. The walk is one iterative pass, a constant factor on something already
+/// linear in the document.
 pub(crate) fn lay_out(doc: &Rc<RefCell<BaseDocument>>) -> Result<(), String> {
     lay_out_doc(&mut doc.borrow_mut())
 }
@@ -2515,35 +2453,32 @@ fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
 
 /// How deeply one page may nest elements.
 ///
-/// The parser is iterative and builds whatever the markup says; layout is
-/// not. `doc.resolve` walks the tree by recursion, so a page of five thousand
-/// nested `<div>`s overflowed the stack and aborted the process, no panic to
-/// catch, no page, no receipts, and no session left to say what happened. Plain
-/// HTML, no script, from any origin the box's browser is pointed at: the same
-/// class of defect as the `Max-Age` overflow, where a number off the page
-/// decided whether the agent driving the engine keeps running.
+/// The parser is iterative and builds whatever the markup says; layout is not.
+/// `doc.resolve` walks the tree by recursion, so a page of five thousand nested
+/// `<div>`s overflowed the stack and aborted the process: no panic to catch, no
+/// page, no receipts, and no session left to say what happened. Plain HTML, no
+/// script, from any origin the box's browser is pointed at.
 ///
 /// `guard_layout` cannot help. It catches a panic; a stack overflow is a
-/// `SIGSEGV` the runtime turns into an abort, and there is nothing to unwind.
-/// So the tree is bounded *before* it reaches layout instead.
+/// `SIGSEGV` the runtime turns into an abort, with nothing to unwind. So the
+/// tree is bounded *before* it reaches layout instead.
 ///
-/// 512, which is what a browser does. Chrome's parser caps HTML nesting at the
-/// same number and reparents beyond it. A document an agent is reading has
-/// nothing legitimate at that depth; the deepest page in this project's corpus
-/// is under 40.
+/// 512, which is what a browser does: Chrome's parser caps HTML nesting at the
+/// same number and reparents beyond it. The deepest page in this project's
+/// corpus is under 40.
 pub(crate) const MAX_ELEMENT_DEPTH: usize = 512;
 
-/// Cut every subtree that sits deeper than [`MAX_ELEMENT_DEPTH`], and say how
-/// many were cut.
+/// Cut every subtree deeper than [`MAX_ELEMENT_DEPTH`], and say how many were
+/// cut.
 ///
-/// Iterative, with its own stack, which is the whole point: a recursive
-/// walk to find the too-deep nodes would overflow on exactly the documents it
-/// exists to defend against.
+/// Iterative, with its own stack, which is the whole point: a recursive walk to
+/// find the too-deep nodes would overflow on exactly the documents it defends
+/// against.
 ///
 /// The nodes at the boundary are kept and their children dropped, so the top of
-/// the document, which is all of it that a reader was ever going to see, is
-/// unchanged. `remove_node` unparents rather than freeing, the same thing
-/// `load_frames` does with a frame's scripts.
+/// the document, all of it a reader was going to see, is unchanged.
+/// `remove_node` unparents rather than freeing, the same thing `load_frames`
+/// does with a frame's scripts.
 fn prune_deep_nesting(doc: &mut BaseDocument) -> usize {
     let mut doomed: Vec<usize> = Vec::new();
     {
@@ -2623,17 +2558,15 @@ const MAX_META_REFRESH_HOPS: usize = 3;
 /// Boa exposes no wall-clock interrupt, so a single `eval` cannot be cut short,
 /// but a page is rarely one script, and this bounds a page that is slow because
 /// it has *many*. After the budget the remaining scripts are skipped and the
-/// snapshot says how many, so a thin outline is explained rather than
-/// mysterious.
+/// snapshot says how many, so a thin outline is explained.
 ///
-/// Worth being exact about what it does not cover, because it was written
-/// hoping it would: a module graph evaluates inside `run_jobs`, which is one
-/// call that returns when it returns. lit.dev spends minutes there and this
-/// budget never gets a turn. Bounding that needs an interrupt Boa does not
-/// have, and a caller who cannot wait must still impose its own timeout.
+/// What it does not cover, because it was written hoping it would: a module
+/// graph evaluates inside `run_jobs`, one call that returns when it returns.
+/// lit.dev spends minutes there and this budget never gets a turn. Bounding
+/// that needs an interrupt Boa does not have, so a caller who cannot wait must
+/// impose its own timeout.
 ///
-/// Generous, because the alternative to a slow page is a wrong one: a page that
-/// merely needs four seconds should get them.
+/// Generous, because the alternative to a slow page is a wrong one.
 const SCRIPT_PHASE_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// The line between "this page redirected" and "this page updates itself".
@@ -2758,11 +2691,9 @@ fn attribute_value(tag: &str, name: &str) -> Option<String> {
 ///
 /// Blitz paints no base layer, so a page that declares no `background-color`
 /// comes back with every untouched pixel at `(0,0,0,0)`. The default text
-/// colour is black, so simply dropping the alpha channel (which JPEG forces,
-/// having none) turned the background black and the text with it, and the live
-/// view arrived black-on-black. White is the canvas a real browser starts from,
-/// so compositing onto it here is what makes an undeclared background look the
-/// way the page's author saw it.
+/// colour is black, so dropping the alpha channel (which JPEG forces, having
+/// none) turned the background black and the text with it, and the live view
+/// arrived black-on-black. White is the canvas a real browser starts from.
 ///
 /// The buffer is premultiplied (verified: a 50%-red fill reads back as
 /// `(128,0,0,128)`), so the source needs no scaling and the backdrop
@@ -2834,25 +2765,22 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, H5iError>
 /// pass, so `:checked` can match during the cascade.
 ///
 /// blitz decides this in `create_checkbox_input`, which runs during layout
-/// construction. Selector matching runs before that, in the same `resolve`,
-/// so when stylo asks an unclicked page "is this `:checked`?" the element's
+/// construction. Selector matching runs before that, in the same `resolve`, so
+/// when stylo asks an unclicked page "is this `:checked`?" the element's
 /// `special_data` is still `None`, the answer is `unwrap_or(false)`, and every
 /// `:checked` rule loses. Resolving twice does not save it: the second pass
-/// finds nothing dirty and skips the cascade, so the rule never gets a second
-/// chance.
+/// finds nothing dirty and skips the cascade.
 ///
 /// The consequence is not subtle. The script-free tab and accordion pattern
 /// (`input:checked ~ .panel { display: block }`) renders as a tab strip with no
-/// panel under it, which is exactly the case where a page deliberately avoided
-/// JavaScript so that it would still work for a reader like this one.
+/// panel under it, exactly the case where a page deliberately avoided
+/// JavaScript so it would still work for a reader like this one.
 ///
-/// This seeds the same value from the same attribute that blitz would have
-/// used, only early enough to be seen. `create_checkbox_input` then finds the
-/// state already present and leaves it alone, so style and layout agree.
-///
-/// HTML boolean-attribute semantics: presence means checked, whatever the
-/// value. That matches blitz's own rule, which matters more here than being
-/// independently right, because both passes have to reach the same answer.
+/// This seeds the same value from the same attribute blitz would have used,
+/// only early enough to be seen. HTML boolean-attribute semantics: presence
+/// means checked, whatever the value. That matches blitz's own rule, which
+/// matters more than being independently right, because both passes have to
+/// reach the same answer.
 fn seed_checkbox_state(doc: &mut BaseDocument) {
     let inputs: Vec<(usize, bool)> = doc
         .tree()
@@ -3350,22 +3278,19 @@ mod frame_tests {
         );
     }
 
-    /// §B21 says a flattened frame's scripts never run. Stripping `<script>`
-    /// was only half of it: an event-handler content attribute is script too,
-    /// and the prelude compiles those from the whole document, so a frame's
-    /// `onload` became a function running in the *host page's* realm, with the
-    /// host's origin, the host's `document.cookie` and the host's fetch
-    /// authority. That is the two-origins-one-realm problem the boundary
-    /// exists to refuse, reached through the one hole left in it.
-    /// A page can nest as deeply as it likes, and layout recurses over the
-    /// tree, so five thousand nested `<div>`s overflowed the stack and aborted
-    /// the process. Plain HTML, no script, from any origin the box's browser is
-    /// pointed at: no panic to catch, no page, no receipts, and no session left
-    /// to say what happened.
+    /// §B21 says a flattened frame's scripts never run. Stripping `<script>` was
+    /// only half of it: an event-handler content attribute is script too, and
+    /// the prelude compiles those from the whole document, so a frame's `onload`
+    /// became a function running in the *host page's* realm, with the host's
+    /// origin, cookies and fetch authority.
     ///
-    /// On a thread with the engine's own stack size, because that arrangement
-    /// is half of the fix and a test running on libtest's much smaller one
-    /// would be measuring the harness. See `cli::run_on_a_deep_stack`.
+    /// A page can nest as deeply as it likes and layout recurses over the tree,
+    /// so five thousand nested `<div>`s overflowed the stack and aborted the
+    /// process: no panic to catch, no page, no receipts.
+    ///
+    /// On a thread with the engine's own stack size, because that arrangement is
+    /// half of the fix and a test on libtest's much smaller one would be
+    /// measuring the harness. See `cli::run_on_a_deep_stack`.
     #[test]
     fn a_deeply_nested_page_does_not_take_the_process_down() {
         std::thread::Builder::new()
@@ -3696,15 +3621,12 @@ mod frame_tests {
         assert!(!defuse_attribute("on", "x"));
     }
 
-    /// The jar is bounded to the origin currently loaded, but the drop
-    /// happened in `finish`, at the *end* of the navigation, and a page's
-    /// frames and subresources are fetched before that. So arriving at
-    /// `evil.example` with `bank.example`'s session still in the jar, and being
-    /// told to fetch `bank.example` in a frame, carried the credential, and
-    /// §B21 then flattened the authenticated answer into the outline the agent
-    /// reads. Two allowed origins and a cross-origin credentialed read, which
-    /// is the pair of properties `crate::cors` and `Jar::retain_origin` exist
-    /// between them to refuse.
+    /// The jar is bounded to the origin currently loaded, but the drop happened
+    /// in `finish`, at the *end* of the navigation, and a page's frames and
+    /// subresources are fetched before that. So arriving at `evil.example` with
+    /// `bank.example`'s session still in the jar, and being told to fetch
+    /// `bank.example` in a frame, carried the credential, and §B21 then
+    /// flattened the authenticated answer into the outline the agent reads.
     #[test]
     fn a_page_cannot_frame_the_previous_origin_with_its_session_still_in_the_jar() {
         let body = "<p>the account page</p>";
@@ -3938,13 +3860,12 @@ mod navigation_origin_tests {
 
     /// The jar bound `Jar::retain_origin` documents, "at any moment the jar
     /// holds only cookies for the origin currently loaded", rested on a drop
-    /// that `open` performed and `open_submission` did not.
+    /// `open` performed and `open_submission` did not.
     ///
     /// The jar is host-scoped, so arriving at another origin with the previous
     /// one's cookies still in it means the new page's script can `fetch` the
-    /// previous origin *with its credentials*. That is the cross-origin
-    /// credentialed read the bound exists to make impossible, reached by
-    /// pressing a submit button.
+    /// previous origin *with its credentials*: the cross-origin credentialed
+    /// read the bound exists to make impossible, reached by pressing submit.
     #[test]
     fn a_form_submission_drops_the_previous_origins_cookies() {
         let broker = crate::net::LocalBroker::new(
