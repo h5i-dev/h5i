@@ -314,16 +314,43 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         .map_err(|e| H5iError::Metadata(format!("could not bind {}: {e}", options.addr)))?;
     let port = local_port(&viewers)?;
 
+    // A port, or a socket, but never both.
+    //
+    // A loopback port has no access control of any kind: any process on the
+    // machine that guesses it drives the session, and driving the session
+    // includes `type $H5I_SECRET_…`. That is the accepted cost of the port
+    // channel, which is why `cli::default_control_file` goes to such lengths
+    // over a private directory to hold it. A session that asked for a *socket*
+    // has already chosen the addressable, permission-checked channel — binding
+    // a second unauthenticated one beside it would hand back everything the
+    // choice bought, on a port nothing even advertises. `--control-socket`
+    // conflicts with `--control-file`, so this is the whole of the fork.
+    #[cfg(unix)]
+    let want_port = options.control_socket.is_none();
+    #[cfg(not(unix))]
+    let want_port = true;
+
     // Bound before anything is advertised, so a client that finds one file and
     // then the other never finds a port nobody is listening on.
-    let control = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| H5iError::Metadata(format!("could not bind a control port: {e}")))?;
-    let control_port = local_port(&control)?;
+    let control = if want_port {
+        Some(
+            TcpListener::bind("127.0.0.1:0")
+                .map_err(|e| H5iError::Metadata(format!("could not bind a control port: {e}")))?,
+        )
+    } else {
+        None
+    };
+    let control_port = match &control {
+        Some(listener) => Some(local_port(listener)?),
+        None => None,
+    };
 
     if let Some(path) = &options.stream_file {
         write_port_file(path, port)?;
     }
-    if let Some(path) = &options.control_file {
+    if let Some(path) = &options.control_file
+        && let Some(control_port) = control_port
+    {
         write_port_file(path, control_port)?;
     }
 
@@ -351,7 +378,9 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
     }
 
     eprintln!("h5i-browser-light: live view on 127.0.0.1:{port}");
-    eprintln!("h5i-browser-light: session control on 127.0.0.1:{control_port}");
+    if let Some(control_port) = control_port {
+        eprintln!("h5i-browser-light: session control on 127.0.0.1:{control_port}");
+    }
     #[cfg(unix)]
     if let Some(path) = &options.control_socket {
         eprintln!("h5i-browser-light: session control on {}", path.display());
@@ -367,7 +396,13 @@ pub fn serve(factory: PageFactory, page: Page, options: ServeOptions) -> Result<
         let unix_tx = tx.clone();
         thread::spawn(move || accept_control_unix(listener, unix_tx));
     }
-    thread::spawn(move || accept_control(control, tx));
+    if let Some(control) = control {
+        thread::spawn(move || accept_control(control, tx));
+    } else {
+        // The sender still has to be consumed, or `rx` would never see the
+        // channel close and `run_session` would outlive every client.
+        drop(tx);
+    }
 
     // Opened before the listeners are advertised: a session that cannot record
     // what it is asked to do should fail at startup, where someone is watching,
@@ -673,7 +708,52 @@ fn bind_control_socket(path: &Path) -> Result<UnixListener, H5iError> {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
     let _ = std::fs::remove_file(path);
-    UnixListener::bind(path).map_err(|e| H5iError::with_path(e, path))
+    let listener = UnixListener::bind(path).map_err(|e| H5iError::with_path(e, path))?;
+    // Whoever can connect to this socket *is* the agent: they can navigate,
+    // evaluate script in the page, and `type $H5I_SECRET_…` — which resolves a
+    // credential into the DOM they can then read back with `snapshot`. Linux
+    // checks write permission on the socket file at `connect`, so its mode is
+    // the access control, and leaving it to the umask made it 0755 on a
+    // default one and 0775 or 0777 on a laxer one. That would be theoretical if
+    // the path were private, and it is not: a boxed session's socket lives
+    // under the box's `/tmp`, which the `agent` profile shares with the host.
+    //
+    // Narrowed after the bind rather than by fiddling with the process umask,
+    // which is global to a process that has threads in it. The window is
+    // between `bind` and here, and closing it entirely needs a private parent
+    // directory — which is what `cli::make_private_dir` gives the default path.
+    restrict_to_owner(path)?;
+    Ok(listener)
+}
+
+/// Make a session artifact readable, and connectable, only by its owner.
+///
+/// The control socket, the port files and the logs all carry something worth
+/// having: a channel that is authority over the session, a port that is the
+/// same authority, and a record of everything the session fetched. None of them
+/// should be left to whatever umask the process happened to inherit.
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path) -> Result<(), H5iError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| {
+        // Fatal rather than best-effort, and the message has to say why or it
+        // reads as an unrelated permissions problem. A control socket this
+        // process cannot narrow is one anything on the machine may connect to,
+        // and connecting to it is authority over the session.
+        H5iError::Metadata(format!(
+            "could not restrict `{}` to this user ({e}). It is the session's control \
+             channel — whoever can open it can drive the browser and use its credentials — \
+             so the session will not start rather than serve on one anyone can reach.",
+            path.display()
+        ))
+    })
+}
+
+/// Windows has no mode bits to set, and inventing an ACL check here would be a
+/// guess wearing the shape of a guarantee.
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &Path) -> Result<(), H5iError> {
+    Ok(())
 }
 
 /// One control connection, whatever carried it.
@@ -1178,7 +1258,18 @@ fn control_verb_inner(
         Verb::Status => (
             json!({
                 "ok": true,
-                "url": session.page.url().to_string(),
+                // Where the session is — and only *which origin*, while a human
+                // is logging in. `requests` is refused during LOGIN because it
+                // "names URLs a login flow visited", and this named the one the
+                // flow is on right now: an OAuth callback carries its `code` in
+                // the query, a magic link and a password reset carry their token
+                // in the path. The origin is what an agent needs to know it is
+                // still on the right site; the rest is the credential.
+                "url": if session.login {
+                    login_safe_url(session.page.url())
+                } else {
+                    session.page.url().to_string()
+                },
                 "engine": "h5i-browser-light",
                 // How many, never which. An agent can see that it is logged in
                 // without being able to read the credential that makes it so,
@@ -2491,23 +2582,59 @@ fn resolve_ref(
 
 /// Whether two readings of a ref name the same thing.
 ///
-/// Compares identity, **not** `name`, and that distinction is the whole of it.
-/// `accessible_name` reports a text input's *current value* (and a password
-/// field's mask), so `type @e1 alice` changes `@e1`'s name from `username` to
-/// `alice` without renumbering anything. A full `RefEntry` equality therefore
-/// refused the second `type` on the same field — which is exactly the retry the
-/// README documents ("`type` replaces the field rather than appending, so
-/// retrying after a failed submit does not produce `alicealice`") and exactly
-/// what the skill promises when it says typing renumbers nothing.
+/// The id it was served under, the node it resolved to, its role, and — for a
+/// link — where it goes. A page that changed any of those changed the thing the
+/// agent read.
 ///
-/// What identifies a ref is where it sits and what it is: the id it was served
-/// under, the node it resolved to, its role, and — for a link — where it goes.
-/// A page that changed any of those changed the thing the agent read.
+/// **And its name, for the roles whose name the page writes.** Leaving the name
+/// out entirely was one step too far. The promise a ref makes is that a handle
+/// from an old reading is refused rather than acted on, and a page that renames
+/// a button from `Cancel` to `Confirm payment` between the snapshot and the
+/// click has changed exactly the thing the agent read it by — same node, same
+/// role, no href, and the old handle honoured. The refusal already names what
+/// the ref points at *now*, which turns that into the most useful message this
+/// session can send.
+///
+/// The exception is the two roles whose accessible name **is** the control's
+/// own value, and which the agent's own verbs change by design:
+/// [`crate::snapshot::accessible_name`] reports a text input's current text (a
+/// password's mask) and a `<select>`'s chosen option. Comparing those refused
+/// the second `type` on the same field — the retry the README documents, where
+/// "`type` replaces the field rather than appending, so retrying after a failed
+/// submit does not produce `alicealice`" — and the second `select` on the same
+/// dropdown. A button's label, a link's text and an image's alt are the
+/// author's, and no verb here rewrites one.
 fn same_target(before: &crate::snapshot::RefEntry, now: &crate::snapshot::RefEntry) -> bool {
     before.id == now.id
         && before.node_id == now.node_id
         && before.role == now.role
         && before.href == now.href
+        && (name_is_the_controls_own_value(&now.role) || before.name == now.name)
+}
+
+/// Whether this role's accessible name is the value the control holds rather
+/// than a label the author wrote.
+///
+/// The whole list, matched on the role strings
+/// [`crate::snapshot::role_for`] mints. `checkbox` and `radio` are deliberately
+/// *not* here: their name comes from a label or a `value` attribute, and
+/// `set-checked` does not touch either.
+fn name_is_the_controls_own_value(role: &str) -> bool {
+    matches!(role, "textbox" | "combobox")
+}
+
+/// A URL reduced to what it is safe to report while a human is logging in.
+///
+/// The origin, and nothing under it. A `file:` or otherwise origin-less URL has
+/// no origin to fall back to and is reported as the scheme alone, because the
+/// path is the part that carries the token.
+fn login_safe_url(url: &Url) -> String {
+    let origin = url.origin();
+    if origin.is_tuple() {
+        format!("{} (path withheld while login is on)", origin.ascii_serialization())
+    } else {
+        format!("{}: (withheld while login is on)", url.scheme())
+    }
 }
 
 /// A ref entry as one line of prose, safe to put in an error message.
@@ -2531,7 +2658,12 @@ fn write_port_file(path: &Path, port: u16) -> Result<(), H5iError> {
     {
         std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
     }
-    std::fs::write(path, port.to_string()).map_err(|e| H5iError::with_path(e, path))
+    std::fs::write(path, port.to_string()).map_err(|e| H5iError::with_path(e, path))?;
+    // The port is not a secret in the sense a password is — a loopback port can
+    // be found by trying them — but it is the address of an unauthenticated
+    // channel, and a file that hands it over is one step somebody does not have
+    // to take. 0600 rather than the umask's 0644.
+    restrict_to_owner(path)
 }
 
 /// Handle one client message, returning what to send back.
@@ -2618,6 +2750,59 @@ mod tests {
 
     fn session_with(html: &str) -> Session {
         session_and_broker(html, crate::secrets::Secrets::default()).0
+    }
+
+    /// Whoever can connect to the control socket *is* the agent: they can
+    /// navigate, evaluate script, and `type $H5I_SECRET_…`, which resolves a
+    /// credential into a DOM they can then read back. Linux checks write
+    /// permission on the socket file at `connect`, so the mode is the access
+    /// control — and it used to be whatever the umask made it, on a path that
+    /// inside a box is under a `/tmp` the `agent` profile shares with the host.
+    #[cfg(unix)]
+    #[test]
+    fn the_control_socket_is_connectable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("session.sock");
+        // The laxest umask a process can inherit, so this proves the mode is
+        // set rather than merely inherited from a tidy environment.
+        let previous = unsafe { umask_for_test(0) };
+        let listener = bind_control_socket(&path);
+        unsafe { umask_for_test(previous) };
+        listener.expect("the socket binds");
+
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the control socket is {mode:o}, not 0600");
+    }
+
+    /// And the port file beside it, for the same reason one step removed: it
+    /// holds the address of a channel that has no authentication of its own.
+    #[cfg(unix)]
+    #[test]
+    fn a_port_file_is_readable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("session.control");
+        let previous = unsafe { umask_for_test(0) };
+        let written = write_port_file(&path, 4321);
+        unsafe { umask_for_test(previous) };
+        written.expect("the file is written");
+
+        let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the port file is {mode:o}, not 0600");
+        assert_eq!(read_port_file(&path).expect("reads"), 4321);
+    }
+
+    /// `umask`, without taking a dependency on `libc` for one call. The same
+    /// shape `cli::libc_getuid` uses and for the same reason.
+    #[cfg(unix)]
+    unsafe fn umask_for_test(mask: u32) -> u32 {
+        unsafe extern "C" {
+            fn umask(mask: u32) -> u32;
+        }
+        unsafe { umask(mask) }
     }
 
     /// The same session, plus the broker underneath it.
@@ -4815,6 +5000,106 @@ mod tests {
         let (reply, _) = control_verb(&mut session, &json!({"verb": "requests"}));
         assert_eq!(reply["ok"], false, "{reply:?}");
         assert_eq!(reply["code"], "login-mode", "{reply:?}");
+    }
+
+    /// The other way a handle goes stale without renumbering: the page keeps
+    /// the node and rewrites the label. Same node id, same role, no href — so
+    /// the identity check passed and `click @e1` acted on a button the agent
+    /// had read as saying something else. A ref's promise is that a handle from
+    /// an old reading is refused rather than acted on, and the label is exactly
+    /// what the agent read it by.
+    #[test]
+    fn a_button_that_renamed_itself_under_the_agent_is_a_stale_ref() {
+        let mut session = scripted_session_with(
+            "<html><body>\
+             <button id='b' onclick=\"document.querySelector('#t').textContent = 'Confirm payment'\">Add</button>\
+             <button id='t'>Cancel</button>\
+             </body></html>",
+        );
+
+        let refs = serve_refs(&mut session);
+        let trigger = refs.iter().find(|r| r.name == "Add").expect("trigger").clone();
+        let target = refs.iter().find(|r| r.name == "Cancel").expect("target").clone();
+
+        let (reply, _) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": trigger.id.clone()}),
+        );
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let after = session.page.snapshot();
+        let now = after.resolve(&target.id).expect("the id still resolves");
+        assert_eq!(
+            now.node_id, target.node_id,
+            "the fixture must keep the node, or this is the renumbering test again"
+        );
+        assert_eq!(now.name, "Confirm payment", "the fixture must rename it");
+
+        let (reply, changed) = control_verb(
+            &mut session,
+            &json!({"verb": "click", "ref": target.id.clone()}),
+        );
+        assert_eq!(reply["ok"], false, "{reply:?}");
+        assert_eq!(reply["code"], "stale-ref", "{reply:?}");
+        assert!(!changed);
+        // And the refusal says what it is now, which is the whole value of it.
+        let text = reply["error"].as_str().unwrap();
+        assert!(text.contains("Confirm payment"), "{text:?}");
+    }
+
+    /// ...and the two roles whose name *is* the value are still exempt, or the
+    /// documented retry — type, fail, type again — would be refused.
+    #[test]
+    fn typing_twice_into_one_field_is_not_a_stale_ref() {
+        let mut session = session_with(
+            "<html><body><form>\
+             <input name='user' aria-label='user'>\
+             <select name='pick'><option>one</option><option>two</option></select>\
+             </form></body></html>",
+        );
+        let refs = serve_refs(&mut session);
+        let field = refs.iter().find(|r| r.role == "textbox").expect("a field").clone();
+        let picker = refs.iter().find(|r| r.role == "combobox").expect("a select").clone();
+
+        for value in ["alice", "bob"] {
+            let (reply, _) = control_verb(
+                &mut session,
+                &json!({"verb": "type", "ref": field.id.clone(), "text": value}),
+            );
+            assert_eq!(reply["ok"], true, "typing `{value}` was refused: {reply:?}");
+        }
+        for value in ["two", "one"] {
+            let (reply, _) = control_verb(
+                &mut session,
+                &json!({"verb": "select", "ref": picker.id.clone(), "option": value}),
+            );
+            assert_eq!(reply["ok"], true, "selecting `{value}` was refused: {reply:?}");
+        }
+    }
+
+    /// LOGIN mode refuses `requests` because it "names URLs a login flow
+    /// visited". `status` named the one the flow is on right now — and an OAuth
+    /// callback carries its `code` in the query, a magic link and a password
+    /// reset carry their token in the path.
+    #[test]
+    fn status_withholds_the_path_while_a_human_is_logging_in() {
+        let mut session = session_with("<html><body><p>x</p></body></html>");
+        let _ = control_verb(
+            &mut session,
+            &json!({"verb": "navigate", "url": "https://site.example/callback?code=s3cr3t"}),
+        );
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "login", "on": true}));
+        assert_eq!(reply["ok"], true, "{reply:?}");
+
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "status"}));
+        let url = reply["url"].as_str().unwrap_or_default();
+        assert!(!url.contains("s3cr3t"), "the token is in the status reply: {url}");
+        assert!(!url.contains("/callback"), "the path is in the status reply: {url}");
+
+        // And it comes back when the human hands the page over.
+        let _ = control_verb(&mut session, &json!({"verb": "login", "on": false}));
+        let (reply, _) = control_verb(&mut session, &json!({"verb": "status"}));
+        assert!(reply["url"].as_str().unwrap_or_default().starts_with("http"));
     }
 
     #[test]

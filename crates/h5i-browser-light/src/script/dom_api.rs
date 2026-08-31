@@ -1270,15 +1270,38 @@ fn fetch_start(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         Ok(url) => url,
         Err(error) => return reply_error(&format!("`{target}` is not a URL: {error}"), context),
     };
+    // The queue, before the ticket. `fetch()` returns before anything is
+    // decided about the request, so a loop calling it builds a slot per call
+    // — a URL, a method, a body, headers — and the drain runs once per settle
+    // round. The request budget refuses requests; it never saw the queue.
+    if host.pending_fetches.borrow().len() >= crate::script::host::MAX_QUEUED_FETCHES {
+        return reply_error(
+            &format!(
+                "this page has {} requests queued and not yet started, which is the most one \
+                 page may hold. The per-navigation request budget is the bound on how many it \
+                 may make; this is the bound on how many it may have waiting.",
+                crate::script::host::MAX_QUEUED_FETCHES
+            ),
+            context,
+        );
+    }
+
     let id = host.next_fetch.get();
     host.next_fetch.set(id + 1);
-    host.requests
-        .borrow_mut()
-        .push(crate::script::host::RequestLink {
-            ticket: id,
-            url: resolved.to_string(),
-            seq: None,
-        });
+    {
+        // Bounded like the queue, and for the same reason: this list is the
+        // causal join between an action and a row in the request log, and it
+        // grew one entry per `fetch()` for the life of the page. What is
+        // dropped is the *link*; the receipt is the broker's and is untouched.
+        let mut links = host.requests.borrow_mut();
+        if links.len() < crate::script::host::MAX_REQUEST_LINKS {
+            links.push(crate::script::host::RequestLink {
+                ticket: id,
+                url: resolved.to_string(),
+                seq: None,
+            });
+        }
+    }
     host.pending_fetches.borrow_mut().insert(
         id,
         crate::script::host::FetchSlot::Queued {
@@ -1531,52 +1554,80 @@ const VOID_ELEMENTS: [&str; 14] = [
 /// carries no payload, so blitz discards the content at parse time and only the
 /// comments this engine created have text to give back. The empty separator —
 /// the case that matters — round-trips exactly.
+/// One step of the serialisation, so the walk below can be a loop.
+enum Step<'a> {
+    /// Serialise this node and push its children.
+    Node(usize),
+    /// The closing tag an element owes, after its children.
+    Close(&'a str),
+}
+
+/// Serialise a subtree.
+///
+/// **Iterative, with its own stack.** The recursive version was the third door
+/// into the deep-tree problem that ends the process rather than the page:
+/// `el.innerHTML = "<div>".repeat(20000)` is four characters of JavaScript, and
+/// script can read the result back in the same turn it built it — before any
+/// layout, and so before the bound `crate::engine::prune_deep_nesting` applies
+/// there. A stack overflow is a `SIGSEGV` with no panic to catch, so the walk
+/// is written not to have one.
 fn serialise(
     doc: &blitz_dom::BaseDocument,
     comments: &std::collections::HashMap<usize, String>,
     id: usize,
     out: &mut String,
 ) {
-    let Some(node) = doc.get_node(id) else { return };
+    let mut stack: Vec<Step<'_>> = vec![Step::Node(id)];
+    while let Some(step) = stack.pop() {
+        let id = match step {
+            Step::Close(name) => {
+                out.push_str("</");
+                out.push_str(name);
+                out.push('>');
+                continue;
+            }
+            Step::Node(id) => id,
+        };
+        let Some(node) = doc.get_node(id) else { continue };
 
-    match &node.data {
-        blitz_dom::NodeData::Comment => {
-            out.push_str("<!--");
-            out.push_str(comments.get(&id).map(String::as_str).unwrap_or(""));
-            out.push_str("-->");
-        }
-        blitz_dom::NodeData::Text(text) => {
-            escape_text(&text.content, out);
-        }
-        blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
-            let name = el.name.local.as_ref();
-            out.push('<');
-            out.push_str(name);
-            if let Some(attrs) = node.attrs() {
-                for attr in attrs {
-                    out.push(' ');
-                    out.push_str(attr.name.local.as_ref());
-                    out.push_str("=\"");
-                    escape_attribute(&attr.value, out);
-                    out.push('"');
+        // Children are pushed in reverse so they come off in document order.
+        let push_children = |stack: &mut Vec<Step<'_>>| {
+            for child in node.children.iter().rev() {
+                stack.push(Step::Node(*child));
+            }
+        };
+
+        match &node.data {
+            blitz_dom::NodeData::Comment => {
+                out.push_str("<!--");
+                out.push_str(comments.get(&id).map(String::as_str).unwrap_or(""));
+                out.push_str("-->");
+            }
+            blitz_dom::NodeData::Text(text) => {
+                escape_text(&text.content, out);
+            }
+            blitz_dom::NodeData::Element(el) | blitz_dom::NodeData::AnonymousBlock(el) => {
+                let name = el.name.local.as_ref();
+                out.push('<');
+                out.push_str(name);
+                if let Some(attrs) = node.attrs() {
+                    for attr in attrs {
+                        out.push(' ');
+                        out.push_str(attr.name.local.as_ref());
+                        out.push_str("=\"");
+                        escape_attribute(&attr.value, out);
+                        out.push('"');
+                    }
                 }
-            }
-            out.push('>');
+                out.push('>');
 
-            if VOID_ELEMENTS.contains(&name) {
-                return;
+                if VOID_ELEMENTS.contains(&name) {
+                    continue;
+                }
+                stack.push(Step::Close(name));
+                push_children(&mut stack);
             }
-            for child in &node.children {
-                serialise(doc, comments, *child, out);
-            }
-            out.push_str("</");
-            out.push_str(name);
-            out.push('>');
-        }
-        _ => {
-            for child in &node.children {
-                serialise(doc, comments, *child, out);
-            }
+            _ => push_children(&mut stack),
         }
     }
 }
@@ -1852,11 +1903,31 @@ fn canvas_size(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 
     let host = host(context)?;
     let mut canvases = host.canvases.borrow_mut();
-    let canvas = canvases.get_or_create(id, width, height);
-    if reset {
-        canvas.resize(width, height);
-    }
-    let size = (canvas.width(), canvas.height());
+    // A refusal is an error the page can see, like `getRandomValues` over its
+    // own cap. See `Canvases::afford`: the ceiling is on every canvas in the
+    // document together, because bounding one at 8192 a side and not bounding
+    // how many there are bounds nothing.
+    let refuse = |why: String| -> JsResult<JsValue> {
+        Err(boa_engine::JsNativeError::error().with_message(why).into())
+    };
+    let size = {
+        let canvas = match canvases.get_or_create(id, width, height) {
+            Ok(canvas) => canvas,
+            Err(why) => return refuse(why),
+        };
+        (canvas.width(), canvas.height())
+    };
+    let size = if reset {
+        if let Err(why) = canvases.resize(id, width, height) {
+            return refuse(why);
+        }
+        match canvases.get(id) {
+            Some(canvas) => (canvas.width(), canvas.height()),
+            None => size,
+        }
+    } else {
+        size
+    };
 
     let array = boa_engine::object::builtins::JsArray::new(context)?;
     array.push(JsValue::from(size.0 as f64), context)?;
@@ -2080,14 +2151,25 @@ fn inner_text(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     Ok(js_string!(assemble_inner_text(segments)).into())
 }
 
+/// **Iterative, with its own stack**, like [`serialise`] above.
+///
+/// The depth a tree may reach is bounded before layout
+/// (`crate::engine::prune_deep_nesting`), and every caller of this lays out
+/// first — so it was safe by an invariant that lives in another file and is not
+/// this function's to rely on. A walker whose failure mode is a `SIGSEGV` with
+/// no panic to catch should not depend on somebody else having gone first.
+///
+/// The node named by `id` contributes nothing itself, only its descendants,
+/// which is what the recursive version did and what `textContent` means.
 fn collect_text_content(doc: &blitz_dom::BaseDocument, id: usize, out: &mut String) {
-    let Some(node) = doc.get_node(id) else { return };
-    for child in node.children.iter() {
-        let Some(kid) = doc.get_node(*child) else { continue };
-        if let blitz_dom::NodeData::Text(text) = &kid.data {
-            out.push_str(&text.content);
-        } else {
-            collect_text_content(doc, *child, out);
+    let Some(root) = doc.get_node(id) else { return };
+    // Reversed on the way in so they come off in document order.
+    let mut stack: Vec<usize> = root.children.iter().rev().copied().collect();
+    while let Some(next) = stack.pop() {
+        let Some(node) = doc.get_node(next) else { continue };
+        match &node.data {
+            blitz_dom::NodeData::Text(text) => out.push_str(&text.content),
+            _ => stack.extend(node.children.iter().rev().copied()),
         }
     }
 }
@@ -2405,7 +2487,16 @@ fn guard_mutation(host: &HostHandle, what: &str, body: impl FnOnce()) {
 fn settle_layout(host: &HostHandle) {
     if *host.styles_stale.borrow() {
         *host.styles_stale.borrow_mut() = false;
-        host.dom.borrow_mut().resolve(0.0);
+        // Through the engine's helper, not `resolve` directly. This was the
+        // fourth door into the deep-tree problem: layout recurses, and
+        // `getComputedStyle` on a tree script has just built reaches it before
+        // the settle loop does — `el.innerHTML = "<div>".repeat(20000)` then
+        // one style read, and the process is gone with no panic to catch.
+        //
+        // It also picks up `guard_layout`, which matters more here than
+        // anywhere: a panic raised inside a native binding unwinds through the
+        // JavaScript engine, across a `Gc` that does not expect it.
+        let _ = crate::engine::lay_out(&host.dom);
     }
 }
 
@@ -2771,6 +2862,10 @@ fn socket_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         boa_engine::JsNativeError::syntax().with_message(format!("`{raw}` is not a URL: {e}"))
     })?;
 
+    if let Err(why) = room_for_a_channel(&host) {
+        return Err(boa_engine::JsNativeError::error().with_message(why).into());
+    }
+
     match host.broker.open_socket(&url, Some(&host.base)) {
         Ok(socket) => {
             let id = host.next_socket.get();
@@ -2827,6 +2922,27 @@ fn socket_drain(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     Ok(out.into())
 }
 
+/// Whether this page may hold another long-lived connection.
+///
+/// See [`crate::script::host::MAX_OPEN_CHANNELS`]: each of these is a thread,
+/// and the thread is the resource the session's sandbox profile actually caps.
+fn room_for_a_channel(host: &HostHandle) -> Result<(), String> {
+    let held = host.sockets.borrow().len() + host.streams.borrow().len();
+    channel_room(held)
+}
+
+/// The arithmetic on its own, so the bound can be tested without a socket.
+pub(crate) fn channel_room(held: usize) -> Result<(), String> {
+    if held >= crate::script::host::MAX_OPEN_CHANNELS {
+        return Err(format!(
+            "this page already holds {held} open connections, which is the most one page may \
+             have at once. Close one before opening another; the per-navigation request \
+             budget is the separate bound on how many it may open in total."
+        ));
+    }
+    Ok(())
+}
+
 // ── server-sent events ───────────────────────────────────────────────────────
 //
 // The same shape as the socket primitives above, and deliberately so: two
@@ -2839,6 +2955,10 @@ fn sse_open(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let url = host.base.join(&raw).map_err(|e| {
         boa_engine::JsNativeError::syntax().with_message(format!("`{raw}` is not a URL: {e}"))
     })?;
+
+    if let Err(why) = room_for_a_channel(&host) {
+        return Err(boa_engine::JsNativeError::error().with_message(why).into());
+    }
 
     match host.broker.open_event_stream(&url, Some(&host.base)) {
         Ok(stream) => {

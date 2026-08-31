@@ -96,6 +96,50 @@ pub struct ActionPolicy {
     pub deny: BTreeSet<String>,
 }
 
+/// Verbs that reach the same capability as the one a profile named, and are
+/// therefore denied with it.
+///
+/// The list exists because a denylist over a ~250-verb protocol is only as good
+/// as its synonyms, and this one had none. `evaluate` is documented as the
+/// entry "most profiles want, because it is arbitrary code in the page" — and
+/// denying it left `evalhandle` (a `Runtime.evaluate` under another name),
+/// `waitforfunction`, `addscript`, `addinitscript`, `expose` and `setcontent`
+/// all forwarding, so a profile that had asked for a reading browser got one
+/// that still ran whatever the agent wrote. `credentials` was the same shape:
+/// denied, while `auth_show` and `auth_login` read and used the same stored
+/// logins.
+///
+/// The left-hand name is what a profile writes; the right-hand names are what
+/// it also means. Extending this is how a *new* daemon verb that reaches an
+/// existing capability is covered without every profile being rewritten —
+/// which is the failure mode `is_mutating`'s "unknown verbs count as mutating"
+/// already guards the other lane against.
+const DENY_ALSO_COVERS: &[(&str, &[&str])] = &[
+    (
+        "evaluate",
+        &[
+            // `Runtime.evaluate` with a `script` from the request.
+            "evalhandle",
+            // A JS expression, polled until it is true.
+            "waitforfunction",
+            // Script injected into the page, and into every future one.
+            "addscript",
+            "addinitscript",
+            // A host callback the page can invoke.
+            "expose",
+            // Replacing the document with markup, script and all.
+            "setcontent",
+        ],
+    ),
+    // The stored-login family under its other name.
+    ("credentials", &["auth"]),
+];
+
+/// Whether one deny entry covers one action, including the `name_*` family.
+fn covers(entry: &str, action: &str) -> bool {
+    action == entry || action.starts_with(&format!("{entry}_"))
+}
+
 impl ActionPolicy {
     pub fn deny_all_of<I: IntoIterator<Item = S>, S: Into<String>>(actions: I) -> Self {
         Self {
@@ -104,13 +148,19 @@ impl ActionPolicy {
     }
 
     fn denies(&self, action: &str) -> bool {
-        if self.deny.contains(action) {
-            return true;
-        }
-        // `state` denies `state_save`/`state_load`; a family is one entry.
-        self.deny
-            .iter()
-            .any(|prefix| action.starts_with(&format!("{prefix}_")))
+        self.deny.iter().any(|entry| {
+            // The entry itself, and the `_` family under it: `state` denies
+            // `state_save`/`state_load`, so a family is one entry.
+            if covers(entry, action) {
+                return true;
+            }
+            // And the verbs that reach the same capability by another name.
+            DENY_ALSO_COVERS
+                .iter()
+                .filter(|(named, _)| named == entry)
+                .flat_map(|(_, also)| also.iter())
+                .any(|also| covers(also, action))
+        })
     }
 }
 
@@ -528,6 +578,22 @@ pub fn spawn(
             socket_path.display()
         ))
     })?;
+    // Whoever can connect here drives the browser: every verb the mediator
+    // forwards, which includes reading the page and — subject to the policy
+    // above — running script in it. Linux checks write permission on the socket
+    // file at `connect`, so the mode is the access control, and leaving it to
+    // the umask made it 0755 on a default one and 0775 or 0777 on a laxer one.
+    // The path is `AGENT_BROWSER_SOCKET_DIR`, which is under a box's `/tmp` —
+    // shared with the host under the `agent` profile.
+    //
+    // This does not make the mediator containment against a deliberately
+    // evasive agent inside the box, which the module header says it is not. It
+    // stops the socket from being everyone *else* on the machine's, which is a
+    // different question and one this can answer.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600));
+    }
     listener
         .set_nonblocking(true)
         .map_err(h5i_error::H5iError::Io)?;
@@ -887,6 +953,78 @@ mod tests {
 
     fn req(id: &str, action: &str) -> String {
         format!(r#"{{"id":"{id}","action":"{action}"}}"#)
+    }
+
+    /// A denylist over a ~250-verb protocol is only as good as its synonyms,
+    /// and this one had none. `evaluate` is documented as the entry "most
+    /// profiles want, because it is arbitrary code in the page" — and denying
+    /// it left `evalhandle`, which is a `Runtime.evaluate` with a script from
+    /// the request under another name, forwarding. So did `addscript`,
+    /// `addinitscript`, `waitforfunction`, `expose` and `setcontent`: a profile
+    /// that had asked for a reading browser got one that still ran whatever
+    /// the agent wrote.
+    #[test]
+    fn denying_evaluate_denies_every_verb_that_is_evaluate_under_another_name() {
+        let policy = ActionPolicy::deny_all_of(["evaluate"]);
+        for verb in [
+            "evaluate",
+            "evalhandle",
+            "waitforfunction",
+            "addscript",
+            "addinitscript",
+            "expose",
+            "setcontent",
+        ] {
+            assert!(
+                policy.denies(verb),
+                "`{verb}` runs page script and survived a profile that denied `evaluate`"
+            );
+        }
+        // And it is a denylist still, not a mood: reading is untouched.
+        for verb in ["read", "snapshot", "screenshot", "click"] {
+            assert!(!policy.denies(verb), "`{verb}` is not evaluate");
+        }
+    }
+
+    /// The same shape on the other capability: `credentials` was denied while
+    /// `auth_show` and `auth_login` read and used the same stored logins.
+    #[test]
+    fn denying_credentials_denies_the_stored_logins_under_their_other_name() {
+        let policy = ActionPolicy::deny_all_of(["credentials"]);
+        for verb in [
+            "credentials_get",
+            "credentials_set",
+            "auth_show",
+            "auth_login",
+            "auth_list",
+            "auth_delete",
+            "auth_save",
+        ] {
+            assert!(policy.denies(verb), "`{verb}` reaches the stored logins");
+        }
+        // `auth` on its own is nameable too, and covers only its own family.
+        let narrow = ActionPolicy::deny_all_of(["auth"]);
+        assert!(narrow.denies("auth_show"));
+        assert!(!narrow.denies("credentials_get"));
+    }
+
+    /// Every name the equivalence table hands out has to be one a profile
+    /// could also have written itself, or the policy would enforce a
+    /// vocabulary its own validator rejects.
+    #[test]
+    fn every_covered_verb_is_a_name_a_profile_may_write() {
+        for (named, also) in DENY_ALSO_COVERS {
+            assert!(
+                h5i_sandbox::sandbox_policy::validate_browser_deny(named).is_ok(),
+                "`{named}` is not accepted by the validator"
+            );
+            for verb in *also {
+                assert!(
+                    h5i_sandbox::sandbox_policy::validate_browser_deny(verb).is_ok(),
+                    "`{verb}` is covered by `{named}` and is not itself nameable"
+                );
+            }
+        }
     }
 
     /// A daemon that answers every request with the same success line.

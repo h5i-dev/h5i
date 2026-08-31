@@ -31,7 +31,6 @@ use boa_engine::{Context, JsError, JsNativeError, JsResult, Module, Source};
 use url::Url;
 
 use super::host::Host;
-use crate::receipt::Initiator;
 
 /// Resolves and fetches modules for one realm.
 pub struct BrokerModuleLoader {
@@ -170,13 +169,29 @@ impl ModuleLoader for BrokerModuleLoader {
             return Ok(cached.clone());
         }
 
-        let outcome = self.host.broker.send_from(
+        // `send_script`, not `send_from`, and that is the same-origin policy
+        // rather than bookkeeping.
+        //
+        // A module script is a **`cors` request in every browser** — unlike a
+        // classic `<script src>`, which is why JSONP exists — and this fetched
+        // one with no CORS context at all: no `Origin` header, no
+        // `Access-Control-Allow-Origin` check on the answer, and the response
+        // handed back with full exposure. `import("https://other.example/x.js")`
+        // was a cross-origin body fetched, parsed and *evaluated in this page's
+        // realm*, which is the one thing the CORS rule on module scripts exists
+        // to refuse. Same shape as the hole `EventSource` had.
+        //
+        // `same-origin` credentials, which is what a module script without a
+        // `crossorigin` attribute gets.
+        let outcome = self.host.broker.send_script(
             &resolved,
-            Initiator::Subresource,
             "GET",
             &[],
             None,
-            Some(&self.host.base),
+            &self.host.base,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::SameOrigin,
         );
 
         // A module import is a request the page made like any other. It is

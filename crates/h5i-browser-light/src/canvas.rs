@@ -40,6 +40,23 @@ use vello_cpu::{RenderContext, RenderMode, Resources};
 /// page must not be able to end the session.
 const MAX_SIDE: u32 = 8192;
 
+/// How many bytes of pixels one document's canvases may hold between them.
+///
+/// [`MAX_SIDE`] bounds *one* canvas at 8192x8192x4 = 256 MiB, which was the
+/// whole of the bound and left the interesting number unbounded: a page can
+/// make as many `<canvas>` elements as it likes, so fifty of them at the
+/// maximum side is twelve gigabytes and the session is killed by the kernel
+/// rather than by any decision this engine made. The same class of defect as
+/// the `Max-Age` overflow — a number off the page deciding whether the agent
+/// driving the engine keeps running.
+///
+/// 256 MiB, which is exactly one canvas at the maximum side: the largest thing
+/// [`MAX_SIDE`] already says a page may have still fits, and the *second* one
+/// is where the page is told no rather than handed the machine's memory. Sixty
+/// viewport-sized canvases fit inside it, which is well past what a page an
+/// agent is reading legitimately draws on.
+const MAX_TOTAL_BYTES: usize = 256 << 20;
+
 /// What a canvas is when nobody said otherwise. The HTML default.
 const DEFAULT_WIDTH: u32 = 300;
 const DEFAULT_HEIGHT: u32 = 150;
@@ -95,6 +112,15 @@ pub struct Canvas {
 }
 
 impl Canvas {
+    /// How many bytes a canvas of this requested size would hold, after the
+    /// per-side clamp. The arithmetic [`Canvases::afford`] budgets over, kept
+    /// beside the allocation it predicts so the two cannot drift.
+    pub fn bytes_for(width: u32, height: u32) -> usize {
+        let width = width.clamp(1, MAX_SIDE) as usize;
+        let height = height.clamp(1, MAX_SIDE) as usize;
+        width * height * 4
+    }
+
     pub fn new(width: u32, height: u32) -> Self {
         let width = width.clamp(1, MAX_SIDE);
         let height = height.clamp(1, MAX_SIDE);
@@ -683,11 +709,60 @@ impl Canvases {
         Self::default()
     }
 
-    /// The canvas for a node, created at the size the element asks for.
-    pub fn get_or_create(&mut self, node_id: usize, width: u32, height: u32) -> &mut Canvas {
-        self.by_node
+    /// What every canvas in this document is holding, in bytes.
+    pub fn bytes(&self) -> usize {
+        self.by_node.values().map(|c| c.pixels.len()).sum()
+    }
+
+    /// The canvas for a node, at the size the element asks for — or the reason
+    /// it may not have one.
+    ///
+    /// The refusal is a value rather than a clamp. A canvas silently smaller
+    /// than the page asked for draws the wrong picture and says nothing, which
+    /// is the worse of the two failures; an error reaches the page's own
+    /// `console` and the snapshot's note, so an agent reading a half-drawn page
+    /// can find out why.
+    pub fn get_or_create(
+        &mut self,
+        node_id: usize,
+        width: u32,
+        height: u32,
+    ) -> Result<&mut Canvas, String> {
+        if !self.by_node.contains_key(&node_id) {
+            self.afford(0, Canvas::bytes_for(width, height))?;
+        }
+        Ok(self
+            .by_node
             .entry(node_id)
-            .or_insert_with(|| Canvas::new(width, height))
+            .or_insert_with(|| Canvas::new(width, height)))
+    }
+
+    /// Resize one canvas, within the document's whole allowance.
+    pub fn resize(&mut self, node_id: usize, width: u32, height: u32) -> Result<(), String> {
+        let held = match self.by_node.get(&node_id) {
+            Some(canvas) => canvas.pixels.len(),
+            None => return Ok(()),
+        };
+        self.afford(held, Canvas::bytes_for(width, height))?;
+        if let Some(canvas) = self.by_node.get_mut(&node_id) {
+            canvas.resize(width, height);
+        }
+        Ok(())
+    }
+
+    /// Whether the document can pay for `wanted` bytes once `releasing` bytes
+    /// it already holds are given back.
+    fn afford(&self, releasing: usize, wanted: usize) -> Result<(), String> {
+        let after = self.bytes().saturating_sub(releasing).saturating_add(wanted);
+        if after > MAX_TOTAL_BYTES {
+            return Err(format!(
+                "this document's canvases would hold {after} bytes, over the \
+                 {MAX_TOTAL_BYTES} byte ceiling one page may use. The bound is on all of \
+                 them together, not on each: one canvas is capped at {MAX_SIDE} a side, and \
+                 nothing capped how many a page could make."
+            ));
+        }
+        Ok(())
     }
 
     pub fn get(&self, node_id: usize) -> Option<&Canvas> {
@@ -853,6 +928,64 @@ mod tests {
         let canvas = Canvas::new(10_000_000, 10_000_000);
         assert_eq!(canvas.width(), MAX_SIDE);
         assert_eq!(canvas.height(), MAX_SIDE);
+    }
+
+    /// `MAX_SIDE` bounded one canvas and nothing bounded how many. A page can
+    /// make as many `<canvas>` elements as it likes, so fifty at the maximum
+    /// side is twelve gigabytes and the session dies by the kernel's hand
+    /// rather than by any decision this engine made.
+    #[test]
+    fn a_document_cannot_hold_more_canvas_than_the_ceiling() {
+        let mut canvases = Canvases::new();
+        // One at the maximum side is 256 MiB and fits.
+        canvases
+            .get_or_create(1, MAX_SIDE, MAX_SIDE)
+            .expect("one full-size canvas is within the ceiling");
+        assert_eq!(canvases.bytes(), Canvas::bytes_for(MAX_SIDE, MAX_SIDE));
+
+        // A second one takes the pair past it and is refused, by name.
+        let refused = canvases
+            .get_or_create(2, MAX_SIDE, MAX_SIDE)
+            .map(|_| ())
+            .expect_err("a second full-size canvas is over the ceiling");
+        assert!(refused.contains("ceiling"), "{refused}");
+        assert!(
+            canvases.get(2).is_none(),
+            "a refused canvas is not half-created"
+        );
+        assert_eq!(
+            canvases.bytes(),
+            Canvas::bytes_for(MAX_SIDE, MAX_SIDE),
+            "and nothing was allocated on the way to refusing"
+        );
+
+        // The bound is on the total rather than on the count, so a document
+        // that spends less can have many.
+        let mut modest = Canvases::new();
+        for id in 0..40 {
+            modest
+                .get_or_create(id, 1280, 800)
+                .expect("forty viewport-sized canvases are well inside the ceiling");
+        }
+    }
+
+    /// And the same ceiling covers growing one that already exists, which is
+    /// the other half of the same allocation: `canvas.width = 8192` on a
+    /// hundred small canvases is the same twelve gigabytes by another road.
+    #[test]
+    fn resizing_past_the_ceiling_is_refused_and_leaves_the_canvas_alone() {
+        let mut canvases = Canvases::new();
+        canvases.get_or_create(1, MAX_SIDE, MAX_SIDE / 2).expect("fits");
+        canvases.get_or_create(2, 64, 64).expect("fits");
+        let refused = canvases
+            .resize(2, MAX_SIDE, MAX_SIDE)
+            .expect_err("growing the second one is over the ceiling");
+        assert!(refused.contains("ceiling"), "{refused}");
+        assert_eq!(canvases.get(2).expect("still there").width(), 64);
+        // And a resize that fits still happens, or the ceiling would be a
+        // freeze rather than a bound.
+        canvases.resize(2, 128, 128).expect("a resize inside the ceiling");
+        assert_eq!(canvases.get(2).expect("still there").width(), 128);
     }
 
     #[test]

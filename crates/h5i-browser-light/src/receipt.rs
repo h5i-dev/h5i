@@ -208,15 +208,40 @@ impl JsonlSink {
         {
             std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|e| H5iError::with_path(e, path))?;
+        let file = open_owner_only(path)?;
         Ok(Self {
             file: Mutex::new(file),
         })
     }
+}
+
+/// Open a session artifact for appending, readable only by its owner.
+///
+/// The request log names every URL this session fetched and the action log
+/// names every verb the agent ran, which together are a complete account of
+/// what the agent was doing. h5i writes them into the session directory, and a
+/// boxed session's directory is under a `/tmp` the `agent` profile shares with
+/// the host — so the umask's 0644 published the account to anything on the
+/// machine. The mode is set at creation, so there is no window in which the
+/// file exists and is readable; an existing file is narrowed too, because a log
+/// that was created wide does not become safe by being appended to.
+fn open_owner_only(path: &Path) -> Result<File, H5iError> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(path).map_err(|e| H5iError::with_path(e, path))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // `mode` applies only when the file is created. A log left behind by an
+        // earlier session — a `--restore`, a crash — keeps whatever it had.
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(file)
 }
 
 impl Sink for JsonlSink {
@@ -477,11 +502,7 @@ impl ActionLog {
         {
             std::fs::create_dir_all(parent).map_err(|e| H5iError::with_path(e, parent))?;
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|e| H5iError::with_path(e, path))?;
+        let file = open_owner_only(path)?;
         Ok(Self {
             file: Mutex::new(file),
             seq: AtomicU64::new(0),

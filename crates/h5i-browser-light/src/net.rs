@@ -590,6 +590,19 @@ impl LocalBroker {
             return Err(format!("the preflight was denied by policy: {reason}"));
         }
 
+        // A preflight is a request in its own right, and the budget is the one
+        // place that had not been told. It sat *before* the claim in
+        // `send_with_cors`, so a page issuing non-simple cross-origin requests
+        // whose preflights the server refuses made unlimited round trips while
+        // the allowance recorded none of them — the real request never happened,
+        // so the request that was counted never happened either.
+        if let Err(over) = self.budget.claim_request() {
+            let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str())
+                .denied(&over.0);
+            let _ = self.record_pair(&record);
+            return Err(over.0);
+        }
+
         let record = RequestRecord::request(seq, Initiator::Subresource, "OPTIONS", url.as_str());
         if let Err(e) = self.append(&record) {
             return Err(format!(
@@ -640,6 +653,10 @@ impl LocalBroker {
         outcome.status = Some(status.as_u16());
         outcome.duration_ms = Some(elapsed);
         let _ = self.append(&outcome);
+        // What it cost. A preflight is small on the wire and real on the clock,
+        // and the clock is the half a page can spend without trying.
+        self.budget
+            .record(0, 0, Duration::from_millis(elapsed));
 
         if !status.is_success() {
             return Err(format!(
@@ -673,7 +690,13 @@ impl LocalBroker {
             // here to check, and none to pin.
             return Ok(());
         };
-        if !matches!(url.scheme(), "http" | "https") {
+        // `ws`/`wss` too, and that omission was the hole: the socket client
+        // reached `TcpStream::connect((host, port))` with a name nothing had
+        // resolved, so `Policy::check_address` — the rebinding and
+        // private-space guard — never ran on the one path that does its own
+        // connecting. A name on the allowlist that answers `10.0.0.1` was a
+        // WebSocket into private space with a receipt that said otherwise.
+        if !matches!(url.scheme(), "http" | "https" | "ws" | "wss") {
             return Ok(());
         }
         let Some(host) = url.host_str() else {
@@ -682,7 +705,7 @@ impl LocalBroker {
 
         let port = url
             .port_or_known_default()
-            .unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
+            .unwrap_or(if matches!(url.scheme(), "https" | "wss") { 443 } else { 80 });
         // IPv6 arrives from `host_str` with its brackets, which the resolver
         // does not want.
         let bare = host
@@ -705,6 +728,22 @@ impl LocalBroker {
         }
         pinned.set(host, resolved);
         Ok(())
+    }
+
+    /// The addresses a host was approved for, for a caller that does its own
+    /// connecting.
+    ///
+    /// `reqwest` is handed [`Pinned`] as its resolver and so cannot reach an
+    /// address the policy did not see. The socket client has no resolver to
+    /// hand anything to — it calls `TcpStream::connect` itself — so it asks
+    /// here instead, and connects to *these* addresses rather than resolving
+    /// the name a second time. Same rule, same window closed.
+    ///
+    /// `None` when nothing is pinned at all (an egress proxy in the path, which
+    /// resolves at the far end), which is the one case a caller may fall back
+    /// to its own lookup.
+    pub fn approved_addresses(&self, host: &str) -> Option<Vec<std::net::SocketAddr>> {
+        self.pinned.as_ref()?.get(host)
     }
 
     /// The session's jar, for the broker's own use.
@@ -768,15 +807,38 @@ impl LocalBroker {
                 // moved. Following it automatically is not the fix — that would
                 // let any server route us out of the allowlist — but saying so
                 // is.
-                let message = if hop > 0 {
+                let message = if hop == 0 {
+                    format!("denied by policy: {reason}")
+                } else if cors.is_some() {
+                    // A page asked, and where a server redirected it is not the
+                    // page's to learn. The chain began at a URL the page named
+                    // and ended somewhere the allowlist refuses; naming that
+                    // target hands the page a URL it had no way to reach and
+                    // that a redirect off an authenticated endpoint routinely
+                    // carries an identity in (`/me` -> `/users/alice`). A
+                    // browser gives a blocked `fetch` a bare failure for the
+                    // same reason.
+                    //
+                    // The receipt has the target under its own sequence number,
+                    // which is where it belongs: the audit lane is the agent's,
+                    // and this string is the page's.
+                    "the request was redirected somewhere this engine is not allowed to \
+                     follow, so it was not followed"
+                        .to_string()
+                } else {
+                    // The agent asked. A redirect that left the allowlist is
+                    // the most actionable thing this engine can say — vitejs.dev
+                    // moved to vite.dev and the corpus reported only "origin is
+                    // not in the allowlist", leaving no way to learn the site
+                    // had moved. Following it automatically is not the fix, that
+                    // would let any server route us out of the allowlist, but
+                    // saying so is.
                     format!(
                         "the site redirected to {current}, which is not allowed: {reason}. \
                          This engine will not follow a redirect out of the allowlist, because \
                          a server could then choose where we go; allow that host if you meant \
                          to follow it."
                     )
-                } else {
-                    format!("denied by policy: {reason}")
                 };
                 return FetchOutcome::failed_at(current, message, Some(seq));
             }
@@ -1305,6 +1367,21 @@ impl LocalBroker {
             return Err(format!("denied by policy: {reason}"));
         }
 
+        // Against the page's allowance like any other request. A connection is
+        // one request that then carries an unbounded number of frames — the
+        // frames are charged in `record_socket_frame`, and this is the handshake
+        // — so a page could otherwise open as many as it liked and spend
+        // nothing to do it.
+        if let Err(over) = self.budget.claim_request() {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str())
+                    .denied(&over.0);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(over.0);
+        }
+
         let record = RequestRecord::request(seq, Initiator::Subresource, "WS-OPEN", url.as_str());
         if let Err(e) = self.append(&record) {
             return Err(format!(
@@ -1348,7 +1425,29 @@ impl LocalBroker {
         // frame said "switching protocols" four hundred times on one
         // connection — and said it on event streams, which never switched
         // anything. A frame is not an exchange with a status of its own.
-        self.append(&outcome)
+        self.append(&outcome)?;
+
+        // **And charged, which it was not.**
+        //
+        // [`crate::budget`] exists to bound what an untrusted page can spend,
+        // and every limit in it was checked on the way *into a request* — which
+        // a socket makes exactly one of. A page could hold one open and pull
+        // gigabytes through it while `budget` reported a page that had spent
+        // almost nothing: the queue is bounded so the memory was safe, and the
+        // bandwidth, the time and the honesty of the number were not.
+        //
+        // Charged as wire and decoded alike: a frame is not content-encoded, so
+        // the two are the same number and pretending otherwise would understate
+        // one of them.
+        self.budget
+            .record(bytes, bytes, std::time::Duration::ZERO);
+        self.budget.within_totals().map_err(|over| {
+            H5iError::Metadata(format!(
+                "{} A long-lived connection is charged per frame, so this is the page's \
+                 whole allowance rather than this frame's.",
+                over.0
+            ))
+        })
     }
 
     /// Authorise and begin an event stream, handing back the open response.
@@ -1365,6 +1464,15 @@ impl LocalBroker {
     /// The front half is identical — policy, then the decision record, *then*
     /// the wire — because that is the half the fail-closed rule lives in, and
     /// two copies of it would be two rules.
+    ///
+    /// **And the same-origin policy, which this path was missing.**
+    /// [`crate::cors`] exists because granting two origins let a script on
+    /// either `fetch` the other and read the body; `EventSource` was a second
+    /// door into the same room, and it was standing open — no `Origin` header,
+    /// no `Access-Control-Allow-Origin` check on the answer, and the session's
+    /// cookies attached unconditionally. A page could name any allowed origin
+    /// and read its stream as the logged-in user. An `EventSource` is a `cors`
+    /// request with same-origin credentials, so it is planned like one.
     pub fn begin_event_stream(
         &self,
         url: &Url,
@@ -1394,6 +1502,63 @@ impl LocalBroker {
             return Err(format!("denied by policy: {reason}"));
         }
 
+        // Who is asking, and so whether the answer may be read. `None` is the
+        // agent naming a URL and is unrestricted; a document is subject to the
+        // origin boundary like any other request it makes.
+        let plan = match document {
+            None => None,
+            Some(doc) => {
+                let origin = crate::cors::Origin::of(doc);
+                let requester = match origin.as_ref() {
+                    Some(origin) => crate::cors::Requester::Document(origin),
+                    None => crate::cors::Requester::Opaque,
+                };
+                Some(crate::cors::plan(
+                    requester,
+                    url,
+                    "GET",
+                    &[],
+                    crate::cors::Mode::Cors,
+                    // `withCredentials` is not exposed, so this is the
+                    // default: cookies same-origin, never across.
+                    crate::cors::Credentials::SameOrigin,
+                ))
+            }
+        };
+        if let Some(crate::cors::Plan::Blocked(why)) = &plan {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
+                    .denied(why);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(format!("blocked by the same-origin policy: {why}"));
+        }
+        let (origin_header, send_cookies, check_response) = match &plan {
+            Some(crate::cors::Plan::Send {
+                origin_header,
+                send_cookies,
+                check_response,
+                ..
+            }) => (origin_header.clone(), *send_cookies, *check_response),
+            _ => (None, true, false),
+        };
+
+        // Budgeted like the socket handshake, and for the same reason: opening
+        // a stream is one request that then carries frames, each of which
+        // spends the allowance in `record_socket_frame`. Without this a page
+        // could open as many streams as it liked — each one a thread — and the
+        // allowance would say it had spent nothing.
+        if let Err(over) = self.budget.claim_request() {
+            let record =
+                RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str())
+                    .denied(&over.0);
+            if let Err(e) = self.record_pair(&record) {
+                return Err(format!("receipt sink refused: {e}"));
+            }
+            return Err(over.0);
+        }
+
         let record = RequestRecord::request(seq, Initiator::Subresource, "SSE-OPEN", url.as_str());
         if let Err(e) = self.append(&record) {
             return Err(format!(
@@ -1416,8 +1581,13 @@ impl LocalBroker {
         // `header_for` reports the value and how many cookies went with it;
         // only the value goes on the wire, and the count is what a receipt is
         // allowed to carry.
-        if let Some((cookies, _count)) = self.jar.header_for(url) {
+        if send_cookies
+            && let Some((cookies, _count)) = self.jar.header_for(url)
+        {
             request = request.header(reqwest::header::COOKIE, cookies);
+        }
+        if let Some(origin) = &origin_header {
+            request = request.header("origin", origin.clone());
         }
 
         match request.send() {
@@ -1430,6 +1600,63 @@ impl LocalBroker {
                 // what flows after it is receipted per event.
                 let mut outcome = record.response();
                 outcome.status = Some(response.status().as_u16());
+
+                // The answer to the question the `Origin` header asked. A
+                // stream is a body like any other, and a cross-origin one may
+                // not be read unless the server named this origin back.
+                if check_response {
+                    let header = |name: &str| -> Option<String> {
+                        response
+                            .headers()
+                            .get(name)
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_string)
+                    };
+                    let asked = origin_header.clone().unwrap_or_else(|| "null".to_string());
+                    if let Err(why) = crate::cors::check_response(
+                        header("access-control-allow-origin").as_deref(),
+                        header("access-control-allow-credentials").as_deref(),
+                        &asked,
+                        send_cookies,
+                    ) {
+                        outcome.error =
+                            Some(format!("blocked by the same-origin policy: {why}"));
+                        let _ = self.append(&outcome);
+                        return Err(format!("blocked by the same-origin policy: {why}"));
+                    }
+                }
+
+                // And that it really is a stream. A browser fails an
+                // `EventSource` whose answer is not `text/event-stream`, and
+                // the rule earns its place beyond conformance: without it the
+                // line parser is a reader for *any* body, and every line
+                // beginning `data:` in someone else's document becomes a
+                // message the page receives.
+                let content_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                if content_type != "text/event-stream" {
+                    let named = if content_type.is_empty() {
+                        "(no content type)"
+                    } else {
+                        content_type.as_str()
+                    };
+                    let why = format!(
+                        "the answer is `{named}`, not `text/event-stream`, so it is not an \
+                         event stream and was not read."
+                    );
+                    outcome.error = Some(why.clone());
+                    let _ = self.append(&outcome);
+                    return Err(why);
+                }
+
                 if let Err(e) = self.append(&outcome) {
                     return Err(format!(
                         "refusing to stream: the receipt could not be written: {e}"
@@ -1796,6 +2023,172 @@ mod cookie_wire_tests {
             }
         });
         port
+    }
+
+    /// A server that redirects once, to wherever it is told.
+    fn redirects_to(target: &'static str) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                }
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\n\
+                     Connection: close\r\n\r\n"
+                );
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// Where a server redirected a page is not the page's to learn.
+    ///
+    /// The chain begins at a URL the page named and ends somewhere the
+    /// allowlist refuses; naming that target hands the page a URL it had no way
+    /// to reach, and a redirect off an authenticated endpoint routinely carries
+    /// an identity in it (`/me` -> `/users/alice`). The agent still gets the
+    /// full sentence, because "the site moved" is the most actionable thing
+    /// this engine can say to whoever is driving it.
+    #[test]
+    fn a_page_is_not_told_where_a_refused_redirect_pointed_and_the_agent_is() {
+        const TARGET: &str = "https://tracker.example/users/alice?token=s3cr3t";
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::new(
+            crate::policy::Policy::new(),
+            sink.clone(),
+            None,
+        )
+        .expect("broker");
+
+        // The page asked: a `fetch` from a document, so a CORS context exists.
+        let port = redirects_to(TARGET);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/me")).unwrap();
+        let document = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        let outcome = broker.send_script(
+            &url,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::SameOrigin,
+        );
+        let error = outcome.error.expect("the hop is refused");
+        assert!(!error.contains("tracker.example"), "{error}");
+        assert!(!error.contains("s3cr3t"), "{error}");
+        assert!(error.contains("redirected"), "{error}");
+
+        // The agent asking the same thing is told where it went.
+        let port = redirects_to(TARGET);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/me")).unwrap();
+        let outcome = broker.send_from(&url, Initiator::Navigation, "GET", &[], None, None);
+        let error = outcome.error.expect("the hop is refused");
+        assert!(error.contains("tracker.example"), "{error}");
+
+        // And the receipt has it either way: the audit lane is not the page's
+        // to be protected from.
+        assert!(
+            sink.records().iter().any(|r| r.url.contains("tracker.example")),
+            "the refused hop is not in the log"
+        );
+    }
+
+    /// Every request on the wire counts, including the ones that are not the
+    /// page's own `fetch`.
+    ///
+    /// A preflight sat *before* the claim in `send_with_cors`, so a page
+    /// issuing non-simple cross-origin requests whose preflights the server
+    /// refuses made unlimited round trips while the allowance recorded none of
+    /// them: the real request never happened, so the request that was counted
+    /// never happened either. A socket handshake and an event stream were
+    /// outside it too, and each of those is a connection that then carries
+    /// frames.
+    #[test]
+    fn a_preflight_a_socket_and_a_stream_all_spend_the_pages_allowance() {
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits {
+                max_requests: 2,
+                ..Default::default()
+            },
+        )
+        .expect("broker");
+
+        // Nothing is listening; the point is which of these the *budget*
+        // refuses, and it refuses before anything is dialled.
+        let ws = Url::parse("ws://127.0.0.1:9/hmr").unwrap();
+        assert!(
+            broker.authorise_socket(&ws, None).is_ok(),
+            "the first is inside the allowance"
+        );
+        let sse = Url::parse("http://127.0.0.1:9/stream").unwrap();
+        // The second spends the last of it; whether the wire answers is not
+        // what is under test.
+        let _ = broker.begin_event_stream(&sse, None);
+
+        let over = broker
+            .authorise_socket(&ws, None)
+            .expect_err("the third is over the allowance");
+        assert!(over.contains("budget-exceeded"), "{over}");
+    }
+
+    /// The budget bounds what an untrusted page can spend, and every limit in
+    /// it was checked on the way *into a request* — which a socket makes
+    /// exactly one of. A page could hold one open and pull gigabytes through it
+    /// while `budget` reported a page that had spent almost nothing: the queue
+    /// is bounded so the memory was safe, and the bandwidth, the time and the
+    /// honesty of the number were not.
+    #[test]
+    fn a_long_lived_connection_is_charged_for_what_it_carries() {
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits {
+                max_wire_bytes: 4_096,
+                ..Default::default()
+            },
+        )
+        .expect("broker");
+
+        let url = Url::parse("ws://127.0.0.1:9/hmr").unwrap();
+        // Inside the allowance: the frame is receipted and the page carries on.
+        broker
+            .record_socket_frame(&url, crate::wsclient::Direction::Receive, 1_024)
+            .expect("a frame inside the allowance");
+        assert_eq!(broker.spending().spent().wire_bytes, 1_024);
+
+        // Past it: the frame is refused, which is what closes the socket.
+        broker
+            .record_socket_frame(&url, crate::wsclient::Direction::Receive, 8_192)
+            .expect_err("a frame past the allowance");
+
+        // And the frames are in the log either way — a receipt records what
+        // crossed the wire, and these did.
+        assert_eq!(
+            broker
+                .records()
+                .iter()
+                .filter(|r| r.method == "WS-RECV" && r.phase == crate::receipt::Phase::Response)
+                .count(),
+            2
+        );
     }
 
     /// The gap the budget fills. Every limit before it was *per request* — a

@@ -229,6 +229,51 @@ pub struct RequestLink {
     pub seq: Option<u64>,
 }
 
+/// How many long-lived connections one page may hold at once.
+///
+/// Sockets and event streams together, because each is a thread and the thread
+/// is the resource: the browser session's own sandbox profile caps the process
+/// at 64, and that ceiling is shared with the viewer loop, the control loop,
+/// the HTTP client's runtime and the fetch workers. Nothing bounded these, so a
+/// page could open until thread creation failed and take the engine's own
+/// workers down with it.
+///
+/// The per-navigation request budget bounds how many a page may *open* over the
+/// life of a page; this bounds how many it may hold at one moment. Sixteen is
+/// far past what a real page does — a dev server's hot-reload socket, a
+/// notification stream, a live feed — and far short of the ceiling.
+///
+/// Counted over the maps rather than over live peers: this engine cannot ask a
+/// channel whether the far end has gone without a method on the trait that
+/// crosses the process split, and a page that opens sixteen and closes none is
+/// holding sixteen whatever the peers think.
+pub const MAX_OPEN_CHANNELS: usize = 16;
+
+/// How many requests a page may have *waiting to be started*.
+///
+/// [`MAX_INFLIGHT_FETCHES`] bounds what is on the wire and
+/// [`crate::budget::Limits::max_requests`] bounds what a page may send — and
+/// neither bounded the queue in between. `fetch()` returns before anything is
+/// decided about it, so a loop calling it builds one `FetchSlot` per call,
+/// holding a URL, a method, a body and headers, and the drain only runs once
+/// per settle round. Five million iterations is what the loop limit permits;
+/// even a small body each is gigabytes before the request budget has refused a
+/// single one.
+///
+/// Twice the default request allowance, so the *budget* is what an ordinary
+/// runaway page hits and this only catches the shape the budget cannot see: a
+/// page queueing faster than the engine can refuse.
+pub const MAX_QUEUED_FETCHES: usize = 1_000;
+
+/// How many request links one realm remembers.
+///
+/// The link list is the causal join between an action and a row in the request
+/// log, and it grew one entry per `fetch()` for the life of the page — so the
+/// bound above stops the queue and this stops the ledger of it. What is dropped
+/// is the *link*, never the receipt: the request log is the record, and it is
+/// the broker's.
+pub const MAX_REQUEST_LINKS: usize = 4_000;
+
 /// How many requests this engine will have on the wire at once.
 ///
 /// Six, which is what browsers settled on per host for HTTP/1.1 — enough that a

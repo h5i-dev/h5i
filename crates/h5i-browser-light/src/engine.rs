@@ -263,6 +263,16 @@ const INLINE_HANDLER_SELECTOR: &str = "[onload],[onclick],[onerror],[onchange],[
     [onpagehide],[onhashchange],[onpopstate],[onresize],[onmessage],[onunload],\
     [onbeforeunload],[onanimationend],[ontransitionend],[onpointerdown],[onpointerup]";
 
+/// What the snapshot says when a navigation left an origin behind.
+///
+/// One string rather than two, because it is written at two points now — when
+/// the document is built, which is before its subresources and frames are
+/// fetched, and again when the page is finished, for an origin change that
+/// happened after that.
+const SESSION_DROPPED_NOTE: &str =
+    "cookies from the previous origin were dropped on navigation: this engine holds a \
+     session only for the origin currently loaded";
+
 /// How many frame documents one page may pull in, including nested ones.
 ///
 /// A bound, and a *said* bound (§B16.10): ad-stuffed pages carry dozens of
@@ -308,6 +318,9 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
     let mut failures: Vec<String> = Vec::new();
     let mut seen: Vec<usize> = Vec::new();
     let mut capped = false;
+    // Where each grafted document came from, for the note. See the note itself
+    // for why counting them was not enough.
+    let mut origins: Vec<String> = Vec::new();
 
     loop {
         // One frame per iteration: the graft invalidates any longer list of
@@ -343,7 +356,8 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
         };
 
         // `srcdoc` wins over `src`, per spec, and needs no fetch: it is inline
-        // content the parser already carried, like a `data:` URL.
+        // content the parser already carried, like a `data:` URL — and so has
+        // this page's own origin, which is why it contributes no name.
         let html = if let Some(inline) = srcdoc {
             inline
         } else {
@@ -390,6 +404,10 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
                 failures.push(format!("{resolved}: `{kind}` is not a document"));
                 continue;
             }
+            match crate::cors::Origin::of(&outcome.final_url) {
+                Some(origin) => origins.push(origin.header()),
+                None => origins.push(outcome.final_url.to_string()),
+            }
             let encoding = crate::encoding::sniff(&outcome.body, content_type.as_deref());
             crate::encoding::decode(&outcome.body, encoding)
         };
@@ -419,6 +437,11 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
         }
         {
             let mut doomed: Vec<usize> = Vec::new();
+            // Script that is not in a `<script>` element: the event-handler
+            // content attributes, and the `javascript:` URLs. See
+            // `defuse_attribute` for why removing the elements alone was only
+            // half the boundary.
+            let mut defused: Vec<(usize, blitz_dom::QualName)> = Vec::new();
             {
                 let doc = page.doc.borrow();
                 let mut stack = vec![frame_id];
@@ -435,15 +458,24 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
                             doomed.push(at);
                             continue;
                         }
+                        for attribute in el.attrs() {
+                            if defuse_attribute(attribute.name.local.as_ref(), &attribute.value) {
+                                stripped_scripts += 1;
+                                defused.push((at, attribute.name.clone()));
+                            }
+                        }
                     }
                     for child in node.children.clone() {
                         stack.push(child);
                     }
                 }
             }
-            if !doomed.is_empty() {
+            if !doomed.is_empty() || !defused.is_empty() {
                 let mut doc = page.doc.borrow_mut();
                 let mut mutator = doc.mutate();
+                for (id, name) in defused {
+                    mutator.clear_attribute(id, name);
+                }
                 for id in doomed {
                     mutator.remove_node(id);
                 }
@@ -453,12 +485,28 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
     }
 
     if loaded > 0 {
+        // **Named, not just counted.** A flattened frame is somebody else's
+        // document appearing inline in the agent's reading of this one, with
+        // nothing in the outline to say which lines came from where. For an
+        // engine whose claim is that a reader can tell where bytes came from,
+        // "three frames were loaded" is not that: a third party writing into
+        // the agent's reading of a page is a prompt-injection channel, and the
+        // one thing that makes it answerable is naming the origin.
+        let mut named = origins;
+        named.sort();
+        named.dedup();
+        let from = if named.is_empty() {
+            "written inline by this page".to_string()
+        } else {
+            format!("served by {}", named.join(", "))
+        };
         page.note(&format!(
-            "{loaded} frame(s) were loaded as content: each document was fetched through \
-             the policy (initiator `frame` in the request log) and appears in the outline \
-             below, flattened. Their scripts do not run ({stripped_scripts} stripped) and \
-             their styles do not apply — a frame here is content, not a second page — and \
-             `contentDocument` answers null."
+            "{loaded} frame(s) were loaded as content, {from}: each document was fetched \
+             through the policy (initiator `frame` in the request log) and appears in the \
+             outline below, flattened, so some of what follows is another origin's page \
+             rather than this one's. Their scripts do not run ({stripped_scripts} stripped) \
+             and their styles do not apply — a frame here is content, not a second page — \
+             and `contentDocument` answers null."
         ));
     }
     if capped {
@@ -475,6 +523,56 @@ fn load_frames(page: &mut Page, broker: &Arc<dyn Broker>) {
             failures.join("; ")
         ));
     }
+}
+
+/// Whether this attribute of a flattened frame's content is script.
+///
+/// Removing `<script>`, `<style>` and `<link>` was only half of §B21's
+/// boundary. An event-handler content attribute *is* script — the prelude
+/// compiles `on*` attributes into functions over the whole document, and does
+/// not know one subtree came from somewhere else — so a frame's `onclick`
+/// became a function running in the **host page's** realm, with the host's
+/// origin, the host's `document.cookie` and the host's fetch authority. That is
+/// exactly the two-origins-one-realm problem the frame boundary exists to
+/// refuse, and it was reachable by the agent doing the thing frames were
+/// reopened for: clicking something inside an embedded form.
+///
+/// `javascript:` in a URL attribute is the same script by another road, and is
+/// refused here for the same reason `load_frames` refuses a `javascript:` frame
+/// source by name.
+///
+/// The `on*` rule is a prefix rather than the enumerated list the prelude
+/// compiles from, deliberately: this is the boundary and that list is a
+/// feature, so a handler added there must not silently become one the frame
+/// gets to use.
+fn defuse_attribute(name: &str, value: &str) -> bool {
+    // Lowercased rather than compared as it arrives. The HTML parser hands
+    // back lowercase local names, but foreign content (SVG, MathML) keeps the
+    // case the document wrote, and a boundary that a page can step around by
+    // capitalising an attribute is not one.
+    let name = name.to_ascii_lowercase();
+    if name.len() > 2 && name.starts_with("on") {
+        return true;
+    }
+    matches!(
+        name.as_str(),
+        "href" | "src" | "action" | "formaction" | "data" | "xlink:href"
+    ) && is_javascript_url(value)
+}
+
+/// Whether a URL attribute names the `javascript:` scheme.
+///
+/// The comparison is on the value with ASCII whitespace and control characters
+/// removed, because the HTML parser strips those from a URL before resolving
+/// it: `java\tscript:alert(1)` is a `javascript:` URL, and a plain
+/// `starts_with` on the raw value is the classic way to miss one.
+fn is_javascript_url(value: &str) -> bool {
+    let cleaned: String = value
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace() && !c.is_control())
+        .collect();
+    cleaned.len() >= "javascript:".len()
+        && cleaned[.."javascript:".len()].eq_ignore_ascii_case("javascript:")
 }
 
 /// Whether to compile the browser prelude while this navigation is in flight.
@@ -754,6 +852,28 @@ impl Page {
         fonts: FontSetup,
         options: PageOptions,
     ) -> Self {
+        // **Before the document exists, and therefore before its subresources
+        // and its frames are fetched.**
+        //
+        // The drop used to live in `PageFactory::finish`, at the *end* of the
+        // navigation — and a page's frames and subresources are fetched before
+        // that. So arriving at `evil.example` with `bank.example`'s session
+        // still in the jar, and being told to fetch `bank.example` in a frame,
+        // carried the credential; §B21 then flattened the authenticated answer
+        // into the outline the agent reads. Two allowed origins and a
+        // cross-origin credentialed read, which is the pair of properties
+        // `crate::cors` and `Jar::retain_origin` exist between them to refuse.
+        //
+        // Here rather than in `Page::open`, because the constructors that take
+        // markup already in hand fetch subresources too, and `Page::open`
+        // arrives here with the URL that was actually *served* — so a redirect
+        // is judged by where it landed rather than by where it was aimed, which
+        // is the reason the drop moved out of `open` in the first place.
+        //
+        // `finish` keeps its own call: script can navigate after this point,
+        // and the note belongs where the page is finished.
+        let dropped_session = broker.keep_only_origin(base_url);
+
         let viewport = Viewport::new(
             options.width,
             options.height,
@@ -808,6 +928,9 @@ impl Page {
 
         Self::apply_ua_stylesheet(&mut doc);
         seed_checkbox_state(&mut doc);
+        // Before layout, because layout is what a deep tree kills. See
+        // `prune_deep_nesting`.
+        let over_nested = prune_deep_nesting(&mut doc);
 
         // Twice, deliberately. The broker is synchronous, so subresources have
         // already completed by the time parsing returns, but their results
@@ -830,6 +953,19 @@ impl Page {
             );
         }
 
+        let mut notes: Vec<String> = Vec::new();
+        if over_nested > 0 {
+            notes.push(format!(
+                "this page nests elements more than {MAX_ELEMENT_DEPTH} deep; {over_nested} \
+                 subtree(s) below that were dropped before layout. The bound exists because \
+                 the layout pass recurses and a deep enough page ends the process rather than \
+                 the page, and it is said here rather than silently applied."
+            ));
+        }
+        if dropped_session {
+            notes.push(SESSION_DROPPED_NOTE.to_string());
+        }
+
         Self {
             // Assumed until `from_bytes` says otherwise: a string handed
             // straight to `from_html` has already been decoded by someone.
@@ -846,7 +982,7 @@ impl Page {
             ran_scripts: false,
             layout_failure,
             settled: None,
-            notes: Vec::new(),
+            notes,
         }
     }
 
@@ -1193,11 +1329,23 @@ impl Page {
                     };
                     // Document-scoped for the same reason the classic `src`
                     // above is: the URL is the page's choice and the body is
-                    // executed.
-                    let outcome = broker.fetch_from(
+                    // executed. **And CORS-checked, which the classic one is
+                    // not.** That difference is the spec's and it is the whole
+                    // of why JSONP exists: a classic script may be loaded
+                    // cross-origin without asking, a module script may not. This
+                    // fetched one with no CORS context, so a cross-origin module
+                    // was parsed and evaluated in this page's realm without the
+                    // server ever being asked — see `crate::script::modules`,
+                    // which had the same hole on the dynamic-import path.
+                    let outcome = broker.send_script(
                         &url,
-                        crate::receipt::Initiator::Subresource,
-                        Some(&document),
+                        "GET",
+                        &[],
+                        None,
+                        &document,
+                        &[],
+                        crate::cors::Mode::Cors,
+                        crate::cors::Credentials::SameOrigin,
                     );
                     if let Some(error) = outcome.error {
                         script.note_error(&format!("could not load {url}: {error}"));
@@ -1238,7 +1386,7 @@ impl Page {
 
         let settled = script.settle();
         if script.take_dirty() {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
         // Drained and discarded: these are the page *loading* — its module
         // graph and any fetch its startup made. Leaving them queued would
@@ -1260,7 +1408,7 @@ impl Page {
         // realm has to be installed on `self` first, because the surfaces live
         // on its host — so this cannot move above the line before it.
         if self.composite_canvases() {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
         Ok(())
     }
@@ -1284,7 +1432,7 @@ impl Page {
         self.settled = Some(settled);
         let painted = self.composite_canvases();
         if dirty || painted {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
         Some(requests)
     }
@@ -1372,7 +1520,7 @@ impl Page {
         // layout pass then has to see.
         let painted = self.composite_canvases();
         if dirty || painted {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
         dirty || painted
     }
@@ -1464,7 +1612,7 @@ impl Page {
         self.settled = Some(settled);
         let painted = self.composite_canvases();
         if dirty || painted {
-            self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+            self.note_layout_failure(lay_out(&self.doc));
         }
     }
 
@@ -1540,7 +1688,7 @@ impl Page {
     /// Called once after a settle rather than after each mutation: a script that
     /// appends fifty rows should lay out once, not fifty times.
     pub fn refresh(&mut self) {
-        self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+        self.note_layout_failure(lay_out(&self.doc));
     }
 
     /// The outline an agent reads.
@@ -1778,7 +1926,7 @@ impl Page {
                 .and_then(|node| node.data.downcast_element_mut())?;
             element.special_data = SpecialElementData::CheckboxInput(checked);
             // `:checked` is a real selector and the cascade has to see it.
-            let _ = guard_layout(|| doc.resolve(0.0));
+            let _ = lay_out_doc(&mut doc);
         }
 
         // The pair a *user* edit fires, in the order a page expects. A page
@@ -1867,7 +2015,7 @@ impl Page {
                     }
                 }
             }
-            let _ = guard_layout(|| doc.resolve(0.0));
+            let _ = lay_out_doc(&mut doc);
         }
 
         self.dispatch_event(node_id, "input");
@@ -1919,7 +2067,7 @@ impl Page {
         });
         // Typing changes layout — a longer value can reflow the form — and
         // nothing else in this file re-resolves on the agent's behalf.
-        let _ = guard_layout(|| doc.resolve(0.0));
+        let _ = lay_out_doc(&mut doc);
         drop(doc);
 
         // A *user* edit fires input then change, in that order. Script setting
@@ -1932,7 +2080,7 @@ impl Page {
             let dirty = script.take_dirty();
             self.settled = Some(settled);
             if dirty {
-                self.note_layout_failure(guard_layout(|| self.doc.borrow_mut().resolve(0.0)));
+                self.note_layout_failure(lay_out(&self.doc));
             }
         }
         true
@@ -2222,11 +2370,12 @@ impl PageFactory {
     /// The rule itself, on a borrow, so the two infallible constructors can run
     /// it too rather than keeping their own copy of half of it.
     fn finish_page(&self, page: &mut Page) -> Result<(), H5iError> {
+        // The backstop. `Page::from_html` drops against the origin actually
+        // served, *before* the page's subresources and frames go out; this
+        // catches an origin change that happened after that — a script
+        // navigation, a submission that built its page another way.
         if self.broker.keep_only_origin(page.url()) {
-            page.note(
-                "cookies from the previous origin were dropped on navigation: this engine \
-                 holds a session only for the origin currently loaded",
-            );
+            page.note(SESSION_DROPPED_NOTE);
         }
         if self.options.script {
             page.run_scripts(self.broker.clone())?;
@@ -2330,6 +2479,27 @@ impl PageFactory {
 /// `AssertUnwindSafe` because the document is behind a `RefCell` that a panic
 /// may leave mid-update. That is exactly the risk being accepted: a possibly
 /// incomplete tree, read and reported, in place of no process.
+/// One layout pass, over a tree bounded first.
+///
+/// **The parse-time prune is not the only door into a deep tree.** Script
+/// builds one after it — `el.innerHTML = "<div>".repeat(20000)` is four
+/// characters of JavaScript — and every layout after that walks whatever is
+/// there. Layout recurses, so the bound has to be re-applied wherever layout is
+/// asked for rather than once at the start.
+///
+/// The walk is one iterative pass over the node tree, against a `resolve` that
+/// does style resolution and layout over the same nodes: a constant factor on
+/// something already linear in the document.
+pub(crate) fn lay_out(doc: &Rc<RefCell<BaseDocument>>) -> Result<(), String> {
+    lay_out_doc(&mut doc.borrow_mut())
+}
+
+/// The same, for a caller already holding the borrow.
+fn lay_out_doc(doc: &mut BaseDocument) -> Result<(), String> {
+    prune_deep_nesting(doc);
+    guard_layout(|| doc.resolve(0.0))
+}
+
 fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
 
@@ -2341,6 +2511,64 @@ fn guard_layout(body: impl FnOnce()) -> Result<(), String> {
             .or_else(|| payload.downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "the layout engine panicked".to_string())
     })
+}
+
+/// How deeply one page may nest elements.
+///
+/// The parser is iterative and builds whatever the markup says; **layout is
+/// not**. `doc.resolve` walks the tree by recursion, so a page of five thousand
+/// nested `<div>`s overflowed the stack and aborted the process — no panic to
+/// catch, no page, no receipts, and no session left to say what happened. Plain
+/// HTML, no script, from any origin the box's browser is pointed at: the same
+/// class of defect as the `Max-Age` overflow, where a number off the page
+/// decided whether the agent driving the engine keeps running.
+///
+/// `guard_layout` cannot help. It catches a panic; a stack overflow is a
+/// `SIGSEGV` the runtime turns into an abort, and there is nothing to unwind.
+/// So the tree is bounded *before* it reaches layout instead.
+///
+/// 512, which is what a browser does — Chrome's parser caps HTML nesting at the
+/// same number and reparents beyond it. A document an agent is reading has
+/// nothing legitimate at that depth; the deepest page in this project's corpus
+/// is under 40.
+pub(crate) const MAX_ELEMENT_DEPTH: usize = 512;
+
+/// Cut every subtree that sits deeper than [`MAX_ELEMENT_DEPTH`], and say how
+/// many were cut.
+///
+/// **Iterative, with its own stack**, which is the whole point: a recursive
+/// walk to find the too-deep nodes would overflow on exactly the documents it
+/// exists to defend against.
+///
+/// The nodes at the boundary are kept and their children dropped, so the top of
+/// the document — which is all of it that a reader was ever going to see — is
+/// unchanged. `remove_node` unparents rather than freeing, the same thing
+/// `load_frames` does with a frame's scripts.
+fn prune_deep_nesting(doc: &mut BaseDocument) -> usize {
+    let mut doomed: Vec<usize> = Vec::new();
+    {
+        let root = doc.root_node().id;
+        let mut stack: Vec<(usize, usize)> = vec![(root, 0)];
+        while let Some((id, depth)) = stack.pop() {
+            let Some(node) = doc.get_node(id) else { continue };
+            if depth >= MAX_ELEMENT_DEPTH {
+                doomed.push(id);
+                continue;
+            }
+            for child in &node.children {
+                stack.push((*child, depth + 1));
+            }
+        }
+    }
+    if doomed.is_empty() {
+        return 0;
+    }
+    let cut = doomed.len();
+    let mut mutator = doc.mutate();
+    for id in doomed {
+        mutator.remove_node(id);
+    }
+    cut
 }
 
 /// Remove `src` from every `<img>`, for a second attempt at markup that killed
@@ -3119,6 +3347,457 @@ mod frame_tests {
             page.notes.iter().any(|n| n.contains("loaded as content")),
             "the flattening is stated, not silent: {:?}",
             page.notes
+        );
+    }
+
+    /// §B21 says a flattened frame's scripts never run. Stripping `<script>`
+    /// was only half of it: an event-handler content attribute is script too,
+    /// and the prelude compiles those from the whole document — so a frame's
+    /// `onload` became a function running in the *host page's* realm, with the
+    /// host's origin, the host's `document.cookie` and the host's fetch
+    /// authority. That is the two-origins-one-realm problem the boundary
+    /// exists to refuse, reached through the one hole left in it.
+    /// A page can nest as deeply as it likes, and layout recurses over the
+    /// tree — so five thousand nested `<div>`s overflowed the stack and aborted
+    /// the process. Plain HTML, no script, from any origin the box's browser is
+    /// pointed at: no panic to catch, no page, no receipts, and no session left
+    /// to say what happened.
+    ///
+    /// On a thread with the engine's own stack size, because that arrangement
+    /// is half of the fix and a test running on libtest's much smaller one
+    /// would be measuring the harness. See `cli::run_on_a_deep_stack`.
+    #[test]
+    fn a_deeply_nested_page_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let depth = 5_000;
+                let mut html = String::with_capacity(depth * 12);
+                html.push_str("<html><body><p>shallow</p>");
+                for _ in 0..depth {
+                    html.push_str("<div>");
+                }
+                html.push_str("deep");
+                for _ in 0..depth {
+                    html.push_str("</div>");
+                }
+                html.push_str("</body></html>");
+
+                let (page, _broker) = page_with(&html, Policy::new());
+                let rendered = page.snapshot().render();
+                assert!(!rendered.is_empty());
+                assert!(
+                    page.notes.iter().any(|n| n.contains("nests elements more than")),
+                    "the bound is said, not silently applied: {:?}",
+                    page.notes
+                );
+                // The content above the bound is still there.
+                assert!(rendered.contains("shallow"), "{rendered}");
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives a page it cannot lay out in full");
+    }
+
+    /// The parse-time bound is not the only door into a deep tree: script can
+    /// build one after it, and the next layout walks whatever is there.
+    #[test]
+    fn a_script_built_deep_tree_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let broker = crate::net::LocalBroker::new(
+                    Policy::new(),
+                    Arc::new(MemorySink::new()),
+                    None,
+                )
+                .expect("broker");
+                let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+                let factory = PageFactory::new(
+                    broker,
+                    fonts.sources.clone(),
+                    PageOptions {
+                        script: true,
+                        ..PageOptions::default()
+                    },
+                );
+                let page = factory.from_html(
+                    "<html><body><div id='host'></div><script>\
+                     document.getElementById('host').innerHTML = '<div>'.repeat(20000);\
+                     </script></body></html>",
+                    &Url::parse("https://host.example/").unwrap(),
+                );
+                let rendered = page.snapshot().render();
+                assert!(!rendered.is_empty());
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives a tree its own script built");
+    }
+
+    /// And the serialiser is a third door: `innerHTML` walks the tree by
+    /// recursion too, and script can read it back in the same turn it built the
+    /// tree in — before any layout, and so before the layout-time bound.
+    #[test]
+    fn reading_back_a_deep_tree_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let broker = crate::net::LocalBroker::new(
+                    Policy::new(),
+                    Arc::new(MemorySink::new()),
+                    None,
+                )
+                .expect("broker");
+                let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+                let factory = PageFactory::new(
+                    broker,
+                    fonts.sources.clone(),
+                    PageOptions {
+                        script: true,
+                        ..PageOptions::default()
+                    },
+                );
+                let page = factory.from_html(
+                    "<html><body><div id='host'></div><p id='out'>none</p><script>\
+                     const h = document.getElementById('host');\
+                     h.innerHTML = '<div>'.repeat(20000);\
+                     document.getElementById('out').textContent = 'len=' + h.innerHTML.length;\
+                     </script></body></html>",
+                    &Url::parse("https://host.example/").unwrap(),
+                );
+                let rendered = page.snapshot().render();
+                assert!(rendered.contains("len="), "the script finished:\n{rendered}");
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives reading back a tree its own script built");
+    }
+
+    /// What the bound costs a page that is nowhere near it. Printed rather
+    /// than asserted: a threshold here would fail on a loaded machine and say
+    /// nothing about the engine.
+    #[test]
+    #[ignore = "a measurement, not an assertion"]
+    fn the_depth_walk_costs_little_against_a_layout() {
+        let path = std::env::var("H5I_PERF_PAGE").expect("set H5I_PERF_PAGE");
+        let html = std::fs::read_to_string(path).expect("read");
+        let broker =
+            crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+                .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory =
+            PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+        let page = factory.from_html(&html, &Url::parse("https://host.example/").unwrap());
+
+        let mut nodes = 0usize;
+        {
+            let doc = page.doc.borrow();
+            let mut stack = vec![doc.root_node().id];
+            while let Some(id) = stack.pop() {
+                let Some(node) = doc.get_node(id) else { continue };
+                nodes += 1;
+                stack.extend(node.children.iter().copied());
+            }
+        }
+
+        let walk = {
+            let started = std::time::Instant::now();
+            for _ in 0..100 {
+                let mut doc = page.doc.borrow_mut();
+                prune_deep_nesting(&mut doc);
+            }
+            started.elapsed() / 100
+        };
+        let layout = {
+            let started = std::time::Instant::now();
+            for _ in 0..10 {
+                let _ = guard_layout(|| page.doc.borrow_mut().resolve(0.0));
+            }
+            started.elapsed() / 10
+        };
+        eprintln!("nodes={nodes} prune={walk:?} layout={layout:?}");
+    }
+
+    /// The fourth door: `getComputedStyle` resolves style on demand, so a
+    /// style read reaches layout on a tree script has just built — before the
+    /// settle loop does, and so before the bound the settle loop applies.
+    #[test]
+    fn a_style_read_on_a_deep_tree_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let broker = crate::net::LocalBroker::new(
+                    Policy::new(),
+                    Arc::new(MemorySink::new()),
+                    None,
+                )
+                .expect("broker");
+                let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+                let factory = PageFactory::new(
+                    broker,
+                    fonts.sources.clone(),
+                    PageOptions {
+                        script: true,
+                        ..PageOptions::default()
+                    },
+                );
+                let page = factory.from_html(
+                    "<html><body><div id='host'></div><p id='out'>none</p><script>\
+                     const h = document.getElementById('host');\
+                     h.innerHTML = '<div>'.repeat(20000);\
+                     document.getElementById('out').textContent =\
+                       'w=' + getComputedStyle(h).width;\
+                     </script></body></html>",
+                    &Url::parse("https://host.example/").unwrap(),
+                );
+                let rendered = page.snapshot().render();
+                assert!(rendered.contains("w="), "the script finished:\n{rendered}");
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives a style read on a tree its own script built");
+    }
+
+    /// A fifth candidate, found by sweeping for the class rather than by
+    /// hitting it: `collect_text_content` recurses with no depth of its own,
+    /// and `innerText` reaches it for an element that is not rendered.
+    #[test]
+    fn reading_inner_text_of_a_deep_hidden_tree_does_not_take_the_process_down() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let broker = crate::net::LocalBroker::new(
+                    Policy::new(),
+                    Arc::new(MemorySink::new()),
+                    None,
+                )
+                .expect("broker");
+                let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+                let factory = PageFactory::new(
+                    broker,
+                    fonts.sources.clone(),
+                    PageOptions {
+                        script: true,
+                        ..PageOptions::default()
+                    },
+                );
+                let page = factory.from_html(
+                    "<html><body><div id='host' style='display:none'></div>\
+                     <p id='out'>none</p><script>\
+                     const h = document.getElementById('host');\
+                     h.innerHTML = '<div>'.repeat(20000) + 'deep';\
+                     document.getElementById('out').textContent = 'len=' + h.innerText.length;\
+                     </script></body></html>",
+                    &Url::parse("https://host.example/").unwrap(),
+                );
+                let rendered = page.snapshot().render();
+                assert!(rendered.contains("len="), "the script finished:\n{rendered}");
+            })
+            .expect("a thread")
+            .join()
+            .expect("the engine survives an innerText read of a deep hidden tree");
+    }
+
+    /// An ordinary page is nowhere near the bound, so it is untouched and says
+    /// nothing about depth. The deepest page in this project's corpus is under
+    /// 40 levels.
+    #[test]
+    fn an_ordinarily_nested_page_is_not_pruned_or_annotated() {
+        let mut html = String::from("<html><body>");
+        for _ in 0..64 {
+            html.push_str("<div>");
+        }
+        html.push_str("<p>content</p>");
+        for _ in 0..64 {
+            html.push_str("</div>");
+        }
+        html.push_str("</body></html>");
+
+        let (page, _broker) = page_with(&html, Policy::new());
+        let rendered = page.snapshot().render();
+        assert!(rendered.contains("content"), "{rendered}");
+        assert!(
+            !page.notes.iter().any(|n| n.contains("nests elements")),
+            "{:?}",
+            page.notes
+        );
+    }
+
+    #[test]
+    fn a_frames_inline_handlers_are_script_and_do_not_run_either() {
+        let broker = crate::net::LocalBroker::new(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let options = PageOptions {
+            script: true,
+            ..PageOptions::default()
+        };
+        let factory = PageFactory::new(broker.clone(), fonts.sources.clone(), options.clone());
+        let html = r#"<html><body><p id="mark">host</p>
+               <iframe srcdoc="<span id='trap' onclick='document.getElementById(&quot;mark&quot;).textContent = &quot;pwned&quot;'>inner</span>"></iframe>
+               </body></html>"#;
+        let mut page = Page::from_bytes(
+            html.as_bytes(),
+            Some("text/html"),
+            &Url::parse("https://host.example/").unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            options,
+        );
+        let dyn_broker: Arc<dyn Broker> = broker.clone();
+        load_frames(&mut page, &dyn_broker);
+        let page = factory.finish(page).expect("finish");
+        let mut page = page;
+        let trap = page
+            .dom()
+            .borrow()
+            .query_selector_all("#trap")
+            .ok()
+            .and_then(|ids| ids.into_iter().next())
+            .expect("the frame content is in the tree");
+        page.dispatch_event(trap, "click");
+        let rendered = page.snapshot().render();
+        assert!(rendered.contains("inner"), "frame content missing:\n{rendered}");
+        assert!(
+            !rendered.contains("pwned"),
+            "a frame's inline handler ran in the host realm:\n{rendered}"
+        );
+    }
+
+    /// The same boundary, on the other road into it. A `javascript:` frame
+    /// *source* was already refused by name; a `javascript:` link inside the
+    /// flattened content was not, and clicking one is the same script in the
+    /// same realm.
+    #[test]
+    fn a_javascript_url_inside_a_frame_is_defused_however_it_is_spelled() {
+        assert!(is_javascript_url("javascript:alert(1)"));
+        assert!(is_javascript_url("JaVaScRiPt:alert(1)"));
+        // The parser strips ASCII whitespace and control characters from a URL
+        // before resolving it, so these are `javascript:` URLs too and a plain
+        // `starts_with` is how one gets missed.
+        assert!(is_javascript_url("  javascript:alert(1)"));
+        assert!(is_javascript_url("java\tscript:alert(1)"));
+        assert!(is_javascript_url("java\nscript:alert(1)"));
+        assert!(is_javascript_url("java\u{0}script:alert(1)"));
+        assert!(!is_javascript_url("https://example.com/javascript:x"));
+        assert!(!is_javascript_url("/not-javascript"));
+
+        assert!(defuse_attribute("onclick", "x()"));
+        assert!(defuse_attribute("ONLOAD", "x()"));
+        assert!(defuse_attribute("href", " javascript:x()"));
+        assert!(!defuse_attribute("href", "https://example.com/"));
+        // Not every short name beginning with `on` is a handler, and `on` is
+        // an attribute of its own on some elements.
+        assert!(!defuse_attribute("on", "x"));
+    }
+
+    /// The jar is bounded to the origin currently loaded — but the drop
+    /// happened in `finish`, at the *end* of the navigation, and a page's
+    /// frames and subresources are fetched before that. So arriving at
+    /// `evil.example` with `bank.example`'s session still in the jar, and being
+    /// told to fetch `bank.example` in a frame, carried the credential — and
+    /// §B21 then flattened the authenticated answer into the outline the agent
+    /// reads. Two allowed origins and a cross-origin credentialed read, which
+    /// is the pair of properties `crate::cors` and `Jar::retain_origin` exist
+    /// between them to refuse.
+    #[test]
+    fn a_page_cannot_frame_the_previous_origin_with_its_session_still_in_the_jar() {
+        let body = "<p>the account page</p>";
+        let bank = one_shot_server(body);
+        let broker = crate::net::LocalBroker::new(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        // The previous navigation's session, held for the origin it belongs to.
+        broker.jar().store(
+            &Url::parse(&format!("http://127.0.0.1:{bank}/")).unwrap(),
+            ["sid=secret"],
+        );
+        assert_eq!(broker.jar().len(), 1);
+
+        let html = format!(
+            r#"<html><body><iframe src="http://127.0.0.1:{bank}/account"></iframe></body></html>"#
+        );
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory =
+            PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+        // A *different* origin: a different loopback port is a different
+        // origin, and this one is the page being read.
+        let evil = Url::parse("http://127.0.0.2:9/").unwrap();
+        let mut page = Page::from_bytes(
+            html.as_bytes(),
+            Some("text/html"),
+            &evil,
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let dyn_broker: Arc<dyn Broker> = broker.clone();
+        load_frames(&mut page, &dyn_broker);
+        let _ = factory.finish(page);
+
+        let carried: usize = broker
+            .records()
+            .iter()
+            .filter(|r| r.url.contains("/account"))
+            .filter_map(|r| r.cookies_sent)
+            .sum();
+        assert_eq!(
+            carried, 0,
+            "the previous origin's session rode along on a frame fetch: {:?}",
+            broker.records()
+        );
+    }
+
+    /// A flattened frame is somebody else's document appearing inline in the
+    /// agent's reading of this one. Counting them was not enough: for an engine
+    /// whose claim is that a reader can tell where bytes came from, "three
+    /// frames were loaded" leaves a third party writing into the agent's
+    /// reading with no way to see whose words they are.
+    #[test]
+    fn the_note_names_the_origin_a_frames_content_came_from() {
+        let body = "<p>inner page</p>";
+        let port = one_shot_server(body);
+        let html = format!(
+            r#"<html><body><iframe src="http://127.0.0.1:{port}/inner"></iframe></body></html>"#
+        );
+        let broker =
+            crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None)
+                .expect("broker");
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory =
+            PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+        let mut page = Page::from_bytes(
+            html.as_bytes(),
+            Some("text/html"),
+            &Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let dyn_broker: Arc<dyn Broker> = broker.clone();
+        load_frames(&mut page, &dyn_broker);
+        let page = factory.finish(page).expect("finish");
+
+        let note = page
+            .notes
+            .iter()
+            .find(|n| n.contains("loaded as content"))
+            .expect("the flattening is stated");
+        assert!(
+            note.contains(&format!("http://127.0.0.1:{port}")),
+            "the origin is named: {note}"
+        );
+        assert!(
+            note.contains("another origin's page"),
+            "and what that means is said: {note}"
         );
     }
 

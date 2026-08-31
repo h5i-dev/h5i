@@ -1258,7 +1258,10 @@ fn a_page_can_read_an_event_stream_end_to_end() {
         fonts.sources.clone(),
         crate::engine::PageOptions::default(),
     );
-    let base = url::Url::parse("http://127.0.0.1/").unwrap();
+    // Same origin as the stream, deliberately: an `EventSource` is a `cors`
+    // request, so a page on a *different* port reading this one would need the
+    // server's permission. That case has its own test below.
+    let base = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let page = factory.from_html("<html><body><p id='out'>none</p></body></html>", &base);
     let mut script = Script::new(page.dom(), broker, &base).expect("realm");
 
@@ -1285,6 +1288,151 @@ fn a_page_can_read_an_event_stream_end_to_end() {
     assert!(methods.iter().any(|m| m == "SSE-OPEN"), "{methods:?}");
 
     let _ = server.join();
+}
+
+/// One server for the cross-origin `EventSource` tests: answers with whatever
+/// headers the case wants, then holds the connection briefly so the reader
+/// thread has something to read.
+fn event_stream_server(extra_headers: &'static str, content_type: &'static str) -> (u16, std::thread::JoinHandle<()>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            use std::io::{Read as _, Write as _};
+            let mut discard = [0u8; 2048];
+            let _ = stream.read(&mut discard);
+            let body = "data: tick one\n\n";
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\n{extra_headers}\
+                     Content-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+            let _ = stream.flush();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    });
+    (port, server)
+}
+
+fn realm_on(base: &url::Url) -> (crate::engine::Page, Script) {
+    let sink = std::sync::Arc::new(crate::receipt::MemorySink::new());
+    let broker =
+        crate::net::LocalBroker::new(crate::policy::Policy::new(), sink, None).expect("broker");
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = crate::engine::PageFactory::new(
+        broker.clone(),
+        fonts.sources.clone(),
+        crate::engine::PageOptions::default(),
+    );
+    let page = factory.from_html("<html><body><p id='out'>none</p></body></html>", base);
+    let script = Script::new(page.dom(), broker, base).expect("realm");
+    (page, script)
+}
+
+/// The hole this closes: `EventSource` had no same-origin policy at all. Two
+/// allowed origins and a script on either could open the other's stream and
+/// read it — the exact case `crate::cors` exists to refuse, on a second path
+/// that never asked.
+#[test]
+fn a_cross_origin_event_stream_is_refused_when_the_server_does_not_allow_it() {
+    let (port, server) = event_stream_server("", "text/event-stream");
+    // A different port is a different origin.
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+    let (_page, mut script) = realm_on(&base);
+
+    // Refused the way every other refusal in this engine reaches a page: as an
+    // error the caller sees, rather than a stream that opens and goes quiet.
+    let error = script
+        .eval(&format!(
+            "globalThis.es = new EventSource('http://127.0.0.1:{port}/events');"
+        ))
+        .expect_err("a stream the server did not allow must not open");
+    let error = error.to_string();
+    assert!(
+        error.contains("same-origin policy") && error.contains("Access-Control-Allow-Origin"),
+        "{error}"
+    );
+
+    let _ = server.join();
+}
+
+/// And is allowed when the server does say so, which is what makes the refusal
+/// above a policy rather than a breakage.
+#[test]
+fn a_cross_origin_event_stream_is_read_when_the_server_allows_the_origin() {
+    let (port, server) = event_stream_server(
+        "Access-Control-Allow-Origin: http://127.0.0.1:1\r\n",
+        "text/event-stream",
+    );
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+    let (_page, mut script) = realm_on(&base);
+
+    script
+        .eval(&format!(
+            "globalThis.got = null;\
+             globalThis.es = new EventSource('http://127.0.0.1:{port}/events');\
+             es.onmessage = (e) => {{ globalThis.got = e.data; }};"
+        ))
+        .expect("the stream opened");
+
+    let waited = script.settle_until_expr("globalThis.got !== null");
+    assert!(waited.met, "no event arrived: {}", waited.render());
+    assert_eq!(script.eval_value("globalThis.got").unwrap(), "tick one");
+
+    let _ = server.join();
+}
+
+/// A body that is not an event stream is not read as one. Without this the
+/// line parser is a reader for any document, and every line beginning `data:`
+/// in someone else's page becomes a message.
+#[test]
+fn an_answer_that_is_not_an_event_stream_is_not_read_as_one() {
+    let (port, server) = event_stream_server(
+        "Access-Control-Allow-Origin: *\r\n",
+        "text/html",
+    );
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+    let (_page, mut script) = realm_on(&base);
+
+    let error = script
+        .eval(&format!(
+            "globalThis.es = new EventSource('http://127.0.0.1:{port}/events');"
+        ))
+        .expect_err("a body that is not an event stream must not be read as one");
+    let error = error.to_string();
+    assert!(error.contains("not `text/event-stream`"), "{error}");
+
+    let _ = server.join();
+}
+
+/// Each of these is a thread, and the thread is the resource the session's
+/// sandbox profile actually caps — at 64 for the whole process, shared with the
+/// viewer loop, the control loop, the HTTP client's runtime and the fetch
+/// workers. Nothing bounded them, so a page could open until thread creation
+/// failed and take the engine's own workers down with it.
+///
+/// The arithmetic rather than sixteen live servers: what is under test is the
+/// bound, and the two maps it counts over are the sockets and the streams
+/// together, because each of them is one thread.
+#[test]
+fn a_page_cannot_hold_more_open_connections_than_the_engine_has_room_for() {
+    use crate::script::host::MAX_OPEN_CHANNELS;
+
+    // The profile's thread ceiling, which this has to leave room under.
+    const { assert!(MAX_OPEN_CHANNELS < 64) };
+    assert!(crate::script::dom_api::channel_room(0).is_ok());
+    assert!(crate::script::dom_api::channel_room(MAX_OPEN_CHANNELS - 1).is_ok());
+
+    let refused = crate::script::dom_api::channel_room(MAX_OPEN_CHANNELS)
+        .expect_err("the page is at the bound");
+    assert!(refused.contains("open connections"), "{refused}");
+    assert!(
+        refused.contains("Close one"),
+        "it says what to do about it: {refused}"
+    );
 }
 
 #[test]
@@ -2517,6 +2665,80 @@ fn a_module_graph_loads_and_evaluates() {
     // `./punctuation.js` inside `/lib/greet.js` is `/lib/punctuation.js`.
     let paths = asked.lock().unwrap().clone();
     assert!(paths.contains(&"/lib/punctuation.js".to_string()), "{paths:?}");
+}
+
+/// A module script is a `cors` request in every browser — unlike a classic
+/// `<script src>`, which is why JSONP exists. This one had no CORS context at
+/// all: no `Origin`, no `Access-Control-Allow-Origin` check on the answer, and
+/// the body handed back with full exposure. So
+/// `import("https://other.example/x.js")` was a cross-origin body fetched,
+/// parsed and *evaluated in this page's realm*, which is the one thing the CORS
+/// rule on module scripts exists to refuse.
+#[test]
+fn a_cross_origin_module_needs_the_servers_permission() {
+    let (port, _asked) = module_server(vec![(
+        "/theirs.js",
+        "globalThis.__ran = 'foreign code in this realm';",
+    )]);
+
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    // A different port is a different origin, and the module server sends no
+    // `Access-Control-Allow-Origin`.
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+
+    let page = factory.from_html(
+        &format!(
+            r#"<html><body><p id="out">before</p>
+               <script type="module">
+                 import('http://127.0.0.1:{port}/theirs.js')
+                   .then(() => {{ document.querySelector('#out').textContent = 'loaded'; }})
+                   .catch(() => {{ document.querySelector('#out').textContent = 'refused'; }});
+               </script></body></html>"#
+        ),
+        &base,
+    );
+
+    let rendered = page.snapshot().render();
+    assert!(
+        !rendered.contains("loaded"),
+        "a cross-origin module ran without the server allowing it:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("refused"),
+        "the page should see the refusal:\n{rendered}\nconsole: {:?}",
+        page.console()
+    );
+}
+
+/// `MAX_INFLIGHT_FETCHES` bounds what is on the wire and the request budget
+/// bounds what a page may send; neither bounded the queue in between.
+/// `fetch()` returns before anything is decided about it, so a loop calling it
+/// builds one slot per call — a URL, a method, a body, headers — and the drain
+/// only runs once per settle round.
+#[test]
+fn a_page_cannot_queue_requests_without_end() {
+    let broker =
+        crate::net::LocalBroker::new(Policy::new(), Arc::new(MemorySink::new()), None).unwrap();
+    let factory = scripted_factory(broker);
+    let base = url::Url::parse("http://127.0.0.1:1/").unwrap();
+
+    // Far more than the queue holds, each with a body, and nothing awaited.
+    let page = factory.from_html(
+        r#"<html><body><p id="out">before</p><script>
+             let refused = 0;
+             const body = 'x'.repeat(512);
+             for (let i = 0; i < 20000; i++) {
+               try { fetch('/q?' + i, { method: 'POST', body }); } catch (e) { refused++; }
+             }
+             document.querySelector('#out').textContent = 'done';
+           </script></body></html>"#,
+        &base,
+    );
+
+    let rendered = page.snapshot().render();
+    assert!(rendered.contains("done"), "the page finished:\n{rendered}");
 }
 
 #[test]

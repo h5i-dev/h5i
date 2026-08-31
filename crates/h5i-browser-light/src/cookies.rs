@@ -158,6 +158,63 @@ struct JarFile {
 /// The only version this build writes and the only one it reads.
 const JAR_VERSION: u32 = 1;
 
+/// What a jar file yielded.
+///
+/// Two numbers rather than one, because "restored nothing" and "refused
+/// everything" mean opposite things to whoever is looking at a session that is
+/// not logged in, and a count that folded them together would say neither.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Restored {
+    /// Cookies this jar now holds because the file had them.
+    pub loaded: usize,
+    /// Rows the file had that no server could have set, and that were
+    /// therefore not believed. See [`is_storable`].
+    pub refused: usize,
+}
+
+/// Whether a cookie is one the wire could have produced.
+///
+/// The store path applies these on the way in from a `Set-Cookie` header; this
+/// is the same set, applied to a row that arrived from a file instead. Written
+/// as a check over a finished [`Cookie`] rather than duplicated inside
+/// `parse_set_cookie`, so the two cannot drift into disagreeing about what a
+/// cookie is.
+fn is_storable(cookie: &Cookie) -> bool {
+    if cookie.host.is_empty() || !is_wire_safe(&cookie.name, &cookie.value) {
+        return false;
+    }
+    if !cookie.path.starts_with('/') {
+        return false;
+    }
+    // The prefixes, which exist purely so a weaker channel cannot overwrite a
+    // stronger one's cookie. A file is the weakest channel there is.
+    if cookie.name.starts_with("__Secure-") && !cookie.secure {
+        return false;
+    }
+    if cookie.name.starts_with("__Host-")
+        && (!cookie.secure || cookie.path != "/" || !cookie.host_only)
+    {
+        return false;
+    }
+    // A cookie asking to travel cross-site has to be `Secure`, on the wire and
+    // here.
+    if cookie.same_site == SameSite::None && !cookie.secure {
+        return false;
+    }
+    // A host-only cookie names one host and widens to nothing, so the suffix
+    // list has no say. A widened one is scoped to a *domain*, and a domain that
+    // is a public suffix would reach every host under it — `host: "com"` is one
+    // cookie sent to the whole of `.com`. An address is its own host and is
+    // never a domain, which is rule 3 on the store path.
+    if !cookie.host_only
+        && cookie.host.parse::<std::net::IpAddr>().is_err()
+        && is_public_suffix(&cookie.host)
+    {
+        return false;
+    }
+    true
+}
+
 impl Jar {
     pub fn new() -> Self {
         Self::default()
@@ -165,16 +222,16 @@ impl Jar {
 
     /// Mirror this jar to `path` from now on, and read whatever is there.
     ///
-    /// Called by the engine only when h5i passed `--cookie-jar`. Returns how
-    /// many cookies were loaded, or an error describing a file that could not
-    /// be read as a jar — never silence, because a `--restore` that silently
-    /// loaded nothing is the defect this whole feature exists to fix.
+    /// Called by the engine only when h5i passed `--cookie-jar`. Returns what
+    /// the file yielded, or an error describing a file that could not be read
+    /// as a jar — never silence, because a `--restore` that silently loaded
+    /// nothing is the defect this whole feature exists to fix.
     ///
     /// A missing file is not an error: it is the first run.
-    pub fn persist_to(&self, path: &std::path::Path) -> Result<usize, String> {
+    pub fn persist_to(&self, path: &std::path::Path) -> Result<Restored, String> {
         let loaded = match std::fs::read_to_string(path) {
             Ok(text) => self.load_json(&text)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Restored::default(),
             Err(e) => return Err(format!("could not read `{}`: {e}", path.display())),
         };
         if let Ok(mut slot) = self.file.lock() {
@@ -188,10 +245,28 @@ impl Jar {
         Ok(loaded)
     }
 
-    /// Merge a jar file's contents into this jar, dropping what has expired.
-    fn load_json(&self, text: &str) -> Result<usize, String> {
+    /// Merge a jar file's contents into this jar, dropping what has expired —
+    /// **and what no server could have set.**
+    ///
+    /// The store path enforces four `Domain` rules, the two name prefixes and
+    /// `SameSite=None` requires `Secure`; this path enforced none of them, so a
+    /// jar file was believed about things the wire is not. A row saying
+    /// `{"host": "com", "host_only": false}` widened one cookie to every `.com`
+    /// host, `__Host-sid` could arrive without the flags that name means, and
+    /// `expires` was a number off a file added straight to `SystemTime` — the
+    /// same overflow the `Max-Age` path fixed with `checked_add`, on the path
+    /// that reads a file rather than a header.
+    ///
+    /// That matters because the file is not this process's own. It lives in the
+    /// session directory, which inside a box is under a `/tmp` the `agent`
+    /// profile shares with the host, and `--restore` is exactly the feature for
+    /// carrying one session's jar into another.
+    ///
+    /// Refusals are counted rather than silent, and they are not an error: one
+    /// bad row must not cost a login that is fine.
+    fn load_json(&self, text: &str) -> Result<Restored, String> {
         if text.trim().is_empty() {
-            return Ok(0);
+            return Ok(Restored::default());
         }
         let parsed: JarFile =
             serde_json::from_str(text).map_err(|e| format!("this is not a jar file: {e}"))?;
@@ -206,8 +281,24 @@ impl Jar {
         let Ok(mut jar) = self.cookies.lock() else {
             return Err("the cookie jar is poisoned".to_string());
         };
-        let mut loaded = 0;
+        let mut out = Restored::default();
         for stored in parsed.cookies {
+            // An expiry the clock cannot represent. `SystemTime + Duration`
+            // **panics** on overflow and this addend is a number off a file, so
+            // a jar carrying `18446744073709551615` took the engine down before
+            // it had read a page. Refused rather than clamped: the row says
+            // when the cookie dies, and a date this build cannot hold is not a
+            // date to guess at.
+            let expires = match stored.expires {
+                None => None,
+                Some(secs) => match SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(secs)) {
+                    Some(at) => Some(at),
+                    None => {
+                        out.refused += 1;
+                        continue;
+                    }
+                },
+            };
             let cookie = Cookie {
                 name: stored.name,
                 value: stored.value,
@@ -222,12 +313,14 @@ impl Jar {
                     _ => SameSite::Lax,
                 },
                 path: stored.path,
-                expires: stored
-                    .expires
-                    .map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs)),
+                expires,
                 secure: stored.secure,
                 http_only: stored.http_only,
             };
+            if !is_storable(&cookie) {
+                out.refused += 1;
+                continue;
+            }
             if cookie.is_expired(now) {
                 continue;
             }
@@ -239,9 +332,9 @@ impl Jar {
                     && held.path == cookie.path)
             });
             jar.push(cookie);
-            loaded += 1;
+            out.loaded += 1;
         }
-        Ok(loaded)
+        Ok(out)
     }
 
     /// The jar as the file holds it. Public for the tests that check the shape.
@@ -546,11 +639,42 @@ fn is_secure(url: &Url) -> bool {
     if url.scheme() == "https" {
         return true;
     }
-    // `[::1]` with the brackets, because that is what `host_str` returns for an
-    // IPv6 literal — the bare `::1` this listed could never match, so a dev
-    // server on IPv6 loopback was the one first-party channel the rule above
-    // did not cover.
-    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1" | "[::1]"))
+    // The same rule the allowlist uses, rather than a second list beside it.
+    // The hand-written one covered `localhost`, `127.0.0.1` and `[::1]` and
+    // missed the rest of `127.0.0.0/8` and `app.localhost` — both loopback by
+    // the allowlist's reckoning, both a potentially-trustworthy origin by a
+    // browser's, and neither able to get a `Secure` cookie back. One rule
+    // cannot disagree with itself.
+    url.host_str().is_some_and(crate::policy::is_loopback)
+}
+
+/// Whether a cookie's name and value are what a header can carry.
+///
+/// RFC 6265 makes a cookie-name a token and a cookie-octet everything except
+/// control characters, whitespace, `"`, `,`, `;` and `\\`. The wire path never
+/// sees a control character — HTTP header parsing rejects one before this does
+/// — but `document.cookie` is a string from page script, and a jar file is a
+/// string from a file. Both reached the `Cookie:` header unchecked, so one
+/// malformed cookie made *every* later request's header unparseable and the
+/// page lost the cookies that were fine along with the one that was not.
+fn is_wire_safe(name: &str, value: &str) -> bool {
+    // **Narrower than the grammar, deliberately.** RFC 6265's cookie-octet also
+    // excludes space, comma, quote and backslash, and refusing those would
+    // refuse cookies the web actually sets — every browser accepts them,
+    // because a `Cookie:` header is one header split on `;` and none of them
+    // change where the split falls. What this rejects is what makes the header
+    // *unparseable* or reframes it: a control character, and the two delimiters
+    // the header itself is built from.
+    let unparseable = |c: char| c.is_control();
+    // `=` separates the pair, so it may not appear in a name; a value may hold
+    // one, which is what a base64 padding character is. Whitespace in a name is
+    // not a name — the header would carry two tokens where a server expects
+    // one — while whitespace in a value is ordinary.
+    !name.is_empty()
+        && !name
+            .chars()
+            .any(|c| unparseable(c) || c.is_whitespace() || matches!(c, '=' | ';'))
+        && !value.chars().any(|c| unparseable(c) || c == ';')
 }
 
 /// RFC 6265 §5.1.4 default-path: the request path with its last segment
@@ -708,6 +832,12 @@ fn parse_set_cookie(header: &str, host: &str, url: &Url, now: SystemTime) -> Opt
         return None;
     }
     let value = value.trim().trim_matches('"').to_string();
+    // Before anything else is read off the header: a name or value a `Cookie:`
+    // header cannot carry is not a cookie, and storing one poisons every later
+    // request rather than only this one.
+    if !is_wire_safe(name, &value) {
+        return None;
+    }
 
     let mut path: Option<String> = None;
     let mut secure = false;
@@ -1148,6 +1278,84 @@ mod tests {
         assert!(jar.header_for(&url("http://[::1]:3000/")).is_some());
     }
 
+    /// A name or value a `Cookie:` header cannot carry is not a cookie, and
+    /// storing one poisoned *every* later request rather than only this one:
+    /// the whole header is built from the jar, so the page lost the cookies
+    /// that were fine along with the one that was not. `document.cookie` is a
+    /// string from page script and a jar file is a string from a file; neither
+    /// goes through an HTTP header parser on the way in.
+    #[test]
+    fn a_cookie_a_header_cannot_carry_is_not_stored() {
+        let jar = Jar::new();
+        let site = url("https://app.example/");
+        jar.store(&site, ["good=fine"]);
+
+        for header in [
+            "bad\rname=v",
+            "bad\nname=v",
+            "bad name=v",
+            "bad\tname=v",
+            "ok=va\rlue",
+            "ok=va\u{0}lue",
+        ] {
+            assert_eq!(
+                jar.store(&site, [header]),
+                0,
+                "`{}` should not have been stored",
+                header.escape_debug()
+            );
+        }
+        assert_eq!(jar.len(), 1, "and the one good cookie is still there");
+
+        // And the rule stays narrower than the grammar, because the web is:
+        // a space, a comma and a quote in a *value* are all things real sites
+        // set and every browser accepts, and none of them move the `;` the
+        // header is split on. A base64 value keeps its padding too — `=` is
+        // legal in a value and only separates the pair once.
+        for header in [
+            "token=YWJjZA==",
+            "pref=a, b",
+            "greeting=hello world",
+            "quoted=\"a b\"",
+        ] {
+            assert_eq!(jar.store(&site, [header]), 1, "`{header}` is ordinary");
+        }
+        let (sent, _) = jar.header_for(&site).expect("sent");
+        assert!(sent.contains("token=YWJjZA=="), "{sent}");
+        assert!(sent.contains("greeting=hello world"), "{sent}");
+    }
+
+    /// Loopback is a first-party channel by one rule, not two: the allowlist's
+    /// `is_loopback` covers the whole of `127.0.0.0/8` and `*.localhost`, and
+    /// the hand-written list beside it covered neither — so a dev server on
+    /// `app.localhost` never got its `Secure` cookie back.
+    #[test]
+    fn every_spelling_of_loopback_is_a_first_party_channel() {
+        for address in [
+            "http://localhost:3000/",
+            "http://app.localhost:3000/",
+            "http://127.0.0.1:3000/",
+            "http://127.0.0.2:3000/",
+            "http://[::1]:3000/",
+        ] {
+            let jar = Jar::new();
+            let site = url(address);
+            assert_eq!(
+                jar.store(&site, ["sid=abc; Secure"]),
+                1,
+                "{address} should store a Secure cookie"
+            );
+            assert!(
+                jar.header_for(&site).is_some(),
+                "{address} should get it back"
+            );
+        }
+        // And plain http elsewhere still is not.
+        let jar = Jar::new();
+        jar.store(&url("http://app.example/"), ["sid=abc; Secure"]);
+        assert!(jar.header_for(&url("http://app.example/")).is_none());
+    }
+
     #[test]
     fn nonsense_is_dropped_rather_than_stored() {
         let jar = Jar::new();
@@ -1309,10 +1517,63 @@ mod persistence_tests {
 
         let second = Jar::new();
         let loaded = second.persist_to(&path).expect("second jar");
-        assert_eq!(loaded, 1, "the next session inherits the login");
+        assert_eq!(loaded.loaded, 1, "the next session inherits the login");
+        assert_eq!(loaded.refused, 0);
         let (header, count) = second.header_for(&site).expect("the cookie is sent");
         assert_eq!(count, 1);
         assert_eq!(header, "sid=s3cr3t");
+    }
+
+    /// A jar file was believed about things the wire is not. The store path
+    /// enforces four `Domain` rules, two name prefixes and `SameSite=None`
+    /// requires `Secure`; this path enforced none of them, and the file is not
+    /// this process's own — it lives in the session directory, which inside a
+    /// box is under a `/tmp` the `agent` profile shares with the host, and
+    /// `--restore` exists to carry one session's jar into another.
+    #[test]
+    fn a_jar_file_cannot_claim_a_scope_no_server_could_have_set() {
+        let jar = Jar::new();
+        let file = r#"{"version":1,"cookies":[
+            {"name":"wide","value":"x","host":"com","host_only":false,
+             "same_site":"lax","path":"/","secure":false,"http_only":false},
+            {"name":"__Host-sid","value":"x","host":"app.example","host_only":false,
+             "same_site":"lax","path":"/x","secure":false,"http_only":false},
+            {"name":"__Secure-sid","value":"x","host":"app.example","host_only":true,
+             "same_site":"lax","path":"/","secure":false,"http_only":false},
+            {"name":"tracker","value":"x","host":"app.example","host_only":true,
+             "same_site":"none","path":"/","secure":false,"http_only":false},
+            {"name":"traversed","value":"x","host":"app.example","host_only":true,
+             "same_site":"lax","path":"nope","secure":false,"http_only":false},
+            {"name":"good","value":"y","host":"app.example","host_only":true,
+             "same_site":"lax","path":"/","secure":false,"http_only":false}
+        ]}"#;
+        let got = jar.load_json(file).expect("the file parses");
+        assert_eq!(got.loaded, 1, "only the ordinary cookie is believed");
+        assert_eq!(got.refused, 5, "and the rest are counted, not silent");
+
+        // The widened one would otherwise be sent to every `.com` host.
+        assert!(jar.header_for(&url("https://anything.com/")).is_none());
+        assert!(jar.header_for(&url("https://app.example/")).is_some());
+    }
+
+    /// The same overflow the `Max-Age` path fixed with `checked_add`, on the
+    /// path that reads a file rather than a header: `SystemTime + Duration`
+    /// panics, so a jar carrying `u64::MAX` took the engine down before it had
+    /// read a page.
+    #[test]
+    fn an_expiry_the_clock_cannot_hold_is_refused_rather_than_aborting() {
+        let jar = Jar::new();
+        let file = format!(
+            r#"{{"version":1,"cookies":[
+                {{"name":"boom","value":"x","host":"app.example","host_only":true,
+                 "same_site":"lax","path":"/","expires":{},"secure":false,"http_only":false}}
+            ]}}"#,
+            u64::MAX
+        );
+        let got = jar.load_json(&file).expect("the file parses");
+        assert_eq!(got.loaded, 0);
+        assert_eq!(got.refused, 1);
+        assert!(jar.is_empty());
     }
 
     #[test]
@@ -1372,7 +1633,7 @@ mod persistence_tests {
         jar.clear();
 
         let next = Jar::new();
-        assert_eq!(next.persist_to(&path).expect("next"), 0);
+        assert_eq!(next.persist_to(&path).expect("next").loaded, 0);
     }
 
     #[test]
@@ -1409,7 +1670,7 @@ mod persistence_tests {
         // stored nothing must leave an empty jar rather than no jar.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("cookies.json");
-        assert_eq!(Jar::new().persist_to(&path).expect("first run"), 0);
+        assert_eq!(Jar::new().persist_to(&path).expect("first run").loaded, 0);
         assert!(path.exists());
     }
 

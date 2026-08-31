@@ -692,6 +692,10 @@ pub enum BrowserEngine {
 /// guarantee, and it is the same trade the Chrome candidate tables make.
 pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
     // Families.
+    // The stored-login family. Distinct from `credentials` on the wire and
+    // reaching the same secrets, so it is nameable in its own right — and
+    // `credentials` also covers it, see `browser_proxy::DENY_ALSO_COVERS`.
+    "auth",
     "cookies",
     "credentials",
     "profiler",
@@ -702,6 +706,15 @@ pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
     "tab",
     "trace",
     // Individual verbs.
+    //
+    // The script-execution verbs are each nameable, and `evaluate` also covers
+    // every one of them: a profile that denied `evaluate` to get a reading
+    // browser was getting one that still ran whatever the agent wrote, because
+    // `evalhandle` is `Runtime.evaluate` under another name. See
+    // `browser_proxy::DENY_ALSO_COVERS`.
+    "addinitscript",
+    "addscript",
+    "addstyle",
     "back",
     "cdp_url",
     "boundingbox",
@@ -716,7 +729,9 @@ pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
     "diff_url",
     "download",
     "drag",
+    "evalhandle",
     "evaluate",
+    "expose",
     "fill",
     "focus",
     "forward",
@@ -742,9 +757,11 @@ pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
     "press",
     "read",
     "reload",
+    "route",
     "screenshot",
     "scroll",
     "select",
+    "setcontent",
     "snapshot",
     "styles",
     "tap",
@@ -753,10 +770,12 @@ pub const BROWSER_DENYABLE_ACTIONS: &[&str] = &[
     "type",
     "uncheck",
     "upload",
+    "unroute",
     "url",
     "useragent",
     "viewport",
     "wait",
+    "waitforfunction",
 ];
 
 /// Check one `[profile.X.browser] deny` entry, fail-closed.
@@ -789,14 +808,21 @@ pub fn validate_browser_deny(entry: &str) -> Result<(), String> {
     // A near match is almost always the intent: `eval` -> `evaluate`,
     // `cookie` -> `cookies`.
     let lowered = name.to_ascii_lowercase();
+    // The *closest* near match, not the first in a list that happens to be
+    // alphabetical. `eval` prefixes both `evaluate` and `evalhandle`, and the
+    // one a person who typed `eval` meant is the shorter — the list order gave
+    // them `evalhandle`, which is a real verb and the wrong advice.
     let hint = BROWSER_DENYABLE_ACTIONS
         .iter()
-        .find(|known| **known == lowered || known.starts_with(&lowered) || lowered.starts_with(*known))
+        .filter(|known| {
+            **known == lowered || known.starts_with(&lowered) || lowered.starts_with(*known)
+        })
+        .min_by_key(|known| (known.len(), **known))
         .map(|known| format!(" — did you mean `{known}`?"))
         .unwrap_or_default();
 
     Err(format!(
-        "unknown browser action `{entry}` in `[profile.X.browser] deny`{hint}\n           An entry that matches no action denies nothing while the policy reads as if it did, \n           so it is refused here (fail-closed). Accepted names are the agent-browser verbs and \n           the families `cookies`, `credentials`, `state`, `storage`, `tab`, `trace`, `profiler`, \n           `react`, `recording` (a family covers its `name_*` members)."
+        "unknown browser action `{entry}` in `[profile.X.browser] deny`{hint}\n           An entry that matches no action denies nothing while the policy reads as if it did, \n           so it is refused here (fail-closed). Accepted names are the agent-browser verbs and \n           the families `auth`, `cookies`, `credentials`, `state`, `storage`, `tab`, `trace`, \n           `profiler`, `react`, `recording` (a family covers its `name_*` members)."
     ))
 }
 

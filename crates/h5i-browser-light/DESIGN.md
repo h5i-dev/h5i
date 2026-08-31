@@ -452,6 +452,14 @@ to it and watch the same pixels. The mode refuses the documented path, which is
 the threat it was written for; it is not containment against an agent that is
 trying, and the refusal text says so rather than implying otherwise.
 
+Two verbs are allowed through it — `status`, so the agent can tell when the mode
+ends, and `login` itself — and `status` reported the current URL. `requests` is
+refused during a login because it "names URLs a login flow visited", and this
+named the one the flow is *on*: an OAuth callback carries its `code` in the
+query, a magic link and a password reset carry their token in the path. It
+reports the origin while the mode is on, which is what answers "am I still on the
+right site" without answering anything else.
+
 ### JavaScript, as a limited preview
 
 Off by default. `--script` turns it on, and `capabilities --script` reports what
@@ -520,6 +528,14 @@ the page never named, inside a sandbox whose whole claim is that every request
 is policy-checked and receipted. Module fetches go through the same broker as
 everything else, carry the document origin, and appear in the request log.
 
+They are also `cors` requests, which a classic `<script src>` beside them is
+not — that difference is the spec's and it is the whole of why JSONP exists.
+Fetching one the classic way meant a cross-origin module was parsed and
+*evaluated in the page's realm* without the server ever being asked, which is the
+one thing the CORS rule on module scripts exists to refuse. Both the static
+`type="module" src` and the dynamic `import()` ask now, with the same-origin
+credentials a module script without a `crossorigin` attribute gets.
+
 ### Live connections, and the caveat that travels with them
 
 `WebSocket` and `EventSource` are real objects over real connections, not names
@@ -557,6 +573,28 @@ receipt rule right. The TLS half shares its connection between the reader thread
 and the writer under a lock — a TLS connection is one piece of state and cannot
 be `try_clone`d the way a `TcpStream` can — with a short read timeout that
 exists solely so the reader drops the lock often enough for a send to get in.
+
+**And the same-origin policy reaches both.** `EventSource` is a `cors` request
+in every browser and this engine sent it as if it were the agent's own: no
+`Origin` header, no `Access-Control-Allow-Origin` check on the answer, and the
+session's cookies attached. Two allowed origins and a script on either could
+open the other's stream and read it — the exact hole [`cors`](src/cors.rs) was
+written to close, on a second path that had grown its own fetch. It is planned
+as the `cors` request it is now, with same-origin credentials, and an answer
+that is not `text/event-stream` is refused, without which the line parser is a
+reader for *any* body and every line beginning `data:` in someone else's
+document is a message the page receives.
+
+A WebSocket is the other shape: CORS does not apply to one, so `Origin` is the
+**only** thing a server has to tell a page's socket from a program's. Sending
+none made every socket this engine opened on a page's behalf look like a
+non-browser client, which is precisely the shape a cross-site WebSocket hijack
+takes. The handshake carries the document's origin now — `null` for a document
+that has none — and a socket the *agent* named carries none, because there is no
+document behind that one. The address behind the name is checked here too: the
+pinning resolver cannot reach a client that calls `TcpStream::connect` itself, so
+the socket asks for the addresses the policy already approved and connects to
+those rather than resolving a second time.
 
 **One refusal stands, by name:**
 
