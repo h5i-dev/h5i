@@ -1240,3 +1240,58 @@ fn the_default_identity_adds_no_flag_an_older_engine_would_refuse() {
         "the refusal should come from the engine, not from clap"
     );
 }
+
+/// A file identity is refused in both lanes, and a mistyped name is not
+/// mistaken for one.
+///
+/// Two bugs in one test because they are one mistake: the first fix checked
+/// only whether the selector was a built-in, in only the `open` lane. So
+/// `read --in` still sent a host path into a box, and a mistyped built-in was
+/// told it had "named a file on this machine" that it never named.
+#[cfg(feature = "identity")]
+#[test]
+fn a_file_identity_is_refused_in_a_box_and_a_typo_is_not_called_a_file() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    let file = fixture.home.path().join("mine.toml");
+    std::fs::write(&file, "name = \"x\"\n").expect("write an identity file");
+    let path = file.display().to_string();
+    let url = fixture.site.base.clone();
+
+    // Both lanes name the boundary. `--in` names a box that does not exist, and
+    // that is the point: this refusal comes *before* anything is spawned, so it
+    // is reached whether or not the box is real.
+    for args in [
+        vec!["browser", "open", url.as_str(), "--in", "nobox", "--identity", &path],
+        vec!["browser", "read", url.as_str(), "--in", "nobox", "--identity", &path],
+    ] {
+        let lane = args[1];
+        let out = fixture.run(&args);
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{lane}: a host path must not go into a box");
+        assert!(
+            said.contains("names a file on this machine"),
+            "{lane} did not name the boundary: {said}"
+        );
+    }
+
+    // A mistyped built-in is a typo, not a file, and gets the answer that lists
+    // what there is.
+    let out = fixture.run(&[
+        "browser", "read", url.as_str(), "--in", "nobox", "--identity", "firefox-143-linx",
+    ]);
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !said.contains("names a file on this machine"),
+        "a typo was reported as a file: {said}"
+    );
+
+    // And on this machine a file identity is perfectly fine.
+    let here = fixture.run(&["browser", "read", url.as_str(), "--no-sandbox", "--identity", &path]);
+    assert!(
+        !String::from_utf8_lossy(&here.stderr).contains("names a file on this machine"),
+        "the boundary is a box's, not a file's"
+    );
+}

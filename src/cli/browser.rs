@@ -44,14 +44,38 @@ use h5i_core::ui::SUCCESS;
 /// says what it was waiting for and leaves the engine's own log behind.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Whether an identity selector is a path rather than a built-in name.
+/// Refuse an identity that lives in a file when the session runs in a box.
 ///
-/// Asked the same way [`h5i_browser_light::identity::Identity::resolve`] asks
-/// it, and in the same order: a built-in name wins, so a file that happens to
-/// be called `native` never shadows the identity of that name.
+/// A path cannot travel into a box. Every other path in a boxed argv is
+/// translated to one the box will have — `control_in_box`, `in_box_base` — and
+/// an identity file is named on the host and read by the engine, which for a
+/// boxed session are different filesystems. Passed through raw it arrived as
+/// "no browser identity called `/home/…/mine.toml`" followed by the list of
+/// built-ins, which reads as a typo rather than as a boundary.
+///
+/// **Both lanes, not just `open`.** `read --in` builds its own argv and was
+/// missed the first time this was fixed, so the same path went into the same
+/// box and produced the same misleading error.
+///
+/// The test is a built-in name *and* an existing file, in that order — the
+/// order [`h5i_browser_light::identity::Identity::resolve`] uses. A built-in
+/// wins, so a file called `native` never shadows the identity of that name; and
+/// a selector that is neither is left alone, so a mistyped built-in still gets
+/// "no browser identity called `firefox-143-linx`" rather than being told it
+/// named a file it never named.
 #[cfg(feature = "identity")]
-fn names_a_file(selector: &str) -> bool {
-    h5i_browser_light::identity::builtin(selector).is_none()
+fn refuse_a_file_identity_in_a_box(in_box: Option<&str>, selector: &str) -> anyhow::Result<()> {
+    let is_builtin = h5i_browser_light::identity::builtin(selector).is_some();
+    if in_box.is_none() || is_builtin || !std::path::Path::new(selector).exists() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "`--identity {selector}` names a file on this machine, and this runs in a box.\n\n  \
+         A box has its own filesystem, so a path beside you is not a path it has. Use one \
+         of the built-in identities, which travel by name:\n    \
+         h5i browser identity list\n\n  \
+         Or put the file where the box can read it and name it by the path it has in there."
+    )
 }
 
 /// The identity a session presents unless one is named.
@@ -1359,18 +1383,7 @@ fn start(
         // Refused here rather than made to work, because making it work means
         // copying a file into the box, and what a box may read is the box's
         // policy to state rather than this command's to widen.
-        if opts.in_box.is_some() && names_a_file(&opts.identity) {
-            anyhow::bail!(
-                "`--identity {}` names a file on this machine, and this session runs in a \
-                 box.\n\n  \
-                 A box has its own filesystem, so a path beside you is not a path it has. \
-                 Use one of the built-in identities, which travel by name:\n    \
-                 h5i browser identity list\n\n  \
-                 Or put the file where the box can read it and name it by the path it has \
-                 in there.",
-                opts.identity
-            );
-        }
+        refuse_a_file_identity_in_a_box(opts.in_box.as_deref(), &opts.identity)?;
         let identity = h5i_browser_light::identity::Identity::resolve(&opts.identity)
             .map_err(anyhow::Error::from)?;
         identity
@@ -2908,6 +2921,11 @@ fn read(
     if json {
         engine_args.push("--json".into());
     }
+    // The same boundary `open` refuses at, and it belongs here too: this lane
+    // builds its own argv, so the fix that only touched `open` left a path
+    // going into a box from here.
+    #[cfg(feature = "identity")]
+    refuse_a_file_identity_in_a_box(in_box.as_deref(), &identity)?;
     // Only when it differs from the default. See `net_args`: an in-box engine
     // may be older than this one, and a flag it has never heard of is a usage
     // error rather than a read.

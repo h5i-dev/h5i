@@ -428,6 +428,18 @@ pub struct Locale {
     pub timezone: Option<TimeZone>,
 }
 
+/// How many languages one identity may declare.
+///
+/// A header cap, and therefore a *coherence* cap. `Accept-Language` carries a
+/// descending q-value ladder and browsers stop at ten; carrying more would mean
+/// either a q below 0.1 or a header no browser sends. So the list is capped at
+/// what the header can say — because the alternative, discovered by testing it,
+/// is that an identity declaring twelve languages was admitted, sent ten on the
+/// wire, and reported twelve from `navigator.languages`. That is the exact
+/// disagreement between the wire and the page this module exists to prevent,
+/// produced by this module's own accessor.
+pub const MAX_LANGUAGES: usize = 10;
+
 impl Locale {
     /// The `Accept-Language` header these languages ask for.
     ///
@@ -441,7 +453,10 @@ impl Locale {
     pub fn accept_language(&self) -> String {
         self.languages
             .iter()
-            .take(10)
+            // Unreachable for an admitted identity — `incoherences` refuses a
+            // longer list — and kept so this can never silently disagree with
+            // `navigator.languages` if that check is ever loosened.
+            .take(MAX_LANGUAGES)
             .enumerate()
             .map(|(index, tag)| {
                 if index == 0 {
@@ -762,6 +777,18 @@ impl Identity {
             found.push(wrong(
                 "locale.languages",
                 "is empty, and navigator.languages never is",
+            ));
+        }
+        if self.locale.languages.len() > MAX_LANGUAGES {
+            found.push(wrong(
+                "locale.languages",
+                format!(
+                    "declares {} languages; `Accept-Language` carries at most {MAX_LANGUAGES}, \
+                     so the wire would offer {MAX_LANGUAGES} while navigator.languages reported \
+                     {} — two answers to one question",
+                    self.locale.languages.len(),
+                    self.locale.languages.len()
+                ),
             ));
         }
         for tag in &self.locale.languages {
@@ -1387,6 +1414,43 @@ mod tests {
             timezone: None,
         };
         assert_eq!(locale.accept_language(), "ja,en-US;q=0.9,en;q=0.8");
+    }
+
+    #[test]
+    fn more_languages_than_a_header_can_carry_are_refused() {
+        // Found by running it: twelve declared, ten on the wire, twelve in
+        // `navigator.languages`. Admitted, and incoherent — by this module's
+        // own accessor, which is the worst place for it to come from.
+        let mut identity = firefox_linux();
+        identity.locale.languages = (0..12).map(|n| format!("l{n}")).collect();
+        let found = identity.incoherences();
+        assert!(
+            found.iter().any(|f| f.field == "locale.languages"),
+            "{found:?}"
+        );
+
+        // At the cap it is fine, and the two agree: one entry per language.
+        identity.locale.languages = (0..MAX_LANGUAGES).map(|n| format!("l{n}")).collect();
+        assert!(identity.incoherences().is_empty());
+        assert_eq!(
+            identity.locale.accept_language().split(',').count(),
+            identity.locale.languages.len(),
+            "the header and the array must describe the same list"
+        );
+    }
+
+    /// Every built-in, and every list the header can carry, says the same thing
+    /// twice.
+    #[test]
+    fn the_header_and_navigator_languages_never_disagree() {
+        for identity in builtins() {
+            assert_eq!(
+                identity.locale.accept_language().split(',').count(),
+                identity.locale.languages.len(),
+                "`{}` sends a different number of languages than it reports",
+                identity.name
+            );
+        }
     }
 
     #[test]
