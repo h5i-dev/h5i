@@ -11,6 +11,7 @@ git2 = "0.20.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = { version = "0.8", features = ["parse", "display"] }
+sha2 = "0.10"
 
 # The repo's primary product is the `h5i` binary, so it lives at the root
 # (`cargo install --path .` / `cargo run` do the obvious thing). The library it
@@ -33,18 +34,39 @@ path = "src/main.rs"
 # `web` adds the `h5i ui` box console and, through h5i-core, the axum server
 # and the embedded React bundle it serves. On by default; drop it with
 # `--no-default-features` for a build that needs no Node toolchain.
-default = ["web", "share", "runner", "browser", "ytdlp"]
+default = ["web", "share", "runner", "browser", "ytdlp", "identity"]
 web = ["h5i-core/web"]
 # `browser` links the rendering engine into this binary, which is what
-# `h5i browser` execs itself to become (`h5i __engine`). On by default: without
-# it, `h5i browser open` has nothing to render a page with.
+# `h5i browser` execs itself to become (`h5i __engine`).
 #
-# A feature rather than an unconditional dependency for one reason, and it is
-# the reason the two-binary split was defensible for as long as it was: the
-# engine is blitz + stylo + boa, and building it is minutes where the rest of
-# h5i is seconds. Someone working on boxes, the forum or the runner builds
-# `--no-default-features` and never compiles a browser.
+# **This is the product, not one of four parts.** ROADMAP.md is the scope
+# authority and its one-liner is "give an AI agent a browser it can drive and
+# you can audit"; a build without this cannot do the thing h5i is for, and
+# `h5i browser open` has nothing to render a page with. The switch is not a
+# statement that the engine is optional, and the comment that used to sit here
+# read like one — it predated the pivot.
+#
+# What it is instead is a build-time convenience, and a measured one: the engine
+# is blitz + stylo + boa, and dropping it takes the graph from 455 crates to
+# 314. Someone spending the afternoon on boxes, the forum or the runner should
+# not pay for a browser they are not touching. That is the whole of the reason,
+# and it is enough of one.
+#
+# Note that `ytdlp` implies it, which is correct — `--via` is a flag on
+# `h5i browser transcript`, so there is nowhere to put it without the engine —
+# and which means "everything except the browser" has to drop `ytdlp` too, or
+# the feature comes straight back in.
 browser = ["dep:h5i-browser-light"]
+# `identity` adds `--identity` and `h5i browser identity`: one coherent browser
+# identity, read by the header layer and the script realm from the same object.
+# See `crates/h5i-browser-light/src/identity.rs`.
+#
+# On by default and gated anyway, for the reason `ytdlp` is. `--identity native`
+# is the default and costs nothing at run time. Without the feature there is no
+# `--identity` to type, no identity module in the binary, and the engine sends
+# the one agent string it has always sent. It implies `browser`, because the
+# thing being given an identity is the engine.
+identity = ["browser", "h5i-browser-light/identity"]
 # `ytdlp` adds the helper lane: `h5i browser transcript --via yt-dlp`, which
 # runs yt-dlp to reach the transcripts that are not in a page's markup at all —
 # YouTube's above all, whose captions live behind the player's own API.
@@ -74,7 +96,7 @@ bpf = ["h5i-core/bpf"]
 # boxes there over SSH (ROADMAP.md R1–R13). On by default because the worker
 # end of it is this same binary: a runner is an h5i install, so a build that
 # could not serve could not be a runner.
-runner = ["dep:h5i-runner", "dep:tempfile"]
+runner = ["dep:h5i-runner"]
 # `share` adds `h5i box share` / `h5i join` and, through h5i-share, the iroh
 # QUIC stack. Drop it for a build with no sharing in it at all;
 # `share-tunnel` is the narrower switch that keeps `--tunnel` and drops iroh.
@@ -102,11 +124,20 @@ h5i-runner = { path = "crates/h5i-runner", optional = true }
 # The rendering engine, linked so `h5i` can exec itself as one. It was a second
 # shipped binary until the pivot; see the crate's own Cargo.toml for why one
 # file is right now and two were right before.
-h5i-browser-light = { path = "crates/h5i-browser-light", optional = true }
-# A scratch directory for the source bundle a runner create builds and streams.
-# Optional with the feature that needs it; it is also a dev-dependency below,
-# which is fine — cargo unifies them.
-tempfile = { version = "3.8", optional = true }
+# `default-features = false` so the root's own `identity` feature is what turns
+# identities on, rather than them arriving through the dependency's defaults and
+# making the root switch cosmetic. The engine crate's only default feature is
+# `identity`, so this leaves the engine itself whole.
+h5i-browser-light = { path = "crates/h5i-browser-light", optional = true, default-features = false }
+# A scratch directory: the source bundle a `runner create` builds and streams,
+# and the workspace `h5i browser transcript --via` gives its helper.
+#
+# **Not optional, and it used to be.** It was declared with `runner`, which was
+# true when the runner was the only caller and stopped being true when the
+# browser lane grew one — so `--features browser` did not compile, and nothing
+# caught it because CI builds default and `--no-default-features` and neither is
+# that combination. A dependency two features need is a dependency of the crate.
+tempfile = "3.8"
 # For one job, in the helper lane: refusing a URL whose scheme is not http(s)
 # before it reaches a program that takes URLs. Already in the tree through
 # h5i-browser-light, so this adds a name to the manifest and no code to the
@@ -126,7 +157,7 @@ libc = "0.2.186"
 # policy digest comes from its manifest; a host session has no box, so its
 # policy is the allowlist it was started with and this is how that becomes a
 # comparable value.
-sha2 = "0.10"
+sha2 = { workspace = true }
 serde = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Only to drive `h5i-share`'s async transports from a blocking CLI handler.
@@ -140,7 +171,6 @@ clap_mangen = "0.2"
 # `kill(pid, SIGKILL)` in tests/browser_session_cli.rs: proving that an engine
 # that dies is recorded as having died needs a way to make one die.
 libc = "0.2.186"
-tempfile = "3.8"
 serde_json = { workspace = true }
 
 [profile.dev]

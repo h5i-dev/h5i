@@ -38,6 +38,8 @@ pub mod budget;
 pub mod cookies;
 pub mod engine;
 pub mod extract;
+#[cfg(feature = "identity")]
+pub mod identity;
 pub mod fonts;
 pub mod markdown;
 pub mod ipc;
@@ -59,6 +61,8 @@ pub mod wsclient;
 
 pub use broker::Broker;
 pub use engine::{Page, PageFactory, PageOptions};
+#[cfg(feature = "identity")]
+pub use identity::Identity;
 pub use policy::{Policy, Verdict};
 pub use receipt::{JsonlSink, MemorySink, RequestRecord, Sink};
 

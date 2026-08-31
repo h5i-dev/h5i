@@ -10194,6 +10194,22 @@
     });
   }
 
+  // The session's identity: one crossing per realm, before anything below is
+  // defined, so every value derived from it is an own property of its object
+  // from the moment that object exists.
+  //
+  // `api.identity` is absent in a build without the `identity` feature, and
+  // then these are the answers this engine gave before identities existed. The
+  // literal is not a second source of truth that could drift from the first:
+  // `identity::native()` is built from the same two constants, and
+  // `the_bare_build_answers_what_native_declares` fails the moment they differ.
+  const identity = api.identity ? api.identity() : {
+    mode: "native",
+    platform: "", vendor: "", productSub: "20030107", oscpu: "",
+    hardwareConcurrency: 1, maxTouchPoints: 0,
+    languages: ["en-US", "en"],
+  };
+
   Object.assign(globalThis, {
     CSS,
     addEventListener, removeEventListener, dispatchEvent,
@@ -10262,7 +10278,9 @@
     // than a plausible one — which is the only reason they are being added.
     // §B8.4's rule holds: a name that exists and answers wrongly is worse than
     // one that is absent, so anything whose honest answer would be a guess
-    // (`visualViewport`, `screen` geometry a real display would set) stays out.
+    // (`visualViewport`) stays out. `screen` was named here too and no longer
+    // is: it appears only when the identity declares a display, so its numbers
+    // are stated rather than guessed. See the `Screen` class above.
     //
     // There is no browser chrome, so every `BarProp` reports `visible: false`.
     // That is not a stub standing in for a toolbar we failed to build — it is
@@ -10331,11 +10349,23 @@
       appVersion: api.userAgent().replace(/^Mozilla\//, ""),
       appCodeName: "Mozilla",
       product: "Gecko",
-      vendor: "",
-      platform: "", language: "en-US", languages: ["en-US"],
-      onLine: true, cookieEnabled: false, maxTouchPoints: 0,
-      hardwareConcurrency: 1,
-      productSub: "20030107", vendorSub: "", oscpu: "",
+      // ── The session's identity, from the host ────────────────────────────
+      //
+      // Literals here were the bug, not the style: the broker wrote the same
+      // facts into `User-Agent` and `Accept-Language` from another file, and
+      // the two had already drifted — the header offered `en` and this array
+      // did not. One identity now, read through `api.identity()`, and defined
+      // here rather than patched on afterwards because a `defineProperty` over
+      // `navigator` is visible three ways: descriptor, getter `toString`,
+      // prototype. See `identity.rs`.
+      vendor: identity.vendor,
+      platform: identity.platform,
+      language: identity.languages[0],
+      languages: Object.freeze(identity.languages.slice()),
+      onLine: true, cookieEnabled: false,
+      maxTouchPoints: identity.maxTouchPoints,
+      hardwareConcurrency: identity.hardwareConcurrency,
+      productSub: identity.productSub, vendorSub: "", oscpu: identity.oscpu,
       pdfViewerEnabled: false,
       // Empty, which is what a plugin-less browser shows — the interfaces
       // are real, the lists have nothing in them.
@@ -10366,7 +10396,9 @@
     // state on one and reads it from the other loses it.
     get self() { return globalThis; },
 
-    devicePixelRatio: 1,
+    // 1 is what a display-less engine honestly has; a declared identity states
+    // one, and it must be the number `screen` was built from or the two clash.
+    devicePixelRatio: identity.screen ? identity.screen.devicePixelRatio : 1,
     scrollTo(x, y) {
       const top = typeof x === "object" && x !== null ? x.top : y;
       api.setScrollTop(api.root(), Number(top) || 0);
@@ -10530,6 +10562,12 @@
     MutationObserver,
     IntersectionObserver, ResizeObserver,
   });
+
+  // The display, when the identity declares one: its own tier, loaded here
+  // rather than on a property read. `screen` behind an accessor would be the
+  // tell this feature exists to avoid — a page reads descriptors first. See
+  // `prelude/screen.js`.
+  if (identity.screen) __h5iTier("screen");
 
   // Interface objects are **not enumerable** on the global, and every one of
   // ours was.

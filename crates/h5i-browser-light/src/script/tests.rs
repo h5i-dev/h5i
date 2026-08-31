@@ -15,6 +15,33 @@ fn page_and_script(html: &str) -> (crate::engine::Page, Script) {
     (page, script)
 }
 
+#[cfg(feature = "identity")]
+/// The same, presenting a chosen identity rather than the honest one.
+///
+/// Through the broker, not around it, because that is the claim being tested:
+/// the realm reads `navigator` from the object the broker would have written
+/// the headers from, so a test that injected the identity straight into the
+/// realm would be testing the one path that cannot drift.
+fn page_and_script_as(
+    html: &str,
+    identity: crate::identity::Identity,
+) -> (crate::engine::Page, Script) {
+    let broker = crate::net::LocalBroker::with_identity(
+        Policy::new(),
+        Arc::new(MemorySink::new()),
+        None,
+        crate::budget::Limits::default(),
+        Arc::new(identity),
+    )
+    .expect("broker");
+    let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(2));
+    let factory = PageFactory::new(broker, fonts.sources.clone(), PageOptions::default());
+    let base = url::Url::parse("https://app.example/").unwrap();
+    let page = factory.from_html(html, &base);
+    let script = Script::new(page.dom(), factory.broker().clone(), &base).expect("realm");
+    (page, script)
+}
+
 /// A page taken all the way through loading, which is what `page_and_script`
 /// deliberately is not: it builds a bare realm, so anything installed *by*
 /// `run_scripts` — the document lifecycle, named access — is not there.
@@ -5950,6 +5977,259 @@ fn the_wire_agent_and_the_scripted_one_are_the_same_string() {
     );
 }
 
+// ── the session's identity, as the page reads it ─────────────────────────────
+
+/// Off means *absent*, not merely unused.
+///
+/// The claim the `identity` feature makes is about the binary, not about how
+/// someone invokes it: without the feature there is no identity module, no
+/// `Screen` interface, and no crossing into Rust to build one. A page can check
+/// that for itself, which is what this does — `api.identity` is the only door,
+/// and in a bare build there is no door.
+///
+/// Written as one test with two arms rather than two tests, so the pair reads
+/// as a single fact about the switch.
+#[test]
+fn the_identity_binding_exists_only_in_a_build_that_has_identities() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    let present = script.eval_value("typeof __h5i.identity").unwrap();
+    if cfg!(feature = "identity") {
+        assert_eq!(present, "function", "the feature is on and the binding is missing");
+    } else {
+        assert_eq!(present, "undefined", "the feature is off and the binding is still there");
+        // And nothing it would have installed is reachable either. `screen` is
+        // the visible half of the feature, and its tier is not compiled in.
+        assert_eq!(script.eval_value("typeof Screen").unwrap(), "undefined");
+    }
+    // Either way the page sees one browser, and it is this one.
+    assert_eq!(
+        script.eval_value("navigator.userAgent").unwrap(),
+        crate::net::USER_AGENT
+    );
+}
+
+/// The prelude's fallback literal, held to the identity it stands in for.
+///
+/// A build without the `identity` feature has no `api.identity()` to call, so
+/// the prelude falls back to a literal — and a literal is exactly the second
+/// source of truth this module was written to remove. It cannot drift, because
+/// this test reads the same properties out of a realm and compares them to
+/// `identity::native()`, which the wire is built from. Change one and this
+/// fails.
+///
+/// It runs in the *feature-on* build and still proves the feature-off one,
+/// because what it pins is that the two agree: with the feature on the values
+/// come from `native()` through the binding, and the assertions below are
+/// written against the literal's numbers.
+#[test]
+fn the_bare_build_answers_what_native_declares() {
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    // Read from the realm, which with the feature on is answering from
+    // `identity::native()` through `api.identity()`.
+    let reported = |script: &mut Script, expression: &str| script.eval_value(expression).unwrap();
+
+    // Every value the fallback literal in `prelude.js` spells out. If one of
+    // these moves, the literal has to move with it — and the assertion names
+    // the property, so the diff says which line to change.
+    assert_eq!(reported(&mut script, "navigator.platform"), "");
+    assert_eq!(reported(&mut script, "navigator.vendor"), "");
+    assert_eq!(reported(&mut script, "navigator.productSub"), "20030107");
+    assert_eq!(reported(&mut script, "navigator.oscpu"), "");
+    assert_eq!(reported(&mut script, "navigator.hardwareConcurrency"), "1");
+    assert_eq!(reported(&mut script, "navigator.maxTouchPoints"), "0");
+    assert_eq!(reported(&mut script, "navigator.languages.join(',')"), "en-US,en");
+    assert_eq!(reported(&mut script, "typeof screen"), "undefined");
+}
+
+#[test]
+fn the_default_identity_leaves_the_page_exactly_as_it_was() {
+    // `native` is the default, so this is the test that says a browser identity
+    // shipped without changing what every existing h5i session looks like.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+
+    assert_eq!(
+        script.eval_value("navigator.userAgent").unwrap(),
+        crate::net::USER_AGENT
+    );
+    assert_eq!(script.eval_value("navigator.platform").unwrap(), "");
+    assert_eq!(script.eval_value("navigator.hardwareConcurrency").unwrap(), "1");
+    assert_eq!(script.eval_value("navigator.maxTouchPoints").unwrap(), "0");
+    assert_eq!(script.eval_value("navigator.vendor").unwrap(), "");
+    assert_eq!(script.eval_value("devicePixelRatio").unwrap(), "1");
+    // No display is declared, so there is none to report — which is what this
+    // engine did before an identity existed, and for the same reason: a
+    // headless engine's honest screen size is a guess.
+    assert_eq!(script.eval_value("typeof screen").unwrap(), "undefined");
+    assert_eq!(script.eval_value("'screen' in globalThis").unwrap(), "false");
+    assert_eq!(script.eval_value("typeof Screen").unwrap(), "undefined");
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn navigator_languages_and_the_accept_language_header_come_from_one_list() {
+    // The drift this whole module exists to make unwritable. The wire said
+    // `en-US,en;q=0.9` and the array said `["en-US"]`, so a server that
+    // content-negotiates on the header and then reads the array in its script
+    // saw two different browsers.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    let identity = crate::identity::native();
+
+    assert_eq!(
+        script.eval_value("navigator.languages.join(',')").unwrap(),
+        identity.locale.languages.join(",")
+    );
+    assert_eq!(
+        script.eval_value("navigator.language").unwrap(),
+        identity.locale.languages[0]
+    );
+    assert_eq!(identity.locale.accept_language(), "en-US,en;q=0.9");
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn a_declared_identity_reaches_navigator_from_the_broker() {
+    let identity = crate::identity::firefox_linux();
+    let (_page, mut script) =
+        page_and_script_as("<html><body><p>x</p></body></html>", identity.clone());
+
+    // The agent string the broker would have put on the wire is the one the
+    // page reads. Not a copy of it: the same object, over the same path a
+    // split engine's renderer uses.
+    assert_eq!(
+        script.eval_value("navigator.userAgent").unwrap(),
+        identity.browser.user_agent
+    );
+    assert_eq!(script.eval_value("navigator.platform").unwrap(), "Linux x86_64");
+    assert_eq!(script.eval_value("navigator.oscpu").unwrap(), "Linux x86_64");
+    assert_eq!(script.eval_value("navigator.productSub").unwrap(), "20100101");
+    assert_eq!(script.eval_value("navigator.hardwareConcurrency").unwrap(), "8");
+    assert_eq!(
+        script.eval_value("navigator.languages.join(',')").unwrap(),
+        "en-US,en"
+    );
+    // `appVersion` is still derived from the one agent string rather than
+    // written again, so it cannot drift from it.
+    assert_eq!(
+        script.eval_value("navigator.appVersion").unwrap(),
+        identity.browser.user_agent.trim_start_matches("Mozilla/")
+    );
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn navigator_carries_no_sign_of_having_been_written_to_afterwards() {
+    // The reason these values come from Rust rather than from a
+    // `defineProperty` pass in the prelude. A page can read the descriptor and
+    // walk the prototype, and an overwritten property looks nothing like one
+    // that was always there.
+    let (_page, mut script) =
+        page_and_script_as("<html><body><p>x</p></body></html>", crate::identity::firefox_linux());
+
+    let descriptor = script
+        .eval_value(
+            "JSON.stringify(Object.getOwnPropertyDescriptor(navigator, 'platform')             ? Object.keys(Object.getOwnPropertyDescriptor(navigator, 'platform')).sort() : [])",
+        )
+        .unwrap();
+    // A data property, so there is no getter whose `toString` could be read.
+    assert!(descriptor.contains("value"), "{descriptor}");
+    assert!(!descriptor.contains("get"), "{descriptor}");
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn a_declared_display_appears_and_an_undeclared_one_does_not() {
+    let identity = crate::identity::firefox_linux();
+    let screen = identity.screen.clone().expect("this identity declares one");
+    let (_page, mut script) =
+        page_and_script_as("<html><body><p>x</p></body></html>", identity);
+
+    assert_eq!(
+        script.eval_value("screen.width").unwrap(),
+        screen.width.to_string()
+    );
+    assert_eq!(
+        script.eval_value("screen.availHeight").unwrap(),
+        screen.avail_height.to_string()
+    );
+    // `pixelDepth` and `colorDepth` are one number on every browser that ships.
+    assert_eq!(
+        script.eval_value("screen.colorDepth === screen.pixelDepth").unwrap(),
+        "true"
+    );
+    // And the ratio the identity declares is the one `window` reports, or a
+    // page gets a device whose pixel ratio contradicts its own screen.
+    assert_eq!(script.eval_value("devicePixelRatio").unwrap(), "1");
+
+    // Read-only, as every `Screen` member is.
+    assert_eq!(
+        script
+            .eval_value("(() => { try { screen.width = 1; } catch { } return screen.width; })()")
+            .unwrap(),
+        screen.width.to_string()
+    );
+    // Not a plain object wearing the name: the brand check is what makes
+    // reading a member off the prototype throw, which is what idlharness asks.
+    assert_eq!(
+        script.eval_value("Object.prototype.toString.call(screen)").unwrap(),
+        "[object Screen]"
+    );
+    assert_eq!(
+        script
+            .eval_value("(() => { try { return Screen.prototype.width; } catch (e) { return e.name; } })()")
+            .unwrap(),
+        "TypeError"
+    );
+    // The interface object is present with the instance, never one alone.
+    assert_eq!(script.eval_value("typeof Screen").unwrap(), "function");
+    // And it is not enumerable on the global, per WebIDL §3.7 — the rule the
+    // core prelude's own pass applies, and which had already run by the time
+    // this tier loaded.
+    assert_eq!(
+        script
+            .eval_value("Object.getOwnPropertyDescriptor(globalThis, 'Screen').enumerable")
+            .unwrap(),
+        "false"
+    );
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn a_declared_time_zone_reaches_date_rather_than_only_a_property() {
+    // The offset has to come from the host hook. Patching
+    // `Date.prototype.getTimezoneOffset` from the prelude would leave
+    // `toString` and the date parser computing from the real zone, and a page
+    // that compares the two would find a browser whose clock contradicts
+    // itself — which is worse than a browser that simply says where it is.
+    let mut identity = crate::identity::firefox_linux();
+    identity.locale.timezone = crate::identity::TimeZone::named("Asia/Tokyo");
+    let (_page, mut script) =
+        page_and_script_as("<html><body><p>x</p></body></html>", identity);
+
+    // `getTimezoneOffset` counts minutes *west* of UTC, so a zone nine hours
+    // east reports -540.
+    assert_eq!(
+        script.eval_value("new Date(0).getTimezoneOffset()").unwrap(),
+        "-540"
+    );
+    // The same offset, arrived at another way: local midnight at the epoch is
+    // 09:00 on the 1st in Tokyo.
+    assert_eq!(script.eval_value("new Date(0).getHours()").unwrap(), "9");
+    assert_eq!(script.eval_value("new Date(0).getDate()").unwrap(), "1");
+}
+
+#[test]
+fn an_undeclared_time_zone_leaves_the_clock_where_it_was() {
+    // `native` declares none, so `Date` keeps computing from the host — which
+    // is what it did before, and what an honest identity should keep doing.
+    let (_page, mut script) = page_and_script("<html><body><p>x</p></body></html>");
+    let host_offset = -chrono::Local::now().offset().local_minus_utc() / 60;
+    assert_eq!(
+        script.eval_value("new Date().getTimezoneOffset()").unwrap(),
+        host_offset.to_string()
+    );
+}
+
 // ── what the application corpus asked for ────────────────────────────────────
 
 #[test]
@@ -6850,3 +7130,5 @@ fn assigning_the_width_clears_the_surface() {
         "and what is left must be an empty surface:\n{rendered}"
     );
 }
+
+

@@ -274,6 +274,22 @@ pub trait Broker: Send + Sync {
 
     /// The credentials this session may substitute, by name. Never values —
     /// that is the whole of [`crate::secrets`].
+    /// Who this session says it is.
+    ///
+    /// On the trait rather than read from a constant because the two halves of
+    /// a split engine both need it and only one of them has it: the broker
+    /// holds the identity because the broker writes the headers, and the
+    /// renderer has to answer `navigator` from the *same* object or the page
+    /// and the wire describe two different browsers.
+    ///
+    /// An `Arc` rather than a borrow or a copy. It cannot be a borrow because
+    /// across the process split there is nothing to borrow from — the value
+    /// arrives as a message. It must not be a copy because this is read once
+    /// per realm and a realm is per navigation, so the strings would be
+    /// reallocated on every page for a value fixed at the session's start.
+    #[cfg(feature = "identity")]
+    fn identity(&self) -> std::sync::Arc<crate::identity::Identity>;
+
     fn secret_names(&self) -> Vec<String>;
 
     /// Resolve `$H5I_SECRET_*` placeholders on the way into a field.

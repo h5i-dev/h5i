@@ -27,25 +27,33 @@ use url::Url;
 use crate::policy::Policy;
 use crate::receipt::{Initiator, RequestRecord, Sink};
 
-/// The one user agent: sent on the wire, and reported by `navigator.userAgent`.
+/// The agent string [`crate::identity::native`] presents.
 ///
 /// Honest rather than imitative — it names this engine and does not claim to be
 /// Chrome. The `Mozilla/5.0 (compatible; ...)` shape is kept because it is the
 /// form content negotiation on real servers is written against, not because it
 /// disguises anything.
 ///
-/// Shared with the script realm deliberately. A page that branches on the user
-/// agent server-side and again in script must see the same answer both times,
-/// or it renders for one engine and scripts for another.
+/// **The identity is what a request now reads**, not this. It stays here, and
+/// stays the value `native` is built from, because it is the *default* and a
+/// change to it changes what every h5i user looks like — so it should read as
+/// one decision in one place rather than as a field in a table of four.
 pub const USER_AGENT: &str = concat!(
     "Mozilla/5.0 (compatible; h5i-browser-light/",
     env!("CARGO_PKG_VERSION"),
     "; +https://github.com/h5i-dev/h5i)"
 );
 
-/// Matches `navigator.language`. A server that content-negotiates on this
-/// should get the same answer the page's script would give.
-pub const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
+/// What `native` asks for, kept as a constant so the one test that pins the
+/// default's wire bytes has something to pin them against.
+///
+/// **Not read when a request is built.** The header is now derived from
+/// [`crate::identity::Locale::accept_language`], off the same list
+/// `navigator.languages` reports, because the two used to be written
+/// separately and *had already drifted*: this string offered `en` and the
+/// script realm's array did not. A server that content-negotiates on the
+/// header while its script reads the array saw two different browsers.
+pub const NATIVE_ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
 
 /// What this engine will accept compressed, and can decode.
 ///
@@ -206,6 +214,87 @@ struct CorsContext {
     credentials: crate::cors::Credentials,
 }
 
+/// Who a session presents itself as, reduced to the two values a request
+/// carries and computed once.
+///
+/// The indirection earns its place twice. It is what lets the identity feature
+/// be *absent* rather than merely unused — without it the wire path would name
+/// a type that does not exist in a build without `identity` — and it is what
+/// keeps the per-request work at zero: both values are settled when the session
+/// is built, because an identity cannot change while a session runs.
+///
+/// `accept_language` is the finished header string, built here and not per
+/// request. That is the whole of the per-request cost question: a request hands
+/// `.header()` a `&str` and it parses one, exactly as it did when the value was
+/// a `&'static str`, so the wire path costs what it cost before identities
+/// existed — 12 ns, measured. Deriving the string from the language list on
+/// every request would have been the regression, and it is what this avoids.
+///
+/// A parsed `HeaderValue` was tried here and is *worse*: cloning one is 18 ns
+/// against the 12 ns to parse a short ASCII header, because the clone touches a
+/// refcount. Storing the string keeps the path identical to the baseline rather
+/// than merely close to it.
+pub struct Presented {
+    user_agent: String,
+    accept_language: String,
+    /// The whole identity, for the renderer to answer `navigator` from.
+    ///
+    /// Only the script realm reads this, and only a build with the feature has
+    /// a realm that can. The wire needs the two fields above and nothing else.
+    #[cfg(feature = "identity")]
+    declared: Arc<crate::identity::Identity>,
+}
+
+impl Presented {
+    /// The honest one: this engine, under its own name.
+    ///
+    /// Built from the constants rather than from `identity::native()` so that a
+    /// build without the feature has one at all. The two agree, and
+    /// `identity::tests::native_is_exactly_what_this_engine_already_sent` is
+    /// what holds them together.
+    pub fn native() -> Result<Self, H5iError> {
+        Self::from_parts(
+            USER_AGENT.to_string(),
+            NATIVE_ACCEPT_LANGUAGE.to_string(),
+            #[cfg(feature = "identity")]
+            Arc::new(crate::identity::native()),
+        )
+    }
+
+    /// The one a session was opened with.
+    #[cfg(feature = "identity")]
+    pub fn declared(identity: Arc<crate::identity::Identity>) -> Result<Self, H5iError> {
+        Self::from_parts(
+            identity.browser.user_agent.clone(),
+            identity.locale.accept_language(),
+            identity.clone(),
+        )
+    }
+
+    fn from_parts(
+        user_agent: String,
+        accept_language: String,
+        #[cfg(feature = "identity")] declared: Arc<crate::identity::Identity>,
+    ) -> Result<Self, H5iError> {
+        // Validated while the session is being built rather than when a page is
+        // waiting on the first request, and the parse is thrown away: what is
+        // kept is the string, because that is what a request wants. A session
+        // whose languages cannot be a header should refuse at its door, and
+        // `Identity::incoherences` already rejects the values that would get
+        // here — this is the belt to that brace, and the only check the
+        // constants ever need.
+        reqwest::header::HeaderValue::from_str(&accept_language).map_err(|e| {
+            H5iError::Metadata(format!("that is not a sendable Accept-Language: {e}"))
+        })?;
+        Ok(Self {
+            user_agent,
+            accept_language,
+            #[cfg(feature = "identity")]
+            declared,
+        })
+    }
+}
+
 pub struct LocalBroker {
     /// A handle to itself, for the two operations that hand out something with
     /// a life of its own.
@@ -265,6 +354,13 @@ pub struct LocalBroker {
     /// claim it cannot support. The proxy is the enforcement point there, which
     /// is the same division of labour the socket client already follows.
     pinned: Option<Arc<Pinned>>,
+    /// Who this session says it is, on the wire and in the page.
+    ///
+    /// Held by the broker rather than read from a constant because the broker
+    /// is the half that puts bytes on the wire, and because it is the same
+    /// object the renderer's script realm answers `navigator` from. One
+    /// identity, two layers, no second copy to drift: see [`Presented`].
+    presented: Presented,
 }
 
 impl LocalBroker {
@@ -285,6 +381,7 @@ impl LocalBroker {
             proxy,
             crate::budget::Limits::default(),
             crate::secrets::Secrets::from_env(),
+            Presented::native()?,
         )
     }
 
@@ -297,7 +394,14 @@ impl LocalBroker {
         proxy: Option<&str>,
         secrets: crate::secrets::Secrets,
     ) -> Result<Arc<Self>, H5iError> {
-        Self::build(policy, sink, proxy, crate::budget::Limits::default(), secrets)
+        Self::build(
+            policy,
+            sink,
+            proxy,
+            crate::budget::Limits::default(),
+            secrets,
+            Presented::native()?,
+        )
     }
 
     /// The same, with the page ceiling the caller wants.
@@ -312,7 +416,51 @@ impl LocalBroker {
         proxy: Option<&str>,
         limits: crate::budget::Limits,
     ) -> Result<Arc<Self>, H5iError> {
-        Self::build(policy, sink, proxy, limits, crate::secrets::Secrets::from_env())
+        Self::build(
+            policy,
+            sink,
+            proxy,
+            limits,
+            crate::secrets::Secrets::from_env(),
+            Presented::native()?,
+        )
+    }
+
+    /// The same, presenting the identity the session was opened with.
+    ///
+    /// A separate constructor rather than a setter, and that is not ceremony:
+    /// the agent string is handed to the HTTP client when the client is built,
+    /// and the broker is shared as an `Arc` the moment it exists. An identity
+    /// that could be changed afterwards would be one that changed mid-session,
+    /// which is the single thing a coherent identity must never do — rotating
+    /// a user agent between two requests of one page is louder than any value
+    /// it could have rotated to.
+    #[cfg(feature = "identity")]
+    pub fn with_identity(
+        policy: Policy,
+        sink: Arc<dyn Sink>,
+        proxy: Option<&str>,
+        limits: crate::budget::Limits,
+        identity: Arc<crate::identity::Identity>,
+    ) -> Result<Arc<Self>, H5iError> {
+        Self::build(
+            policy,
+            sink,
+            proxy,
+            limits,
+            crate::secrets::Secrets::from_env(),
+            Presented::declared(identity)?,
+        )
+    }
+
+    /// Who this session says it is.
+    ///
+    /// Read by the renderer through the broker, so the half that answers
+    /// `navigator` and the half that writes the headers answer from one object
+    /// rather than from two copies of one file.
+    #[cfg(feature = "identity")]
+    pub fn identity(&self) -> &Arc<crate::identity::Identity> {
+        &self.presented.declared
     }
 
     fn build(
@@ -321,6 +469,7 @@ impl LocalBroker {
         proxy: Option<&str>,
         limits: crate::budget::Limits,
         secrets: crate::secrets::Secrets,
+        presented: Presented,
     ) -> Result<Arc<Self>, H5iError> {
         let mut builder = reqwest::blocking::Client::builder()
             // Redirects are followed by hand so each hop is a policy decision
@@ -328,7 +477,7 @@ impl LocalBroker {
             // exactly the hops most worth seeing.
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30))
-            .user_agent(USER_AGENT);
+            .user_agent(presented.user_agent.clone());
 
         let mut proxied = false;
         if let Some(proxy_url) = proxy.filter(|p| !p.trim().is_empty()) {
@@ -367,6 +516,7 @@ impl LocalBroker {
             client,
             budget: crate::budget::Budget::new(limits),
             pinned,
+            presented,
             seq: AtomicU64::new(0),
             jar: crate::cookies::Jar::new(),
             proxied,
@@ -746,7 +896,10 @@ impl LocalBroker {
                 .client
                 .request(verb, current.clone())
                 .header(reqwest::header::ACCEPT, accept_for(asked_as))
-                .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
+                .header(
+                    reqwest::header::ACCEPT_LANGUAGE,
+                    self.presented.accept_language.as_str(),
+                )
                 .header(reqwest::header::ACCEPT_ENCODING, ACCEPT_ENCODING);
             if !body.is_empty() {
                 if let Some(kind) = content_type {
@@ -1252,7 +1405,10 @@ impl LocalBroker {
             .client
             .request(reqwest::Method::GET, url.clone())
             .header(reqwest::header::ACCEPT, "text/event-stream")
-            .header(reqwest::header::ACCEPT_LANGUAGE, ACCEPT_LANGUAGE)
+            .header(
+                reqwest::header::ACCEPT_LANGUAGE,
+                self.presented.accept_language.as_str(),
+            )
             // The client carries a 30s timeout for ordinary requests, which is
             // exactly wrong for a stream that is *supposed* to stay open and
             // quiet. Cleared for this one request only.
@@ -1298,6 +1454,11 @@ impl LocalBroker {
 }
 
 impl crate::broker::Broker for LocalBroker {
+    #[cfg(feature = "identity")]
+    fn identity(&self) -> Arc<crate::identity::Identity> {
+        self.presented.declared.clone()
+    }
+
     fn send(&self, fetch: &crate::broker::Fetch) -> FetchOutcome {
         let context = fetch.cors.as_ref().map(|ask| CorsContext {
             document: crate::cors::Origin::of(&ask.document),

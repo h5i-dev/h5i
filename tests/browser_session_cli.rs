@@ -1079,3 +1079,219 @@ fn a_secret_flag_on_a_boxed_session_is_refused_and_names_env_toml() {
     assert!(why.contains("env.toml"), "the refusal names where to put it: {why}");
     assert!(why.contains("secrets"), "{why}");
 }
+
+// ── browser identities ───────────────────────────────────────────────────────
+//
+// Gated with the feature they exercise: without it there is no `--identity` to
+// pass, and a test that asserted the flag was rejected would be pinning clap's
+// error message rather than anything this crate decides.
+
+#[cfg(feature = "identity")]
+#[test]
+fn an_identity_that_this_engine_cannot_back_refuses_the_session() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    // Coherent as a description, and still refused: this engine sends no
+    // Sec-CH-UA and has no WebGL, and a Chrome agent string in front of a
+    // browser with neither is louder than an honest one. The refusal has to
+    // reach the CLI rather than being a note in the engine's log, because the
+    // session it would have started is the thing being prevented.
+    let url = fixture.site.base.clone();
+    let out = fixture.run(&[
+        "browser",
+        "open",
+        url.as_str(),
+        "--allow",
+        "127.0.0.1",
+        "--script",
+        "--identity",
+        "chrome-151-windows",
+    ]);
+    assert!(!out.status.success(), "a refused identity must not open a session");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("ua-client-hints"), "{said}");
+    assert!(said.contains("webgl2"), "{said}");
+
+    // And nothing was left behind: the check runs before anything is spawned.
+    let list = fixture.run(&["browser", "list", "--json"]);
+    let sessions: serde_json::Value =
+        serde_json::from_slice(&list.stdout).unwrap_or(serde_json::Value::Array(vec![]));
+    assert_eq!(
+        sessions.as_array().map(Vec::len).unwrap_or(0),
+        0,
+        "a refused open left a session behind"
+    );
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn the_identity_a_session_presented_is_in_its_record() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    let id = fixture.open(&["--script", "--identity", "firefox-143-linux"]);
+    let out = fixture.run(&["browser", "status", "--session", &id, "--json"]);
+    let record: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("status prints a record");
+
+    // The name is what someone typed; the digest is what was presented. A
+    // hand-written identity file can be edited after the session opened, so the
+    // digest is the half an audit can rely on.
+    assert_eq!(record["identity"], "firefox-143-linux");
+    let digest = record["identity_digest"].as_str().unwrap_or_default();
+    assert_eq!(digest.len(), 16, "a digest belongs on the record: {record}");
+
+    let _ = fixture.run(&["browser", "close", "--session", &id]);
+}
+
+#[cfg(feature = "identity")]
+#[test]
+fn identity_check_says_what_it_does_not_cover_as_plainly_as_what_it_does() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    let out = fixture.run(&["browser", "identity", "check", "firefox-143-linux", "--script", "--json"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("check prints JSON");
+
+    assert_eq!(report["admitted"], true);
+    // The second list is the point. An identity that printed only what it
+    // reaches would be promising invisibility, which is not what this is.
+    let uncovered = report["does_not_cover"].to_string();
+    assert!(uncovered.contains("ClientHello"), "{uncovered}");
+    assert!(uncovered.contains("HTTP/2"), "{uncovered}");
+}
+
+/// h5i's default identity and the engine's are the same word.
+///
+/// This is the property the old `net_args` comment was reaching for when it
+/// sent `--identity` on every invocation. It is a fact about two constants, and
+/// paying for it on the wire broke every box running an older h5i — so it is
+/// checked here instead, where it costs nothing and fails loudly.
+#[cfg(feature = "identity")]
+#[test]
+fn the_two_defaults_are_one_word() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    // What the engine falls back to when no `--identity` reaches it.
+    let out = fixture.run(&["browser", "identity", "check", "native", "--json"]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("check prints JSON");
+    assert_eq!(report["name"], "native");
+    assert_eq!(report["mode"], "native");
+
+    // And what h5i sends when nobody types the flag: nothing at all, so the
+    // engine's own default is what decides. `identity` on the record is the
+    // name h5i resolved, and the two have to agree or the record describes a
+    // session that never ran.
+    let id = fixture.open(&[]);
+    let status = fixture.run(&["browser", "status", "--session", &id, "--json"]);
+    let record: serde_json::Value =
+        serde_json::from_slice(&status.stdout).expect("status prints a record");
+    assert_eq!(record["identity"], "native");
+    let _ = fixture.run(&["browser", "close", "--session", &id]);
+}
+
+/// A default session sends the engine no `--identity` at all.
+///
+/// The regression this pins is specific and was shipped: `net_args` pushed the
+/// flag unconditionally, so a boxed session whose in-box h5i predated it failed
+/// at argument parsing — `h5i browser read --in <box>` stopped working for
+/// callers who had never heard of identities. Every other flag here is
+/// conditional; this one has to be too.
+#[cfg(feature = "identity")]
+#[test]
+fn the_default_identity_adds_no_flag_an_older_engine_would_refuse() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    // `--in` needs a box, so the check is made against the argv h5i builds for
+    // the sessionless lane instead: with no `--identity` typed, the engine is
+    // run with none, and the proof is that a build of the engine that has never
+    // heard of the flag would have been given nothing to choke on.
+    //
+    // Asserted through behaviour rather than by reading argv: an engine that
+    // received `--identity` and rejected it fails the read outright, and a
+    // successful read is what says nothing unknown was passed.
+    let url = fixture.site.base.clone();
+    let out = fixture.run(&["browser", "read", url.as_str(), "--no-sandbox"]);
+    assert!(
+        out.status.success(),
+        "a default read must not pass anything the engine could refuse: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // And when one *is* named, it does travel.
+    let named = fixture.run(&[
+        "browser", "read", url.as_str(), "--no-sandbox", "--script",
+        "--identity", "chrome-151-windows",
+    ]);
+    assert!(!named.status.success(), "a refused identity must reach the engine");
+    assert!(
+        String::from_utf8_lossy(&named.stderr).contains("ua-client-hints"),
+        "the refusal should come from the engine, not from clap"
+    );
+}
+
+/// A file identity is refused in both lanes, and a mistyped name is not
+/// mistaken for one.
+///
+/// Two bugs in one test because they are one mistake: the first fix checked
+/// only whether the selector was a built-in, in only the `open` lane. So
+/// `read --in` still sent a host path into a box, and a mistyped built-in was
+/// told it had "named a file on this machine" that it never named.
+#[cfg(feature = "identity")]
+#[test]
+fn a_file_identity_is_refused_in_a_box_and_a_typo_is_not_called_a_file() {
+    let Some(fixture) = Fixture::new() else {
+        return skip("h5i is not built");
+    };
+
+    let file = fixture.home.path().join("mine.toml");
+    std::fs::write(&file, "name = \"x\"\n").expect("write an identity file");
+    let path = file.display().to_string();
+    let url = fixture.site.base.clone();
+
+    // Both lanes name the boundary. `--in` names a box that does not exist, and
+    // that is the point: this refusal comes *before* anything is spawned, so it
+    // is reached whether or not the box is real.
+    for args in [
+        vec!["browser", "open", url.as_str(), "--in", "nobox", "--identity", &path],
+        vec!["browser", "read", url.as_str(), "--in", "nobox", "--identity", &path],
+    ] {
+        let lane = args[1];
+        let out = fixture.run(&args);
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{lane}: a host path must not go into a box");
+        assert!(
+            said.contains("names a file on this machine"),
+            "{lane} did not name the boundary: {said}"
+        );
+    }
+
+    // A mistyped built-in is a typo, not a file, and gets the answer that lists
+    // what there is.
+    let out = fixture.run(&[
+        "browser", "read", url.as_str(), "--in", "nobox", "--identity", "firefox-143-linx",
+    ]);
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !said.contains("names a file on this machine"),
+        "a typo was reported as a file: {said}"
+    );
+
+    // And on this machine a file identity is perfectly fine.
+    let here = fixture.run(&["browser", "read", url.as_str(), "--no-sandbox", "--identity", &path]);
+    assert!(
+        !String::from_utf8_lossy(&here.stderr).contains("names a file on this machine"),
+        "the boundary is a box's, not a file's"
+    );
+}

@@ -176,6 +176,8 @@ pub fn install(context: &mut Context) -> JsResult<()> {
         ("fetchDrain", 0, fetch_drain),
         ("fetchPending", 0, fetch_pending),
         ("userAgent", 0, user_agent),
+        #[cfg(feature = "identity")]
+        ("identity", 0, identity),
         ("attrNames", 1, attr_names),
         ("nodeKind", 1, node_kind),
         ("isConnected", 1, is_connected),
@@ -1148,9 +1150,99 @@ fn attr_names(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     Ok(out.into())
 }
 
-/// The one user agent, so the prelude cannot hold a second copy that drifts.
+/// The session's agent string, so the prelude cannot hold a second copy that
+/// drifts from the one the broker put on the wire.
+#[cfg(feature = "identity")]
+fn user_agent(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let host = host(context)?;
+    Ok(JsValue::from(js_string!(
+        host.identity.browser.user_agent.as_str()
+    )))
+}
+
+/// The same, for a build with no identities: there is one agent string, and it
+/// is a constant.
+#[cfg(not(feature = "identity"))]
 fn user_agent(_this: &JsValue, _args: &[JsValue], _context: &mut Context) -> JsResult<JsValue> {
     Ok(JsValue::from(js_string!(crate::net::USER_AGENT)))
+}
+
+/// Everything else the session's identity declares, as one plain object.
+///
+/// One binding rather than a dozen, and one call rather than one per property:
+/// the prelude reads this once while it is building `navigator`, so the cost is
+/// a single crossing per realm instead of a crossing behind every property a
+/// fingerprinting script touches — and those are touched in bursts.
+///
+/// The shape is deliberately flat and dumb. Anything the prelude has to
+/// *decide* — whether to define `screen` at all, what `appVersion` is — is a
+/// decision, and decisions belong on one side or the other rather than half in
+/// each. What crosses here is only what the identity says.
+#[cfg(feature = "identity")]
+fn identity(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let host = host(context)?;
+    let identity = &host.identity;
+
+    fn put(
+        object: &boa_engine::object::JsObject,
+        name: &str,
+        value: JsValue,
+        context: &mut Context,
+    ) -> JsResult<()> {
+        object.set(js_string!(name), value, false, context)?;
+        Ok(())
+    }
+
+    let out = boa_engine::object::JsObject::with_null_proto();
+    for (name, text) in [
+        ("mode", identity.mode.as_str()),
+        ("platform", identity.device.platform.as_str()),
+        ("vendor", identity.browser.vendor.as_str()),
+        ("productSub", identity.browser.product_sub.as_str()),
+        ("oscpu", identity.device.oscpu.as_str()),
+    ] {
+        put(&out, name, js_string!(text).into(), context)?;
+    }
+    for (name, number) in [
+        ("hardwareConcurrency", identity.device.hardware_concurrency),
+        ("maxTouchPoints", identity.device.max_touch_points),
+    ] {
+        put(&out, name, JsValue::from(number), context)?;
+    }
+
+    let languages = boa_engine::object::builtins::JsArray::new(context)?;
+    for tag in &identity.locale.languages {
+        languages.push(JsValue::from(js_string!(tag.as_str())), context)?;
+    }
+    put(&out, "languages", languages.into(), context)?;
+
+    // Absent rather than null when the identity declares no display. The rule
+    // `prelude.js` already follows is that a name which exists and answers
+    // wrongly is worse than one that is absent, and a headless engine's honest
+    // screen size is a guess — so `native` and `privacy` expose no `screen` at
+    // all, exactly as before this module existed. A *declared* identity is the
+    // case that rule was waiting for: the answer is stated, not guessed.
+    if let Some(screen) = &identity.screen {
+        let object = boa_engine::object::JsObject::with_null_proto();
+        for (name, value) in [
+            ("width", screen.width),
+            ("height", screen.height),
+            ("availWidth", screen.avail_width),
+            ("availHeight", screen.avail_height),
+            ("colorDepth", screen.color_depth),
+        ] {
+            put(&object, name, JsValue::from(value), context)?;
+        }
+        put(
+            &object,
+            "devicePixelRatio",
+            JsValue::from(screen.device_pixel_ratio()),
+            context,
+        )?;
+        put(&out, "screen", object.into(), context)?;
+    }
+
+    Ok(out.into())
 }
 
 /// Accept a request from script and hand back a ticket.
