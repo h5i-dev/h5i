@@ -1421,10 +1421,8 @@ fn an_answer_that_is_not_an_event_stream_is_not_read_as_one() {
 fn a_page_cannot_hold_more_open_connections_than_the_engine_has_room_for() {
     use crate::script::host::MAX_OPEN_CHANNELS;
 
-    assert!(
-        MAX_OPEN_CHANNELS < 64,
-        "the bound has to leave room under the profile's thread ceiling"
-    );
+    // The profile's thread ceiling, which this has to leave room under.
+    const { assert!(MAX_OPEN_CHANNELS < 64) };
     assert!(crate::script::dom_api::channel_room(0).is_ok());
     assert!(crate::script::dom_api::channel_room(MAX_OPEN_CHANNELS - 1).is_ok());
 
