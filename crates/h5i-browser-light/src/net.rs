@@ -790,15 +790,38 @@ impl LocalBroker {
                 // moved. Following it automatically is not the fix — that would
                 // let any server route us out of the allowlist — but saying so
                 // is.
-                let message = if hop > 0 {
+                let message = if hop == 0 {
+                    format!("denied by policy: {reason}")
+                } else if cors.is_some() {
+                    // A page asked, and where a server redirected it is not the
+                    // page's to learn. The chain began at a URL the page named
+                    // and ended somewhere the allowlist refuses; naming that
+                    // target hands the page a URL it had no way to reach and
+                    // that a redirect off an authenticated endpoint routinely
+                    // carries an identity in (`/me` -> `/users/alice`). A
+                    // browser gives a blocked `fetch` a bare failure for the
+                    // same reason.
+                    //
+                    // The receipt has the target under its own sequence number,
+                    // which is where it belongs: the audit lane is the agent's,
+                    // and this string is the page's.
+                    "the request was redirected somewhere this engine is not allowed to \
+                     follow, so it was not followed"
+                        .to_string()
+                } else {
+                    // The agent asked. A redirect that left the allowlist is
+                    // the most actionable thing this engine can say — vitejs.dev
+                    // moved to vite.dev and the corpus reported only "origin is
+                    // not in the allowlist", leaving no way to learn the site
+                    // had moved. Following it automatically is not the fix, that
+                    // would let any server route us out of the allowlist, but
+                    // saying so is.
                     format!(
                         "the site redirected to {current}, which is not allowed: {reason}. \
                          This engine will not follow a redirect out of the allowlist, because \
                          a server could then choose where we go; allow that host if you meant \
                          to follow it."
                     )
-                } else {
-                    format!("denied by policy: {reason}")
                 };
                 return FetchOutcome::failed_at(current, message, Some(seq));
             }
@@ -1370,7 +1393,29 @@ impl LocalBroker {
         // frame said "switching protocols" four hundred times on one
         // connection — and said it on event streams, which never switched
         // anything. A frame is not an exchange with a status of its own.
-        self.append(&outcome)
+        self.append(&outcome)?;
+
+        // **And charged, which it was not.**
+        //
+        // [`crate::budget`] exists to bound what an untrusted page can spend,
+        // and every limit in it was checked on the way *into a request* — which
+        // a socket makes exactly one of. A page could hold one open and pull
+        // gigabytes through it while `budget` reported a page that had spent
+        // almost nothing: the queue is bounded so the memory was safe, and the
+        // bandwidth, the time and the honesty of the number were not.
+        //
+        // Charged as wire and decoded alike: a frame is not content-encoded, so
+        // the two are the same number and pretending otherwise would understate
+        // one of them.
+        self.budget
+            .record(bytes, bytes, std::time::Duration::ZERO);
+        self.budget.within_totals().map_err(|over| {
+            H5iError::Metadata(format!(
+                "{} A long-lived connection is charged per frame, so this is the page's \
+                 whole allowance rather than this frame's.",
+                over.0
+            ))
+        })
     }
 
     /// Authorise and begin an event stream, handing back the open response.
@@ -1931,6 +1976,131 @@ mod cookie_wire_tests {
             }
         });
         port
+    }
+
+    /// A server that redirects once, to wherever it is told.
+    fn redirects_to(target: &'static str) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0
+                        || header.trim().is_empty()
+                    {
+                        break;
+                    }
+                }
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\n\
+                     Connection: close\r\n\r\n"
+                );
+                let _ = stream.flush();
+            }
+        });
+        port
+    }
+
+    /// Where a server redirected a page is not the page's to learn.
+    ///
+    /// The chain begins at a URL the page named and ends somewhere the
+    /// allowlist refuses; naming that target hands the page a URL it had no way
+    /// to reach, and a redirect off an authenticated endpoint routinely carries
+    /// an identity in it (`/me` -> `/users/alice`). The agent still gets the
+    /// full sentence, because "the site moved" is the most actionable thing
+    /// this engine can say to whoever is driving it.
+    #[test]
+    fn a_page_is_not_told_where_a_refused_redirect_pointed_and_the_agent_is() {
+        const TARGET: &str = "https://tracker.example/users/alice?token=s3cr3t";
+        let sink = Arc::new(MemorySink::new());
+        let broker = LocalBroker::new(
+            crate::policy::Policy::new(),
+            sink.clone(),
+            None,
+        )
+        .expect("broker");
+
+        // The page asked: a `fetch` from a document, so a CORS context exists.
+        let port = redirects_to(TARGET);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/me")).unwrap();
+        let document = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        let outcome = broker.send_script(
+            &url,
+            "GET",
+            &[],
+            None,
+            &document,
+            &[],
+            crate::cors::Mode::Cors,
+            crate::cors::Credentials::SameOrigin,
+        );
+        let error = outcome.error.expect("the hop is refused");
+        assert!(!error.contains("tracker.example"), "{error}");
+        assert!(!error.contains("s3cr3t"), "{error}");
+        assert!(error.contains("redirected"), "{error}");
+
+        // The agent asking the same thing is told where it went.
+        let port = redirects_to(TARGET);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/me")).unwrap();
+        let outcome = broker.send_from(&url, Initiator::Navigation, "GET", &[], None, None);
+        let error = outcome.error.expect("the hop is refused");
+        assert!(error.contains("tracker.example"), "{error}");
+
+        // And the receipt has it either way: the audit lane is not the page's
+        // to be protected from.
+        assert!(
+            sink.records().iter().any(|r| r.url.contains("tracker.example")),
+            "the refused hop is not in the log"
+        );
+    }
+
+    /// The budget bounds what an untrusted page can spend, and every limit in
+    /// it was checked on the way *into a request* — which a socket makes
+    /// exactly one of. A page could hold one open and pull gigabytes through it
+    /// while `budget` reported a page that had spent almost nothing: the queue
+    /// is bounded so the memory was safe, and the bandwidth, the time and the
+    /// honesty of the number were not.
+    #[test]
+    fn a_long_lived_connection_is_charged_for_what_it_carries() {
+        let broker = LocalBroker::with_limits(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+            crate::budget::Limits {
+                max_wire_bytes: 4_096,
+                ..Default::default()
+            },
+        )
+        .expect("broker");
+
+        let url = Url::parse("ws://127.0.0.1:9/hmr").unwrap();
+        // Inside the allowance: the frame is receipted and the page carries on.
+        broker
+            .record_socket_frame(&url, crate::wsclient::Direction::Receive, 1_024)
+            .expect("a frame inside the allowance");
+        assert_eq!(broker.spending().spent().wire_bytes, 1_024);
+
+        // Past it: the frame is refused, which is what closes the socket.
+        broker
+            .record_socket_frame(&url, crate::wsclient::Direction::Receive, 8_192)
+            .expect_err("a frame past the allowance");
+
+        // And the frames are in the log either way — a receipt records what
+        // crossed the wire, and these did.
+        assert_eq!(
+            broker
+                .records()
+                .iter()
+                .filter(|r| r.method == "WS-RECV" && r.phase == crate::receipt::Phase::Response)
+                .count(),
+            2
+        );
     }
 
     /// The gap the budget fills. Every limit before it was *per request* — a

@@ -146,6 +146,14 @@ impl Budget {
 
     /// Whether the cumulative ceilings are still intact.
     ///
+    /// Public because a long-lived connection has no next request to be
+    /// refused at: a socket or an event stream carries bytes for as long as it
+    /// is open, so it asks directly, per frame. See
+    /// [`crate::net::LocalBroker::record_socket_frame`].
+    pub fn within_totals(&self) -> Result<(), Exceeded> {
+        self.check_totals()
+    }
+
     /// Separate from [`Self::claim_request`] so the byte and time totals are
     /// checked on the way *in* to the next request rather than the way out of
     /// the last one: the request that goes over the line should be the one
