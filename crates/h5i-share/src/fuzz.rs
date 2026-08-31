@@ -1,19 +1,17 @@
 //! Random heads, thrown at the two parsers, checking the properties that must
 //! hold for *every* input rather than for the ones somebody thought of.
 //!
-//! Fifteen rounds of adversarial reading found real defects in this crate's
-//! HTTP handling, and every one of them was a case a person constructed:
+//! Fifteen rounds of adversarial reading found real defects in this crate's HTTP
+//! handling, and every one was a case a person constructed:
 //! `Content-Length\u{0c}`, a bare CR in a response header, a second
-//! `Content-Length` beside a `Transfer-Encoding`. That is a good way to find
-//! the bugs somebody can imagine, and a bad way to find the rest. This module
-//! generates heads instead (from a grammar seeded with the nastiest tokens the
-//! previous rounds turned up, plus mutation and plain noise) and asserts the
-//! invariants the rest of the crate is entitled to assume.
+//! `Content-Length` beside a `Transfer-Encoding`. That is a good way to find the
+//! bugs somebody can imagine, and a bad way to find the rest. This module
+//! generates heads instead, from a grammar seeded with the nastiest tokens the
+//! previous rounds turned up, plus mutation and plain noise.
 //!
 //! Deterministic on purpose. A fuzzer that finds a failure CI cannot reproduce
 //! is a fuzzer that reports flakes, so the generator is a fixed sequence and a
-//! failure prints the seed that produced it. `H5I_FUZZ_ROUNDS` turns the same
-//! test into a soak.
+//! failure prints the seed. `H5I_FUZZ_ROUNDS` turns the same test into a soak.
 
 /// xorshift64*. Small, no dependency, and identical on every platform, which
 /// is the only property that matters here.
@@ -219,17 +217,15 @@ const METHODS: &[&str] = &[
 /// Line endings, sampled once per head rather than once per line.
 ///
 /// Sampled per line, with four of the five illegal, acceptance decayed as
-/// (1/5)^(headers+1): measured against the real parser, 1.88% of heads got
-/// past `gate::parse`, and of two million heads *zero* carried both framings
-/// and about 157 carried a share cookie. The generator was emitting
+/// (1/5)^(headers+1): measured against the real parser, 1.88% of heads got past
+/// `gate::parse`, and of two million heads *zero* carried both framings and about
+/// 157 carried a share cookie. The generator was emitting
 /// `Content-Length\u{0c}` and obs-folds in more than half of all heads and the
-/// parser was rejecting every one of them on line discipline before the
-/// assertions ran. So the test's headline property, the credential never
-/// reaches the box, was being checked on roughly one input per run, and the
-/// two-framings assertion on none at all.
+/// parser was rejecting every one on line discipline before the assertions ran.
+/// So the test's headline property was being checked on roughly one input per
+/// run, and the two-framings assertion on none at all.
 ///
-/// A whole head in one ending is also the realistic shape: a client that emits
-/// bare LF emits it consistently.
+/// A whole head in one ending is also the realistic shape.
 const EOLS: &[&str] = &[
     "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n", "\r\n",
     "\r\n", "\r\n", "\r\n", "\r\n", "\n", "\r", "\r\r\n", "\n\r",
@@ -468,15 +464,12 @@ fn floor_char(s: &str, mut i: usize) -> usize {
 ///
 /// Behind `p2p` because a ticket is: it carries the addressing of an iroh
 /// endpoint, and the parser these exercise is only compiled with that feature.
-/// Built unconditionally, they were dead code in a
-/// `--no-default-features` build, which is one of the two clippy runs CI does
-/// with `-D warnings`, and the one no local check here had ever run.
+/// Built unconditionally, they were dead code in a `--no-default-features`
+/// build, which is one of the two clippy runs CI does with `-D warnings`.
 ///
 /// A ticket is the one thing on the joiner's side that arrives entirely from
-/// somebody else and is pasted in by hand. Hand-written review of it has
-/// already found two real defects (an address filter that caught one spelling
-/// of loopback out of four, and no cap on how many places one ticket could aim
-/// at) so it is worth generating rather than only imagining.
+/// somebody else and is pasted in by hand. Hand-written review of it has already
+/// found two real defects, so it is worth generating rather than only imagining.
 #[cfg(feature = "p2p")]
 const TICKET_ADDRS: &[&str] = &[
     r#"{"Ip":"127.0.0.1:2375"}"#,

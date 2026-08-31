@@ -3,16 +3,15 @@
 //! Placement is a second axis beside the isolation tier a box already declares
 //! (ROADMAP.md R1): the tier says how the box is confined, this says which
 //! machine confines it. The two are orthogonal, and nothing here changes what a
-//! box is *allowed* to do. Only which machine an escape would reach.
+//! box is *allowed* to do, only which machine an escape would reach.
 //!
 //! This module deliberately knows nothing about SSH, frames, or the runner
-//! protocol. It is a trait and two plain structs. The implementation lives
-//! above, in the binary, over `h5i-runner`. That is a layering decision with a
-//! reason: `h5i-runner` already depends on `h5i-sandbox`, and a later milestone
-//! may well want it to reach `h5i-core` for receipts or export, so a
-//! dependency in this direction would be a cycle waiting to happen. A trait
-//! costs one indirection and makes the remote path testable in this crate with
-//! a fake that opens no connection at all.
+//! protocol. It is a trait and two plain structs, and the implementation lives
+//! above, in the binary. That is a layering decision with a reason:
+//! `h5i-runner` already depends on `h5i-sandbox`, and a later milestone may want
+//! it to reach `h5i-core`, so a dependency in this direction would be a cycle
+//! waiting to happen. A trait costs one indirection and makes the remote path
+//! testable here with a fake that opens no connection.
 
 use std::path::Path;
 
@@ -137,10 +136,9 @@ pub trait RemoteRunner {
 ///
 /// *Not* one of `server::HOST_OBSERVED_LANES`, and that is the whole point
 /// (ROADMAP.md R10). This was observed from outside the box, by an h5i we
-/// authenticated over a channel with a pinned host key, which is strictly
-/// more than the box could forge, and strictly less than something this machine
-/// watched itself. Folding it into host-observed would overclaim; calling it
-/// box-claimed would underclaim.
+/// authenticated over a channel with a pinned host key, which is strictly more
+/// than the box could forge and strictly less than something this machine
+/// watched itself.
 ///
 /// The honest degradation, and the security claim of this whole part in one
 /// sentence: runner-observed collapses to box-claimed exactly when the runner
@@ -150,12 +148,11 @@ pub const RUNNER_OBSERVED_LANE: &str = "runner-observed";
 
 /// The name a box goes by on the runner.
 ///
-/// Derived rather than chosen, so the same box always lands on the same name
-/// and a retry is idempotent. The short digest suffix is doing real work: agent
-/// and slug both admit `-`, so `("a-b", "c")` and `("a", "b-c")` would
-/// otherwise produce one name for two different boxes. The runner would refuse
-/// the second as a conflict rather than corrupt anything, but a refusal for a
-/// box the user legitimately asked for is a bug from where they are standing.
+/// Derived rather than chosen, so the same box always lands on the same name and
+/// a retry is idempotent. The short digest suffix is doing real work: agent and
+/// slug both admit `-`, so `("a-b", "c")` and `("a", "b-c")` would otherwise
+/// produce one name for two different boxes, and the runner would refuse the
+/// second as a conflict.
 pub fn remote_box_id(manifest_id: &str) -> String {
     let digest = crate::refstore::sha256_hex(manifest_id.as_bytes());
     let readable: String = manifest_id

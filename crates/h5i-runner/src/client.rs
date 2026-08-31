@@ -1,11 +1,11 @@
 //! The control-plane side: opening a channel, shaking hands, asking one thing.
 //!
-//! Every method here is one channel and one RPC (ROADMAP.md R4), and each one
-//! starts by proving the peer is there before it starts the longer clock for
-//! the request. That is the two-clock discipline R5 asks for, made real by
+//! Every method here is one channel and one RPC (ROADMAP.md R4), and each starts
+//! by proving the peer is there before it starts the longer clock for the
+//! request. That is the two-clock discipline R5 asks for, made real by
 //! [`Channel::rearm`] rather than asserted: a peer that never answers the
 //! handshake is killed in seconds, and a peer that answers and then takes a
-//! while to do the work is given the time the work needs.
+//! while is given the time the work needs.
 
 use std::io::Read;
 use std::process::{ChildStdin, ChildStdout};
@@ -141,13 +141,13 @@ impl Client {
     /// Make a box on the runner.
     ///
     /// `bundle` is `None` for an empty source. When it is `Some`, its bytes go
-    /// out as `DATA` frames after the request and before `DATA_DONE`, on the
-    /// same channel. The transfer is part of this RPC rather than a second one
-    /// that could arrive without it.
+    /// out as `DATA` frames after the request and before `DATA_DONE`, on the same
+    /// channel, so the transfer is part of this RPC rather than a second one that
+    /// could arrive without it.
     ///
-    /// The policy digest the worker echoes is checked here, not merely logged:
-    /// it is the one thing that says the box was built under the policy this
-    /// side resolved (ROADMAP.md R7).
+    /// The policy digest the worker echoes is checked here, not merely logged: it
+    /// is the one thing that says the box was built under the policy this side
+    /// resolved (ROADMAP.md R7).
     pub fn create(
         &self,
         request: &CreateRequest,

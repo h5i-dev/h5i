@@ -5,17 +5,16 @@
 
 //! The runner protocol over a real process boundary.
 //!
-//! `h5i-runner`'s own tests drive the worker loop through two in-memory
-//! buffers, which is where the framing and the state machine are pinned down.
-//! This is the other half of R13.1's exit criterion: the same protocol against
-//! the *real binary*, spawned as a child, with pipes and an exit status in
-//! between, and still no sshd, no second machine and no network, which is what
-//! makes it something CI can run.
+//! `h5i-runner`'s own tests drive the worker loop through two in-memory buffers,
+//! which is where the framing and the state machine are pinned down. This is the
+//! other half of R13.1's exit criterion: the same protocol against the *real
+//! binary*, spawned as a child, with pipes and an exit status in between, and
+//! still no sshd, no second machine and no network.
 //!
 //! What the child-process transport is *for* is the failure half. A peer that
-//! sends an oversized frame, or stops mid-message, or speaks a protocol from
-//! the future, is trivial to arrange here and near-impossible to arrange
-//! against a real runner on demand.
+//! sends an oversized frame, or stops mid-message, or speaks a protocol from the
+//! future, is trivial to arrange here and near-impossible to arrange against a
+//! real runner on demand.
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -711,10 +710,9 @@ fn destroy_and_gc_leave_the_runner_clean() {
 /// The whole R13.2 cycle over *real SSH*, against a runner you have paired.
 ///
 /// Opt-in, like `H5I_TEST_CONTAINER` and `H5I_TEST_NET`: it needs a second
-/// machine (or a localhost sshd) and a pairing, so CI cannot run it and a
-/// developer with one should be able to. Everything above this line is the same
-/// protocol over a child process, which is what makes the child-process
-/// transport worth having; this is the part only a real runner can answer.
+/// machine (or a localhost sshd) and a pairing, so CI cannot run it. Everything
+/// above this line is the same protocol over a child process; this is the part
+/// only a real runner can answer.
 ///
 /// ```bash
 /// h5i runner pair selftest $USER@localhost --worker-path $PWD/target/debug/h5i
