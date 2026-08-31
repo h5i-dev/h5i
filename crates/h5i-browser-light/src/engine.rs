@@ -263,6 +263,16 @@ const INLINE_HANDLER_SELECTOR: &str = "[onload],[onclick],[onerror],[onchange],[
     [onpagehide],[onhashchange],[onpopstate],[onresize],[onmessage],[onunload],\
     [onbeforeunload],[onanimationend],[ontransitionend],[onpointerdown],[onpointerup]";
 
+/// What the snapshot says when a navigation left an origin behind.
+///
+/// One string rather than two, because it is written at two points now — when
+/// the document is built, which is before its subresources and frames are
+/// fetched, and again when the page is finished, for an origin change that
+/// happened after that.
+const SESSION_DROPPED_NOTE: &str =
+    "cookies from the previous origin were dropped on navigation: this engine holds a \
+     session only for the origin currently loaded";
+
 /// How many frame documents one page may pull in, including nested ones.
 ///
 /// A bound, and a *said* bound (§B16.10): ad-stuffed pages carry dozens of
@@ -818,6 +828,28 @@ impl Page {
         fonts: FontSetup,
         options: PageOptions,
     ) -> Self {
+        // **Before the document exists, and therefore before its subresources
+        // and its frames are fetched.**
+        //
+        // The drop used to live in `PageFactory::finish`, at the *end* of the
+        // navigation — and a page's frames and subresources are fetched before
+        // that. So arriving at `evil.example` with `bank.example`'s session
+        // still in the jar, and being told to fetch `bank.example` in a frame,
+        // carried the credential; §B21 then flattened the authenticated answer
+        // into the outline the agent reads. Two allowed origins and a
+        // cross-origin credentialed read, which is the pair of properties
+        // `crate::cors` and `Jar::retain_origin` exist between them to refuse.
+        //
+        // Here rather than in `Page::open`, because the constructors that take
+        // markup already in hand fetch subresources too, and `Page::open`
+        // arrives here with the URL that was actually *served* — so a redirect
+        // is judged by where it landed rather than by where it was aimed, which
+        // is the reason the drop moved out of `open` in the first place.
+        //
+        // `finish` keeps its own call: script can navigate after this point,
+        // and the note belongs where the page is finished.
+        let dropped_session = broker.keep_only_origin(base_url);
+
         let viewport = Viewport::new(
             options.width,
             options.height,
@@ -894,6 +926,11 @@ impl Page {
             );
         }
 
+        let mut notes: Vec<String> = Vec::new();
+        if dropped_session {
+            notes.push(SESSION_DROPPED_NOTE.to_string());
+        }
+
         Self {
             // Assumed until `from_bytes` says otherwise: a string handed
             // straight to `from_html` has already been decoded by someone.
@@ -910,7 +947,7 @@ impl Page {
             ran_scripts: false,
             layout_failure,
             settled: None,
-            notes: Vec::new(),
+            notes,
         }
     }
 
@@ -2286,11 +2323,12 @@ impl PageFactory {
     /// The rule itself, on a borrow, so the two infallible constructors can run
     /// it too rather than keeping their own copy of half of it.
     fn finish_page(&self, page: &mut Page) -> Result<(), H5iError> {
+        // The backstop. `Page::from_html` drops against the origin actually
+        // served, *before* the page's subresources and frames go out; this
+        // catches an origin change that happened after that — a script
+        // navigation, a submission that built its page another way.
         if self.broker.keep_only_origin(page.url()) {
-            page.note(
-                "cookies from the previous origin were dropped on navigation: this engine \
-                 holds a session only for the origin currently loaded",
-            );
+            page.note(SESSION_DROPPED_NOTE);
         }
         if self.options.script {
             page.run_scripts(self.broker.clone())?;
@@ -3263,6 +3301,66 @@ mod frame_tests {
         // Not every short name beginning with `on` is a handler, and `on` is
         // an attribute of its own on some elements.
         assert!(!defuse_attribute("on", "x"));
+    }
+
+    /// The jar is bounded to the origin currently loaded — but the drop
+    /// happened in `finish`, at the *end* of the navigation, and a page's
+    /// frames and subresources are fetched before that. So arriving at
+    /// `evil.example` with `bank.example`'s session still in the jar, and being
+    /// told to fetch `bank.example` in a frame, carried the credential — and
+    /// §B21 then flattened the authenticated answer into the outline the agent
+    /// reads. Two allowed origins and a cross-origin credentialed read, which
+    /// is the pair of properties `crate::cors` and `Jar::retain_origin` exist
+    /// between them to refuse.
+    #[test]
+    fn a_page_cannot_frame_the_previous_origin_with_its_session_still_in_the_jar() {
+        let body = "<p>the account page</p>";
+        let bank = one_shot_server(body);
+        let broker = crate::net::LocalBroker::new(
+            Policy::new(),
+            Arc::new(MemorySink::new()),
+            None,
+        )
+        .expect("broker");
+        // The previous navigation's session, held for the origin it belongs to.
+        broker.jar().store(
+            &Url::parse(&format!("http://127.0.0.1:{bank}/")).unwrap(),
+            ["sid=secret"],
+        );
+        assert_eq!(broker.jar().len(), 1);
+
+        let html = format!(
+            r#"<html><body><iframe src="http://127.0.0.1:{bank}/account"></iframe></body></html>"#
+        );
+        let fonts = crate::fonts::load(&[], &crate::fonts::default_font_dirs(), Some(4));
+        let factory =
+            PageFactory::new(broker.clone(), fonts.sources.clone(), PageOptions::default());
+        // A *different* origin: a different loopback port is a different
+        // origin, and this one is the page being read.
+        let evil = Url::parse("http://127.0.0.2:9/").unwrap();
+        let mut page = Page::from_bytes(
+            html.as_bytes(),
+            Some("text/html"),
+            &evil,
+            broker.clone(),
+            factory.fonts(),
+            PageOptions::default(),
+        );
+        let dyn_broker: Arc<dyn Broker> = broker.clone();
+        load_frames(&mut page, &dyn_broker);
+        let _ = factory.finish(page);
+
+        let carried: usize = broker
+            .records()
+            .iter()
+            .filter(|r| r.url.contains("/account"))
+            .filter_map(|r| r.cookies_sent)
+            .sum();
+        assert_eq!(
+            carried, 0,
+            "the previous origin's session rode along on a frame fetch: {:?}",
+            broker.records()
+        );
     }
 
     #[test]
